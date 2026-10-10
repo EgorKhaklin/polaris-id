@@ -964,6 +964,88 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
         self.assertIn("Allocated resources", r.stdout, "the node's room must be printed")
 
 
+
+class HelmUpgradeCountsTheMigrationsSinceTheRelease(unittest.TestCase):
+    """scripts/polaris-helm-upgrade-drill.sh requires the upgrade to apply exactly the up-migrations this
+    commit has and the previous release does not. It required "at least one", and once v1.0.0-rc.71 was
+    cut with nothing added since, every pull request read 114 before, 114 after and failed. Its own two
+    functions run here, cut from the drill, against a scratch repository of three commits."""
+
+    def functions(self):
+        lines = (ROOT / "scripts" / "polaris-helm-upgrade-drill.sh").read_text().splitlines()
+        out = []
+        for name in ("migrations_new", "migrations_since"):
+            start = next(i for i, line in enumerate(lines) if line.startswith(name + "() {"))
+            end = next(i for i in range(start, len(lines)) if lines[i] == "}")
+            out += lines[start:end + 1]
+        return "\n".join(out)
+
+    def setUp(self):
+        self.repo = pathlib.Path(tempfile.mkdtemp(prefix="polaris-helm-count-"))
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        # A hook's GIT_DIR or GIT_INDEX_FILE would send these commits into the repository being committed.
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        self.env.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org")
+        mig = self.repo / "polaris_sql" / "migrations"
+        mig.mkdir(parents=True)
+        self.git("init", "-q")
+        for f in ("2026-01-01-001-a.up.sql", "2026-01-01-001-a.down.sql"):
+            (mig / f).write_text("SELECT 1;\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "the release")
+        self.release = self.git("rev-parse", "HEAD")
+        self.git("commit", "-q", "--allow-empty", "-m", "nothing added")
+        self.same = self.git("rev-parse", "HEAD")
+        for f in ("2026-02-01-001-b.up.sql", "2026-02-01-001-b.down.sql"):
+            (mig / f).write_text("SELECT 2;\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "one migration")
+        self.one = self.git("rev-parse", "HEAD")
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.repo), *args], env=self.env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def run_fn(self, call, target="TARGETSHA"):
+        script = 'ROOT=%s; FROM=v-release; TARGET=%s\n%s\n%s' % (self.repo, target, self.functions(), call)
+        return subprocess.run(["bash", "-c", script], env=self.env, capture_output=True, text=True, timeout=30)
+
+    def test_nothing_added_since_the_release_is_zero_and_passes(self):
+        r = self.run_fn("migrations_new %s %s" % (self.release, self.same))
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "0"), r.stderr)
+        r = self.run_fn("migrations_since 114 114 0")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("no migration since v-release", r.stdout)
+        # The form this replaced fails on the same numbers: the defect, kept visible.
+        old = subprocess.run(["bash", "-c", 'AFTER=114 BEFORE=114; [[ "${AFTER}" -gt "${BEFORE}" ]]'],
+                             env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(old.returncode, 0)
+
+    def test_one_added_must_be_applied_exactly_once(self):
+        r = self.run_fn("migrations_new %s %s" % (self.release, self.one))
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "1"), r.stderr)
+        self.assertEqual(self.run_fn("migrations_since 114 115 1").returncode, 0)
+        for before, after in ((114, 114), (114, 116), (115, 114)):
+            with self.subTest(before=before, after=after):
+                r = self.run_fn("migrations_since %d %d 1" % (before, after))
+                self.assertNotEqual(r.returncode, 0, r.stdout)
+                self.assertIn("has 1 that v-release does not", r.stdout)
+        r = self.run_fn("migrations_since 114 115 0")
+        self.assertNotEqual(r.returncode, 0, "a migration applied that the commit does not add must fail")
+
+    def test_a_count_that_was_not_read_is_named(self):
+        for args in ("'' 114 0", "114 '' 0", "114 114 ''", "114 x 0"):
+            with self.subTest(args=args):
+                r = self.run_fn("migrations_since %s" % args)
+                self.assertNotEqual(r.returncode, 0, r.stdout)
+                self.assertIn("the migration counts could not be read", r.stdout)
+
+    def test_a_revision_that_cannot_be_read_is_refused(self):
+        r = self.run_fn("migrations_new %s 0000000000000000000000000000000000000000" % self.release)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("could not list the migrations", r.stdout)
+
 # A stand-in polaris-migrate.sh: records the environment it was run with and its arguments, and
 # fails --up or --sync-objects when the case asks.
 _MIGRATE = r"""#!/bin/sh
@@ -1302,7 +1384,7 @@ class UpgradeRollbackStopsAtAFailedCopy(_CutBlock):
     DOCKER = r'''#!/bin/sh
 echo "docker $*" >> "$CALLS"
 case "$*" in
-  *"config --no-interpolate"*) echo "name: proj" ;;
+  *"docker-compose.prod.yml config") echo "name: proj" ;;
   "volume inspect"*) ;;
   *" down") ;;
   "run --rm"*) exit "${STUB_COPY_RC:-0}" ;;
@@ -1321,11 +1403,14 @@ esac
             (self.dir / d).mkdir(exist_ok=True)
         (self.dir / "bin" / "docker").write_text(self.DOCKER)
         (self.dir / "scripts" / "polaris-deploy.sh").write_text('#!/bin/sh\necho "deploy $*" >> "$CALLS"\n')
+        # The block reads the project with polaris.env loaded, as the deploy does; here there is none.
+        shutil.copy(LOADER, self.dir / "scripts" / "polaris-env.sh")
         for f in (self.dir / "bin" / "docker", self.dir / "scripts" / "polaris-deploy.sh"):
             f.chmod(0o755)
         calls = self.dir / "calls"
         r = subprocess.run(["bash", "-c", block], cwd=self.dir, capture_output=True, text=True, timeout=60,
-                           env=dict({"PATH": "%s:/usr/bin:/bin" % (self.dir / "bin"), "CALLS": str(calls)}, **env))
+                           env=dict({"PATH": "%s:/usr/bin:/bin" % (self.dir / "bin"), "CALLS": str(calls),
+                                     "POLARIS_ENV_FILE": ""}, **env))
         return r, (calls.read_text().splitlines() if calls.exists() else [])
 
     def test_a_failed_copy_is_not_deployed_onto(self):

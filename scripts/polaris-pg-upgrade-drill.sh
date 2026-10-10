@@ -92,7 +92,7 @@ extract "# 2. Stop the stack" "# 3. Change the FROM line" "${WORK}/step2.sh"
 extract "# 4. Set the old cluster aside" "# 5. Rebuild" "${WORK}/step4.sh"
 extract "# 5. Rebuild" "# 6. Only once step 5" "${WORK}/step5.sh"
 extract "# 6. Only once step 5" '```' "${WORK}/step6.sh"
-extract 'P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate' '```' "${WORK}/rollback-all.sh"
+extract 'P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose' '```' "${WORK}/rollback-all.sh"
 # The rollback block is the second one in the section that starts with the P line; the first such
 # line belongs to step 4, so take the block after the "To go back" sentence.
 python3 - "${DOC}" "${WORK}/rollback.sh" <<'PY'
@@ -180,6 +180,10 @@ assert cur["version"].split(".")[0] == sys.argv[1], ("current database", cur)
 assert any(b["type"] == "full" and b["database"]["id"] == cur["id"] for b in st["backup"]), ("no full backup of", cur)' "$1" \
         || fail "the repository's current database is not PostgreSQL $1 with a full backup"
 }
+
+# The documented compose commands run under whatever Compose this host has; say which, since the
+# versions differ in what they accept (2.38 refused what 5.5 took, 2026-10-10).
+echo "  $(docker compose version 2>&1)"
 
 step "1/5 this tree on PostgreSQL 16: try.sh (credential A), then the seed"
 bash "${ROOT}/lab/strategy/006/try.sh" > "${WORK}/try.log" 2>&1 || { tail -20 "${WORK}/try.log" >&2; fail "try.sh"; }

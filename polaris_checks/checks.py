@@ -7957,7 +7957,8 @@ _HELM_UPGRADE_DRILL = (
     ('helm install "${REL}" "${WORK}/from/deploy/helm/polaris"', "install that release with its own chart"),
     ('helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris"', "upgrade with this chart"),
     ("no pending migrations", "require no migration pending"),
-    ('[[ "${AFTER}" -gt "${BEFORE}" ]]', "require the upgrade to have applied migrations"),
+    ('why=$(migrations_since "${BEFORE}" "${AFTER}" "${WANT}") || fail', "require the upgrade to apply exactly the "
+     "migrations new since the previous release"),
     ("drill.marker", "require data written before the upgrade to survive it"),
 )
 

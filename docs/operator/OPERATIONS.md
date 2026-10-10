@@ -1029,7 +1029,7 @@ database is two Patroni members behind `pg-router`. The day-2 surface is
 `patronictl`, run inside either member:
 
 ```bash
-P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl -c /var/lib/postgresql/patroni.yml"
+P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.bluegreen.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl -c /var/lib/postgresql/patroni.yml"
 $P list                                   # members, roles, timeline, lag
 $P switchover --primary postgres --candidate postgres2   # planned; asks to confirm
 $P history                                # every timeline change and why
@@ -1737,9 +1737,11 @@ docker compose -f polaris_web/docker-compose.prod.yml down
 
 # 4. Set the old cluster aside, keeping it until step 6. Run this step once: it refuses when
 #    the copy already exists, because a second run would copy the new cluster over the only
-#    copy of the old one. The volume is found by its compose labels, as polaris-deploy.sh
-#    finds its project; a name match can pick another stack's volume on the same host.
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+#    copy of the old one. The volume is found by its compose labels, and the project is read
+#    as polaris-deploy.sh reads it, with polaris.env loaded (scripts/polaris-env.sh); the
+#    domain only lets the file parse and does not name the project. A name match can pick
+#    another stack's volume on the same host.
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
 V=$(docker volume ls -q --filter "label=com.docker.compose.project=$P" \
       --filter label=com.docker.compose.volume=pg_data)
 if [ -z "$P" ]; then
@@ -1775,7 +1777,7 @@ ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgr
 # 6. Only once step 5 printed "schema_version table matches migrations/ on disk" and the
 #    stack serves, delete the old cluster's copy. The names are looked up again, without
 #    needing the deploy's variables, so a new shell works; compose names the volume <project>_pg_data.
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
 if [ -n "$P" ]; then docker volume rm "${P}_pg_data_old"
 else echo "docker compose config failed: run this from the repository root, and check the compose file parses."; fi
 ```
@@ -1786,7 +1788,7 @@ compose's labels if step 5 never made it), redeploy, and upgrade pgBackRest's st
 old cluster (step 5 moved it to the new one) with a full backup. A new shell works here too:
 
 ```bash
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
 V="${P}_pg_data"
 if [ -z "$P" ] || ! docker volume inspect "${V}_old" >/dev/null 2>&1; then
   echo "docker compose config failed (run from the repository root, check the compose file parses), or no ${V}_old to roll back to. Stop here."
