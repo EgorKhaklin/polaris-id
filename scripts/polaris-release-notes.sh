@@ -82,6 +82,11 @@ print("Every release carries SPDX SBOMs with signed SLSA build provenance "
 print("```bash\ngh attestation verify sbom-python.spdx.json --repo " + repo + "\n"
       "gh attestation verify sbom-python.spdx.json --repo " + repo
       + " --bundle sbom-provenance.intoto.jsonl\n```\n")
+# Measured with gh 2.92.0: on a terminal it prints the line below and names the workflow; with no
+# terminal (a script or a pipe) it prints nothing on success (a failure prints its error).
+print("In a terminal each prints `✓ Verification succeeded!` and names `.github/workflows/sbom.yml@refs/heads/main` "
+      "as the workflow that built and signed it. With no terminal a success prints nothing (a failure prints its "
+      "error): in a script, read its exit status or pass `--format json`.\n")
 print("### Details\n")
 if details:
     print("<details><summary>Every change in this release</summary>\n")

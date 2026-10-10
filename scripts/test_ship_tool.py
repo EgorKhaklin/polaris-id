@@ -1134,6 +1134,14 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn("a secret file the stack mounts is missing", upgrade)
         self.assertIn("/blob/v9.9.9/docs/operator/OPERATIONS.md#polaris-version-upgrade", upgrade)
 
+    def test_verify_says_how_to_read_a_silent_success(self):
+        verify = self.render("").split("### Verify this release")[1].split("### Details")[0]
+        self.assertIn("gh attestation verify sbom-python.spdx.json", verify)
+        self.assertIn("`✓ Verification succeeded!`", verify)
+        self.assertIn(".github/workflows/sbom.yml@refs/heads/main", verify)
+        self.assertIn("a success prints nothing (a failure prints its error)", verify)
+        self.assertIn("read its exit status or pass `--format json`", verify)
+
     def test_a_block_with_no_intro_has_no_summary(self):
         head = self.render("").split("### Breaking changes")[0]
         self.assertNotIn("Security", head)
