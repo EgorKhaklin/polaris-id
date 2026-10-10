@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- polaris-verify, the Python SDK and the application's verify with an explicit algorithm accepted any signature under an empty or truncated ML-DSA public key (one witness decided); every verify site now refuses a key or signature that is not its parameter set's exact size before either witness runs. Trust acceptance stayed fail-closed: a short key never matches an anchor, and the anchor is what binds a key to an issuer.
 - The application role's password reached the database as plain text on psql's command line at first start; the server now receives a SCRAM verifier.
 
 ### Fixed

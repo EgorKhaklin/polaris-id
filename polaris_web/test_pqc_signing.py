@@ -439,6 +439,84 @@ class SecondWitnessDegradationTests(unittest.TestCase):
         self.assertFalse(pqc_signing.second_witness_available())
 
 
+class ExactSizeIsCheckedTests(unittest.TestCase):
+    """2026-10-10: verify() and verify_both() with an explicit algorithm did not check an ML-DSA
+    public key's or signature's length before verifying, so an empty key (from a missing
+    configuration) or a truncated one could verify. `_size_problem` now runs on verify_both before
+    either witness, and verify() and the second witness check it before their library sees the
+    bytes. Arbitrary bytes of the wrong length, not a forgery: a wrong length is refused at the
+    size check. A wrong-length key is a recognised conformance case
+    (fido-alliance/conformance-test-tools-resources#817)."""
+
+    def test_the_tables_match_liboqs_details(self):
+        if not pqc_signing.is_available():
+            self.skipTest("liboqs absent")
+        import oqs  # type: ignore
+        for alg, (pk_len, sig_len) in pqc_signing.custody.ALGORITHM_SIZES.items():
+            if alg not in set(oqs.get_enabled_sig_mechanisms()):
+                continue
+            with oqs.Signature(alg) as s:
+                self.assertEqual((pk_len, sig_len),
+                                 (s.details["length_public_key"], s.details["length_signature"]), alg)
+
+    def test_size_problem_names_a_wrong_length_and_passes_the_exact_one(self):
+        pk_len, sig_len = pqc_signing.custody.ALGORITHM_SIZES["ML-DSA-65"]
+        self.assertEqual((pk_len, sig_len), (1952, 3309))
+        self.assertIsNone(pqc_signing._size_problem("ML-DSA-65", b"\x01" * pk_len, b"\x02" * sig_len))
+        for bad in (0, 1, 32, pk_len - 1, pk_len + 1):
+            self.assertIn("public key", pqc_signing._size_problem("ML-DSA-65", b"\x01" * bad, b"\x02" * sig_len))
+        for bad in (0, 1, sig_len - 1, sig_len + 1):
+            self.assertIn("signature", pqc_signing._size_problem("ML-DSA-65", b"\x01" * pk_len, b"\x02" * bad))
+
+    def test_verify_both_refuses_a_wrong_length_without_a_backend(self):
+        # verify_both checks the size before it calls either witness, so it refuses a wrong length
+        # even here, and the lone-primary fallback never decides bytes of the wrong length.
+        msg = b"a stored credential"
+        pk_len, sig_len = pqc_signing.custody.ALGORITHM_SIZES["ML-DSA-65"]
+        for bad_pk in (b"", b"\x01", b"\x01" * 32, b"\x01" * (pk_len - 1)):
+            self.assertIs(pqc_signing.verify_both(msg, (b"\x02" * sig_len).hex(), bad_pk.hex(),
+                                                  algorithm="ML-DSA-65"), False, len(bad_pk))
+
+    def test_a_lone_primary_that_would_accept_cannot_resurrect_a_wrong_length(self):
+        # The size check is upstream of the fallback: stub the primary to accept and the witness
+        # to "not installed" (None); verify_both still refuses a wrong-length key.
+        msg = b"a stored credential"
+        _, sig_len = pqc_signing.custody.ALGORITHM_SIZES["ML-DSA-65"]
+        saved = (pqc_signing.verify, pqc_signing._verify_second_witness)
+        try:
+            pqc_signing.verify = lambda *a, **k: True
+            pqc_signing._verify_second_witness = lambda *a, **k: None
+            self.assertIs(pqc_signing.verify_both(msg, (b"\x02" * sig_len).hex(), (b"\x01" * 32).hex(),
+                                                  algorithm="ML-DSA-65"), False)
+        finally:
+            pqc_signing.verify, pqc_signing._verify_second_witness = saved
+
+    @unittest.skipUnless(pqc_signing.is_available(), "needs liboqs for verify() and the control")
+    def test_verify_refuses_a_wrong_length_key_and_a_real_signature_still_verifies(self):
+        msg = b"a stored credential"
+        digest = hashlib.sha3_256(msg).digest()
+        pk_len, sig_len = pqc_signing.custody.ALGORITHM_SIZES["ML-DSA-65"]
+        for bad_pk in (b"", b"\x01", b"\x01" * 32, b"\x01" * (pk_len - 1), b"\x01" * (pk_len + 1)):
+            self.assertIs(pqc_signing.verify(msg, (b"\x02" * sig_len).hex(), bad_pk.hex(),
+                                             algorithm="ML-DSA-65"), False, len(bad_pk))
+        # positive control: a real key and a real signature still verify
+        import oqs  # type: ignore
+        with oqs.Signature("ML-DSA-65") as s:
+            pk = bytes(s.generate_keypair())
+            sig = bytes(s.sign(digest))
+        self.assertIs(pqc_signing.verify(msg, sig.hex(), pk.hex(), algorithm="ML-DSA-65"), True)
+        self.assertIs(pqc_signing.verify_both(msg, sig.hex(), pk.hex(), algorithm="ML-DSA-65"), True)
+
+    @unittest.skipUnless(pqc_signing.is_available() and pqc_signing.second_witness_available(),
+                         "needs both witnesses")
+    def test_the_second_witness_returns_False_not_None_on_a_wrong_length(self):
+        msg = b"a stored credential"
+        pk_len, sig_len = pqc_signing.custody.ALGORITHM_SIZES["ML-DSA-65"]
+        for bad_pk in (b"", b"\x01", b"\x01" * 32, b"\x01" * (pk_len - 1)):
+            self.assertIs(pqc_signing._verify_second_witness(msg, (b"\x02" * sig_len).hex(),
+                                                             bad_pk.hex(), algorithm="ML-DSA-65"), False, len(bad_pk))
+
+
 class HexFieldTests(unittest.TestCase):
     """unhex reads a hex field the way the three published verifiers do (1218b649): hex digits
     in either case and nothing else, with bytes.fromhex's own exceptions."""

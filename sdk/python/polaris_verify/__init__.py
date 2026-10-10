@@ -54,11 +54,40 @@ ACCEPTED_ALGORITHMS = {"ML-DSA-65": "MLDSA65PublicKey", "ML-DSA-87": "MLDSA87Pub
 # 2026-10-05: the FN-DSA family (draft FIPS 206), verification only, under the name liboqs gives
 # the round-3 scheme it implements (FIPS 206 is not final). cryptography has no Falcon, so the
 # value is None and liboqs alone witnesses it here; Falcon-512 (category 1) stays below the floor.
+#: The one table of exact sizes: (public key bytes, signature bytes) per accepted parameter set,
+#: FIPS 204 for ML-DSA. test_sdk pins its keys to ACCEPTED_ALGORITHMS and its values to liboqs.
+ALGORITHM_SIZES = {"ML-DSA-65": (1952, 3309), "ML-DSA-87": (2592, 4627),
+                   "Falcon-padded-1024": (1793, 1280)}
 
 
 def _accepted(alg):
     """True iff `alg` names an accepted parameter set (total over hostile input)."""
     return isinstance(alg, str) and alg in ACCEPTED_ALGORITHMS
+
+
+def _size_problem(alg, pk, sig):
+    """Why `pk` and `sig` cannot be a public key and a signature of `alg`, or None when each is
+    exactly its ALGORITHM_SIZES length.
+
+    2026-10-10: no verify path checked an ML-DSA public key's or signature's length before
+    verifying, so a missing or truncated key could come back as a valid signature from one
+    witness. The rule since then: every door asks this BEFORE either witness runs and refuses
+    with its answer, so no witness ever sees a key or signature of the wrong length, and a
+    wrong length is a refusal, never a witness that "could not run". Each witness asks again
+    before its library sees the bytes, for any caller that reaches it directly.
+
+    It decides the shape and nothing else: an attacker can make a full-length key too, and
+    what binds a key to an issuer is the trust anchor. Empty is a wrong length, whatever the
+    table says."""
+    sizes = ALGORITHM_SIZES.get(alg) if _accepted(alg) else None
+    if sizes is None:
+        return "unknown or unaccepted signature algorithm: %r" % (alg,)
+    for what, value, want in (("public key", pk, sizes[0]), ("signature", sig, sizes[1])):
+        if not isinstance(value, (bytes, bytearray)):
+            return "the %s is not bytes" % what
+        if not value or len(value) != want:
+            return "the %s is %d bytes; %s takes exactly %d" % (what, len(value), alg, want)
+    return None
 
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
@@ -138,6 +167,9 @@ def token_value_serial_problem(token_value):
 
 
 def _verify_cryptography(digest, sig, pk, alg=ALGORITHM):
+    # A key or signature of the wrong length is False, not None: refused, not unwitnessable.
+    if _accepted(alg) and _size_problem(alg, pk, sig) is not None:
+        return False
     try:
         from cryptography.hazmat.primitives.asymmetric import mldsa
         from cryptography.exceptions import InvalidSignature
@@ -149,6 +181,7 @@ def _verify_cryptography(digest, sig, pk, alg=ALGORITHM):
     try:
         key = getattr(mldsa, cls_name).from_public_bytes(pk)
     except Exception:
+        # The length was checked above, so this is a backend without the parameter set.
         return None
     try:
         key.verify(sig, digest)
@@ -181,6 +214,8 @@ def _import_oqs():
 
 def _verify_liboqs(digest, sig, pk, alg=ALGORITHM):
     if not _accepted(alg):
+        return False
+    if _size_problem(alg, pk, sig) is not None:   # before the library sees the bytes
         return False
     try:
         oqs = _import_oqs()
@@ -228,6 +263,9 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
     if serial_problem is not None:
         return AuthenticityVerdict(False, None, alg, note="not an authentic credential: %s" % serial_problem)
     digest = _digest(tok)
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        return AuthenticityVerdict(False, None, alg, note=size_problem)
     primary = _verify_cryptography(digest, sig, pk, alg)
     witness = _verify_liboqs(digest, sig, pk, alg)
     ran = []
@@ -266,13 +304,17 @@ def _canonical(obj: dict, keys) -> bytes:
 def _verify_over_digest(digest, sig_hex, pk_hex, alg=ALGORITHM):
     """Dual-witness ML-DSA verify over a digest under `alg` (an accepted parameter set).
     Returns (ok, witnesses, note); ok is None when no verifier is available, the witnesses
-    disagree, or the algorithm is not accepted."""
+    disagree, or the algorithm is not accepted. A key or signature of the wrong length is
+    (False, [], why), decided before either witness runs."""
     if not _accepted(alg):
         return None, [], "unknown or unaccepted signature algorithm: %r" % (alg,)
     try:
         sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         return None, [], "signature_hex/public_key_hex are not valid hex"
+    size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
+    if size_problem is not None:
+        return False, [], size_problem
     primary = _verify_cryptography(digest, sig, pk, alg)
     witness = _verify_liboqs(digest, sig, pk, alg)
     ran = []
@@ -428,7 +470,7 @@ def verify_status_assertion(assertion: dict, now=None) -> StatusAssertionVerdict
     if ok is None:
         return StatusAssertionVerdict(False, None, None, status, note, ran)
     return StatusAssertionVerdict(bool(ok), _within_window(assertion, now), status == "ACTIVE", status,
-                                  witnesses=ran)
+                                  note, witnesses=ran)
 
 
 # The signed-field list per artifact format (wire spec section 3). One generic verifier covers
@@ -759,7 +801,7 @@ def verify_cosignature(cosig: dict, witness_key=None) -> ArtifactVerdict:
         return ArtifactVerdict(False, None, note, ran)
     if ok and witness_key is not None and not _same_hex(c.get("public_key_hex"), witness_key):
         return ArtifactVerdict(False, None, "the cosignature is not from the expected witness", ran)
-    return ArtifactVerdict(bool(ok), None, None if ok else "cosignature signature is invalid", ran)
+    return ArtifactVerdict(bool(ok), None, None if ok else (note or "cosignature signature is invalid"), ran)
 
 
 @dataclasses.dataclass
@@ -989,7 +1031,7 @@ def verify_attestation(att: dict, attesting_agency_id=None, expected_key=None) -
     if ok and expected_key is not None and \
             not _same_hex(a.get("attested_public_key_hex"), expected_key):
         return ArtifactVerdict(False, None, "the attestation is signed over a different attested key", ran)
-    return ArtifactVerdict(bool(ok), None, None if ok else "the attestation signature is invalid", ran)
+    return ArtifactVerdict(bool(ok), None, None if ok else (note or "the attestation signature is invalid"), ran)
 
 
 def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=None,
