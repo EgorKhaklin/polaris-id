@@ -148,8 +148,12 @@ VERIFICATION = [
      ["python3 -m unittest lab/strategy/007/test_gate.py"],
      "the access gate moved (lab, record 007): its OIDC flow over the verifier"),
     (r"^lab/interop/negative-vectors/",
-     ["python3 -m unittest lab/interop/negative-vectors/test_vectors.py"],
+     ["python3 -m unittest lab/interop/negative-vectors/test_vectors.py",
+      "python3 -m unittest lab/interop/status-list/revoked/test_fixture.py"],
      "the negative vectors moved (lab, record 018): regenerated, and every verdict reached"),
+    (r"^lab/interop/status-list/revoked/",
+     ["python3 -m unittest lab/interop/status-list/revoked/test_fixture.py"],
+     "the revoked-credential fixture moved: regenerated, and read as revoked at index 3"),
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
@@ -351,6 +355,7 @@ UNSHARDED_SUITES = {
                                 "test_cli", "test_conformance_capture", "test_status"],
     "lab/strategy/007": ["test_gate"],
     "lab/interop/negative-vectors": ["test_vectors"],
+    "lab/interop/status-list/revoked": ["test_fixture"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
@@ -380,6 +385,7 @@ UNSHARDED_RUNNERS = {
     "packages/polaris-oid4vp":  ("preflight", None),
     "lab/strategy/007":         ("unittest", None),
     "lab/interop/negative-vectors": ("unittest", None),
+    "lab/interop/status-list/revoked": ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
 }
