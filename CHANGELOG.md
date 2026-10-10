@@ -220,6 +220,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
 - CI runs the product suite's app-role suite and ZK steps, and Real PQC's web suite, as jobs of their own.
 - The coverage step stops re-running suites the product suite's other steps run.
+- The operability gate in PRODUCTION-READINESS has 29 criteria, 22 PASS: OP-29, a PostgreSQL major-version upgrade drilled there and back as OPERATIONS.md writes it, passes.
 
 ### Fixed
 
