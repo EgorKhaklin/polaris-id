@@ -537,6 +537,73 @@ do_sync_objects() {
         fi
     done
     echo "  Objects synced — procedure/trigger/view/grant definitions match the source."
+    raise_production_floor
+}
+
+# The zero-knowledge anonymity floor of a production database (2026-10-10). The notional sample sets
+# polaris.min_epoch_anonymity_set to ONE (04_data.sql) and every install loads it; docker-init.sh puts
+# 20 back for POLARIS_ENV=production at a cluster's first init only, and 09_grants.sql above sets it
+# only where it is unset. So a production database initialised before 2026-10-08 (up to 1.0.0-rc.70)
+# kept 1, and uc11_close_epoch could close epochs smaller than 20. Here, with POLARIS_ENV=production
+# (the deploy, the Linux installer and the chart's migration Job set it), exactly the sample's 1 is
+# raised to 20 with docker-init.sh's statement and read back: anything but 20 or more stops the run.
+# A floor of exactly 1 is taken to be the sample's, so a production floor of 1 does not survive an
+# upgrade. Any other value is the authority's (docs/design/epoch-cadence.md: "20 unless the authority
+# sets another") and stays, with a warning when it is below 20. A database that is not production is
+# never touched.
+FLOOR_READ="SELECT coalesce(polaris_database_setting('polaris.min_epoch_anonymity_set'), '')"
+FLOOR_RAISE=$(cat <<'SQL'
+DO $$
+BEGIN
+    IF polaris_database_setting('polaris.min_epoch_anonymity_set') = '1' THEN
+        EXECUTE format('ALTER DATABASE %I SET polaris.min_epoch_anonymity_set = 20', current_database());
+    END IF;
+END$$;
+SQL
+)
+
+raise_production_floor() {
+    [[ "${POLARIS_ENV:-}" == "production" ]] || return 0
+    local floor out
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "  [dry-run] would raise a production anonymity floor of 1 to 20"
+        return 0
+    fi
+    if ! floor=$(run_psql -X -v ON_ERROR_STOP=1 -c "${FLOOR_READ}" 2>&1); then
+        echo "  ✗ cannot read this production database's anonymity floor (polaris.min_epoch_anonymity_set):" >&2
+        echo "${floor}" | tail -3 >&2
+        exit "${EXIT_DB}"
+    fi
+    floor="${floor//[[:space:]]/}"
+    if [[ "${floor}" == "1" ]]; then
+        if ! out=$(run_psql -X -v ON_ERROR_STOP=1 -c "${FLOOR_RAISE}" 2>&1); then
+            echo "  ✗ could not raise this production database's anonymity floor from the notional sample's 1 to 20:" >&2
+            echo "${out}" | tail -3 >&2
+            exit "${EXIT_DB}"
+        fi
+        if ! floor=$(run_psql -X -v ON_ERROR_STOP=1 -c "${FLOOR_READ}" 2>&1); then
+            echo "  ✗ cannot read the anonymity floor back after raising it:" >&2
+            echo "${floor}" | tail -3 >&2
+            exit "${EXIT_DB}"
+        fi
+        floor="${floor//[[:space:]]/}"
+        if ! [[ "${floor}" =~ ^[0-9]+$ ]] || (( 10#${floor} < 20 )); then
+            echo "  ✗ the anonymity floor reads '${floor}' after it was raised to 20: uc11_close_epoch would close" >&2
+            echo "    epochs below 20 on this production database. Set it as the superuser, then re-run:" >&2
+            echo "      ALTER DATABASE <db> SET polaris.min_epoch_anonymity_set = 20" >&2
+            exit "${EXIT_DB}"
+        fi
+        echo "  ✓ anonymity floor: the notional sample's 1 raised to ${floor} (polaris.min_epoch_anonymity_set)"
+    elif [[ "${floor}" =~ ^[0-9]+$ ]] && (( 10#${floor} < 20 )); then
+        echo "  ! anonymity floor ${floor}, below the default of 20: kept, as the authority set it" \
+             "(docs/design/epoch-cadence.md)" >&2
+    elif [[ -z "${floor}" ]]; then
+        echo "  ✓ anonymity floor: unset, so uc11_close_epoch reads 20"
+    elif ! [[ "${floor}" =~ ^[0-9]+$ ]]; then
+        echo "  ! anonymity floor '${floor}' is not a number: uc11_close_epoch fails on every epoch until it is" >&2
+    else
+        echo "  ✓ anonymity floor: ${floor}"
+    fi
 }
 
 # ---------------------------------------------------------------------------

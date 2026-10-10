@@ -333,7 +333,7 @@ UNSHARDED_SUITES = {
                 "test_migrate_runner", "test_coverage_script",
                 "test_trigger_drill", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
-                "test_event_partition_migration"],
+                "test_event_partition_migration", "test_database_settings"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
