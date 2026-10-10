@@ -26,7 +26,7 @@
 #   --skip-db               Skip database restore (FS-AoR only)
 #   --verify-schema-version Cross-check schema_version table against
 #                           migrations/*.up.sql on disk after restore.
-#                           Exits EXIT_SCHEMA_MISMATCH=10 if divergent
+#                           Exits EXIT_SCHEMA_MISMATCH=10 if divergent or unreadable
 #                           (prevents serving half-restored DB). v9.23.
 #
 # Examples:
@@ -328,16 +328,29 @@ if [[ "${VERIFY_SCHEMA}" -eq 1 && "${SKIP_DB}" -eq 0 ]]; then
     else
         expected_versions=$(find "${migrations_dir}" -maxdepth 1 -name '*.up.sql' \
             -exec basename {} .up.sql \; 2>/dev/null | sort -u)
+        # A migration is applied when its latest event says so: the rule polaris-migrate.sh's
+        # is_currently_applied() keeps, since schema_version is an append-only event log and a
+        # revert is a new row. A read that fails is a failed check, never an empty list. Until
+        # 2026-10-10 this selected a column the table does not have and discarded the error, so
+        # every good restore exited 10 with every migration reported missing.
+        applied_sql="SELECT name FROM (SELECT DISTINCT ON (name) name, event_type FROM schema_version"
+        applied_sql+=" ORDER BY name, occurred_at DESC, event_id DESC) latest"
+        applied_sql+=" WHERE event_type = 'applied' ORDER BY name"
+        sv_err=$(mktemp)
         if [[ "${USE_DOCKER_STACK}" -eq 1 ]]; then
-            actual_versions=$(docker compose -f "${COMPOSE_FILE}" exec -T postgres \
-                psql -U polaris -d "${TARGET_DB}" -At \
-                -c "SELECT version FROM schema_version ORDER BY version" 2>/dev/null \
-                | sort -u || echo "")
+            sv_read() { docker compose -f "${COMPOSE_FILE}" exec -T postgres \
+                psql -U polaris -d "${TARGET_DB}" -X -At -v ON_ERROR_STOP=1 -c "${applied_sql}"; }
         else
-            actual_versions=$(psql -d "${TARGET_DB}" -At \
-                -c "SELECT version FROM schema_version ORDER BY version" 2>/dev/null \
-                | sort -u || echo "")
+            sv_read() { psql -d "${TARGET_DB}" -X -At -v ON_ERROR_STOP=1 -c "${applied_sql}"; }
         fi
+        if ! actual_raw=$(sv_read 2>"${sv_err}"); then
+            echo "  ✗ cannot read schema_version in ${TARGET_DB}, so the restore is unverified:"
+            sed 's/^/      /' "${sv_err}" | head -5
+            rm -f "${sv_err}"
+            exit "${EXIT_SCHEMA_MISMATCH}"
+        fi
+        rm -f "${sv_err}"
+        actual_versions=$(printf '%s\n' "${actual_raw}" | sed '/^$/d' | sort -u)
 
         missing_in_db=$(comm -23 <(echo "${expected_versions}") <(echo "${actual_versions}") 2>/dev/null || true)
         extra_in_db=$(comm -13 <(echo "${expected_versions}") <(echo "${actual_versions}") 2>/dev/null || true)
