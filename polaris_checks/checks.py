@@ -3390,13 +3390,13 @@ def check_pgbackrest_scaffolding(root: pathlib.Path) -> list[Finding]:
         return _fail("pgbackrest",
                      "polaris-deploy.sh must take the first full pgBackRest backup when the repository holds none")
     backup = _read(root, "scripts/polaris-backup.sh")
-    if 'pgbackrest --stanza=polaris --type="${PGBR_TYPE}" backup' not in backup \
+    if not re.search(r'pgbackrest --stanza=polaris (?:--repo="\$\{repo\}" )?--type="\$\{PGBR_TYPE\}" backup', backup) \
             or "record_backup pgbackrest" not in backup:
         return _fail("pgbackrest",
                      "polaris-backup.sh must take a pgBackRest backup when archiving is on and record it in "
                      "BackupEvent (without scheduled base backups the archive is never expired)")
     # docker-init warns loudly if archiving runs against a LOCAL (non-offsite) repo.
-    if not re.search(r"repo1-type.{0,40}s3", init) or "WARNING" not in init:
+    if not re.search(r"repo(?:1|\[0-9\]\+)-type.{0,40}s3", init) or "WARNING" not in init:
         return _fail("pgbackrest",
                      "docker-init.sh must WARN when archiving is enabled with a local (non-s3) repo "
                      "(a local repo does not survive host loss)")
@@ -8040,7 +8040,17 @@ def check_offsite_backup_env_driven(root: pathlib.Path) -> list[Finding]:
     appears in more than one config file ("option 'repo1-path' cannot be set
     multiple times"), so the repo location may live ONLY in the rendered
     conf.d/repo.conf. A repo1-path back in pgbackrest.conf breaks every
-    deployment, local or offsite, at container start."""
+    deployment, local or offsite, at container start.
+
+    2026-10-10: the bucket is repo2 BESIDE the local repo1 (it used to replace it), and it is
+    encrypted by pgBackRest. Pinned: the renderer never makes S3 repo1; it renders
+    repo2-cipher-type=aes-256-cbc; it refuses a bucket with no repo2-cipher-pass in the secret
+    fragment and a cipher passphrase in env; it never writes the passphrase into repo.conf; no
+    repo2- option sits in pgbackrest.conf (one there conjures a repo2 at the default local path
+    when no bucket is set); the scheduled and first backups go to every repo (pgBackRest backs
+    up to repo1 alone unless told, so a bucket would get WAL and no base backup); and the drill
+    proves the backup in both repos, expire on repo2, ciphertext only in the bucket, the
+    refused restores, and a restore from repo2 alone after repo1 is wiped."""
     conf = _read(root, "polaris_web/pgbackrest.conf")
     gen = _read(root, "polaris_web/pgbackrest-conf.sh")
     entry = _read(root, "polaris_web/pg-entrypoint.sh")
@@ -8048,21 +8058,57 @@ def check_offsite_backup_env_driven(root: pathlib.Path) -> list[Finding]:
     compose = _read(root, "polaris_web/docker-compose.prod.yml")
     secrets = _read(root, "scripts/polaris-generate-secrets.sh")
     deploy = _read(root, "scripts/polaris-deploy.sh")
+    backup = _read(root, "scripts/polaris-backup.sh")
+    rcheck = _read(root, "scripts/polaris-restore-check.sh")
     drill = _read(root, "scripts/polaris-offsite-drill.sh")
     ci = _read(root, ".github/workflows/ci.yml")
     dr = _read(root, "docs/operator/DR.md")
-    if not (conf and gen and entry and dockerfile and compose and secrets and deploy and drill and ci and dr):
+    if not (conf and gen and entry and dockerfile and compose and secrets and deploy and backup and rcheck
+            and drill and ci and dr):
         return _fail("offsite_backup", "an offsite-backup file is missing (renderer, entrypoint, drill, "
-                     "compose, secrets, deploy, DR.md, or ci.yml)")
+                     "compose, secrets, deploy, backup, restore check, DR.md, or ci.yml)")
     if re.search(r"^\s*repo1-path\s*=", conf, re.M):
         return _fail("offsite_backup",
                      "pgbackrest.conf sets repo1-path; the repo location lives only in the rendered "
                      "conf.d/repo.conf (pgBackRest refuses an option set in two files: 'cannot be set "
                      "multiple times' fails every container start)")
-    if "POLARIS_PGBACKREST_S3_BUCKET" not in gen or "repo1-type=s3" not in gen or "repo1-path=" not in gen:
+    if re.search(r"^\s*repo2-", conf, re.M):
         return _fail("offsite_backup",
-                     "pgbackrest-conf.sh must render BOTH the local repo1-path default and the S3 repo "
-                     "(repo1-type=s3) from POLARIS_PGBACKREST_S3_BUCKET")
+                     "pgbackrest.conf sets a repo2- option; any repo2 option configures a repo2, at "
+                     "pgBackRest's default local path when no bucket is set. repo2 lives only in the "
+                     "rendered conf.d/repo.conf, and only with a bucket")
+    if "POLARIS_PGBACKREST_S3_BUCKET" not in gen or "repo2-type=s3" not in gen or "repo1-path=" not in gen:
+        return _fail("offsite_backup",
+                     "pgbackrest-conf.sh must render the local repo1-path always and add the bucket as "
+                     "repo2 (repo2-type=s3) from POLARIS_PGBACKREST_S3_BUCKET")
+    if re.search(r"^repo1-(?:type=s3|s3-)", gen, re.M):
+        return _fail("offsite_backup",
+                     "pgbackrest-conf.sh renders the bucket as repo1, replacing the local repo; it is "
+                     "repo2, beside the local repo1")
+    if "repo2-cipher-type=aes-256-cbc" not in gen:
+        return _fail("offsite_backup",
+                     "pgbackrest-conf.sh must render repo2-cipher-type=aes-256-cbc: the offsite copy is "
+                     "encrypted by pgBackRest")
+    if not re.search(r"grep[^\n]*repo2-cipher-pass[^\n]*\$CREDS", gen) or not re.search(r"^\s*exit 4\b", gen, re.M):
+        return _fail("offsite_backup",
+                     "pgbackrest-conf.sh must refuse (exit 4) a bucket whose secret fragment ($CREDS) "
+                     "holds no repo2-cipher-pass: an offsite copy is encrypted or not written")
+    if not re.search(r"-lt 32\b", gen):
+        return _fail("offsite_backup",
+                     "pgbackrest-conf.sh must refuse a repo2-cipher-pass shorter than 32 characters")
+    if 'require_cipher "the operator-mounted' not in gen or 'require_cipher "the configuration"' not in gen:
+        return _fail("offsite_backup",
+                     "pgbackrest-conf.sh must hold an operator-mounted repo.conf, and any repository a "
+                     "fragment configures, to the cipher rule: a repository off this host (repoN-type not "
+                     "posix) with no repoN-cipher-type is refused")
+    if re.search(r"cipher-pass=\$", gen):
+        return _fail("offsite_backup",
+                     "pgbackrest-conf.sh writes a cipher passphrase into repo.conf from a variable; the "
+                     "passphrase lives in the mounted secret fragment only (repo.conf is 0644)")
+    if "compgen -e" not in gen or "CIPHER_PASS*" not in gen:
+        return _fail("offsite_backup",
+                     "pgbackrest-conf.sh must refuse (exit 3) a cipher passphrase in env, under its own "
+                     "name or pgBackRest's (PGBACKREST_REPO<n>_CIPHER_PASS)")
     if "POLARIS_PGBACKREST_S3_KEY_SECRET" not in gen or not re.search(r"exit 3", gen):
         return _fail("offsite_backup",
                      "pgbackrest-conf.sh must refuse (exit 3) when the S3 key pair is in env; the key "
@@ -8079,10 +8125,10 @@ def check_offsite_backup_env_driven(root: pathlib.Path) -> list[Finding]:
         return _fail("offsite_backup",
                      "the prod compose must pass POLARIS_PGBACKREST_S3_* to postgres and mount the "
                      "credential fragment at conf.d/repo-creds.conf")
-    if re.search(r"POLARIS_PGBACKREST_S3_KEY", compose):
+    if re.search(r"POLARIS_PGBACKREST_S3_KEY|CIPHER_PASS", compose):
         return _fail("offsite_backup",
-                     "the prod compose must not carry the S3 key pair in environment (it leaks via "
-                     "docker inspect); it is the mounted secret fragment only")
+                     "the prod compose must not carry the S3 key pair or a cipher passphrase in "
+                     "environment (it leaks via docker inspect); they are the mounted secret fragment only")
     if "pgbackrest_repo_creds.conf" not in secrets or "pgbackrest_repo_creds.conf" not in deploy:
         return _fail("offsite_backup",
                      "polaris-generate-secrets.sh must create pgbackrest_repo_creds.conf and "
@@ -8095,20 +8141,74 @@ def check_offsite_backup_env_driven(root: pathlib.Path) -> list[Finding]:
                      "polaris-generate-secrets.sh must DEFINE write_pgbackrest_creds_if_missing before "
                      "calling it (bash resolves functions at call time; `bash -n` passes on a definition "
                      "placed after the call, and the v9.173 CI prod boot died on 'command not found')")
+    # Every repo gets base backups: the deploy's first full and the scheduled ones, per repo.
+    if not re.search(r'pgbackrest --stanza=polaris --repo="\$\{repo\}" --type="\$\{PGBR_TYPE\}" backup', backup) \
+            or "conf.d/repo.conf" not in backup:
+        return _fail("offsite_backup",
+                     "polaris-backup.sh must back up each repo named in conf.d/repo.conf (--repo=N): "
+                     "pgBackRest backs up to repo1 alone unless told, so the bucket would hold WAL and "
+                     "no base backup to replay it onto")
+    if not re.search(r'pgbackrest --stanza=polaris --repo="\$\{repo\}" --type=full backup', deploy) \
+            or "conf.d/repo.conf" not in deploy:
+        return _fail("offsite_backup",
+                     "polaris-deploy.sh must take the first full backup in each repo named in "
+                     "conf.d/repo.conf that holds none (--repo=N)")
+    m_pre = re.search(r'polaris_web/pgbackrest-conf\.sh"[^\n]*\n[^\n]*pgbackrest_repo_creds\.conf', deploy)
+    m_call = re.search(r"^if pgbr_preflight; then", deploy, re.M)
+    m_up = re.search(r"^\s*compose (?:pull|up)\b", deploy, re.M)
+    if not (m_pre and m_call and m_up) or m_call.start() > m_up.start():
+        return _fail("offsite_backup",
+                     "polaris-deploy.sh must run pgbackrest-conf.sh against the host's "
+                     "pgbackrest_repo_creds.conf (pgbr_preflight) before its first compose pull or up: "
+                     "a configuration the postgres image refuses must stop the deploy, not the database")
+    if not re.search(r"verify 2 --set=", rcheck):
+        return _fail("offsite_backup",
+                     "polaris-restore-check.sh must verify the newest repo2 backup when repo2 is "
+                     "configured (pgbackrest --repo=2 verify): the deployment's own proof that the "
+                     "offsite copy decrypts")
     if not re.search(r'^S3_IMAGE="?[^\s"]+@sha256:', drill, re.M) or "restore" not in drill \
-            or "repo1-type=s3" not in drill or "POLARIS_PGBACKREST_S3_KEY=" not in drill:
+            or "grep -qx 'repo2-type=s3'" not in drill or "POLARIS_PGBACKREST_S3_KEY=" not in drill:
         return _fail("offsite_backup",
                      "polaris-offsite-drill.sh must back up to and restore from a digest-pinned S3 "
-                     "endpoint (S3_IMAGE=...@sha256:), assert the rendered repo is repo1-type=s3, and "
-                     "prove the key-pair-in-env refusal")
+                     "endpoint (S3_IMAGE=...@sha256:), assert the rendered bucket repo is "
+                     "repo2-type=s3, and prove the key-pair-in-env refusal")
+    drill_steps = (
+        (r"repo2-cipher-type=aes-256-cbc", "assert the rendered repo2 is encrypted"),
+        (r"CIPHER_PASS=", "prove the cipher-passphrase-in-env refusal"),
+        (r"--repo=1 --type=full backup", "take a full backup into repo1"),
+        (r"--repo=2 --type=full backup", "take a full backup into repo2"),
+        (r"rendered repo2-retention-full=2 did not remove", "see backup's own expire, at the rendered retention, remove repo2's oldest full"),
+        (r"Salted__", "check every bucket object carries pgBackRest's cipher header"),
+        (r"grep -qF \"\$MARKER\"", "scan every bucket object for the marker row's plaintext"),
+        (r"canary", "prove the scan finds a planted plaintext canary"),
+        (r"repo1 was not wiped", "wipe repo1 before the restore"),
+        (r"repo-creds-nopass\.conf", "refuse a restore from repo2 with no passphrase"),
+        (r"repo-creds-wrongpass\.conf", "refuse a restore from repo2 with a wrong passphrase"),
+        (r'grep -qF -- "\$says"', "require each refused restore's own error text, not any failure"),
+        (r"configures repo2 \(repo2-type=s3\) with no cipher", "refuse a mounted repo.conf naming an S3 repo with no cipher"),
+        (r"--repo=2 restore", "restore a fresh postgres from repo2 alone"),
+        (r'^echo "done"$', "print a final done line"),
+    )
+    missing = [why for pat, why in drill_steps if not re.search(pat, drill, re.M)]
+    if re.search(r"--repo\d+-retention-full=", drill):
+        missing.append("not override the retention on the command line (the rendered value is what "
+                       "must expire)")
+    if missing:
+        return _fail("offsite_backup",
+                     "polaris-offsite-drill.sh no longer proves the encrypted offsite repo: it must "
+                     + "; ".join(missing))
     if "polaris-offsite-drill.sh" not in ci:
         return _fail("offsite_backup", "ci.yml must run scripts/polaris-offsite-drill.sh")
     if "POLARIS_PGBACKREST_S3_BUCKET" not in dr:
         return _fail("offsite_backup", "DR.md must document the POLARIS_PGBACKREST_S3_* offsite switch")
     return _ok("offsite_backup",
                "offsite backup by env alone: the image entrypoint renders conf.d/repo.conf every start "
-               "(local default or S3), the key pair is a mounted fragment the container refuses from env, "
-               "compose/secrets/deploy carry it, and CI drills backup+restore against MinIO")
+               "(the local repo1 always, the bucket as an aes-256-cbc repo2 beside it), the key pair and "
+               "the passphrase (32+ characters) are a mounted fragment the container refuses from env, a "
+               "bucket without a passphrase and any repository off the host without a cipher are refused, "
+               "the deploy runs the same refusal before it starts anything, backup and deploy back up "
+               "every repo, the weekly restore check verifies repo2, and the CI drill proves both repos, "
+               "retention, ciphertext, the refused restores, and a restore from repo2 alone")
 
 
 def check_pager_integration(root: pathlib.Path) -> list[Finding]:
@@ -9533,7 +9633,7 @@ _RESTORE_VERIFY_NEEDLES = (
      "prove WAL damaged after the newest backup refused at replay"),
     ("lab/strategy/006/restore.sh", 'verify found the newest backup ($LABEL)',
      "prove a damaged file of the newest backup refused at verify"),
-    ("scripts/polaris-restore-check.sh", 'verify --set="$label"', "verify the newest backup set before restoring it"),
+    ("scripts/polaris-restore-check.sh", 'verify 1 --set="$label"', "verify the newest backup set before restoring it"),
 )
 
 

@@ -1830,10 +1830,12 @@ jobs:
 
       # v9.173 (roadmap P0.9) — the OFFSITE path. The round-trip above uses a
       # LOCAL repo, which is not what a real deployment relies on for durability.
-      # This drill switches the repo to S3 by env alone (the production path:
+      # This drill adds an S3 repo by env alone (the production path:
       # POLARIS_PGBACKREST_S3_* rendered by the image entrypoint + a mounted
-      # credential fragment), backs up into a TLS MinIO bucket with verification
-      # on, and restores a fresh postgres from the bucket. Pinned by
+      # secret fragment): the bucket is an encrypted repo2 beside the local repo1.
+      # It backs up into both over verified TLS, expires repo2, checks the bucket
+      # holds ciphertext only, refuses restores without the passphrase, wipes
+      # repo1 and restores a fresh postgres from repo2 alone. Pinned by
       # check_offsite_backup_env_driven.
       - name: pgBackRest OFFSITE (S3) backup + restore drill against MinIO
         run: bash scripts/polaris-offsite-drill.sh

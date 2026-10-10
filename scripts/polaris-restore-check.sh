@@ -13,7 +13,10 @@
 #
 # What a run proves, in order (the first that fails ends the run, and nothing is recorded):
 #   1. the newest backup and the WAL that makes it consistent are intact (`pgbackrest verify --set`);
-#      damage elsewhere in the repository is reported and noted, not fatal;
+#      damage elsewhere in the repository is reported and noted, not fatal. With an offsite bucket
+#      configured (repo2 in the rendered conf.d/repo.conf), the newest repo2 backup and its WAL
+#      verify as well, which reads them from the bucket and decrypts them with the passphrase:
+#      the deployment's own proof that the offsite copy is readable;
 #   2. the archive is current: the live database switches WAL, and the file it completes is
 #      archived within --archive-timeout;
 #   3. the newest backup and the archive after it restore, and PostgreSQL starts on them and
@@ -169,7 +172,9 @@ fi
 [[ ! -e "$DIR" ]] || { echo "restore-check: $DIR already exists (a kept copy?); remove it first" >&2; exit 2; }
 live "SELECT 1" >/dev/null || fail "cannot reach the live database at $LIVE_HOST:$LIVE_PORT"
 [[ "$(live "SHOW archive_mode")" != off ]] || na "WAL archiving is off on the live database (POLARIS_PGBACKREST_ENABLED)"
-info="$("${AS_PG[@]}" pgbackrest --stanza="$STANZA" --output=json info 2>/dev/null)" || na "pgBackRest has no readable repository for stanza $STANZA"
+# repo1, the local repository, throughout: with an offsite bucket configured it is repo2, and a label
+# read across both repos could name a backup that verify and restore (repo1) do not hold.
+info="$("${AS_PG[@]}" pgbackrest --stanza="$STANZA" --repo=1 --output=json info 2>/dev/null)" || na "pgBackRest has no readable repository for stanza $STANZA"
 # The image has no Python: the labels, oldest first, straight from pgBackRest's compact JSON.
 label="$(printf '%s' "$info" | grep -o '"label":"[^"]*"' | tail -1 | cut -d'"' -f4 || true)"
 [[ -n "$label" ]] || na "the repository holds no backup yet"
@@ -187,22 +192,39 @@ free_kb="$(df -Pk "$parent" | awk 'NR==2 {print $4}')"
 # in the repository (an older backup, or a gap a past archiving failure left) costs the restore
 # points it covers, not this one, so it is reported and noted in the record, and does not fail it.
 t0=$(date +%s)
-verify() {  # verify [--set=LABEL] -> the report; returns 1 unless its status line says ok
-    VERIFY_REPORT="$("${AS_PG[@]}" pgbackrest --stanza="$STANZA" --output=text --verbose=y --log-level-console=warn "$@" verify 2>&1)" \
-        || fail "pgbackrest verify could not run: $(printf '%s' "$VERIFY_REPORT" | tail -3)"
+verify() {  # verify <repo> [--set=LABEL] -> the report; returns 1 unless its status line says ok
+    local repo="$1"; shift
+    VERIFY_REPORT="$("${AS_PG[@]}" pgbackrest --stanza="$STANZA" --repo="$repo" --output=text --verbose=y --log-level-console=warn "$@" verify 2>&1)" \
+        || fail "pgbackrest verify (repo$repo) could not run: $(printf '%s' "$VERIFY_REPORT" | tail -3)"
     grep -Eq '^status: ok$' <<< "$VERIFY_REPORT"
 }
-if ! verify --set="$label" || ! grep -Fq "backup: $label, status: valid" <<< "$VERIFY_REPORT"; then
+if ! verify 1 --set="$label" || ! grep -Fq "backup: $label, status: valid" <<< "$VERIFY_REPORT"; then
     printf '%s\n' "$VERIFY_REPORT" >&2
     fail "pgbackrest verify found the newest backup ($label) or the WAL it needs damaged"
 fi
 OLDER_DAMAGE=""
-if ! verify; then
+if ! verify 1; then
     OLDER_DAMAGE="$(grep -E 'invalid|missing|error' <<< "$VERIFY_REPORT" | tr -s ' ' | head -3 | paste -sd ';' -)"
     printf '%s\n' "$VERIFY_REPORT" >&2
     say "WARNING: the repository holds damage outside the newest backup (restore points it covers are lost): $OLDER_DAMAGE"
 fi
 say "the newest backup ($label) and the WAL it needs verify"
+# The offsite copy (repo2, encrypted): its newest backup and the WAL it needs, read from the bucket
+# and decrypted. A bucket that cannot be read, or holds no backup, fails the run: the restore points
+# it is there for would be lost with this host.
+OFFSITE=""
+if grep -Eq '^repo2-' /etc/pgbackrest/conf.d/repo.conf 2>/dev/null; then
+    info2="$("${AS_PG[@]}" pgbackrest --stanza="$STANZA" --repo=2 --output=json info 2>&1)" \
+        || fail "the offsite repository (repo2) cannot be read: $(printf '%s' "$info2" | tail -3)"
+    label2="$(printf '%s' "$info2" | grep -o '"label":"[^"]*"' | tail -1 | cut -d'"' -f4 || true)"
+    [[ -n "$label2" ]] || fail "the offsite repository (repo2) holds no backup"
+    if ! verify 2 --set="$label2" || ! grep -Fq "backup: $label2, status: valid" <<< "$VERIFY_REPORT"; then
+        printf '%s\n' "$VERIFY_REPORT" >&2
+        fail "pgbackrest verify found the newest offsite backup ($label2, repo2) or the WAL it needs unreadable or damaged"
+    fi
+    OFFSITE="offsite repo2 backup $label2 verified (decrypted)"
+    say "the newest offsite backup ($label2, repo2) and the WAL it needs verify"
+fi
 
 # --- 2. the archive is current ----------------------------------------------------------------
 # The window is fixed first and ends before the oldest transaction a client still has open: such a
@@ -236,7 +258,7 @@ cleanup() {
 trap cleanup EXIT
 install -d -o postgres -g postgres -m 0700 "$DIR"
 printf 'SWITCH_LSN=%q\nLO=%q\nHI=%q\n' "$probe" "$lo" "$hi" > "$STATE"
-"${AS_PG[@]}" pgbackrest --stanza="$STANZA" --pg1-path="$DIR" --archive-mode=off --log-level-console=warn restore \
+"${AS_PG[@]}" pgbackrest --stanza="$STANZA" --repo=1 --pg1-path="$DIR" --archive-mode=off --log-level-console=warn restore \
     || fail "pgBackRest could not restore $label"
 # The command line wins over the restored configuration: no archiving (pgBackRest set it off too),
 # no TCP, and the socket where this script looks.
@@ -260,6 +282,8 @@ prove_copy
 
 # --- record -----------------------------------------------------------------------------------
 detail="restored and replayed past the switch at $probe in ${restored_s}s; system id, schema history and pg_amcheck clean; $COMPARED append-only tables equal ($ROWS rows) from $lo to $hi"
+# First, so the 300-character record keeps it.
+detail="${OFFSITE:+$OFFSITE; }$detail"
 [[ -z "$OLDER_DAMAGE" ]] || detail="$detail; older damage in the repository: $OLDER_DAMAGE"
 psql -X -q -v ON_ERROR_STOP=1 -h "$LIVE_HOST" -p "$LIVE_PORT" -U postgres -d "$DB" \
      -v location="pgBackRest stanza $STANZA, backup $label" -v detail="${detail:0:300}" \

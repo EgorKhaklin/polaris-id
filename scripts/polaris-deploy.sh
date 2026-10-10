@@ -134,6 +134,42 @@ else
     echo "  [2/7] git pull… skipped"
 fi
 
+# The postgres image renders its pgBackRest repositories at every start and refuses to start on a
+# configuration it cannot keep encrypted: a bucket with no repo2-cipher-pass, or one under 32
+# characters, in secrets/pgbackrest_repo_creds.conf (a fragment still naming repo1-s3-*, from before
+# the bucket became repo2, is one); a secret in env; a repository off this host with no cipher. Found
+# there, that is the database down in the middle of a deploy. The same renderer runs here first,
+# after the pull so it is this release's, against this host's fragment and the postgres service's
+# resolved settings, and its refusal stops the deploy before anything is started.
+pgbr_preflight() {
+    local tmp env_lines line rc=0
+    local -a env_args=()
+    env_lines="$(compose config --format json 2>/dev/null | python3 -c '
+import json, sys
+env = json.load(sys.stdin)["services"]["postgres"].get("environment") or {}
+for k, v in sorted(env.items()):
+    if k.startswith(("POLARIS_PGBACKREST_", "PGBACKREST_")) and v is not None and "\n" not in str(v):
+        print("%s=%s" % (k, v))' 2>/dev/null)" \
+        || env_lines="$(env | grep -E '^(POLARIS_)?PGBACKREST_' || true)"
+    while IFS= read -r line; do [[ -n "${line}" ]] && env_args+=("${line}"); done <<< "${env_lines}"
+    tmp="$(mktemp -d)"
+    mkdir -p "${tmp}/conf.d"
+    if ! env -i PATH="${PATH}" ${env_args[@]+"${env_args[@]}"} bash "${POLARIS_ROOT}/polaris_web/pgbackrest-conf.sh" \
+            "${tmp}/conf.d/repo.conf" "${SECRETS_DIR}/pgbackrest_repo_creds.conf" > "${tmp}/out" 2>&1; then
+        sed 's/^/      /' "${tmp}/out" >&2
+        rc=1
+    fi
+    rm -rf "${tmp}"
+    return "${rc}"
+}
+if pgbr_preflight; then
+    echo "  ✓ the pgBackRest repository configuration is one the postgres image accepts"
+else
+    echo "  ✗ the postgres image would refuse this pgBackRest configuration (above); nothing was started." >&2
+    echo "    Fix secrets/pgbackrest_repo_creds.conf or the POLARIS_PGBACKREST_* settings (DR.md, section 5)." >&2
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # 3. Capture previous image tag (for rollback)
 # ---------------------------------------------------------------------------
@@ -277,36 +313,58 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
     if compose exec -T -u postgres postgres pgbackrest --stanza=polaris stanza-create >/dev/null 2>&1 \
        && compose exec -T -u postgres postgres pgbackrest --stanza=polaris check >/dev/null 2>&1; then
         echo "  ✓ pgBackRest stanza ready (archive-push validated)"
-        if ! compose exec -T -u postgres postgres pgbackrest --stanza=polaris --output=json info 2>/dev/null \
-                | grep -q '"type": *"full"'; then
-            echo "        no base backup yet: taking the first full one…"
-            if compose exec -T -u postgres postgres pgbackrest --stanza=polaris --type=full backup >/dev/null 2>&1; then
-                pg_sql -c "INSERT INTO BackupEvent (kind, location, detail) VALUES ('pgbackrest', 'pgBackRest repo1, stanza polaris', 'full, the first, by polaris-deploy.sh')" > /dev/null \
-                    || echo "  ⚠  the first full backup is complete but was not recorded in BackupEvent" >&2
-                echo "  ✓ first full backup taken (a point-in-time restore can start from it)"
-                # Lab record 017 (gate row OP-11): prove now that it restores, so the clock
-                # PolarisRestoreUnverified reads starts at a verified restore; the weekly timer
-                # (deploy/linux/polaris-restore-verify.timer) keeps it current.
-                echo "        verifying that it restores (scripts/polaris-restore-verify.sh)…"
-                rv_log="$(mktemp)"
-                if "${SCRIPT_DIR}/polaris-restore-verify.sh" > "$rv_log" 2>&1; then
-                    echo "  ✓ the first backup restores: a scratch copy was proven against the live database"
-                else
-                    echo "  ⚠  the first backup did NOT verify; the weekly check and PolarisRestoreUnverified will say so too:" >&2
-                    tail -12 "$rv_log" | sed 's/^/       /' >&2
-                fi
-                rm -f "$rv_log"
-            else
-                echo "  ⚠  the first full backup FAILED; a point-in-time restore has nothing to start from" >&2
-                echo "     until one completes: docker compose -f ${COMPOSE_FILE} exec -u postgres postgres \\" >&2
-                echo "       pgbackrest --stanza=polaris --type=full backup" >&2
+        # Each repository gets its own first full: a backup goes to one repo (repo1 unless --repo
+        # names another), and with an offsite bucket the local repo is repo1 and the bucket an
+        # encrypted repo2 (pgbackrest-conf.sh). The repos are the ones the rendered repo.conf names.
+        pgbr_repos="$(compose exec -T postgres cat /etc/pgbackrest/conf.d/repo.conf 2>/dev/null \
+                      | sed -nE 's/^repo([0-9]+)-(path|type)=.*/\1/p' | sort -un)" || pgbr_repos=""
+        if [[ -z "${pgbr_repos}" ]]; then
+            # Never a silent repo1: with a bucket set, the offsite repo2 is named as not backed up.
+            pgbr_bucket="$(compose exec -T postgres printenv POLARIS_PGBACKREST_S3_BUCKET 2>/dev/null | tr -d '\r')" || pgbr_bucket=""
+            echo "  ⚠  could not read the rendered /etc/pgbackrest/conf.d/repo.conf: only repo1 (local) is checked for a first backup" >&2
+            if [[ -n "${pgbr_bucket}" ]]; then
+                echo "  ⚠  repo2 (the offsite bucket ${pgbr_bucket}) gets NO first full backup from this deploy; until one exists" >&2
+                echo "     the bucket holds WAL with nothing to replay it onto. Re-run the deploy once repo.conf reads." >&2
             fi
+            pgbr_repos=1
+        fi
+        first_full_local=0
+        for repo in ${pgbr_repos}; do
+            if compose exec -T -u postgres postgres pgbackrest --stanza=polaris --repo="${repo}" --output=json info 2>/dev/null \
+                    | grep -q '"type": *"full"'; then
+                continue
+            fi
+            echo "        repo${repo} holds no base backup yet: taking its first full one…"
+            if compose exec -T -u postgres postgres pgbackrest --stanza=polaris --repo="${repo}" --type=full backup >/dev/null 2>&1; then
+                pg_sql -c "INSERT INTO BackupEvent (kind, location, detail) VALUES ('pgbackrest', 'pgBackRest repo${repo}, stanza polaris', 'full, the first, by polaris-deploy.sh')" > /dev/null \
+                    || echo "  ⚠  the first full backup is complete but was not recorded in BackupEvent" >&2
+                echo "  ✓ first full backup taken in repo${repo} (a point-in-time restore can start from it)"
+                if [[ "${repo}" == 1 ]]; then first_full_local=1; fi
+            else
+                echo "  ⚠  the first full backup to repo${repo} FAILED; a point-in-time restore from it has nothing to start from" >&2
+                echo "     until one completes: docker compose -f ${COMPOSE_FILE} exec -u postgres postgres \\" >&2
+                echo "       pgbackrest --stanza=polaris --repo=${repo} --type=full backup" >&2
+            fi
+        done
+        if [[ "${first_full_local}" == 1 ]]; then
+            # Lab record 017 (gate row OP-11): prove now that it restores, so the clock
+            # PolarisRestoreUnverified reads starts at a verified restore; the weekly timer
+            # (deploy/linux/polaris-restore-verify.timer) keeps it current.
+            echo "        verifying that it restores (scripts/polaris-restore-verify.sh)…"
+            rv_log="$(mktemp)"
+            if "${SCRIPT_DIR}/polaris-restore-verify.sh" > "$rv_log" 2>&1; then
+                echo "  ✓ the first backup restores: a scratch copy was proven against the live database"
+            else
+                echo "  ⚠  the first backup did NOT verify; the weekly check and PolarisRestoreUnverified will say so too:" >&2
+                tail -12 "$rv_log" | sed 's/^/       /' >&2
+            fi
+            rm -f "$rv_log"
         fi
     else
         echo "  ⚠  pgBackRest stanza-create/check FAILED. Archiving is enabled but the" >&2
         echo "     repo is not ready — WAL will accumulate on disk until this is fixed." >&2
         echo "     Check POLARIS_PGBACKREST_S3_* on the postgres service and" >&2
-        echo "     secrets/pgbackrest_repo_creds.conf (the S3 key pair), then re-run:" >&2
+        echo "     secrets/pgbackrest_repo_creds.conf (the S3 key pair, repo2-cipher-pass), then re-run:" >&2
         echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris check" >&2
     fi
 fi

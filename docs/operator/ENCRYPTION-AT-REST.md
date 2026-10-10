@@ -17,8 +17,9 @@ protection of the live data files and WAL is host-level and operator-gated: it
 depends on a full-disk or volume encryption layer the operator provisions (LUKS /
 dm-crypt / fscrypt, or a managed provider's storage encryption) and a key
 custodian. The pg_dump tarballs are encrypted by Polaris when
-`POLARIS_BACKUP_KEY_FILE` is set; the pgBackRest repository is not encrypted by
-Polaris ([section 3](#3-what-is-already-protected)); transit is encrypted by Polaris.
+`POLARIS_BACKUP_KEY_FILE` is set; the local pgBackRest repository is not
+encrypted by Polaris, and its offsite copy, when configured, is encrypted by
+pgBackRest ([section 3](#3-what-is-already-protected)); transit is encrypted by Polaris.
 This document is the posture and the operator path, not a claim that the live
 database is encrypted at rest by Polaris.
 
@@ -80,14 +81,25 @@ of the posture, not a footnote.
   when the key file is set and warns loudly when it is not;
   `scripts/polaris-restore.sh` fails closed without the key. A stolen backup
   tarball is ciphertext. See [DR.md](DR.md).
-- **The pgBackRest repository (base backups plus the continuous WAL archive) is
-  not encrypted by Polaris.** `polaris_web/pgbackrest.conf` and the rendered
-  `conf.d/repo.conf` set no `repo1-cipher-type`, so the repo inherits the posture
-  of where it lives: a local repo (the `pgbackrest_repo` volume, on the same host
-  as `pg_data`) inherits the host volume posture and belongs on the encrypted
-  volume; an S3 repo inherits the bucket's server-side encryption (SSE or KMS).
-  An operator who wants pgBackRest's own cipher adds `repo1-cipher-type=aes-256-cbc`
-  and `repo1-cipher-pass` to the mounted `pgbackrest_repo_creds.conf` fragment
+- **The local pgBackRest repository (repo1: base backups plus the continuous WAL
+  archive) is not encrypted by Polaris.** `polaris_web/pgbackrest.conf` and the
+  rendered `conf.d/repo.conf` set no `repo1-cipher-type`, so it inherits the
+  posture of the `pgbackrest_repo` volume, on the same host as `pg_data`, and
+  belongs on the encrypted volume. An operator who wants pgBackRest's own cipher
+  on it adds `repo1-cipher-type=aes-256-cbc` and `repo1-cipher-pass` to the
+  mounted `pgbackrest_repo_creds.conf` fragment.
+- **The offsite copy is encrypted by pgBackRest when configured.** With
+  `POLARIS_PGBACKREST_S3_BUCKET` set, the bucket is a second repository (repo2)
+  beside the local one, written with `repo2-cipher-type=aes-256-cbc`. The
+  passphrase (`repo2-cipher-pass`, 32 characters or more) comes only from the
+  mounted fragment: the postgres container refuses to start with a bucket and no
+  passphrase, or with a passphrase in its environment, and refuses any other
+  repository off the host (an operator-mounted `repo.conf`, or one in the
+  fragment) that has no cipher. The weekly restore check decrypts the newest
+  offsite backup to verify it. The bucket's server-side encryption (SSE or
+  KMS) still applies underneath. Without the passphrase the bucket's contents,
+  key pair or not, are ciphertext; keep a copy of it off the host, because
+  without it the offsite copy cannot be restored
   ([DR.md, section 5](DR.md#5-wal-archiving-and-the-offsite-repo-pgbackrest)).
 - **Data in transit is encrypted and verified.** Both production hops (app to
   pgbouncer, pgbouncer to Postgres) run TLS and pin the peer certificate
@@ -168,9 +180,10 @@ four requirements, then the recipe for each deployment shape:
    removal of the data disk alone, not against theft or imaging of the whole
    host.
 3. **Keep backups encrypted**: set `POLARIS_BACKUP_KEY_FILE` so the pg_dump
-   tarballs are ciphertext, and put the pgBackRest repository, which Polaris
-   does not encrypt, on an encrypted volume or bucket; give the backup key and
-   the volume key independent custody, so one compromise is not both.
+   tarballs are ciphertext, and put the local pgBackRest repository, which
+   Polaris does not encrypt, on the encrypted volume (the offsite copy is
+   encrypted by pgBackRest); give the backup key, the repo2 passphrase and the
+   volume key independent custody, so one compromise is not all of them.
 4. **Verify**: a powered-off or detached volume must be ciphertext. Confirm
    before the host handles real data.
 

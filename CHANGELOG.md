@@ -165,6 +165,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- An offsite bucket (`POLARIS_PGBACKREST_S3_BUCKET`) is added as a second pgBackRest repository beside the local one, which it used to replace, and is encrypted by pgBackRest (aes-256-cbc) with a passphrase of 32 characters or more from the mounted `pgbackrest_repo_creds.conf` only. The postgres container refuses to start with a bucket and no passphrase, with a passphrase in its environment, or with any repository off the host (an operator-mounted `repo.conf` included) that has no cipher, and `polaris-deploy.sh` refuses the same before it starts anything. Scheduled and first backups go to both repositories, and the weekly restore check verifies the newest offsite backup. An install whose bucket was repo1 must update the fragment before upgrading (DR.md, section 5, migration).
 - The stack, the chart and CI run Redis 8 (was 7.4) and HAProxy 3.4, a long-term-support release (was 3.1, no longer maintained). Redis 8 is offered under AGPLv3 as well as the RSALv2 and SSPLv1 of 7.4.
 - The chart spreads its replicated pods across nodes and zones, runs two edge, router and pgbouncer pods, and moves Redis.
 - The HA profile and the chart replicate synchronously by default; a failover loses no acknowledged write (lab record 017).
