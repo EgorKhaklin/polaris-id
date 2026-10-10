@@ -127,6 +127,19 @@ content() {  # a short digest of an image's layers and config; an unreadable ima
     printf '%s' "${raw}" | shasum -a 256 | cut -c1-12
 }
 app_content() { content "$(docker inspect --format '{{.Image}}' "$("${COMPOSE[@]}" ps -q app)")"; }
+# Each service's container after the upgrade and the content of the image it runs, read now: step 3's
+# deploy builds the image set again, and under Docker's containerd image store a build that moves a
+# tag can drop the record of the image a running container was created from (on Docker Desktop it
+# dropped caddy's, pgbouncer's and postgres's), so step 4 could not read it back. Step 4 takes this
+# reading for a container still running from here, and reads one made since then itself.
+SVCS=(app caddy pgbouncer postgres)
+upgraded_ids=()
+upgraded_content=()
+for svc in "${SVCS[@]}"; do
+    cid=$("${COMPOSE[@]}" ps -q "${svc}") && [[ -n "${cid}" ]] || fail "no ${svc} container after the upgrade"
+    upgraded_ids+=("${cid}")
+    upgraded_content+=("$(content "$(docker inspect --format '{{.Image}}' "${cid}")")")
+done
 
 step "3/4 a release that cannot start is rolled back to the image it replaced"
 # polaris-deploy.sh rolled back by re-tagging the running image's ID. Under Docker's containerd image
@@ -183,11 +196,16 @@ ok "the deploy restored its first backup into a scratch copy and proved it ($ver
 # config) was not rebuilt. Content, not the image ID: with Docker's containerd image store two
 # fully cached builds of one Dockerfile get different IDs (BuildKit's per-build metadata).
 # Each running image is read before the rebuild: once a rebuild moves the tag, the containerd
-# store keeps no record of the image a container was created from.
-SVCS=(app caddy pgbouncer postgres)
+# store keeps no record of the image a container was created from. A container still running from
+# the upgrade was read then (above); its image cannot have changed without a new container.
 running=()
-for svc in "${SVCS[@]}"; do
-    running+=("$(content "$(docker inspect --format '{{.Image}}' "$("${COMPOSE[@]}" ps -q "${svc}")")")")
+for i in "${!SVCS[@]}"; do
+    cid=$("${COMPOSE[@]}" ps -q "${SVCS[$i]}") && [[ -n "${cid}" ]] || fail "no ${SVCS[$i]} container after the rollback"
+    if [[ "${cid}" == "${upgraded_ids[$i]}" ]]; then
+        running+=("${upgraded_content[$i]}")
+    else
+        running+=("$(content "$(docker inspect --format '{{.Image}}' "${cid}")")")
+    fi
 done
 bash "${TREE}/scripts/polaris-image-build.sh" --stack prod > "${WORK}/rebuild.log" 2>&1 \
     || { tail -20 "${WORK}/rebuild.log" >&2; fail "building ${TARGET:0:8}'s images"; }
