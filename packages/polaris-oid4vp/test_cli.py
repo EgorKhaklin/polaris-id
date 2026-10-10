@@ -468,5 +468,171 @@ class ServeCommandHeldOutTests(unittest.TestCase):
                 self.assertIn(expected, out.getvalue())
 
 
+
+class TransactionDataServeTests(unittest.TestCase):
+    """`serve --transaction-data FILE --once`: the entries of the request it starts, checked
+    before it listens, and `--credential-query-id`, the id those entries name."""
+
+    _serve = ServeCommandHeldOutTests._serve
+
+    PAYMENT = {"type": "urn:eudi:sca:payment:1", "credential_ids": ["pay"],
+               "payload": {"transaction_id": "polaris-test-0001",
+                           "payee": {"name": "Example Shop", "id": "DE00EXAMPLE0001"},
+                           "currency": "EUR", "amount": 49.99}}
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-td-"))
+        keygen(self.tmp, "verifier.test")
+
+    def _file(self, content):
+        import json
+        path = self.tmp / "transaction-data.json"
+        path.write_text(content if isinstance(content, str) else json.dumps(content))
+        return str(path)
+
+    def test_the_entries_reach_the_request_once_starts(self):
+        import json
+        from polaris_oid4vp.jwe import b64u_encode
+        raw = b64u_encode(json.dumps(self.PAYMENT, separators=(",", ":")).encode())
+        rc, seen, out, _ = self._serve("--credential-query-id", "pay", "--once",
+                                       "--transaction-data", self._file([raw, self.PAYMENT]))
+        self.assertEqual(rc, 0)
+        (session,) = seen["verifier"]._sessions.values()
+        self.assertEqual([e.raw for e in session.transaction_data][0], raw)
+        jar = seen["verifier"]._by_request[session.state]
+        payload = jar.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["transaction_data"][0], raw, "the string was not sent as given")
+        self.assertEqual(len(claims["transaction_data"]), 2)
+        self.assertEqual(claims["dcql_query"]["credentials"][0]["id"], "pay")
+        self.assertIn("2 transaction_data entries", out)
+
+    def test_without_once_there_is_no_request_to_carry_them(self):
+        rc, seen, _, err = self._serve("--credential-query-id", "pay",
+                                       "--transaction-data", self._file([self.PAYMENT]))
+        self.assertEqual(rc, 2)
+        self.assertNotIn("verifier", seen)
+        self.assertIn("add --once", err)
+
+    def test_entries_a_wallet_would_refuse_stop_it_starting(self):
+        string_amount = dict(self.PAYMENT, payload=dict(self.PAYMENT["payload"], amount="49.99"))
+        for content in ("{", "[]", [string_amount], [dict(self.PAYMENT, credential_ids=["pid"])]):
+            with self.subTest(content=str(content)[:40]):
+                rc, seen, _, err = self._serve("--credential-query-id", "pay", "--once",
+                                               "--transaction-data", self._file(content))
+                self.assertEqual(rc, 2)
+                self.assertNotIn("verifier", seen)
+                self.assertIn("--transaction-data", err)
+        rc, _, _, err = self._serve("--once", "--transaction-data", self._file([self.PAYMENT]))
+        self.assertEqual(rc, 2, "the default query is pid, and the payment names pay")
+
+    def test_the_credential_query_id_reaches_the_query(self):
+        rc, seen, _, _ = self._serve("--credential-query-id", "pay")
+        self.assertEqual((rc, seen["verifier"].query_id), (0, "pay"))
+        rc, seen, _, _ = self._serve()
+        self.assertEqual(seen["verifier"].query_id, "pid")
+        rc, seen, _, err = self._serve("--credential-query-id", "p d")
+        self.assertEqual(rc, 2)
+        self.assertNotIn("verifier", seen)
+
+    def test_verifier_info_names_the_query_that_is_made(self):
+        import json
+        path = self.tmp / "verifier-info.json"
+        path.write_text(json.dumps([{"format": "f", "data": "x", "credential_ids": ["pay"]}]))
+        self.assertEqual(self._serve("--credential-query-id", "pay", "--verifier-info", str(path))[0], 0)
+        self.assertEqual(self._serve("--verifier-info", str(path))[0], 2)
+
+
+class VerdictCommandTests(unittest.TestCase):
+    """`polaris-oid4vp verdict`: a captured response judged against its request, over the
+    two-credential vector in testdata/."""
+
+    def setUp(self):
+        import json
+        here = pathlib.Path(__file__).resolve().parent
+        self.v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
+                            .read_text(encoding="utf-8"))
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-verdict-"))
+        self.request = self._write("request.json", self.v["request"])
+        self.issuers = self._write("issuers.json", {"keys": self.v["issuer_jwks"]})
+
+    def _write(self, name, content):
+        import json
+        path = self.tmp / name
+        path.write_text(content if isinstance(content, str) else json.dumps(content))
+        return str(path)
+
+    def _verdict(self, response="per_credential", *extra, request=None, token=None):
+        import contextlib
+        import io
+        import json
+        token = token or self._write("vp_token.json", self.v["responses"][response]["vp_token"])
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = main(["verdict", "--request", request or self.request, "--vp-token", token,
+                       "--issuer-jwks", self.issuers, "--now", str(self.v["at"]), *extra])
+        return rc, (json.loads(out.getvalue()) if out.getvalue() else None), err.getvalue()
+
+    def test_each_response_under_each_reading(self):
+        for response, outcomes in self.v["outcomes"].items():
+            for scope, outcome in outcomes.items():
+                with self.subTest(response=response, scope=scope):
+                    rc, result, _ = self._verdict(response, "--transaction-data-scope", scope)
+                    accepted = outcome == "accepted"
+                    self.assertEqual((rc, result["accepted"], result["scope"]),
+                                     (0 if accepted else 1, accepted, scope))
+                    self.assertEqual(result["expected"]["per_credential"], {"pid": [], "pay": [0]})
+                    self.assertEqual(result["expected"]["all_entries"], {"pid": [0], "pay": [0]})
+                    if not accepted:
+                        self.assertEqual(result["verdicts"]["pid"]["code"], outcome.split()[-1])
+
+    def test_without_a_reading_it_does_not_decide_and_says_why(self):
+        rc, result, err = self._verdict("all_entries")
+        self.assertEqual(rc, 2)
+        self.assertIsNone(result["accepted"])
+        self.assertIn("name the transaction_data scope", err)
+        self.assertTrue(result["readings"]["all_entries"]["pid"]["authentic"])
+        self.assertEqual(result["readings"]["per_credential"]["pid"]["code"], "transaction_data_extra")
+
+    def test_a_request_object_jws_and_a_whole_response_body_read_as_their_contents(self):
+        import json
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from test_verifier import _jws
+        jws = _jws(ec.generate_private_key(ec.SECP256R1()),
+                   {"alg": "ES256", "typ": "oauth-authz-req+jwt"}, self.v["request"])
+        body = self._write("body.json", json.dumps(
+            {"vp_token": self.v["responses"]["per_credential"]["vp_token"], "state": "s"}))
+        rc, result, _ = self._verdict("per_credential", "--transaction-data-scope", "per_credential",
+                                      request=self._write("request.jwt", jws), token=body)
+        self.assertEqual((rc, result["accepted"]), (0, True))
+
+    def test_inputs_it_cannot_read_are_refused(self):
+        for request in (str(self.tmp / "absent.json"), self._write("bad.json", "{"),
+                        self._write("list.json", "[1]"), self._write("two.jwt", "a.b")):
+            with self.subTest(request=request[-12:]):
+                rc, result, err = self._verdict("per_credential", request=request)
+                self.assertEqual((rc, result), (2, None))
+                self.assertIn("polaris-oid4vp:", err)
+
+    def test_issuer_keys_it_cannot_read_are_refused(self):
+        """The same files `serve` refuses, refused here too (found by coverage: untested)."""
+        for flag, content in (("--issuer-jwks", "{not json"), ("--issuer-trust-anchor", "hello")):
+            with self.subTest(flag=flag):
+                import contextlib
+                import io
+                token = self._write("vp_token.json", self.v["responses"]["per_credential"]["vp_token"])
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    rc = main(["verdict", "--request", self.request, "--vp-token", token,
+                               flag, self._write("bad-issuer", content)])
+                self.assertEqual(rc, 2)
+                self.assertIn(flag, err.getvalue())
+
+    def test_judged_a_year_on_it_is_stale(self):
+        rc, result, _ = self._verdict("per_credential", "--transaction-data-scope", "per_credential",
+                                      "--now", str(self.v["at"] + 365 * 86400))
+        self.assertEqual((rc, result["verdicts"]["pid"]["code"]), (1, "kb_freshness"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

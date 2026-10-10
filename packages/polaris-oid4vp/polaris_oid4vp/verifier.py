@@ -34,6 +34,7 @@ every presentation ever sent to this verifier readable by anybody who later obta
 """
 import base64
 import json
+import re
 import secrets
 import threading
 import time
@@ -48,7 +49,9 @@ except ImportError:  # pragma: no cover
 
 from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, JweError, _loads_depth_bounded,
                   _public_key_from_jwk, b64u_encode, decrypt_response, encrypt_compact)
-from .sdjwt import Verdict, verify_presentation
+from .sdjwt import (ALL_ENTRIES, PER_CREDENTIAL, TRANSACTION_DATA_HASH_ALGS,
+                    TRANSACTION_DATA_SCOPES, JtiMemory, TransactionDataBinding,
+                    TransactionDataEntry, Verdict, verify_presentation)
 
 #: How long an outstanding request stays answerable. A nonce that is accepted forever is not
 #: a nonce; this is the other half of the key binding JWT's own freshness check, on our side,
@@ -58,6 +61,186 @@ DEFAULT_REQUEST_TTL_SECONDS = 300
 #: The audience of a request object, fixed by OpenID4VP 1.0 for a wallet that is not a
 #: specific named entity.
 WALLET_AUDIENCE = "https://self-issued.me/v2"
+
+#: The response mode HAIP pins and every request here names. TS12 section 3.6 has the key
+#: binding JWT of an SCA presentation repeat it.
+RESPONSE_MODE = "direct_post.jwt"
+
+#: How long a verifier remembers a TS12 `jti` it has checked: a day. TS12 3.6 makes the value
+#: unique to each presentation; memory is per Verifier instance and bounded, and a relying party
+#: that needs a register for longer records `verdict.transaction_data["jti"]` in its own.
+JTI_RETENTION_SECONDS = 24 * 3600
+
+#: OpenID4VP 1.0 section 6.1, a Credential Query's id: "a non-empty string consisting of
+#: alphanumeric, underscore (_), or hyphen (-) characters."
+_DCQL_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+#: TS12's payment transaction type (section 4.3.1).
+TS12_PAYMENT = "urn:eudi:sca:payment:1"
+
+#: TS12's JSON Schema for the `payload` of a urn:eudi:sca:payment:1 entry, as published at
+#: eu-digital-identity-wallet/eudi-doc-standards-and-technical-specifications/docs/technical-specifications/api/ts12-urn-eudi-sca-payment-1-data-model.json
+#: (commit ee91a294, git blob 0c9a0c60). TS12 v1.0.1, (c) European Union 2025-2026, CC BY 4.0
+#: (https://creativecommons.org/licenses/by/4.0/). Transcribed from JSON into this mapping, with
+#: `$schema`, `examples` and `format` left out: `format` is an annotation in JSON Schema 2020-12,
+#: not an assertion, so a validator does not apply it by default and neither does this one.
+#: lab/interop/transaction-data/ fetches the file at that commit and holds this mapping to it.
+_TS12_PAYMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "transaction_id": {"type": "string", "maxLength": 36, "minLength": 1},
+        "date_time": {"type": "string"},
+        "payee": {"type": "object",
+                  "properties": {"name": {"type": "string"}, "id": {"type": "string"},
+                                 "logo": {"type": "string"}, "website": {"type": "string"}},
+                  "required": ["name", "id"]},
+        "pisp": {"type": "object",
+                 "properties": {"legal_name": {"type": "string"}, "brand_name": {"type": "string"},
+                                "domain_name": {"type": "string"}},
+                 "required": ["legal_name", "brand_name", "domain_name"]},
+        "execution_date": {"type": "string"},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "amount": {"type": "number"},
+        "amount_estimated": {"type": "boolean"},
+        "amount_earmarked": {"type": "boolean"},
+        "sct_inst": {"type": "boolean"},
+        "recurrence": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+                "number": {"type": "integer"},
+                "frequency": {"type": "string",
+                              "enum": ["INDA", "DAIL", "WEEK", "TOWK", "TWMN", "MNTH", "TOMN",
+                                       "QUTR", "FOMN", "SEMI", "YEAR", "TYEA"]},
+                "mit_options": {"type": "object",
+                                "properties": {"amount_variable": {"type": "boolean"},
+                                               "min_amount": {"type": "number"},
+                                               "max_amount": {"type": "number"},
+                                               "total_amount": {"type": "number"},
+                                               "initial_amount": {"type": "number"},
+                                               "initial_amount_number": {"type": "integer"},
+                                               "apr": {"type": "number"}}},
+            },
+            "required": ["frequency"],
+        },
+    },
+    "required": ["transaction_id", "payee", "currency", "amount"],
+    "additionalProperties": False,
+}
+
+#: JSON Schema's types over what `json.loads` returns. A boolean is not a number, and 2020-12
+#: counts a number with no fractional part as an integer, 1.0 included.
+_JSON_TYPES = {
+    "object": lambda v: isinstance(v, dict),
+    "string": lambda v: isinstance(v, str),
+    "boolean": lambda v: isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "integer": lambda v: ((isinstance(v, int) and not isinstance(v, bool))
+                          or (isinstance(v, float) and v.is_integer())),
+}
+
+
+def _schema_problems(value, schema, where):
+    """What `schema` refuses in `value`, for the keywords TS12's payment schema uses: type,
+    properties, required, additionalProperties, minLength, maxLength, pattern and enum."""
+    if not _JSON_TYPES[schema["type"]](value):
+        return ["%s is not a JSON %s" % (where, schema["type"])]
+    problems = []
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0):
+            problems.append("%s is shorter than %d characters" % (where, schema["minLength"]))
+        if len(value) > schema.get("maxLength", len(value)):
+            problems.append("%s is longer than %d characters" % (where, schema["maxLength"]))
+        # ECMA-262, as JSON Schema specifies: `$` ends the input. Python's `$` also matches
+        # before a final newline, so "EUR\n" would pass it.
+        pattern = schema.get("pattern")
+        if pattern is not None and not re.search(
+                pattern[:-1] + r"\Z" if pattern.endswith("$") else pattern, value):
+            problems.append("%s does not match %s" % (where, pattern))
+        if "enum" in schema and value not in schema["enum"]:
+            problems.append("%s is %r, not one of %s" % (where, value, ", ".join(schema["enum"])))
+    if isinstance(value, dict):
+        for name in schema.get("required", ()):
+            if name not in value:
+                problems.append("%s has no %s" % (where, name))
+        members = schema.get("properties", {})
+        for name, member in value.items():
+            if name in members:
+                problems.extend(_schema_problems(member, members[name], "%s.%s" % (where, name)))
+            elif schema.get("additionalProperties", True) is False:
+                problems.append("%s carries %r, which the schema does not allow" % (where, name))
+    return problems
+
+
+def ts12_payment_problems(payload):
+    """Why `payload` does not satisfy TS12's JSON Schema for urn:eudi:sca:payment:1, one sentence
+    per problem; an empty list when it does. The schema is TS12's own (above), never one written
+    here: a wallet validates a payment against it (TS12 3.2, step 4) and refuses what it refuses.
+    TS12's prose rules that the schema does not encode (an execution_date not in the past, none
+    beside a recurrence) are not checked."""
+    return _schema_problems(payload, _TS12_PAYMENT_SCHEMA, "payload")
+
+
+def transaction_data_entries(entries, credential_ids):
+    """`transaction_data` for a request object (OpenID4VP 1.0 section 5.1), refused here, at
+    construction, when a wallet would refuse it, rather than sent.
+
+    `entries` is a non-empty list. A string is sent exactly as given, so a vector's `raw` reaches
+    the wallet byte for byte and its published hashes apply. An object is encoded here, as compact
+    UTF-8 JSON in unpadded base64url. Either way the string the request carries is the one the
+    hashes are checked over. Each must decode to an object with a non-empty string `type` and
+    `credential_ids` naming this request's credential queries, each once. A
+    `transaction_data_hashes_alg` is a non-empty array (B.3.3.1) naming an algorithm this
+    verifier computes, and the entries must share one, since one key binding JWT binds them with
+    one. A TS12 type (urn:eudi:sca:...) carries a `payload` object (TS12 section 4.2), and a
+    payment's must satisfy TS12's schema for it (ts12_payment_problems). Returns a tuple of
+    TransactionDataEntry; raises ValueError naming the entry and the rule.
+    """
+    if not isinstance(entries, (list, tuple)) or not entries:
+        raise ValueError("transaction_data must be a non-empty JSON array of entries")
+    out = []
+    for position, item in enumerate(entries):
+        if isinstance(item, dict):
+            raw = b64u_encode(json.dumps(item, separators=(",", ":"), ensure_ascii=False)
+                              .encode("utf-8"))
+        elif isinstance(item, str):
+            raw = item
+        else:
+            raise ValueError("transaction_data entry %d is a JSON %s; an entry is a base64url "
+                             "string or a JSON object" % (position, type(item).__name__))
+        try:
+            entry = TransactionDataEntry(raw)
+        except ValueError as exc:
+            raise ValueError("transaction_data entry %d: %s" % (position, exc)) from None
+        if not isinstance(entry.document.get("transaction_data_hashes_alg", []), list):
+            raise ValueError("transaction_data entry %d: transaction_data_hashes_alg is an array "
+                             "(OpenID4VP 1.0 B.3.3.1), not a bare string" % position)
+        if entry.hashes_alg is not None and not set(entry.hashes_alg) & set(TRANSACTION_DATA_HASH_ALGS):
+            raise ValueError("transaction_data entry %d allows %s, none of which this verifier "
+                             "computes (%s)" % (position, ", ".join(entry.hashes_alg),
+                                                ", ".join(sorted(TRANSACTION_DATA_HASH_ALGS))))
+        unknown = [i for i in entry.credential_ids if i not in credential_ids]
+        if unknown or len(set(entry.credential_ids)) != len(entry.credential_ids):
+            raise ValueError("transaction_data entry %d: credential_ids %s must name this "
+                             "request's credential queries (%s), each once"
+                             % (position, list(entry.credential_ids), ", ".join(credential_ids)))
+        if entry.is_ts12 and not isinstance(entry.document.get("payload"), dict):
+            raise ValueError("transaction_data entry %d is of the TS12 type %s and carries no "
+                             "payload object (TS12 section 4.2)" % (position, entry.type))
+        if entry.type == TS12_PAYMENT:
+            problems = ts12_payment_problems(entry.document["payload"])
+            if problems:
+                raise ValueError("transaction_data entry %d is a TS12 payment whose payload does "
+                                 "not satisfy TS12's schema: %s" % (position, "; ".join(problems)))
+        out.append(entry)
+    shared = set(TRANSACTION_DATA_HASH_ALGS)
+    for entry in out:
+        shared &= entry.allowed_algs()
+    if not shared:
+        raise ValueError("the transaction_data entries share no hash algorithm this verifier "
+                         "computes, so no key binding JWT could hash them all")
+    return tuple(out)
 
 
 def claim_query(claim):
@@ -125,9 +308,9 @@ def _selected(path, requested):
 class Session:
     """One outstanding presentation request, and the secrets that make it answerable once."""
 
-    __slots__ = ("state", "nonce", "enc_key", "created", "answered")
+    __slots__ = ("state", "nonce", "enc_key", "created", "answered", "transaction_data")
 
-    def __init__(self, enc_key):
+    def __init__(self, enc_key, transaction_data=()):
         self.state = secrets.token_urlsafe(16)
         # 256 bits. OpenID4VP 1.0 section 5.2 requires "sufficient entropy" and the suite
         # warns below 128 bits, which is a floor rather than a target.
@@ -135,6 +318,8 @@ class Session:
         self.enc_key = enc_key
         self.created = time.time()
         self.answered = False
+        # This request's transaction_data entries (TransactionDataEntry), empty for none.
+        self.transaction_data = tuple(transaction_data)
 
 
 
@@ -234,9 +419,16 @@ class Verifier:
                  issuer_jwks=None, issuer_trust_anchors=None, redirect_uri=None,
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
                  vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
-                 status_resolver=None, verifier_info=None):
+                 status_resolver=None, verifier_info=None, credential_query_id=None):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
+        # The id of the request's one DCQL credential query, "pid" unless named. A
+        # transaction_data entry names it in credential_ids, and the published TS12 vectors
+        # name "pay" inside the very string that is hashed, so it cannot be rewritten to fit.
+        self.query_id = self.DCQL_QUERY_ID if credential_query_id is None else credential_query_id
+        if not isinstance(self.query_id, str) or not _DCQL_ID.fullmatch(self.query_id):
+            raise ValueError("a credential query id is a non-empty string of letters, digits, _ "
+                             "and - (OpenID4VP 1.0 section 6.1), not %r" % (self.query_id,))
         self.cert = load_pem_x509_certificate(client_cert_pem)
         self.key = serialization.load_pem_private_key(client_key_pem, password=None)
         der = self.cert.public_bytes(serialization.Encoding.DER)
@@ -259,17 +451,28 @@ class Verifier:
         # the function underneath it is a capability the product does not have.
         self.status_resolver = status_resolver
         self.verifier_info = (None if verifier_info is None
-                              else verifier_info_entries(verifier_info, (self.DCQL_QUERY_ID,)))
+                              else verifier_info_entries(verifier_info, (self.query_id,)))
         self._sessions = {}
         self._by_request = {}
         self._lock = threading.Lock()
+        self._jti_memory = JtiMemory(retention_seconds=JTI_RETENTION_SECONDS)
 
     # ------------------------------------------------------------------ the request
 
-    def new_request(self):
-        """Start one presentation request. Returns (session, the signed request object)."""
+    def new_request(self, transaction_data=None):
+        """Start one presentation request. Returns (session, the signed request object).
+
+        `transaction_data`, opt-in per request, is the entries this request asks the wallet to
+        authorize (OpenID4VP 1.0 section 8.4), as `transaction_data_entries` takes them; an entry
+        a wallet would refuse raises ValueError here and no request is made. The request object
+        carries them, and the presentation's key binding JWT must bind every one: with one
+        credential query, every entry names it, so both readings of which entries a key binding
+        JWT binds expect all of them. Without it the request is exactly what it always was.
+        """
+        entries = (() if transaction_data is None
+                   else transaction_data_entries(transaction_data, (self.query_id,)))
         enc_key = ec.generate_private_key(ec.SECP256R1())
-        session = Session(enc_key)
+        session = Session(enc_key, entries)
         jar = self._request_object(session)
         with self._lock:
             self._expire_locked()
@@ -328,7 +531,7 @@ class Verifier:
             "aud": WALLET_AUDIENCE,
             "client_id": self.client_id,
             "response_type": "vp_token",
-            "response_mode": "direct_post.jwt",
+            "response_mode": RESPONSE_MODE,
             "response_uri": self.response_uri,
             "nonce": session.nonce,
             "state": session.state,
@@ -343,13 +546,16 @@ class Verifier:
                 "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
             },
             "dcql_query": {"credentials": [{
-                "id": self.DCQL_QUERY_ID,
+                "id": self.query_id,
                 "format": "dc+sd-jwt",
                 "meta": {"vct_values": self.vct_values},
                 "claims": [dict({"path": list(path)}, **({"values": list(values)} if values else {}))
                            for path, values in self.claims],
             }]},
         }
+        if session.transaction_data:
+            # The strings exactly as they will be hashed: never re-encoded after this point.
+            claims["transaction_data"] = [entry.raw for entry in session.transaction_data]
         if wallet_nonce is not None:
             claims["wallet_nonce"] = wallet_nonce
         if self.verifier_info:
@@ -425,6 +631,13 @@ class Verifier:
                                "the vp_token is not one presentation for the one credential "
                                "the DCQL query asked for")
 
+        # Only for a request that carried transaction_data; None leaves every claim it would
+        # read unread, as before.
+        binding = None
+        if session.transaction_data:
+            binding = TransactionDataBinding(session.transaction_data, self.query_id,
+                                             scope=PER_CREDENTIAL, response_mode=RESPONSE_MODE,
+                                             jti_fresh=self._jti_memory)
         verdict = verify_presentation(presentation,
                                       expected_nonce=session.nonce,
                                       expected_audience=self.client_id,
@@ -437,7 +650,8 @@ class Verifier:
                                       # signed. Measured 2026-09-17: a loyalty card's
                                       # `given_name` came back as though it were a PID's.
                                       expected_vct=self.vct_values,
-                                      status_resolver=self.status_resolver)
+                                      status_resolver=self.status_resolver,
+                                      transaction_data=binding)
         if not verdict.authentic:
             # The reason goes to the operator through the returned verdict, and the wallet
             # gets the same constant refusal every other cause gets.
@@ -492,16 +706,16 @@ class Verifier:
         # last part, so anything helpful added here fails the test.
         return 200, {"redirect_uri": self.redirect_uri}, verdict
 
-    #: The `id` of the one credential query in the request's DCQL. OpenID4VP 1.0 section 8.1
-    #: keys `vp_token` by that id. Until 2026-09-27 the key was never compared: one
-    #: presentation under any name was taken as the answer (found by mutating a genuine
-    #: Credo response, lab/interop/credo/adversarial/).
+    #: The `id` of the one credential query in the request's DCQL, unless the verifier is given
+    #: another (`credential_query_id`). OpenID4VP 1.0 section 8.1 keys `vp_token` by that id.
+    #: Until 2026-09-27 the key was never compared: one presentation under any name was taken as
+    #: the answer (found by mutating a genuine Credo response, lab/interop/credo/adversarial/).
     DCQL_QUERY_ID = "pid"
 
     def _single_presentation(self, vp_token):
-        if not isinstance(vp_token, dict) or list(vp_token) != [self.DCQL_QUERY_ID]:
+        if not isinstance(vp_token, dict) or list(vp_token) != [self.query_id]:
             return None
-        value = vp_token[self.DCQL_QUERY_ID]
+        value = vp_token[self.query_id]
         if isinstance(value, list):
             if len(value) != 1:
                 return None
@@ -538,6 +752,164 @@ class Verifier:
         for state in [s for s, sess in self._sessions.items() if sess.created < cutoff]:
             self._sessions.pop(state, None)
             self._by_request.pop(state, None)
+
+
+def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jwks=None,
+                    trust_anchors=None, now=None):
+    """A verdict over a captured response: every presentation in `vp_token`, each held to the
+    request it answers, and the request's transaction_data under both readings of which entries
+    a key binding JWT binds.
+
+    `request` is the authorization request's claims (the request object's payload as it was
+    sent): its `nonce` and `client_id` (the key binding JWT's audience), `response_mode`,
+    `dcql_query` (credential queries of format dc+sd-jwt; `meta.vct_values` is the type each asks
+    for) and `transaction_data`. `vp_token` maps each credential query id to its one
+    presentation (OpenID4VP 1.0 section 8.1). `now` evaluates the key binding JWTs at the instant
+    they were captured, which a replayed capture needs.
+
+    Each presentation is checked as `verify_presentation` checks it; the claims it discloses are
+    returned, not judged against the query. With transaction_data every presentation is
+    evaluated under PER_CREDENTIAL and under ALL_ENTRIES, each reading with its own jti memory,
+    and `transaction_data_scope` names the reading that decides. Unnamed, the two decide only
+    when they expect the same entries of every credential; otherwise `accepted` is None and
+    `problem` asks for one. Nothing is accepted under a reading nobody chose.
+
+    Under PER_CREDENTIAL an entry naming two or more presented credentials is bound by exactly
+    one of their key binding JWTs, whichever the wallet chose: OpenID4VP 1.0 section 5.1, "If
+    there is more than one element in the array, the Wallet MUST use only one of the referenced
+    Credentials for transaction authorization." A response binding it twice, or nowhere, is
+    refused although each presentation alone may be authentic.
+
+    Returns {"accepted": True, False or None; "scope": the reading that decided, or None;
+    "problem": why it was not accepted, or None; "expected": {reading: {query id: positions of
+    the entries its key binding JWT must bind}}; "either": {position: query ids}, the entries
+    exactly one of those credentials binds under PER_CREDENTIAL; "verdicts": {query id: Verdict}
+    as decided; "readings": {reading: {query id: Verdict}}; "response_refusals": {reading: why
+    the response is refused although its presentations are authentic, or None}}. Without
+    transaction_data, "expected", "either", "readings" and "response_refusals" are empty and
+    "verdicts" holds the one evaluation. Raises ValueError for a request nothing can be held to.
+    """
+    if transaction_data_scope is not None and transaction_data_scope not in TRANSACTION_DATA_SCOPES:
+        raise ValueError("the transaction_data scope is %r; it is one of %s"
+                         % (transaction_data_scope, ", ".join(TRANSACTION_DATA_SCOPES)))
+    if not isinstance(request, dict):
+        raise ValueError("the request is a JSON object of the authorization request's claims")
+    nonce, audience = request.get("nonce"), request.get("client_id")
+    if not (isinstance(nonce, str) and nonce and isinstance(audience, str) and audience):
+        raise ValueError("the request names no nonce or no client_id, and a key binding JWT is "
+                         "checked against both")
+    dcql = request.get("dcql_query")
+    queries = dcql.get("credentials") if isinstance(dcql, dict) else None
+    if not isinstance(queries, list) or not queries:
+        raise ValueError("the request's dcql_query has no credentials")
+    asked = {}
+    for query in queries:
+        qid = query.get("id") if isinstance(query, dict) else None
+        if not isinstance(qid, str) or not _DCQL_ID.fullmatch(qid) or qid in asked:
+            raise ValueError("a credential query's id is missing, malformed or repeated: %r" % (qid,))
+        if query.get("format") != "dc+sd-jwt":
+            raise ValueError("credential query %r asks for format %r; this verifier checks "
+                             "dc+sd-jwt only" % (qid, query.get("format")))
+        meta = query.get("meta") if isinstance(query.get("meta"), dict) else {}
+        vct = meta.get("vct_values")
+        asked[qid] = vct if isinstance(vct, list) else None
+    entries = []
+    if request.get("transaction_data") is not None:
+        raw = request["transaction_data"]
+        if not isinstance(raw, list) or not raw:
+            raise ValueError("the request's transaction_data is not a non-empty array")
+        for position, item in enumerate(raw):
+            try:
+                entry = TransactionDataEntry(item)
+            except ValueError as exc:
+                raise ValueError("transaction_data entry %d: %s" % (position, exc)) from None
+            unknown = [i for i in entry.credential_ids if i not in asked]
+            if unknown:
+                raise ValueError("transaction_data entry %d names %s, which the request's "
+                                 "dcql_query does not ask for" % (position, ", ".join(unknown)))
+            entries.append(entry)
+        if any(e.is_ts12 for e in entries) and not isinstance(request.get("response_mode"), str):
+            raise ValueError("the request carries TS12 transaction data and names no "
+                             "response_mode, which TS12 3.6 has the key binding JWT repeat")
+
+    out = {"accepted": False, "scope": None, "problem": None, "expected": {}, "either": {},
+           "verdicts": {}, "readings": {}, "response_refusals": {}}
+    if entries:
+        # Every query is presented, or the vp_token is refused below, so `asked` is `presented`.
+        out["expected"] = {scope: {qid: list(TransactionDataBinding(
+            entries, qid, scope=scope, response_mode=None, jti_fresh=None, presented=asked).expected)
+            for qid in asked} for scope in TRANSACTION_DATA_SCOPES}
+        out["either"] = {position: [q for q in asked if q in entry.credential_ids]
+                         for position, entry in enumerate(entries)
+                         if sum(q in entry.credential_ids for q in asked) > 1}
+    if not isinstance(vp_token, dict) or set(vp_token) != set(asked):
+        out["problem"] = ("the vp_token does not answer the request: it holds %s and the "
+                          "dcql_query asks for %s"
+                          % (sorted(vp_token) if isinstance(vp_token, dict) else "no object",
+                             sorted(asked)))
+        return out
+    presented = {}
+    for qid in asked:
+        value = vp_token[qid]
+        if isinstance(value, list) and len(value) == 1:
+            value = value[0]
+        if not isinstance(value, str) or not value:
+            out["problem"] = "the vp_token holds no single presentation for %r" % qid
+            return out
+        presented[qid] = value
+
+    def evaluate(scope):
+        memory = JtiMemory()
+        return {qid: verify_presentation(
+            presentation, expected_nonce=nonce, expected_audience=audience,
+            issuer_jwks=issuer_jwks, trust_anchors=trust_anchors, now=now,
+            expected_vct=asked[qid],
+            transaction_data=None if not entries else TransactionDataBinding(
+                entries, qid, scope=scope, response_mode=request.get("response_mode"),
+                jti_fresh=memory, presented=presented))
+            for qid, presentation in presented.items()}
+
+    def bound_once(verdicts):
+        """Section 5.1 across the response: each entry naming several presented credentials is
+        bound by exactly one of their key binding JWTs. None when so, else why not."""
+        for position, qids in sorted(out["either"].items()):
+            if not all(verdicts[q].authentic for q in qids):
+                continue            # a refused presentation refuses the response already
+            by = [q for q in qids if position in verdicts[q].transaction_data["bound"]]
+            if not by:
+                return ("transaction_data_missing: entry %d names the presented credentials %s "
+                        "and no key binding JWT binds it; OpenID4VP 1.0 section 5.1 has the "
+                        "wallet authorize it with one of them" % (position, ", ".join(qids)))
+            if len(by) > 1:
+                return ("transaction_data_extra: entry %d is bound by %s; OpenID4VP 1.0 section "
+                        "5.1: \"the Wallet MUST use only one of the referenced Credentials for "
+                        "transaction authorization\"" % (position, " and ".join(by)))
+        return None
+
+    if not entries:
+        out["verdicts"] = evaluate(None)
+    else:
+        out["readings"] = {scope: evaluate(scope) for scope in TRANSACTION_DATA_SCOPES}
+        out["response_refusals"] = {PER_CREDENTIAL: bound_once(out["readings"][PER_CREDENTIAL]),
+                                    ALL_ENTRIES: None}
+        if transaction_data_scope is None and (out["expected"][PER_CREDENTIAL]
+                                               != out["expected"][ALL_ENTRIES]):
+            out["accepted"] = None
+            out["problem"] = ("the two readings expect different entries of these credentials "
+                              "(see expected); name the transaction_data scope, %s, to decide"
+                              % " or ".join(TRANSACTION_DATA_SCOPES))
+            return out
+        out["scope"] = transaction_data_scope
+        out["verdicts"] = out["readings"][transaction_data_scope or PER_CREDENTIAL]
+    refused = [(qid, v) for qid, v in out["verdicts"].items() if not v.authentic]
+    response_refusal = out["response_refusals"].get(out["scope"] or PER_CREDENTIAL)
+    out["accepted"] = not refused and response_refusal is None
+    if refused:
+        qid, verdict = refused[0]
+        out["problem"] = "%s: %s: %s" % (qid, verdict.code, verdict.reason)
+    elif response_refusal is not None:
+        out["problem"] = response_refusal
+    return out
 
 
 def _sha256(raw):

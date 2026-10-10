@@ -32,6 +32,9 @@ from cryptography.x509.oid import NameOID  # noqa: E402
 from polaris_oid4vp.sdjwt import (  # noqa: E402
     DEFAULT_MAX_SKEW_SECONDS, MAX_DISCLOSURES, MAX_PRESENTATION_BYTES, MAX_RESOLVE_DEPTH,
     MAX_X5C_CERTS, Verdict, b64u_encode, verify_presentation)
+from polaris_oid4vp.sdjwt import (  # noqa: E402
+    ALL_ENTRIES, PER_CREDENTIAL, JtiMemory, TransactionDataBinding, TransactionDataEntry,
+    transaction_data_hash)
 
 NONCE = "vJ3xQ2kZ8fLpN1sT7wRm5bYc0aHdEgUi"
 AUDIENCE = "x509_hash:0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
@@ -116,7 +119,8 @@ class Wallet:
                 claims=(("given_name", "Jean"), ("family_name", "Dupont")),
                 corrupt_issuer_sig=False, corrupt_kb_sig=False, drop_key_binding=False,
                 extra_disclosure=None, issuer_typ="dc+sd-jwt", kb_typ="kb+jwt",
-                issuer_alg="ES256", include_cnf=True, payload_extra=None, issuer_header=None):
+                issuer_alg="ES256", include_cnf=True, payload_extra=None, issuer_header=None,
+                kb_extra=None):
         disclosures = [_disclosure("salt%d" % i, name, value)
                        for i, (name, value) in enumerate(claims)]
         digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest()) for d in disclosures]
@@ -146,9 +150,11 @@ class Wallet:
             return presented
 
         computed = b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())
-        kb = _jws(self.holder_key, {"alg": "ES256", "typ": kb_typ},
-                  {"iat": int(time.time()) if iat is None else iat, "aud": audience,
-                   "nonce": nonce, "sd_hash": computed if sd_hash is None else sd_hash})
+        kb_payload = {"iat": int(time.time()) if iat is None else iat, "aud": audience,
+                      "nonce": nonce, "sd_hash": computed if sd_hash is None else sd_hash}
+        # Claims beside the standard four, such as transaction_data_hashes.
+        kb_payload.update(kb_extra or {})
+        kb = _jws(self.holder_key, {"alg": "ES256", "typ": kb_typ}, kb_payload)
         if corrupt_kb_sig:
             head, _, sig = kb.rpartition(".")
             flipped = bytearray(base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4)))
@@ -2702,3 +2708,387 @@ class CanonicalEncodingTests(unittest.TestCase):
         for bad in ("QUJ", "QUJE!", "QU JD"):
             with self.assertRaises(ValueError, msg=bad):
                 b64u_decode(bad)
+
+
+# ------------------------------------------------------------------- transaction data
+
+def _td_raw(entry):
+    """An entry as a request carries it: compact JSON in base64url without padding."""
+    return b64u_encode(json.dumps(entry, separators=(",", ":")).encode())
+
+
+def _td_hash(raw, alg="sha-256"):
+    """The wallet's side, computed with hashlib here rather than by the code under test."""
+    return b64u_encode(hashlib.new(alg.replace("-", ""), raw.encode("ascii")).digest())
+
+
+PAYMENT = {"type": "urn:eudi:sca:payment:1", "credential_ids": ["pay"],
+           "payload": {"transaction_id": "polaris-test-0001",
+                       "payee": {"name": "Example Shop", "id": "DE00EXAMPLE0001"},
+                       "currency": "EUR", "amount": 49.99}}
+#: OpenID4VP 1.0 section 5.1's own example type, for an entry that is not one of TS12's.
+EXAMPLE = {"type": "example_type", "credential_ids": ["pid"]}
+RAW_PAYMENT, RAW_EXAMPLE = _td_raw(PAYMENT), _td_raw(EXAMPLE)
+
+#: Computed with OpenSSL (LibreSSL 3.3.6), not with Python:
+#: printf %s RAW | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d =
+OPENSSL = {
+    RAW_PAYMENT: {
+        "sha-256": "zLUkXUDKSesRanZnioYrRRkoeokqXy3etYci9izdCRU",
+        "sha-384": "aFGzbGTNRCUZMLnY_ClNrnjFIE2vsqF1OuWr2KdgZPnL9PKG4462qqQBFMaxsdLd",
+        "sha-512": "BiyLSsa6UPvDu_vnCd_dUqyX4Ueanwflbb4CrJIPLZsem_Ipfp9AL8Z7Y31KpiGy9qaCBNh9xbLddv-hP43vTw"},
+    RAW_EXAMPLE: {
+        "sha-256": "7iC-6vLSX4XugO3MEmOkcLol3V2lup8oRKMmYLYLQ4I",
+        "sha-384": "4q-U74QPIeqDva1VhOZ1rFFkVhX0C7lBveQvsrEY0cB_LKnBjox3m7Uk3kdKSPZP",
+        "sha-512": "zUgE8XFEPnqprrBln-M21L-Jh9K4BorJ9ti5UCBVV7Ss2ul5eo7Zub5v3ie0TsNOq2m-ZIoBrYaZh-KE2SnF4g"},
+}
+
+TWO_FACTORS = [{"knowledge": "pin_6_or_more_digits"}, {"possession": "key_in_local_native_wscd"}]
+DROP = object()
+
+
+def _sca(raws, alg="sha-256", **over):
+    """What a TS12 wallet's key binding JWT carries for `raws`, with `over` replacing or (DROP)
+    removing one claim."""
+    import uuid
+    claims = {"transaction_data_hashes": [_td_hash(r, alg) for r in raws],
+              "transaction_data_hashes_alg": alg, "jti": str(uuid.uuid4()),
+              "response_mode": "direct_post.jwt", "amr": list(TWO_FACTORS)}
+    for name, value in over.items():
+        if value is DROP:
+            claims.pop(name, None)
+        else:
+            claims[name] = value
+    return claims
+
+
+def _binding(raws, query_id="pay", scope=PER_CREDENTIAL, memory=None, presented=None):
+    return TransactionDataBinding([TransactionDataEntry(r) for r in raws], query_id, scope=scope,
+                                  response_mode="direct_post.jwt",
+                                  jti_fresh=JtiMemory() if memory is None else memory,
+                                  presented=presented)
+
+
+#: An entry two credential queries may authorize; OpenID4VP 1.0 section 5.1 has the wallet use one.
+RAW_SHARED = _td_raw({"type": "example_type", "credential_ids": ["pid", "pay"]})
+
+
+class TransactionDataHashTests(unittest.TestCase):
+    """OpenID4VP 1.0 B.3.3.1: each hash is over "the string received in the transaction_data
+    request parameter (base64url decoding is not performed before hashing)"."""
+
+    def test_the_hash_is_over_the_string_as_sent_and_agrees_with_openssl(self):
+        for raw, by_alg in OPENSSL.items():
+            for alg, expected in by_alg.items():
+                with self.subTest(alg=alg, raw=raw[:16]):
+                    self.assertEqual(transaction_data_hash(raw, alg), expected)
+                    decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+                    self.assertNotEqual(expected, b64u_encode(
+                        hashlib.new(alg.replace("-", ""), decoded).digest()))
+
+
+class TransactionDataKeyBindingTests(unittest.TestCase):
+    """The key binding JWT held to the request's transaction_data, one refusal per way it can be
+    wrong. Each case is the positive control with one claim changed."""
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def _verify(self, kb_extra, raws=(RAW_PAYMENT,), query_id="pay", scope=PER_CREDENTIAL,
+                memory=None, presented=None, **kw):
+        return self.w.verify(self.w.present(kb_extra=kb_extra, **kw),
+                             transaction_data=_binding(raws, query_id, scope, memory, presented))
+
+    def _refused(self, code, kb_extra, **kw):
+        v = self._verify(kb_extra, **kw)
+        self.assertFalse(v.authentic, "accepted: %r" % (kb_extra,))
+        self.assertEqual(v.code, code, v.reason)
+        return v
+
+    # -- the positive controls
+
+    def test_a_key_binding_jwt_that_binds_the_entry_is_authentic(self):
+        claims = _sca([RAW_PAYMENT])
+        v = self._verify(claims)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        self.assertEqual(v.transaction_data, {
+            "credential": "pay", "scope": "per_credential", "expected": [0], "optional": [],
+            "bound": [0], "readings_agree": True, "alg": "sha-256", "ts12": True,
+            "jti": claims["jti"]})
+        self.assertEqual(v.as_dict()["transaction_data"], v.transaction_data)
+
+    def test_sha_384_and_sha_512_when_the_entry_allows_them(self):
+        raw = _td_raw(dict(PAYMENT, transaction_data_hashes_alg=["sha-384", "sha-512"]))
+        for alg in ("sha-384", "sha-512"):
+            with self.subTest(alg=alg):
+                v = self._verify(_sca([raw], alg), raws=(raw,))
+                self.assertTrue(v.authentic, v.reason)
+                self.assertEqual(v.transaction_data["alg"], alg)
+        self._refused("transaction_data_alg", _sca([raw], "sha-256"), raws=(raw,))
+
+    def test_without_a_named_algorithm_sha_256_is_assumed(self):
+        v = self._verify(_sca([RAW_PAYMENT], transaction_data_hashes_alg=DROP))
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.transaction_data["alg"], "sha-256")
+
+    def test_three_categories_are_two_or_more(self):
+        amr = TWO_FACTORS + [{"inherence": "fingerprint_device"}]
+        self.assertTrue(self._verify(_sca([RAW_PAYMENT], amr=amr)).authentic)
+
+    # -- the hashes: missing, extra, wrong
+
+    def test_absent_hashes_are_refused(self):
+        self._refused("transaction_data_missing",
+                      _sca([RAW_PAYMENT], transaction_data_hashes=DROP))
+
+    def test_fewer_hashes_than_entries_are_refused(self):
+        second = _td_raw(dict(PAYMENT, payload=dict(PAYMENT["payload"], transaction_id="t-2")))
+        v = self._refused("transaction_data_missing", _sca([RAW_PAYMENT]),
+                          raws=(RAW_PAYMENT, second))
+        self.assertIn("entries 0, 1", v.reason)
+
+    def test_an_extra_hash_is_refused(self):
+        self._refused("transaction_data_extra", _sca([RAW_PAYMENT, RAW_EXAMPLE]))
+
+    def test_hashes_where_the_reading_expects_none_are_refused(self):
+        """per_credential: the payment names pay, so the pid key binding JWT binds nothing."""
+        v = self._refused("transaction_data_extra", _sca([RAW_PAYMENT]), query_id="pid")
+        self.assertIn("per_credential", v.reason)
+
+    def test_a_hash_of_the_decoded_json_is_refused(self):
+        decoded = base64.urlsafe_b64decode(RAW_PAYMENT + "=" * (-len(RAW_PAYMENT) % 4))
+        wrong = b64u_encode(hashlib.sha256(decoded).digest())
+        v = self._refused("transaction_data_mismatch",
+                          _sca([RAW_PAYMENT], transaction_data_hashes=[wrong]))
+        self.assertIn("decoded JSON", v.reason)
+
+    def test_hashes_in_another_order_are_refused(self):
+        second = _td_raw(dict(PAYMENT, payload=dict(PAYMENT["payload"], transaction_id="t-2")))
+        v = self._refused("transaction_data_mismatch", _sca([second, RAW_PAYMENT]),
+                          raws=(RAW_PAYMENT, second))
+        self.assertIn("order", v.reason)
+
+    def test_hashes_that_are_not_an_array_of_strings_are_refused(self):
+        for bad in (_td_hash(RAW_PAYMENT), [7], {"0": _td_hash(RAW_PAYMENT)}):
+            with self.subTest(bad=bad):
+                self._refused("transaction_data_mismatch",
+                              _sca([RAW_PAYMENT], transaction_data_hashes=bad))
+
+    # -- the algorithm: not a string, not allowed
+
+    def test_an_alg_that_is_not_a_string_is_refused(self):
+        v = self._refused("transaction_data_alg",
+                          _sca([RAW_PAYMENT], transaction_data_hashes_alg=["sha-256"]))
+        self.assertIn("not the string", v.reason)
+
+    def test_an_alg_the_entry_did_not_allow_is_refused(self):
+        v = self._refused("transaction_data_alg", _sca([RAW_PAYMENT], "sha-512"))
+        self.assertIn("not an algorithm every entry it binds allows", v.reason)
+
+    def test_an_alg_neither_allowed_nor_computable_here_is_refused(self):
+        """Found by mutation: an algorithm this verifier cannot compute takes its own branch, and
+        nothing reached it unless the request had allowed the algorithm."""
+        v = self._refused("transaction_data_alg",
+                          _sca([RAW_PAYMENT], transaction_data_hashes_alg="md5",
+                               transaction_data_hashes=["x"]))
+        self.assertIn("'md5', which is not an algorithm every entry it binds allows (sha-256)",
+                      v.reason)
+
+    def test_an_absent_alg_is_refused_when_the_request_named_algorithms(self):
+        raw = _td_raw(dict(PAYMENT, transaction_data_hashes_alg=["sha-256"]))
+        self._refused("transaction_data_alg", _sca([raw], transaction_data_hashes_alg=DROP),
+                      raws=(raw,))
+
+    def test_an_allowed_alg_this_verifier_cannot_compute_is_refused(self):
+        raw = _td_raw(dict(PAYMENT, transaction_data_hashes_alg=["sha3-256", "sha-256"]))
+        v = self._refused("transaction_data_alg",
+                          _sca([raw], transaction_data_hashes_alg="sha3-256",
+                               transaction_data_hashes=["x"]), raws=(raw,))
+        self.assertIn("cannot compute", v.reason)
+
+    # -- TS12 section 3.6
+
+    def test_an_absent_jti_is_refused(self):
+        self._refused("ts12_jti", _sca([RAW_PAYMENT], jti=DROP))
+        self._refused("ts12_jti", _sca([RAW_PAYMENT], jti=""))
+
+    def test_a_jti_used_before_is_refused(self):
+        memory = JtiMemory()
+        claims = _sca([RAW_PAYMENT])
+        self.assertTrue(self._verify(claims, memory=memory).authentic)
+        v = self._refused("ts12_jti", dict(claims), memory=memory)
+        self.assertIn("used before", v.reason)
+
+    def test_a_response_mode_other_than_the_requests_is_refused(self):
+        self._refused("ts12_response_mode", _sca([RAW_PAYMENT], response_mode="direct_post"))
+        self._refused("ts12_response_mode", _sca([RAW_PAYMENT], response_mode=DROP))
+
+    def test_amr_with_fewer_than_two_categories_is_refused(self):
+        for amr in ([{"knowledge": "pin_6_or_more_digits"}, {"knowledge": "pattern"}],
+                    [{"possession": "key_in_remote_wscd"}], []):
+            with self.subTest(amr=amr):
+                v = self._refused("ts12_amr", _sca([RAW_PAYMENT], amr=amr))
+                self.assertIn("at least two", v.reason)
+
+    def test_amr_methods_ts12_does_not_define_do_not_count(self):
+        self._refused("ts12_amr", _sca([RAW_PAYMENT], amr=[
+            {"knowledge": "retina"}, {"possession": "key_in_remote_wscd"}]))
+
+    def test_amr_that_is_not_single_member_objects_is_refused(self):
+        for amr in (DROP, "pin", ["pin", "hwk"], [{"knowledge": "pattern", "possession": "other"}],
+                    [{"knowledge": 6}, {"possession": "other"}], {"knowledge": "pattern"}):
+            with self.subTest(amr=amr):
+                self._refused("ts12_amr", _sca([RAW_PAYMENT], amr=amr))
+
+    def test_ts12_claims_are_not_asked_of_another_type(self):
+        v = self._verify({"transaction_data_hashes": [_td_hash(RAW_EXAMPLE)]},
+                         raws=(RAW_EXAMPLE,), query_id="pid")
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual((v.transaction_data["ts12"], v.transaction_data["jti"]), (False, None))
+
+    def test_ts12_claims_are_asked_only_of_the_credential_the_entry_names(self):
+        """all_entries: pid binds the payment too, and TS12's claims stay with pay."""
+        v = self._verify({"transaction_data_hashes": [_td_hash(RAW_PAYMENT)]},
+                         query_id="pid", scope=ALL_ENTRIES)
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.transaction_data["expected"], [0])
+        self.assertFalse(v.transaction_data["ts12"])
+
+    def test_without_a_key_binding_jwt_nothing_is_bound(self):
+        v = self.w.verify(self.w.present(drop_key_binding=True), require_key_binding=False,
+                          transaction_data=_binding((RAW_PAYMENT,)))
+        self.assertEqual((v.authentic, v.code), (False, "transaction_data_missing"))
+        v = self.w.verify(self.w.present(drop_key_binding=True), require_key_binding=False,
+                          transaction_data=_binding((RAW_PAYMENT,), query_id="pid"))
+        self.assertTrue(v.authentic, "pid binds nothing under per_credential: %s" % v.reason)
+
+
+class AnOptionalEntryTests(unittest.TestCase):
+    """One key binding JWT and an entry it shares with another presented credential: it may bind
+    the entry or leave it to the other (OpenID4VP 1.0 section 5.1); the response must bind it
+    exactly once, which verify_response holds."""
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def _verify(self, kb_extra):
+        return self.w.verify(self.w.present(kb_extra=kb_extra),
+                             transaction_data=_binding((RAW_SHARED,), "pid",
+                                                       presented=("pid", "pay")))
+
+    def test_it_may_bind_the_entry(self):
+        v = self._verify({"transaction_data_hashes": [_td_hash(RAW_SHARED)]})
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual((v.transaction_data["expected"], v.transaction_data["optional"],
+                          v.transaction_data["bound"]), ([], [0], [0]))
+
+    def test_it_may_leave_the_entry_to_the_other(self):
+        v = self._verify({})
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.transaction_data["bound"], [])
+
+    def test_hashes_that_bind_none_of_its_entries_are_refused(self):
+        v = self._verify({"transaction_data_hashes": [_td_hash(RAW_PAYMENT)]})
+        self.assertEqual((v.authentic, v.code), (False, "transaction_data_extra"))
+        self.assertIn("binds none of the entries it may bind", v.reason)
+
+
+class TransactionDataReadingsTests(unittest.TestCase):
+    """Which entries a key binding JWT binds when a response presents two credentials."""
+
+    def test_an_entry_naming_two_presented_credentials_is_optional_in_each(self):
+        for query_id in ("pid", "pay"):
+            with self.subTest(query_id=query_id):
+                per = _binding((RAW_SHARED,), query_id, presented=("pid", "pay"))
+                self.assertEqual((per.expected, per.optional, per.readings_agree), ((), (0,), False))
+                every = _binding((RAW_SHARED,), query_id, ALL_ENTRIES, presented=("pid", "pay"))
+                self.assertEqual((every.expected, every.optional), ((0,), ()))
+        alone = _binding((RAW_SHARED,), "pay")          # only pay presented: pay must bind it
+        self.assertEqual((alone.expected, alone.optional, alone.readings_agree), ((0,), (), True))
+
+    def test_what_each_reading_expects_of_each_credential(self):
+        raws = (RAW_EXAMPLE, RAW_PAYMENT)            # the first names pid, the second pay
+        for query_id, scope, expected in (("pid", PER_CREDENTIAL, (0,)), ("pay", PER_CREDENTIAL, (1,)),
+                                          ("pid", ALL_ENTRIES, (0, 1)), ("pay", ALL_ENTRIES, (0, 1))):
+            with self.subTest(query_id=query_id, scope=scope):
+                b = _binding(raws, query_id, scope)
+                self.assertEqual(b.expected, expected)
+                self.assertFalse(b.readings_agree)
+        self.assertTrue(_binding((RAW_PAYMENT,), "pay").readings_agree)
+
+    def test_a_reading_nobody_named_is_refused(self):
+        for scope in ("both", None, "per-credential"):
+            with self.subTest(scope=scope), self.assertRaises(ValueError):
+                _binding((RAW_PAYMENT,), scope=scope)
+
+
+class WithoutTransactionDataNothingChangesTests(unittest.TestCase):
+    """Non-regression: with no transaction_data the key binding JWT's transaction claims are not
+    read at all, so a presentation verifies exactly as it did before they existed."""
+
+    def test_stray_transaction_claims_are_not_read(self):
+        w = Wallet()
+        stray = {"transaction_data_hashes": ["not-a-hash"], "transaction_data_hashes_alg": ["x"],
+                 "amr": "none", "response_mode": "fragment"}
+        for kb_extra in (None, stray):
+            with self.subTest(kb_extra=kb_extra):
+                v = w.verify(w.present(kb_extra=kb_extra))
+                self.assertTrue(v.authentic, v.reason)
+                self.assertIsNone(v.transaction_data)
+                # The members a verdict has without transaction_data, whatever they are.
+                self.assertNotIn("transaction_data", v.as_dict())
+                self.assertEqual(set(v.as_dict()), set(Verdict(True).as_dict()))
+
+
+class TransactionDataEntryTests(unittest.TestCase):
+    """What an entry must be for it to be read at all (OpenID4VP 1.0 section 5.1)."""
+
+    def test_an_entry_reads_as_sent(self):
+        e = TransactionDataEntry(RAW_PAYMENT)
+        self.assertEqual((e.raw, e.type, e.credential_ids, e.hashes_alg),
+                         (RAW_PAYMENT, "urn:eudi:sca:payment:1", ("pay",), None))
+        self.assertTrue(e.is_ts12)
+        self.assertFalse(TransactionDataEntry(RAW_EXAMPLE).is_ts12)
+
+    def test_a_bare_string_alg_is_read_as_a_list_of_one(self):
+        e = TransactionDataEntry(_td_raw(dict(EXAMPLE, transaction_data_hashes_alg="sha-384")))
+        self.assertEqual(e.hashes_alg, ("sha-384",))
+
+    def test_what_is_not_an_entry_is_refused(self):
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        # A string whose last character carries padding bits, so a second spelling exists.
+        raw = next(r for r in (_td_raw(dict(EXAMPLE, n="x" * k)) for k in range(4))
+                   if len(r) % 4 in (2, 3))
+        pad = "=" * (-len(raw) % 4)
+        same = base64.urlsafe_b64decode(raw + pad)
+        noncanonical = next(raw[:-1] + c for c in alphabet if c != raw[-1]
+                            and base64.urlsafe_b64decode(raw[:-1] + c + pad) == same)
+        TransactionDataEntry(raw)       # the canonical spelling reads
+        dup = b64u_encode(b'{"type":"a","type":"b","credential_ids":["pid"]}')
+        for bad in ("", 5, None, "not base64!", noncanonical, dup, _td_raw([EXAMPLE]),
+                    _td_raw(dict(EXAMPLE, type="")), _td_raw({"credential_ids": ["pid"]}),
+                    _td_raw(dict(EXAMPLE, credential_ids=[])),
+                    _td_raw(dict(EXAMPLE, credential_ids="pid")),
+                    _td_raw(dict(EXAMPLE, credential_ids=["", "pid"])),
+                    _td_raw(dict(EXAMPLE, transaction_data_hashes_alg=[])),
+                    _td_raw(dict(EXAMPLE, transaction_data_hashes_alg=[256])),
+                    _td_raw(dict(EXAMPLE, transaction_data_hashes_alg=5))):
+            with self.subTest(bad=str(bad)[:24]), self.assertRaises(ValueError):
+                TransactionDataEntry(bad)
+
+
+class JtiMemoryTests(unittest.TestCase):
+    """A jti is remembered for its retention and no longer (found by coverage: the forgetting was
+    never run)."""
+
+    def test_a_jti_is_remembered_for_its_retention_and_then_forgotten(self):
+        from unittest import mock
+        from polaris_oid4vp import sdjwt as S
+        memory = JtiMemory(retention_seconds=60)
+        for at, fresh in ((1000.0, True), (1059.0, False), (1061.0, True), (1062.0, False)):
+            with self.subTest(at=at), mock.patch.object(S.time, "time", return_value=at):
+                self.assertIs(memory("a"), fresh)
+        forever = JtiMemory()
+        for at, fresh in ((1.0, True), (10.0 ** 10, False)):
+            with self.subTest(forever=at), mock.patch.object(S.time, "time", return_value=at):
+                self.assertIs(forever("b"), fresh)

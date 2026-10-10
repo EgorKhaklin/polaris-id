@@ -41,7 +41,11 @@ wallet MUST NOT send one. A wallet may fetch the signed request object by POST (
 encrypted and names a P-256 key, ECDH-ES and A128GCM or A256GCM, the signed object comes back
 encrypted to that key (a nested JWT, RFC 9101 section 6.1). The operator may add `verifier_info`
 (section 5.1), such as a registrar's registration certificate, which the request object carries
-unchanged.
+unchanged. A request may carry `transaction_data` (section 8.4): the key binding JWT must hash each
+entry as sent (Appendix B.3.3.1) with an algorithm the entry allows, and for an EU TS12 (SCA)
+entry carry TS12's `jti`, `response_mode` and `amr`. Which entries each key binding JWT binds when
+a response presents several credentials is settled by the specification only for an entry naming
+several of them (section 5.1: one of them binds it), so the reading is a named option.
 
 ## HAIP 1.0
 
