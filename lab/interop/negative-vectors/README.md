@@ -95,9 +95,10 @@ Without binding flags, `python3 make_vectors.py > vectors.json` reproduces `vect
   never renumbers one. `INDEX.json` is the index below.
 - [`views/index.json`](views/index.json): one entry per vector, `id`, `spec_section` (the first clause),
   `target` (the layer), `input` (the presentation), `expected`, `hardening` (true for `spec-implied`),
-  `reference_rejected_at_mint`, `clauses`, `trust`, `profile` (`haip` for every vector: the Key Binding JWT's
-  `typ` is `kb+jwt`; AP2's hops use `kb+sd-jwt`, so the `typ` cases do not transfer to AP2, as the header's
-  `scope` says), and `files` (its EU pair). `reference_rejected_at_mint` is
+  `reference_rejected_at_mint`, `clauses`, `trust`, `profile`, and `files` (its EU pair). `profile` is `haip`
+  for every vector: the KB-JWT `typ` is `kb+jwt`, as the header's `scope` says. A verifier that requires another
+  KB-JWT typ (for example `kb+sd-jwt`) refuses the controls at the key-binding layer; for such a verifier only the
+  issuer-signed cases apply, checked on their own. `reference_rejected_at_mint` is
   polaris-oid4vp's verdict when the views were made: the generator runs every vector through
   `run_vectors.py`'s `polaris-oid4vp` adapter with the vectors' own settings, as `test_vectors.py` does (this
   tree's package, else an installed one). Making the views therefore needs polaris-oid4vp.

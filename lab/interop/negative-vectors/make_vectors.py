@@ -427,9 +427,9 @@ def views(doc, rejected):
     index = _view_json({"name": doc["name"], "version": doc["version"], "warning": doc["warning"],
                         "source": "vectors.json; these views are derived from it by make_vectors.py",
                         "reference": "reference_rejected_at_mint: polaris-oid4vp's verdict when the views were made",
-                        "scope": "profile haip: SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0, whose Key "
-                                 "Binding JWT typ is kb+jwt. AP2's hops use kb+sd-jwt, so the vectors that turn on "
-                                 "typ (kb-typ-jwt) do not transfer to AP2.",
+                        "scope": "profile haip: the KB-JWT typ is kb+jwt (HAIP). A verifier that requires another "
+                                 "KB-JWT typ (for example kb+sd-jwt) refuses the controls at the key-binding layer; "
+                                 "for such a verifier only the issuer-signed cases apply, checked on their own.",
                         "settings": settings, "vectors": entries})
     out["index.json"] = index
     out["eudi/INDEX.json"] = index
