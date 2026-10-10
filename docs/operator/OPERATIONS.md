@@ -1655,8 +1655,9 @@ before 2.30 creates one at a secret file that is missing when the stack starts
 (2.30 and later refuse to start instead), and every version creates one at a
 missing bind-mounted file such as the pgBackRest fragment; the operator removes
 it. The deploy refuses to start while a secret
-file that `docker-compose.prod.yml` mounts and the production configuration
-validates is missing, and names it. A tag checkout has no branch,
+file the stack mounts is missing, and names it: it reads the stack as
+`docker compose config` resolves it, with the overlays in
+`POLARIS_COMPOSE_EXTRA`, and checks again after its own `git pull`. A tag checkout has no branch,
 so the deploy's own `git pull --ff-only` would fail; `--no-pull` skips it.
 On a host whose secrets are sealed (age or awskms), the generator writes to
 `polaris_web/secrets` in plaintext, and as adopting the store removed that

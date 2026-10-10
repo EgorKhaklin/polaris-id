@@ -1089,7 +1089,7 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertNotIn("systemctl", upgrade)
         # Generic: which files one release lacks belongs in that release's CHANGELOG line, not here.
         self.assertNotIn("rc.70", upgrade)
-        self.assertIn("a secret file the production compose file mounts", upgrade)
+        self.assertIn("a secret file the stack mounts is missing", upgrade)
         self.assertIn("/blob/v9.9.9/docs/operator/OPERATIONS.md#polaris-version-upgrade", upgrade)
 
     def test_a_block_with_no_intro_has_no_summary(self):

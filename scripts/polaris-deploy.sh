@@ -98,49 +98,80 @@ if ! docker compose version >/dev/null 2>&1; then
     echo "  ✗ docker compose v2 plugin not available"; exit 1
 fi
 
-# The secret files the stack needs to start. The app's are every secret_file setting in
-# polaris_web/config_schema.py that the prod compose points at a mounted secret: production
-# validates each at boot (readable, non-empty), so they are read from those two files rather
-# than listed here. A release that adds one is then required before anything is built, once
-# the checkout is that release's, as OPERATIONS.md's upgrade makes it first (v1.0.0-rc.70 had no
-# polaris_redis_password and no polaris_secret_key_fallbacks, and a list of four let its upgrade
-# go on to start an app that production validation refuses). The rest are not
-# app settings: redis_users.acl is Redis's users, derived from that password; the root
-# password initializes the database; and (v9.173) pgbackrest_repo_creds.conf is mounted
-# unconditionally, so a missing source makes docker create a DIRECTORY there.
-if ! app_secrets="$(python3 -I -c '
-import re, sys
-sys.path.insert(0, sys.argv[1])
-import config_schema
-compose = open(sys.argv[1] + "/docker-compose.prod.yml", encoding="utf-8").read()
-files = dict(re.findall(r"(?m)^  (\w+):\n    file: \$\{POLARIS_SECRETS_DIR[^}]*\}/(\S+)$", compose))
-for name, secret in sorted(set(re.findall(r"(?m)^\s+(POLARIS_\w+_FILE): /run/secrets/(\w+)\s*$", compose))):
-    s = config_schema.lookup(name)
-    if s is not None and s.kind == "secret_file":
-        print(files[secret])' "${POLARIS_ROOT}/polaris_web")" || [[ -z "${app_secrets}" ]]; then
-    echo "  ✗ could not read the secret files production requires from polaris_web/config_schema.py"
-    echo "    and polaris_web/docker-compose.prod.yml"
-    exit 1
-fi
-missing=0
-for secret in ${app_secrets} redis_users.acl polaris_db_root_password pgbackrest_repo_creds.conf; do
-    if [[ ! -f "${SECRETS_DIR}/${secret}" || ! -s "${SECRETS_DIR}/${secret}" ]]; then
-        echo "  ✗ missing secret: secrets/${secret}"
-        missing=1
+# The secret files the stack needs to start, read from the stack as compose resolves it (this file,
+# the overlays POLARIS_COMPOSE_EXTRA adds, .env): every secret a service mounts and every file
+# bind-mounted from the secrets directory (the TLS certificates; pgbackrest_repo_creds.conf, which
+# Docker Compose turns into a DIRECTORY when it is missing). Each must be a non-empty file before
+# anything is built. A list kept here fell behind: v1.0.0-rc.70's upgrade checked four secrets, and
+# the app production validates needed six; the HA and DR overlays mount three more. A service's
+# *_FILE setting naming a /run/secrets file the service does not mount is refused: nothing would
+# be there when the app reads it.
+secret_preflight() {  # WHEN: printed with the result
+    local out line missing=0 path name
+    if ! out="$(compose config --format json 2> /dev/null | python3 -I -c '
+import json, os, sys
+cfg = json.load(sys.stdin)
+sdir = os.path.realpath(sys.argv[1])
+top = cfg.get("secrets") or {}
+need, bad = set(), []
+for svc_name, svc in sorted((cfg.get("services") or {}).items()):
+    mounted = set()
+    for s in svc.get("secrets") or []:
+        src = s.get("source") if isinstance(s, dict) else s
+        tgt = (s.get("target") if isinstance(s, dict) else None) or src
+        mounted.add(tgt if tgt.startswith("/") else "/run/secrets/" + tgt)
+        f = (top.get(src) or {}).get("file")
+        if not f:
+            bad.append("%s mounts secret %s, which names no file" % (svc_name, src))
+        else:
+            need.add(f)
+    for k, v in sorted((svc.get("environment") or {}).items()):
+        if k.endswith("_FILE") and isinstance(v, str) and v.startswith("/run/secrets/") and v not in mounted:
+            bad.append("%s sets %s=%s, a secret it does not mount" % (svc_name, k, v))
+    for v in svc.get("volumes") or []:
+        if isinstance(v, dict) and v.get("type") == "bind":
+            src = v.get("source") or ""
+            if os.path.realpath(src).startswith(sdir + os.sep):
+                need.add(src)
+for b in bad:
+    print("BAD " + b)
+for f in sorted(need):
+    print("FILE " + f)
+if bad or not need:
+    sys.exit(3)
+' "${SECRETS_DIR}")"; then
+        printf '%s\n' "${out}" | { grep '^BAD ' || true; } | sed 's/^BAD /  ✗ /'
+        echo "  ✗ could not read the secret files the stack mounts from \`docker compose config\` ($1);"
+        echo "    nothing was started."
+        exit 1
     fi
-done
-if [[ "${missing}" -ne 0 ]]; then
-    echo "    run: ./scripts/polaris-generate-secrets.sh (it writes only the files that are missing)"
-    # Sealed, the files above are missing from the store this deploy just unsealed, and the
-    # generator writes plaintext to polaris_web/secrets: every secret, if that directory is gone.
-    if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
-        echo "    then seal only those: ./scripts/polaris-secrets.sh seal --only <name> for each one named"
-        echo "    above, and remove the plaintext directory (docs/operator/SECRETS.md, section 5.1)"
+    while IFS= read -r line; do
+        [[ "${line}" == "FILE "* ]] || continue
+        path="${line#FILE }"
+        name="${path#"${SECRETS_DIR}"/}"
+        if [[ -d "${path}" ]]; then
+            echo "  ✗ a directory where a secret file belongs: ${path} (remove it; the generator writes the file)"
+            missing=1
+        elif [[ ! -f "${path}" || ! -s "${path}" ]]; then
+            echo "  ✗ missing secret: ${name}"
+            missing=1
+        fi
+    done <<< "${out}"
+    if [[ "${missing}" -ne 0 ]]; then
+        echo "    run: ./scripts/polaris-generate-secrets.sh (it writes only the files that are missing)"
+        # Sealed, the files above are missing from the store this deploy just unsealed, and the
+        # generator writes plaintext to polaris_web/secrets: every secret, if that directory is gone.
+        if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
+            echo "    then seal only those: ./scripts/polaris-secrets.sh seal --only <name> for each one named"
+            echo "    above, and remove the plaintext directory (docs/operator/SECRETS.md, section 5.1)"
+        fi
+        echo "    Nothing was started ($1)."
+        exit 1
     fi
-    exit 1
-fi
+    echo "  ✓ every secret file the stack mounts is present ($1)"
+}
 echo "  ✓ docker present"
-echo "  ✓ all secrets present"
+secret_preflight "this checkout"
 
 # One build or deploy of this host's images at a time. Every stack on a host builds and runs the same
 # tags (polaris-app:prod and its siblings), so a deploy that ran beside another one, or beside try.sh's
@@ -162,6 +193,8 @@ if [[ "${PULL_GIT}" -eq 1 ]] && [[ -d "${POLARIS_ROOT}/.git" ]]; then
     (cd "${POLARIS_ROOT}" && git pull --ff-only) || {
         echo "  ! git pull failed (continuing — fix manually if needed)"
     }
+    # The release just pulled may mount a secret the one checked above did not.
+    secret_preflight "after git pull"
 else
     echo "  [2/7] git pull… skipped"
 fi

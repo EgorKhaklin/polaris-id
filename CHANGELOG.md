@@ -258,6 +258,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A status change to a number that is no credential reported success.
 - A refused deep page number now says what to do instead and offers the list back.
 - The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.
+- The deploy's secret pre-flight read one compose file and a list kept in the script, so the HA and DR profiles' secrets and the TLS certificates went unchecked, and a deploy that pulled checked the release it started from. It now reads the stack as `docker compose config` resolves it, with its overlays, requires every file the stack mounts from the secrets directory, refuses a setting that names a secret its service does not mount, and checks again after its own `git pull`.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 

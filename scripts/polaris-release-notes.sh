@@ -69,8 +69,7 @@ print("In the install's checkout (on a Linux host, `/opt/polaris`, as root):\n\n
       "```bash\ngit fetch --tags && git checkout v" + version + "\n"
       "bash scripts/polaris-generate-secrets.sh   # writes only the secret files a release adds\n"
       "scripts/polaris-deploy.sh prod --no-pull   # a tag checkout has no branch to pull\n```\n\n"
-      "The deploy refuses to start while a secret file the production compose file mounts and the "
-      "production configuration validates is missing, rebuilds "
+      "The deploy refuses to start while a secret file the stack mounts is missing, rebuilds "
       "every image, applies the migrations and the database objects, and smoke-tests the app "
       "(the expand-contract migration policy keeps the running app safe during the roll). "
       + absolute("The procedure: [OPERATIONS.md](docs/operator/OPERATIONS.md#polaris-version-upgrade). ")
