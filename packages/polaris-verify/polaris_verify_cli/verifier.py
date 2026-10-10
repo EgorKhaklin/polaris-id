@@ -318,6 +318,10 @@ _NOTE_NO_WITNESS = ("no ML-DSA-65 verifier available: install liboqs-python "
 _NOTE_DEV_PLACEHOLDER = ("this run declared --dev-placeholder, so no real backend was "
                          "consulted: NOTHING here is authenticated")
 
+#: The fields an authenticity pack is made of. --verify-dir reads an object with none of them as
+#: no pack at all, rather than as a pack refused for being empty.
+_PACK_FIELDS = ("format", "token_value", "algorithm", "signature_hex", "public_key_hex")
+
 
 def verify_pack(pack: dict, anchor_keys=None) -> dict:
     """Verify an authenticity pack. Returns a verdict dict. Total: hostile non-dict input
@@ -440,8 +444,9 @@ def verify_dir(dir_path) -> int:
 
     Every pack's verdict is held to its expectation, a refusal before either witness runs (a
     wrong length, hex that does not decode) included: a refusal is a verdict. A file that is
-    not an authenticity pack, and a pack no backend here can verify, are SKIPPED, and neither
-    passes. Exit 0 iff every vector is as expected and a real witness decided at least one, and
+    not an authenticity pack (another artifact, whose row names the flag that checks it, or an
+    object with none of a pack's fields), and a pack no backend here can verify, are SKIPPED,
+    and neither passes. Exit 0 iff every vector is as expected and a real witness decided at least one, and
     the last line then says so; otherwise 2, after "N of M as expected" and a line naming each
     cause from the run. 3 when the directory holds no *.json."""
     import glob
@@ -470,10 +475,21 @@ def verify_dir(dir_path) -> int:
             continue
         # Another signed artifact is not a pack, by the rule --pack applies (a trust list, an ID
         # token, a revocation feed in the conformance set). Judged as a pack it is refused for not
-        # being one, and a vector of it expecting "invalid" would pass for that reason.
+        # being one, and a vector of it expecting "invalid" would pass for that reason. The row
+        # names the flag that does check it, for whoever pointed this at the wrong directory.
         fmt = pack.get("format")
         if isinstance(fmt, str) and fmt != "polaris-authenticity-pack/1":
-            print("%-34s SKIPPED (not an authenticity pack: a %s)" % (name, fmt))
+            flag = _FLAG_FOR_FORMAT.get(fmt)
+            print("%-34s SKIPPED (a %s, not an authenticity pack: %s)"
+                  % (name, fmt, "check it with " + flag if flag else "no flag checks it, see the README"))
+            skipped["not an authenticity pack"] = skipped.get("not an authenticity pack", 0) + 1
+            continue
+        # Nor is an object with none of a pack's fields (an expectation alone, a note): nothing in
+        # it was refused, so it is no negative. Until 2026-10-10 it was compared, and an
+        # `{"_vector": {"expect": "invalid"}}` beside a genuine pack let the run exit 0.
+        if not any(field in pack for field in _PACK_FIELDS):
+            print("%-34s SKIPPED (not an authenticity pack: no %s or %s)"
+                  % (name, ", ".join(_PACK_FIELDS[:-1]), _PACK_FIELDS[-1]))
             skipped["not an authenticity pack"] = skipped.get("not an authenticity pack", 0) + 1
             continue
         meta = pack.get("_vector") if isinstance(pack.get("_vector"), dict) else {}
@@ -5471,6 +5487,21 @@ class _Parser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
         self.exit(4, "%s: error: %s\n" % (self.prog, message))
+
+
+#: The flag that checks another artifact from the command line, and for a link of a chain the mode
+#: flag it is read beside (_MODE_FLAGS). --verify-dir skips such an artifact and names this, so a
+#: stranger who points it at the wrong directory learns where the file is checked.
+_FLAG_FOR_FORMAT = {
+    _AGENT_GRANT_FORMAT: "--agent-grant",
+    _AGENT_PROOF_FORMAT: "--agent-proof beside --agent-grant",
+    _HOLDER_BINDING_FORMAT: "--holder-binding beside --agent-grant",
+    _GRANT_REVOCATION_FORMAT: "--grant-revocation beside --agent-grant",
+    _EPOCH_CHECKPOINT_FORMAT: "--epoch-checkpoint beside --zk-proof",
+    _MANIFEST_FORMAT: "--trusted-manifest beside --zk-proof",
+    _STATUS_ASSERTION_FORMAT: "--status-assertion beside --pack",
+    _PRESENTATION_FORMAT: "--presentation",
+}
 
 
 #: The flags each mode reads, beyond the crypto mode. A flag the chosen mode would ignore is

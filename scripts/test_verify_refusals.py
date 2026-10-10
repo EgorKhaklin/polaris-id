@@ -955,9 +955,46 @@ class VerifyDirHoldsEveryPackToItsExpectation(unittest.TestCase):
         trust_list["_vector"] = {"expect": "invalid"}
         code, out = self.run_dir({"a-genuine.json": self.GENUINE, "b-trust-list.json": trust_list})
         self.assertTrue(self.row(out, "b-trust-list.json").endswith(
-            " SKIPPED (not an authenticity pack: a polaris-trust-list/1)"), out)
+            " SKIPPED (a polaris-trust-list/1, not an authenticity pack: no flag checks it, see the README)"), out)
         self.assertIn("1 skipped: not an authenticity pack", out.splitlines()[-1])
         self.assertEqual(code, 2, out)
+
+    def test_another_artifact_is_skipped_with_the_flag_that_checks_it(self):
+        how = {"polaris-agent-grant/1": "check it with --agent-grant",
+               "polaris-agent-proof/1": "check it with --agent-proof beside --agent-grant",
+               "polaris-holder-binding/1": "check it with --holder-binding beside --agent-grant",
+               "polaris-grant-revocation/1": "check it with --grant-revocation beside --agent-grant",
+               "polaris-epoch-checkpoint/1": "check it with --epoch-checkpoint beside --zk-proof",
+               "polaris-federation-manifest/1": "check it with --trusted-manifest beside --zk-proof",
+               "polaris-status-assertion/1": "check it with --status-assertion beside --pack",
+               "polaris-presentation/1": "check it with --presentation"}
+        names = {fmt: "%s.json" % fmt.split("/")[0] for fmt in how}
+        code, out = self.run_dir({names[fmt]: {"format": fmt, "_vector": {"expect": "invalid"}} for fmt in how})
+        for fmt, check in how.items():
+            with self.subTest(fmt):
+                self.assertEqual(self.row(out, names[fmt]), "%-34s SKIPPED (a %s, not an authenticity pack: %s)"
+                                 % (names[fmt], fmt, check))
+        self.assertEqual(self.closing(out), ["0 of 8 as expected",
+                                             "8 skipped: not an authenticity pack; " + self.NO_WITNESS])
+        self.assertEqual(code, 2, out)
+        # Each flag named is one its mode reads, so the advice runs rather than exiting 4.
+        modes = {"--agent-grant": "--agent-grant", "--zk-proof": "--zk-proof",
+                 "--pack": "--pack with --status-assertion", "--presentation": "--presentation"}
+        for check in V._FLAG_FOR_FORMAT.values():
+            flag, _, beside = check.partition(" beside ")
+            self.assertIn(flag[2:].replace("-", "_"), V._MODE_FLAGS[modes[beside or flag]], check)
+
+    def test_an_object_with_no_pack_field_is_not_a_pack(self):
+        # No format, token, algorithm, signature or key: nothing was refused, so it is not a negative
+        # that passed. Until 2026-10-10 it was compared, and beside a genuine pack the run exited 0.
+        no_field = "SKIPPED (not an authenticity pack: no format, token_value, algorithm, signature_hex or public_key_hex)"
+        code, out = self.run_dir({"a-genuine.json": self.GENUINE, "b-empty.json": {"_vector": {"expect": "invalid"}}})
+        self.assertEqual(self.row(out, "b-empty.json"), "%-34s %s" % ("b-empty.json", no_field))
+        self.assertIn("1 skipped: not an authenticity pack", out.splitlines()[-1])
+        self.assertNotEqual(code, 0, out)
+        code, out = self.run_dir({"a-genuine.json": self.GENUINE, "c-note.json": {"_note": "the key is in anchors/"}})
+        self.assertEqual(self.row(out, "c-note.json"), "%-34s %s" % ("c-note.json", no_field))
+        self.assertNotEqual(code, 0, out)
 
     def test_a_pack_no_witness_can_verify_is_skipped_with_its_cause(self):
         files = {"a-genuine.json": self.GENUINE, "b-key-of-the-wrong-length.json": self.wrong_length("invalid")}
@@ -997,7 +1034,7 @@ class VerifyDirHoldsEveryPackToItsExpectation(unittest.TestCase):
         artifact = {"format": "polaris-trust-list/1", "_vector": {"expect": "invalid"}}
         for label, vector, closing in (
                 ("an expectation and nothing else", {"_vector": {"expect": "invalid"}},
-                 ["1 of 1 as expected", self.NO_WITNESS]),
+                 ["0 of 1 as expected", "1 skipped: not an authenticity pack; " + self.NO_WITNESS]),
                 ("the placeholder", self.PLACEHOLDER, ["1 of 1 as expected", self.NO_WITNESS]),
                 ("another artifact", artifact,
                  ["0 of 1 as expected", "1 skipped: not an authenticity pack; " + self.NO_WITNESS]),
