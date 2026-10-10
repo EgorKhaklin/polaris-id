@@ -150,7 +150,7 @@
   {
    "id": "disclosed-exp",
    "changed": "exp travels in a Disclosure instead of the payload",
-   "class": "spec",
+   "class": "spec-implied",
    "layer": "sd-jwt-vc",
    "clauses": [
     {
@@ -165,7 +165,7 @@
   {
    "id": "disclosed-iss",
    "changed": "iss travels in a Disclosure instead of the payload",
-   "class": "spec",
+   "class": "spec-implied",
    "layer": "sd-jwt-vc",
    "clauses": [
     {

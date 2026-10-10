@@ -228,9 +228,13 @@ VECTORS = (
      {"payload": _dup_first_digest}, "reject"),
     ("claim-overwrite", "a Disclosure names a claim the payload already holds in the clear", "spec", "sd-jwt", (RFC9901_EXISTS,),
      {"payload": _set(given_name="Max")}, "reject"),
-    ("disclosed-exp", "exp travels in a Disclosure instead of the payload", "spec", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
+    # spec-implied: SD-JWT VC draft-19 s2.2.2.3 constrains the issuer's format, and its verification
+    # section adds no verifier refusal for a disclosed exp.
+    ("disclosed-exp", "exp travels in a Disclosure instead of the payload", "spec-implied", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
      {"payload": _drop("exp"), "extra": ((_salt("exp"), "exp", NOW + 365 * 86400),)}, "reject"),
-    ("disclosed-iss", "iss travels in a Disclosure instead of the payload", "spec", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
+    # spec-implied: SD-JWT VC draft-19 s2.2.2.3 constrains the issuer's format, and its verification
+    # section adds no verifier refusal for a disclosed iss.
+    ("disclosed-iss", "iss travels in a Disclosure instead of the payload", "spec-implied", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
      {"payload": _drop("iss"), "extra": ((_salt("iss"), "iss", ISSUER),), "mode": "jwks"}, "reject"),
     ("disclosure-four-elements", "an object-property Disclosure with four elements", "spec", "sd-jwt", (RFC9901_THREE,),
      {"extra": ((_salt("nationality"), "nationality", "DE", "extra"),)}, "reject"),
