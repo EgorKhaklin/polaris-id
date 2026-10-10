@@ -91,7 +91,7 @@ docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=polariskex \
     "$PG_IMAGE" >/dev/null
 
 for _ in $(seq 1 60); do docker exec "$PG" pg_isready -q -h 127.0.0.1 2>/dev/null && break; sleep 1; done
-docker exec "$PG" pg_isready -q -h 127.0.0.1 || { echo "polaris-internal-kex-drill: postgres did not come up" >&2; docker logs "$PG" 2>&1 | tail -20; exit 1; }
+docker exec "$PG" pg_isready -q -h 127.0.0.1 || { echo "polaris-internal-kex-drill: postgres did not come up" >&2; { docker logs "$PG" 2>&1 || true; } | tail -20; exit 1; }
 
 docker cp "$WORK/server.crt" "$PG:/tmp/server.crt" >/dev/null
 docker cp "$WORK/server.key" "$PG:/tmp/server.key" >/dev/null
@@ -109,7 +109,7 @@ for _ in $(seq 1 30); do
 done
 docker exec -e PGPASSWORD=polariskex "$PG" psql -U postgres -tAc "SHOW ssl" 2>/dev/null \
     | tr -d '[:space:]' | grep -qx on \
-    || { echo "polaris-internal-kex-drill: postgres did not come up with TLS on" >&2; docker logs "$PG" 2>&1 | tail -20; exit 1; }
+    || { echo "polaris-internal-kex-drill: postgres did not come up with TLS on" >&2; { docker logs "$PG" 2>&1 || true; } | tail -20; exit 1; }
 
 docker build -q -f polaris_web/Dockerfile.pgbouncer -t polaris-pgbouncer:kexdrill polaris_web >/dev/null
 docker run -d --name "$PB" --network "$NET" \

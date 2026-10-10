@@ -13,7 +13,7 @@ psycopg-binary==3.3.6
 # package scan installs this lock with 3.12, so it is pinned here for both.
 typing-extensions==4.16.0
 certifi==2026.7.22
-charset-normalizer==3.5.1
+charset-normalizer==3.5.2
 click==8.5.0
 dnspython==2.8.0
 idna==3.20

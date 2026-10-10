@@ -26,7 +26,7 @@
 #
 # Build context is polaris_web/ (see docker-compose.prod.yml: context: .).
 # ============================================================================
-FROM caddy:2.11.4-builder-alpine@sha256:b6a94e74b72261bd536b35acdd22f3577d4e466a9550f2c8d6c8ed6413085d72 AS builder
+FROM caddy:2.11.4-builder-alpine@sha256:0aa610043dab5da82ad0a0268e46bb852785e6f5160f12f1c6fe3f42903d7e1b AS builder
 
 # Compile the edge rate-limiter into the binary. Add future --with plugins here.
 #
@@ -63,7 +63,7 @@ RUN for attempt in 1 2 3 4; do \
         sleep $((attempt * 20)); \
     done
 
-FROM caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+FROM caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
 
 # Every Polaris image carries the same provenance labels; the version is
 # passed in by scripts/polaris-image-build.sh from polaris_web/__version__.py.

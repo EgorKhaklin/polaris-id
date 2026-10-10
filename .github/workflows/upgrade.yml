@@ -8,7 +8,10 @@
 # checkout to this commit, and runs polaris-generate-secrets.sh and polaris-deploy.sh prod. It
 # then requires no migration pending, every Polaris container on the image this commit builds,
 # a credential issued after the upgrade verifying, and the one issued before still valid, its
-# pack unchanged and verifying against the old key.
+# pack unchanged and verifying against the old key. Between the two, a release that cannot start
+# is deployed and must be rolled back to the image it replaced. The job runs Docker's containerd
+# image store, the default on a clean install of Docker Engine 29 and later, where a rollback by
+# image ID found no image once the build had moved the tag.
 #
 # It builds two releases' images, so pull requests run it only when a path it exercises
 # changed. It also runs on every push to main, nightly, and by hand.
@@ -56,6 +59,21 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+
+      - name: Docker's containerd image store, as a clean install of Docker Engine 29 has it
+        run: |
+          set -e
+          sudo python3 - <<'EOF'
+          import json, os
+          path = "/etc/docker/daemon.json"
+          conf = json.load(open(path)) if os.path.exists(path) and os.path.getsize(path) else {}
+          conf.setdefault("features", {})["containerd-snapshotter"] = True
+          json.dump(conf, open(path, "w"), indent=2)
+          EOF
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter.v1 \
+            || { echo "::error::Docker is not on the containerd image store"; docker info; exit 1; }
+          echo "Docker $(docker version --format '{{.Server.Version}}') on the containerd image store"
 
       - name: Upgrade the previous release (scripts/polaris-upgrade-drill.sh)
         run: bash scripts/polaris-upgrade-drill.sh

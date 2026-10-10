@@ -118,7 +118,7 @@ Volumes:
 | Anchor the transparency logs in Bitcoin | Daily, or at the cadence you choose | `./scripts/polaris-chain-anchor.py checkpoint`, `ots stamp`, later `ots upgrade`, `verify`, `polaris-id anchor-record`; see [Anchoring the logs in Bitcoin](#anchoring-the-logs-in-bitcoin) |
 | Certificate transparency check | Daily (cron) | `./scripts/polaris-ct-monitor.sh`: alerts on unexpected cert issuance for `${POLARIS_DOMAIN}`; see [Certificate transparency monitoring](#certificate-transparency-monitoring) |
 | Audit-log rotation | Yearly (cron) | `./scripts/polaris-rotate-logs.sh --actor-user-id=N`: archive from the retention policy, verify, purge, in one cron-ready pipeline (`--cutoff-days` overrides the policy with one fixed cutoff) |
-| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH`: scrypt-hashed AppUser + AuthAuditLog entry |
+| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH --reason TEXT`: scrypt-hashed AppUser + AuthAuditLog entry |
 | Scrape `/metrics` | Continuous (Prometheus) | `curl http://app:8000/metrics` from the stack network: Prometheus text-format exposition; see [Prometheus metrics](#prometheus-metrics-metrics) for the required edge ACL |
 | Rotate `POLARIS_SECRET_KEY` | 180 days | `./scripts/polaris-rotate-secret.sh polaris_secret_key` |
 | Rotate DB password | 180 days | `./scripts/polaris-rotate-secret.sh polaris_db_password` |
@@ -1262,6 +1262,11 @@ polaris-id rp-policy <client_id> --no-require-zk \
 polaris-id rp-history <client_id>              # every decision, and who made it
 polaris-id rp-history --weakened-only          # only the bars that were lowered
 ```
+
+On the Docker stack the database answers only on the stack's network, so
+[`scripts/polaris-rp-register.sh`](../../scripts/polaris-rp-register.sh) runs `rp-register`'s
+statements as the schema owner through the postgres container, with the same options; `rp-policy`
+and `rp-history` still need a connection as the schema owner.
 
 A change that REDUCES what the party must satisfy (the zero-knowledge step-up turned
 off, a required enrollment dropped, the context restriction lifted, the scope widened,

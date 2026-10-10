@@ -22,6 +22,9 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 HERE="${ROOT}/lab/strategy/006"
 OUT="${HERE}/out"
 SECRETS="${ROOT}/polaris_web/secrets"
+# It recreates a service from the host's image tags (building it if missing): one build or deploy at a time.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the lab rotation"
 export COMPOSE_PROJECT_NAME=polaris-try POLARIS_DOMAIN=localhost
 export POLARIS_COMPOSE_EXTRA="-f ${ROOT}/polaris_web/docker-compose.citest.yml -f ${HERE}/names.yml"
 COMPOSE=(docker compose -f "${ROOT}/polaris_web/docker-compose.prod.yml"
@@ -69,8 +72,15 @@ anchors() { python3 -c 'import json,sys; json.dump({"public_keys_hex": sys.argv[
 step "1/6 register K1 (the key try.sh minted) for agency 1, then issue credential A under it"
 K1=$(pub "${SECRETS}/polaris_signing_key")
 if [[ -z "$(sql "SELECT 1 FROM AuthorityKeyCurrent WHERE agency_id = 1 AND public_key_hex = '${K1}'")" ]]; then
-    key_event register 1 "${K1}" --note "rotate.sh: the key try.sh minted"
+    # --current: the key the running app signs with, read from its custody, which is K1 (checked below:
+    # credential A verifies under the registered key).
+    key_event register 1 --current --note "rotate.sh: the key try.sh minted, read from the app's custody"
 fi
+# try.sh issued its credential before any registration; --current registers K1 from its first
+# signature, so that credential is authorized at signing too (the fresh-install review, 2026-10-09).
+TRY=$(field "${OUT}/pack.json" token_id)
+[[ "$(facts "${TRY}")" == "True True True" ]] || fail "try.sh's credential, issued before the registration: $(facts "${TRY}")"
+ok "credential #${TRY}, issued by try.sh before K1 was registered, is authorized at signing"
 issue A
 A=$(field "${OUT}/pack-A.json" token_id)
 [[ "$(field "${OUT}/pack-A.json" public_key_hex)" == "${K1}" ]] || fail "credential A was not signed by K1"

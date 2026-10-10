@@ -9,7 +9,7 @@
 -c requirements.txt
 
 # ---- Test-only: property testing (10 Hypothesis tests) ----
-hypothesis>=6.168.1,<7.0
+hypothesis>=6.168.3,<7.0
 
 # ---- Test-only: pytest (ZK two-witness suites, v9.44/v9.46) ----
 # polaris_zk/witness2/test_witness2.py and polaris_web/test_zk_second_witness.py
@@ -26,13 +26,13 @@ playwright>=1.63.0,<2.0
 # scripts/polaris-coverage.sh runs the suites under coverage, combines them, and
 # gates CI on a line-coverage floor. Subprocess coverage (test_cli shells into
 # polaris.py) relies on coverage.process_startup(), which this provides.
-coverage>=7.16.1,<8.0
+coverage>=7.16.2,<8.0
 
 # ---- Lint: ruff (v9.306) ----
 # The pyflakes-family hygiene gate (unused imports, unused locals, undefined
 # names, placeholder-free f-strings), configured in ruff.toml with select = F.
 # Run by the pre-commit hook and the CI "Ruff" step; formatting is not enforced.
-ruff==0.16.9
+ruff==0.16.10
 
 # ---- Test-only: PyYAML (the pre-commit config's detection test) ----
 # polaris_checks/test_checks.py parses .pre-commit-config.yaml to hold the hooks to one
