@@ -424,6 +424,43 @@ function-owner's privileges.
 
 **Residual risk:** LOW.
 
+### E-E5: a restore gives the application role back what the schema revoked
+
+**Scenario:** a backup is restored into a database already initialised,
+as the stack's is after its first start (the documented recovery and
+the PostgreSQL major-version upgrade). `pg_restore --clean` recreates
+every table and routine, each takes the database's default privileges
+(`09_grants.sql` grants `polaris_app` SELECT, INSERT, UPDATE and DELETE
+on new tables and EXECUTE on new routines), and pg_dump records grants
+as a difference from PostgreSQL's built-in default, so the narrowing is
+never replayed. A compromised application then writes the append-only
+tables, the counts and the registers, updates any column of `AppUser`,
+and runs the owner-only retention routines. Measured on 2026-10-10: a
+same-major restore into a try.sh stack changed 86 of `polaris_app`'s
+privileges, and reported success.
+
+**Affected:** `scripts/polaris-restore.sh` into an initialised database
+(`--target=docker-stack`, or a host database `setup.sh` set up), and the
+single-table reload DR.md section 4.2 once documented.
+
+**Controls:**
+- The restore sets the target's schema default privileges aside before
+  `pg_restore`, so the dump's grants and default privileges land as they
+  were; database-wide default privileges are refused before anything is
+  restored
+- Afterwards every table, column, routine and sequence the dump holds,
+  the public schema and the default privileges must carry the ACLs the
+  same dump gives a new database, and every object the dump lists must
+  be in that reference, or the restore exits 11
+  (`scripts/test_restore_schema_check.py`)
+- DR.md no longer reloads one table from a dump
+
+**Residual risk:** LOW. The check proves fidelity to the backup, not to
+policy: a backup taken from a database already widened restores
+widened. Before the fix, a widened restore lasted until a deploy re-ran
+`09_grants.sql`, and a revoke made only by a migration (DELETE on
+`EnrollmentCode`) not even then.
+
 ---
 
 ## P: the physical card
@@ -577,7 +614,7 @@ least one threat where it serves as a control:
 
 | Constraint | Threats it controls |
 |---|---|
-| C1 (append-only) | T-T1, R-R1, R-R2 |
+| C1 (append-only) | T-T1, R-R1, R-R2, E-E5 |
 | C2 (ZK→token_id NULL) | I-I2, R-R2 |
 | C3 (one active per individual) | T-T1 |
 | C4 (atomic increment) | D-D2 |

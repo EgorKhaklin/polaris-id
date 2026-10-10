@@ -201,6 +201,42 @@ class FlakeClassifierTests(unittest.TestCase):
             "pull access denied for polaris/nope, repository does not exist")
         self.assertNotEqual(name, "registry-5xx")
 
+    def test_a_docker_hub_rate_limit_is_a_known_flake(self):
+        """Runs 37988431584 and 37988697783: every image build died on Docker Hub's 429.
+
+        The BuildKit line is copied from the log; the daemon line is how `docker pull` and
+        `docker compose` print the same refusal. Before the signature both said
+        'investigate'."""
+        for line in (
+                "ERROR: failed to build: failed to solve: failed to copy: httpReadSeeker: failed "
+                "open: unexpected status code https://registry-1.docker.io/v2/library/postgres/"
+                "manifests/sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+                ": 429 Too Many Requests - Server message: toomanyrequests: You have reached your "
+                "unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit",
+                "Error response from daemon: toomanyrequests: You have reached your "
+                "unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit",
+                # An authenticated account's own limit: the same flake, another remedy.
+                "Error response from daemon: toomanyrequests: You have reached your pull rate "
+                "limit as 'polarisbot': 0123abcd. You may increase the limit by upgrading. "
+                "https://www.docker.com/increase-rate-limit"):
+            with self.subTest(line=line[60:100]):
+                verdict, name, advice = ship.classify_failure_log(line)
+                self.assertEqual((verdict, name), ("flake", "dockerhub-rate-limit"))
+                self.assertIn("wait, then rerun", advice)
+                self.assertIn("docker login", advice)
+                self.assertIn("higher tier", advice)
+
+    def test_a_removed_image_beats_the_rate_limit(self):
+        """A log carrying both answers is the definite one: registry-removal, not a flake.
+
+        One job's 429 must not turn another job's removed image into "wait and rerun"."""
+        verdict, name, _advice = ship.classify_failure_log(
+            "Error response from daemon: toomanyrequests: You have reached your "
+            "unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit\n"
+            "pull access denied for minio/minio, repository does not exist or may require "
+            "'docker login'")
+        self.assertEqual((verdict, name), ("upstream", "registry-removal"))
+
     def test_the_apt_index_flake_still_classifies(self):
         for line in ("E: Failed to fetch http://azure.archive.ubuntu.com",
                      "Hash Sum mismatch",

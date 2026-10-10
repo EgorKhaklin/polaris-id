@@ -198,25 +198,30 @@ MANIFEST=$(find "$WORK" -name MANIFEST.json | head -1)
     jq -r '.sha256 | to_entries[] | "\(.value)  \(.key)"' MANIFEST.json | sha256sum -c)
 DUMP=$(find "$WORK" -name polaris.dump | head -1)
 
-# 3. Extract only the affected table from the custom-format dump.
-TARGET_TABLE=identitytoken
-pg_restore -t "$TARGET_TABLE" -f "$WORK/restore-${TARGET_TABLE}.sql" "$DUMP"
-
-# 4. Drop and reload it inside one transaction (CASCADE if FKs depend on it;
-#    read the generated SQL first).
-docker compose -f polaris_web/docker-compose.prod.yml cp "$WORK/restore-${TARGET_TABLE}.sql" postgres:/tmp/
+# 3. If the log names an index, rebuild it in place; the table's rows are untouched.
 docker compose -f polaris_web/docker-compose.prod.yml exec postgres \
-    psql -U postgres -d polaris -v ON_ERROR_STOP=1 \
-    -c "BEGIN;" -c "DROP TABLE ${TARGET_TABLE} CASCADE;" -f "/tmp/restore-${TARGET_TABLE}.sql" -c "COMMIT;"
+    psql -U postgres -d polaris -v ON_ERROR_STOP=1 -c "REINDEX TABLE identitytoken;"
+
+# 4. Damaged or lost rows: recover the cluster to a point before the damage (section 4.3).
+#    Without WAL archiving, restore the newest backup whole into the stack, as section 4.3 says.
 
 # 5. Re-run /api/health and the failing queries.
 ```
 
-**Audit-of-record concern:** restoring an audit-class table
-(`TokenLifecycleEvent`, `VerificationEvent`, `AuthAuditLog`) from a dump older
-than the corruption loses the events written in between. WAL replay (section
-4.3) preserves every event up to the chosen target time. Prefer section 4.3
-for audit-class tables.
+Do not drop one table and reload it from the dump. `pg_restore -t` writes the
+table, its rows, its grants and its inline CHECK and NOT NULL constraints, and
+none of its triggers, indexes, primary-key, unique or foreign-key constraints,
+or row-level security policies: the reload removes the state-machine
+and audit triggers and the authority-isolation policy, and `CASCADE` drops the
+other tables' foreign keys to it. The new table also takes the database's
+default privileges, so `polaris_app` could write what `09_grants.sql` revokes.
+A whole restore with `scripts/polaris-restore.sh` keeps all of them and checks
+the privileges (exit 11 otherwise).
+
+**Audit-of-record concern:** a restore from a dump older than the corruption
+loses the events written in between (`TokenLifecycleEvent`,
+`VerificationEvent`, `AuthAuditLog` among them). WAL replay (section 4.3)
+preserves every event up to the chosen target time.
 
 ### 4.3 Database corruption: full cluster
 

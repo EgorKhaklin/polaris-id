@@ -33,6 +33,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Under real signing, possession routes accept a signature only under a key its authority had registered; a planted signature row vouches for nothing.
 - The application role can no longer insert, update or delete a credential's signatures; `polaris migrate-population` runs as the schema owner.
 - By setting only its session's timezone, the application role could date signatures, audit rows and revocations up to fourteen hours off and approve a recovery before its cool-down ended; every routine, column default and view that reads the clock now reads UTC.
+- A restore into an initialised database, as the recovery runbook and the major-version upgrade do it, gave the application role back what the schema revokes: writes to the append-only tables, the counts and the registers, UPDATE on every column of AppUser, and the owner-only retention routines. The recreated objects took the database's default privileges. `polaris-restore.sh` now restores the backup's privileges as they were and checks them against the dump (exit 11 otherwise); DR.md no longer reloads one table from a dump, which also dropped its triggers and policies.
 
 ### Fixed
 
@@ -167,6 +168,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- The stack, the chart and CI run Redis 8 (was 7.4) and HAProxy 3.4, a long-term-support release (was 3.1, no longer maintained). Redis 8 is offered under AGPLv3 as well as the RSALv2 and SSPLv1 of 7.4.
 - The chart spreads its replicated pods across nodes and zones, runs two edge, router and pgbouncer pods, and moves Redis.
 - The HA profile and the chart replicate synchronously by default; a failover loses no acknowledged write (lab record 017).
 - Dependabot groups each directory's minor and patch updates into one pull request per run.

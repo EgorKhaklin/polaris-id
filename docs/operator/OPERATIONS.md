@@ -85,7 +85,7 @@ below.
 | `app` | `polaris-app:prod` (built from `Dockerfile.prod`) | Flask + gunicorn (`WEB_CONCURRENCY`, default 4) | 8000 |
 | `pgbouncer` | `polaris-pgbouncer:prod` (built from `Dockerfile.pgbouncer`) | Session-mode connection pool in front of Postgres (transaction mode is refused: it would hand one request's operator scope to the next) | 6432 |
 | `postgres` | `polaris-postgres:prod` (built from `Dockerfile.postgres`: `postgres:16-alpine` plus pgBackRest) | Database | 5432 |
-| `redis` | `redis:7-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
+| `redis` | `redis:8-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
 
 Volumes:
 - `pg_data` (named): Postgres data
@@ -633,6 +633,7 @@ Exit codes (greppable for incident response):
 | 8 | Filesystem audit-of-record restore failed |
 | 9 | `docker` not available (when `--target=docker-stack`) |
 | 10 | `schema_version` diverges from `migrations/`, or cannot be read (`--verify-schema-version`) |
+| 11 | The restored privileges are not the backup's, or cannot be checked: every table, column, routine and sequence the dump holds, the public schema and the default privileges must carry the ACLs the same dump gives a new database. Also refused before anything is restored: a target with database-wide default privileges |
 
 After restore:
 
