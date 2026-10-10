@@ -855,6 +855,51 @@ class DeployRefusesWhenItCannotTellWhichSecretsTheStackMounts(_Base):
         self.assertIn("every secret file the stack mounts is present", out)
 
 
+class StackSecretsReadTheResolvedStack(unittest.TestCase):
+    """The deploy's pre-flight once read the compose file as text, and a quoted POLARIS_*_FILE value
+    dropped that secret from its list without a word (a review of the fix3 pre-flight, 2026-10-10).
+    scripts/polaris_stack_secrets.py reads `docker compose config --format json` instead, where
+    Compose has already resolved the quoting: a quoted value names its secret exactly as a bare one."""
+
+    def setUp(self):
+        if not shutil.which("docker") or subprocess.run(["docker", "compose", "version"],
+                                                        capture_output=True).returncode != 0:
+            if os.environ.get("CI") == "true":
+                self.fail("Docker Compose is missing in CI")
+            self.skipTest("no Docker Compose on this host")
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="polaris-stack-secrets-"))
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        (self.dir / "secrets").mkdir()
+        (self.dir / "secrets" / "x").write_text("x\n")
+
+    def parse(self, value, mounted):
+        (self.dir / "c.yml").write_text(
+            "services:\n  app:\n    image: alpine\n    environment:\n      POLARIS_X_FILE: %s\n" % value
+            + ("    secrets: [x]\n" if mounted else "")
+            + "secrets:\n  x:\n    file: ./secrets/x\n")
+        env = dict(os.environ, DOCKER_HOST="unix:///nonexistent/docker.sock")
+        cfg = subprocess.run(["docker", "compose", "-f", str(self.dir / "c.yml"), "config", "--format", "json"],
+                             cwd=self.dir, env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(cfg.returncode, 0, cfg.stderr)
+        return subprocess.run([sys.executable, str(ROOT / "scripts" / "polaris_stack_secrets.py"), str(self.dir / "secrets")],
+                              input=cfg.stdout, capture_output=True, text=True, timeout=30)
+
+    def test_a_quoted_value_names_its_secret_as_a_bare_one_does(self):
+        want = os.path.realpath(self.dir / "secrets" / "x")
+        for value in ('"/run/secrets/x"', "'/run/secrets/x'", "/run/secrets/x"):
+            with self.subTest(value=value):
+                r = self.parse(value, mounted=True)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                files = [os.path.realpath(line[len("FILE "):]) for line in r.stdout.splitlines() if line.startswith("FILE ")]
+                self.assertEqual(files, [want], r.stdout)   # paths compared resolved: /var is /private/var on macOS
+
+    def test_a_quoted_value_whose_secret_is_not_mounted_is_refused_by_name(self):
+        for value in ('"/run/secrets/x"', "'/run/secrets/x'"):
+            with self.subTest(value=value):
+                r = self.parse(value, mounted=False)
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertIn("BAD app sets POLARIS_X_FILE=/run/secrets/x, a secret it does not mount", r.stdout)
+
 class GeneratorRefusesADirectoryWhereASecretBelongs(unittest.TestCase):
     """docker creates a directory at a bind source that is missing when the stack starts, and `-s`
     is true for a directory: the generator said the secret existed and never wrote it, so a host
