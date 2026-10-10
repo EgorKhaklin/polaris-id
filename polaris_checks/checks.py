@@ -6452,12 +6452,40 @@ def check_workflows_reach_the_app_role(root: pathlib.Path) -> list[Finding]:
                "role its password, so the privilege-boundary tests connect as polaris_app")
 
 
+# 2026-10-10: the release's SBOM steps ran only when a release was cut, so a step added on 10-02
+# failed for the first time on v1.0.0-rc.71's release. A pull request that changes how the SBOMs
+# are made now runs the build, and the build sits in sbom-build.yml: a read-only job with no OIDC
+# identity, whose files the attesting job in sbom.yml holds to the digests it reported.
+_SBOM_PR_PATHS = (".github/workflows/sbom.yml", ".github/workflows/sbom-build.yml",
+                  "scripts/polaris-sbom-enrich.py", ".github/sbom/**",
+                  "scripts/polaris-image-build.sh", "polaris_web/Dockerfile*", "polaris_web/requirements*.txt")
+
+
 def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
-    wf = _read(root, ".github/workflows/sbom.yml")
-    if not wf:
+    release_wf = _read(root, ".github/workflows/sbom.yml")
+    if not release_wf:
         return _fail("sbom", ".github/workflows/sbom.yml is missing; releases ship no SBOM")
-    if "release:" not in wf:
+    if "release:" not in release_wf:
         return _fail("sbom", "sbom.yml is not triggered on release")
+    if not re.search(r"(?m)^  schedule:\n\s+- cron:", release_wf):
+        return _fail("sbom", "sbom.yml has no schedule: an upstream base image that drifts past the NTIA "
+                     "minimum elements shows only when the next release is cut")
+    pr = re.search(r"(?m)^  pull_request:\n    paths:\n((?:      - .*\n)+)", release_wf + "\n")
+    listed = {p.strip().strip("-").strip().strip("\"'") for p in pr.group(1).splitlines()} if pr else set()
+    missing = [p for p in _SBOM_PR_PATHS if p not in listed]
+    if missing:
+        return _fail("sbom", "a pull request that changes how the SBOMs are made does not run their build "
+                     "before a release needs it: sbom.yml's pull_request paths lack " + ", ".join(missing))
+    build_wf = _read(root, ".github/workflows/sbom-build.yml")
+    if build_wf:
+        if "uses: ./.github/workflows/sbom-build.yml" not in release_wf:
+            return _fail("sbom", "sbom-build.yml exists but sbom.yml does not call it")
+        if re.search(r"(?m)^\s*id-token:\s*write", build_wf):
+            return _fail("sbom", "sbom-build.yml asks for an OIDC identity: the build must not be able to sign")
+        if "needs.build.outputs.sha256" not in release_wf:
+            return _fail("sbom", "the attesting job does not hold the SBOMs to the digests the build reported")
+    # The build's steps first, as they run; a release workflow with no separate build is read alone.
+    wf = build_wf + "\n" + release_wf
     if "spdx-json" not in wf:
         return _fail("sbom", "sbom.yml does not generate SPDX-format SBOMs")
     # All five images plus the python surface must be covered. The images are
@@ -6522,6 +6550,10 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
     sbom = _read(root, ".github/workflows/sbom.yml")
     if not sbom:
         return _fail("sbom_trivy", ".github/workflows/sbom.yml is missing")
+    sbom += "\n" + _read(root, ".github/workflows/sbom-build.yml")
+    if not re.search(r"aquasec/trivy:[0-9]", sbom):
+        return _fail("sbom_trivy", "the SBOM generator (sbom.yml, sbom-build.yml) names no Trivy version, "
+                     "so nothing holds it to the scanner's")
     versions = set(re.findall(r"aquasec/trivy:([0-9][0-9.]*)", ci + sbom))
     if not versions:
         return _fail("sbom_trivy", "no aquasec/trivy version found in the workflows")
@@ -6792,7 +6824,8 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
                      "see two controls refused: another tag's identity, and provenance asked of "
                      "an architecture's digest")
     trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", wf))
-    sbom_trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", _read(root, ".github/workflows/sbom.yml")))
+    sbom_trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", _read(root, ".github/workflows/sbom.yml")
+                                + _read(root, ".github/workflows/sbom-build.yml")))
     if not trivy or trivy != sbom_trivy:
         return _fail(name, f"{rel} generates the registry SBOMs with Trivy {sorted(trivy)}, "
                      f"sbom.yml with {sorted(sbom_trivy)}; the two must be one version")

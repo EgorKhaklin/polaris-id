@@ -3017,13 +3017,17 @@ def test_sbom_workflow_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
     wf.mkdir(parents=True)
     sbom = wf / "sbom.yml"
+    # Every fixture runs on a release and on a pull request that changes how the SBOMs are made, so
+    # each case below fails for its own reason.
+    PR = ("  pull_request:\n    paths:\n" + "".join('      - "%s"\n' % p for p in checks._SBOM_PR_PATHS))
+    ON = "on:\n  release:\n    types: [published]\n" + PR + "  schedule:\n    - cron: \"23 5 * * 1\"\n"
 
     # No workflow at all -> releases ship no SBOM.
     assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
         "must FAIL when sbom.yml is absent"
 
     # Present but missing an image and the upload step.
-    sbom.write_text("on:\n  release:\n    types: [published]\n"
+    sbom.write_text(ON +
                     "jobs:\n  sbom:\n    steps:\n"
                     "      - run: trivy fs --format spdx-json /src\n"
                     "      - run: docker build -t polaris-app:sbom .\n"
@@ -3031,7 +3035,7 @@ def test_sbom_workflow_check_discriminates(tmp_path):
     assert checks.check_sbom_workflow(tmp_path)[0].level == "FAIL", \
         "must FAIL when not all five images are covered"
 
-    sbom.write_text("on:\n  release:\n    types: [published]\n"
+    sbom.write_text(ON +
                     "jobs:\n  sbom:\n    steps:\n"
                     "      - run: trivy fs --format spdx-json --output sbom-python.spdx.json /src\n"
                     "      - run: |\n"
@@ -3099,6 +3103,36 @@ def test_sbom_workflow_check_discriminates(tmp_path):
         "must PASS with release trigger, SPDX, all five images, python, the NTIA minimum " \
         "elements filled and checked before attesting, and upload before publishing"
 
+    def found():
+        return checks.check_sbom_workflow(tmp_path)[0]
+
+    # The release path runs only at a release: a pull request changing it runs nothing.
+    sbom.write_text(head.replace(PR, "") + "      - run: |\n" + install + fill + judge + attest + publish)
+    assert found().level == "FAIL" and "pull_request paths lack" in found().message, found().message
+    sbom.write_text(head.replace('      - "scripts/polaris-sbom-enrich.py"\n', "") + "      - run: |\n"
+                    + install + fill + judge + attest + publish)
+    assert "scripts/polaris-sbom-enrich.py" in found().message, "must name the path a pull request would not run"
+    sbom.write_text(head.replace("  schedule:\n    - cron: \"23 5 * * 1\"\n", "") + "      - run: |\n"
+                    + install + fill + judge + attest + publish)
+    assert found().level == "FAIL" and "no schedule" in found().message, found().message
+
+    # The build split out: a read-only job with no OIDC identity, its files held to its digests.
+    build = wf / "sbom-build.yml"
+    gen = head[head.index("jobs:"):].replace("jobs:\n  sbom:", "jobs:\n  build:") + "      - run: |\n" + install + fill + judge
+    caller = (ON + "jobs:\n  build:\n    uses: ./.github/workflows/sbom-build.yml\n"
+              "  publish:\n    needs: [build]\n    steps:\n"
+              "      - run: test \"$WANT\" = \"${{ needs.build.outputs.sha256 }}\"\n" + attest + publish)
+    build.write_text("on:\n  workflow_call:\n" + gen)
+    sbom.write_text(caller)
+    assert found().level == "OK", f"must PASS a split build that sbom.yml calls and holds to its digests: {found().message}"
+    sbom.write_text(caller.replace("uses: ./.github/workflows/sbom-build.yml", "runs-on: ubuntu-latest"))
+    assert found().level == "FAIL" and "does not call it" in found().message, found().message
+    sbom.write_text(caller.replace("${{ needs.build.outputs.sha256 }}", "anything"))
+    assert found().level == "FAIL" and "digests" in found().message, found().message
+    sbom.write_text(caller)
+    build.write_text("on:\n  workflow_call:\npermissions:\n  id-token: write\n" + gen)
+    assert found().level == "FAIL" and "OIDC identity" in found().message, found().message
+
 
 def test_sbom_trivy_match_check_discriminates(tmp_path):
     wf = tmp_path / ".github" / "workflows"
@@ -3115,6 +3149,19 @@ def test_sbom_trivy_match_check_discriminates(tmp_path):
     sbom.write_text("env:\n  TRIVY_IMAGE: aquasec/trivy:0.58.1\n")
     assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "OK", \
         "must PASS when both use the same Trivy version"
+
+    # The generator split into sbom-build.yml: its pin is read there, and one is required.
+    (wf / "sbom-build.yml").write_text("env:\n  TRIVY_IMAGE: aquasec/trivy:0.58.1\n")
+    sbom.write_text("jobs:\n  build:\n    uses: ./.github/workflows/sbom-build.yml\n")
+    assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "OK", \
+        "must PASS when the reusable build pins the scanner's version"
+    (wf / "sbom-build.yml").write_text("env:\n  TRIVY_IMAGE: aquasec/trivy:0.59.0\n")
+    assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the reusable build's Trivy differs from the scanner's"
+    (wf / "sbom-build.yml").write_text("env: {}\n")
+    found = checks.check_sbom_trivy_matches_scan(tmp_path)[0]
+    assert found.level == "FAIL" and "names no Trivy version" in found.message, \
+        "must FAIL when the generator names no version at all, rather than passing on the scanner's alone"
 
 
 def test_supply_chain_pins_check_discriminates(tmp_path):
@@ -3148,7 +3195,7 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
     broken(".github/workflows/ci.yml",
            "redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0",
            "redis:8-alpine", "must FAIL when a CI service image runs by tag")
-    broken(".github/workflows/sbom.yml",
+    broken(".github/workflows/sbom-build.yml",
            "aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
            "aquasec/trivy:0.58.1", "must FAIL when the SBOM generator runs by tag")
     broken("polaris_web/docker-compose.yml",
@@ -3202,6 +3249,7 @@ def test_release_provenance_check_discriminates(tmp_path):
 
 def test_release_images_signed_check_discriminates(tmp_path):
     files = (".github/workflows/release-images.yml", ".github/workflows/sbom.yml",
+             ".github/workflows/sbom-build.yml",
              "docs/operator/VERIFY-RELEASE.md", "scripts/polaris-pin-chart-images.py")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)

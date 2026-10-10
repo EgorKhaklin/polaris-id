@@ -33,6 +33,11 @@
 # self-built images (app, caddy, pgbouncer, postgres, etcd). Image SBOMs require the
 # built image, so this rebuilds them at the release tag; that is release-cadence
 # work, not per-push, so the cost is acceptable.
+#
+# The build is .github/workflows/sbom-build.yml, a read-only job with no OIDC identity; the job
+# here that attests and publishes runs no build step and attests only the files the build
+# reported, digest for digest. A pull request that changes how the SBOMs are made or what they
+# describe runs the build too, and so does a weekly run on main: read-only, attesting nothing.
 # ============================================================================
 
 name: SBOM + provenance per release
@@ -45,25 +50,35 @@ on:
         required: true
   release:
     types: [published]
+  # A change to how the SBOMs are made, or to what they describe, runs the build before a release.
+  pull_request:
+    paths:
+      - ".github/workflows/sbom.yml"
+      - ".github/workflows/sbom-build.yml"
+      - "scripts/polaris-sbom-enrich.py"
+      - ".github/sbom/**"
+      - "scripts/polaris-image-build.sh"
+      - "polaris_web/Dockerfile*"
+      - "polaris_web/requirements*.txt"
+  # Weekly on main, read-only: a base image or package that drifts upstream into something the NTIA
+  # minimum elements cannot name shows here before the next release needs it.
+  schedule:
+    - cron: "23 5 * * 1"
 
 # Read-only by default; the job that attaches, attests and publishes asks for its writes itself.
 permissions:
   contents: read
 
-env:
-  # The one place the SBOM generator's Trivy version lives in THIS file. It
-  # must equal the image-cve-scan pin in ci.yml (checked by polaris_checks).
-  TRIVY_IMAGE: aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7
-
 jobs:
-  sbom:
-    name: Generate, attest and attach the SBOMs, then publish the draft
+  resolve:
+    name: Resolve the draft release
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
-      contents: write        # attach assets to the draft release and publish it
-      id-token: write        # OIDC identity for keyless Sigstore signing
-      attestations: write    # store the SLSA provenance attestation
+      contents: write        # a draft release is visible only with write access
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - name: Resolve the draft release
         id: tag
@@ -84,95 +99,42 @@ jobs:
           [ "$draft" = "true" ] \
             || { echo "::error::$TAG is already published, and a published release is immutable: it cannot take the SBOMs"; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout at the release tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+  build:
+    name: Generate the SBOMs and hold them to SPDX 2.3 and the NTIA minimum elements
+    needs: [resolve]
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'schedule' || needs.resolve.result == 'success') }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/sbom-build.yml  # zizmor: ignore[self-repository] -- a job's ./ reusable workflow is read at the caller's own commit, not from the runner's workspace
+    with:
+      ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'schedule' && github.sha || needs.resolve.outputs.tag }}
+      version: ${{ needs.resolve.outputs.version }}
+
+  publish:
+    name: Attest the SBOMs the build made, attach them to the draft, then publish it
+    needs: [resolve, build]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # attach assets to the draft release and publish it
+      id-token: write        # OIDC identity for keyless Sigstore signing
+      attestations: write    # store the SLSA provenance attestation
+    steps:
+      - name: Take the SBOMs the build job made
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          persist-credentials: false
-          ref: ${{ steps.tag.outputs.tag }}
+          name: sbom
+          path: sbom
 
-      - name: Python runtime surface SBOM (SPDX)
-        run: |
-          mkdir -p sbom
-          # Mount the source read-only and an output dir read-write; Trivy
-          # writes the SPDX doc to the bind-mounted /out path.
-          docker run --rm \
-            -v "$PWD/polaris_web:/src:ro" \
-            -v "$PWD/sbom:/out" \
-            "$TRIVY_IMAGE" fs --format spdx-json \
-            --output /out/sbom-python.spdx.json /src/requirements.txt
-          test -s sbom/sbom-python.spdx.json || { echo "::error::python SBOM empty"; exit 1; }
-
-      - name: Build the five self-built images
-        run: |
-          bash scripts/polaris-image-build.sh --stack sbom
-
-      - name: Image SBOMs (SPDX)
-        run: |
-          for name in app caddy pgbouncer postgres etcd; do
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD/sbom:/out" \
-              "$TRIVY_IMAGE" image --format spdx-json \
-              --output "/out/sbom-image-${name}.spdx.json" "polaris-${name}:sbom"
-            test -s "sbom/sbom-image-${name}.spdx.json" \
-              || { echo "::error::image SBOM for ${name} empty"; exit 1; }
-          done
-
-      - name: Validate every SBOM is SPDX 2.3
-        run: |
-          fail=0
-          for f in sbom/*.spdx.json; do
-            ver=$(python3 -c "import json,sys; print(json.load(open('$f')).get('spdxVersion',''))")
-            n=$(python3 -c "import json,sys; d=json.load(open('$f')); print(len([p for p in d.get('packages',[]) if p.get('name')]))")
-            echo "$f -> $ver, $n packages"
-            [ "$ver" = "SPDX-2.3" ] || { echo "::error::$f is not SPDX-2.3"; fail=1; }
-            [ "$n" -ge 1 ] || { echo "::error::$f lists no packages"; fail=1; }
-          done
-          [ "$fail" = 0 ] || exit 1
-
-      # The 2021 NTIA minimum elements, and valid SPDX 2.3, before anything is attested. Trivy
-      # leaves suppliers, the subject's version and the author short and copies license names
-      # that are not on the SPDX list; scripts/polaris-sbom-enrich.py fills each from facts the
-      # SBOM and the release hold (and fails, naming the component, where it holds none). The
-      # SPDX project's checker then decides, and the verdict is read from its JSON report: the
-      # SBOM must be conformant AND carry no validation message. Its own non-zero exit would end
-      # the step before naming the SBOM and printing the report, so it is not what decides here.
-      # A failure leaves the draft.
-      - name: Meet the NTIA minimum elements, judged by the SPDX project's checker
+      - name: Hold them to the digests the build job reported
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
+          WANT: ${{ needs.build.outputs.sha256 }}
         run: |
-          python3 -m venv "$RUNNER_TEMP/sbom-check"
-          "$RUNNER_TEMP/sbom-check/bin/pip" install --quiet --require-hashes -r .github/sbom/requirements.txt
-          PY="$RUNNER_TEMP/sbom-check/bin/python"
-          V="${TAG#v}"
-          # Trivy ran as root in its container, so the SBOMs are root-owned and the enrichment
-          # below could not rewrite them (v1.0.0-rc.71's first run: PermissionError). The runner
-          # owns sbom/, so a copy renamed over each file makes it the runner's.
-          for f in sbom/*.spdx.json; do
-            cp "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
-            [ -w "$f" ] || { echo "::error::$f is still not writable by the runner"; exit 1; }
-          done
-          # The Caddy main module and the lockfile are built here; everything else names its own.
-          "$PY" scripts/polaris-sbom-enrich.py --version "$V" --ours requirements.txt sbom/sbom-python.spdx.json
-          "$PY" scripts/polaris-sbom-enrich.py --version "$V" --ours caddy sbom/sbom-image-caddy.spdx.json
-          "$PY" scripts/polaris-sbom-enrich.py --version "$V" \
-            sbom/sbom-image-app.spdx.json sbom/sbom-image-pgbouncer.spdx.json \
-            sbom/sbom-image-postgres.spdx.json sbom/sbom-image-etcd.spdx.json
-          fail=0
-          for f in sbom/*.spdx.json; do
-            "$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "$f" > "$RUNNER_TEMP/verdict.json" || true
-            if jq -e '.isConformant == true and (.validationMessages | length) == 0' \
-                "$RUNNER_TEMP/verdict.json" > /dev/null; then
-              echo "$f: NTIA minimum elements met, valid SPDX 2.3"
-            else
-              echo "::error::$f does not meet the NTIA minimum elements or is not valid SPDX 2.3"
-              "$RUNNER_TEMP/sbom-check/bin/ntia-checker" "$f" || true
-              fail=1
-            fi
-          done
-          [ "$fail" = 0 ] || exit 1
+          [ -n "$WANT" ] || { echo "::error::the build job reported no digests"; exit 1; }
+          got=$(cd sbom && sha256sum ./*.spdx.json | sort -k2)
+          [ "$got" = "$WANT" ] || { echo "::error::the SBOMs are not the ones the build job made"; printf 'built:\n%s\ntaken:\n%s\n' "$WANT" "$got"; exit 1; }
 
       # P0.6 — SLSA build-provenance over every SBOM, signed keyless through
       # GitHub OIDC + Sigstore (Fulcio cert, Rekor transparency log). Each SBOM
@@ -203,7 +165,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           gh release upload "$TAG" sbom/*.spdx.json sbom/sbom-provenance.intoto.jsonl --clobber
           gh release edit "$TAG" --draft=false
@@ -212,8 +174,8 @@ jobs:
   # a published release must carry the six SBOMs and a bundle that verifies each of them.
   verify:
     name: The published release carries its SBOMs and their provenance
-    needs: [sbom]
-    if: always() && (github.event_name == 'release' || needs.sbom.result == 'success')
+    needs: [publish]
+    if: always() && (github.event_name == 'release' || needs.publish.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
