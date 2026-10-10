@@ -301,6 +301,11 @@ REVOKE INSERT, UPDATE, DELETE ON AgencyQuota FROM polaris_app;
 -- the application role recorded an IAL2 proofing, remote and unsupervised, resting on no evidence.
 REVOKE INSERT, UPDATE, DELETE ON EnrollmentProofing FROM polaris_app;
 REVOKE INSERT, UPDATE, DELETE ON EnrollmentEvidence FROM polaris_app;
+-- An enrollment code is live state behind a one-way-door trigger (hash, channel, issuance and expiry
+-- immutable, redemption once, attempts only up), which guards UPDATE only. Migration 2026-09-11-017
+-- revoked DELETE, so a code that was issued or redeemed cannot be erased and reissued with no attempts
+-- counted; until 2026-10-10 this file did not, and every deploy's --sync-objects granted it back.
+REVOKE DELETE ON EnrollmentCode FROM polaris_app;
 -- 2026-09-26: the referee vouchings, where an assurance level is minted from somebody's word.
 -- Nothing the application runs writes them (referee.record_vouching has no route); with INSERT the
 -- application role recorded 26 vouchings by an unproofed referee with no co-signer.

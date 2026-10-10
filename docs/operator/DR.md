@@ -69,7 +69,9 @@ its `archive_command` executes on the database host. A managed service (RDS,
 Cloud SQL, Azure Flexible Server) does not run this image, so its recovery
 point and point-in-time restore are the provider's, and the drill above does
 not measure them. The procedures in section 4 that call `pgbackrest` are
-replaced by the provider's restore console in that deployment.
+replaced by the provider's restore console in that deployment. Such a database
+is initialised by [`scripts/polaris-db-init.sh`](../../scripts/polaris-db-init.sh)
+([ENCRYPTION-AT-REST.md, Option B](ENCRYPTION-AT-REST.md#option-b-managed-postgres-with-storage-layer-encryption)).
 
 **Standby survives the primary.** Streaming replication keeps a standby within
 seconds of the primary and meets the 300 s target more tightly than the
@@ -198,25 +200,30 @@ MANIFEST=$(find "$WORK" -name MANIFEST.json | head -1)
     jq -r '.sha256 | to_entries[] | "\(.value)  \(.key)"' MANIFEST.json | sha256sum -c)
 DUMP=$(find "$WORK" -name polaris.dump | head -1)
 
-# 3. Extract only the affected table from the custom-format dump.
-TARGET_TABLE=identitytoken
-pg_restore -t "$TARGET_TABLE" -f "$WORK/restore-${TARGET_TABLE}.sql" "$DUMP"
-
-# 4. Drop and reload it inside one transaction (CASCADE if FKs depend on it;
-#    read the generated SQL first).
-docker compose -f polaris_web/docker-compose.prod.yml cp "$WORK/restore-${TARGET_TABLE}.sql" postgres:/tmp/
+# 3. If the log names an index, rebuild it in place; the table's rows are untouched.
 docker compose -f polaris_web/docker-compose.prod.yml exec postgres \
-    psql -U postgres -d polaris -v ON_ERROR_STOP=1 \
-    -c "BEGIN;" -c "DROP TABLE ${TARGET_TABLE} CASCADE;" -f "/tmp/restore-${TARGET_TABLE}.sql" -c "COMMIT;"
+    psql -U postgres -d polaris -v ON_ERROR_STOP=1 -c "REINDEX TABLE identitytoken;"
+
+# 4. Damaged or lost rows: recover the cluster to a point before the damage (section 4.3).
+#    Without WAL archiving, restore the newest backup whole into the stack, as section 4.3 says.
 
 # 5. Re-run /api/health and the failing queries.
 ```
 
-**Audit-of-record concern:** restoring an audit-class table
-(`TokenLifecycleEvent`, `VerificationEvent`, `AuthAuditLog`) from a dump older
-than the corruption loses the events written in between. WAL replay (section
-4.3) preserves every event up to the chosen target time. Prefer section 4.3
-for audit-class tables.
+Do not drop one table and reload it from the dump. `pg_restore -t` writes the
+table, its rows, its grants and its inline CHECK and NOT NULL constraints, and
+none of its triggers, indexes, primary-key, unique or foreign-key constraints,
+or row-level security policies: the reload removes the state-machine
+and audit triggers and the authority-isolation policy, and `CASCADE` drops the
+other tables' foreign keys to it. The new table also takes the database's
+default privileges, so `polaris_app` could write what `09_grants.sql` revokes.
+A whole restore with `scripts/polaris-restore.sh` keeps all of them and checks
+the privileges (exit 11 otherwise).
+
+**Audit-of-record concern:** a restore from a dump older than the corruption
+loses the events written in between (`TokenLifecycleEvent`,
+`VerificationEvent`, `AuthAuditLog` among them). WAL replay (section 4.3)
+preserves every event up to the chosen target time.
 
 ### 4.3 Database corruption: full cluster
 
@@ -585,10 +592,10 @@ $COMPOSE restart postgres
 every container start by
 [`polaris_web/pgbackrest-conf.sh`](../../polaris_web/pgbackrest-conf.sh) from
 env; nothing in `pgbackrest.conf` is edited (pgBackRest refuses an option set
-in two files). With no `POLARIS_PGBACKREST_S3_BUCKET` the repo is the local
-volume `/var/lib/pgbackrest`, which does not survive the host; `docker-init.sh`
-prints a warning when archiving is enabled against a local repo. Three
-settings on the postgres service make it offsite:
+in two files). repo1 is always the local volume `/var/lib/pgbackrest`, which
+does not survive the host; `docker-init.sh` prints a warning when archiving is
+enabled with no S3 repo. Three settings on the postgres service add the
+offsite copy as repo2, beside repo1:
 
 ```bash
 export POLARIS_PGBACKREST_S3_BUCKET=<bucket>
@@ -598,34 +605,90 @@ export POLARIS_PGBACKREST_S3_REGION=<region>
 #           _CA_FILE (a private endpoint's CA bundle), _VERIFY_TLS=n (tests only)
 ```
 
-**The S3 key pair** is a root-level secret: it can read, write, and delete
-every backup. It is never env. The renderer exits 3 and the container refuses
-to start if it finds `POLARIS_PGBACKREST_S3_KEY` or
-`POLARIS_PGBACKREST_S3_KEY_SECRET` in its environment, because env leaks
-through `docker inspect`, `docker compose config`, and the process listing.
-The pair goes in the file-mounted fragment that
+pgBackRest's `archive-push` writes each WAL segment to both repositories, and
+the base backups go to each in turn (`polaris-deploy.sh` and `polaris-backup.sh`
+run one `backup --repo=N` per repository). repo2 is encrypted by pgBackRest
+(`repo2-cipher-type=aes-256-cbc`) and keeps two full backups
+(`repo2-retention-full=2`), like repo1. An unreachable bucket fails
+`archive-push`, so WAL accumulates on the primary until it answers, as it did
+when the bucket was the only repository.
+
+**The S3 key pair and the passphrase** are root-level secrets: the pair can
+read, write, and delete every backup, and with the bucket's contents the
+passphrase is the database. Neither is ever env. The renderer exits 3 and the
+container refuses to start if it finds `POLARIS_PGBACKREST_S3_KEY`,
+`POLARIS_PGBACKREST_S3_KEY_SECRET`, or a cipher passphrase
+(`POLARIS_PGBACKREST_*CIPHER_PASS*`, or pgBackRest's own
+`PGBACKREST_REPO2_CIPHER_PASS`) in its environment, because env leaks through
+`docker inspect`, `docker compose config`, and the process listing. It exits 4
+and the container refuses to start if a bucket is set and the fragment holds no
+`repo2-cipher-pass`, or one shorter than 32 characters: the offsite copy is
+encrypted or not written. [`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh)
+runs the same renderer against the host's fragment before it starts anything,
+so a configuration the container would refuse stops the deploy, not the
+database. All three go
+in the file-mounted fragment that
 [`scripts/polaris-generate-secrets.sh`](../../scripts/polaris-generate-secrets.sh)
 creates as a commented template, mounted read-only at
 `/etc/pgbackrest/conf.d/repo-creds.conf`:
 
 ```bash
+openssl rand -base64 48                                   # the passphrase
 $EDITOR polaris_web/secrets/pgbackrest_repo_creds.conf   # uncomment and fill in:
 # [global]
-# repo1-s3-key=<access-key>
-# repo1-s3-key-secret=<secret-key>
+# repo2-s3-key=<access-key>
+# repo2-s3-key-secret=<secret-key>
+# repo2-cipher-pass=<the passphrase, 32 characters or more>
 ```
 
+Keep a copy of the passphrase off the host, with the other recovery secrets:
+a host lost with its only copy leaves an offsite copy nobody can restore. It
+cannot be changed for an existing repository; a new passphrase means a new
+`_PATH` and a new stanza there.
+
+**Migration: an install whose repo1 was the bucket.** Until 2026-10-10 a bucket
+replaced the local repository as repo1, unencrypted unless the operator added a
+cipher. After the upgrade, `polaris-deploy.sh` refuses before it starts anything,
+and the postgres container refuses to start, until the fragment is updated:
+
+1. In the fragment, rename `repo1-s3-key` and `repo1-s3-key-secret` to
+   `repo2-s3-key` and `repo2-s3-key-secret`.
+2. If the old repository used no cipher (the default), add a new
+   `repo2-cipher-pass` and point repo2 at a new, empty path in the bucket
+   (`POLARIS_PGBACKREST_S3_PATH=/polaris-enc`, say): pgBackRest cannot encrypt a
+   repository that already holds plaintext. If it used `repo1-cipher-type` and
+   `repo1-cipher-pass` in the fragment, rename the passphrase line to
+   `repo2-cipher-pass`, delete `repo1-cipher-type`, and keep the path: the
+   existing backups become repo2's. A passphrase under 32 characters is
+   refused; that repository needs a new path and a new passphrase instead.
+3. Run `scripts/polaris-deploy.sh prod`. It creates the stanza on the new local
+   repo1 (and on repo2 when its path is new), runs `check` against both, and
+   takes a first full backup in each repository that has none. Confirm both
+   with `pgbackrest --stanza=polaris --repo=1 info` and `--repo=2 info`.
+4. For an old unencrypted path: it is a plaintext copy of the database. Once
+   repo2 holds a full backup newer than the oldest point you may need to
+   restore to, delete the old path from the bucket.
+
+On Kubernetes the image renders the same way: a release with
+`pgbackrest.enabled=true` and `pgbackrest.s3.bucket` set needs the same three
+lines in the Secret's `pgbackrest_repo_creds.conf`
+([`KUBERNETES.md`](KUBERNETES.md)) before it runs this image, or the postgres
+pod refuses to start. The chart leaves archiving off unless it is enabled.
+
 An operator with a different repo type (Azure, GCS, SFTP) mounts their own
-read-only `/etc/pgbackrest/conf.d/repo.conf`; the renderer leaves a mounted
-file alone.
+read-only `/etc/pgbackrest/conf.d/repo.conf`; the renderer does not rewrite a
+mounted file, and refuses one (as it refuses a fragment) that configures a
+repository off the host, any `repoN-type` but `posix`, without
+`repoN-cipher-type` or with `repoN-cipher-type=none`.
 
 **The base backups.** A point-in-time restore starts from a base backup; the
 archive alone cannot. [`scripts/polaris-deploy.sh`](../../scripts/polaris-deploy.sh)
 runs `stanza-create` and `check`, prints the fix-up command if either fails, and
-takes the first full backup when the repository holds none.
+takes the first full backup in each repository that holds none.
 [`scripts/polaris-backup.sh`](../../scripts/polaris-backup.sh), on its daily
-schedule, takes one after its dump: a full when the newest full is a week old,
-a differential otherwise, each recorded in `BackupEvent`. Taking them is also
+schedule, takes one per repository after its dump: a full when that
+repository's newest full is a week old, a differential otherwise, each recorded
+in `BackupEvent`. Taking them is also
 what expires old WAL (the repository keeps two fulls and the archive they
 need); a deployment that never runs `polaris-backup.sh` keeps every segment,
 and PolarisBackupStale pages after 26 hours. By hand, inside the postgres
@@ -636,7 +699,8 @@ COMPOSE="docker compose -f polaris_web/docker-compose.prod.yml"
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris stanza-create
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris check
 # schedule a base backup (daily is typical); the repo keeps two full backups
-$COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris --type=full backup \
+# --repo=2 for the offsite copy: a backup goes to one repository (repo1 by default)
+$COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris --repo=1 --type=full backup \
   && $COMPOSE exec -T postgres psql -U postgres -d polaris -v ON_ERROR_STOP=1 \
        -c "INSERT INTO BackupEvent (kind, location) VALUES ('pgbackrest', 'stanza polaris, full')"
 $COMPOSE exec -u postgres postgres pgbackrest --stanza=polaris info
@@ -650,13 +714,31 @@ hours. `polaris-backup.sh` records its dumps itself.
 Run `pgbackrest --stanza=polaris check` daily; a failing check means WAL is
 piling up on the primary and the recovery point is drifting (SEV-2).
 
+**Restoring from the offsite copy** when the host and its repo1 are gone: on
+the new host, put the same fragment (key pair and passphrase) and the same
+`POLARIS_PGBACKREST_S3_*` settings in place, then restore with
+`pgbackrest --stanza=polaris --repo=2 restore` into an empty data directory, as
+the drill below does. The weekly restore check (`polaris-restore-verify.sh`)
+restores repo1 and, when repo2 is configured, runs
+`pgbackrest --stanza=polaris --repo=2 --set=<newest> verify`: that reads the
+newest offsite backup and the WAL it needs from the bucket and decrypts them,
+and a failure fails the check (nothing is recorded, and
+PolarisRestoreUnverified pages after 8 days). It reads that backup from the
+bucket every week, which an egress-billed bucket charges for. It does not
+restore from repo2; the drill below does.
+
 **Proof.** Two CI round-trips exercise archive, backup, and restore with WAL
 replay: one against a local repo (job step "pgBackRest archive + backup +
 restore round-trip" in [`ci.yml`](../../.github/workflows/ci.yml)) and one
 offsite against a TLS S3 endpoint (versitygw, digest-pinned) through the same env-and-fragment path an
 operator uses
 ([`scripts/polaris-offsite-drill.sh`](../../scripts/polaris-offsite-drill.sh)),
-which also proves the key-pair-in-env refusal. The RPO/RTO drill in section 1
+which also proves the refusals of secrets in env and of a bucket without a
+passphrase. Its encrypted-repo2 steps (a full backup in both repositories,
+repo2's retention expiring its oldest full, no plaintext in the bucket,
+restores refused without the passphrase, and a restore from repo2 alone after
+repo1 is wiped) were added on 2026-10-10 and are proven when the drill passes
+in CI. The RPO/RTO drill in section 1
 restores from the same repo layout. The Kubernetes chart mounts the same
 credential fragment from a Secret ([`KUBERNETES.md`](KUBERNETES.md)).
 

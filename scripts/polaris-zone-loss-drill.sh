@@ -172,11 +172,11 @@ for _ in $(seq 1 30); do [[ "$(pg "${R0}" 'SELECT count(*) FROM drill.zone_marke
 [[ "$(pg "${R0}" 'SELECT count(*) FROM drill.zone_marker')" == 1 ]] || fail "the replica ${R0} never received the marker"
 wait_sync "${L0}" "${R0}"
 L0NODE=$(kubectl -n "${NS}" get pod "${L0}" -o jsonpath='{.spec.nodeName}')
-ok "leader ${L0} on ${L0NODE} ($(zone_of "${L0NODE}")); the replica ${R0} holds the marker; Redis on $(nodes_of redis | head -1)"
+ok "leader ${L0} on ${L0NODE} ($(zone_of "${L0NODE}")); the replica ${R0} holds the marker; Redis on $(nodes_of redis | sed -n 1p)"
 
 # The write path and the health path, from pods on nodes that stay up.
 survivor() { kubectl -n "${NS}" get pods -l "app.kubernetes.io/component=$1" --field-selector=status.phase=Running \
-                 -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName}{"\n"}{end}' | awk -v n="${L0NODE}" '$2 != n {print $1; exit}'; }
+                 -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName}{"\n"}{end}' | awk -v n="${L0NODE}" '$2 != n && !seen++ {print $1}'; }
 APPPOD=$(survivor app); EDGEPOD=$(survivor caddy)
 [[ -n "${APPPOD}" && -n "${EDGEPOD}" ]] || fail "no app or edge pod off ${L0NODE}"
 cat > "${WORK}/insert.py" <<'EOF'
@@ -241,14 +241,14 @@ done
 ok "${L0} rejoined as a replica after ${rejoin_s}s"
 
 echo "== 6. the node holding Redis is killed =="
-REDISNODE=$(nodes_of redis | head -1)
+REDISNODE=$(nodes_of redis | sed -n 1p)
 [[ -n "${REDISNODE}" ]] || fail "Redis is not running before step 6"
 LNOW=$(leader) || fail "no member leads before step 6"
 wait_sync "${LNOW}" "$([[ "${LNOW}" == "${REL}-postgres-0" ]] && echo "${REL}-postgres-1" || echo "${REL}-postgres-0")"
 held_leader=false
 [[ "$(kubectl -n "${NS}" get pod "${LNOW}" -o jsonpath='{.spec.nodeName}')" == "${REDISNODE}" ]] && held_leader=true
 EDGEPOD=$(kubectl -n "${NS}" get pods -l app.kubernetes.io/component=caddy --field-selector=status.phase=Running \
-          -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName}{"\n"}{end}' | awk -v n="${REDISNODE}" '$2 != n {print $1; exit}')
+          -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName}{"\n"}{end}' | awk -v n="${REDISNODE}" '$2 != n && !seen++ {print $1}')
 [[ -n "${EDGEPOD}" ]] || fail "no edge pod off ${REDISNODE}"
 # A new forward on a new port: the old one may still hold its port for a moment after it is killed.
 kill "${PF_PID}" 2> /dev/null || true; wait "${PF_PID}" 2> /dev/null || true
@@ -260,7 +260,7 @@ t2=$(now)
 docker kill "${REDISNODE}" > /dev/null; STOPPED="${REDISNODE}"
 while :; do
     # Nothing yet off the killed node is an answer, not an error (grep exits 1; set -e would end the drill).
-    moved=$(nodes_of redis | grep -v -x "${REDISNODE}" | head -1 || true)
+    moved=$(nodes_of redis | grep -v -x "${REDISNODE}" | sed -n 1p || true)
     if [[ -n "${moved}" && "$(health)" == "200 healthy" ]]; then redis_s=$(( $(now) - t2 )); break; fi
     (( $(now) - t2 > CEIL_HEALTH )) && fail "Redis did not run again off ${REDISNODE} with the edge healthy within ${CEIL_HEALTH}s ($(health))"
     sleep 3

@@ -49,6 +49,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 STABLE
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_total BIGINT;
@@ -105,6 +106,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 STABLE
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_dormant BIGINT;

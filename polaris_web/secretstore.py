@@ -6,8 +6,10 @@ Until now the production secrets (the session key, the DB passwords, the
 replicator password, the signing key file, the TLS keys, the pgBackRest key
 pair) lived as plaintext files in polaris_web/secrets/ and nowhere else. That
 directory is now the MATERIALIZED form only. The source of truth is a sealed
-store, polaris_web/secrets.sealed/, whose contents are useless without a key
-that is not on the disk next to them:
+store, polaris_web/secrets.sealed/, whose contents are useless without the key
+that unseals them. Where that key lives decides what a copy of the disk holds
+(docs/operator/SECRETS.md, section 5): an age identity in a file on the same
+host travels with the disk; one on a hardware token, or a KMS key, does not.
 
   age      each secret encrypted to the operator's age recipients (a public
            key; the identity that decrypts can live on a hardware token via an
@@ -17,7 +19,9 @@ that is not on the disk next to them:
            with the data key (the file name is the AAD) and the wrapped key is
            stored beside it. Decrypt needs kms:Decrypt on the key, which is an
            IAM decision, not a file on the host.
-  file     no sealing (the pre-P1.3 layout). Kept for development.
+  file     no sealing: the plaintext directory is the store. It is the
+           default, so polaris-doctor.sh and every start of polaris.service
+           say that the secrets are plaintext on the disk.
 
 Operations: seal (plaintext dir -> sealed dir), unseal (sealed dir -> a
 destination the deploy points at a tmpfs, so plaintext exists only in RAM

@@ -33,11 +33,19 @@
 -- signed in. The same reason polaris_database_setting exists: a bound the caller can move is
 -- not a bound. Every product decision reads this instead; check_no_session_date_in_sql
 -- refuses CURRENT_DATE in the product's SQL.
+--
+-- 2026-10-09 (THREAT-MODEL): the same holds one level down. The instant columns are TIMESTAMP
+-- without a zone, so a bare CURRENT_TIMESTAMP stored into one, or compared with one, is read in
+-- the caller's zone: polaris_app set Etc/GMT-14 and uc1 dated a signature fourteen hours ahead,
+-- and uc9_complete_recovery approved before the cool-down ended. Every routine in this file that
+-- reads the clock therefore carries SET timezone = 'UTC'; a CREATE OR REPLACE without it would
+-- reset the pin, so check_database_instants_read_the_utc_clock refuses one.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION polaris_utc_date()
 RETURNS DATE
 LANGUAGE sql STABLE PARALLEL SAFE
 SET search_path = pg_catalog, pg_temp
+SET timezone = 'UTC'
 AS $$
     SELECT (now() AT TIME ZONE 'UTC')::date
 $$;
@@ -92,6 +100,7 @@ CREATE OR REPLACE FUNCTION uc1_issue_and_activate(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_individual_id  INTEGER;
@@ -113,7 +122,7 @@ BEGIN
     -- Step 1b: refuse issuance under a deprecated algorithm. uc6_migrate_algorithm
     -- already refuses to migrate a token TO a deprecated algorithm; uc1 must not
     -- mint a brand-new ACTIVE token under one either (it would be a live token
-    -- signed with an algorithm the system already considers retired/weakened —
+    -- signed with an algorithm the system already considers retired/weakened:
     -- exactly what the algorithm-as-data, post-quantum-migration design prevents).
     PERFORM 1 FROM CryptographicAlgorithm
      WHERE algorithm_id = p_algorithm_id
@@ -147,7 +156,7 @@ BEGIN
     -- so the M:N invariant (every token has >= 1 active signature) is
     -- satisfied from the moment the token exists. v9.58: the signature bytes
     -- now come from the app's signing module (polaris_web/pqc_signing.py) via
-    -- p_signature_bytes — a real ML-DSA-65 signature when POLARIS_USE_REAL_PQC=1
+    -- p_signature_bytes: a real ML-DSA-65 signature when POLARIS_USE_REAL_PQC=1
     -- and liboqs are present, a deterministic SHA3-256 binding of token_value
     -- otherwise. Direct SQL callers that pass NULL fall back to the legacy
     -- deterministic string, so existing tooling and tests are unaffected.
@@ -175,7 +184,7 @@ BEGIN
     -- Step 6-7: activate (UC-1 steps 6-7). Set the audit-trigger context GUCs
     -- so the AFTER UPDATE trigger writes a properly-attributed lifecycle event.
     -- This replaces the explicit INSERT INTO TokenLifecycleEvent that used to
-    -- live here — the database now guarantees the audit row.
+    -- live here: the database now guarantees the audit row.
     PERFORM set_config('polaris.actor_agency_id', p_issuing_agency_id::TEXT, true);
     PERFORM set_config('polaris.reason_code',     'POST_BIOMETRIC_ENROLLMENT', true);
 
@@ -232,6 +241,7 @@ LANGUAGE plpgsql
 -- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_lost_individual_id     INTEGER;
@@ -407,6 +417,7 @@ CREATE OR REPLACE FUNCTION uc5_bind_device(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_token_status VARCHAR(20);
@@ -576,6 +587,7 @@ LANGUAGE plpgsql
 -- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_issuing_agency_id INTEGER;
@@ -760,6 +772,7 @@ CREATE OR REPLACE PROCEDURE uc9_initiate_recovery(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_active_count   INTEGER;
@@ -955,6 +968,7 @@ LANGUAGE plpgsql
 -- not weaken any gate; search_path is pinned so the elevated body cannot be redirected.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_individual_id     INTEGER;
@@ -1233,6 +1247,7 @@ CREATE OR REPLACE PROCEDURE uc6_migrate_algorithm(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_token_exists  INTEGER;
@@ -1338,6 +1353,7 @@ CREATE OR REPLACE PROCEDURE close_anchor_batch(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_pending_count   INTEGER;
@@ -1537,6 +1553,7 @@ LANGUAGE plpgsql
 -- the admin gate below and not through a plain UPDATE by the application role.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_attesting_id  INTEGER;
@@ -1914,6 +1931,7 @@ LANGUAGE plpgsql
 -- be redirected to attacker-controlled objects.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_actor_role         VARCHAR(64);
@@ -2200,6 +2218,15 @@ COMMENT ON PROCEDURE uc_archive_purge IS
 -- must be an admin, as defense in depth. The procedure issues NO DELETE — it
 -- cannot be a covert deletion path.
 -- ============================================================================
+-- In order: (1) the individual must exist; (2) the actor must exist, be an admin, AND be active
+-- (a deactivated admin account must not be able to erase); (3) a non-empty reason is required
+-- (the legal or policy basis); (4) refuse to double-erase by the AUTHORITATIVE log, not the current
+-- name: legal_name has no format constraint beyond non-empty, so a holder whose real name equals the
+-- pseudonym template must not be refused a first, legitimate erasure; (5) pseudonymize the name (a
+-- legitimate UPDATE on the mutable Individual); (6) record the act in the append-only erasure log
+-- (who, when and why, NOT what), with no RAISE NOTICE, which would write id, actor and reason to a
+-- less-controlled sink. The body is byte for byte what the migrations install, so a deploy's
+-- --sync-objects rewrites nothing (scripts/test_sync_objects_parity.py).
 CREATE OR REPLACE PROCEDURE uc_pseudonymize_individual(
     p_individual_id   INTEGER,
     p_actor_user_id   INTEGER,
@@ -2220,7 +2247,6 @@ DECLARE
     v_already      INTEGER;
     v_pseudonym    VARCHAR(200) := 'PSEUDONYMIZED-' || p_individual_id;
 BEGIN
-    -- 1. The individual must exist.
     SELECT legal_name INTO v_current_name
         FROM Individual WHERE individual_id = p_individual_id;
     IF v_current_name IS NULL THEN
@@ -2229,8 +2255,6 @@ BEGIN
             USING ERRCODE = 'foreign_key_violation';
     END IF;
 
-    -- 2. The actor must exist, be an admin, AND be active (a deactivated admin
-    --    account must not be able to erase).
     SELECT role, is_active INTO v_actor_role, v_actor_active
         FROM AppUser WHERE user_id = p_actor_user_id;
     IF v_actor_role IS NULL THEN
@@ -2249,16 +2273,13 @@ BEGIN
             USING ERRCODE = 'insufficient_privilege';
     END IF;
 
-    -- 3. A non-empty reason is required (the legal/policy basis).
     IF p_reason IS NULL OR char_length(trim(p_reason)) = 0 THEN
         RAISE EXCEPTION 'uc_pseudonymize_individual: a non-empty reason is required.'
             USING ERRCODE = 'check_violation';
     END IF;
 
-    -- 4. Refuse to double-erase. Check the AUTHORITATIVE log, not the current
-    --    name: legal_name has no format constraint beyond non-empty, so a
-    --    holder whose real name happens to equal the pseudonym template must
-    --    not be wrongly refused a first, legitimate erasure.
+    -- Refuse to double-erase by consulting the AUTHORITATIVE log, not the name
+    -- (legal_name has no format constraint beyond non-empty).
     SELECT count(*) INTO v_already
         FROM IndividualErasureEvent WHERE individual_id = p_individual_id;
     IF v_already > 0 THEN
@@ -2267,15 +2288,12 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    -- 5. Pseudonymize the name (a legitimate UPDATE on the mutable Individual).
     UPDATE Individual
         SET legal_name = v_pseudonym
         WHERE individual_id = p_individual_id;
 
-    -- 6. Record the act in the append-only erasure log (who/when/why, NOT what).
-    --    No RAISE NOTICE: the IndividualErasureEvent row is the authoritative
-    --    record; re-emitting id/actor/reason to the server log would write them
-    --    to a less-controlled sink, against the erasure intent.
+    -- No RAISE NOTICE: the IndividualErasureEvent row is the authoritative
+    -- record; re-emitting it to the server log is an uncontrolled sink.
     INSERT INTO IndividualErasureEvent
         (individual_id, pseudonym_assigned, erased_by_user_id, reason)
     VALUES
@@ -2302,6 +2320,8 @@ COMMENT ON PROCEDURE uc_pseudonymize_individual IS
 -- deployment that has recorded no decision at all still cannot purge a recent
 -- audit row.
 -- ============================================================================
+-- The final 365 is the schema floor, when nothing is configured at all. The body is byte for byte what
+-- the migrations install, so a deploy's --sync-objects rewrites nothing.
 CREATE OR REPLACE FUNCTION retention_days_for(
     p_table_class  VARCHAR(24),
     p_jurisdiction VARCHAR(10) DEFAULT NULL
@@ -2323,7 +2343,7 @@ LANGUAGE sql STABLE AS $$
             AND rp.superseded_at IS NULL
           ORDER BY rp.effective_from DESC
           LIMIT 1),
-        365   -- the schema floor, when nothing is configured at all
+        365
     );
 $$;
 
@@ -2337,7 +2357,9 @@ CREATE OR REPLACE FUNCTION retention_cutoff(
     p_jurisdiction VARCHAR(10) DEFAULT NULL
 )
 RETURNS TIMESTAMPTZ
-LANGUAGE sql STABLE AS $$
+LANGUAGE sql STABLE
+SET timezone = 'UTC'
+AS $$
     SELECT now() - make_interval(days => retention_days_for(p_table_class, p_jurisdiction));
 $$;
 
@@ -2380,6 +2402,7 @@ LANGUAGE plpgsql
 -- elevated body cannot be redirected.
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_role      VARCHAR(20);
@@ -2462,6 +2485,7 @@ CREATE OR REPLACE PROCEDURE uc_set_retention_policy(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_role    VARCHAR(20);
@@ -2509,6 +2533,7 @@ CREATE OR REPLACE PROCEDURE uc_bulk_issue(p_batch_id INTEGER, INOUT p_rows_issue
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_agency INTEGER; v_algo INTEGER; v_auth VARCHAR(20); v_n INTEGER;
@@ -2634,6 +2659,7 @@ CREATE OR REPLACE FUNCTION uc_issue_credential_copy(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
 DECLARE
     v_token_id    INTEGER;
@@ -2724,6 +2750,7 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
+SET timezone = 'UTC'
 AS $$
     SELECT c.status_index
       FROM CredentialCopy c

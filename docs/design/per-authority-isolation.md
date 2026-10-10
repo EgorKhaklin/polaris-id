@@ -146,11 +146,19 @@ placement decision is the operator's, as the ADR already says of everything else
 
 ## Proven by
 
-`scripts/polaris-authority-isolation-drill.py` on every push: an operator bound to one
-authority cannot read another's credentials **through a raw SQL query**, not merely through the
-application, which is the only version of that claim worth making. It also asserts the
-permissive default, and that holder identity is still visible, so the limitation above stays
-demonstrated rather than merely written down.
+`scripts/polaris-authority-isolation-drill.py` on every push: in the session the application
+scopes to an operator's authority, a **raw SQL query** cannot read another authority's credentials,
+not merely the application's own queries, which is the only version of that claim worth making.
+SQL the operator writes is outside it, as the drill's header says: the scope is a session setting,
+and the SQL console refuses a bound account. It also asserts the permissive default, and that
+holder identity is still visible, so the limitation above stays demonstrated rather than merely
+written down.
+
+The policies on the partitioned event tables (TokenLifecycleEvent, VerificationEvent) live on
+the parent; a partition carries none. So the application role holds no privilege on any partition
+(`polaris_lock_event_partitions`, which the partition manager and the detach both apply): a query
+reaches event rows only through the parent, where the policy applies. Until 2026-10-10 it kept
+SELECT on the partitions, which no product path used.
 
 `check_per_authority_isolation` pins the policies, the operator binding, the permissive default,
 the unguarded-cast trap above, the fact that the scope is applied to every connection `get_db`

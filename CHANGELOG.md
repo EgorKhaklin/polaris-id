@@ -11,9 +11,37 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The application role's password reached the database as plain text on psql's command line at first start; the server now receives a SCRAM verifier.
+
+### Fixed
+
+- A deploy whose PostgreSQL image was another major than its cluster's (a FROM line moved and deployed, as a dependency bump proposes) recreated the database on a cluster that server refuses, and it stayed down until the line went back. `polaris-deploy.sh` now refuses before building, either way, and names the documented upgrade; a Helm upgrade does not check.
+- After the documented major-version upgrade, and after its rollback, pgBackRest's stanza still named the other cluster, so WAL archiving failed (error [028]) until an operator found the stanza upgrade. Both now upgrade the stanza and take a full backup, asking the stack whether it archives; the deploy prints pgBackRest's error and, on [028], the two commands.
+- A managed PostgreSQL, whose owner is not a superuser, could not load the schema as ENCRYPTION-AT-REST.md said; `scripts/polaris-db-init.sh` initialises one after a single grant.
+- A weak application-role password stopped the database's first start after the schema had loaded; it now stops before anything is written.
+- The application role briefly had the public development password while the schema loaded, and kept it if a migration failed; it now gets its own before the load, and an empty one is refused in production.
+- Under pipefail, a pipe into `head`, `grep -q`, `grep -m` or `grep -l`, or an `awk` that exits, failed when the writer outlived the match (SIGPIPE, exit 141), so a check such as the edge-limits drill's "the upstream served the slow body" could pass without firing; 101 such pipes in 40 shell files now read to the end, and `check_shell_pipes_read_to_the_end` refuses a new one.
+- The deploy's secret pre-flight read one compose file and a list kept in the script, so the HA and DR profiles' secrets and the TLS certificates went unchecked, and a deploy that pulled checked the release it started from. It now reads the stack as `docker compose config` resolves it, with its overlays, requires every file the stack mounts from the secrets directory, refuses a setting that names a secret its service does not mount, and checks again after its own `git pull`.
+- OPERATIONS.md's PostgreSQL major-version upgrade read the compose project with `config --no-interpolate`, which Compose 2.38 refuses on the production file's secret binds, so steps 4 and 6 and the rollback stopped before they began; they read it as the deploy does, with polaris.env loaded.
+- The patronictl shorthand in OPERATIONS.md and FAILOVER.md loaded the HA overlay without the blue-green file it extends, so Compose refused it ("app-green has neither an image nor a build context") on the first HA command; it loads the blue-green file before the HA one, as LINUX-SERVER.md and DEPLOYMENT.md do.
+
+### Added
+
+- `scripts/polaris-pg-upgrade-drill.sh` runs OPERATIONS.md's PostgreSQL major-version upgrade (16 to 17) and its rollback as written, and requires every table's rows, the sequences, the catalogue, roles and grants, a credential issued before and pgBackRest's health to be the same on each side; its control must name one audit row changed on the new major. CI runs both nightly and on pull requests that change what they run.
+
+### Changed
+
+- The operability gate in PRODUCTION-READINESS has 29 criteria, 22 PASS: OP-29, a PostgreSQL major-version upgrade drilled there and back as OPERATIONS.md writes it, passes.
+
+## v1.0.0-rc.71 — 2026-10-10 (the application's database role keeps only what it is granted, through restores, deploys and upgrades)
+
+A restore and a deploy no longer give the application's database role back what the schema revokes, and the role reads an event partition only through its parent; an upgrade raises a production database's anonymity floor of one to twenty; an offsite bucket is an encrypted second repository (breaking), and ZK proofs from earlier binaries no longer verify (breaking). The full list follows: 25 security, 89 fixed, 75 added and 42 changed entries.
+
+### Security
+
 - The chart mounted every key of its Secret into the app's pod, the superuser's and the replicator's passwords, both servers' TLS keys and the backup repository's credentials among them; each pod now mounts only the keys it reads, at 0440 (lab record 017).
 - The HA and DR profiles' etcd authenticates its clients, and Patroni's REST API refuses unauthenticated writes; both accepted any container on their networks (lab record 017).
-- ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
+- **Breaking**: ZK proofs are built with Plonky2's zero-knowledge configuration; earlier binaries built sound but non-hiding proofs, which no longer verify.
 - A production database kept the notional sample's anonymity floor of one and closed epochs of two members; it now restores twenty.
 - The access log records method, path and protocol, no longer the query string or the referrer (lab record 017).
 - A restore to an earlier point no longer revives what was withdrawn after it, nor reissues identifiers already issued (lab record 017).
@@ -32,10 +60,27 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The Atlas no longer returns events naming their holders; the access check reads every SQL source.
 - Under real signing, possession routes accept a signature only under a key its authority had registered; a planted signature row vouches for nothing.
 - The application role can no longer insert, update or delete a credential's signatures; `polaris migrate-population` runs as the schema owner.
+- By setting only its session's timezone, the application role could date signatures, audit rows and revocations up to fourteen hours off and approve a recovery before its cool-down ended; every routine, column default and view that reads the clock now reads UTC.
+- A restore into an initialised database, as the recovery runbook and the major-version upgrade do it, gave the application role back what the schema revokes: writes to the append-only tables, the counts and the registers, UPDATE on every column of AppUser, and the owner-only retention routines. The recreated objects took the database's default privileges. `polaris-restore.sh` now restores the backup's privileges as they were and checks them against the dump (exit 11 otherwise); DR.md no longer reloads one table from a dump, which also dropped its triggers and policies.
+- Every deploy gave the application role back DELETE on EnrollmentCode, which migration 2026-09-11-017 revoked: `--sync-objects` re-runs `09_grants.sql`, which grants every table and revokes only what it names. The code's one-way-door trigger guards UPDATE only, so an issued or redeemed code could be erased and reissued with no attempts counted. `09_grants.sql` now revokes it, and a test requires one sync to change nothing a migrated database holds: views and their options, triggers, routines, every role's privileges, default privileges and database settings.
+- The application's database role can no longer read an event partition directly, only through its parent, whose privileges, and on VerificationEvent and TokenLifecycleEvent the authority policies, apply; no product path read one. The partition lock and the detach revoke every privilege on a partition.
 
 ### Fixed
 
-- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when credentials signed for real belong to an authority with no registered key.
+- An upgraded production database kept the notional sample's anonymity floor of one, so `uc11_close_epoch` could close epochs smaller than twenty: the production init sets twenty only when a cluster is first initialised, and no migration or object sync set it. Measured on 2026-10-10: an rc.70 production database upgraded to the tree before this fix read 1 where a fresh install read 20. `polaris-migrate.sh --sync-objects`, which `polaris-deploy.sh`, the Linux installer and the chart's migration Job now run with `POLARIS_ENV=production`, raises exactly that one to twenty, reads it back and stops the upgrade otherwise; a floor the authority set to another value stays, with a warning below twenty, and a database that is not production is not touched. Tested with a stand-in database client; no installation outside this project's own tests exists.
+- The Linux installer went on to its health check when a migration or the object sync failed, and past a Docker service that did not start, a failed image build or a failed secrets generation: each ran inside an `&&` list, which `set -e` does not stop. It now stops at the step that failed and names the command to re-run.
+- A restore lost the database's own settings: `pg_restore` applies `ALTER DATABASE ... SET` and `ALTER ROLE ... IN DATABASE ... SET` only with `--create`, which `polaris-restore.sh` does not use. Restored into a new database, the revocation bound, its window and the anonymity floor fell back to the procedures' defaults and the clock to the server's (on the shipped images the values `09_grants.sql` sets, so only an operator's own values were lost); restored into an initialised one, the target kept its own, a notional-sample floor of one included. `polaris-backup.sh` now records them in the backup under its manifest, and the restore replaces the target's with them, reads them back and exits 12 when they differ or cannot be applied. Backups taken earlier restore as before and say so. The round trip is tested against PostgreSQL in CI, and the format, the quoting and every refusal without a database. No installation outside this project's own tests exists.
+- The documented upgrade (OPERATIONS.md, LINUX-SERVER.md and the release notes) restarted the old images or ran the deploy alone; it now checks out the release, creates any missing secret files and runs the deploy, which re-applies the database objects. An install made at v1.0.0-rc.70 or earlier lacks three files `docker-compose.prod.yml` mounts (`polaris_secret_key_fallbacks`, `polaris_redis_password` and `redis_users.acl`), six with the HA/DR overlays; `polaris-generate-secrets.sh` writes all six. `polaris-deploy.sh` refuses to start while a secret file `docker-compose.prod.yml` mounts and the production configuration validates is missing, and `polaris-generate-secrets.sh` refuses a directory where a secret file belongs (Docker Compose creates one at a missing bind-mounted file, and before 2.30 at a missing secret file) instead of reporting the secret present.
+- `polaris-restore.sh --verify-schema-version` reported every migration missing on every good restore: it read a column `schema_version` does not have and discarded the error. It now judges each migration by its latest event, as `polaris-migrate.sh` does, and fails closed when it cannot read the table.
+- The documented PostgreSQL major-version upgrade deleted the live database volume before the restore was verified, chosen by a name match that could pick another stack's volume. It now keeps the old cluster as a copy until the restore verifies, finds the volume by its compose labels, refuses a second run, and documents a rollback.
+- The README said all eight outside libraries and tools presented through a wallet built here; SpruceID's adapter and ERICA ran their own wallet harnesses. Its OpenID Certified badge now names the certified version, 1.0.0rc7.
+- Under real signing, the relying-party route refused a credential with no issuance record: every credential a recovery issued, and every credential once the audit purge reached its record (five years under either retention template; credentials are valid for ten). Its key check dated by that record; it now dates such a credential by its first signature, written in the transaction that made it.
+- A revocation past the rate bound showed "An internal database error occurred"; the console now asks for a co-signing authority.
+- Run with `sudo` on a systemd host, the documented upgrade, rotation and first-operator commands failed for want of `POLARIS_DOMAIN`; the scripts now read `polaris.env` as the unit does.
+- A sealed secret store set up as SECRETS.md said left `polaris.service` reading the shredded plaintext directory at its next start; an empty `POLARIS_SECRETS_DIR` is now refused.
+- SECRETS.md said a sealed store's key is not on its disk; an age identity kept on the host is. The doctor and every start now say when the secrets are plaintext on disk.
+- DEPLOYMENT.md's first-operator command omitted the `--reason` the script requires.
+- The install guides did not say to register the signing key, without which every relying-party verification is refused; the doctor now fails when an active credential signed for real is under a key its authority had not registered when it was signed, names the key, and warns to re-issue what no registration can fix.
 - The scaling documents no longer present the signature check's rate per core as the verification route's capacity, nor unmeasured worker, replica and host scaling as measured.
 - A caught-up replica of an idle HA cluster no longer reads as lagging; reads stayed on the primary (lab record 017).
 - SECRETS.md still said Redis runs without a password.
@@ -50,11 +95,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - KEY-CEREMONY.md rotated keys with a trust-anchors file the running app never reads; it now rotates through the key register.
 - The enrolment-fold concurrency test's control changes an enrolled person's jurisdiction for real, so earlier tests cannot leave it with nothing to fold.
 - deploy/README described a single-PostgreSQL Helm chart and OPERATIONS an unrestricted metrics edge; both now match the code.
+- On Kubernetes each edge replica kept its own TLS state: a restart ordered its certificate again and two replicas served different roots; the chart keeps one internal root, serves and reloads a cert-manager Secret (`edge.tls=secret`), and runs ACME on one replica's kept volume.
 - PQC-POSTURE no longer says Falcon signing time depends on the message: measured natively (record 015, step 4), it does not; the signer stays experimental while FIPS 206 is a draft.
 - A population migration counts a credential as migrated only when its target signature has no deprecation date; one already set to lapse is refused with the re-issue instruction instead of the database's error.
 - The rolling-deploy drill, backup and restore read compose's output whole before matching it; under pipefail an early grep -q exit could SIGPIPE compose and fail a check that had passed.
 - The internal-hop key-exchange drill retries a TLS probe that returned nothing and names one that never ran, instead of reporting an empty measurement.
 - The trigger mutation drill credits a mutation only when the tests that failed fail again, so a flaky test can no longer hide an untested refusal.
+- The failover drills compare acknowledged inserts by identity: two totals read while writes continued once reported a landed write lost in CI and could hide a real loss; the Kubernetes drill now fails on any loss under synchronous replication.
 - Every documented install reaches the current candidate; a bare `pip install` gets 0.1.0, which predates every fix in SECURITY.md.
 - The plug-and-play matrix tests the SDKs' current candidates on a genuine and a tampered credential, not npm's `latest`.
 - The EU-library lab wallet's lockfile carried nine OSV advisories (Bouncy Castle 1.83, Kotlin 2.2.21); it pins fixed releases.
@@ -67,11 +114,53 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp serves the request object with `Cache-Control: no-store`, as the German EUDI wallet guide's request_uri response does.
 - The record 007 Pomerium demo maps `*.localhost.pomerium.io` to loopback itself; public DNS stopped resolving it.
 - CI's coverage floors are enforced again: since 2026-09-30 a failed coverage export left them comparing nothing, and passing.
+- A fresh install named no step to register its signing key, so relying parties refused its credentials; `polaris-key-event.sh register <agency> --current` registers it from its first signature, so credentials issued before it verify too, and the installer, a deploy and the doctor name it.
+- `polaris-key-event.sh` never registers a retired or compromised key again, and one authority's key events run one at a time.
 - The trigger refusal drill no longer reports a refusal untested when the test that caught it failed inside a subtest beside a flaky one.
 - Two C1 privilege-boundary tests no longer fail when a trigger's random fold runs inside them.
+- The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
+- The SQL console runs one statement per query; a second statement could lift its five-second limit.
+- SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
+- A credential's page and both investigation pages read its verifications through an index, not a full scan.
+- Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.
+- The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
+- The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
+- A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
+- A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
+- Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
+- Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
+- A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
+- The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
+- The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
+- A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
+- A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
+- A credential's page read its device bindings and revocations by scanning those tables.
+- Record pages' tables scroll at phone width, and their hard-coded pill colours (3.49:1) take the theme.
+- The public walkthrough said post-quantum signing protects against coercion; it now marks where each rule is enforced.
+- An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
+- The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
+- The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
+- A failed deploy did not roll back on Docker's containerd image store (Engine 29's default) or on a stack whose app is not `polaris-app`.
+- In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
+- Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
+- Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
+- SPEC-COMPLIANCE.md said `vc+sd-jwt` credentials are verified; the verifier refuses them (`issuer_typ`), as its README says.
+- The EU-library lab walk failed its dependency check on a clean machine: its verification metadata missed one BOM a cold cache fetches.
+- The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
+- API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
+- The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
+- Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
+- A credential issued by recovery carried a placeholder for a signature and verified under nothing; approval now signs it.
+- Issuance and migration recorded the algorithm a request named, not the one that signed; now the signing key's set.
+- The readiness ledger said a Module-LWE break needs no verification code; the hash-based fallback has no signer or verifier.
+- A status change to a number that is no credential reported success.
+- A refused deep page number now says what to do instead and offers the list back.
+- The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.
 
 ### Added
 
+- The plug-and-play matrix runs site/llms.txt's command block as written against the published polaris-verify, on every operating system and interpreter it covers and on any pull request that edits the file, and holds the exit codes the file states.
+- `docs/reference/claims.json` maps every README badge and the listed status sentences of the README, the site, `site/llms.txt` and the scoreboard to where each is published, its evidence and how to reproduce it; `check_claims_manifest` fails when a badge has no entry, a listed badge or sentence is gone from its surface, evidence does not resolve, or a stated count of outside implementations differs from the implementations named, each counted once on its own dated scoreboard rows.
 - `scripts/polaris-throughput-measure.sh` measures online verifications a second through the production path, per app vCPU and across two replicas, weekly; SCALING.md sizes a deployment from it.
 - `scripts/polaris-zone-loss-drill.sh` kills the database leader's node, then Redis's, on a three-zone kind cluster.
 - The edge reads a client's address from a PROXY protocol header sent by an L4 balancer the operator names.
@@ -102,6 +191,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A drill rotates the issuer key on the try.sh stack and then declares the old one compromised; CI runs it after try.sh.
 - scripts/polaris-key-event.sh registers, retires or declares compromised an authority key on the Docker stack, as the schema owner.
 - scripts/polaris-doctor.sh judges every component of the Docker stack and names the failing ones; a drill breaks four and requires each named.
+- scripts/polaris-evaluate.sh judges an install and writes a report that says what it does not establish; CI breaks a rule and the edge under it.
 - An experimental FN-DSA signer: Falcon-padded-1024 keys sign only under POLARIS_EXPERIMENTAL_SIGNERS, never in production, two-witnessed (liboqs, then @noble/post-quantum under Node); migration 2026-10-06-001.
 - A population migrates onto the FN-DSA family where its opt-in holds: 2,000 credentials re-signed at 604/s against ML-DSA-87's 319/s, nobody dark (quantum-event drill, POLARIS_QE_TARGET).
 - A lab step puts a checkpoint of the three transparency logs into Bitcoin block 969876 through OpenTimestamps; its verifier reads the block from two sources.
@@ -141,9 +231,14 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp encrypts the request object to the wallet's key when its `wallet_metadata` asks, as the EU iOS wallet kit requires.
 - polaris-oid4vp `serve --verifier-info` adds attestations such as a registration certificate to the request, as the German wallet requires.
 - A check that the product suite's parallel CI parts share one setup and that its required job gates on each.
+- `scripts/polaris-rp-register.sh` registers a relying party on the Docker stack, where `polaris rp-register` could not reach the database.
+- CI walks a fresh host to a credential a relying party verifies online, counting the operator's inputs and reporting the time.
+- The doctor warns when continuous archiving is off or the backup repository is on the host it protects.
 
 ### Changed
 
+- **Breaking**: an offsite bucket (`POLARIS_PGBACKREST_S3_BUCKET`) is a second pgBackRest repository, repo2, beside the local one it used to replace, encrypted by pgBackRest (aes-256-cbc). An install with a bucket must, before upgrading, rename `repo1-s3-key` and `repo1-s3-key-secret` to `repo2-s3-key` and `repo2-s3-key-secret` in `pgbackrest_repo_creds.conf`, add a `repo2-cipher-pass` of 32 characters or more there, and point a bucket that was written unencrypted at a new `POLARIS_PGBACKREST_S3_PATH` (DR.md, section 5, migration). The postgres container refuses to start with a bucket and no passphrase, with a passphrase in its environment, or with any repository off the host (an operator-mounted `repo.conf` included) that has no cipher, and `polaris-deploy.sh` refuses the same before it starts anything. Scheduled and first backups go to both repositories, and the weekly restore check verifies the newest offsite backup.
+- The stack, the chart and CI run Redis 8 (was 7.4) and HAProxy 3.4, a long-term-support release (was 3.1, no longer maintained). Redis 8 is offered under AGPLv3 as well as the RSALv2 and SSPLv1 of 7.4.
 - The chart spreads its replicated pods across nodes and zones, runs two edge, router and pgbouncer pods, and moves Redis.
 - The HA profile and the chart replicate synchronously by default; a failover loses no acknowledged write (lab record 017).
 - Dependabot groups each directory's minor and patch updates into one pull request per run.
@@ -182,47 +277,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - A web request's statements end two seconds before its worker's timeout, so no query outlives its request.
 - The landing emblem has no ring; a soft gold halo sits behind it.
 - `polaris-id migrate-algorithm` signs as the route does; `--signature-hex` and `--signature-file` are withdrawn.
+- CI runs the product suite's app-role suite and ZK steps, and Real PQC's web suite, as jobs of their own.
 - The coverage step stops re-running suites the product suite's other steps run.
-
-### Fixed
-
-- The README's OpenID Certified badge now names what it covers: the polaris-oid4vp verifier, not Polaris.
-- The SQL console runs one statement per query; a second statement could lift its five-second limit.
-- SECURITY.md called PyPI's publish attestation the same kind of provenance as build provenance; it says what each is.
-- A credential's page and both investigation pages read its verifications through an index, not a full scan.
-- Release SBOMs failed the NTIA minimum elements and four were invalid SPDX; the release checks both before publishing.
-- The advisory-lock check reads locks taken in functions; the holder key register's lock gains contention tests.
-- The migration page and API.md no longer say a migration always writes a placeholder; it signs with the signing module in force.
-- A migration's signature was dated by the credential's issuance, so its key read unauthorized; each is dated by its own.
-- A holder's pack was refused at the relying-party door once a migration added signatures; any in force verifies.
-- Closing a migration window cut superseded signatures off at once, whatever its grace; they verify until the date.
-- Under the placeholder profile a population migration wrote a signature no verify path accepted; now issuance's.
-- A population migration onto a set nothing here signs with (SLH-DSA) is refused before it starts.
-- The warrant audit page no longer says zero-knowledge events come back redacted; they are never returned.
-- The Atlas marked every withheld count "<5", false for one withheld for its whole's sake; it shows a neutral mark.
-- A person's investigation page takes its colours from the theme; a credential value read at 3.48:1 in light.
-- A credential's investigation page found its successor by scanning every credential: 904 ms at 3.6 million.
-- A credential's page read its device bindings and revocations by scanning those tables.
-- Record pages' tables scroll at phone width, and their hard-coded pill colours (3.49:1) take the theme.
-- The public walkthrough said post-quantum signing protects against coercion; it now marks where each rule is enforced.
-- An Atlas series could carry one bucket more than asked, and its authority filter took non-ASCII digits.
-- The simulator stamped events on the host's clock, so on a host off UTC the Atlas's hour windows missed them.
-- The UI drill and the performance baseline refuse a port another server holds; the drill's app no longer outlives it.
-- In the Atlas, a hovered tab keeps its label and a lone interval is drawn; a stacked chart no longer reads a withheld value as zero.
-- Public pages: no empty band above the first line, a visible secondary action, a four-column feature grid.
-- Every page showing the OpenID® Certified™ mark names the OpenID Foundation as its owner, as its trademark policy (2.2) asks.
-- SPEC-COMPLIANCE.md said `vc+sd-jwt` credentials are verified; the verifier refuses them (`issuer_typ`), as its README says.
-- The EU-library lab walk failed its dependency check on a clean machine: its verification metadata missed one BOM a cold cache fetches.
-- The duress wording check passed the noun "compulsion resistance"; API.md and DATA-MODEL.md named the mechanism with it.
-- API.md pointed at `app.py` for the federation check; it is in `verification_routes.py`.
-- The signals queue said "N of M active" while counting every credential with a duress code, in 923 ms.
-- Delete buttons for a person, a credential and an authority, which the database always refuses, are gone.
-- A credential issued by recovery carried a placeholder for a signature and verified under nothing; approval now signs it.
-- Issuance and migration recorded the algorithm a request named, not the one that signed; now the signing key's set.
-- The readiness ledger said a Module-LWE break needs no verification code; the hash-based fallback has no signer or verifier.
-- A status change to a number that is no credential reported success.
-- A refused deep page number now says what to do instead and offers the list back.
-- The population recount's lock test passed with the lock deleted; it now holds a fold that touches no row.
 
 ## v1.0.0-rc.70 — 2026-10-01 (the three verifiers read every input alike)
 

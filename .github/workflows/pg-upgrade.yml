@@ -1,0 +1,90 @@
+# ============================================================================
+# pg-upgrade.yml - a PostgreSQL major-version upgrade, done the way docs/operator/OPERATIONS.md's
+# "Postgres version upgrade" says, and undone (scripts/polaris-pg-upgrade-drill.sh; lab record 017).
+#
+# The drill runs this tree's try.sh on the PostgreSQL its Dockerfile pins, fills every
+# audit-of-record table, reads the database's state (every table's rows, sequences, catalogue,
+# roles and grants), then runs the document's steps 1 to 5 as written with the FROM line on a
+# pinned newer major. It requires the same state on the new major, the restore's own schema
+# cross-check, pgBackRest healthy with a full backup of the new major, and the credential issued
+# before still valid with its pack unchanged; then the document's rollback brings back the old
+# major with the same state, step 4 refuses to run again, and step 6 deletes the copy. The control
+# changes one audit row after the move and requires the comparison to name its table.
+#
+# The drill and its control are two jobs, side by side; each builds the stack, so pull requests
+# run them only when a path they exercise changed. They also run on every push to main, nightly,
+# and by hand.
+# ============================================================================
+name: PostgreSQL major upgrade (the documented procedure, there and back)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "polaris_web/Dockerfile.postgres"
+      - "polaris_web/docker-init.sh"
+      - "polaris_web/pg-entrypoint.sh"
+      - "polaris_web/pgbackrest-conf.sh"
+      - "polaris_web/pgbackrest.conf"
+      - "polaris_web/requirements-patroni.txt"
+      - "polaris_web/patroni-entrypoint.sh"
+      - "polaris_web/patroni-post-init.sh"
+      - "polaris_web/docker-compose.prod.yml"
+      - "polaris_web/docker-compose.citest.yml"
+      - "polaris_sql/**"
+      - "lab/strategy/006/**"
+      - "docs/operator/OPERATIONS.md"
+      - "scripts/polaris-deploy.sh"
+      - "scripts/polaris-image-build.sh"
+      - "scripts/polaris-env.sh"
+      - "scripts/polaris-host-lock.sh"
+      - "scripts/polaris-migrate.sh"
+      - "scripts/polaris-backup.sh"
+      - "scripts/polaris-restore.sh"
+      - "scripts/polaris-restore-check.sh"
+      - "scripts/polaris-pg-upgrade-drill.sh"
+      - "scripts/pg-upgrade-drill-seed.sql"
+      - ".github/workflows/pg-upgrade.yml"
+  schedule:
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pg-upgrade-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pg-upgrade:
+    name: PostgreSQL to the next major and back, as OPERATIONS.md says
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: The upgrade and the rollback (scripts/polaris-pg-upgrade-drill.sh)
+        run: bash scripts/polaris-pg-upgrade-drill.sh
+
+  pg-upgrade-control:
+    name: The control - one audit row changed on the new major must be named
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: The control (scripts/polaris-pg-upgrade-drill.sh --prove-control)
+        run: bash scripts/polaris-pg-upgrade-drill.sh --prove-control

@@ -135,7 +135,7 @@ start_holder() {  # $1 the certificate the holder trusts for the verifier's TLS 
       cd /work/one-core && exec /work/core-server -c config/config-procivis-base.yml -c /walk/procivis.yml' \
     "$1" >/dev/null
   for _ in $(seq 1 120); do
-    docker logs "$CONTAINER" 2>&1 | grep -q 'Starting server at' && return 0
+    docker logs "$CONTAINER" 2>&1 | grep 'Starting server at' >/dev/null && return 0
     sleep 0.5
   done
   docker logs "$CONTAINER" 2>&1 | tail -20

@@ -184,7 +184,7 @@ if [[ "$(field "${out}" body_finished_by_client)" == False ]]; then
 else
     bad "the client finished its 40-byte body at a byte a second; the edge never ended it"
 fi
-if docker logs "${NET}-up" 2>&1 | grep -q "served POST /slow"; then
+if docker logs "${NET}-up" 2>&1 | grep "served POST /slow" >/dev/null; then
     bad "the upstream served the slow body"
 fi
 

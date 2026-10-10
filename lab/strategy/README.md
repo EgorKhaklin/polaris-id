@@ -4,11 +4,11 @@
 fifth merge reason, [STRATEGIC-BUILD](../../docs/OPERATING-CONTRACT.md), to something a reader
 can check later.
 
-The other four merge reasons answer to evidence that already exists: an external suite, an
-external user, an external finding, a broken promise. STRATEGIC-BUILD does not, which is
-exactly why it is the one that needs a paper trail. A capability admitted here was admitted on
-a prediction, and a prediction nobody wrote down is indistinguishable afterwards from a
-preference.
+The other five merge reasons answer to evidence that already exists: an external suite, an
+external user, an external finding, a broken promise, a named adversary's demonstrated
+capability. STRATEGIC-BUILD does not, which is exactly why it is the one that needs a paper
+trail. A capability admitted here was admitted on a prediction, and a prediction nobody wrote
+down is indistinguishable afterwards from a preference.
 
 ## The ten questions
 

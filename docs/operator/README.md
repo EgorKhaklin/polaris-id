@@ -11,6 +11,7 @@ fails otherwise.
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Choosing a deployment path (laptop, single host, Linux under systemd, Kubernetes), the single-host compose procedure, and the environment-variable table |
 | [`CONFIG.md`](CONFIG.md) | Every setting the application reads, its type and default, and what production requires; generated from the schema the production boot validates against |
 | [`LINUX-SERVER.md`](LINUX-SERVER.md) | A fresh Linux server to a healthy production stack under systemd with one script; day-2 commands, upgrades, uninstall |
+| [`EVALUATE.md`](EVALUATE.md) | One command that judges an install and writes a report: what it ran, what a sound install does, what this one did, and what a run does not establish |
 | [`KUBERNETES.md`](KUBERNETES.md) | The Helm reference profile: the production topology on a cluster with enforced network policies and the restricted Pod Security Standard |
 | [`INSTALL.md`](INSTALL.md) | The laptop evaluation install (the macOS launcher) and its troubleshooting |
 | [`HARDENING.md`](HARDENING.md) | The operating system around Polaris: SSH, updates, firewall and Docker, time, daemon, permissions, auditing |
@@ -20,12 +21,13 @@ fails otherwise.
 | [`SECRETS.md`](SECRETS.md) | Every secret the stack uses, how each is generated, read and rotated, and the sealed store |
 | [`KEY-CEREMONY.md`](KEY-CEREMONY.md) | The issuer signing key: custody drivers (file, PKCS#11, AWS KMS), the witnessed ceremony, rotation with trust anchors |
 | [`WEBAUTHN-ROLLOUT.md`](WEBAUTHN-ROLLOUT.md) | Rolling WebAuthn MFA out to operators in phases, the attestation policy, enrollment and recovery |
-| [`SECURITY.md`](SECURITY-CONTROLS.md) | The security posture: every control, where it is enforced, which check pins it, and the dated hardening engagement |
+| [`SECURITY-CONTROLS.md`](SECURITY-CONTROLS.md) | The security posture: every control, where it is enforced, which check pins it, and the dated hardening engagement |
 | [`PRIVACY.md`](PRIVACY.md) | Data minimization and the operational privacy posture |
 | [`ENCRYPTION-AT-REST.md`](ENCRYPTION-AT-REST.md) | What is plaintext on disk, what is already encrypted, and the host volume encryption path |
 | [`DR.md`](DR.md) | Disaster recovery: the targets (RPO 300 s, RTO 4 h), the procedures by failure class, WAL archiving and the off-site repository |
 | [`DR-DRILLS.md`](DR-DRILLS.md) | The drill ledger, machine-appended: every measured RPO and RTO, locally and from the monthly CI run |
 | [`CHAOS-DRILLS.md`](CHAOS-DRILLS.md) | The chaos ledger, machine-appended: the standing program, its five induced failures with their recovery ceilings, and every weekly run's measured recoveries and page delivery |
+| [`SECURITY-STATE-DRILLS.md`](SECURITY-STATE-DRILLS.md) | Which operator procedures a drill runs while comparing the database's security state (privileges, policies, routines, triggers, settings), what each compares, its last result and the commit it ran at |
 | [`FAILOVER.md`](FAILOVER.md) | The HA profile: Patroni-managed automated failover with its measured drill numbers and the split-brain analysis; the high-availability complement to DR.md |
 | [`SLOS.md`](SLOS.md) | The reference service objectives (availability, request latency, database latency) and the error budget, grounded in exposed metrics |
 | [`QUANTUM-EVENT.md`](QUANTUM-EVENT.md) | The day an algorithm falls: re-signing the whole population onto a new parameter set without any holder losing a credential that verifies, with the measured rate and where the time goes |
@@ -41,7 +43,7 @@ pre-deploy checklist in [OPERATIONS.md](OPERATIONS.md#pre-deploy-checklist).
 What a deployment still needs from your organization is the decision table
 in [PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md).
 
-**Assessing a deployment.** [SECURITY.md](SECURITY-CONTROLS.md), [PRIVACY.md](PRIVACY.md),
+**Assessing a deployment.** [SECURITY-CONTROLS.md](SECURITY-CONTROLS.md), [PRIVACY.md](PRIVACY.md),
 [ENCRYPTION-AT-REST.md](ENCRYPTION-AT-REST.md), [DR.md](DR.md) with the
 measured rows in [DR-DRILLS.md](DR-DRILLS.md) and [CHAOS-DRILLS.md](CHAOS-DRILLS.md), and
 [PQC-POSTURE.md](../reference/PQC-POSTURE.md).

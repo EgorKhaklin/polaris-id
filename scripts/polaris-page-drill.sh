@@ -128,8 +128,8 @@ docker run -d --name "$PROM" --network "$NET" --network-alias prometheus \
     "$PROM_IMAGE" >/dev/null
 ready() { docker exec "$SINK" python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('$1', timeout=2).status==200 else 1)" >/dev/null 2>&1; }
 for i in $(seq 1 60); do ready http://alertmanager:9093/-/ready && ready http://prometheus:9090/-/ready && break; sleep 1; done
-ready http://prometheus:9090/-/ready || { docker logs "$PROM" 2>&1 | tail -20 >&2; fail "prometheus never became ready"; }
-ready http://alertmanager:9093/-/ready || { docker logs "$AM" 2>&1 | tail -20 >&2; fail "alertmanager never became ready"; }
+ready http://prometheus:9090/-/ready || { { docker logs "$PROM" 2>&1 || true; } | tail -20 >&2; fail "prometheus never became ready"; }
+ready http://alertmanager:9093/-/ready || { { docker logs "$AM" 2>&1 || true; } | tail -20 >&2; fail "alertmanager never became ready"; }
 # Let Prometheus scrape the 0 baseline for a while: no page must arrive.
 sleep 8
 [ ! -s "$WORK/state/hooks.log" ] || { cat "$WORK/state/hooks.log" >&2; fail "a page arrived while the duress counter was 0"; }
@@ -144,7 +144,7 @@ for i in $(seq 1 90); do
     sleep 1
 done
 t1=$(date +%s)
-[ -n "$paged" ] || { docker logs "$AM" 2>&1 | tail -20 >&2; docker logs "$PROM" 2>&1 | tail -10 >&2; fail "no PolarisDuressEvent page within 90s of the counter increment"; }
+[ -n "$paged" ] || { { docker logs "$AM" 2>&1 || true; } | tail -20 >&2; { docker logs "$PROM" 2>&1 || true; } | tail -10 >&2; fail "no PolarisDuressEvent page within 90s of the counter increment"; }
 python3 - "$WORK/state/hooks.log" <<'PYEOF'
 import json, sys
 ok = False

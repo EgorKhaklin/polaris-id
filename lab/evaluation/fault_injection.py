@@ -772,7 +772,7 @@ def main():
                          "worker: SIGKILL one gunicorn worker (use --window 0)")
     pr.add_argument("--redis-port", type=int, default=6431,
                     help="the DEDICATED Redis this run starts; never 6399-6415 (the suites' and the gate's)")
-    pr.add_argument("--redis-image", default="redis:7-alpine")
+    pr.add_argument("--redis-image", default="redis:8-alpine")
     pr.add_argument("--redis-container", default="polaris-eval-redis")
     pr.add_argument("--out", default=str(ROOT / "lab" / "evaluation" / "results"))
     args = ap.parse_args()

@@ -262,9 +262,11 @@ def deprecate_superseded(conn, target_algorithm_id, grace_seconds=0):
     with conn.cursor() as cur:
         # +1 second at minimum: deprecation_after_signed refuses a signature deprecated at the
         # instant it was created, and a row migrated in this same second would hit that CHECK.
+        # On the UTC clock, the one the database records signed_at on (2026-10-09): from a
+        # session at UTC-12 the session's clock put the deprecation before the signing.
         cur.execute(
             "UPDATE TokenSignature s SET deprecation_date = "
-            "CURRENT_TIMESTAMP + (%s || ' seconds')::INTERVAL "
+            "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') + (%s || ' seconds')::INTERVAL "
             "FROM IdentityToken t "
             "WHERE s.token_id = t.token_id AND t.status IN ('ACTIVE', 'RESERVE') "
             "AND s.algorithm_id <> %s AND s.deprecation_date IS NULL",
@@ -288,7 +290,8 @@ def verifiability_report(conn):
             "SELECT count(*) AS total, "
             "count(*) FILTER (WHERE NOT EXISTS ("
             "  SELECT 1 FROM TokenSignature s WHERE s.token_id = t.token_id "
-            "  AND (s.deprecation_date IS NULL OR s.deprecation_date > CURRENT_TIMESTAMP))"
+            "  AND (s.deprecation_date IS NULL "
+            "       OR s.deprecation_date > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')))"
             ") AS unverifiable "
             f"FROM {_POPULATION}")
         row = cur.fetchone()

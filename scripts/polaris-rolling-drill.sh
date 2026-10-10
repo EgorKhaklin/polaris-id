@@ -67,15 +67,15 @@ PYEOF
 
 traffic_start() { : > "$1"; python3 "$WORK/traffic.py" "$URL" "$1" & TRAFFIC_PID=$!; sleep 3; }
 traffic_stop()  { kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_PID" 2>/dev/null || true; cat "$1"; echo; }
-cid() { compose ps -q "$1" | head -1; }
+cid() { compose ps -q "$1" | sed -n 1p; }
 
 echo "== preflight: both colours up and the edge answers =="
 # Read the whole list before matching: under pipefail, grep -q leaving at the first match can
 # kill compose with SIGPIPE, and the pipeline then fails although app-green was listed.
 SERVICES="$(compose config --services)"
 grep -qx app-green <<<"$SERVICES" || fail "the blue-green overlay is not active (set POLARIS_COMPOSE_EXTRA)"
-for i in $(seq 1 30); do curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep -q 200 && break; sleep 2; done
-curl -sk -o /dev/null -w '%{http_code}\n' "$URL/api/health" | grep -q 200 || fail "edge not healthy before the drill"
+for i in $(seq 1 30); do curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep 200 >/dev/null && break; sleep 2; done
+curl -sk -o /dev/null -w '%{http_code}\n' "$URL/api/health" | grep 200 >/dev/null || fail "edge not healthy before the drill"
 BLUE0=$(cid app); GREEN0=$(cid app-green); [ -n "$BLUE0" ] && [ -n "$GREEN0" ] || fail "app containers not found"
 echo "  app=$BLUE0 app-green=$GREEN0"
 
@@ -142,7 +142,7 @@ print(f"  during the outage: {s['requests']} requests, {s.get('served', 0)} serv
 assert s["drops"] > 0, "the traffic generator saw no drops during a 20s outage: it cannot detect drops"
 print("  the generator detects an outage (control valid)")
 PYEOF
-for i in $(seq 1 45); do curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep -q 200 && break; sleep 2; done
-curl -sk -o /dev/null -w '%{http_code}\n' "$URL/api/health" | grep -q 200 || fail "stack not healthy after the control"
+for i in $(seq 1 45); do curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep 200 >/dev/null && break; sleep 2; done
+curl -sk -o /dev/null -w '%{http_code}\n' "$URL/api/health" | grep 200 >/dev/null || fail "stack not healthy after the control"
 rm -rf "$WORK"
 echo "== ROLLING DEPLOY DRILL PASSED: zero drops under traffic, control detected the outage =="

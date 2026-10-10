@@ -142,6 +142,9 @@ cleanup() {
     rm -rf "${WORK}"
 }
 trap cleanup EXIT
+# Each configuration brings the production stack up from the host's image tags: one build or deploy at a time.
+source "${ROOT}/scripts/polaris-host-lock.sh"
+polaris_host_lock "the throughput measurement"
 fail() { echo "::error::$*" >&2; exit 1; }
 
 # The edge as CI runs it, without its per-address limit: the block is removed whole.

@@ -70,8 +70,9 @@ CITATION.cff
 polaris_checks/
 scripts/
 # Lab record 017: the scripts the postgres image carries, the migration runner for the Kubernetes
-# upgrade Job (gate row OP-18) and the restore check (gate row OP-11).
+# upgrade Job (gate row OP-18) with the loader it sources, and the restore check (gate row OP-11).
 !scripts/polaris-migrate.sh
+!scripts/polaris-env.sh
 !scripts/polaris-restore-check.sh
 deploy/
 polaris_cli/

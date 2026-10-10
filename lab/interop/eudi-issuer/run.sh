@@ -177,10 +177,10 @@ echo "built      $(ls wallet/build/install/*/lib/eudi-lib-jvm-openid4vci-kt-*.ja
 wait "$UP_PID" || { UP_PID=""; tail -5 compose-up.log >&2; echo "the issuer stack did not start; see $WORK/compose-up.log" >&2; exit 2; }
 UP_PID=""
 for _ in $(seq 1 120); do
-  "${COMPOSE[@]}" logs pid-issuer 2>/dev/null | grep -q 'Started PidIssuerApplication' && break
+  "${COMPOSE[@]}" logs pid-issuer 2>/dev/null | grep 'Started PidIssuerApplication' >/dev/null && break
   sleep 2
 done
-"${COMPOSE[@]}" logs pid-issuer 2>/dev/null | grep -q 'Started PidIssuerApplication' || {
+"${COMPOSE[@]}" logs pid-issuer 2>/dev/null | grep 'Started PidIssuerApplication' >/dev/null || {
   echo "the issuer did not start; see $WORK/issuer-stack.log" >&2; exit 2; }
 HAPROXY="$("${COMPOSE[@]}" ps -q haproxy)"
 echo "issuer     up at https://localhost/pid-issuer (inside the HAProxy container's network)"

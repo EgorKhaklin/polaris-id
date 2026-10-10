@@ -21,7 +21,7 @@ body:
     id: result
     attributes:
       label: Did you get the success line?
-      description: "The one-minute script ends with `RESULT: accepted, and all three controls refused`; the ten-minute path prints its accepted line at step 7."
+      description: "The one-minute script prints `RESULT: accepted, and all three controls refused`; the ten-minute path prints its accepted line at step 7."
       options:
         - Yes, without help
         - Yes, after working around something (say what below)

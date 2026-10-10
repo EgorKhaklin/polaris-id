@@ -60,7 +60,7 @@ if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --git-dir >/dev/nu
     else
       echo "  ✗ pristine checkout: passes here, fails on a fresh clone —"
       { grep '✗' /tmp/_polaris_pristine.out; grep -A 4 '^BROKEN' /tmp/_polaris_pristine.out; } \
-        | head -8 | sed 's/^/    /'
+        | sed -n 1,8p | sed 's/^/    /'
       echo "    (untracked files are invisible to this on purpose: git add them, then re-run)"
       fails=$((fails+1))
     fi

@@ -47,6 +47,12 @@ omit =
 polaris_cli =
     polaris_cli/
     */polaris-cli-pkg-*/site/polaris_cli/
+# scripts/test_restore_schema_check.py runs the backup and restore scripts from temporary copies of
+# the tree (/tmp/polaris-rds-*/tree-extra/scripts/ and the like) and removes them afterwards: the
+# same fold, or `coverage json` fails on polaris_db_settings.py's copy.
+scripts =
+    scripts/
+    */polaris-r*-*/*/scripts/
 
 [report]
 # The CLI entrypoints are exercised end to end (the app shells into the ZK

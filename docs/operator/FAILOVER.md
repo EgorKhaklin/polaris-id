@@ -293,7 +293,7 @@ silent.
 ## 5. Operating it
 
 ```bash
-P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl -c /var/lib/postgresql/patroni.yml"
+P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.bluegreen.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl -c /var/lib/postgresql/patroni.yml"
 $P list                                                  # roles, timeline, lag
 $P switchover --primary postgres --candidate postgres2   # planned; a few seconds of write outage (§3)
 $P history                                               # every timeline change and its cause

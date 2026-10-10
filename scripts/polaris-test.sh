@@ -199,7 +199,7 @@ status=$?
 # -----------------------------------------------------------------------------
 # Compact summary.
 # -----------------------------------------------------------------------------
-if echo "$output" | tail -20 | grep -qE "^OK$|^OK \("; then
+if echo "$output" | tail -20 | grep -E "^OK$|^OK \(" >/dev/null; then
     n=$(echo "$output" | grep -oE 'Ran [0-9]+ tests' | tail -1 | grep -oE '[0-9]+')
     secs=$(echo "$output" | grep -oE 'in [0-9.]+s' | tail -1)
     printf "${G}PASS${NC}  %s tests %s\n" "${n:-?}" "${secs:-}"

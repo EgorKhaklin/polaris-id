@@ -43,7 +43,7 @@ BACKOFF="${POLARIS_BUILD_BACKOFF:-15}"
 # The version the image labels itself with comes from the one canonical source,
 # so an image cannot claim a version the repository never shipped.
 version() {
-    sed -n 's/^__version__[^"]*"\([^"]*\)".*/\1/p' "${ROOT}/polaris_web/__version__.py" | head -1
+    sed -n 's/^__version__[^"]*"\([^"]*\)".*/\1/p' "${ROOT}/polaris_web/__version__.py" | sed -n 1p
 }
 
 build_one() {

@@ -147,6 +147,13 @@ jobs:
           "$RUNNER_TEMP/sbom-check/bin/pip" install --quiet --require-hashes -r .github/sbom/requirements.txt
           PY="$RUNNER_TEMP/sbom-check/bin/python"
           V="${TAG#v}"
+          # Trivy ran as root in its container, so the SBOMs are root-owned and the enrichment
+          # below could not rewrite them (v1.0.0-rc.71's first run: PermissionError). The runner
+          # owns sbom/, so a copy renamed over each file makes it the runner's.
+          for f in sbom/*.spdx.json; do
+            cp "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
+            [ -w "$f" ] || { echo "::error::$f is still not writable by the runner"; exit 1; }
+          done
           # The Caddy main module and the lockfile are built here; everything else names its own.
           "$PY" scripts/polaris-sbom-enrich.py --version "$V" --ours requirements.txt sbom/sbom-python.spdx.json
           "$PY" scripts/polaris-sbom-enrich.py --version "$V" --ours caddy sbom/sbom-image-caddy.spdx.json

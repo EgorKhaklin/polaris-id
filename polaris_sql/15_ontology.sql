@@ -55,7 +55,7 @@ SELECT
     -- Anti-coercion property: does this token have a duress code enrolled?
     (t.duress_code_hash IS NOT NULL) AS has_duress_code,
     -- Computed: age in days
-    EXTRACT(EPOCH FROM (NOW() - t.issued_date)) / 86400.0
+    EXTRACT(EPOCH FROM ((NOW() AT TIME ZONE 'UTC') - t.issued_date)) / 86400.0
         AS age_days,
     -- Computed: lifetime event counts
     (SELECT COUNT(*) FROM TokenLifecycleEvent l

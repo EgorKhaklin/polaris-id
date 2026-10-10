@@ -67,7 +67,7 @@ analysis. Everything else goes to `lab/`. Do not invent a seventh justification.
 outside to act. That is the right default for a pre-pilot system and it has a failure
 mode, which is that Polaris can only ever answer questions it has already been asked. The
 owner's judgement on 2026-09-19 was that the passivity now costs more than the discipline
-buys. The decision record is what keeps the fifth reason from swallowing the other four: it
+buys. The decision record is what keeps the fifth reason from swallowing the other five: it
 forces the alternatives, the cost, the thing delayed, and the falsifier to be written down
 where a reader can hold the work to them later.
 
@@ -79,8 +79,9 @@ a claim guard stays only while it protects a falsifiable technical or security p
 **The decision test for every new idea.** Does a named external dependency require this?
 Did a real external user require it? Did an external reviewer find it? Does it repair an
 executable violation of an existing product promise? Is there a decision record under
-`lab/strategy/` whose falsifier is written down? Five times no: it goes to `lab/`, or it
-is not done.
+`lab/strategy/` whose falsifier is written down? Does an executable counterexample show an
+adversary the threat model names gaining a capability the design withholds? Six times no: it
+goes to `lab/`, or it is not done.
 
 ## 4. Versioning
 

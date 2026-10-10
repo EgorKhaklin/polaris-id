@@ -32,6 +32,8 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
 compose() { (cd "$ROOT/polaris_web" && docker compose -f docker-compose.prod.yml ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"} "$@"); }
 NAME=polaris-restore-verify

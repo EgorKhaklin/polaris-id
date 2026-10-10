@@ -18,26 +18,30 @@
 #
 # Env:  POLARIS_SECRETS_BACKEND      file (default) | age | awskms
 #       POLARIS_SECRETS_DIR          where plaintext is materialized for the
-#                                    stack (default /run/polaris/secrets)
+#                                    stack; required with age or awskms
+#                                    (normally /run/polaris/secrets)
 #       POLARIS_SECRETS_SEALED_DIR   default polaris_web/secrets.sealed
 #       POLARIS_SECRETS_PLAIN_DIR    default polaris_web/secrets (the seal source)
 #       age:    POLARIS_SECRETS_AGE_RECIPIENTS, POLARIS_SECRETS_AGE_IDENTITY
 #       awskms: POLARIS_SECRETS_AWSKMS_KEY_ID, _REGION, _ENDPOINT_URL (tests)
 #
-# The wrapper is thin on purpose: the logic and its tests are
+# Run by hand, it reads /etc/polaris/polaris.env as polaris.service does
+# (scripts/polaris-env.sh). The wrapper is thin on purpose: the logic and its tests are
 # polaris_web/secretstore.py / test_secretstore.py.
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 PY="${POLARIS_PYTHON:-python3}"
 BACKEND="${POLARIS_SECRETS_BACKEND:-file}"
 PLAIN="${POLARIS_SECRETS_PLAIN_DIR:-$ROOT/polaris_web/secrets}"
 SEALED="${POLARIS_SECRETS_SEALED_DIR:-$ROOT/polaris_web/secrets.sealed}"
 STORE="$ROOT/polaris_web/secretstore.py"
 
-usage() { sed -n '2,25p' "$0"; exit 2; }
+usage() { sed -n '2,26p' "$0"; exit 2; }
 [ $# -ge 1 ] || usage
 cmd="$1"; shift
 
@@ -57,10 +61,11 @@ ensure_dir() {  # $1 = materialization dir. A tmpfs when we can mount one.
 case "$cmd" in
     unseal-if-configured)
         if [ "$BACKEND" = file ]; then
-            echo "secrets: backend=file; the plaintext directory $PLAIN is the store (nothing to unseal)"
+            echo "secrets: backend=file: the secrets are plaintext files in $PLAIN on this disk;" \
+                 "seal them with age or awskms (docs/operator/SECRETS.md, section 5)"
             exit 0
         fi
-        DST="${POLARIS_SECRETS_DIR:-/run/polaris/secrets}"
+        DST=$(polaris_secrets_dir) || exit 1
         ensure_dir "$DST"
         "$PY" "$STORE" --plain "$PLAIN" --sealed "$SEALED" unseal --dst "$DST"
         ;;
@@ -75,7 +80,7 @@ case "$cmd" in
     verify)
         # With a non-file backend the materialized dir is what must not drift.
         live="$PLAIN"
-        [ "$BACKEND" != file ] && live="${POLARIS_SECRETS_DIR:-/run/polaris/secrets}"
+        if [ "$BACKEND" != file ]; then live=$(polaris_secrets_dir) || exit 1; fi
         "$PY" "$STORE" --plain "$live" --sealed "$SEALED" verify
         ;;
     *) usage ;;

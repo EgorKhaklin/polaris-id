@@ -255,7 +255,7 @@ echo "  ok: restored to T, $loose lines of withdrawal state are looser than at t
 
 echo "== 7. reconcile, and compare =="
 PY="${PYTHON:-python3}"
-dsn() { echo "host=127.0.0.1 port=$(docker port "$1" 5432/tcp | head -1 | sed 's/.*://') dbname=polaris user=postgres password=rootpw"; }
+dsn() { echo "host=127.0.0.1 port=$(docker port "$1" 5432/tcp | sed -n 1p | sed 's/.*://') dbname=polaris user=postgres password=rootpw"; }
 reconcile() {
     "$PY" "$ROOT/scripts/polaris-reconcile-restore.py" --restored "$(dsn "$RES")" --archive-end "$(dsn "$SCR")" \
         --target-time "$T" --operator "the PITR drill" --acting-admin admin

@@ -26,6 +26,9 @@
 # should be. A run that only printed the success line would say nothing: a verifier that
 # accepts everything prints it too.
 set -euo pipefail
+# The last line of every run, whichever way it ends: a run that stops early is the report most worth having.
+report_line() { echo "Tell us how it went, success or failure: https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml"; }
+trap report_line EXIT
 
 IMAGE="${EUDI_IMAGE:-ghcr.io/dominikschlosser/eudi-dev:v2.3.7}"
 EUDI_VERSION="${EUDI_VERSION:-v2.3.7}"
@@ -232,7 +235,7 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
     TUNNEL_PID=""
   fi
 }
-trap stop_verifier EXIT
+trap 'stop_verifier; report_line' EXIT
 
 start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exits 2
   TUNNELS=$((TUNNELS + 1))
@@ -240,7 +243,7 @@ start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exi
   TUNNEL_PID=$!
   TUNNEL_URL=""
   for _ in $(seq 1 60); do
-    TUNNEL_URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "cloudflared-$TUNNELS.log" | head -1 || true)"
+    TUNNEL_URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "cloudflared-$TUNNELS.log" | sed -n 1p || true)"
     [ -n "$TUNNEL_URL" ] && grep -q 'Registered tunnel connection' "cloudflared-$TUNNELS.log" && return 0
     sleep 1
   done
@@ -295,7 +298,7 @@ EOF
 # not check it has no such flag, so the flag is read off the wallet's own help. Behind a tunnel
 # the public certificate needs nothing.
 TLS_CA=() TLS_CHECKED=""
-if [ "$TUNNEL" != 1 ] && wallet accept --help 2>&1 | grep -q -- '--tls-ca'; then
+if [ "$TUNNEL" != 1 ] && wallet accept --help 2>&1 | grep -- '--tls-ca' >/dev/null; then
   TLS_CA=(--tls-ca "$(in_wallet_view pki/tls.pem)") TLS_CHECKED=1
   echo "TLS        the wallet checks the verifier's; it trusts keygen's listener certificate"
 fi

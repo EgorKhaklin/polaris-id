@@ -574,17 +574,39 @@ def describe_current() -> Optional[dict]:
     return c.describe() if c else None
 
 
+def public_key_hex(agency_id=None) -> str:
+    """The public key this process signs with for an agency (its own key under
+    POLARIS_AGENCY_KEYS_DIR, else the instance's), as hex: what the key register records
+    for it. Public, so it may be printed. Raises CustodyError when no key is configured:
+    the development profile signs with a placeholder, which no register can hold."""
+    custody = get_custody_for_agency(agency_id) if agency_id is not None else get_custody()
+    if custody is None:
+        raise CustodyError("no signing key is configured (the development profile signs with a "
+                           "placeholder), so there is no key to register")
+    return custody.public_key().hex()
+
+
 if __name__ == "__main__":  # pragma: no cover
     import argparse
+    import sys
     ap = argparse.ArgumentParser(description="Polaris key custody (P1.2)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("describe", help="show the driver the environment selects (non-secret)")
+    k = sub.add_parser("public-key", help="print the public key an agency signs with, as hex (non-secret); "
+                                          "`polaris-key-event.sh register AGENCY --current` registers it")
+    k.add_argument("--agency", type=int, default=None, help="the issuing agency (default: the instance's key)")
     g = sub.add_parser("pkcs11-keygen", help="generate the ML-DSA-65 issuer key INSIDE a PKCS#11 token")
     g.add_argument("--module", required=True); g.add_argument("--token-label", default="polaris")
     g.add_argument("--pin-file", required=True); g.add_argument("--key-label", default="polaris-issuer")
     a = ap.parse_args()
     if a.cmd == "describe":
         print(json.dumps(describe_current(), indent=2))
+    elif a.cmd == "public-key":
+        try:
+            print(public_key_hex(a.agency))
+        except CustodyError as exc:
+            sys.stderr.write("custody: %s\n" % exc)
+            raise SystemExit(3)
     else:
         pk = pkcs11_generate_key(a.module, a.token_label, _read_secret_file(a.pin_file, "pkcs11 PIN"), a.key_label)
         print(json.dumps({"algorithm": ALGORITHM, "public_key_hex": pk.hex(), "fingerprint": fingerprint(pk),

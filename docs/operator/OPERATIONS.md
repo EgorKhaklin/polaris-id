@@ -85,7 +85,7 @@ below.
 | `app` | `polaris-app:prod` (built from `Dockerfile.prod`) | Flask + gunicorn (`WEB_CONCURRENCY`, default 4) | 8000 |
 | `pgbouncer` | `polaris-pgbouncer:prod` (built from `Dockerfile.pgbouncer`) | Session-mode connection pool in front of Postgres (transaction mode is refused: it would hand one request's operator scope to the next) | 6432 |
 | `postgres` | `polaris-postgres:prod` (built from `Dockerfile.postgres`: `postgres:16-alpine` plus pgBackRest) | Database | 5432 |
-| `redis` | `redis:7-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
+| `redis` | `redis:8-alpine` (digest-pinned) | Rate-limiter backend | 6379 |
 
 Volumes:
 - `pg_data` (named): Postgres data
@@ -118,7 +118,7 @@ Volumes:
 | Anchor the transparency logs in Bitcoin | Daily, or at the cadence you choose | `./scripts/polaris-chain-anchor.py checkpoint`, `ots stamp`, later `ots upgrade`, `verify`, `polaris-id anchor-record`; see [Anchoring the logs in Bitcoin](#anchoring-the-logs-in-bitcoin) |
 | Certificate transparency check | Daily (cron) | `./scripts/polaris-ct-monitor.sh`: alerts on unexpected cert issuance for `${POLARIS_DOMAIN}`; see [Certificate transparency monitoring](#certificate-transparency-monitoring) |
 | Audit-log rotation | Yearly (cron) | `./scripts/polaris-rotate-logs.sh --actor-user-id=N`: archive from the retention policy, verify, purge, in one cron-ready pipeline (`--cutoff-days` overrides the policy with one fixed cutoff) |
-| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH`: scrypt-hashed AppUser + AuthAuditLog entry |
+| Operator onboarding | As needed | `./scripts/polaris-create-operator.sh --username NAME --role admin\|operator\|auditor --password-file PATH --reason TEXT`: scrypt-hashed AppUser + AuthAuditLog entry |
 | Scrape `/metrics` | Continuous (Prometheus) | `curl http://app:8000/metrics` from the stack network: Prometheus text-format exposition; see [Prometheus metrics](#prometheus-metrics-metrics) for the required edge ACL |
 | Rotate `POLARIS_SECRET_KEY` | 180 days | `./scripts/polaris-rotate-secret.sh polaris_secret_key` |
 | Rotate DB password | 180 days | `./scripts/polaris-rotate-secret.sh polaris_db_password` |
@@ -556,6 +556,10 @@ every durable component:
 - `pg_dump` of the Polaris database (custom format), encrypted with the key
   in `POLARIS_BACKUP_KEY_FILE` (the script warns loudly when the key is unset
   and the dump goes out in plaintext)
+- `database-settings.json`: the database's own settings (`ALTER DATABASE ... SET`
+  and `ALTER ROLE ... IN DATABASE ... SET`: the revocation bound, the UTC clock,
+  the anonymity floor and any you set), which `pg_restore` applies only with
+  `--create`; the restore replays them
 - `MANIFEST.json` with timestamps + SHA-256 hashes of each component
 
 ```bash
@@ -632,7 +636,9 @@ Exit codes (greppable for incident response):
 | 7 | `pg_restore` failed (state may be partial) |
 | 8 | Filesystem audit-of-record restore failed |
 | 9 | `docker` not available (when `--target=docker-stack`) |
-| 10 | `schema_version` diverges from `migrations/` (`--verify-schema-version`) |
+| 10 | `schema_version` diverges from `migrations/`, or cannot be read (`--verify-schema-version`) |
+| 11 | The restored privileges are not the backup's, or cannot be checked: every table, column, routine and sequence the dump holds, the public schema and the default privileges must carry the ACLs the same dump gives a new database. Also refused before anything is restored: a target with database-wide default privileges |
+| 12 | The restored database settings are not the backup's (`database-settings.json`), or cannot be read or applied, or the backup records none (every Polaris database carries `09_grants.sql`'s). The target's own settings are replaced by the backup's and read back; a backup taken before 2026-10-10 records none and leaves the target's as they are |
 
 After restore:
 
@@ -1023,7 +1029,7 @@ database is two Patroni members behind `pg-router`. The day-2 surface is
 `patronictl`, run inside either member:
 
 ```bash
-P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl -c /var/lib/postgresql/patroni.yml"
+P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.bluegreen.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl -c /var/lib/postgresql/patroni.yml"
 $P list                                   # members, roles, timeline, lag
 $P switchover --primary postgres --candidate postgres2   # planned; asks to confirm
 $P history                                # every timeline change and why
@@ -1262,6 +1268,11 @@ polaris-id rp-policy <client_id> --no-require-zk \
 polaris-id rp-history <client_id>              # every decision, and who made it
 polaris-id rp-history --weakened-only          # only the bars that were lowered
 ```
+
+On the Docker stack the database answers only on the stack's network, so
+[`scripts/polaris-rp-register.sh`](../../scripts/polaris-rp-register.sh) runs `rp-register`'s
+statements as the schema owner through the postgres container, with the same options; `rp-policy`
+and `rp-history` still need a connection as the schema owner.
 
 A change that REDUCES what the party must satisfy (the zero-knowledge step-up turned
 off, a required enrollment dropped, the context restriction lifted, the scope widened,
@@ -1627,13 +1638,41 @@ The Plonky2 prover is CPU-bound. To improve:
 ### Polaris version upgrade
 
 ```bash
-# Standard path
-./scripts/polaris-deploy.sh prod
+# Standard path, in the install's checkout (on a Linux host, /opt/polaris, as root)
+git fetch --tags && git checkout vX.Y.Z    # or, following a branch: git pull --ff-only
+bash scripts/polaris-generate-secrets.sh   # writes only the secret files a release adds
+./scripts/polaris-deploy.sh prod --no-pull
 ```
 
-This pulls the latest commit, rebuilds every Polaris image (the app, the
+Update the checkout first, so the secrets step and the deploy are the new
+release's. `polaris-generate-secrets.sh` writes only the secret files that are
+missing and never overwrites one; a release can add one. An install made at
+v1.0.0-rc.70 or earlier lacks three files that `docker-compose.prod.yml` mounts
+(`polaris_secret_key_fallbacks`, `polaris_redis_password` and
+`redis_users.acl`), six with the HA/DR overlays; the generator writes all six.
+It refuses, and names, a directory where a secret file belongs: Docker Compose
+before 2.30 creates one at a secret file that is missing when the stack starts
+(2.30 and later refuse to start instead), and every version creates one at a
+missing bind-mounted file such as the pgBackRest fragment; the operator removes
+it. The deploy refuses to start while a secret
+file the stack mounts is missing, and names it: it reads the stack as
+`docker compose config` resolves it, with the overlays in
+`POLARIS_COMPOSE_EXTRA`, and checks again after its own `git pull`. A tag checkout has no branch,
+so the deploy's own `git pull --ff-only` would fail; `--no-pull` skips it.
+On a host whose secrets are sealed (age or awskms), the generator writes to
+`polaris_web/secrets` in plaintext, and as adopting the store removed that
+directory it writes every secret anew: seal only the files the deploy names as
+missing, each with `./scripts/polaris-secrets.sh seal --only <name>`
+(`redis_users.acl` is derived from `polaris_redis_password`: seal both or
+neither), then
+remove the plaintext directory as
+[SECRETS.md, section 5.1](SECRETS.md#51-adopting-a-sealed-store) does (a full
+`seal` would replace the live database passwords and signing key).
+
+The deploy rebuilds every Polaris image (the app, the
 edge, the pooler and the database), applies schema migrations idempotently,
-recreates the infrastructure containers whose image changed, and then the app
+re-applies the database objects (procedures, triggers, grants), recreates the
+infrastructure containers whose image changed, and then the app
 container(s). The DB volume is preserved.
 [`scripts/polaris-upgrade-drill.sh`](../../scripts/polaris-upgrade-drill.sh)
 runs this path from the previous release's own stack: nothing pending, every
@@ -1647,6 +1686,16 @@ recreated.
 Always read [CHANGELOG.md](../../CHANGELOG.md) for the version you are
 upgrading to; an entry with "breaking change" in the notes requires extra
 steps.
+
+**The anonymity floor.** A production database initialised before 2026-10-08
+(every release up to 1.0.0-rc.70) kept the notional sample's
+`polaris.min_epoch_anonymity_set` of 1, so `uc11_close_epoch` could close epochs
+smaller than 20. The object sync this upgrade runs raises exactly that 1 to 20 and stops
+the upgrade if the floor then reads below 20; a floor you set to another value
+stays, with a warning when it is below 20. A floor of exactly 1 is taken to be
+the sample's and raised: a production floor of 1 does not survive an upgrade. The Linux installer and the chart's
+migration Job do the same
+([epoch-cadence.md](../design/epoch-cadence.md)).
 
 **Upgrading across v9.239.** The edge now runs as uid 1000 and listens on
 8080/8443 behind the host's 80/443. A deployment created earlier has
@@ -1686,22 +1735,80 @@ docker compose -f polaris_web/docker-compose.prod.yml down
 
 # 3. Change the FROM line in polaris_web/Dockerfile.postgres to the new major
 
-# 4. Retire the old data volume (the backup from step 1 is the only copy now).
-#    The compose project prefixes the volume name, so look it up.
-docker volume rm "$(docker volume ls -q | grep pg_data)"
+# 4. Set the old cluster aside, keeping it until step 6. Run this step once: it refuses when
+#    the copy already exists, because a second run would copy the new cluster over the only
+#    copy of the old one. The volume is found by its compose labels, and the project is read
+#    as polaris-deploy.sh reads it, with polaris.env loaded (scripts/polaris-env.sh); the
+#    domain only lets the file parse and does not name the project. A name match can pick
+#    another stack's volume on the same host.
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
+V=$(docker volume ls -q --filter "label=com.docker.compose.project=$P" \
+      --filter label=com.docker.compose.volume=pg_data)
+if [ -z "$P" ]; then
+  echo "docker compose config failed: run this from the repository root, and check the compose file parses. Stop here."
+elif [ "$(printf '%s\n' "$V" | grep -c .)" -ne 1 ]; then
+  echo "expected one pg_data volume in project '$P', found: '$V'. Stop here."
+elif docker volume inspect "${V}_old" >/dev/null 2>&1; then
+  echo "${V}_old already exists (step 4 ran before, or an earlier upgrade left it). Stop here."
+else
+  docker volume create "${V}_old" &&
+  docker run --rm -v "$V:/from:ro" -v "${V}_old:/to" \
+    alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+    cp -a /from/. /to/ &&
+  docker volume rm "$V"
+fi
 
-# 5. Rebuild and bring the stack up on an empty cluster, then restore into it
+# 5. Rebuild and bring the stack up on an empty cluster, upgrade pgBackRest's stanza to it, then
+#    restore into it and take the new major's first full backup. Until the stanza is upgraded
+#    the deploy's pgBackRest step reports error [028] (the old cluster's stanza), and WAL would
+#    accumulate during the restore. Whether the stack archives (POLARIS_PGBACKREST_ENABLED, on
+#    unless 0) is asked of the stack: polaris.env sets it, and this shell may not have read it.
 ./scripts/polaris-deploy.sh prod --no-pull
+ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgres printenv POLARIS_PGBACKREST_ENABLED)
+[ "$ARCHIVING" = 0 ] ||
+  docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+    pgbackrest --stanza=polaris stanza-upgrade
 ./scripts/polaris-restore.sh /var/backups/polaris/<step-1 tarball> \
     --target=docker-stack --force --verify-schema-version
+[ "$ARCHIVING" = 0 ] ||
+  docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+    pgbackrest --stanza=polaris --type=full backup
+
+# 6. Only once step 5 printed "schema_version table matches migrations/ on disk" and the
+#    stack serves, delete the old cluster's copy. The names are looked up again, without
+#    needing the deploy's variables, so a new shell works; compose names the volume <project>_pg_data.
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
+if [ -n "$P" ]; then docker volume rm "${P}_pg_data_old"
+else echo "docker compose config failed: run this from the repository root, and check the compose file parses."; fi
 ```
 
-If continuous WAL archiving is enabled, run the stanza upgrade before the
-first new-major backup:
+Until step 6, `<project>_pg_data_old` holds the old major's cluster untouched. To go back,
+restore the `FROM` line, then put the copy back into the cluster's volume (created with
+compose's labels if step 5 never made it), redeploy, and upgrade pgBackRest's stanza to the
+old cluster (step 5 moved it to the new one) with a full backup. A new shell works here too:
 
 ```bash
-docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
-    pgbackrest --stanza=polaris stanza-upgrade
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
+V="${P}_pg_data"
+if [ -z "$P" ] || ! docker volume inspect "${V}_old" >/dev/null 2>&1; then
+  echo "docker compose config failed (run from the repository root, check the compose file parses), or no ${V}_old to roll back to. Stop here."
+else
+  docker compose -f polaris_web/docker-compose.prod.yml down
+  docker volume inspect "$V" >/dev/null 2>&1 ||
+    docker volume create --label com.docker.compose.project="$P" \
+      --label com.docker.compose.volume=pg_data "$V"
+  docker run --rm -v "${V}_old:/from:ro" -v "$V:/to" \
+    alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+    sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/' &&
+  ./scripts/polaris-deploy.sh prod --no-pull &&
+  ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgres printenv POLARIS_PGBACKREST_ENABLED) &&
+  if [ "$ARCHIVING" != 0 ]; then
+    docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+      pgbackrest --stanza=polaris stanza-upgrade &&
+    docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+      pgbackrest --stanza=polaris --type=full backup
+  fi
+fi
 ```
 
 ### TLS certificate renewal

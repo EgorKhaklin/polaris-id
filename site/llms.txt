@@ -1,0 +1,49 @@
+# Polaris ID
+
+> Identity infrastructure built to be checked, not trusted. An authority issues a credential signed with ML-DSA-65; the person holds it; anyone checks it two ways: authenticity offline, against published keys, with no database and no network; authorization online, or by a short-lived signed status assertion. Pre-pilot software on notional data: it has never held real identity data, and nobody but the author has operated it. Apache-2.0.
+
+Every claim here has evidence you can run. Start with the command below; it needs Python 3 and no account.
+
+## Verify a credential offline (one minute)
+
+```
+pip install --pre "polaris-verify[cryptography]"
+r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main
+curl -fsSLO $r/vectors/ml-dsa-65-valid.json
+curl -fsSLO $r/vectors/anchors/ml-dsa-65-issuer.json
+polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack ml-dsa-65-valid.json --json
+```
+
+It prints a JSON verdict and exits 0. The tampered vectors beside it (`ml-dsa-65-tampered-signature.json`, `ml-dsa-65-tampered-token.json`, `ml-dsa-65-wrong-key.json`) must exit 2. Exit codes: 0 accepted, 2 not accepted (including an abstention without a trust anchor), 3 the check could not run, 4 refused to start. The verifier refuses to start until its cryptography is named, and without a trust anchor it abstains rather than report success.
+
+## Start here
+
+- [README](https://github.com/EgorKhaklin/polaris-id/blob/main/README.md): what it is, how to try it, its status and its limits.
+- [Stranger path](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md): from a clean machine to an accepted presentation, with a ten-minute version.
+- [Mission](https://github.com/EgorKhaklin/polaris-id/blob/main/MISSION.md): the constitutional constraints and what each one binds.
+
+## Specifications
+
+- [OpenAPI](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/openapi.yaml): the relying-party API.
+- [Wire specification](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/WIRE-SPEC.md): the signed formats a verifier reads.
+- [Conformance contract](https://github.com/EgorKhaklin/polaris-id/blob/main/conformance/SPEC.md) and [cases](https://github.com/EgorKhaklin/polaris-id/blob/main/conformance/cases.json): what a conforming verifier must accept and refuse.
+- [Standards compliance](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md): OpenID4VP 1.0, HAIP 1.0, SD-JWT VC, OpenID4VCI 1.0, Token Status List, ML-DSA-65.
+
+## Evidence and limits
+
+- [Claims manifest](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/claims.json): every README badge and the status sentences it lists, each with its evidence and how to reproduce it. A sentence it does not list is not covered.
+- [Production readiness](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md): the bound on what the project may claim, and the operability gate, each PASS citing evidence a check resolves.
+- [Scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md): what named outside parties did with Polaris, with dates.
+- [Security policy](https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md), [threat model](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/design/threat-model.md), [red-team scope](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/RED-TEAM-SCOPE.md), [review packet](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/REVIEW-PACKET.md).
+- Not yet: an independent security review, an operator other than the author, a pilot.
+
+## Certification, in its scope
+
+`polaris-oid4vp 1.0.0rc7` is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026): a self-certification the OpenID Foundation reviewed and published, for that package version in that role. It is not an endorsement, not an audit, and not a certification of the rest of Polaris.
+
+## Packages
+
+- [polaris-verify](https://pypi.org/project/polaris-verify/) (PyPI): the offline verifier.
+- [polaris-oid4vp](https://pypi.org/project/polaris-oid4vp/) (PyPI): the OpenID4VP verifier, as a library or a server.
+- [polaris-sdk-python](https://pypi.org/project/polaris-sdk-python/) (PyPI) and [polaris-sdk-ts](https://www.npmjs.com/package/polaris-sdk-ts) (npm): relying-party SDKs.
+- [Source](https://github.com/EgorKhaklin/polaris-id), Apache-2.0.

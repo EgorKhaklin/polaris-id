@@ -20,6 +20,8 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 MONTHS="${POLARIS_MONTHS_AHEAD:-3}"
 case "$MONTHS" in ''|*[!0-9]*) echo "POLARIS_MONTHS_AHEAD must be an integer" >&2; exit 2 ;; esac
 read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"

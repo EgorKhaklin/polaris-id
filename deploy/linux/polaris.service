@@ -23,6 +23,10 @@ EnvironmentFile=__ENV_FILE__
 # P1.3: with POLARIS_SECRETS_BACKEND=age|awskms the sealed store is unsealed into
 # a tmpfs at POLARIS_SECRETS_DIR before compose reads it; a no-op otherwise.
 ExecStartPre=/usr/bin/env bash __INSTALL_DIR__/scripts/polaris-secrets.sh unseal-if-configured
+# A start while a deploy or build holds the host's image tags would recreate the stack from a build in flight:
+# the start refuses instead (scripts/polaris-host-lock.sh; taken and given back at once, so a deploy that
+# begins in the instant between this and ExecStart is the one case it does not cover).
+ExecStartPre=/usr/bin/env bash -c 'source __INSTALL_DIR__/scripts/polaris-host-lock.sh && polaris_host_lock polaris.service'
 ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml $POLARIS_COMPOSE_EXTRA up -d --remove-orphans
 ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml $POLARIS_COMPOSE_EXTRA down
 TimeoutStartSec=900

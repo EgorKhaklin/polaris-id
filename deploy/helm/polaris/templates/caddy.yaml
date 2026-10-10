@@ -1,3 +1,16 @@
+{{- /* G5: where the edge's certificate comes from (values.yaml, edge.tls). */}}
+{{- if not (has .Values.edge.tls (list "secret" "acme" "internal")) }}
+{{- fail (printf "edge.tls must be secret, acme or internal (got %q)" .Values.edge.tls) }}
+{{- end }}
+{{- if and (eq .Values.edge.tls "secret") (not .Values.edge.tlsSecret) }}
+{{- fail "edge.tls=secret needs edge.tlsSecret: the kubernetes.io/tls Secret that holds the edge's certificate" }}
+{{- end }}
+{{- if and (eq .Values.edge.tls "acme") (not (dig "acmeVolume" "size" "" .Values.edge)) }}
+{{- fail "edge.tls=acme needs edge.acmeVolume.size. An upgrade with --reuse-values keeps an older release's values, which have none: use --reset-then-reuse-values" }}
+{{- end }}
+{{- if and (eq .Values.edge.tls "acme") (gt (int .Values.edge.replicas) 1) }}
+{{- fail "edge.tls=acme serves one replica: replicas that do not share the ACME state each order a certificate and answer only their own challenges. Set edge.replicas=1, or use edge.tls=secret with a certificate cert-manager keeps" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,6 +20,12 @@ metadata:
     app.kubernetes.io/component: caddy
 spec:
   replicas: {{ .Values.edge.replicas }}
+  {{- if eq .Values.edge.tls "acme" }}
+  # One replica on a ReadWriteOnce volume: a rolling update would start the new pod before the
+  # old one lets go of the volume.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "polaris.selector" . | nindent 6 }}
@@ -56,6 +75,15 @@ spec:
               mountPath: /config
             - name: tmp
               mountPath: /tmp
+            {{- if eq .Values.edge.tls "internal" }}
+            - name: edge-ca
+              mountPath: /etc/caddy/ca
+              readOnly: true
+            {{- else if eq .Values.edge.tls "secret" }}
+            - name: edge-tls
+              mountPath: /etc/caddy/tls
+              readOnly: true
+            {{- end }}
           readinessProbe:
             tcpSocket:
               port: https
@@ -63,16 +91,95 @@ spec:
           resources:
             requests: {cpu: 100m, memory: 64Mi}
             limits: {memory: 256Mi}
+        {{- if eq .Values.edge.tls "secret" }}
+        # G5: Caddy reads a certificate file when it loads its config, so a renewed Secret was not
+        # served until the pod restarted. The kubelet updates a Secret volume (no subPath) in
+        # place; this reloads Caddy through its admin socket when the files change. It starts
+        # with nothing recorded, so its first pass reloads too (retrying until Caddy answers):
+        # restarted after a change, it would otherwise take the new files for the served ones.
+        - name: tls-reload
+          image: {{ .Values.images.caddy }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              seen=""
+              while :; do
+                now=$(cat /etc/caddy/tls/tls.crt /etc/caddy/tls/tls.key | sha256sum)
+                if [ "$now" != "$seen" ] && caddy reload --force --config /etc/caddy/Caddyfile \
+                     --adapter caddyfile --address unix//config/admin.sock; then
+                  seen=$now
+                  echo "the edge serves the certificate in edge.tlsSecret: reloaded"
+                fi
+                sleep 20
+              done
+          volumeMounts:
+            - name: caddyfile
+              mountPath: /etc/caddy/Caddyfile
+              subPath: Caddyfile
+              readOnly: true
+            - name: edge-tls
+              mountPath: /etc/caddy/tls
+              readOnly: true
+            - name: config
+              mountPath: /config
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {memory: 64Mi}
+        {{- end }}
       volumes:
         - name: caddyfile
           configMap:
             name: {{ include "polaris.fullname" . }}-caddy
         - name: data
+          {{- if eq .Values.edge.tls "acme" }}
+          persistentVolumeClaim:
+            claimName: {{ include "polaris.fullname" . }}-caddy-acme
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         - name: config
           emptyDir: {}
         - name: tmp
           emptyDir: {medium: Memory}
+        {{- if eq .Values.edge.tls "internal" }}
+        - name: edge-ca
+          secret:
+            secretName: {{ .Values.edge.caSecret | default (printf "%s-edge-ca" (include "polaris.fullname" .)) }}
+            defaultMode: 0440
+        {{- else if eq .Values.edge.tls "secret" }}
+        - name: edge-tls
+          secret:
+            secretName: {{ .Values.edge.tlsSecret }}
+            defaultMode: 0440
+            items:
+              - {key: tls.crt, path: tls.crt}
+              - {key: tls.key, path: tls.key}
+        {{- end }}
+{{- if eq .Values.edge.tls "acme" }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "polaris.fullname" . }}-caddy-acme
+  labels:
+    {{- include "polaris.labels" . | nindent 4 }}
+    app.kubernetes.io/component: caddy
+  annotations:
+    # G5: the ACME account and certificates outlive an uninstall, so a reinstall does not order
+    # them again (Let's Encrypt allows five duplicate certificates a week).
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with (dig "acmeVolume" "storageClass" "" .Values.edge) }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.edge.acmeVolume.size }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

@@ -96,7 +96,7 @@ except Exception:
         echo "  ok: $2 $3 -> ${code}"
     else
         echo "FAIL: $2 $3 answered ${code}, expected $1" >&2
-        docker logs "${NET}-edge" 2>&1 | tail -10 >&2
+        { docker logs "${NET}-edge" 2>&1 || true; } | tail -10 >&2
         exit 1
     fi
 }

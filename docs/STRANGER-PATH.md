@@ -27,7 +27,7 @@ against a SHA-256 pinned in this repository before running it.
     curl -fsSLO https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/lab/interop/requirements.txt
     bash run.sh
 
-The last line it prints when all is well:
+When all is well, it prints:
 
     RESULT: accepted, and all three controls refused
 

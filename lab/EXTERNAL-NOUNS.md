@@ -22,7 +22,9 @@ Anything the author ran against the author's own code belongs in the last sectio
 
 ### Wallets
 
-Every wallet ran with no contact with its authors, and unmodified unless its row says otherwise:
+The authors of each wallet took no part in the runs, though this project has written to some of
+them: two (OID4VCgo and eudi-dev) fixed a defect reported from here, and later rows re-test the
+fix, as the notes below the table record. Every wallet ran unmodified unless its row says otherwise:
 configuration only (trust anchors, TLS roots). Where a row names a library, a short wallet built
 here drove it. Each run carries controls that must be refused, because a verifier that
 accepts everything prints the same success line.
