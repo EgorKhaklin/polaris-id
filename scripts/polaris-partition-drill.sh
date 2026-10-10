@@ -65,12 +65,13 @@ polaris_db_state security > "$STATE_DIR/after" || fail "the security state could
 GREW=$(polaris_db_state_partitions_grew "$STATE_DIR/before" "$STATE_DIR/after" polaris_app) \
     || fail "the partition manager's run changed the security state beyond its new partitions, or a new partition differs from the ones before it (findings above)"
 echo "  the manager (+${AHEAD} months): $GREW"
-# The month past the furthest one is the drill's, not the window's: dropped again, refused if it holds rows.
+# The month past the furthest one is the drill's, not the window's: dropped again, refused if it holds rows,
+# and the manager made it for each of the four tables, so anything but four drops is a failure.
 if [ "$AHEAD" -gt 3 ]; then
 psql_do -v ahead="$AHEAD" <<'SQL' >/dev/null || fail "could not drop the month the manager added past the furthest one"
 SELECT set_config('polaris.partition_drill_ahead', :'ahead', false);
 DO $$
-DECLARE v_part regclass; v_rows boolean;
+DECLARE v_part regclass; v_rows boolean; v_dropped integer := 0;
 BEGIN
   FOR v_part IN
     SELECT c.oid::regclass FROM pg_inherits i
@@ -82,7 +83,11 @@ BEGIN
     EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s)', v_part) INTO v_rows;
     IF v_rows THEN RAISE EXCEPTION '% holds rows; the drill drops only the empty month it added', v_part; END IF;
     EXECUTE format('DROP TABLE %s', v_part);
+    v_dropped := v_dropped + 1;
   END LOOP;
+  IF v_dropped <> 4 THEN
+    RAISE EXCEPTION 'dropped % tables of the month the drill added, not one for each of the four event tables', v_dropped;
+  END IF;
 END $$;
 SQL
 fi

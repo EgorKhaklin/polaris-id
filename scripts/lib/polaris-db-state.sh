@@ -291,7 +291,8 @@ SQL
 _polaris_db_state_prelude() {  # KIND
     case "$1" in
         constraint) cat <<'SQL'
-CREATE OR REPLACE FUNCTION pg_temp.polaris_db_state_read_back(con oid) RETURNS text LANGUAGE plpgsql AS $read_back$
+CREATE OR REPLACE FUNCTION pg_temp.polaris_db_state_read_back(con oid) RETURNS text LANGUAGE plpgsql
+SET client_min_messages = warning AS $read_back$
 DECLARE rel regclass; def text; back text;
 BEGIN
     SELECT conrelid::regclass, pg_get_constraintdef(oid) INTO rel, def FROM pg_constraint WHERE oid = con;

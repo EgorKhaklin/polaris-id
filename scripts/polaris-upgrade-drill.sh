@@ -10,9 +10,15 @@
 #   2. the same checkout moves to this commit, as `git pull` would, and upgrades as OPERATIONS.md's
 #      "Polaris version upgrade" says: polaris-generate-secrets.sh (it writes only what is
 #      missing), then polaris-deploy.sh prod (images, migrations, objects, the app, a smoke test);
+#      the upgraded database's security state (scripts/lib/polaris-db-state.sh) must equal, table
+#      by table, that of this commit installed fresh in the same cluster from the files its
+#      postgres image carries (scripts/lib/polaris-db-reference.sh): what an upgrade leaves
+#      different from a fresh install of the same release is drift;
 #   3. a release that cannot start is deployed the same way: its smoke test fails and the deploy
 #      puts back the app image it replaced, which the app then runs, serving (under Docker's
 #      containerd image store, which upgrade.yml turns on, as a clean install of Engine 29 has it);
+#      its migrations and object sync change nothing, so the security state is exactly as step 2
+#      left it;
 #   4. after it: no migration is pending; every Polaris container runs an image built from this
 #      commit; this commit's try.sh issues credential B on the upgraded stack and polaris-verify
 #      accepts it; credential A's authenticity pack, fetched again from the upgraded stack,
@@ -51,6 +57,27 @@ echo "upgrading ${FROM} ($(git -C "${ROOT}" rev-parse --short "${FROM}^{commit}"
 source "${ROOT}/scripts/polaris-host-lock.sh"
 polaris_host_lock "the upgrade drill"
 
+# The database's security state, read inside try.sh's postgres container (whichever release's
+# compose files made it, so found by its labels) as the superuser the image's init made, as step
+# 4's psql reads it. The libraries are this commit's: the previous release's checkout has none.
+source "${ROOT}/scripts/lib/polaris-db-state.sh"
+source "${ROOT}/scripts/lib/polaris-db-reference.sh"
+STATE_DB=polaris
+REFERENCE_DB=polaris_reference
+pg_container() {
+    local ids
+    ids=$(docker ps -q --filter label=com.docker.compose.project=polaris-try \
+                      --filter label=com.docker.compose.service=postgres) || return 1
+    [[ -n "${ids}" && "${ids}" != *$'\n'* ]] \
+        || { echo "not one running postgres container in polaris-try (${ids:-none})" >&2; return 1; }
+    printf '%s' "${ids}"
+}
+pg_run() { local c; c=$(pg_container) || return 1; docker exec -u postgres "${c}" "$@" < /dev/null; }
+sql() { pg_run psql -X -q -At -v ON_ERROR_STOP=1 -U postgres -d "${STATE_DB}" -c "$1"; }
+state() {  # NAME WHEN: the security state of ${STATE_DB} into ${WORK}/state-NAME
+    polaris_db_state security > "${WORK}/state-$1" || fail "the security state could not be read $2"
+}
+
 step "1/4 the previous release, ${FROM}, as its own try.sh leaves it"
 git -C "${ROOT}" worktree add --detach "${TREE}" "${FROM}" > /dev/null 2>&1 || fail "checking out ${FROM}"
 OUT="${TREE}/lab/strategy/006/out"
@@ -59,6 +86,8 @@ bash "${TREE}/lab/strategy/006/try.sh" > "${WORK}/try-before.log" 2>&1 \
 A=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token_id"])' "${OUT}/pack.json")
 cp "${OUT}/pack.json" "${WORK}/pack-A-before.json"
 ok "${FROM} issued credential #${A} and polaris-verify accepted it"
+state before "on ${FROM}, before the upgrade"
+ok "${FROM}'s security state read ($(grep -c . "${WORK}/state-before") facts; kept as the record)"
 
 step "2/4 upgrade to ${TARGET:0:8} as OPERATIONS.md says"
 git -C "${TREE}" checkout --detach -q "${TARGET}" || fail "moving the checkout to ${TARGET:0:8}"
@@ -68,6 +97,26 @@ POLARIS_COMPOSE_EXTRA="-f docker-compose.citest.yml -f ${TREE}/lab/strategy/006/
     bash "${TREE}/scripts/polaris-deploy.sh" prod --no-pull > "${WORK}/deploy.log" 2>&1 \
     || { tail -30 "${WORK}/deploy.log" >&2; fail "polaris-deploy.sh prod"; }
 ok "polaris-deploy.sh prod finished: migrations, objects, the app, its smoke test"
+state a1 "after the upgrade"
+# The reference is built from the SQL the running postgres image carries, so that image must carry
+# this commit's: otherwise the upgrade would be compared with some other release.
+polaris_db_reference_carries "${TREE}/polaris_sql" \
+    || fail "the upgraded postgres image does not carry ${TARGET:0:8}'s SQL, so no reference can be built from it"
+polaris_db_reference_build "${REFERENCE_DB}" "${WORK}/reference.log" \
+    || { tail -20 "${WORK}/reference.log" >&2; fail "building a fresh ${TARGET:0:8} install beside the upgraded database"; }
+STATE_DB="${REFERENCE_DB}"
+state reference "from the fresh ${TARGET:0:8} install"
+STATE_DB=polaris
+polaris_db_reference_drop "${REFERENCE_DB}" || fail "dropping the reference database"
+# Building and dropping the reference may change nothing the operator has: roles are the
+# cluster's, so this read would show one it added or altered.
+state a1-again "after the reference was dropped"
+polaris_db_state_same "${WORK}/state-a1" "${WORK}/state-a1-again" \
+    || fail "building the reference changed the upgraded database or the cluster's roles (< before it, > after)"
+polaris_db_state_same_by_table "${WORK}/state-reference" "${WORK}/state-a1" \
+    || fail "the upgraded database's security state is not a fresh ${TARGET:0:8} install's (< fresh only, > upgrade only)"
+moved=$(diff "${WORK}/state-before" "${WORK}/state-a1" | grep -c '^[<>]' || true)
+ok "the upgraded database's security state is a fresh ${TARGET:0:8} install's, table by table ($(grep -c . "${WORK}/state-a1") facts; ${moved} moved since ${FROM})"
 
 COMPOSE=(docker compose -f "${TREE}/polaris_web/docker-compose.prod.yml"
          -f "${TREE}/polaris_web/docker-compose.citest.yml" -f "${TREE}/lab/strategy/006/names.yml")
@@ -102,6 +151,12 @@ status=$(curl -s --cacert "${OUT}/caddy-root.crt" https://localhost:8443/api/hea
          | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status"))' 2> /dev/null || true)
 [[ "${status}" == healthy || "${status}" == degraded ]] || fail "the app does not serve after the rollback (status ${status:-none})"
 ok "a release that could not start was rolled back to the image it replaced (content ${before}); the app serves (${status})"
+# Its deploy ran the migrations (none pending) and the object sync again: neither may change a
+# privilege, a definition or a setting (a sync that gave back what a migration revoked, 2026-10-10).
+state a2 "after the rollback"
+polaris_db_state_same "${WORK}/state-a1" "${WORK}/state-a2" \
+    || fail "the failed deploy and its rollback changed the security state (< after the upgrade, > after the rollback)"
+ok "the failed deploy and its rollback left the security state exactly as the upgrade did"
 
 step "4/4 what the operator had, after the upgrade and the rollback"
 mig=$(cd "${TREE}" && bash scripts/polaris-migrate.sh --target=docker-stack --dry-run --up 2>&1) \
