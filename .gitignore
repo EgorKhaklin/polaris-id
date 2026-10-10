@@ -27,6 +27,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+# scripts/lib holds the drills' sourced shell libraries, not a Python build's lib/.
+!scripts/lib/
 lib64/
 parts/
 sdist/

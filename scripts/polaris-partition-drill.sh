@@ -8,7 +8,11 @@
 # The four event tables ship monthly range-partitioned. This drill proves, on
 # a loaded database, the properties the schema promises:
 #   1. the manager premakes the monthly window, and a future-dated row lands in
-#      a monthly partition rather than DEFAULT;
+#      a monthly partition rather than DEFAULT. Around a run of it that creates
+#      partitions, the security state (scripts/lib/polaris-db-state.sh) is read
+#      before and after: on each new partition every role, polaris_app first,
+#      holds what it holds on the partitions of the same table that existed,
+#      and nothing else changed;
 #   2. append-only (C1) holds on a monthly-partition row and on a DEFAULT row;
 #   3. a whole month DETACHes in O(1) and append-only holds across the detach;
 #   4. the online conversion turns a populated NON-partitioned table into a
@@ -19,7 +23,8 @@
 # It needs psql on PATH and a loaded polaris database (the CI product-test job
 # provides both). Read-only to the real event data except its own scratch rows,
 # which it inserts with far-future timestamps and cleans up by dropping the
-# partitions/tables it created.
+# partitions/tables it created. The month step 1 adds past the furthest one
+# (empty: nothing writes that far ahead) is dropped again.
 # ============================================================================
 set -euo pipefail
 DB="${POLARIS_DB_NAME:-polaris_test}"
@@ -28,11 +33,59 @@ PGHOST_ARG=(); [ -n "${POLARIS_DB_HOST:-}" ] && PGHOST_ARG=(-h "$POLARIS_DB_HOST
 psql_do() { psql -v ON_ERROR_STOP=1 -qtA "${PGHOST_ARG[@]+"${PGHOST_ARG[@]}"}" "${PGUSER_ARG[@]+"${PGUSER_ARG[@]}"}" -d "$DB" "$@"; }
 fail() { echo "::error::$*" >&2; exit 1; }
 command -v psql >/dev/null || fail "psql is required"
+# The security state's reader: one SQL text, its rows (the contract in the library's header).
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/polaris-db-state.sh"
+sql() { psql -X -q -At -v ON_ERROR_STOP=1 "${PGHOST_ARG[@]+"${PGHOST_ARG[@]}"}" "${PGUSER_ARG[@]+"${PGUSER_ARG[@]}"}" -d "$DB" -c "$1"; }
+STATE_DIR=$(mktemp -d)
+trap 'rm -rf "$STATE_DIR"' EXIT
 
 echo "== partition drill against $DB =="
 
-# 1. the manager premakes months; a next-month row lands in a monthly partition
-psql_do -c "CALL uc_ensure_event_partitions(3);" >/dev/null
+# 1. the manager premakes months; a next-month row lands in a monthly partition.
+#    It runs with a horizon one month past the furthest monthly partition (at
+#    least the usual 3), so the run creates partitions, between two reads of the
+#    security state. 1.0.0-rc.40: each new partition inherited the blanket grant,
+#    so polaris_app could DELETE from a month directly. What every role may do on
+#    a new month must be what it may do on the months before it, and the run may
+#    change nothing else.
+FURTHEST=$(psql_do <<'SQL'
+SELECT coalesce(max((extract(year FROM m) - extract(year FROM t)) * 12 + extract(month FROM m) - extract(month FROM t)), -1)::int
+  FROM (SELECT to_date(substring(c.relname from '([0-9]{4}_[0-9]{2})$'), 'YYYY_MM') AS m, now() AT TIME ZONE 'UTC' AS t
+          FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
+         WHERE p.relname IN ('tokenlifecycleevent', 'verificationevent', 'enrollmentstatusevent', 'authauditlog')
+           AND c.relname ~ '_[0-9]{4}_[0-9]{2}$') AS s;
+SQL
+) || fail "could not read how many months ahead the event partitions reach"
+case "$FURTHEST" in ''|*[!0-9-]*) fail "the furthest event partition's month reads as '$FURTHEST', not a number" ;; esac
+AHEAD=$((FURTHEST + 1)); [ "$AHEAD" -ge 3 ] || AHEAD=3
+[ "$AHEAD" -le 60 ] || fail "the event partitions already reach $FURTHEST months ahead and the manager stops at 60: reload the database"
+polaris_db_state security > "$STATE_DIR/before" || fail "the security state could not be read before the partition manager ran"
+psql_do -c "CALL uc_ensure_event_partitions(${AHEAD});" >/dev/null || fail "the partition manager failed (+${AHEAD} months)"
+polaris_db_state security > "$STATE_DIR/after" || fail "the security state could not be read after the partition manager ran"
+GREW=$(polaris_db_state_partitions_grew "$STATE_DIR/before" "$STATE_DIR/after" polaris_app) \
+    || fail "the partition manager's run changed the security state beyond its new partitions, or a new partition differs from the ones before it (findings above)"
+echo "  the manager (+${AHEAD} months): $GREW"
+# The month past the furthest one is the drill's, not the window's: dropped again, refused if it holds rows.
+if [ "$AHEAD" -gt 3 ]; then
+psql_do -v ahead="$AHEAD" <<'SQL' >/dev/null || fail "could not drop the month the manager added past the furthest one"
+SELECT set_config('polaris.partition_drill_ahead', :'ahead', false);
+DO $$
+DECLARE v_part regclass; v_rows boolean;
+BEGIN
+  FOR v_part IN
+    SELECT c.oid::regclass FROM pg_inherits i
+      JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
+     WHERE p.relname IN ('tokenlifecycleevent', 'verificationevent', 'enrollmentstatusevent', 'authauditlog')
+       AND c.relname = p.relname || to_char(date_trunc('month', now() AT TIME ZONE 'UTC')
+             + make_interval(months => current_setting('polaris.partition_drill_ahead')::int), '_YYYY_MM')
+  LOOP
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s)', v_part) INTO v_rows;
+    IF v_rows THEN RAISE EXCEPTION '% holds rows; the drill drops only the empty month it added', v_part; END IF;
+    EXECUTE format('DROP TABLE %s', v_part);
+  END LOOP;
+END $$;
+SQL
+fi
 NEXT_PART=$(psql_do <<'SQL'
 INSERT INTO VerificationEvent(token_id, requesting_agency_id, context_id, event_timestamp, outcome, disclosure_level)
 VALUES (1, 1, 1, date_trunc('month', now()) + interval '1 month' + interval '3 days', 'SUCCESS', 'FULL');
