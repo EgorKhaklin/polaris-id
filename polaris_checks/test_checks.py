@@ -21755,6 +21755,21 @@ def test_git_spawning_tests_drop_the_hook_environment_check_discriminates(tmp_pa
     mod.write_text(spawn + module_scrub.replace("GIT_", "GIT_DIR"))
     assert fn(tmp_path)[0].level == "FAIL", "must FAIL a scrub of one named variable: the prefix is the guard"
 
+    # git reached other ways is git all the same: a command line run through a shell, an absolute
+    # path, or a lookup on PATH.
+    for form in ('    def test_x(self):\n        subprocess.run("git init -q /tmp/x", shell=True)\n',
+                 '    def test_x(self):\n        subprocess.run(["bash", "-c", "git -C /tmp/x commit -m m"])\n',
+                 '    def test_x(self):\n        subprocess.run(["/usr/bin/git", "init"])\n',
+                 '    def test_x(self):\n        subprocess.run([shutil.which("git"), "init"])\n',
+                 '    def test_x(self):\n        args = ["init"]\n        subprocess.run(["git"] + args)\n',
+                 '    def test_x(self):\n        subprocess.run(["/opt/homebrew/bin/git", "init"])\n',
+                 '    def test_x(self):\n        subprocess.run(["/usr/bin/env", "git", "init"])\n'):
+        other = "import os, shutil, subprocess\n\nclass T:\n" + form
+        mod.write_text(other)
+        assert fn(tmp_path)[0].level == "FAIL", f"must FAIL a module that runs git this way unscrubbed: {form!r}"
+        mod.write_text(other + module_scrub)
+        assert fn(tmp_path)[0].level == "OK", f"must PASS the same module scrubbed: {fn(tmp_path)[0].message}"
+
     mod.write_text(spawn + module_scrub.replace("os.environ.pop(k)", "os.environ.get(k)"))
     assert fn(tmp_path)[0].level == "FAIL", "must FAIL a guard that reads GIT_* and removes nothing"
 

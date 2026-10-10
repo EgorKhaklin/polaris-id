@@ -26842,7 +26842,13 @@ def check_verification_plan_covers_published_artifacts(root: pathlib.Path) -> li
 # a scratch repository's one file (2026-10-10), the third time after 2026-09-28's two. A class-level
 # guard covers only its own class, and the 10-10 tests were new classes beside a guarded one; the
 # scrub is module-wide (setUpModule, or an autouse fixture) and drops every GIT_* by prefix.
-_SPAWNS_GIT = re.compile(r"[\[(]\s*[\"']git[\"']\s*,")
+# Not seen: git named through a variable or constant (GIT = "git"; [GIT, "init"]).
+_SPAWNS_GIT = re.compile(
+    r"[\[(]\s*[\"'](?:(?:/[\w.+-]+)+/)?git[\"']\s*[,\])]"                # ["git", ...], ["git"] + args, any absolute git
+    r"|[\[(]\s*[\"']/usr/bin/env[\"']\s*,\s*[\"']git[\"']"               # git started by env
+    r"|shutil\.which\(\s*[\"']git[\"']\s*\)"                               # git looked up on PATH
+    r"|[\"'](?:(?:/[\w.+-]+)+/)?git\s+(?:-C|init|add|commit|clone|config|worktree|rev-parse|"
+    r"log|ls-files|status|checkout|merge|tag|fetch|push)\b")              # a command line in a string (shell=True, bash -c)
 
 
 def check_git_spawning_tests_drop_the_hook_environment(root: pathlib.Path) -> list[Finding]:
