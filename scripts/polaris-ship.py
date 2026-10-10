@@ -331,7 +331,7 @@ UNSHARDED_SUITES = {
                 "test_conformance_runner", "test_ship_tool", "test_pgbouncer_entrypoint",
                 "test_sbom_enrich", "test_issuance_scope", "test_pin_chart_images", "test_chain_anchor_tool",
                 "test_migrate_runner", "test_coverage_script",
-                "test_trigger_drill", "test_operator_env", "test_key_event",
+                "test_trigger_drill", "test_procedure_drill", "test_compose_parse", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
                 "test_event_partition_migration", "test_database_settings", "test_db_state", "test_db_reference",
                 "test_pgbackrest_conf", "test_db_init"],
@@ -491,6 +491,28 @@ RUN_LOCK = int.from_bytes(hashlib.sha256(("polaris-ship run " + DB_PREFIX).encod
 ZK_SOURCES = ("polaris_zk/src", "polaris_zk/Cargo.toml", "polaris_zk/Cargo.lock", "polaris_zk/rust-toolchain.toml")
 
 
+def zk_source_tree(root=ROOT):
+    """The git tree of ZK_SOURCES as they stand in the working copy, uncommitted changes included:
+    what polaris_zk/build.rs stamps into the binary. None when git cannot read them."""
+    import tempfile
+    zk = os.path.join(root, "polaris_zk")
+    with tempfile.TemporaryDirectory() as d:
+        # A scratch index, and none of a hook's GIT_* (they name another repository's index).
+        genv = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        genv["GIT_INDEX_FILE"] = os.path.join(d, "index")
+
+        def git(*args):
+            r = subprocess.run(["git", *args], cwd=zk, env=genv, capture_output=True, text=True)
+            return r.stdout.strip() if r.returncode == 0 else None
+        if git("read-tree", "--empty") is None:
+            return None
+        present = [p[len("polaris_zk/"):] for p in ZK_SOURCES if os.path.exists(os.path.join(root, p))]
+        if not present or git("add", "-A", "--", *present) is None:
+            return None
+        tree = git("write-tree", "--prefix=polaris_zk/")
+        return tree if tree and re.fullmatch(r"[0-9a-f]{40}", tree) else None
+
+
 def zk_prover_stale(root=ROOT, env=None):
     """Why the ZK prover ZKSnarkTests would run cannot be trusted, or None.
 
@@ -503,6 +525,24 @@ def zk_prover_stale(root=ROOT, env=None):
     binary = env.get("POLARIS_ZK_BINARY") or os.path.join(root, "polaris_zk", "target", "release", "polaris-zk")
     if not os.path.isfile(binary):
         return None
+    # Exact first: a binary that reports the source tree it was built from (polaris_zk/build.rs) is
+    # current when that tree is the working copy's, and stale when it is not, whatever the file times.
+    try:
+        r = subprocess.run([binary, "source-tree"], stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, timeout=30)
+        stamp = r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        stamp = ""
+    if re.fullmatch(r"[0-9a-f]{40}", stamp):
+        tree = zk_source_tree(root)
+        if tree is None:
+            return ("the source tree of %s could not be read, so nothing says %s is current"
+                    % (", ".join(ZK_SOURCES), binary))
+        if stamp == tree:
+            return None
+        return ("%s was built from source tree %s and the working copy's is %s: ZKSnarkTests would check "
+                "the old circuit. Build it: cd polaris_zk && cargo build --release" % (binary, stamp[:12], tree[:12]))
+    # A binary from before the stamp, or one built outside git: by file times.
     # --first-parent: a change made on a side branch reaches this one when it is merged, and a binary
     # built in between is still the earlier circuit (the 10-06 change reached main on 10-07).
     r = subprocess.run(["git", "-C", root, "log", "-1", "--first-parent", "--format=%ct %h", "--", *ZK_SOURCES],

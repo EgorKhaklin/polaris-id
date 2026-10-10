@@ -1,0 +1,156 @@
+# ============================================================================
+# The SBOM build, called by sbom.yml: for a release with its tag, and for a pull request that
+# changes how the SBOMs are made (sbom.yml, this file, scripts/polaris-sbom-enrich.py,
+# .github/sbom/), so a change to the release path runs before a release needs it. On
+# 2026-10-10 the NTIA step, added on 10-02, ran for the first time on v1.0.0-rc.71's release
+# and failed; nothing had run it in between.
+#
+# It generates the six SPDX SBOMs, holds each to SPDX 2.3 and the NTIA minimum elements, reports
+# their digests and hands them over as an artifact. Its token is read-only and it holds no OIDC
+# identity: the job that attests and publishes (sbom.yml) runs no build step, takes the files from
+# the artifact and holds them to these digests first (lab record 011's split).
+# ============================================================================
+name: SBOM build
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "The tree to describe: the release tag, or a pull request's head"
+        required: true
+        type: string
+      version:
+        description: "The version the SBOMs carry (a release's tag without its v); empty: the tree's own"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      sha256:
+        description: "sha256sum of each SBOM, sorted by name"
+        value: ${{ jobs.build.outputs.sha256 }}
+
+permissions:
+  contents: read
+
+env:
+  # The one place the SBOM generator's Trivy version lives in THIS file (sbom.yml calls it). It
+  # must equal the image-cve-scan pin in ci.yml (checked by polaris_checks).
+  TRIVY_IMAGE: aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7
+
+jobs:
+  build:
+    name: Generate the SBOMs and hold them to SPDX 2.3 and the NTIA minimum elements
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha256: ${{ steps.digests.outputs.sha256 }}
+    steps:
+      - name: Checkout the tree to describe (the release tag, or a pull request's head)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+
+      - name: Python runtime surface SBOM (SPDX)
+        run: |
+          mkdir -p sbom
+          # Mount the source read-only and an output dir read-write; Trivy
+          # writes the SPDX doc to the bind-mounted /out path.
+          docker run --rm \
+            -v "$PWD/polaris_web:/src:ro" \
+            -v "$PWD/sbom:/out" \
+            "$TRIVY_IMAGE" fs --format spdx-json \
+            --output /out/sbom-python.spdx.json /src/requirements.txt
+          test -s sbom/sbom-python.spdx.json || { echo "::error::python SBOM empty"; exit 1; }
+
+      - name: Build the five self-built images
+        run: |
+          bash scripts/polaris-image-build.sh --stack sbom
+
+      - name: Image SBOMs (SPDX)
+        run: |
+          for name in app caddy pgbouncer postgres etcd; do
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$PWD/sbom:/out" \
+              "$TRIVY_IMAGE" image --format spdx-json \
+              --output "/out/sbom-image-${name}.spdx.json" "polaris-${name}:sbom"
+            test -s "sbom/sbom-image-${name}.spdx.json" \
+              || { echo "::error::image SBOM for ${name} empty"; exit 1; }
+          done
+
+      - name: Validate every SBOM is SPDX 2.3
+        run: |
+          fail=0
+          for f in sbom/*.spdx.json; do
+            ver=$(python3 -c "import json,sys; print(json.load(open('$f')).get('spdxVersion',''))")
+            n=$(python3 -c "import json,sys; d=json.load(open('$f')); print(len([p for p in d.get('packages',[]) if p.get('name')]))")
+            echo "$f -> $ver, $n packages"
+            [ "$ver" = "SPDX-2.3" ] || { echo "::error::$f is not SPDX-2.3"; fail=1; }
+            [ "$n" -ge 1 ] || { echo "::error::$f lists no packages"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      # The 2021 NTIA minimum elements, and valid SPDX 2.3, before anything is attested. Trivy
+      # leaves suppliers, the subject's version and the author short and copies license names
+      # that are not on the SPDX list; scripts/polaris-sbom-enrich.py fills each from facts the
+      # SBOM and the release hold (and fails, naming the component, where it holds none). The
+      # SPDX project's checker then decides, and the verdict is read from its JSON report: the
+      # SBOM must be conformant AND carry no validation message. Its own non-zero exit would end
+      # the step before naming the SBOM and printing the report, so it is not what decides here.
+      # A failure leaves the draft.
+      - name: Meet the NTIA minimum elements, judged by the SPDX project's checker
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/sbom-check"
+          "$RUNNER_TEMP/sbom-check/bin/pip" install --quiet --require-hashes -r .github/sbom/requirements.txt
+          PY="$RUNNER_TEMP/sbom-check/bin/python"
+          # A release passes its version; a pull request describes its tree at the version it carries.
+          V="${VERSION:-$(sed -n 's/^__version__: str = "\(.*\)"$/\1/p' polaris_web/__version__.py)}"
+          [ -n "$V" ] || { echo "::error::no version to give the SBOMs"; exit 1; }
+          # Trivy ran as root in its container, so the SBOMs are root-owned and the enrichment
+          # below could not rewrite them (v1.0.0-rc.71's first run: PermissionError). The runner
+          # owns sbom/, so a copy renamed over each file makes it the runner's.
+          for f in sbom/*.spdx.json; do
+            cp "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
+            [ -w "$f" ] || { echo "::error::$f is still not writable by the runner"; exit 1; }
+          done
+          # The Caddy main module and the lockfile are built here; everything else names its own.
+          "$PY" scripts/polaris-sbom-enrich.py --version "$V" --ours requirements.txt sbom/sbom-python.spdx.json
+          "$PY" scripts/polaris-sbom-enrich.py --version "$V" --ours caddy sbom/sbom-image-caddy.spdx.json
+          "$PY" scripts/polaris-sbom-enrich.py --version "$V" \
+            sbom/sbom-image-app.spdx.json sbom/sbom-image-pgbouncer.spdx.json \
+            sbom/sbom-image-postgres.spdx.json sbom/sbom-image-etcd.spdx.json
+          fail=0
+          for f in sbom/*.spdx.json; do
+            "$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "$f" > "$RUNNER_TEMP/verdict.json" || true
+            if jq -e '.isConformant == true and (.validationMessages | length) == 0' \
+                "$RUNNER_TEMP/verdict.json" > /dev/null; then
+              echo "$f: NTIA minimum elements met, valid SPDX 2.3"
+            else
+              echo "::error::$f does not meet the NTIA minimum elements or is not valid SPDX 2.3"
+              "$RUNNER_TEMP/sbom-check/bin/ntia-checker" "$f" || true
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      # The attesting job takes these files from an artifact and attests only what this job made:
+      # it holds them to the digests reported here before it signs anything.
+      - name: Report the SBOMs' digests
+        id: digests
+        run: |
+          d=$(cd sbom && sha256sum ./*.spdx.json | sort -k2)
+          [ "$(printf '%s\n' "$d" | grep -c 'spdx.json$')" = 6 ] \
+            || { echo "::error::expected six SBOMs, found:"; printf '%s\n' "$d"; exit 1; }
+          { echo "sha256<<EOF"; printf '%s\n' "$d"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Hand the SBOMs to the attesting job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: sbom/*.spdx.json
+          if-no-files-found: error
+          retention-days: 1
