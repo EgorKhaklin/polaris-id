@@ -18,8 +18,26 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+_POLARIS_SEEN = []
+
+
 def polaris_oid4vp(vector, settings):
-    sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "packages", "polaris-oid4vp"))
+    # The installed package when there is one (a release from PyPI), else this tree's: until
+    # 2026-10-10 the tree always went first on sys.path, so a run "against a release" measured the
+    # tree. The first call says which it used.
+    try:
+        import polaris_oid4vp
+    except ImportError:
+        sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "packages", "polaris-oid4vp"))
+        import polaris_oid4vp
+    if not _POLARIS_SEEN:
+        import importlib.metadata
+        try:
+            version = importlib.metadata.version("polaris-oid4vp")
+        except importlib.metadata.PackageNotFoundError:
+            version = "this tree"
+        _POLARIS_SEEN.append(version)
+        print("polaris-oid4vp %s from %s" % (version, os.path.dirname(polaris_oid4vp.__file__)), file=sys.stderr)
     from cryptography import x509
     from polaris_oid4vp.sdjwt import verify_presentation
     kw = {"expected_nonce": settings["nonce"], "expected_audience": settings["audience"], "now": settings["now"],

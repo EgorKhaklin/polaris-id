@@ -34,6 +34,9 @@ issuer's certificate chain). A library that implements only some layers is judge
 python3 run_vectors.py vectors.json --adapter polaris-oid4vp
 ```
 
+The `polaris-oid4vp` adapter uses the installed package when there is one (for a release:
+`pip install polaris-oid4vp==1.0.0rc16`), else this tree's, and prints the version and path it used.
+
 An adapter is one function, `(vector, settings) -> ("accept" | "reject", reason)`. `settings` holds the
 instant, nonce, audience, credential type, trust anchors (PEM) and issuer JWKs every vector assumes.
 Adding a verifier means adding its function to `run_vectors.py`; it answers `n/a` for a layer it leaves to
