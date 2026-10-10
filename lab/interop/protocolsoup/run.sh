@@ -75,9 +75,10 @@ git -C src checkout -q FETCH_HEAD
 # -mod=readonly: every module is checked against ProtocolSoup's go.sum and nothing in the tree is
 # rewritten. The module and build caches are named volumes so a second run does not download again.
 started=$(date +%s)
+# GOTOOLCHAIN=auto: a commit needing a newer Go than the pinned image holds (v4.1.1: 1.26.6) fetches it.
 docker run --rm -v "$WORK/src/backend":/src:ro -v "$WORK":/out -w /src \
   -v polaris-go-mod:/go/pkg/mod -v polaris-go-build:/root/.cache/go-build \
-  -e CGO_ENABLED=0 -e GOFLAGS=-mod=readonly -e GOTOOLCHAIN=local "$GO_IMAGE" \
+  -e CGO_ENABLED=0 -e GOFLAGS=-mod=readonly -e GOTOOLCHAIN=auto "$GO_IMAGE" \
   sh -c 'go version && go build -trimpath -o /out/wallet-harness ./cmd/walletharness' | sed 's/^/           /'
 echo "built      wallet-harness in $(( $(date +%s) - started )) s"
 
