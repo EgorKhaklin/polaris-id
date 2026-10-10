@@ -11,8 +11,9 @@ fails on any difference it does not expect: a lost fact, a gained one, or a chan
 Where a row compares against a fresh install, it is this release installed in a throwaway cluster
 of its own from the database image the upgrade deployed, initialised as a production install is,
 and partitions are compared by their table, since which months exist depends on the date. The two
-clusters' roles are compared for the roles Polaris creates; a role only one cluster has and Polaris
-does not create (Patroni's, the replicator) is left out, and the drill names it.
+clusters' roles are compared for the roles Polaris creates (`polaris_app`, and `polaris_replicator`
+when the stack has a replication password); a role only one cluster has and Polaris does not create
+is left out, and the drill names it.
 
 The state is read by [`scripts/lib/polaris-db-state.sh`](../../scripts/lib/polaris-db-state.sh) unless the row says otherwise. Its
 security kinds: role, member, table, column, sequence, execute, schema, database, defacl,

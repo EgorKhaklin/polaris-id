@@ -158,7 +158,13 @@ state after "after the upgrade"
 # the chart was upgraded to, loaded into kind from this host: polaris-postgres:prod.
 polaris_db_reference_carries "${ROOT}/polaris_sql" \
     || { diagnose; fail "the leading member's image does not carry ${TARGET:0:8}'s SQL and init"; }
+# Its first boot gets the stack's other password files too, so it creates what the stack's did:
+# with a replication password, the init (or Patroni, under the HA profile) made polaris_replicator.
+ref_env=()
+repl="$(pg_run printenv POLARIS_REPLICATOR_PASSWORD_FILE 2> /dev/null || true)"
+[[ -z "${repl}" ]] || ref_env+=("POLARIS_REPLICATOR_PASSWORD_FILE=$(basename "${repl}")")
 polaris_db_reference_run polaris-postgres:prod "${REFERENCE}" "${WORK}/reference-secrets" "${WORK}/reference.log" \
+        ${ref_env[@]+"${ref_env[@]}"} \
     || { tail -20 "${WORK}/reference.log" >&2; fail "installing ${TARGET:0:8} fresh in a throwaway cluster"; }
 ( pg_run() { docker exec -u postgres "${REFERENCE}" "$@" < /dev/null; }
   polaris_db_reference_carries "${ROOT}/polaris_sql" ) \

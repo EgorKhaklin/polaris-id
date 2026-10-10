@@ -16,10 +16,11 @@
 # boot sets, as the anonymity floor was. Whatever the upgrade left different from a fresh install
 # of the same release is drift.
 #
-# The two clusters' roles are compared too, for the roles polaris_sql creates: an upgraded
-# polaris_app whose attributes, memberships or settings differ from a fresh one's is drift. Facts
-# about a role only one cluster has and Polaris does not create (Patroni's, the replicator) are left
-# out, and named; a Polaris role on one side only is not left out.
+# The two clusters' roles are compared too, for the roles Polaris creates (polaris_sql's and the
+# init's: polaris_app, and polaris_replicator, which the init creates, or Patroni under the HA
+# profile, when the stack has a replication password): an upgraded role whose attributes,
+# memberships or settings differ from a fresh one's is drift, and so is one on one side only. Facts
+# about a role only one cluster has and Polaris does not create are left out, and named.
 #
 # polaris_db_reference_carries runs `pg_run` (the caller's): given an argv, it runs it inside a
 # database server's container as the superuser, with stdin closed, and fails when it fails.
@@ -28,12 +29,15 @@
 #                                         (DIR is its polaris_sql; the init is polaris_web/
 #                                         docker-init.sh beside it): a reference built from other
 #                                         files would compare the upgrade with some other release
-#   polaris_db_reference_run IMAGE NAME DIR LOG  start container NAME from IMAGE, its passwords
-#                                         generated into DIR; wait for its first boot; migrate and
-#                                         sync as production; require it to read as production
+#   polaris_db_reference_run IMAGE NAME DIR LOG [ENV=SECRET...]  start container NAME from IMAGE,
+#                                         its passwords generated into DIR (and one per ENV=SECRET,
+#                                         the stack's other password files: the replicator's);
+#                                         wait for its first boot; migrate and sync as production;
+#                                         require it to read as production
 #   polaris_db_reference_sql NAME SQL     one SQL text in it, as the superuser: its rows on stdout
 #   polaris_db_reference_stop NAME DIR    remove the container, and DIR
-#   polaris_db_reference_roles DIR        the roles polaris_sql under DIR creates, one per line
+#   polaris_db_reference_roles DIR        the roles Polaris creates (CREATE ROLE in polaris_sql
+#                                         under DIR and in polaris_web/docker-init.sh beside it)
 #   polaris_db_state_cross_cluster A B ROLES OUTA OUTB  A and B without the facts about a role only
 #                                         one cluster has that ROLES does not name; the roles left
 #                                         out on stdout
@@ -112,17 +116,29 @@ polaris_db_reference_stop() {  # NAME DIR
     if [[ -n "${2:-}" ]]; then rm -rf "$2"; fi
 }
 
-polaris_db_reference_run() {  # IMAGE NAME DIR LOG
-    if [[ $# -ne 4 || -z "$1" || -z "$3" || -z "$4" ]]; then
+polaris_db_reference_run() {  # IMAGE NAME DIR LOG [ENV=SECRET...]
+    if [[ $# -lt 4 || -z "$1" || -z "$3" || -z "$4" ]]; then
         echo "polaris_db_reference_run: give IMAGE, NAME, DIR and LOG" >&2
         return 2
     fi
     _polaris_db_reference_name_ok "$2" || return 2
     local image="$1" name="$2" dir="$3" log="$4" secret i up=0 admin limit="${POLARIS_REFERENCE_BOOT_SECONDS:-240}"
+    local -a extra_env=() extra_secrets=()
+    shift 4
+    # The stack's other password files, so its first boot creates what the stack's did (the
+    # replicator's: the init creates polaris_replicator when it has one).
+    for i in "$@"; do
+        if [[ ! "${i}" =~ ^POLARIS_[A-Z_]+_FILE=[a-z_]+$ ]]; then
+            echo "polaris_db_reference_run: '${i}' is not ENV=SECRET (POLARIS_..._FILE=a_secret_name)" >&2
+            return 2
+        fi
+        extra_env+=(-e "${i%%=*}=/run/secrets/${i#*=}")
+        extra_secrets+=("${i#*=}")
+    done
     # The passwords its first boot reads, generated for it alone: none of the operator's reaches it.
     # Readable by the container's postgres user, which is not the host's.
     mkdir -p "${dir}" || { echo "polaris_db_reference: cannot make ${dir}" >&2; return 1; }
-    for secret in polaris_db_root_password polaris_db_password; do
+    for secret in polaris_db_root_password polaris_db_password ${extra_secrets[@]+"${extra_secrets[@]}"}; do
         ( umask 022 && openssl rand -hex 24 > "${dir}/${secret}" ) && [[ -s "${dir}/${secret}" ]] \
             || { echo "polaris_db_reference: could not generate ${secret} in ${dir}" >&2; return 1; }
     done
@@ -132,7 +148,7 @@ polaris_db_reference_run() {  # IMAGE NAME DIR LOG
         -e POSTGRES_DB=polaris -e POSTGRES_USER=postgres \
         -e POSTGRES_PASSWORD_FILE=/run/secrets/polaris_db_root_password \
         -e POLARIS_APP_PASSWORD_FILE=/run/secrets/polaris_db_password \
-        -e POLARIS_ENV=production -e POLARIS_PGBACKREST_ENABLED=0 \
+        -e POLARIS_ENV=production -e POLARIS_PGBACKREST_ENABLED=0 ${extra_env[@]+"${extra_env[@]}"} \
         -v "${dir}:/run/secrets:ro" "${image}" >> "${log}" 2>&1 \
         || { echo "polaris_db_reference: could not start ${name} from ${image} (${log})" >&2; return 1; }
     # The first boot initialises on a server that listens on its socket only; the server it then
@@ -176,9 +192,14 @@ polaris_db_reference_roles() {  # DIR: this tree's polaris_sql
         echo "polaris_db_reference_roles: give this tree's polaris_sql directory" >&2
         return 2
     fi
-    local roles
-    roles="$({ LC_ALL=C grep -rhoiE 'CREATE ROLE[[:space:]]+(IF NOT EXISTS[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*' \
-                 --include='*.sql' "$1" || true; } | awk '{ print tolower($NF) }' | LC_ALL=C sort -u)"
+    local roles init="$1/../polaris_web/docker-init.sh"
+    if [[ ! -r "${init}" ]]; then
+        echo "polaris_db_reference_roles: ${init} cannot be read, and the init creates roles too" >&2
+        return 1
+    fi
+    local pattern='CREATE ROLE[[:space:]]+(IF NOT EXISTS[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*'
+    roles="$({ LC_ALL=C grep -rhoiE "${pattern}" --include='*.sql' "$1" || true
+               LC_ALL=C grep -hoiE "${pattern}" "${init}" || true; } | awk '{ print tolower($NF) }' | LC_ALL=C sort -u)"
     if [[ -z "${roles}" ]]; then
         echo "polaris_db_reference_roles: no CREATE ROLE under $1, so no role would be compared" >&2
         return 1

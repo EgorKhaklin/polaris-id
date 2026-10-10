@@ -145,6 +145,22 @@ class RunTests(_Base):
         self.assertLess(calls.index(run[0]), calls.index(migrate[0]))
         self.assertTrue(any("appuser" in c for c in calls[calls.index(migrate[1]):]))
 
+    def test_the_stacks_other_password_files_are_mirrored_with_values_of_its_own(self):
+        r = self.bash('polaris_db_reference_run polaris-postgres:prod polaris-reference-test "%s" "%s" '
+                      'POLARIS_REPLICATOR_PASSWORD_FILE=polaris_replicator_password' % (self.secrets, self.log),
+                      PATH="%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        run = [c for c in self.docker_calls() if c.startswith("run ")][0]
+        self.assertIn("-e POLARIS_REPLICATOR_PASSWORD_FILE=/run/secrets/polaris_replicator_password", run)
+        self.assertEqual(len((self.secrets / "polaris_replicator_password").read_text().strip()), 48)
+        for bad in ("POLARIS_REPLICATOR_PASSWORD_FILE=../escape", "PGPASSWORD=x", "POLARIS_X_FILE"):
+            with self.subTest(bad=bad):
+                (self.tmp / "docker-calls").unlink(missing_ok=True)
+                r = self.bash('polaris_db_reference_run polaris-postgres:prod polaris-reference-test "%s" "%s" %s'
+                              % (self.secrets, self.log, bad), PATH="%s:/usr/bin:/bin" % self.bin)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertEqual(self.docker_calls(), [])
+
     def test_a_reference_that_is_not_a_production_install_is_refused(self):
         # The production block retires the sample's administrator: a reference without it would hide
         # every fact only production's first boot sets.
@@ -196,28 +212,42 @@ class RunTests(_Base):
 
 class RolesTests(_Base):
 
-    def test_the_roles_polaris_sql_creates(self):
+    def init(self, text):
+        (self.tmp / "polaris_web").mkdir(exist_ok=True)
+        (self.tmp / "polaris_web" / "docker-init.sh").write_text(text)
+
+    def test_the_roles_polaris_sql_and_the_init_create(self):
         sql = self.tmp / "polaris_sql"
         (sql / "migrations").mkdir(parents=True)
+        self.init('psql -c "CREATE ROLE polaris_replicator WITH LOGIN REPLICATION PASSWORD x"\n')
         (sql / "09_grants.sql").write_text("DO $$ BEGIN CREATE ROLE polaris_app WITH LOGIN; END $$;\n")
         (sql / "migrations" / "x.up.sql").write_text("create role if not exists Polaris_Auditor;\n")
         (sql / "README.md").write_text("CREATE ROLE not_sql\n")
         r = self.bash('polaris_db_reference_roles "%s"' % sql)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.split(), ["polaris_app", "polaris_auditor"])
+        self.assertEqual(r.stdout.split(), ["polaris_app", "polaris_auditor", "polaris_replicator"])
 
     def test_no_role_created_is_a_failure_not_an_empty_list(self):
         sql = self.tmp / "polaris_sql"
         sql.mkdir()
+        self.init("echo no roles here\n")
         (sql / "01_schema.sql").write_text("CREATE TABLE t (x int);\n")
         r = self.bash('polaris_db_reference_roles "%s"' % sql)
         self.assertEqual(r.returncode, 1)
         self.assertIn("no CREATE ROLE", r.stderr)
 
-    def test_the_real_tree_creates_polaris_app(self):
+    def test_without_the_init_the_roles_are_not_known(self):
+        sql = self.tmp / "polaris_sql"
+        sql.mkdir()
+        (sql / "09_grants.sql").write_text("CREATE ROLE polaris_app;\n")
+        r = self.bash('polaris_db_reference_roles "%s"' % sql)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("docker-init.sh cannot be read", r.stderr)
+
+    def test_the_real_tree_creates_polaris_app_and_polaris_replicator(self):
         r = self.bash('polaris_db_reference_roles "%s"' % (ROOT / "polaris_sql"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("polaris_app", r.stdout.split())
+        self.assertEqual(r.stdout.split(), ["polaris_app", "polaris_replicator"])
 
 
 class CrossClusterTests(_Base):
@@ -227,9 +257,9 @@ class CrossClusterTests(_Base):
              "owner public.agency r postgres",
              "role polaris_app super=false inherit=true createrole=false createdb=false login=true replication=false bypassrls=false",
              "table public.agency polaris_app SELECT"]
-    # The upgraded side runs under Patroni: its replicator role is the cluster's, not Polaris's.
-    UPGRADED = FRESH + ["database this replicator CONNECT",
-                        "role replicator super=false inherit=true createrole=false createdb=false login=true replication=true bypassrls=false"]
+    # The upgraded side's cluster has a role of its own that Polaris does not create.
+    UPGRADED = FRESH + ["database this infra_monitor CONNECT",
+                        "role infra_monitor super=false inherit=true createrole=false createdb=false login=true replication=false bypassrls=false"]
 
     def cross(self, a, b, roles=("polaris_app",)):
         ra, rb = self.state_file("a", a), self.state_file("b", b)
@@ -248,8 +278,8 @@ class CrossClusterTests(_Base):
     def test_a_role_only_one_cluster_has_is_left_out_and_named(self):
         r = self.cross(self.with_partition(self.FRESH), self.with_partition(self.UPGRADED))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.split(), ["replicator"])
-        self.assertNotIn("replicator", (self.tmp / "b.cmp").read_text())
+        self.assertEqual(r.stdout.split(), ["infra_monitor"])
+        self.assertNotIn("infra_monitor", (self.tmp / "b.cmp").read_text())
         self.assertEqual(self.same().returncode, 0, self.same().stderr)
 
     def test_a_polaris_role_whose_attributes_changed_on_one_side_is_drift(self):
@@ -267,7 +297,7 @@ class CrossClusterTests(_Base):
                                  "table public.agency polaris_auditor SELECT"]
         r = self.cross(self.with_partition(self.FRESH), self.with_partition(extra), roles=("polaris_app", "polaris_auditor"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.split(), ["replicator"])
+        self.assertEqual(r.stdout.split(), ["infra_monitor"])
         s = self.same()
         self.assertEqual(s.returncode, 1)
         self.assertIn("> table public.agency polaris_auditor SELECT", s.stderr)
@@ -276,10 +306,19 @@ class CrossClusterTests(_Base):
         fresh = self.FRESH + ["role polaris_auditor super=false inherit=true createrole=false createdb=false login=true replication=false bypassrls=false"]
         r = self.cross(self.with_partition(fresh), self.with_partition(self.UPGRADED), roles=("polaris_app", "polaris_auditor"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.split(), ["replicator"])
+        self.assertEqual(r.stdout.split(), ["infra_monitor"])
         s = self.same()
         self.assertEqual(s.returncode, 1)
         self.assertIn("< role polaris_auditor", s.stderr)
+
+    def test_the_replication_role_the_stack_has_and_the_reference_lacks_is_drift(self):
+        stack = self.UPGRADED + ["role polaris_replicator super=false inherit=true createrole=false createdb=false login=true replication=true bypassrls=false"]
+        r = self.cross(self.with_partition(self.FRESH), self.with_partition(stack), roles=("polaris_app", "polaris_replicator"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("polaris_replicator", r.stdout.split(), "Polaris's own replication role was left out")
+        s = self.same()
+        self.assertEqual(s.returncode, 1)
+        self.assertIn("> role polaris_replicator", s.stderr)
 
     def test_a_shared_role_stays_whoever_it_is(self):
         # The superuser both clusters have owns objects: its facts are compared, not left out.

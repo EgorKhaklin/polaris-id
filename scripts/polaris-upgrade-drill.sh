@@ -114,7 +114,13 @@ state a1 "after the upgrade"
 # compared with some other release.
 image="$(docker inspect --format '{{.Image}}' "$(pg_container)")" && [[ -n "${image}" ]] \
     || fail "the upgraded postgres container's image could not be read"
+# Its first boot gets the stack's other password files too, so it creates what the stack's did:
+# with a replication password, the init (or Patroni, under the HA profile) made polaris_replicator.
+ref_env=()
+repl="$(pg_run printenv POLARIS_REPLICATOR_PASSWORD_FILE 2> /dev/null || true)"
+[[ -z "${repl}" ]] || ref_env+=("POLARIS_REPLICATOR_PASSWORD_FILE=$(basename "${repl}")")
 polaris_db_reference_run "${image}" "${REFERENCE}" "${WORK}/reference-secrets" "${WORK}/reference.log" \
+        ${ref_env[@]+"${ref_env[@]}"} \
     || { tail -20 "${WORK}/reference.log" >&2; fail "installing ${TARGET:0:8} fresh in a throwaway cluster"; }
 ( pg_run() { docker exec -u postgres "${REFERENCE}" "$@" < /dev/null; }
   polaris_db_reference_carries "${TREE}/polaris_sql" ) \
