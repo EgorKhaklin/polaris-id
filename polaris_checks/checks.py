@@ -4357,8 +4357,27 @@ def check_prod_app_password_synced(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_pw_sync", "docker-init.sh does not read POLARIS_APP_PASSWORD_FILE")
     if not re.search(r"ALTER\s+ROLE\s+polaris_app", init, re.I):
         return _fail("prod_pw_sync", "docker-init.sh does not ALTER ROLE polaris_app to the secret")
+    # Lab record 017 (managed PostgreSQL): the password never reaches a statement or a command line.
+    # It went into the ALTER ROLE text on psql's command line, where a process listing and any
+    # statement log (on a managed database, the provider's) could read it.
+    for line in init.splitlines():
+        if (re.search(r"ALTER\s+ROLE\s+polaris_app", line, re.I)
+                and re.search(r"\$\{?POLARIS_APP_PASSWORD\b", line)):
+            return _fail("prod_pw_sync", "docker-init.sh puts POLARIS_APP_PASSWORD itself into the ALTER ROLE "
+                         "statement, which reaches psql's command line and any statement log; send a "
+                         "SCRAM-SHA-256 verifier computed before it")
+    if "SCRAM-SHA-256$" not in init:
+        return _fail("prod_pw_sync", "docker-init.sh must set polaris_app's password as a SCRAM-SHA-256 "
+                     "verifier computed before it reaches the server")
+    # Judged before the schema loads: a refusal after it left a half-initialised database, which the
+    # image never initialises again.
+    gate, load = init.find("must be at least 16 characters"), re.search(r"-f\s+\S*00_load_all\.sql", init)
+    if gate < 0 or load is None or gate > load.start():
+        return _fail("prod_pw_sync", "docker-init.sh must judge POLARIS_APP_PASSWORD before it loads "
+                     "00_load_all.sql, or a weak one stops the first start half-initialised")
     return _ok("prod_pw_sync",
-               f"prod syncs the polaris_app role password to the app's secret ({app_secret.group(1)})")
+               f"prod syncs the polaris_app role password to the app's secret ({app_secret.group(1)}), as a "
+               "SCRAM verifier, judged before the schema loads")
 
 
 # ---------------------------------------------------------------------------
@@ -4381,9 +4400,12 @@ def check_prod_hardening(root: pathlib.Path) -> list[Finding]:
     if not init:
         return _fail("prod_hardening", "polaris_web/docker-init.sh is missing")
     # 1. Demo accounts neutralized in production.
-    prod_block = re.search(r'POLARIS_ENV.*?production.*?(?=\nfi\b|\Z)', init, re.S)
-    if not (prod_block and "is_active" in prod_block.group(0)
-            and re.search(r"'admin',\s*'operator',\s*'auditor'", prod_block.group(0))):
+    # Any production block: docker-init.sh refuses a missing password in production before it loads
+    # anything, so the hardening block is not the first one that names POLARIS_ENV.
+    hardened = [b.group(0) for b in re.finditer(r'POLARIS_ENV.*?production.*?(?=\nfi\b|\Z)', init, re.S)
+                if "is_active" in b.group(0) and re.search(r"'admin',\s*'operator',\s*'auditor'", b.group(0))]
+    prod_block = re.search(re.escape(hardened[0]), init) if hardened else None
+    if not prod_block:
         return _fail("prod_hardening",
                      "docker-init.sh must disable the demo accounts (admin/operator/auditor) when "
                      "POLARIS_ENV=production — they ship with publicly-known passwords")
@@ -4403,6 +4425,82 @@ def check_prod_hardening(root: pathlib.Path) -> list[Finding]:
     return _ok("prod_hardening",
                "prod neutralizes demo accounts, restores the anonymity floor (%d) and wires the Redis "
                "rate limiter" % min(floors))
+
+
+# ---------------------------------------------------------------------------
+# Lab record 017 (managed PostgreSQL). ENCRYPTION-AT-REST.md's Option B told an operator to load
+# polaris_sql/ by hand on a managed service, whose database owner is not a superuser; PostgreSQL 15
+# and later refuse such a role the three polaris.* settings the schema keeps on the database, so
+# the load stopped half-written, and nothing applied docker-init.sh's production steps (the app
+# role's password, the demo accounts, the anonymity floor). scripts/polaris-db-init.sh checks the
+# preconditions before any write, then runs docker-init.sh in its external mode; CI runs it
+# against an owner that is not a superuser, without the grant and with it.
+# ---------------------------------------------------------------------------
+_EXTERNAL_PG_SETTINGS = ("polaris.min_epoch_anonymity_set", "polaris.default_max_revoke_percent",
+                         "polaris.default_window_days")
+
+
+def check_external_postgres_initialised(root: pathlib.Path) -> list[Finding]:
+    script = _read(root, "scripts/polaris-db-init.sh")
+    init = _read(root, "polaris_web/docker-init.sh")
+    ci = _read(root, ".github/workflows/ci.yml")
+    doc = _read(root, "docs/operator/ENCRYPTION-AT-REST.md")
+    if not (script and init and ci and doc):
+        return _fail("external_postgres", "scripts/polaris-db-init.sh, polaris_web/docker-init.sh, ci.yml or "
+                     "docs/operator/ENCRYPTION-AT-REST.md is missing")
+    for setting in _EXTERNAL_PG_SETTINGS:
+        if f"has_parameter_privilege('{setting}', 'SET')" not in script:
+            return _fail("external_postgres", f"polaris-db-init.sh does not check SET on {setting} before "
+                         "writing: the load stops half-written where the owner may not set it")
+    if "relnamespace = 'public'::regnamespace" not in script or "pronamespace = 'public'::regnamespace" not in script:
+        return _fail("external_postgres", "polaris-db-init.sh must refuse a database that is not empty: every "
+                     "relation, function and type in public, not its tables alone")
+    if not re.search(r'"\$\{app_exists\}" == t && "\$\{POLARIS_DB_INIT_REUSE_APP_ROLE:-\}" != 1', script):
+        return _fail("external_postgres", "polaris-db-init.sh must refuse an existing polaris_app unless the "
+                     "operator opts in: a role is the server's, and setting its password locks out the stack "
+                     "of another database that uses it")
+    if not re.search(r'if \[\[ -z "\$\{APP_PW\}" \]\]; then', script):
+        return _fail("external_postgres", "polaris-db-init.sh must refuse an empty application password before "
+                     "a write")
+    if not re.search(r"POLARIS_INIT_MANAGED_BY=external\b", script) or "POLARIS_ENV=production" not in script \
+            or "docker-init.sh" not in script:
+        return _fail("external_postgres", "polaris-db-init.sh must run docker-init.sh in its external mode with "
+                     "POLARIS_ENV=production, so the production steps apply")
+    if not re.search(r'elif \[ "\$MANAGED" = "external" \]; then\s*\n\s*echo', init) \
+            or "POLARIS_SQL_DIR" not in init:
+        return _fail("external_postgres", "docker-init.sh must take POLARIS_SQL_DIR and leave the server's "
+                     "configuration alone in its external mode")
+    if not re.search(r'"\$\{POLARIS_ENV:-\}" = "production" \]\s*\\\s*&& \{ \[ -z "\$POLARIS_APP_PASSWORD" \]', init):
+        return _fail("external_postgres", "docker-init.sh must refuse, in production, an empty or development "
+                     "password for polaris_app, not skip its rotation")
+    early = init.find('CREATE ROLE polaris_app WITH LOGIN PASSWORD \'%s\'')
+    load = init.find('-f "$SQL_DIR/00_load_all.sql"')
+    if early < 0 or load < 0 or early > load:
+        return _fail("external_postgres", "docker-init.sh must give polaris_app its password before the schema "
+                     "loads: 09_grants.sql creates the role with the development password when it does not exist")
+    for block in ("REPL_PWFILE", "POLARIS_PGBACKREST_ENABLED"):
+        if not re.search(r'if \[ -z "\$MANAGED" \] && [^\n]*' + block, init):
+            return _fail("external_postgres", f"docker-init.sh's {block} block must run only on the bundled "
+                         "server (no POLARIS_INIT_MANAGED_BY)")
+    job = re.search(r"(?ms)^  managed-postgres:\n.*?(?=^  [a-z0-9-]+:\n|\Z)", ci)
+    if not job or job.group(0).count("scripts/polaris-db-init.sh") < 2 \
+            or "GRANT SET ON PARAMETER" not in job.group(0) \
+            or "expected the refusal (exit 3)" not in job.group(0):
+        return _fail("external_postgres", "ci.yml's managed-postgres job must run polaris-db-init.sh without "
+                     "the parameter grant and with it")
+    for needle, why in (("POLARIS_APP_PASSWORD_FILE=/tmp/empty.pw", "refuse an empty password before a write"),
+                        ("after a failed load polaris_app answers to the development password",
+                         "show a failed load never leaves the development password"),
+                        ("polaris_app's password reached the server's statement log",
+                         "show the password never reaches the server's statement log"),
+                        ("the check above measured nothing", "control the log check with the verifier statement")):
+        if needle not in job.group(0):
+            return _fail("external_postgres", f"ci.yml's managed-postgres job must {why} ({needle!r})")
+    if "scripts/polaris-db-init.sh" not in doc or "GRANT SET ON PARAMETER" not in doc:
+        return _fail("external_postgres", "ENCRYPTION-AT-REST.md's managed option must name polaris-db-init.sh "
+                     "and the grant it needs")
+    return _ok("external_postgres", "a PostgreSQL Polaris does not ship is initialised by polaris-db-init.sh as "
+               "an owner that is not a superuser, refused before any write without the parameter grant (CI)")
 
 
 # ---------------------------------------------------------------------------
@@ -28100,6 +28198,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_cookie_secure_in_production,
     check_prod_app_password_synced,
     check_prod_hardening,
+    check_external_postgres_initialised,
     check_backup_encryption,
     check_table_count_matches_doc,
     check_launcher_current,

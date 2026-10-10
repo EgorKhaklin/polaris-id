@@ -37,6 +37,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-generate-recovery-code.sh` | Mints a printed-mnemonic recovery code | An operator, at enrolment |
 | `polaris-set-webauthn-deadline.sh` | Sets `webauthn_required_after` for an account | An operator, during the MFA rollout |
 | `polaris-pseudonymize-individual.sh` | The right-to-erasure wrapper over `uc_pseudonymize_individual` | An operator, under a recorded policy |
+| `polaris-db-init.sh` | Initialises a PostgreSQL Polaris does not ship (a managed service) as a production database, as its owner, which need not be a superuser; refuses before writing when a precondition is missing | An operator (ENCRYPTION-AT-REST.md, Option B); CI's `managed-postgres` job |
 | `polaris-migrate.sh` | Applies or reverts migrations under lock and statement timeouts | An operator; `deploy/linux/install.sh` |
 | `polaris-ct-monitor.sh` | Certificate Transparency monitor for the deployment domain | The cron wiring |
 | `polaris-pqc-status.sh` | Reports whether real post-quantum signing is available here | An operator, diagnosing a signing failure |

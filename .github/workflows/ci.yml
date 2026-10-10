@@ -3829,3 +3829,133 @@ jobs:
         run: |
           docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml down -v || true
           sudo umount /run/polaris/secrets 2>/dev/null || true
+
+  managed-postgres:
+    # Lab record 017 (managed PostgreSQL): a database Polaris does not ship, owned by a role that is
+    # not a superuser, as on a managed service. The provider's superuser creates the owner and the
+    # database and, once, grants SET on the three polaris.* settings; everything else runs as the owner.
+    name: A PostgreSQL Polaris does not ship, owned by a role that is not a superuser, initialised by one script
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: ci_superuser_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      POLARIS_DB_HOST: localhost
+      POLARIS_DB_OWNER: polaris_owner
+      POLARIS_DB_OWNER_PASSWORD_FILE: /tmp/owner.pw
+      POLARIS_APP_PASSWORD_FILE: /tmp/app.pw
+      PGSSLMODE: disable        # the service container serves no TLS; the script defaults to verify-full
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: The provider creates the owner, not a superuser, and its database
+        env:
+          PGPASSWORD: ci_superuser_password
+        run: |
+          set -e
+          command -v psql > /dev/null || { sudo apt-get update && sudo apt-get install -y postgresql-client; }
+          printf 'owner-ci-password' > /tmp/owner.pw
+          openssl rand -hex 24 > /tmp/app.pw
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE polaris_owner LOGIN NOSUPERUSER CREATEROLE PASSWORD 'owner-ci-password'" \
+            -c "CREATE DATABASE polaris OWNER polaris_owner" \
+            -c "CREATE DATABASE polaris_broken OWNER polaris_owner" \
+            -c "ALTER SYSTEM SET log_statement = 'all'" -c "SELECT pg_reload_conf()"
+
+      - name: Without the parameter grant the script refuses and writes nothing
+        env:
+          PGPASSWORD: ci_superuser_password
+        run: |
+          set +e
+          bash scripts/polaris-db-init.sh > /tmp/refused.out 2>&1
+          rc=$?
+          set -e
+          cat /tmp/refused.out
+          [ "$rc" = 3 ] || { echo "::error::expected the refusal (exit 3), got $rc"; exit 1; }
+          grep -q "GRANT SET ON PARAMETER polaris.min_epoch_anonymity_set" /tmp/refused.out
+          tables=$(psql -h localhost -U postgres -d polaris -tAc "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
+          [ "$tables" = 0 ] || { echo "::error::the refusal left $tables tables behind"; exit 1; }
+
+      # The review of 2026-10-09: a password file holding only a newline read as no password and left
+      # polaris_app on the public development one; and 09_grants.sql set that password while the schema
+      # loaded, where it stayed when a migration failed (a role outlives a dropped database).
+      - name: An empty password is refused before a write; a failed load never leaves the development password
+        env:
+          PGPASSWORD: ci_superuser_password
+        run: |
+          set -e
+          printf '\n' > /tmp/empty.pw
+          set +e
+          POLARIS_APP_PASSWORD_FILE=/tmp/empty.pw bash scripts/polaris-db-init.sh > /tmp/empty.out 2>&1
+          rc=$?
+          set -e
+          cat /tmp/empty.out
+          [ "$rc" = 2 ] && grep -q "is empty" /tmp/empty.out || { echo "::error::an empty password was not refused (exit $rc)"; exit 1; }
+          [ "$(psql -h localhost -U postgres -d postgres -tAc "SELECT count(*) FROM pg_roles WHERE rolname = 'polaris_app'")" = 0 ]
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "GRANT SET ON PARAMETER polaris.min_epoch_anonymity_set, polaris.default_max_revoke_percent, polaris.default_window_days TO polaris_owner"
+          # A copy of the checkout whose newest migration fails: the load stops there.
+          mkdir -p /tmp/broken && git archive HEAD | tar -x -C /tmp/broken
+          last=$(ls /tmp/broken/polaris_sql/migrations/*.up.sql | sort | tail -1)
+          echo "SELECT no_such_function();" >> "$last"
+          set +e
+          POLARIS_DB_NAME=polaris_broken bash /tmp/broken/scripts/polaris-db-init.sh > /tmp/broken.out 2>&1
+          rc=$?
+          set -e
+          tail -3 /tmp/broken.out
+          [ "$rc" = 1 ] || { echo "::error::the broken load did not fail (exit $rc)"; exit 1; }
+          if PGPASSWORD=polaris_dev_password psql -h localhost -U polaris_app -d polaris_broken -tAc "SELECT 1" > /dev/null 2>&1; then
+            echo "::error::after a failed load polaris_app answers to the development password"; exit 1
+          fi
+          PGPASSWORD="$(cat /tmp/app.pw)" psql -h localhost -U polaris_app -d polaris_broken -tAc "SELECT 1" > /dev/null
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE polaris_broken" -c "DROP ROLE polaris_app"
+
+      - name: With the grant the script initialises a production database
+        env:
+          # The service container's ID through the environment, not a template inside the script.
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+          PGPASSWORD: ci_superuser_password
+        run: |
+          set -e
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "GRANT SET ON PARAMETER polaris.min_epoch_anonymity_set, polaris.default_max_revoke_percent, polaris.default_window_days TO polaris_owner"
+          bash scripts/polaris-db-init.sh
+          q() { psql -h localhost -U postgres -d polaris -tAc "$1"; }
+          [ "$(q "SELECT rolsuper FROM pg_roles WHERE rolname = 'polaris_owner'")" = f ]
+          applied=$(q "SELECT count(*) FROM schema_version WHERE event_type = 'applied'")
+          on_disk=$(find polaris_sql/migrations -name '*.up.sql' | wc -l | tr -d ' ')
+          [ "$applied" = "$on_disk" ] || { echo "::error::$applied of $on_disk migrations applied"; exit 1; }
+          [ "$(q "SELECT polaris_database_setting('polaris.min_epoch_anonymity_set')")" = 20 ]
+          [ "$(q "SELECT count(*) FROM AppUser WHERE username IN ('admin', 'operator', 'auditor') AND is_active")" = 0 ]
+          # polaris_app answers to the stack's password, stored as a SCRAM verifier, and not to the public one.
+          PGPASSWORD="$(cat /tmp/app.pw)" psql -h localhost -U polaris_app -d polaris -tAc "SELECT count(*) FROM IdentityToken" > /dev/null
+          if PGPASSWORD=polaris_dev_password psql -h localhost -U polaris_app -d polaris -tAc "SELECT 1" > /dev/null 2>&1; then
+            echo "::error::polaris_app still answers to the development password"; exit 1
+          fi
+          [ "$(q "SELECT left(rolpassword, 14) FROM pg_authid WHERE rolname = 'polaris_app'")" = 'SCRAM-SHA-256$' ]
+          # A second run refuses the initialised database.
+          set +e
+          bash scripts/polaris-db-init.sh > /tmp/again.out 2>&1
+          rc=$?
+          set -e
+          [ "$rc" = 3 ] && grep -q "not empty" /tmp/again.out
+          # The server logged every statement: polaris_app's password is never among them, and the
+          # verifier that replaced it is (the control: a log that recorded nothing would also lack it).
+          docker logs "${PG_CONTAINER}" > /tmp/server.log 2>&1
+          if grep -qF "$(cat /tmp/app.pw)" /tmp/server.log; then
+            echo "::error::polaris_app's password reached the server's statement log"; exit 1
+          fi
+          grep -q "ROLE polaris_app WITH LOGIN PASSWORD 'SCRAM-SHA-256" /tmp/server.log \
+            || { echo "::error::the server log holds no polaris_app verifier statement: the check above measured nothing"; exit 1; }
+          echo "initialised as polaris_owner (not a superuser): $applied migrations, anonymity floor 20, demo accounts off, polaris_app on its own password"

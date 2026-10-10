@@ -334,7 +334,7 @@ UNSHARDED_SUITES = {
                 "test_trigger_drill", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
                 "test_event_partition_migration", "test_database_settings", "test_db_state", "test_db_reference",
-                "test_pgbackrest_conf"],
+                "test_pgbackrest_conf", "test_db_init"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
