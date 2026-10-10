@@ -853,10 +853,17 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                                     "partition (C1)")
     unlocked = [t for t in ("tokenlifecycleevent", "verificationevent", "enrollmentstatusevent",
                             "authauditlog") if t not in lock.group(0).lower()]
-    if unlocked or not re.search(r"REVOKE\s+INSERT\s*,\s*UPDATE\s*,\s*DELETE", lock.group(0), re.I):
-        return _fail("c1_aor_priv", "polaris_lock_event_partitions must REVOKE INSERT, UPDATE, "
-                                    "DELETE on the partitions of all four event tables; missing: "
-                                    + (", ".join(unlocked) or "the REVOKE") + " (C1)")
+    # 2026-10-10: and SELECT. The authority policies live on the parents, and a partition read
+    # directly carries none; no product path reads a partition, so the application keeps nothing.
+    if unlocked or not re.search(r"REVOKE\s+ALL\s+ON\s+%I\s+FROM\s+polaris_app", lock.group(0), re.I):
+        return _fail("c1_aor_priv", "polaris_lock_event_partitions must REVOKE ALL on the partitions of "
+                                    "all four event tables from polaris_app (a partition read directly "
+                                    "carries no authority policy); missing: "
+                                    + (", ".join(unlocked) or "the REVOKE ALL") + " (C1)")
+    detach = re.search(r"PROCEDURE\s+uc_detach_event_partitions_before\b.*?END\s*\$\$;", schema, re.I | re.S)
+    if not detach or not re.search(r"REVOKE\s+ALL\s+ON\s+%I\s+FROM\s+polaris_app", detach.group(0), re.I):
+        return _fail("c1_aor_priv", "uc_detach_event_partitions_before must REVOKE ALL from polaris_app on "
+                                    "the table it detaches, as the lock does on a partition (C1)")
     if not re.search(r"^\s*SELECT\s+polaris_lock_event_partitions\(\)", grants, re.I | re.M):
         return _fail("c1_aor_priv", "09_grants.sql must call polaris_lock_event_partitions() after "
                                     "its blanket GRANT, or every partition keeps UPDATE and DELETE (C1)")
@@ -995,8 +1002,8 @@ def check_aor_privilege_boundary(root: pathlib.Path) -> list[Finding]:
                                     "unrevoked (enforce_agency_key_registered, admitting only the owner), "
                                     "or the application role swaps the key the trust list serves (C1)")
     return _ok("c1_aor_priv",
-               "append-only tables revoke UPDATE/DELETE from polaris_app, and so does every "
-               "partition of the four event tables; the lifecycle log and the ZK epoch tables refuse "
+               "append-only tables revoke UPDATE/DELETE from polaris_app, which holds no privilege on "
+               "any partition of the four event tables; the lifecycle log and the ZK epoch tables refuse "
                "the application's INSERT, and so do the trust graph, revoked only from its "
                "procedure, and the holder key register; uc_archive_purge, uc11_close_epoch, uc10 "
                "and uc_record_holder_key_event are SECURITY DEFINER (C1)")

@@ -1868,9 +1868,12 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     lock = ("CREATE OR REPLACE FUNCTION polaris_lock_event_partitions() RETURNS INTEGER AS $$\n"
             "  WHERE p.relname IN ('tokenlifecycleevent', 'verificationevent', "
             "'enrollmentstatusevent', 'authauditlog')\n"
-            "  EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON %I FROM polaris_app', v);\n$$;\n")
+            "  EXECUTE format('REVOKE ALL ON %I FROM polaris_app', v);\n$$;\n")
+    detach_revoke = "        EXECUTE format('REVOKE ALL ON %I FROM polaris_app', v);\n"
     ensure = ("CREATE OR REPLACE PROCEDURE uc_ensure_event_partitions(n integer) AS $$\nBEGIN\n"
-              "    PERFORM polaris_lock_event_partitions();\nEND $$;\n")
+              "    PERFORM polaris_lock_event_partitions();\nEND $$;\n"
+              "CREATE OR REPLACE PROCEDURE uc_detach_event_partitions_before(c timestamptz) AS $$\nBEGIN\n"
+              + detach_revoke + "END $$;\n")
     epochs = ("REVOKE INSERT, UPDATE, DELETE ON TokenStateEpoch FROM polaris_app;\n"
               "REVOKE INSERT ON TokenStateEpochLeaf FROM polaris_app;\n"
               "REVOKE INSERT ON AgencyTrustAttestation FROM polaris_app;\n"
@@ -1932,6 +1935,14 @@ def test_aor_privilege_boundary_check_discriminates(tmp_path):
     (sql / "01_schema.sql").write_text(lock + ensure.replace("    PERFORM polaris_lock_event_partitions();\n", ""))
     assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
         "must FAIL when the partition manager leaves a new partition unlocked"
+    # 2026-10-10: a partition carries no authority policy, so the application keeps nothing on one.
+    (sql / "01_schema.sql").write_text(lock.replace("REVOKE ALL ON %I", "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON %I")
+                                       + ensure)
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the lock leaves the application SELECT on a partition"
+    (sql / "01_schema.sql").write_text(lock + ensure.replace(detach_revoke, ""))
+    assert checks.check_aor_privilege_boundary(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a detached partition keeps the application's privileges"
 
     # 6. The application keeps the write on TokenSignature -> FAIL; everything present -> OK.
     (sql / "01_schema.sql").write_text(lock + ensure)
