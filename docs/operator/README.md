@@ -27,6 +27,7 @@ fails otherwise.
 | [`DR.md`](DR.md) | Disaster recovery: the targets (RPO 300 s, RTO 4 h), the procedures by failure class, WAL archiving and the off-site repository |
 | [`DR-DRILLS.md`](DR-DRILLS.md) | The drill ledger, machine-appended: every measured RPO and RTO, locally and from the monthly CI run |
 | [`CHAOS-DRILLS.md`](CHAOS-DRILLS.md) | The chaos ledger, machine-appended: the standing program, its five induced failures with their recovery ceilings, and every weekly run's measured recoveries and page delivery |
+| [`SECURITY-STATE-DRILLS.md`](SECURITY-STATE-DRILLS.md) | Which operator procedures a drill runs while comparing the database's security state (privileges, policies, routines, triggers, settings), what each compares, its last result and the commit it ran at |
 | [`FAILOVER.md`](FAILOVER.md) | The HA profile: Patroni-managed automated failover with its measured drill numbers and the split-brain analysis; the high-availability complement to DR.md |
 | [`SLOS.md`](SLOS.md) | The reference service objectives (availability, request latency, database latency) and the error budget, grounded in exposed metrics |
 | [`QUANTUM-EVENT.md`](QUANTUM-EVENT.md) | The day an algorithm falls: re-signing the whole population onto a new parameter set without any holder losing a credential that verifies, with the measured rate and where the time goes |
