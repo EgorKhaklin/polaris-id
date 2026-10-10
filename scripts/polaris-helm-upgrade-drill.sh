@@ -11,7 +11,11 @@
 #      own tree, its chart installed, a marker row written.
 #   3. This commit's images built, and `helm upgrade` with this chart: the pre-upgrade Job
 #      (templates/migrate-job.yaml) applies the migrations the release lacks, then syncs the
-#      database objects, before the new pods roll.
+#      database objects, before the new pods roll. The upgraded database's security state
+#      (scripts/lib/polaris-db-state.sh) must then equal, table by table, that of this commit
+#      installed fresh beside it in the leading member, from the files its image carries
+#      (scripts/lib/polaris-db-reference.sh): what an upgrade leaves different from a fresh
+#      install of the same release is drift.
 #   4. Afterwards: no migration pending (the runner in the new image, asked inside a database pod),
 #      migrations recorded that the previous release did not have, the app healthy through the
 #      edge, the marker intact.
@@ -102,22 +106,63 @@ psql_db() {  # psql_db <sql>: as the owner, inside the member that leads, over i
     local pod; pod=$(leader_pod) || fail "no member left recovery within 120s"
     kubectl -n "${NS}" exec "$pod" -c postgres -- psql -h /var/run/postgresql -U postgres -d polaris -tAqc "$1"
 }
+# The database's security state, read inside the member that leads, over its socket, as psql_db
+# reads it. The leader is found again for every command: Patroni may hand over during or after the
+# roll, and a write sent to the replica is refused.
+source "${ROOT}/scripts/lib/polaris-db-state.sh"
+source "${ROOT}/scripts/lib/polaris-db-reference.sh"
+STATE_DB=polaris
+REFERENCE_DB=polaris_reference
+# The drill's own fixture: written under FROM, and made the same way in the reference, so the two
+# states compare whole rather than through a filter that could hide something.
+MARKER_DDL="CREATE SCHEMA drill; CREATE TABLE drill.marker (note text)"
+pg_run() {
+    local pod
+    pod=$(leader_pod) || { echo "no member left recovery within 120s" >&2; return 1; }
+    kubectl -n "${NS}" exec "${pod}" -c postgres -- "$@" < /dev/null
+}
+sql() { pg_run psql -X -q -At -v ON_ERROR_STOP=1 -h /var/run/postgresql -U postgres -d "${STATE_DB}" -c "$1"; }
+state() {  # NAME WHEN: the security state of ${STATE_DB} into ${WORK}/state-NAME
+    polaris_db_state security > "${WORK}/state-$1" || fail "the security state could not be read $2"
+}
 
 echo "== 3. ${FROM}, installed with its own chart =="
 helm install "${REL}" "${WORK}/from/deploy/helm/polaris" -n "${NS}" "${COMMON[@]}" \
     --set images.app=polaris-app:from --set images.caddy=polaris-caddy:from \
     --set images.pgbouncer=polaris-pgbouncer:from --set images.postgres=polaris-postgres:from > /dev/null \
     || { diagnose; fail "helm install of ${FROM}"; }
-psql_db "CREATE SCHEMA drill; CREATE TABLE drill.marker (note text); INSERT INTO drill.marker VALUES ('${FROM}')" \
+psql_db "${MARKER_DDL}; INSERT INTO drill.marker VALUES ('${FROM}')" \
     > /dev/null || fail "writing the marker"
 BEFORE=$(psql_db "SELECT count(*) FROM schema_version WHERE event_type = 'applied'")
 ok "${FROM} running; ${BEFORE} migrations recorded; marker written"
+state before "on ${FROM}, before the upgrade"
+ok "${FROM}'s security state read ($(grep -c . "${WORK}/state-before") facts; kept as the record)"
 
 echo "== 4. helm upgrade to ${TARGET:0:8} =="
 helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris" -n "${NS}" "${COMMON[@]}" > "${WORK}/upgrade.log" 2>&1 \
     || { cat "${WORK}/upgrade.log" >&2; kubectl -n "${NS}" logs "job/${REL}-migrate" --tail=30 >&2 || true; diagnose; \
          fail "helm upgrade"; }
 ok "helm upgrade finished; its pre-upgrade migration Job succeeded"
+state after "after the upgrade"
+polaris_db_reference_carries "${ROOT}/polaris_sql" \
+    || { diagnose; fail "the leading member's image does not carry ${TARGET:0:8}'s SQL, so no reference can be built from it"; }
+polaris_db_reference_build "${REFERENCE_DB}" "${WORK}/reference.log" \
+    || { tail -20 "${WORK}/reference.log" >&2; fail "building a fresh ${TARGET:0:8} install beside the upgraded database"; }
+pg_run psql -X -q -v ON_ERROR_STOP=1 -h /var/run/postgresql -U postgres -d "${REFERENCE_DB}" -c "${MARKER_DDL}" > /dev/null \
+    || fail "making the drill's marker table in the reference"
+STATE_DB="${REFERENCE_DB}"
+state reference "from the fresh ${TARGET:0:8} install"
+STATE_DB=polaris
+polaris_db_reference_drop "${REFERENCE_DB}" || fail "dropping the reference database"
+# Building and dropping the reference may change nothing the operator has: roles are the
+# cluster's, so this read would show one it added or altered.
+state after-again "after the reference was dropped"
+polaris_db_state_same "${WORK}/state-after" "${WORK}/state-after-again" \
+    || fail "building the reference changed the upgraded database or the cluster's roles (< before it, > after)"
+polaris_db_state_same_by_table "${WORK}/state-reference" "${WORK}/state-after" \
+    || fail "the upgraded database's security state is not a fresh ${TARGET:0:8} install's (< fresh only, > upgrade only)"
+moved=$(diff "${WORK}/state-before" "${WORK}/state-after" | grep -c '^[<>]' || true)
+ok "the upgraded database's security state is a fresh ${TARGET:0:8} install's, table by table ($(grep -c . "${WORK}/state-after") facts; ${moved} moved since ${FROM})"
 
 echo "== 5. what the operator has now =="
 LEADER=$(leader_pod) || fail "no member left recovery within 120s after the upgrade"
