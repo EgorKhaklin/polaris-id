@@ -3,7 +3,7 @@
 """An upgraded database is compared with a fresh install of the same release, built beside it.
 
 scripts/lib/polaris-db-reference.sh builds that reference in the database server's own container
-from the files its image carries, after checking those files are this tree's, and compares two
+with the image's own init, after checking the image's SQL and init are this tree's, and compares two
 security states exactly or table by table, so the months two databases happen to hold do not matter
 and a partition unlike its siblings still shows. These
 tests source it under bash with a stand-in `pg_run` that records each command and fails the step
@@ -20,15 +20,20 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 LIB = ROOT / "scripts" / "lib" / "polaris-db-reference.sh"
 
 # One record line per call; STUB_FAIL names a step (a word its argv holds) whose call fails.
+# STUB_IMAGE plays the image: a directory with sql/ and 00-init.sh; a `sh -c` call really runs,
+# with the image's paths, in its script and its arguments, rewritten to the test's.
 STUB = r"""
 pg_run() {
     printf '%s\n' "$*" >> "$STUB_DIR/calls"
     if [ -n "${STUB_FAIL:-}" ]; then
         case "$*" in *"$STUB_FAIL"*) echo "stub: $STUB_FAIL failed" >&2; return 3 ;; esac
     fi
-    # The image's SQL directory, played by a directory of the test's: the digest script really runs.
-    if [ "$1" = sh ] && [ "$2" = -c ] && [ -n "${STUB_IMAGE_SQL:-}" ]; then
-        sh -c "$(printf '%s' "$3" | sed "s#/docker-entrypoint-initdb.d/sql#${STUB_IMAGE_SQL}#g")"
+    if [ "$1" = sh ] && [ "$2" = -c ] && [ -n "${STUB_IMAGE:-}" ]; then
+        local script
+        script=$(printf '%s' "$3" | sed -e "s#/docker-entrypoint-initdb.d/sql#${STUB_IMAGE}/sql#g" \
+                                        -e "s#/docker-entrypoint-initdb.d/00-init.sh#${STUB_IMAGE}/00-init.sh#g")
+        shift 3
+        sh -c "${script}" $(printf '%s\n' "$@" | sed "s#/docker-entrypoint-initdb.d/00-init.sh#${STUB_IMAGE}/00-init.sh#g")
         return
     fi
     echo "stub output of: $1"
@@ -83,12 +88,10 @@ class BuildTests(_Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         calls = self.calls()
         self.assertEqual(len(calls), 5, calls)
-        drop, create, load, up, sync = calls
+        drop, create, init, up, sync = calls
         self.assertIn("-d postgres -c DROP DATABASE IF EXISTS polaris_reference WITH (FORCE)", drop)
         self.assertIn("-d postgres -c CREATE DATABASE polaris_reference", create)
-        # The load runs from the image's own SQL directory (its \i paths are relative), into NAME.
-        self.assertIn("cd /docker-entrypoint-initdb.d/sql && psql", load)
-        self.assertIn("-d polaris_reference -f 00_load_all.sql", load)
+        self.assertTrue(init.endswith("bash /docker-entrypoint-initdb.d/00-init.sh"), init)
         for call, mode in ((up, "--up"), (sync, "--sync-objects")):
             self.assertIn("POLARIS_DB_NAME=polaris_reference", call)
             self.assertIn("POLARIS_DB_HOST=/var/run/postgresql", call)
@@ -96,6 +99,33 @@ class BuildTests(_Base):
         # Every step's output went to the log, none to the caller's stdout.
         self.assertEqual(r.stdout, "")
         self.assertEqual(self.log.read_text().count("stub output of:"), 5)
+
+    def test_the_init_runs_on_the_reference_with_only_the_containers_polaris_env(self):
+        # The image's init, played by a script that writes down the environment it was given.
+        image = self.tmp / "image"
+        (image / "sql").mkdir(parents=True)
+        seen = self.tmp / "init-env"
+        (image / "00-init.sh").write_text("env > %s\n" % seen)
+        r = self.bash('polaris_db_reference_build polaris_reference "%s"' % self.log, STUB_IMAGE=str(image),
+                      POLARIS_ENV="production", POLARIS_APP_PASSWORD_FILE="/run/secrets/polaris_db_password",
+                      POLARIS_APP_PASSWORD="a-live-secret-0123456789", PGPASSWORD="superuser",
+                      POLARIS_REPLICATOR_PASSWORD_FILE="/run/secrets/polaris_replicator_password",
+                      POSTGRES_DB="polaris")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        env = dict(line.split("=", 1) for line in seen.read_text().splitlines() if "=" in line)
+        self.assertEqual(env.get("POSTGRES_DB"), "polaris_reference")
+        self.assertEqual(env.get("POLARIS_INIT_MANAGED_BY"), "patroni")
+        self.assertEqual(env.get("POLARIS_ENV"), "production")
+        self.assertEqual(env.get("POSTGRES_USER"), "postgres")
+        for name in ("POLARIS_APP_PASSWORD_FILE", "POLARIS_APP_PASSWORD", "PGPASSWORD",
+                     "POLARIS_REPLICATOR_PASSWORD_FILE", "STUB_DIR"):
+            self.assertNotIn(name, env, "the init was handed the container's %s" % name)
+        # A container with no POLARIS_ENV gives the init none: a sample install, as its own boot would be.
+        seen.unlink()
+        r = self.bash('polaris_db_reference_build polaris_reference "%s"' % self.log, STUB_IMAGE=str(image))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        env = dict(line.split("=", 1) for line in seen.read_text().splitlines() if "=" in line)
+        self.assertEqual(env.get("POLARIS_ENV"), "")
 
     def test_a_name_that_is_not_a_reference_is_refused_before_anything_runs(self):
         for name in ("polaris", "postgres", "polaris_test", "polaris_reference;drop", "polaris_referencex",
@@ -116,7 +146,7 @@ class BuildTests(_Base):
 
     def test_each_failed_step_fails_the_build_names_itself_and_stops_it(self):
         steps = [("DROP DATABASE", "could not drop", 1), ("CREATE DATABASE", "could not create", 2),
-                 ("00_load_all.sql", "00_load_all.sql did not load", 3), ("--up", "--up failed", 4),
+                 ("00-init.sh", "init did not complete", 3), ("--up", "--up failed", 4),
                  ("--sync-objects", "--sync-objects failed", 5)]
         for word, message, ran in steps:
             with self.subTest(step=word):
@@ -209,16 +239,22 @@ class CarriesTests(_Base):
 
     def setUp(self):
         super().setUp()
-        self.tree = self.tmp / "tree"
+        # A tree (polaris_sql, polaris_web/docker-init.sh) and the image it built (sql/, 00-init.sh).
+        self.tree = self.tmp / "tree" / "polaris_sql"
         self.image = self.tmp / "image"
-        for d in (self.tree, self.image):
+        self.sql = self.image / "sql"
+        for d in (self.tree, self.sql):
             (d / "migrations").mkdir(parents=True)
             (d / "00_load_all.sql").write_text("\\i 01_schema.sql\n")
             (d / "01_schema.sql").write_text("CREATE TABLE t (x int);\n")
             (d / "migrations" / "2026-10-10-001-x.up.sql").write_text("SELECT 1;\n")
+        self.tree_init = self.tmp / "tree" / "polaris_web" / "docker-init.sh"
+        self.tree_init.parent.mkdir()
+        for init in (self.tree_init, self.image / "00-init.sh"):
+            init.write_text("#!/bin/bash\necho init\n")
 
     def carries(self, **env):
-        return self.bash('polaris_db_reference_carries "%s"' % self.tree, STUB_IMAGE_SQL=str(self.image), **env)
+        return self.bash('polaris_db_reference_carries "%s"' % self.tree, STUB_IMAGE=str(self.image), **env)
 
     def test_the_same_files_pass_and_what_is_not_sql_does_not_count(self):
         (self.tree / "README.md").write_text("the tree's notes, which the image need not carry\n")
@@ -228,10 +264,11 @@ class CarriesTests(_Base):
 
     def test_any_other_sql_fails(self):
         cases = {
-            "a changed byte": lambda: (self.image / "01_schema.sql").write_text("CREATE TABLE t (x bigint);\n"),
-            "a file the tree lacks": lambda: (self.image / "migrations" / "2026-10-10-002-y.up.sql").write_text("SELECT 2;\n"),
-            "a file the image lacks": lambda: (self.image / "migrations" / "2026-10-10-001-x.up.sql").unlink(),
-            "a file moved": lambda: (self.image / "01_schema.sql").rename(self.image / "migrations" / "01_schema.sql"),
+            "a changed byte": lambda: (self.sql / "01_schema.sql").write_text("CREATE TABLE t (x bigint);\n"),
+            "a file the tree lacks": lambda: (self.sql / "migrations" / "2026-10-10-002-y.up.sql").write_text("SELECT 2;\n"),
+            "a file the image lacks": lambda: (self.sql / "migrations" / "2026-10-10-001-x.up.sql").unlink(),
+            "a file moved": lambda: (self.sql / "01_schema.sql").rename(self.sql / "migrations" / "01_schema.sql"),
+            "another init": lambda: (self.image / "00-init.sh").write_text("#!/bin/bash\necho other\n"),
         }
         for name, change in cases.items():
             with self.subTest(case=name):
@@ -251,6 +288,15 @@ class CarriesTests(_Base):
                 self.assertEqual(r.returncode, 1, r.stderr)
                 self.assertNotIn("not this tree's", r.stderr)
 
+    def test_no_init_on_either_side_fails_rather_than_matching_nothing(self):
+        for name in ("image", "tree"):
+            with self.subTest(missing=name):
+                self.setUp()
+                (self.image / "00-init.sh" if name == "image" else self.tree_init).unlink()
+                r = self.carries()
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertIn("could not be read", r.stderr)
+
     def test_hashes_of_no_file_fail_rather_than_matching(self):
         # An xargs that runs nothing: both sides would hash the same empty list and match.
         bin_dir = self.tmp / "bin"
@@ -259,7 +305,7 @@ class CarriesTests(_Base):
         (bin_dir / "xargs").chmod(0o755)
         r = self.carries(PATH="%s:/usr/bin:/bin:/usr/sbin:/sbin" % bin_dir)
         self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("no SQL file could be read", r.stderr)
+        self.assertIn("could not be read", r.stderr)
 
     def test_an_image_that_cannot_be_read_fails(self):
         r = self.carries(STUB_FAIL="sh -c")

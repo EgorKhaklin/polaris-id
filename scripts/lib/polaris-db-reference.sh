@@ -6,19 +6,23 @@
 #
 # An upgraded database legitimately differs from the previous release's by what the new
 # migrations add, so it is not compared with its own past. It is compared with a REFERENCE: this
-# release's own fresh load, built in the same cluster from the files its database image carries
-# (/docker-entrypoint-initdb.d/sql/00_load_all.sql, then /opt/polaris/scripts/polaris-migrate.sh
-# --up and one --sync-objects, the way a fresh install and a deploy run them). Whatever the
-# upgrade left different from a fresh install of the same release is drift.
+# release installed fresh in the same cluster by what its database image carries, the way a fresh
+# install and a deploy build it: the image's own first-boot init (/docker-entrypoint-initdb.d/
+# 00-init.sh, polaris_web/docker-init.sh: 00_load_all.sql, the migrations and, under the
+# container's POLARIS_ENV=production, the production block), then /opt/polaris/scripts/
+# polaris-migrate.sh --up and one --sync-objects. 00_load_all.sql alone is not a fresh install: it
+# keeps the notional sample's anonymity floor of one, which the production block raises to 20.
+# Whatever the upgrade left different from a fresh install of the same release is drift.
 #
 # The caller defines `pg_run`: given an argv, it runs it inside the database server's container
 # as the database superuser (docker exec -u postgres, or kubectl exec ... -c postgres), with stdin
 # closed, and fails when the command fails.
 #
-#   polaris_db_reference_carries DIR      status 0 when the image's SQL is this tree's (DIR is its
-#                                         polaris_sql): a reference built from other files would
-#                                         compare the upgrade with some other release
-#   polaris_db_reference_build NAME LOG   create database NAME and load this release into it;
+#   polaris_db_reference_carries DIR      status 0 when the image's SQL and init are this tree's
+#                                         (DIR is its polaris_sql; the init is polaris_web/
+#                                         docker-init.sh beside it): a reference built from other
+#                                         files would compare the upgrade with some other release
+#   polaris_db_reference_build NAME LOG   create database NAME and install this release into it;
 #                                         every step's output goes to LOG
 #   polaris_db_reference_drop NAME        drop it
 #   polaris_db_state_same A B             status 0 when two state files hold exactly the same facts
@@ -33,28 +37,32 @@
 # ============================================================================
 
 _POLARIS_DB_REFERENCE_SQL=/docker-entrypoint-initdb.d/sql
+_POLARIS_DB_REFERENCE_INIT=/docker-entrypoint-initdb.d/00-init.sh
 _POLARIS_DB_REFERENCE_MIGRATE=/opt/polaris/scripts/polaris-migrate.sh
-# One digest of the paths and bytes of the *.sql files under the current directory, in POSIX sh, so
-# the same text runs on the host and in the image (busybox there). No file is a failure, and so is
-# a list of the files' hashes that came back empty: two of those would hash alike and match.
+# One digest of the paths and bytes of the *.sql files under the current directory and of the
+# bytes of the init script named by $1, in POSIX sh, so the same text runs on the host and in the
+# image (busybox there). No file is a failure, and so is a list of the files' hashes that came back
+# empty, or an init that hashed to nothing: two of those would hash alike and match.
 _POLARIS_DB_REFERENCE_DIGEST='sum=sha256sum; command -v sha256sum > /dev/null 2>&1 || sum="shasum -a 256"
 f=$(find . -type f -name "*.sql" | LC_ALL=C sort); [ -n "$f" ] || exit 1
 h=$(printf "%s\n" "$f" | xargs $sum) && [ -n "$h" ] || exit 1
-printf "%s\n" "$h" | $sum | cut -c1-16'
+i=$($sum < "$1" | cut -c1-64) && [ -n "$i" ] || exit 1
+printf "%s\ninit %s\n" "$h" "$i" | $sum | cut -c1-16'
 
 polaris_db_reference_carries() {  # DIR: this tree's polaris_sql
     if [[ $# -ne 1 || ! -d "${1:-}" ]]; then
         echo "polaris_db_reference_carries: give this tree's polaris_sql directory" >&2
         return 2
     fi
-    local here there
-    here=$(cd "$1" && sh -c "${_POLARIS_DB_REFERENCE_DIGEST}") && [[ -n "${here}" ]] \
-        || { echo "polaris_db_reference_carries: no SQL file could be read under $1" >&2; return 1; }
+    local here there init
+    init="$(cd "$1/.." && pwd)/polaris_web/docker-init.sh"
+    here=$(cd "$1" && sh -c "${_POLARIS_DB_REFERENCE_DIGEST}" _ "${init}") && [[ -n "${here}" ]] \
+        || { echo "polaris_db_reference_carries: the SQL under $1 or the init ${init} could not be read" >&2; return 1; }
     there=$(pg_run sh -c "cd ${_POLARIS_DB_REFERENCE_SQL} || exit 1
-${_POLARIS_DB_REFERENCE_DIGEST}") && [[ -n "${there}" ]] \
-        || { echo "polaris_db_reference_carries: the SQL the image carries could not be read" >&2; return 1; }
+${_POLARIS_DB_REFERENCE_DIGEST}" _ "${_POLARIS_DB_REFERENCE_INIT}") && [[ -n "${there}" ]] \
+        || { echo "polaris_db_reference_carries: the SQL and init the image carries could not be read" >&2; return 1; }
     [[ "${there}" == "${here}" ]] && return 0
-    echo "polaris_db_reference_carries: the image carries SQL ${there}, not this tree's ${here}" >&2
+    echo "polaris_db_reference_carries: the image carries SQL and init ${there}, not this tree's ${here}" >&2
     return 1
 }
 
@@ -95,11 +103,13 @@ polaris_db_reference_build() {  # NAME LOG
         || { echo "polaris_db_reference: could not drop a reference left by an earlier run, ${name} (${log})" >&2; return 1; }
     pg_run psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -c "CREATE DATABASE ${name}" >> "${log}" 2>&1 \
         || { echo "polaris_db_reference: could not create ${name} (${log})" >&2; return 1; }
-    # 00_load_all.sql includes its files by relative path, so it runs from their directory, as the
-    # image's own init (docker-init.sh) runs it.
-    pg_run sh -c "cd ${_POLARIS_DB_REFERENCE_SQL} && psql -X -q -v ON_ERROR_STOP=1 -U postgres -d ${name} -f 00_load_all.sql" \
-        >> "${log}" 2>&1 \
-        || { echo "polaris_db_reference: this release's 00_load_all.sql did not load into ${name} (${log})" >&2; return 1; }
+    # The image's own init, as the HA profile's post_init runs it (POLARIS_INIT_MANAGED_BY=patroni:
+    # no ALTER SYSTEM, no stanza), with an emptied environment that keeps the container's
+    # POLARIS_ENV: no password file reaches it, so it rotates no role's password and makes no
+    # replication role, and it writes only to NAME.
+    pg_run sh -c "exec env -i PATH=\"\${PATH}\" PGHOST=/var/run/postgresql POSTGRES_USER=postgres POSTGRES_DB=${name} \
+POLARIS_INIT_MANAGED_BY=patroni POLARIS_ENV=\"\${POLARIS_ENV:-}\" bash ${_POLARIS_DB_REFERENCE_INIT}" >> "${log}" 2>&1 \
+        || { echo "polaris_db_reference: this release's init did not complete on ${name} (${log})" >&2; return 1; }
     pg_run "${migrate_env[@]}" "${_POLARIS_DB_REFERENCE_MIGRATE}" --up >> "${log}" 2>&1 \
         || { echo "polaris_db_reference: polaris-migrate.sh --up failed on ${name} (${log})" >&2; return 1; }
     pg_run "${migrate_env[@]}" "${_POLARIS_DB_REFERENCE_MIGRATE}" --sync-objects >> "${log}" 2>&1 \
