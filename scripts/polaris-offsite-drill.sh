@@ -355,7 +355,8 @@ refused_restore() {  # refused_restore <what> <expected text> <and this ERE, or 
     # prints what was captured, unprintable bytes shown as ?, so the run names the text it saw.
     if ! LC_ALL=C grep -qF -- "$says" "$WORK/refused-restore.log" \
             || { [ -n "$cipher" ] && ! LC_ALL=C grep -qE -- "$cipher" "$WORK/refused-restore.log"; } \
-            || LC_ALL=C grep -qE 'HostConnectError|ServiceError|FileMissingError' "$WORK/refused-restore.log"; then
+            || LC_ALL=C grep -qE 'HostConnectError|ServiceError|FileMissingError' "$WORK/refused-restore.log" \
+            || { [ -n "${NOT_SAYS:-}" ] && LC_ALL=C grep -qE -- "$NOT_SAYS" "$WORK/refused-restore.log"; }; then
         echo "--- what the refused restore printed (last 20 lines) ---" >&2
         LC_ALL=C tr -c '[:print:]\n' '?' < "$WORK/refused-restore.log" | tail -20 >&2
         fail "a restore from repo2 $what failed, but not with the refusal it names ($says${cipher:+, $cipher})"
@@ -367,20 +368,24 @@ refused_restore() {  # refused_restore <what> <expected text> <and this ERE, or 
 # makes it the cipher's. A wrong passphrase decrypts the file to bytes that do not parse: the first
 # live run (2026-10-10, pgBackRest 2.58.0) logged "[FormatError] unable to load info file ...
 # key/value found outside of section at line 1", then "[075]: no backup set found to restore"; a
-# padding check that fails first would raise CryptoError instead. Step 9 restores the same bucket
-# with the right passphrase, so the passphrase is the only difference. With no cipher configured,
-# pgBackRest reads the ciphertext as text: the same run logged "key/value found outside of section
-# at line 1: Salted__", the header of aes-256-cbc's format opening the file; older releases hinted
-# "is or was the repo encrypted".
+# padding check that fails first raises "CryptoError: unable to flush" (cipherBlock.c) instead. A
+# bare CryptoError is not the cipher's: a TLS certificate failure raises one inside the same info
+# load. Step 9 restores the same bucket with the right passphrase, so the passphrase is the only
+# difference. With no cipher configured, pgBackRest reads the ciphertext as text: the same run
+# logged "key/value found outside of section at line 1: Salted__", the header of aes-256-cbc's
+# format opening the file, and that alone is the pin (the loader's "is or was the repo encrypted?"
+# hint follows any CryptoError, a TLS failure's included). The two refusals exclude each other: a
+# wrong passphrase's output must not read as ciphertext taken for text.
 INFO_REFUSED="unable to load info file"
-WRONG_KEY_REFUSED='\[FormatError\] unable to load info file|CryptoError'
-NO_CIPHER_REFUSED='at line 1: Salted__|is or was the repo encrypted'
+WRONG_KEY_REFUSED='\[FormatError\] unable to load info file|CryptoError: unable to flush'
+NO_CIPHER_REFUSED='at line 1: Salted__'
 
 echo "== 8. (d) a restore from repo2 without the passphrase is refused =="
 # No passphrase: the image's own path refuses before pgBackRest runs (fail closed).
 refused_restore "with no passphrase" "repo2-cipher-pass. The offsite repo" "" "$WORK/repo-creds-nopass.conf" image
 # A wrong passphrase: the image renders as always, and pgBackRest cannot decrypt the repo.
-refused_restore "with a wrong passphrase" "$INFO_REFUSED" "$WRONG_KEY_REFUSED" "$WORK/repo-creds-wrongpass.conf" image
+NOT_SAYS="$NO_CIPHER_REFUSED" \
+    refused_restore "with a wrong passphrase" "$INFO_REFUSED" "$WRONG_KEY_REFUSED" "$WORK/repo-creds-wrongpass.conf" image
 # The bucket and its key pair with no cipher configured at all: pgBackRest reading the objects as
 # plaintext.
 grep -v '^repo2-cipher-type=' "$WORK/rendered.conf" > "$WORK/repo-nocipher.conf"

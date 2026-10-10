@@ -6596,8 +6596,9 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
         "refused_restore wrong \"$INFO_REFUSED\" \"$WRONG_KEY_REFUSED\" \"$WORK/repo-creds-wrongpass.conf\" image\n"
         "refused_restore nocipher \"$INFO_REFUSED\" \"$NO_CIPHER_REFUSED\" \"$WORK/repo-creds-nopass.conf\" own\n"
         "grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n"
-        "WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError'\n"
-        "NO_CIPHER_REFUSED='at line 1: Salted__|is or was the repo encrypted'\n"
+        "LC_ALL=C grep -qE -- \"$cipher\" \"$WORK/refused-restore.log\"\n"
+        "WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError: unable to flush'\n"
+        "NO_CIPHER_REFUSED='at line 1: Salted__'\n"
         "grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n"
         "RESTORE_REPO2='pgbackrest --stanza=polaris --repo=2 restore'\n"
         "echo \"done\"\n")
@@ -6756,9 +6757,10 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
              "rendered retention"),
             ("refuses mounted \"configures repo2 (repo2-type=s3) with no cipher\"\n", "mounted repo.conf"),
             ("grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n", "own error text"),
-            ("WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError'\n",
+            ("LC_ALL=C grep -qE -- \"$cipher\" \"$WORK/refused-restore.log\"\n", "cipher-specific pattern"),
+            ("WRONG_KEY_REFUSED='\\[FormatError\\] unable to load info file|CryptoError: unable to flush'\n",
              "wrong-passphrase restore's own cipher error"),
-            ("NO_CIPHER_REFUSED='at line 1: Salted__|is or was the repo encrypted'\n", "no-cipher restore's own error"),
+            ("NO_CIPHER_REFUSED='at line 1: Salted__'\n", "no-cipher restore's own error"),
             ("refused_restore nocipher \"$INFO_REFUSED\" \"$NO_CIPHER_REFUSED\" \"$WORK/repo-creds-nopass.conf\" own\n",
              "hold the no-cipher restore"),
             ("grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n",
