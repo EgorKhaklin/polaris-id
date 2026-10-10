@@ -34,6 +34,11 @@
 # and sequence the dump holds, the public schema and the default privileges must carry the ACLs the
 # same dump gives a new database. Otherwise EXIT_PRIVILEGE_MISMATCH=11.
 #
+# And the backup's database settings (database-settings.json: ALTER DATABASE ... SET and ALTER ROLE
+# ... IN DATABASE ... SET, which pg_restore applies only with --create): the target's are replaced by
+# them and read back. A file that cannot be read or applied, or settings that read back otherwise, exit
+# EXIT_SETTINGS_MISMATCH=12. A backup taken before they were recorded leaves the target's as they are.
+#
 # Examples:
 #   ./scripts/polaris-restore.sh /var/backups/polaris-20260514T030000Z.tar.gz
 #   ./scripts/polaris-restore.sh polaris-backup.tar.gz --target=polaris_restored
@@ -58,6 +63,7 @@ EXIT_FS_RESTORE_FAIL=8
 EXIT_DOCKER_MISSING=9
 EXIT_SCHEMA_MISMATCH=10   # v9.23 — schema_version table vs migrations/ diverged
 EXIT_PRIVILEGE_MISMATCH=11   # the restored privileges are not the backup's, or cannot be read or made so
+EXIT_SETTINGS_MISMATCH=12    # the restored database settings are not the backup's, or cannot be read or applied
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
@@ -76,7 +82,7 @@ VERIFY_SCHEMA=0   # v9.23 — opt-in schema_version cross-check after restore
 BACKUP_FILE=""
 
 usage() {
-    sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
     exit "${EXIT_USAGE}"
 }
 
@@ -229,6 +235,7 @@ SELECT '*', 'default privileges of ' || d.defaclrole::regrole::text || ' in ' ||
 SQL
 )
 SCRATCH_DB=""
+SETTINGS_HELPER="${SCRIPT_DIR}/polaris_db_settings.py"
 
 cat <<BANNER
 
@@ -311,6 +318,10 @@ for name, expected in m.get("sha256", {}).items():
         ok = False
     else:
         print(f"  ✓ {name}  ({m.get('size_bytes', {}).get(name, '?')} bytes)")
+# The settings the restore replays must be the ones the backup hashed, not a file put beside them.
+if os.path.exists(os.path.join(base, "database-settings.json")) and "database-settings.json" not in m.get("sha256", {}):
+    print("  ✗ database-settings.json is not covered by the manifest")
+    ok = False
 print()
 print(f"  manifest declares Polaris version: {m.get('polaris_version', 'unknown')}")
 print(f"  manifest timestamp:                {m.get('timestamp_utc',  'unknown')}")
@@ -331,6 +342,11 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
     echo "  Would restore the following components:"
     [[ "${SKIP_DB}" -eq 0 ]] && \
         echo "    • PostgreSQL dump  →  database '${TARGET_DB}'"
+    if [[ "${SKIP_DB}" -eq 0 && -f "${EXTRACTED}/database-settings.json" ]]; then
+        echo "    • database settings (database-settings.json)  →  database '${TARGET_DB}', replacing its own"
+    elif [[ "${SKIP_DB}" -eq 0 ]]; then
+        echo "    • no database settings recorded (an older backup): '${TARGET_DB}' keeps its own"
+    fi
     echo
     echo "  Dry-run complete. Re-run without --dry-run to apply."
     exit "${EXIT_OK}"
@@ -416,6 +432,40 @@ if [[ "${SKIP_DB}" -eq 0 ]]; then
         echo "    newer-dump SET directive). The data restored; no action needed."
     else
         echo "  ✓ pg_restore complete (${restored_tables} tables in public schema)"
+    fi
+
+    # The backup's database settings. pg_restore applies them only with --create, so until 2026-10-10
+    # a restore into a new database lost them, and one into an initialised database kept that
+    # database's own. The target's are reset and the backup's set in one transaction, then read back
+    # and compared both ways. A file that cannot be read or applied, or settings that read back
+    # otherwise, stop the restore here: nothing was changed by a replay that failed.
+    step "4.2/6" "database settings: the backup's, on '${TARGET_DB}'…"
+    settings_file="${EXTRACTED}/database-settings.json"
+    if [[ ! -e "${settings_file}" ]]; then
+        echo "  • this backup records no database settings (taken before 2026-10-10): '${TARGET_DB}' keeps its own"
+    else
+        if ! settings_sql=$(python3 "${SETTINGS_HELPER}" replay "${settings_file}" "${TARGET_DB}" 2>"${WORK}/settings.err") \
+           || ! settings_query=$(python3 "${SETTINGS_HELPER}" query 2>>"${WORK}/settings.err"); then
+            echo "  ✗ the backup's database settings cannot be read, so they were not restored:" >&2
+            sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
+            exit "${EXIT_SETTINGS_MISMATCH}"
+        fi
+        if ! settings_err=$(db_sql "${TARGET_DB}" "${settings_sql}" 2>&1); then
+            echo "  ✗ the backup's database settings could not be applied to '${TARGET_DB}', which keeps its own:" >&2
+            printf '%s\n' "${settings_err}" | sed -n '1,5p' | sed 's/^/      /' >&2
+            exit "${EXIT_SETTINGS_MISMATCH}"
+        fi
+        if ! restored_settings=$(db_sql "${TARGET_DB}" "${settings_query}" 2>"${WORK}/settings.err"); then
+            echo "  ✗ cannot read '${TARGET_DB}'s database settings, so the restore is unverified:" >&2
+            sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
+            exit "${EXIT_SETTINGS_MISMATCH}"
+        fi
+        if ! settings_mismatch=$(printf '%s\n' "${restored_settings}" | python3 "${SETTINGS_HELPER}" compare "${settings_file}" 2>&1); then
+            echo "  ✗ the restored database settings are not the backup's:" >&2
+            printf '%s\n' "${settings_mismatch}" | sed -n '1,40p' | sed 's/^/      /' >&2
+            exit "${EXIT_SETTINGS_MISMATCH}"
+        fi
+        echo "  ✓ the backup's database settings, restored: $(python3 "${SETTINGS_HELPER}" count "${settings_file}")"
     fi
 
     # The privileges, against what the same dump gives a new database with no default privileges

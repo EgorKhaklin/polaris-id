@@ -556,6 +556,10 @@ every durable component:
 - `pg_dump` of the Polaris database (custom format), encrypted with the key
   in `POLARIS_BACKUP_KEY_FILE` (the script warns loudly when the key is unset
   and the dump goes out in plaintext)
+- `database-settings.json`: the database's own settings (`ALTER DATABASE ... SET`
+  and `ALTER ROLE ... IN DATABASE ... SET`: the revocation bound, the UTC clock,
+  the anonymity floor and any you set), which `pg_restore` applies only with
+  `--create`; the restore replays them
 - `MANIFEST.json` with timestamps + SHA-256 hashes of each component
 
 ```bash
@@ -634,6 +638,7 @@ Exit codes (greppable for incident response):
 | 9 | `docker` not available (when `--target=docker-stack`) |
 | 10 | `schema_version` diverges from `migrations/`, or cannot be read (`--verify-schema-version`) |
 | 11 | The restored privileges are not the backup's, or cannot be checked: every table, column, routine and sequence the dump holds, the public schema and the default privileges must carry the ACLs the same dump gives a new database. Also refused before anything is restored: a target with database-wide default privileges |
+| 12 | The restored database settings are not the backup's (`database-settings.json`), or cannot be read or applied. The target's own settings are replaced by the backup's and read back; a backup taken before 2026-10-10 records none and leaves the target's as they are |
 
 After restore:
 

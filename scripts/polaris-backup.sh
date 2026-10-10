@@ -8,8 +8,13 @@
 # the database dump plus a manifest with SHA-256 hashes:
 #
 #   pg_dump (custom format)                 the database
+#   database-settings.json                  its own settings (ALTER DATABASE ... SET and
+#                                           ALTER ROLE ... IN DATABASE ... SET), which
+#                                           polaris-restore.sh replays (scripts/polaris_db_settings.py)
 #   MANIFEST.json                           timestamps + SHA-256 hashes
 #
+# Exits 5 when the dump was taken and its database's settings could not be recorded: a backup
+# without them would restore without them, so none is written.
 # Usage:
 #     ./scripts/polaris-backup.sh                       # writes /var/backups/polaris-<ts>.tar.gz
 #     ./scripts/polaris-backup.sh --dest /path/to/dir   # custom destination
@@ -146,6 +151,10 @@ for name, expected in m["sha256"].items():
         ok = False
     else:
         print(f"  ✓ {name}")
+# A settings file the manifest does not cover could have been put there; the restore refuses it too.
+if os.path.exists(os.path.join(base, "database-settings.json")) and "database-settings.json" not in m["sha256"]:
+    print("  ✗ database-settings.json is not covered by the manifest")
+    ok = False
 if not ok:
     sys.exit(1)
 print("  ✓ MANIFEST verified")
@@ -174,7 +183,7 @@ echo "  → Polaris backup ${TS}"
 echo "  → staging at ${STAGE}"
 
 # 1. pg_dump
-echo "  [1/2] pg_dump…"
+echo "  [1/3] pg_dump…"
 # Capture before matching: under pipefail a grep -q that leaves early can SIGPIPE compose.
 RUNNING_SERVICES="$(docker compose -f "${COMPOSE_FILE}" ps --services 2>/dev/null || true)"
 if grep -qx postgres <<<"$RUNNING_SERVICES"; then
@@ -193,8 +202,34 @@ else
     : > "${STAGE}/polaris.dump"   # zero-byte sentinel
 fi
 
-# 2. Manifest with hashes
-echo "  [2/2] manifest…"
+# 2. The database's own settings (pg_db_role_setting). pg_restore applies them only with --create,
+#    which polaris-restore.sh does not use, so they travel beside the dump and the restore replays
+#    them. Read where the dump was taken, as the role that took it; none for the zero-byte sentinel.
+echo "  [2/3] database settings…"
+if [[ -s "${STAGE}/polaris.dump" ]]; then
+    SETTINGS_QUERY=$(python3 "${SCRIPT_DIR}/polaris_db_settings.py" query)
+    if grep -qx postgres <<<"$RUNNING_SERVICES"; then
+        read_settings() {
+            docker compose -f "${COMPOSE_FILE}" exec -T postgres psql -X -At -v ON_ERROR_STOP=1 -U postgres -d polaris -c "${SETTINGS_QUERY}"
+        }
+    else
+        read_settings() {
+            psql -X -At -v ON_ERROR_STOP=1 -h "${POLARIS_DB_HOST:-localhost}" -U "${POLARIS_DB_USER:-postgres}" \
+                -d "${POLARIS_DB_NAME:-polaris}" -c "${SETTINGS_QUERY}"
+        }
+    fi
+    if ! settings_raw=$(read_settings 2>"${WORK}/settings.err") \
+       || ! printf '%s\n' "${settings_raw}" | python3 "${SCRIPT_DIR}/polaris_db_settings.py" record \
+                > "${STAGE}/database-settings.json" 2>>"${WORK}/settings.err"; then
+        echo "  ✗ the database's own settings could not be recorded, so a restore of this backup would lose them; no backup was written:" >&2
+        sed -n '1,5p' "${WORK}/settings.err" | sed 's/^/      /' >&2
+        exit 5
+    fi
+    echo "  ✓ $(python3 "${SCRIPT_DIR}/polaris_db_settings.py" count "${STAGE}/database-settings.json") database settings recorded"
+fi
+
+# 3. Manifest with hashes
+echo "  [3/3] manifest…"
 python3 - "${STAGE}" "${TS}" <<'PY' > "${STAGE}/MANIFEST.json"
 import json, hashlib, os, sys, time
 stage = sys.argv[1]
@@ -284,7 +319,7 @@ else
     echo "  ! this tarball holds no database dump; it is not recorded as a backup" >&2
 fi
 
-# 3. A pgBackRest base backup, when the database archives its WAL (on by default since lab record 017,
+# 4. A pgBackRest base backup, when the database archives its WAL (on by default since lab record 017,
 #    gate row OP-14). A point-in-time restore starts from one of these, and taking them is also what
 #    expires old WAL: the repository keeps two fulls and the archive they need (pgbackrest.conf). A
 #    full when the newest is a week old or there is none, a differential otherwise; each recorded in

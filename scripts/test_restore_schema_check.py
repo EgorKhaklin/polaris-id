@@ -16,11 +16,15 @@ POLARIS_DB_USER, POLARIS_DB_PASSWORD, POLARIS_DB_PORT) and a role that may creat
     python3 -m unittest test_restore_schema_check      (from scripts/)
 """
 import glob
+import hashlib
+import importlib.util
+import json
 import os
 import pathlib
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -154,7 +158,7 @@ class VerifySchemaVersionAfterRestore(_RestoreHarness):
         """Restored by a checkout that lacks the newest migration: the database has one more."""
         tree = os.path.join(self.tmp, "older-tree")
         os.makedirs(os.path.join(tree, "scripts"))
-        for f in ("polaris-restore.sh", "polaris-env.sh"):
+        for f in ("polaris-restore.sh", "polaris-env.sh", "polaris_db_settings.py"):
             shutil.copy2(SCRIPTS / f, os.path.join(tree, "scripts", f))
         shutil.copytree(ROOT / "polaris_sql" / "migrations", os.path.join(tree, "polaris_sql", "migrations"))
         os.remove(os.path.join(tree, "polaris_sql", "migrations", self.newest + ".up.sql"))
@@ -278,6 +282,7 @@ class RestoreKeepsTheBackupsPrivileges(_RestoreHarness):
         tree = os.path.join(self.tmp, "tree-" + case, "scripts")
         os.makedirs(tree)
         shutil.copy2(SCRIPTS / "polaris-env.sh", tree)
+        shutil.copy2(SCRIPTS / "polaris_db_settings.py", tree)
         text = (SCRIPTS / "polaris-restore.sh").read_text()
         self.assertEqual(text.count(old), 1, "the control's anchor drifted: %r" % old)
         pathlib.Path(tree, "polaris-restore.sh").write_text(text.replace(old, new))
@@ -329,6 +334,146 @@ class RestoreKeepsTheBackupsPrivileges(_RestoreHarness):
         self.assertIn("database-wide default privileges", r.stderr)
         self.assertIn("nothing was restored", r.stderr)
         self.assertEqual(self._psql(target, "SELECT to_regclass('public.restore_marker') IS NOT NULL"), "t")
+
+
+EXIT_SETTINGS_MISMATCH = 12
+_spec = importlib.util.spec_from_file_location("polaris_db_settings", SCRIPTS / "polaris_db_settings.py")
+db_settings = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(db_settings)
+
+
+class RestoreKeepsTheDatabaseSettings(_RestoreHarness):
+    """A restore gives the database the settings the backup's had: its own, and its roles' in it.
+
+    09_grants.sql binds the revocation bound and window, the UTC clock and the anonymity floor to the
+    database (ALTER DATABASE ... SET); an operator may change them, and a role may carry settings of
+    its own in the database. pg_restore applies none of them without --create, which the restore does
+    not use, so until 2026-10-10 a restore into a new database had none, and one into an initialised
+    database kept that database's own (the notional sample's floor of one among them). The source holds
+    an operator's values, a role's setting, a list setting and a value that needs quoting; each case's
+    expectation is the source's settings, read when its backup was taken (scripts/test_database_settings.py
+    holds the cases that need no database)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._connect("rds")
+        src = cls._createdb("src")
+        load = _run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", src, "-f", "00_load_all.sql"],
+                    cls.env, cwd=ROOT / "polaris_sql")
+        assert load.returncode == 0, load.stderr[-1500:]
+        for sql in ("ALTER DATABASE %s SET polaris.default_max_revoke_percent = '2.50'",
+                    "ALTER DATABASE %s SET polaris.min_epoch_anonymity_set = 25",
+                    "ALTER DATABASE %s SET polaris.operator_note = E'it''s a \\\\ value; with \"quotes\"'",
+                    "ALTER DATABASE %s SET search_path = '$user', public, 'we\"ird x'",
+                    "ALTER ROLE polaris_app IN DATABASE %s SET statement_timeout = '7s'"):
+            cls._psql(src, sql % src)
+        cls.source = cls._settings(src)
+        cls.backup = cls._backup(src, "backup")
+
+    @classmethod
+    def _settings(cls, db):
+        return db_settings.load(cls._psql(db, db_settings.QUERY))
+
+    @classmethod
+    def _initialised(cls, suffix):
+        db = cls._createdb(suffix)
+        load = _run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", db, "-f", "00_load_all.sql"],
+                    cls.env, cwd=ROOT / "polaris_sql")
+        assert load.returncode == 0, load.stderr[-1500:]
+        return db
+
+    def restore(self, target, tarball=None, script=SCRIPTS / "polaris-restore.sh"):
+        return _run(["bash", str(script), tarball or self.backup, "--target=%s" % target, "--force"], self.env)
+
+    def floor(self, db):
+        return self._psql(db, "SELECT polaris_database_setting('polaris.min_epoch_anonymity_set')")
+
+    def retar(self, name, mutate):
+        """The backup, extracted, changed by MUTATE(stage directory), its manifest rehashed, re-packed."""
+        work = os.path.join(self.tmp, name)
+        os.makedirs(work)
+        with tarfile.open(self.backup) as tar:
+            tar.extractall(work, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
+        stage = [p for p in glob.glob(os.path.join(work, "polaris-*")) if os.path.isdir(p)][0]
+        mutate(stage)
+        manifest_path = os.path.join(stage, "MANIFEST.json")
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        names = sorted(n for n in os.listdir(stage) if n != "MANIFEST.json")
+        manifest["sha256"] = {n: hashlib.sha256(pathlib.Path(stage, n).read_bytes()).hexdigest() for n in names}
+        manifest["size_bytes"] = {n: os.path.getsize(os.path.join(stage, n)) for n in names}
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f)
+        out = os.path.join(work, os.path.basename(stage) + ".tar.gz")
+        with tarfile.open(out, "w:gz") as tar:
+            tar.add(stage, arcname=os.path.basename(stage))
+        return out
+
+    def test_the_source_holds_what_the_cases_look_for(self):
+        got = {(r, n.lower()): v for r, n, v in self.source}
+        self.assertEqual(got[(None, "polaris.min_epoch_anonymity_set")], "25")
+        self.assertEqual(got[(None, "polaris.default_max_revoke_percent")], "2.50", "09_grants.sql's 5.00 came back")
+        self.assertEqual(got[(None, "polaris.operator_note")], 'it\'s a \\ value; with "quotes"')
+        self.assertEqual(got[("polaris_app", "statement_timeout")], "7s")
+        self.assertIn((None, "timezone"), got)
+
+    def test_a_restore_into_a_new_database_has_the_backups_settings(self):
+        target = self._createdb("fresh")
+        self.assertEqual(self._settings(target), [], "a new database has settings of its own")
+        r = self.restore(target)
+        self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-2500:])
+        self.assertIn("the backup's database settings, restored: %d" % len(self.source), r.stdout)
+        self.assertEqual(db_settings.compare(self.source, self._settings(target)), [])
+        self.assertEqual(self.floor(target), "25", "uc11_close_epoch reads another floor")
+
+    def test_a_restore_into_an_initialised_database_replaces_its_settings(self):
+        target = self._initialised("initialised")
+        self._psql(target, "ALTER DATABASE %s SET work_mem = '1MB'" % target)
+        self.assertEqual(self.floor(target), "1", "the target does not hold the sample's floor")
+        r = self.restore(target)
+        self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-2500:])
+        self.assertEqual(db_settings.compare(self.source, self._settings(target)), [])
+        self.assertEqual(self.floor(target), "25")
+
+    def test_an_older_backup_restores_as_before(self):
+        """A backup without the file restores its data and leaves the target's settings as they were."""
+        older = self.retar("older", lambda stage: os.remove(os.path.join(stage, "database-settings.json")))
+        target = self._createdb("older")
+        r = self.restore(target, older)
+        self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-2500:])
+        self.assertIn("this backup records no database settings", r.stdout)
+        self.assertEqual(self._settings(target), [])
+
+    def test_settings_that_cannot_be_applied_are_refused_and_change_nothing(self):
+        def unknown_role(stage):
+            path = os.path.join(stage, "database-settings.json")
+            with open(path) as f:
+                doc = json.load(f)
+            doc["settings"].append({"role": "polaris_no_such_role_%d" % os.getpid(), "name": "work_mem", "value": "2MB"})
+            with open(path, "w") as f:
+                json.dump(doc, f)
+        target = self._initialised("unappliable")
+        before = self._settings(target)
+        r = self.restore(target, self.retar("unappliable", unknown_role))
+        self.assertEqual(r.returncode, EXIT_SETTINGS_MISMATCH, (r.stdout + r.stderr)[-2500:])
+        self.assertIn("could not be applied", r.stderr)
+        self.assertEqual(self._settings(target), before, "a replay that failed changed the target's settings")
+
+    def test_settings_that_read_back_otherwise_are_refused(self):
+        """The comparison's own control: the replay, then one setting the backup does not hold."""
+        tree = os.path.join(self.tmp, "tree-extra", "scripts")
+        os.makedirs(tree)
+        for f in ("polaris-env.sh", "polaris_db_settings.py"):
+            shutil.copy2(SCRIPTS / f, tree)
+        text = (SCRIPTS / "polaris-restore.sh").read_text()
+        old = 'settings_err=$(db_sql "${TARGET_DB}" "${settings_sql}" 2>&1)'
+        self.assertEqual(text.count(old), 1, "the control's anchor drifted")
+        new = 'settings_err=$(db_sql "${TARGET_DB}" "${settings_sql} ALTER DATABASE \\"${TARGET_DB}\\" SET work_mem TO \'3MB\';" 2>&1)'
+        pathlib.Path(tree, "polaris-restore.sh").write_text(text.replace(old, new))
+        r = self.restore(self._createdb("extra"), script=pathlib.Path(tree, "polaris-restore.sh"))
+        self.assertEqual(r.returncode, EXIT_SETTINGS_MISMATCH, (r.stdout + r.stderr)[-2500:])
+        self.assertIn("the restored database settings are not the backup's", r.stderr)
+        self.assertIn("the database's work_mem: restored 3MB, the backup none", r.stderr)
 
 
 class DockerExecUsesTheStackRole(unittest.TestCase):
