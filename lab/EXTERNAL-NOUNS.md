@@ -134,7 +134,7 @@ signed Certification of Conformance; request OCS-3049 approved and
 [listed](https://openid.net/certification/certified-oid4vp-haip-final/), read back from the page.
 The fee was waived on 2026-09-23 under the Foundation's open-source policy.
 
-It is a self-certification the Foundation reviewed and published, not an endorsement and not an
+It is a self-certification the OpenID Foundation approved and lists, not an endorsement and not an
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
 on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 to 1.0.0rc14 are
 not certified), the wallet role, other formats, or anything the suite does not test.
