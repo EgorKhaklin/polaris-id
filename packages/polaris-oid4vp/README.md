@@ -127,6 +127,14 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 - The CLI is a test harness. A deployment embeds `Verifier` (it needs your status policy; see
   Revocation).
 
+**Trust, in two steps.** Start with pinned trust: `--issuer-trust-anchor` (`trust_anchors=` in
+the API) holds the issuer CA certificates a relying party received directly, and `--issuer-jwks`
+the issuer keys. That is what this package does today. The second step, reading issuers from a
+trusted list, is not supported yet. The order follows the FY2025 Japan-EU educational-credential
+interoperability demonstration, which pre-shared its root and intermediate certificates in the
+first round and puts trusted lists in the scope of the second (Digital Agency,
+[scope definition document](https://www.digital.go.jp/assets/contents/node/basic_page/field_ref_resources/a238993a-8e6a-455c-b3d3-bbebf6ef273e/b59aa26d/20260918_policies_trust_report_02.pdf), 2026-09-18).
+
 This is a separate package from `polaris-verify` because it listens on a socket and depends on
 `cryptography`; `polaris-verify` does neither.
 
