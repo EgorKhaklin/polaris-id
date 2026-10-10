@@ -334,5 +334,111 @@ class SameTests(_Base):
         self.assertEqual(r.returncode, 2)
 
 
+
+# A stand-in for polaris_db_state: each call prints the next canned state ($STUB_DIR/state-1, -2, ...)
+# and records itself; a state file named fail-N makes the Nth read fail.
+STATE_STUB = r"""
+polaris_db_state() {
+    local n
+    n=$(( $(cat "$STUB_DIR/reads" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$STUB_DIR/reads"
+    echo "read $n" >> "$STUB_DIR/log"
+    [ -e "$STUB_DIR/fail-$n" ] && { echo "stub: read $n fails" >&2; return 1; }
+    cat "$STUB_DIR/state-$n"
+}
+cmd() { echo "cmd $*" >> "$STUB_DIR/log"; return "${STUB_CMD_RC:-0}"; }
+"""
+
+
+class UnchangedByTests(_Base):
+    """A procedure that changes data only: the state before and after must be exactly the same."""
+
+    def run_it(self, before, after, **env):
+        self.state_file("state-1", before)
+        self.state_file("state-2", after)
+        (self.tmp / "out").mkdir(exist_ok=True)
+        return self.bash(STATE_STUB + 'polaris_db_state_unchanged_by "%s" cmd rotate polaris_db_password'
+                         % (self.tmp / "out"), **env)
+
+    def events(self):
+        return (self.tmp / "log").read_text().splitlines()
+
+    def test_the_same_state_around_a_command_that_succeeds(self):
+        r = self.run_it(STATE, STATE)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.events(), ["read 1", "cmd rotate polaris_db_password", "read 2"])
+        self.assertEqual((self.tmp / "out" / "state-before").read_text(), (self.tmp / "out" / "state-after").read_text())
+
+    def test_a_changed_state_fails_and_names_the_change(self):
+        r = self.run_it(STATE, [x if x != "role polaris_app super=false" else "role polaris_app super=true" for x in STATE])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("> role polaris_app super=true", r.stderr)
+        self.assertIn("< role polaris_app super=false", r.stderr)
+        self.assertIn("changed across: cmd rotate polaris_db_password", r.stderr)
+
+    def test_a_failed_command_is_its_own_status_unless_the_state_changed_too(self):
+        r = self.run_it(STATE, STATE, STUB_CMD_RC="7")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("the command failed (status 7)", r.stderr)
+        r = self.run_it(STATE, STATE + ["role x super=false"], STUB_CMD_RC="7")
+        self.assertEqual(r.returncode, 1)
+
+    def test_a_state_that_cannot_be_read_fails_and_before_it_nothing_runs(self):
+        (self.tmp / "fail-1").write_text("")
+        r = self.run_it(STATE, STATE)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("could not be read before", r.stderr)
+        self.assertEqual(self.events(), ["read 1"], "the command ran although the state before it was not read")
+        for f in ("fail-1", "reads", "log"):
+            (self.tmp / f).unlink()
+        (self.tmp / "fail-2").write_text("")
+        r = self.run_it(STATE, STATE)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("could not be read after", r.stderr)
+
+    def test_misuse(self):
+        for body in ('polaris_db_state_unchanged_by "%s"' % self.tmp, 'polaris_db_state_unchanged_by /nowhere cmd'):
+            with self.subTest(body=body):
+                self.assertEqual(self.bash(STATE_STUB + body).returncode, 2)
+
+
+class SettingAbsentTests(_Base):
+    """A transaction's setting (the purge's carve-out) is never one of the database or of a role."""
+
+    SETTINGS = ["dbsetting this - polaris.default_window_days=30", "dbsetting all polaris_app search_path=public"]
+
+    def absent(self, lines, name="polaris.purge_in_progress"):
+        return self.bash('polaris_db_state_setting_absent "%s" "%s"' % (self.state_file("s", lines), name))
+
+    def test_absent(self):
+        r = self.absent(STATE + self.SETTINGS)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_set_for_the_database_or_a_role_in_any_case_fails_and_is_named(self):
+        for line in ("dbsetting this - polaris.purge_in_progress=TRUE",
+                     "dbsetting all polaris_app polaris.purge_in_progress=on",
+                     "dbsetting this polaris_app Polaris.Purge_In_Progress=TRUE"):
+            with self.subTest(line=line):
+                r = self.absent(STATE + self.SETTINGS + [line])
+                self.assertEqual(r.returncode, 1)
+                self.assertIn(line, r.stderr)
+        # And the name asked for, in any case.
+        r = self.absent(STATE + self.SETTINGS + ["dbsetting this - polaris.purge_in_progress=TRUE"],
+                        name="POLARIS.Purge_In_Progress")
+        self.assertEqual(r.returncode, 1, r.stderr)
+
+    def test_only_that_setting_and_only_a_setting_counts(self):
+        r = self.absent(STATE + self.SETTINGS + ["dbsetting this - polaris.purge_in_progress_note=x",
+                                                 "routine public.f() def=aa definer=true owner=postgres "
+                                                 "config=polaris.purge_in_progress=TRUE"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_state_with_no_setting_read_is_not_absence(self):
+        r = self.absent(STATE)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("no dbsetting fact", r.stderr)
+        self.assertEqual(self.absent(STATE + self.SETTINGS, name="").returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

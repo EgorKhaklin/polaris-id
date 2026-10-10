@@ -22,6 +22,11 @@
 #      decision.
 #   5. A purge inside the retention window is still refused (flag mode).
 #   6. A tampered archive is still refused (the SHA-256 binding).
+#   7. The purge changes data, never a privilege, a definition or a setting: the
+#      security state (scripts/lib/polaris-db-state.sh) reads exactly the same
+#      after it and at the end as after the seeding, and its carve-out
+#      (polaris.purge_in_progress, SET LOCAL by design) is never a setting of the
+#      database or of a role.
 #
 # Usage:
 #   bash scripts/polaris-retention-drill.sh
@@ -46,6 +51,11 @@ pass() { printf "  ${G}✓${NC} %s\n" "$1"; }
 fail() { printf "  ${R}✗${NC} %s\n" "$1" >&2; echo "::error::retention drill: $1" 2>/dev/null || true; exit 1; }
 
 psql_q() { psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB}" -X -tAq -c "$1"; }
+# The security state's reader (the contract in scripts/lib/polaris-db-state.sh's header).
+source "${ROOT}/scripts/lib/polaris-db-state.sh"
+source "${ROOT}/scripts/lib/polaris-db-reference.sh"
+sql() { psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB}" -X -q -At -v ON_ERROR_STOP=1 -c "$1"; }
+PURGE_GUC=polaris.purge_in_progress
 
 echo
 echo "  Polaris retention drill"
@@ -96,6 +106,10 @@ BEGIN
 END \$\$;
 SQL
 pass "MINIMIZED adopted; rows seeded at 1100 and 2200 days"
+polaris_db_state security > "${WORK}/state-before" || fail "the security state could not be read before the purge"
+polaris_db_state_setting_absent "${WORK}/state-before" "${PURGE_GUC}" \
+    || fail "${PURGE_GUC} is already set for the database or a role, before the purge"
+pass "security state read before the purge ($(grep -c . "${WORK}/state-before") facts); ${PURGE_GUC} is set for no database or role"
 
 # ---------------------------------------------------------------------------
 # 2. Archive from the policy.
@@ -151,6 +165,12 @@ POLARIS_DB_NAME="${DB}" POLARIS_DB_USER="${DB_USER}" POLARIS_DB_HOST="${DB_HOST}
     || { cat "${WORK}/purge.log" >&2; fail "polaris-purge.sh failed on a policy archive"; }
 grep -q "Coverage pre-check" "${WORK}/purge.log" || fail "the coverage pre-check did not run"
 pass "purge complete; coverage pre-check passed"
+polaris_db_state security > "${WORK}/state-after-purge" || fail "the security state could not be read after the purge"
+polaris_db_state_same "${WORK}/state-before" "${WORK}/state-after-purge" \
+    || fail "the purge changed the security state (< before it, > after it)"
+polaris_db_state_setting_absent "${WORK}/state-after-purge" "${PURGE_GUC}" \
+    || fail "the purge left ${PURGE_GUC} set for the database or a role"
+pass "the purge changed no security fact and left ${PURGE_GUC} set for no database or role"
 
 # ---------------------------------------------------------------------------
 # 5. The rows landed on the right side of each horizon.
@@ -181,6 +201,10 @@ if psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB}" -X -q -v ON_ERROR_STOP=1 -c \
     fail "a ten-day cutoff was accepted in flag mode"
 fi
 pass "flag mode still refuses a cutoff inside the retention window"
+polaris_db_state security > "${WORK}/state-end" || fail "the security state could not be read at the end"
+polaris_db_state_same "${WORK}/state-before" "${WORK}/state-end" \
+    || fail "the drill's refused purges changed the security state (< before the purge, > at the end)"
+pass "the security state at the end is the one before the purge"
 
 echo
 printf "  ${G}retention drill passed${NC}: the chain runs end to end, per class.\n"

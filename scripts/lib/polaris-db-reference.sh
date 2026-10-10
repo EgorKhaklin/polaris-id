@@ -26,6 +26,11 @@
 #                                         every step's output goes to LOG
 #   polaris_db_reference_drop NAME        drop it
 #   polaris_db_state_same A B             status 0 when two state files hold exactly the same facts
+#   polaris_db_state_unchanged_by DIR CMD...  run CMD between two reads of the security state
+#                                         (DIR/state-before, DIR/state-after): status 0 when CMD
+#                                         succeeds and the two are exactly the same
+#   polaris_db_state_setting_absent FILE NAME  status 0 when no setting of the database or of a
+#                                         role in FILE sets NAME
 #   polaris_db_state_by_parent FILE       a polaris_db_state file with each partition written as
 #                                         its table, so two states compare table by table: which
 #                                         months exist depends on the date each was made
@@ -161,5 +166,53 @@ polaris_db_state_same_by_table() {  # A B
     n=$(diff <(printf '%s\n' "${a}") <(printf '%s\n' "${b}") | grep -c '^[<>]' || true)
     { diff <(printf '%s\n' "${a}") <(printf '%s\n' "${b}") | grep '^[<>]' | sed -n 1,30p || true; } >&2
     echo "polaris_db_state_same_by_table: ${n} fact(s) differ ($1 <, $2 >)" >&2
+    return 1
+}
+
+# For a procedure that may change data but never a privilege, a definition or a setting (a purge, a
+# password rotation): the caller defines `sql`, as for polaris_db_state. Status 1 when the state
+# cannot be read or differs (the first differing lines on stderr), whether or not CMD succeeded;
+# 3 when CMD failed and the state did not change; 2 on misuse.
+polaris_db_state_unchanged_by() {  # DIR CMD [ARGS...]
+    if [[ $# -lt 2 || ! -d "${1:-}" ]]; then
+        echo "polaris_db_state_unchanged_by: give a directory and a command" >&2
+        return 2
+    fi
+    local dir="$1" rc=0
+    shift
+    polaris_db_state security > "${dir}/state-before" \
+        || { echo "polaris_db_state_unchanged_by: the security state could not be read before: $*" >&2; return 1; }
+    "$@" || rc=$?
+    polaris_db_state security > "${dir}/state-after" \
+        || { echo "polaris_db_state_unchanged_by: the security state could not be read after: $*" >&2; return 1; }
+    if ! polaris_db_state_same "${dir}/state-before" "${dir}/state-after"; then
+        echo "polaris_db_state_unchanged_by: the security state changed across: $* (< before, > after)" >&2
+        return 1
+    fi
+    if [[ ${rc} -ne 0 ]]; then
+        echo "polaris_db_state_unchanged_by: the command failed (status ${rc}): $*" >&2
+        return 3
+    fi
+}
+
+# A setting only a transaction may hold (polaris.purge_in_progress is SET LOCAL by design) must never
+# be one of the database or of a role: that would hold it for every session. Names compare without
+# case, as PostgreSQL's do. A FILE with no dbsetting fact is not a reading of the settings: status 2.
+polaris_db_state_setting_absent() {  # FILE NAME
+    if [[ $# -ne 2 || -z "$2" || ! -s "$1" ]]; then
+        echo "polaris_db_state_setting_absent: give a non-empty state file and a setting's name" >&2
+        return 2
+    fi
+    local out
+    out=$(LC_ALL=C awk -v name="$2" '
+        BEGIN { name = tolower(name) }
+        $1 == "dbsetting" { n++; if (index(tolower($4), name "=") == 1) print }
+        END { if (n == 0) exit 2 }' "$1") || {
+        echo "polaris_db_state_setting_absent: $1 holds no dbsetting fact, so no setting was read" >&2
+        return 2
+    }
+    [[ -z "${out}" ]] && return 0
+    printf '%s\n' "${out}" >&2
+    echo "polaris_db_state_setting_absent: $2 is set for the database or a role (above)" >&2
     return 1
 }
