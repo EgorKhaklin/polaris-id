@@ -133,7 +133,7 @@ run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relyin
                                        test_verify_conformance test_verify_p9 test_verify_refusals test_ship_tool \
                                        test_pgbouncer_entrypoint test_issuance_scope test_sbom_enrich \
                                        test_conformance_runner test_pin_chart_images test_chain_anchor_tool test_migrate_runner \
-                                       test_coverage_script test_trigger_drill
+                                       test_coverage_script test_trigger_drill test_operator_env test_key_event test_doctor test_evaluate
 # polaris_sim's tests import the package (from polaris_sim import ...), so they
 # run from the repo root with the dotted module path, not from inside the dir.
 run "$ROOT" unittest polaris_sim.test_sim

@@ -61,6 +61,8 @@ EXIT_ARG=7
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 POLARIS_ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
+# Run by hand (sudo resets the environment), read the configuration polaris.service runs with.
+source "${SCRIPT_DIR}/polaris-env.sh"
 MIGRATIONS_DIR="${POLARIS_ROOT}/polaris_sql/migrations"
 COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.prod.yml"
 DEV_COMPOSE_FILE="${POLARIS_ROOT}/polaris_web/docker-compose.yml"
