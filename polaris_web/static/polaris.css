@@ -181,6 +181,10 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* The hidden attribute always hides. A class that sets display (.board is a grid) otherwise shows
+   what a script hid: until 2026-10-10 every Athena tab rendered the constitution board. */
+[hidden] { display: none !important; }
+
 html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
