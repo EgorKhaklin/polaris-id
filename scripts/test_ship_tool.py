@@ -214,15 +214,25 @@ class FlakeClassifierTests(unittest.TestCase):
                 ": 429 Too Many Requests - Server message: toomanyrequests: You have reached your "
                 "unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit",
                 "Error response from daemon: toomanyrequests: You have reached your "
-                "unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit"):
-            with self.subTest(line=line[:40]):
+                "unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit",
+                # An authenticated account's own limit: the same flake, another remedy.
+                "Error response from daemon: toomanyrequests: You have reached your pull rate "
+                "limit as 'polarisbot': 0123abcd. You may increase the limit by upgrading. "
+                "https://www.docker.com/increase-rate-limit"):
+            with self.subTest(line=line[60:100]):
                 verdict, name, advice = ship.classify_failure_log(line)
                 self.assertEqual((verdict, name), ("flake", "dockerhub-rate-limit"))
                 self.assertIn("wait, then rerun", advice)
+                self.assertIn("docker login", advice)
+                self.assertIn("higher tier", advice)
 
-    def test_a_removed_image_is_not_the_rate_limit(self):
-        """registry-removal is a definite answer and stays one: it must not read as a flake."""
+    def test_a_removed_image_beats_the_rate_limit(self):
+        """A log carrying both answers is the definite one: registry-removal, not a flake.
+
+        One job's 429 must not turn another job's removed image into "wait and rerun"."""
         verdict, name, _advice = ship.classify_failure_log(
+            "Error response from daemon: toomanyrequests: You have reached your "
+            "unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit\n"
             "pull access denied for minio/minio, repository does not exist or may require "
             "'docker login'")
         self.assertEqual((verdict, name), ("upstream", "registry-removal"))

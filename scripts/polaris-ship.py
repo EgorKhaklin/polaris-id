@@ -1007,13 +1007,16 @@ FLAKE_SIGNATURES = [
     # A 4xx, yet a flake: rerunning DOES clear it once the window passes, which is the test
     # this table applies. It stays apart from registry-removal, whose 4xx is a definite
     # answer that no rerun clears. Matched on the registry's own message, which appears in
-    # no command in the tree, so a step's echoed text cannot match it.
+    # no command in the tree, so a step's echoed text cannot match it. Both of its wordings
+    # match: the unauthenticated limit, and an account's own ("as <user>"). Their remedies
+    # differ, so the advice names both.
     ("dockerhub-rate-limit",
      r"toomanyrequests: You have reached your (?:unauthenticated )?pull rate limit",
-     "Docker Hub refused a pull under its unauthenticated pull rate limit (429 "
-     "toomanyrequests). Nothing in the tree is implicated, but a rerun inside the same "
-     "window fails the same way: wait, then rerun the failed jobs. If it keeps recurring, "
-     "authenticate the pulls (docker login on the image-building jobs) rather than rerunning"),
+     "Docker Hub refused a pull under its pull rate limit (429 toomanyrequests). Nothing in "
+     "the tree is implicated, but a rerun inside the same window fails the same way: wait, "
+     "then rerun the failed jobs. If it keeps recurring, raise the limit rather than "
+     "rerunning: an 'unauthenticated' limit needs a docker login on the image-building jobs; "
+     "an account's own limit ('as <user>') needs fewer pulls or a higher tier"),
     # 2026-09-16: the rolling drill's preflight asks `docker compose config --services` for
     # `app-green` and refuses when it is absent. On run 35110741726 it was absent seconds
     # after the boot step of the same job had started both colours and printed them healthy,
