@@ -51,7 +51,7 @@ It is **pre-pilot software on notional data**: it has never held real identity d
 
 ## Try it
 
-One minute, from an empty folder. An independent, OpenID Certified wallet ([eudi-dev](https://github.com/dominikschlosser/eudi-dev)) presents a credential to the verifier installed from PyPI, then three tampered presentations must each be refused. Needs `python3`; Docker is optional.
+One minute, from an empty folder. An independent, OpenID Certified wallet ([eudi-dev](https://github.com/dominikschlosser/eudi-dev)) presents a credential to the verifier installed from PyPI, then three tampered presentations must each be refused. Needs `python3` 3.9 or newer. Docker is optional: `run.sh` uses it when it is running, and `EUDI_NATIVE=1 bash run.sh` runs the wallet's own binary instead.
 
 ```bash
 r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main
