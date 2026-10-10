@@ -7,11 +7,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
-## Unreleased
+## v1.0.0-rc.72 — 2026-10-10 (an ML-DSA key or signature of the wrong size is refused, and a PostgreSQL major-version upgrade runs as written)
+
+polaris-verify, the Python SDK and the application refuse an ML-DSA public key or signature that is not its parameter set's exact size before either witness runs; before this, a missing or truncated key could be reported genuine. Trust acceptance stayed fail-closed throughout. The application role's password reaches the database at first start only as a SCRAM verifier; a PostgreSQL major-version upgrade and its rollback are drilled as OPERATIONS.md writes them, and a deploy refuses a PostgreSQL image of another major than its cluster's; the deploy's secret pre-flight reads the stack as Compose resolves it; a managed PostgreSQL is initialised by one script. polaris-oid4vp keeps SD-JWT VC draft 19's never-disclosed claims by position, not by name, and accepts the EU reference PID issuer's document-signer certificates. The full list follows: 2 security, 13 fixed, 4 added and 1 changed entries.
 
 ### Security
 
-- polaris-verify, the Python SDK and the application's verify with an explicit algorithm accepted any signature under an empty or truncated ML-DSA public key (one witness decided); every verify site now refuses a key or signature that is not its parameter set's exact size before either witness runs. Trust acceptance stayed fail-closed: a short key never matches an anchor, and the anchor is what binds a key to an issuer.
+- polaris-verify, the Python SDK and the application's verify with an explicit algorithm could report a signature as genuine under an empty or truncated ML-DSA public key (one witness decided); every verify site now refuses a key or signature that is not its parameter set's exact size before either witness runs. Trust acceptance stayed fail-closed: a short key never matches an anchor, and the anchor is what binds a key to an issuer.
 - The application role's password reached the database as plain text on psql's command line at first start; the server now receives a SCRAM verifier.
 
 ### Fixed
