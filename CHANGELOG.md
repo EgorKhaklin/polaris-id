@@ -24,6 +24,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The deploy's secret pre-flight read one compose file and a list kept in the script, so the HA and DR profiles' secrets and the TLS certificates went unchecked, and a deploy that pulled checked the release it started from. It now reads the stack as `docker compose config` resolves it, with its overlays, requires every file the stack mounts from the secrets directory, refuses a setting that names a secret its service does not mount, and checks again after its own `git pull`.
 - OPERATIONS.md's PostgreSQL major-version upgrade read the compose project with `config --no-interpolate`, which Compose 2.38 refuses on the production file's secret binds, so steps 4 and 6 and the rollback stopped before they began; they read it as the deploy does, with polaris.env loaded.
 - The patronictl shorthand in OPERATIONS.md and FAILOVER.md loaded the HA overlay without the blue-green file it extends, so Compose refused it ("app-green has neither an image nor a build context") on the first HA command; it loads the blue-green file before the HA one, as LINUX-SERVER.md and DEPLOYMENT.md do.
+- A restore whose backup's database settings could not be applied or read back exited 12 before it checked the application role's privileges, so a privilege the backup did not hold went unreported; it now checks the privileges first and, when both fail, prints both and exits 11.
 
 ### Added
 
