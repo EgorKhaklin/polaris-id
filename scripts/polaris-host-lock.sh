@@ -116,7 +116,7 @@ polaris_host_lock() {
             break
         fi
         id=""
-        stale=$(_polaris_lock_ids | head -n1)
+        stale=$(_polaris_lock_ids | sed -n 1p)
         if [[ ${attempt} -eq 1 && -n "${stale}" ]] && _polaris_lock_is_stale "${stale}"; then
             echo "  • this host's image lock was left by $(_polaris_lock_label holder "${stale}"), which is gone: taking it over" >&2
             docker network rm "${stale}" >/dev/null 2>&1 || true

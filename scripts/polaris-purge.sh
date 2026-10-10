@@ -142,7 +142,7 @@ echo
 TMP=$(mktemp -d)
 trap 'rm -rf "${TMP}"' EXIT
 tar -xzf "${ARCHIVE}" -C "${TMP}"
-EXTRACTED=$(find "${TMP}" -maxdepth 1 -mindepth 1 -type d -name 'polaris-archive-*' | head -1)
+EXTRACTED=$(find "${TMP}" -maxdepth 1 -mindepth 1 -type d -name 'polaris-archive-*' | sed -n 1p)
 if [[ -z "${EXTRACTED}" || ! -f "${EXTRACTED}/MANIFEST.json" ]]; then
     echo "  ✗ archive manifest not found; refusing to purge" >&2
     exit "${EXIT_ARCHIVE}"

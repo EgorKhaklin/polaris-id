@@ -6,25 +6,41 @@
 #
 # An upgraded database legitimately differs from the previous release's by what the new
 # migrations add, so it is not compared with its own past. It is compared with a REFERENCE: this
-# release installed fresh in the same cluster by what its database image carries, the way a fresh
-# install and a deploy build it: the image's own first-boot init (/docker-entrypoint-initdb.d/
-# 00-init.sh, polaris_web/docker-init.sh: 00_load_all.sql, the migrations and, under the
-# container's POLARIS_ENV=production, the production block), then /opt/polaris/scripts/
-# polaris-migrate.sh --up and one --sync-objects. 00_load_all.sql alone is not a fresh install: it
-# keeps the notional sample's anonymity floor of one, which the production block raises to 20.
-# Whatever the upgrade left different from a fresh install of the same release is drift.
+# release installed fresh, the way a fresh install and a deploy build it, in a THROWAWAY CLUSTER of
+# its own: `docker run` of the image the upgrade deployed, which initialises itself at first boot
+# as a production install does (POLARIS_ENV=production: 00_load_all.sql, the migrations and the
+# production block, with passwords generated for it alone and archiving off, so nothing leaves the
+# container), then polaris-migrate.sh --up and one --sync-objects as production. Built in the
+# operator's own cluster (until 2026-10-10), the production init would have set the cluster-wide
+# polaris_app's password; a non-production init would have hidden a fact only production's first
+# boot sets, as the anonymity floor was. Whatever the upgrade left different from a fresh install
+# of the same release is drift.
 #
-# The caller defines `pg_run`: given an argv, it runs it inside the database server's container
-# as the database superuser (docker exec -u postgres, or kubectl exec ... -c postgres), with stdin
-# closed, and fails when the command fails.
+# The two clusters' roles are compared too, for the roles Polaris creates (polaris_sql's and the
+# init's: polaris_app, and polaris_replicator, which the init creates, or Patroni under the HA
+# profile, when the stack has a replication password): an upgraded role whose attributes,
+# memberships or settings differ from a fresh one's is drift, and so is one on one side only. Facts
+# about a role only one cluster has and Polaris does not create are left out, and named.
+#
+# polaris_db_reference_carries runs `pg_run` (the caller's): given an argv, it runs it inside a
+# database server's container as the superuser, with stdin closed, and fails when it fails.
 #
 #   polaris_db_reference_carries DIR      status 0 when the image's SQL and init are this tree's
 #                                         (DIR is its polaris_sql; the init is polaris_web/
 #                                         docker-init.sh beside it): a reference built from other
 #                                         files would compare the upgrade with some other release
-#   polaris_db_reference_build NAME LOG   create database NAME and install this release into it;
-#                                         every step's output goes to LOG
-#   polaris_db_reference_drop NAME        drop it
+#   polaris_db_reference_run IMAGE NAME DIR LOG [ENV=SECRET...]  start container NAME from IMAGE,
+#                                         its passwords generated into DIR (and one per ENV=SECRET,
+#                                         the stack's other password files: the replicator's);
+#                                         wait for its first boot; migrate and sync as production;
+#                                         require it to read as production
+#   polaris_db_reference_sql NAME SQL     one SQL text in it, as the superuser: its rows on stdout
+#   polaris_db_reference_stop NAME DIR    remove the container, and DIR
+#   polaris_db_reference_roles DIR        the roles Polaris creates (CREATE ROLE in polaris_sql
+#                                         under DIR and in polaris_web/docker-init.sh beside it)
+#   polaris_db_state_cross_cluster A B ROLES OUTA OUTB  A and B without the facts about a role only
+#                                         one cluster has that ROLES does not name; the roles left
+#                                         out on stdout
 #   polaris_db_state_same A B             status 0 when two state files hold exactly the same facts
 #   polaris_db_state_unchanged_by DIR CMD...  run CMD between two reads of the security state
 #                                         (DIR/state-before, DIR/state-after): status 0 when CMD
@@ -36,9 +52,9 @@
 #                                         months exist depends on the date each was made
 #   polaris_db_state_same_by_table A B    status 0 when two state files agree table by table
 #
-# NAME is polaris_reference or polaris_reference_<suffix>, and nothing else: these functions never
-# create, load or drop the operator's database. Status 1: a step failed (named on stderr);
-# status 2: misuse.
+# NAME is polaris-reference or polaris-reference-<suffix>, and nothing else: these functions never
+# start, read or remove another container. Status 1: a step failed (named on stderr); status 2:
+# misuse.
 # ============================================================================
 
 _POLARIS_DB_REFERENCE_SQL=/docker-entrypoint-initdb.d/sql
@@ -81,44 +97,142 @@ polaris_db_state_same() {  # A B: status 0 when exactly equal; 1 with the first 
     return 1
 }
 
-_polaris_db_reference_name_ok() {  # NAME: status 0 when NAME is a reference database's name
-    if [[ "${1:-}" =~ ^polaris_reference(_[a-z0-9_]+)?$ ]]; then
+_polaris_db_reference_name_ok() {  # NAME: status 0 when NAME is a reference container's name
+    if [[ "${1:-}" =~ ^polaris-reference(-[a-z0-9-]+)?$ ]]; then
         return 0
     fi
-    echo "polaris_db_reference: '${1:-}' is not a reference database's name (polaris_reference[_suffix])" >&2
+    echo "polaris_db_reference: '${1:-}' is not a reference container's name (polaris-reference[-suffix])" >&2
     return 2
 }
 
-polaris_db_reference_drop() {  # NAME
+polaris_db_reference_sql() {  # NAME SQL
     _polaris_db_reference_name_ok "${1:-}" || return 2
-    pg_run psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -c "DROP DATABASE IF EXISTS $1 WITH (FORCE)" >&2 \
-        || { echo "polaris_db_reference: could not drop $1" >&2; return 1; }
+    docker exec -u postgres "$1" psql -X -q -At -v ON_ERROR_STOP=1 -U postgres -d polaris -c "$2" < /dev/null
 }
 
-polaris_db_reference_build() {  # NAME LOG
-    if [[ $# -ne 2 || -z "$2" ]]; then
-        echo "polaris_db_reference_build: give NAME and LOG" >&2
+polaris_db_reference_stop() {  # NAME DIR
+    _polaris_db_reference_name_ok "${1:-}" || return 2
+    docker rm -f "$1" > /dev/null 2>&1 || true
+    if [[ -n "${2:-}" ]]; then rm -rf "$2"; fi
+}
+
+polaris_db_reference_run() {  # IMAGE NAME DIR LOG [ENV=SECRET...]
+    if [[ $# -lt 4 || -z "$1" || -z "$3" || -z "$4" ]]; then
+        echo "polaris_db_reference_run: give IMAGE, NAME, DIR and LOG" >&2
         return 2
     fi
-    _polaris_db_reference_name_ok "$1" || return 2
-    local name="$1" log="$2" migrate_env
-    migrate_env=(env POLARIS_DB_HOST=/var/run/postgresql POLARIS_DB_USER=postgres "POLARIS_DB_NAME=${name}")
-    # A reference left by a run that was stopped would otherwise make CREATE fail.
-    polaris_db_reference_drop "${name}" >> "${log}" 2>&1 \
-        || { echo "polaris_db_reference: could not drop a reference left by an earlier run, ${name} (${log})" >&2; return 1; }
-    pg_run psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -c "CREATE DATABASE ${name}" >> "${log}" 2>&1 \
-        || { echo "polaris_db_reference: could not create ${name} (${log})" >&2; return 1; }
-    # The image's own init, as the HA profile's post_init runs it (POLARIS_INIT_MANAGED_BY=patroni:
-    # no ALTER SYSTEM, no stanza), with an emptied environment that keeps the container's
-    # POLARIS_ENV: no password file reaches it, so it rotates no role's password and makes no
-    # replication role, and it writes only to NAME.
-    pg_run sh -c "exec env -i PATH=\"\${PATH}\" PGHOST=/var/run/postgresql POSTGRES_USER=postgres POSTGRES_DB=${name} \
-POLARIS_INIT_MANAGED_BY=patroni POLARIS_ENV=\"\${POLARIS_ENV:-}\" bash ${_POLARIS_DB_REFERENCE_INIT}" >> "${log}" 2>&1 \
-        || { echo "polaris_db_reference: this release's init did not complete on ${name} (${log})" >&2; return 1; }
-    pg_run "${migrate_env[@]}" "${_POLARIS_DB_REFERENCE_MIGRATE}" --up >> "${log}" 2>&1 \
-        || { echo "polaris_db_reference: polaris-migrate.sh --up failed on ${name} (${log})" >&2; return 1; }
-    pg_run "${migrate_env[@]}" "${_POLARIS_DB_REFERENCE_MIGRATE}" --sync-objects >> "${log}" 2>&1 \
-        || { echo "polaris_db_reference: polaris-migrate.sh --sync-objects failed on ${name} (${log})" >&2; return 1; }
+    _polaris_db_reference_name_ok "$2" || return 2
+    local image="$1" name="$2" dir="$3" log="$4" secret i up=0 admin limit="${POLARIS_REFERENCE_BOOT_SECONDS:-240}"
+    local -a extra_env=() extra_secrets=()
+    shift 4
+    # The stack's other password files, so its first boot creates what the stack's did (the
+    # replicator's: the init creates polaris_replicator when it has one).
+    for i in "$@"; do
+        if [[ ! "${i}" =~ ^POLARIS_[A-Z_]+_FILE=[a-z_]+$ ]]; then
+            echo "polaris_db_reference_run: '${i}' is not ENV=SECRET (POLARIS_..._FILE=a_secret_name)" >&2
+            return 2
+        fi
+        extra_env+=(-e "${i%%=*}=/run/secrets/${i#*=}")
+        extra_secrets+=("${i#*=}")
+    done
+    # The passwords its first boot reads, generated for it alone: none of the operator's reaches it.
+    # Readable by the container's postgres user, which is not the host's.
+    mkdir -p "${dir}" || { echo "polaris_db_reference: cannot make ${dir}" >&2; return 1; }
+    for secret in polaris_db_root_password polaris_db_password ${extra_secrets[@]+"${extra_secrets[@]}"}; do
+        ( umask 022 && openssl rand -hex 24 > "${dir}/${secret}" ) && [[ -s "${dir}/${secret}" ]] \
+            || { echo "polaris_db_reference: could not generate ${secret} in ${dir}" >&2; return 1; }
+    done
+    # A container left by a run that was stopped would otherwise make the name taken.
+    docker rm -f "${name}" >> "${log}" 2>&1 || true
+    docker run -d --name "${name}" --network none \
+        -e POSTGRES_DB=polaris -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD_FILE=/run/secrets/polaris_db_root_password \
+        -e POLARIS_APP_PASSWORD_FILE=/run/secrets/polaris_db_password \
+        -e POLARIS_ENV=production -e POLARIS_PGBACKREST_ENABLED=0 ${extra_env[@]+"${extra_env[@]}"} \
+        -v "${dir}:/run/secrets:ro" "${image}" >> "${log}" 2>&1 \
+        || { echo "polaris_db_reference: could not start ${name} from ${image} (${log})" >&2; return 1; }
+    # The first boot initialises on a server that listens on its socket only; the server it then
+    # starts listens on TCP as well, so TCP answering is the first boot done.
+    for i in $(seq 1 "${limit}"); do
+        if [[ "$(docker inspect -f '{{.State.Running}}' "${name}" 2> /dev/null)" != true ]]; then
+            docker logs --tail 40 "${name}" >> "${log}" 2>&1 || true
+            echo "polaris_db_reference: ${name} stopped during its first boot (${log})" >&2
+            return 1
+        fi
+        if docker exec "${name}" pg_isready -q -h 127.0.0.1 -U postgres > /dev/null 2>&1; then
+            up=1
+            break
+        fi
+        sleep 1
+    done
+    if [[ "${up}" != 1 ]]; then
+        docker logs --tail 40 "${name}" >> "${log}" 2>&1 || true
+        echo "polaris_db_reference: ${name} did not finish its first boot in ${limit} s (${log})" >&2
+        return 1
+    fi
+    for i in --up --sync-objects; do
+        docker exec -u postgres "${name}" env POLARIS_DB_HOST=/var/run/postgresql POLARIS_DB_USER=postgres \
+            POLARIS_DB_NAME=polaris POLARIS_ENV=production "${_POLARIS_DB_REFERENCE_MIGRATE}" "${i}" \
+            < /dev/null >> "${log}" 2>&1 \
+            || { echo "polaris_db_reference: polaris-migrate.sh ${i} failed in ${name} (${log})" >&2; return 1; }
+    done
+    # It must be what it stands for, a production install: the production block retired the
+    # notional sample's administrator. Otherwise a fact only production's first boot sets would be
+    # missing on both sides and compare equal.
+    admin="$(polaris_db_reference_sql "${name}" "SELECT count(*) FROM appuser WHERE username = 'admin' AND is_active")" \
+        || { echo "polaris_db_reference: ${name} could not be read" >&2; return 1; }
+    if [[ "${admin}" != 0 ]]; then
+        echo "polaris_db_reference: ${name} is not a production install (the sample's admin is active: '${admin}')" >&2
+        return 1
+    fi
+}
+
+polaris_db_reference_roles() {  # DIR: this tree's polaris_sql
+    if [[ $# -ne 1 || ! -d "${1:-}" ]]; then
+        echo "polaris_db_reference_roles: give this tree's polaris_sql directory" >&2
+        return 2
+    fi
+    local roles init="$1/../polaris_web/docker-init.sh"
+    if [[ ! -r "${init}" ]]; then
+        echo "polaris_db_reference_roles: ${init} cannot be read, and the init creates roles too" >&2
+        return 1
+    fi
+    local pattern='CREATE ROLE[[:space:]]+(IF NOT EXISTS[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*'
+    roles="$({ LC_ALL=C grep -rhoiE "${pattern}" --include='*.sql' "$1" || true
+               LC_ALL=C grep -hoiE "${pattern}" "${init}" || true; } | awk '{ print tolower($NF) }' | LC_ALL=C sort -u)"
+    if [[ -z "${roles}" ]]; then
+        echo "polaris_db_reference_roles: no CREATE ROLE under $1, so no role would be compared" >&2
+        return 1
+    fi
+    printf '%s\n' "${roles}"
+}
+
+polaris_db_state_cross_cluster() {  # A B ROLES OUTA OUTB
+    if [[ $# -ne 5 || ! -s "${1:-}" || ! -s "${2:-}" || ! -s "${3:-}" ]]; then
+        echo "polaris_db_state_cross_cluster: give two non-empty states, a roles file and two outputs" >&2
+        return 2
+    fi
+    LC_ALL=C awk -v outa="$4" -v outb="$5" '
+        function out_of(line,    f, n, k) {
+            n = split(line, f, " ")
+            for (k = 2; k <= n; k++) if (f[k] in drop) return 1
+            return 0
+        }
+        FILENAME == ARGV[1] { if ($1 != "") { pol[$1] = 1; np++ } next }
+        FILENAME == ARGV[2] { a[++na] = $0; if ($1 == "role") ra[$2] = 1; next }
+        FILENAME == ARGV[3] { b[++nb] = $0; if ($1 == "role") rb[$2] = 1; next }
+        END {
+            if (np == 0) { print "polaris_db_state_cross_cluster: the roles file names none" > "/dev/stderr"; exit 2 }
+            for (r in pol) if (!(r in ra) && !(r in rb)) {
+                print "polaris_db_state_cross_cluster: neither state holds role " r ", so its roles were not read" > "/dev/stderr"; exit 2
+            }
+            for (r in ra) if (!(r in rb) && !(r in pol)) drop[r] = 1
+            for (r in rb) if (!(r in ra) && !(r in pol)) drop[r] = 1
+            printf "" > outa; printf "" > outb
+            for (i = 1; i <= na; i++) if (!out_of(a[i])) print a[i] > outa
+            for (i = 1; i <= nb; i++) if (!out_of(b[i])) print b[i] > outb
+            for (r in drop) print r
+        }' "$3" "$1" "$2" | LC_ALL=C sort
 }
 
 # Each fact about a partition (its grants, owner, triggers, row-level security; a column of it)

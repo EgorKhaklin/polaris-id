@@ -98,49 +98,49 @@ if ! docker compose version >/dev/null 2>&1; then
     echo "  ✗ docker compose v2 plugin not available"; exit 1
 fi
 
-# The secret files the stack needs to start. The app's are every secret_file setting in
-# polaris_web/config_schema.py that the prod compose points at a mounted secret: production
-# validates each at boot (readable, non-empty), so they are read from those two files rather
-# than listed here. A release that adds one is then required before anything is built, once
-# the checkout is that release's, as OPERATIONS.md's upgrade makes it first (v1.0.0-rc.70 had no
-# polaris_redis_password and no polaris_secret_key_fallbacks, and a list of four let its upgrade
-# go on to start an app that production validation refuses). The rest are not
-# app settings: redis_users.acl is Redis's users, derived from that password; the root
-# password initializes the database; and (v9.173) pgbackrest_repo_creds.conf is mounted
-# unconditionally, so a missing source makes docker create a DIRECTORY there.
-if ! app_secrets="$(python3 -I -c '
-import re, sys
-sys.path.insert(0, sys.argv[1])
-import config_schema
-compose = open(sys.argv[1] + "/docker-compose.prod.yml", encoding="utf-8").read()
-files = dict(re.findall(r"(?m)^  (\w+):\n    file: \$\{POLARIS_SECRETS_DIR[^}]*\}/(\S+)$", compose))
-for name, secret in sorted(set(re.findall(r"(?m)^\s+(POLARIS_\w+_FILE): /run/secrets/(\w+)\s*$", compose))):
-    s = config_schema.lookup(name)
-    if s is not None and s.kind == "secret_file":
-        print(files[secret])' "${POLARIS_ROOT}/polaris_web")" || [[ -z "${app_secrets}" ]]; then
-    echo "  ✗ could not read the secret files production requires from polaris_web/config_schema.py"
-    echo "    and polaris_web/docker-compose.prod.yml"
-    exit 1
-fi
-missing=0
-for secret in ${app_secrets} redis_users.acl polaris_db_root_password pgbackrest_repo_creds.conf; do
-    if [[ ! -f "${SECRETS_DIR}/${secret}" || ! -s "${SECRETS_DIR}/${secret}" ]]; then
-        echo "  ✗ missing secret: secrets/${secret}"
-        missing=1
+# The secret files the stack needs to start, read from the stack as compose resolves it (this file,
+# the overlays POLARIS_COMPOSE_EXTRA adds, .env): every secret a service mounts and every file
+# bind-mounted from the secrets directory (the TLS certificates; pgbackrest_repo_creds.conf, which
+# Docker Compose turns into a DIRECTORY when it is missing). Each must be a non-empty file before
+# anything is built. A list kept here fell behind: v1.0.0-rc.70's upgrade checked four secrets, and
+# the app production validates needed six; the HA and DR overlays mount three more. A service's
+# *_FILE setting naming a /run/secrets file the service does not mount is refused: nothing would
+# be there when the app reads it.
+secret_preflight() {  # WHEN: printed with the result
+    local out line missing=0 path name
+    if ! out="$(compose config --format json 2> /dev/null | python3 -I "${SCRIPT_DIR}/polaris_stack_secrets.py" "${SECRETS_DIR}")"; then
+        printf '%s\n' "${out}" | { grep '^BAD ' || true; } | sed 's/^BAD /  ✗ /'
+        echo "  ✗ could not read the secret files the stack mounts from \`docker compose config\` ($1);"
+        echo "    nothing was started."
+        exit 1
     fi
-done
-if [[ "${missing}" -ne 0 ]]; then
-    echo "    run: ./scripts/polaris-generate-secrets.sh (it writes only the files that are missing)"
-    # Sealed, the files above are missing from the store this deploy just unsealed, and the
-    # generator writes plaintext to polaris_web/secrets: every secret, if that directory is gone.
-    if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
-        echo "    then seal only those: ./scripts/polaris-secrets.sh seal --only <name> for each one named"
-        echo "    above, and remove the plaintext directory (docs/operator/SECRETS.md, section 5.1)"
+    while IFS= read -r line; do
+        [[ "${line}" == "FILE "* ]] || continue
+        path="${line#FILE }"
+        name="${path#"${SECRETS_DIR}"/}"
+        if [[ -d "${path}" ]]; then
+            echo "  ✗ a directory where a secret file belongs: ${path} (remove it; the generator writes the file)"
+            missing=1
+        elif [[ ! -f "${path}" || ! -s "${path}" ]]; then
+            echo "  ✗ missing secret: ${name}"
+            missing=1
+        fi
+    done <<< "${out}"
+    if [[ "${missing}" -ne 0 ]]; then
+        echo "    run: ./scripts/polaris-generate-secrets.sh (it writes only the files that are missing)"
+        # Sealed, the files above are missing from the store this deploy just unsealed, and the
+        # generator writes plaintext to polaris_web/secrets: every secret, if that directory is gone.
+        if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then
+            echo "    then seal only those: ./scripts/polaris-secrets.sh seal --only <name> for each one named"
+            echo "    above, and remove the plaintext directory (docs/operator/SECRETS.md, section 5.1)"
+        fi
+        echo "    Nothing was started ($1)."
+        exit 1
     fi
-    exit 1
-fi
+    echo "  ✓ every secret file the stack mounts is present ($1)"
+}
 echo "  ✓ docker present"
-echo "  ✓ all secrets present"
+secret_preflight "this checkout"
 
 # One build or deploy of this host's images at a time. Every stack on a host builds and runs the same
 # tags (polaris-app:prod and its siblings), so a deploy that ran beside another one, or beside try.sh's
@@ -150,7 +150,7 @@ echo "  ✓ all secrets present"
 source "${SCRIPT_DIR}/polaris-host-lock.sh"
 polaris_host_lock "this deploy"
 # The rollback pin is named for the compose project: two stacks on one host keep a pin each.
-PROJECT=$(compose config 2>/dev/null | sed -n 's/^name: //p' | head -n1 || true)
+PROJECT=$(compose config 2>/dev/null | sed -n 's/^name: //p' | sed -n 1p || true)
 [[ -n "${PROJECT}" ]] || { echo "  ✗ could not read the compose project's name (docker compose config)" >&2; exit 1; }
 echo "  ✓ the only build or deploy of this host's images (project ${PROJECT})"
 
@@ -162,6 +162,8 @@ if [[ "${PULL_GIT}" -eq 1 ]] && [[ -d "${POLARIS_ROOT}/.git" ]]; then
     (cd "${POLARIS_ROOT}" && git pull --ff-only) || {
         echo "  ! git pull failed (continuing — fix manually if needed)"
     }
+    # The release just pulled may mount a secret the one checked above did not.
+    secret_preflight "after git pull"
 else
     echo "  [2/7] git pull… skipped"
 fi
@@ -241,7 +243,7 @@ fi
 ROLLBACK_TAG="polaris-app:rollback-${PROJECT}"
 PREV_IMAGE_ID=""
 # -a: a stopped or restarting app still names the image this deploy replaces.
-PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)
+PREV_APP=$(compose ps -a -q app 2>/dev/null | sed -n 1p || true)
 if [[ -n "${PREV_APP}" ]]; then
     PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' "${PREV_APP}" 2>/dev/null || echo "")
 fi
@@ -258,6 +260,52 @@ if [[ -n "${PREV_IMAGE_ID}" ]]; then
 else
     echo "  [3/7] No previous app container in project ${PROJECT} (a first deploy): a failed smoke test cannot roll back"
 fi
+
+# ---------------------------------------------------------------------------
+# 3b. The database's PostgreSQL major against this tree's. A server refuses a cluster another major
+#     initialised, so a FROM line moved to a new major and deployed (as a dependency bump proposes)
+#     recreated postgres in step 5 on a cluster it could not open, and the database stayed down until
+#     the line went back. A major change is a dump and restore: OPERATIONS.md, "Postgres version
+#     upgrade". Checked before step 4 builds anything. A missing or empty volume passes (the image
+#     initialises it); a cluster whose major cannot be read is refused.
+# ---------------------------------------------------------------------------
+pg_major_check() {
+    local vols cluster want image pull err
+    want=$(sed -n -E 's/^FROM postgres:([0-9]+)[^0-9].*/\1/p' "${POLARIS_ROOT}/polaris_web/Dockerfile.postgres")
+    [[ "${want}" =~ ^[0-9]+$ ]] || { echo "  ✗ polaris_web/Dockerfile.postgres has no single 'FROM postgres:<major>' line" >&2; return 1; }
+    vols=$(docker volume ls -q --filter "label=com.docker.compose.project=${PROJECT}" \
+               --filter label=com.docker.compose.volume=pg_data) \
+        || { echo "  ✗ could not list project ${PROJECT}'s volumes" >&2; return 1; }
+    [[ -n "${vols}" ]] || return 0
+    [[ "$(printf '%s\n' "${vols}" | grep -c .)" -eq 1 ]] \
+        || { echo "  ✗ more than one pg_data volume in project ${PROJECT}: ${vols//$'\n'/ }" >&2; return 1; }
+    # Read with the stack's own postgres image, never pulled, so a same-major deploy needs no registry
+    # here (step 4 pulls with --ignore-pull-failures); the pinned alpine only when that image is absent.
+    image=$(compose config --format json 2>/dev/null \
+                | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["postgres"]["image"])' 2>/dev/null) \
+        || image=""
+    pull=never
+    if [[ -z "${image}" ]] || ! docker image inspect "${image}" > /dev/null 2>&1; then
+        image=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+        pull=missing
+    fi
+    err=$(mktemp "${TMPDIR:-/tmp}/polaris-pg-major.XXXXXX")
+    if ! cluster=$(docker run --rm --pull="${pull}" --entrypoint sh -v "${vols}:/d:ro" "${image}" \
+                       -c 'cat /d/PG_VERSION 2>/dev/null || echo none' 2>"${err}"); then
+        echo "  ✗ could not read ${vols}'s PG_VERSION with ${image}, so its cluster's major is unknown:" >&2
+        sed -n '1,3p' "${err}" | sed 's/^/      /' >&2
+        rm -f "${err}"
+        return 1
+    fi
+    rm -f "${err}"
+    [[ "${cluster}" != none && "${cluster}" != "${want}" ]] || return 0
+    echo "  ✗ ${vols} holds a PostgreSQL ${cluster} cluster, and polaris_web/Dockerfile.postgres is PostgreSQL ${want}." >&2
+    echo "    A server refuses another major's cluster: recreating postgres would take the database down." >&2
+    echo "    Change majors the way docs/operator/OPERATIONS.md, \"Postgres version upgrade\", says (a dump and" >&2
+    echo "    restore), or put the FROM line back. Nothing was built or recreated." >&2
+    return 1
+}
+pg_major_check || exit 1
 
 # ---------------------------------------------------------------------------
 # 4. Pull the upstream images, build Polaris's own
@@ -371,8 +419,9 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
     fi
     # As the postgres user: the server archives WAL as postgres, so a repo
     # created by root here would refuse every later archive-push.
-    if compose exec -T -u postgres postgres pgbackrest --stanza=polaris stanza-create >/dev/null 2>&1 \
-       && compose exec -T -u postgres postgres pgbackrest --stanza=polaris check >/dev/null 2>&1; then
+    stanza_log="$(mktemp "${TMPDIR:-/tmp}/polaris-stanza.XXXXXX")"
+    if compose exec -T -u postgres postgres pgbackrest --stanza=polaris stanza-create >"$stanza_log" 2>&1 \
+       && compose exec -T -u postgres postgres pgbackrest --stanza=polaris check >>"$stanza_log" 2>&1; then
         echo "  ✓ pgBackRest stanza ready (archive-push validated)"
         # Each repository gets its own first full: a backup goes to one repo (repo1 unless --repo
         # names another), and with an offsite bucket the local repo is repo1 and the bucket an
@@ -392,7 +441,7 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
         first_full_local=0
         for repo in ${pgbr_repos}; do
             if compose exec -T -u postgres postgres pgbackrest --stanza=polaris --repo="${repo}" --output=json info 2>/dev/null \
-                    | grep -q '"type": *"full"'; then
+                    | grep '"type": *"full"' >/dev/null; then
                 continue
             fi
             echo "        repo${repo} holds no base backup yet: taking its first full one…"
@@ -423,11 +472,24 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
         fi
     else
         echo "  ⚠  pgBackRest stanza-create/check FAILED. Archiving is enabled but the" >&2
-        echo "     repo is not ready — WAL will accumulate on disk until this is fixed." >&2
-        echo "     Check POLARIS_PGBACKREST_S3_* on the postgres service and" >&2
-        echo "     secrets/pgbackrest_repo_creds.conf (the S3 key pair, repo2-cipher-pass), then re-run:" >&2
-        echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris check" >&2
+        echo "     repo is not ready, so WAL will accumulate on disk until this is fixed." >&2
+        # A log without pgBackRest's own ERROR or HINT lines (a daemon or compose failure says
+        # "Error") must not end the deploy here: grep's no-match is 1, and set -e would.
+        { grep -E 'ERROR|HINT' "$stanza_log" || true; } | sed -n 1,4p | sed 's/^/       /' >&2
+        if grep -q 'ERROR: \[028\]' "$stanza_log"; then
+            # [028]: the repository's stanza belongs to another cluster, as after a PostgreSQL
+            # major-version upgrade (OPERATIONS.md, "Postgres version upgrade", step 5).
+            echo "     The repository holds the previous cluster's stanza. After a major-version" >&2
+            echo "     upgrade, upgrade the stanza, then take a full backup:" >&2
+            echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris stanza-upgrade" >&2
+            echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris --type=full backup" >&2
+        else
+            echo "     Check POLARIS_PGBACKREST_S3_* on the postgres service and" >&2
+            echo "     secrets/pgbackrest_repo_creds.conf (the S3 key pair, repo2-cipher-pass), then re-run:" >&2
+            echo "       docker compose -f ${COMPOSE_FILE} exec -u postgres postgres pgbackrest --stanza=polaris check" >&2
+        fi
     fi
+    rm -f "$stanza_log"
 fi
 
 # ---------------------------------------------------------------------------
@@ -442,7 +504,7 @@ fi
 wait_healthy() {  # $1 = service
     local cid i
     for i in $(seq 1 60); do
-        cid=$(compose ps -q "$1" 2>/dev/null | head -1)
+        cid=$(compose ps -q "$1" 2>/dev/null | sed -n 1p)
         [[ -n "$cid" ]] && [[ "$(docker inspect --format '{{.State.Health.Status}}' "$cid" 2>/dev/null)" == "healthy" ]] && return 0
         sleep 2
     done
@@ -475,7 +537,7 @@ for i in $(seq 1 30); do
     # Probe from inside the docker network — avoids waiting on TLS issuance.
     if HEALTH_JSON=$(compose exec -T app \
                        curl -fsS http://localhost:8000/api/health 2>/dev/null); then
-        STATUS=$(echo "${HEALTH_JSON}" | grep -oE '"status":"[a-z]+"' | head -1 | cut -d'"' -f4)
+        STATUS=$(echo "${HEALTH_JSON}" | grep -oE '"status":"[a-z]+"' | sed -n 1p | cut -d'"' -f4)
         if [[ "${STATUS}" == "healthy" ]]; then
             SMOKE_OK=1
             break

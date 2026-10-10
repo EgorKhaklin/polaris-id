@@ -20,17 +20,125 @@ set -e
 # by Patroni's post_init hook for what is the same on both profiles (the
 # schema, the migrations, the application role, the production lock). The
 # three ALTER SYSTEM blocks below are skipped in that mode.
+# Lab record 017 (managed PostgreSQL): scripts/polaris-db-init.sh runs this script against a
+# database the operator's provider runs, as its owner, with POLARIS_INIT_MANAGED_BY=external
+# and POLARIS_SQL_DIR naming the checkout's polaris_sql; psql then reaches the server through
+# PGHOST and the other libpq variables. The server's configuration is the provider's, so the
+# same three blocks are skipped.
 MANAGED="${POLARIS_INIT_MANAGED_BY:-}"
+case "$MANAGED" in
+    ""|patroni|external) ;;
+    # An unknown mode would skip the bundled server's TLS, replication and archiving silently.
+    *) echo "FATAL: POLARIS_INIT_MANAGED_BY must be empty, patroni or external (got '$MANAGED')." >&2; exit 2 ;;
+esac
+SQL_DIR="${POLARIS_SQL_DIR:-/docker-entrypoint-initdb.d/sql}"
+
+# The polaris_app password is read and judged before anything is written: a refusal after the
+# schema had loaded would leave a half-initialised database, which the image never initialises
+# again. It is set after the migrations, below.
+#
+# Syncing the polaris_app role password to the prod secret. 09_grants.sql created
+# the role with the dev default ('polaris_dev_password'); the app and pgbouncer
+# both authenticate as polaris_app with the generated /run/secrets/polaris_db_password.
+# Without this rotation the role keeps the dev password while everything else
+# presents the generated one: authentication fails (or, worse, the dev password
+# is what is live in production).
+#
+# v9.85: read the file-mounted secret first (the *_FILE convention the rest of
+# the prod stack uses, G28). docker-compose.prod.yml points
+# POLARIS_APP_PASSWORD_FILE at the SAME /run/secrets/polaris_db_password the app
+# and pgbouncer read, so the role's password ends up equal to theirs. `cat`
+# command substitution strips the trailing newline; the leading and trailing whitespace go too, as
+# the app's _read_secret_file().read().strip() drops them, so the two values compare byte-for-byte.
+if [ -n "$POLARIS_APP_PASSWORD_FILE" ] && [ -r "$POLARIS_APP_PASSWORD_FILE" ]; then
+    POLARIS_APP_PASSWORD="$(cat "$POLARIS_APP_PASSWORD_FILE")"
+fi
+POLARIS_APP_PASSWORD="${POLARIS_APP_PASSWORD#"${POLARIS_APP_PASSWORD%%[![:space:]]*}"}"
+POLARIS_APP_PASSWORD="${POLARIS_APP_PASSWORD%"${POLARIS_APP_PASSWORD##*[![:space:]]}"}"
+# In production polaris_app never keeps the public development password: an empty or absent secret
+# (a file holding only a newline) is refused before anything is written, not skipped.
+if [ "${POLARIS_ENV:-}" = "production" ] \
+        && { [ -z "$POLARIS_APP_PASSWORD" ] || [ "$POLARIS_APP_PASSWORD" = "polaris_dev_password" ]; }; then
+    echo "FATAL: production needs polaris_app's password (POLARIS_APP_PASSWORD_FILE): it is empty or the public development one." >&2
+    exit 2
+fi
+
+ROTATE_APP_PASSWORD=0
+if [ -n "$POLARIS_APP_PASSWORD" ] && [ "$POLARIS_APP_PASSWORD" != "polaris_dev_password" ]; then
+    # F-13: password complexity gate. The polaris_app role can read every row in
+    # the schema, so a weak password is the whole database one guess away.
+    #   - absolute floor: 16 characters.
+    #   - under 24 chars (human-chosen territory): also require a digit, a
+    #     letter, and a symbol, to resist dictionary attacks.
+    #   - 24+ chars: length alone is the entropy. The generated secret is 48 hex
+    #     chars (openssl rand -hex 24, ~192 bits) and has NO symbol by
+    #     construction, so a blanket symbol rule would reject our own secret.
+    if [ ${#POLARIS_APP_PASSWORD} -lt 16 ]; then
+        echo "FATAL: POLARIS_APP_PASSWORD must be at least 16 characters." >&2
+        exit 2
+    fi
+    if [ ${#POLARIS_APP_PASSWORD} -lt 24 ]; then
+        if ! echo "$POLARIS_APP_PASSWORD" | grep '[0-9]' >/dev/null; then
+            echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a digit." >&2
+            exit 2
+        fi
+        if ! echo "$POLARIS_APP_PASSWORD" | grep '[A-Za-z]' >/dev/null; then
+            echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a letter." >&2
+            exit 2
+        fi
+        if ! echo "$POLARIS_APP_PASSWORD" | grep '[^A-Za-z0-9]' >/dev/null; then
+            echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a symbol." >&2
+            exit 2
+        fi
+    fi
+
+    # Printable ASCII only: the verifier below is computed over the password's bytes, and libpq
+    # normalises other characters (SASLprep) before it proves them. The generated secret is hex.
+    if printf '%s' "$POLARIS_APP_PASSWORD" | LC_ALL=C grep -q '[^ -~]'; then
+        echo "FATAL: POLARIS_APP_PASSWORD must be printable ASCII." >&2
+        exit 2
+    fi
+    command -v python3 > /dev/null \
+        || { echo "FATAL: python3 computes polaris_app's SCRAM verifier and is not on PATH." >&2; exit 2; }
+    ROTATE_APP_PASSWORD=1
+fi
+
+# polaris_app gets its password BEFORE the schema loads. 09_grants.sql creates the role with the
+# development password only when it does not exist, so creating it here first means that password is
+# never set: not while the load runs, and not after a load or a migration that fails (a role is the
+# cluster's, and outlives a dropped database). The server receives a SCRAM-SHA-256 verifier computed
+# here, as psql's \password sends one, never the password: it reaches neither a command line nor the
+# statement a server may log (on a managed database, the provider's log). The password travels to
+# python on stdin.
+if [ "$ROTATE_APP_PASSWORD" = 1 ]; then
+    echo "Setting polaris_app's password..."
+    verifier=$(printf '%s' "$POLARIS_APP_PASSWORD" | python3 -c '
+import base64, hashlib, hmac, os, sys
+pw = sys.stdin.buffer.read(); salt = os.urandom(16); n = 4096
+salted = hashlib.pbkdf2_hmac("sha256", pw, salt, n)
+ck = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+sk = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+b64 = lambda x: base64.b64encode(x).decode()
+print("SCRAM-SHA-256$%d:%s$%s:%s" % (n, b64(salt), b64(hashlib.sha256(ck).digest()), b64(sk)))')
+    if [ -n "$(psql -X -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -qtAc \
+                 "SELECT 1 FROM pg_roles WHERE rolname = 'polaris_app'")" ]; then
+        app_role_sql="ALTER ROLE polaris_app WITH PASSWORD '%s';\n"
+    else
+        app_role_sql="CREATE ROLE polaris_app WITH LOGIN PASSWORD '%s';\n"
+    fi
+    printf "$app_role_sql" "$verifier" \
+        | psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -q > /dev/null
+fi
 
 echo "Loading Polaris SQL package..."
 
 # 00_load_all.sql uses \i with relative paths, so we cd into the SQL directory
 # before invoking psql.
-cd /docker-entrypoint-initdb.d/sql
+cd "$SQL_DIR"
 psql -v ON_ERROR_STOP=1 \
      --username "$POSTGRES_USER" \
      --dbname "$POSTGRES_DB" \
-     -f /docker-entrypoint-initdb.d/sql/00_load_all.sql
+     -f "$SQL_DIR/00_load_all.sql"
 
 # v9.121 — enable TLS so the app<->DB hop is encrypted. The self-signed server
 # cert is mounted read-only at /etc/polaris-pg-certs (postgres:16-alpine has no
@@ -42,6 +150,8 @@ PG_CERT_SRC=/etc/polaris-pg-certs
 PG_DATA_DIR="${PGDATA:-/var/lib/postgresql/data}"
 if [ "$MANAGED" = "patroni" ]; then
     echo "TLS, replication and archiving are Patroni parameters under the HA profile; skipping ALTER SYSTEM."
+elif [ "$MANAGED" = "external" ]; then
+    echo "TLS, replication and archiving are the database provider's; skipping ALTER SYSTEM."
 elif [ -f "$PG_CERT_SRC/server.crt" ] && [ -f "$PG_CERT_SRC/server.key" ]; then
     echo "Enabling Postgres TLS from the mounted cert..."
     cp "$PG_CERT_SRC/server.crt" "$PG_DATA_DIR/server.crt"
@@ -64,14 +174,15 @@ fi
 # mirrors scripts/polaris-migrate.sh's apply path: lexicographic ordering,
 # per-file transaction, SHA-256 recorded in schema_version. actor_user_id
 # is NULL (system-applied during init; no human actor at boot time).
-MIG_DIR="/docker-entrypoint-initdb.d/sql/migrations"
+MIG_DIR="$SQL_DIR/migrations"
 if [ -d "$MIG_DIR" ]; then
     echo "Applying schema migrations..."
     count=0
     for up_file in "$MIG_DIR"/*.up.sql; do
         [ -f "$up_file" ] || continue
         name=$(basename "$up_file" .up.sql)
-        sha=$(sha256sum "$up_file" | awk '{print $1}')
+        # sha256sum on Linux and in the image; shasum where an operator's host has only that.
+        sha=$( (sha256sum "$up_file" 2>/dev/null || shasum -a 256 "$up_file") | awk '{print $1}')
         # Wrap in a single transaction: apply + record in schema_version.
         sql_tmp=$(mktemp)
         cat > "$sql_tmp" <<SQL
@@ -96,60 +207,6 @@ SQL
     echo "Applied $count migration(s)."
 fi
 
-# Sync the polaris_app role password to the prod secret. 09_grants.sql created
-# the role with the dev default ('polaris_dev_password'); the app and pgbouncer
-# both authenticate as polaris_app with the generated /run/secrets/polaris_db_password.
-# Without this rotation the role keeps the dev password while everything else
-# presents the generated one — authentication fails (or, worse, the dev password
-# is what is live in production).
-#
-# v9.85 — read the file-mounted secret first (the *_FILE convention the rest of
-# the prod stack uses, G28). docker-compose.prod.yml points
-# POLARIS_APP_PASSWORD_FILE at the SAME /run/secrets/polaris_db_password the app
-# and pgbouncer read, so the role's password ends up equal to theirs. `cat`
-# command substitution strips the trailing newline, matching the app's
-# _read_secret_file().read().strip(), so the two values compare byte-for-byte.
-if [ -n "$POLARIS_APP_PASSWORD_FILE" ] && [ -r "$POLARIS_APP_PASSWORD_FILE" ]; then
-    POLARIS_APP_PASSWORD="$(cat "$POLARIS_APP_PASSWORD_FILE")"
-fi
-
-if [ -n "$POLARIS_APP_PASSWORD" ] && [ "$POLARIS_APP_PASSWORD" != "polaris_dev_password" ]; then
-    # F-13: password complexity gate. The polaris_app role can read every row in
-    # the schema, so a weak password is the whole database one guess away.
-    #   - absolute floor: 16 characters.
-    #   - under 24 chars (human-chosen territory): also require a digit, a
-    #     letter, and a symbol, to resist dictionary attacks.
-    #   - 24+ chars: length alone is the entropy. The generated secret is 48 hex
-    #     chars (openssl rand -hex 24, ~192 bits) and has NO symbol by
-    #     construction, so a blanket symbol rule would reject our own secret.
-    if [ ${#POLARIS_APP_PASSWORD} -lt 16 ]; then
-        echo "FATAL: POLARIS_APP_PASSWORD must be at least 16 characters." >&2
-        exit 2
-    fi
-    if [ ${#POLARIS_APP_PASSWORD} -lt 24 ]; then
-        if ! echo "$POLARIS_APP_PASSWORD" | grep -q '[0-9]'; then
-            echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a digit." >&2
-            exit 2
-        fi
-        if ! echo "$POLARIS_APP_PASSWORD" | grep -q '[A-Za-z]'; then
-            echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a letter." >&2
-            exit 2
-        fi
-        if ! echo "$POLARIS_APP_PASSWORD" | grep -q '[^A-Za-z0-9]'; then
-            echo "FATAL: POLARIS_APP_PASSWORD under 24 chars must contain a symbol." >&2
-            exit 2
-        fi
-    fi
-
-    echo "Rotating polaris_app password..."
-    # Pass via env-var to psql to avoid showing it in process listings or logs.
-    PGPASSWORD_NEW="$POLARIS_APP_PASSWORD" psql -v ON_ERROR_STOP=1 \
-         --username "$POSTGRES_USER" \
-         --dbname "$POSTGRES_DB" \
-         -c "ALTER ROLE polaris_app WITH PASSWORD '$POLARIS_APP_PASSWORD'" \
-         > /dev/null  # suppress any echo of the SQL
-fi
-
 # v9.126 — streaming-replication readiness. When the operator provides a
 # replication secret, make THIS primary replication-ready: set the WAL params a
 # standby needs (persisted via ALTER SYSTEM and applied on the real server start,
@@ -159,7 +216,7 @@ fi
 # bootstrapped with `pg_basebackup -R` per docs/operator/FAILOVER.md. Optional:
 # with no replicator secret, this is a single node and nothing is touched.
 REPL_PWFILE="${POLARIS_REPLICATOR_PASSWORD_FILE:-}"
-if [ "$MANAGED" != "patroni" ] && [ -n "$REPL_PWFILE" ] && [ -r "$REPL_PWFILE" ]; then
+if [ -z "$MANAGED" ] && [ -n "$REPL_PWFILE" ] && [ -r "$REPL_PWFILE" ]; then
     REPL_PW="$(cat "$REPL_PWFILE")"
     if [ ${#REPL_PW} -lt 16 ]; then
         echo "FATAL: the replication password must be at least 16 characters." >&2
@@ -201,7 +258,7 @@ fi
 # stanza here, against this init server, so the first real start archives rather
 # than piling up WAL. The base backups are polaris-deploy.sh's (the first) and
 # polaris-backup.sh's (the scheduled ones); the CI round-trip proves the path.
-if [ "$MANAGED" != "patroni" ] && [ "${POLARIS_PGBACKREST_ENABLED:-1}" = "1" ]; then
+if [ -z "$MANAGED" ] && [ "${POLARIS_PGBACKREST_ENABLED:-1}" = "1" ]; then
     echo "Enabling continuous WAL archiving via pgBackRest (archive_mode=on)..."
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" >/dev/null \
         -c "ALTER SYSTEM SET archive_mode = on;" \

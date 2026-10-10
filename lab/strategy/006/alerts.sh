@@ -124,8 +124,23 @@ for series in polaris_clock_skew_seconds 'polaris_db_archive_last_timestamp_seco
               'polaris_state_filesystem_bytes{kind="size"}' 'polaris_backup_last_success_timestamp_seconds{kind="dump"}' \
               'probe_ssl_earliest_cert_expiry'; do
     q=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "${series}")
-    n=$(api "/api/v1/query?query=${q}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["result"]))' 2>/dev/null)
-    [[ "${n:-0}" -ge 1 ]] || fail "Prometheus has no ${series}"
+    # Read once, 5 s in, probe_ssl_earliest_cert_expiry was missing on #339's run; a failing TLS probe
+    # looks the same. Each series is polled like `up` above, for 30 s, and is still a failure after
+    # that, with what Prometheus knows of the edge's probe printed beside it.
+    n=0
+    for _ in $(seq 1 30); do
+        n=$(api "/api/v1/query?query=${q}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["result"]))' 2>/dev/null) || n=0
+        [[ "${n:-0}" =~ ^[0-9]+$ && "${n}" -ge 1 ]] && break
+        sleep 1
+    done
+    if ! [[ "${n:-0}" =~ ^[0-9]+$ && "${n}" -ge 1 ]]; then
+        echo "  probe_success: $(api '/api/v1/query?query=probe_success' | python3 -c 'import json,sys
+print("; ".join("%s=%s" % (r["metric"].get("instance", "?"), r["value"][1]) for r in json.load(sys.stdin)["data"]["result"]) or "none")' 2>/dev/null)" >&2
+        echo "  polaris-edge-tls targets: $(api '/api/v1/targets' | python3 -c 'import json,sys
+ts = [t for t in json.load(sys.stdin)["data"]["activeTargets"] if t["labels"].get("job") == "polaris-edge-tls"]
+print("; ".join("%s %s lastError=%r" % (t["labels"].get("instance", "?"), t["health"], t.get("lastError", "")) for t in ts) or "none")' 2>/dev/null)" >&2
+        fail "Prometheus has no ${series} after 30 s"
+    fi
 done
 ok "the skew, the archive, the filesystem, the backups and the edge certificate are all scraped"
 

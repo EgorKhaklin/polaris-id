@@ -133,7 +133,7 @@ if ! "${SCRIPT_DIR}/polaris-archive.sh" --dest="${DEST}" "${CUTOFF_ARGS[@]}" ${T
 fi
 
 # Find the newly-produced archive (most recent)
-ARCHIVE_PATH=$(ls -1t "${DEST}"/polaris-archive-*.tar.gz 2>/dev/null | head -1)
+ARCHIVE_PATH=$(ls -1t "${DEST}"/polaris-archive-*.tar.gz 2>/dev/null | sed -n 1p)
 if [[ -z "${ARCHIVE_PATH}" || ! -f "${ARCHIVE_PATH}" ]]; then
     RESULT="FAIL:archive_missing"
     exit 1

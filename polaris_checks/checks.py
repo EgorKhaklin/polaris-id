@@ -4357,8 +4357,27 @@ def check_prod_app_password_synced(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_pw_sync", "docker-init.sh does not read POLARIS_APP_PASSWORD_FILE")
     if not re.search(r"ALTER\s+ROLE\s+polaris_app", init, re.I):
         return _fail("prod_pw_sync", "docker-init.sh does not ALTER ROLE polaris_app to the secret")
+    # Lab record 017 (managed PostgreSQL): the password never reaches a statement or a command line.
+    # It went into the ALTER ROLE text on psql's command line, where a process listing and any
+    # statement log (on a managed database, the provider's) could read it.
+    for line in init.splitlines():
+        if (re.search(r"ALTER\s+ROLE\s+polaris_app", line, re.I)
+                and re.search(r"\$\{?POLARIS_APP_PASSWORD\b", line)):
+            return _fail("prod_pw_sync", "docker-init.sh puts POLARIS_APP_PASSWORD itself into the ALTER ROLE "
+                         "statement, which reaches psql's command line and any statement log; send a "
+                         "SCRAM-SHA-256 verifier computed before it")
+    if "SCRAM-SHA-256$" not in init:
+        return _fail("prod_pw_sync", "docker-init.sh must set polaris_app's password as a SCRAM-SHA-256 "
+                     "verifier computed before it reaches the server")
+    # Judged before the schema loads: a refusal after it left a half-initialised database, which the
+    # image never initialises again.
+    gate, load = init.find("must be at least 16 characters"), re.search(r"-f\s+\S*00_load_all\.sql", init)
+    if gate < 0 or load is None or gate > load.start():
+        return _fail("prod_pw_sync", "docker-init.sh must judge POLARIS_APP_PASSWORD before it loads "
+                     "00_load_all.sql, or a weak one stops the first start half-initialised")
     return _ok("prod_pw_sync",
-               f"prod syncs the polaris_app role password to the app's secret ({app_secret.group(1)})")
+               f"prod syncs the polaris_app role password to the app's secret ({app_secret.group(1)}), as a "
+               "SCRAM verifier, judged before the schema loads")
 
 
 # ---------------------------------------------------------------------------
@@ -4381,9 +4400,12 @@ def check_prod_hardening(root: pathlib.Path) -> list[Finding]:
     if not init:
         return _fail("prod_hardening", "polaris_web/docker-init.sh is missing")
     # 1. Demo accounts neutralized in production.
-    prod_block = re.search(r'POLARIS_ENV.*?production.*?(?=\nfi\b|\Z)', init, re.S)
-    if not (prod_block and "is_active" in prod_block.group(0)
-            and re.search(r"'admin',\s*'operator',\s*'auditor'", prod_block.group(0))):
+    # Any production block: docker-init.sh refuses a missing password in production before it loads
+    # anything, so the hardening block is not the first one that names POLARIS_ENV.
+    hardened = [b.group(0) for b in re.finditer(r'POLARIS_ENV.*?production.*?(?=\nfi\b|\Z)', init, re.S)
+                if "is_active" in b.group(0) and re.search(r"'admin',\s*'operator',\s*'auditor'", b.group(0))]
+    prod_block = re.search(re.escape(hardened[0]), init) if hardened else None
+    if not prod_block:
         return _fail("prod_hardening",
                      "docker-init.sh must disable the demo accounts (admin/operator/auditor) when "
                      "POLARIS_ENV=production — they ship with publicly-known passwords")
@@ -4403,6 +4425,82 @@ def check_prod_hardening(root: pathlib.Path) -> list[Finding]:
     return _ok("prod_hardening",
                "prod neutralizes demo accounts, restores the anonymity floor (%d) and wires the Redis "
                "rate limiter" % min(floors))
+
+
+# ---------------------------------------------------------------------------
+# Lab record 017 (managed PostgreSQL). ENCRYPTION-AT-REST.md's Option B told an operator to load
+# polaris_sql/ by hand on a managed service, whose database owner is not a superuser; PostgreSQL 15
+# and later refuse such a role the three polaris.* settings the schema keeps on the database, so
+# the load stopped half-written, and nothing applied docker-init.sh's production steps (the app
+# role's password, the demo accounts, the anonymity floor). scripts/polaris-db-init.sh checks the
+# preconditions before any write, then runs docker-init.sh in its external mode; CI runs it
+# against an owner that is not a superuser, without the grant and with it.
+# ---------------------------------------------------------------------------
+_EXTERNAL_PG_SETTINGS = ("polaris.min_epoch_anonymity_set", "polaris.default_max_revoke_percent",
+                         "polaris.default_window_days")
+
+
+def check_external_postgres_initialised(root: pathlib.Path) -> list[Finding]:
+    script = _read(root, "scripts/polaris-db-init.sh")
+    init = _read(root, "polaris_web/docker-init.sh")
+    ci = _read(root, ".github/workflows/ci.yml")
+    doc = _read(root, "docs/operator/ENCRYPTION-AT-REST.md")
+    if not (script and init and ci and doc):
+        return _fail("external_postgres", "scripts/polaris-db-init.sh, polaris_web/docker-init.sh, ci.yml or "
+                     "docs/operator/ENCRYPTION-AT-REST.md is missing")
+    for setting in _EXTERNAL_PG_SETTINGS:
+        if f"has_parameter_privilege('{setting}', 'SET')" not in script:
+            return _fail("external_postgres", f"polaris-db-init.sh does not check SET on {setting} before "
+                         "writing: the load stops half-written where the owner may not set it")
+    if "relnamespace = 'public'::regnamespace" not in script or "pronamespace = 'public'::regnamespace" not in script:
+        return _fail("external_postgres", "polaris-db-init.sh must refuse a database that is not empty: every "
+                     "relation, function and type in public, not its tables alone")
+    if not re.search(r'"\$\{app_exists\}" == t && "\$\{POLARIS_DB_INIT_REUSE_APP_ROLE:-\}" != 1', script):
+        return _fail("external_postgres", "polaris-db-init.sh must refuse an existing polaris_app unless the "
+                     "operator opts in: a role is the server's, and setting its password locks out the stack "
+                     "of another database that uses it")
+    if not re.search(r'if \[\[ -z "\$\{APP_PW\}" \]\]; then', script):
+        return _fail("external_postgres", "polaris-db-init.sh must refuse an empty application password before "
+                     "a write")
+    if not re.search(r"POLARIS_INIT_MANAGED_BY=external\b", script) or "POLARIS_ENV=production" not in script \
+            or "docker-init.sh" not in script:
+        return _fail("external_postgres", "polaris-db-init.sh must run docker-init.sh in its external mode with "
+                     "POLARIS_ENV=production, so the production steps apply")
+    if not re.search(r'elif \[ "\$MANAGED" = "external" \]; then\s*\n\s*echo', init) \
+            or "POLARIS_SQL_DIR" not in init:
+        return _fail("external_postgres", "docker-init.sh must take POLARIS_SQL_DIR and leave the server's "
+                     "configuration alone in its external mode")
+    if not re.search(r'"\$\{POLARIS_ENV:-\}" = "production" \]\s*\\\s*&& \{ \[ -z "\$POLARIS_APP_PASSWORD" \]', init):
+        return _fail("external_postgres", "docker-init.sh must refuse, in production, an empty or development "
+                     "password for polaris_app, not skip its rotation")
+    early = init.find('CREATE ROLE polaris_app WITH LOGIN PASSWORD \'%s\'')
+    load = init.find('-f "$SQL_DIR/00_load_all.sql"')
+    if early < 0 or load < 0 or early > load:
+        return _fail("external_postgres", "docker-init.sh must give polaris_app its password before the schema "
+                     "loads: 09_grants.sql creates the role with the development password when it does not exist")
+    for block in ("REPL_PWFILE", "POLARIS_PGBACKREST_ENABLED"):
+        if not re.search(r'if \[ -z "\$MANAGED" \] && [^\n]*' + block, init):
+            return _fail("external_postgres", f"docker-init.sh's {block} block must run only on the bundled "
+                         "server (no POLARIS_INIT_MANAGED_BY)")
+    job = re.search(r"(?ms)^  managed-postgres:\n.*?(?=^  [a-z0-9-]+:\n|\Z)", ci)
+    if not job or job.group(0).count("scripts/polaris-db-init.sh") < 2 \
+            or "GRANT SET ON PARAMETER" not in job.group(0) \
+            or "expected the refusal (exit 3)" not in job.group(0):
+        return _fail("external_postgres", "ci.yml's managed-postgres job must run polaris-db-init.sh without "
+                     "the parameter grant and with it")
+    for needle, why in (("POLARIS_APP_PASSWORD_FILE=/tmp/empty.pw", "refuse an empty password before a write"),
+                        ("after a failed load polaris_app answers to the development password",
+                         "show a failed load never leaves the development password"),
+                        ("polaris_app's password reached the server's statement log",
+                         "show the password never reaches the server's statement log"),
+                        ("the check above measured nothing", "control the log check with the verifier statement")):
+        if needle not in job.group(0):
+            return _fail("external_postgres", f"ci.yml's managed-postgres job must {why} ({needle!r})")
+    if "scripts/polaris-db-init.sh" not in doc or "GRANT SET ON PARAMETER" not in doc:
+        return _fail("external_postgres", "ENCRYPTION-AT-REST.md's managed option must name polaris-db-init.sh "
+                     "and the grant it needs")
+    return _ok("external_postgres", "a PostgreSQL Polaris does not ship is initialised by polaris-db-init.sh as "
+               "an owner that is not a superuser, refused before any write without the parameter grant (CI)")
 
 
 # ---------------------------------------------------------------------------
@@ -5557,6 +5655,157 @@ def check_no_grep_q_transaction_scrape(root: pathlib.Path) -> list[Finding]:
     return _ok("no_grep_q_psql",
                "no script scrapes a psql transaction through `grep -q`; success is judged "
                "by verifying the outcome")
+
+
+# Under `set -o pipefail` a pipeline fails when ANY stage fails, and a stage that stops reading
+# early (`head`, `grep -q`, `grep -m`, `grep -l`, a `sed` that quits, an `awk` that exits) closes
+# the pipe while the stage before it may still be writing. That writer dies of SIGPIPE (141), so a
+# pipeline whose consumer FOUND what it looked for reports failure, depending on output size and
+# timing: `if docker logs x | grep -q y; then bad ...` skips the `bad` it should reach (a negative
+# check that passes open), and `v=$(cmd | head -1)` stops a `set -e` script at random. A sourced
+# library runs under its caller's pipefail, so every tracked shell file is held to this, whether or
+# not it sets pipefail itself. A consumer that reads to the end does the same job: `sed -n 1p` for
+# `head -1`, `grep ... >/dev/null` for `grep -q` (2026-10-10: 101 sites in 40 files rewritten).
+# Quoted text is not code (`grep -E 'a|head'`), nor are comments, case patterns or heredoc bodies;
+# a `$(...)` inside double quotes is. Out of scope: `read` and `break` as consumers, and the run
+# steps of the workflows and Dockerfiles.
+_PIPE_INTO = re.compile(r"(?<!\|)\|&?(?!\|)(?:[ \t]+|\\?\n)*")
+_EARLY_GREP = re.compile(r"[ef]?grep((?:[ \t]+(?:-[A-Za-z0-9]+|--[a-z-]+(?:=\S+)?))*)")
+_SED_QUIT = re.compile(r"(?:^|[;{}\n0-9$/])\s*[qQ]\s*\d*\s*(?:[;}]|$)")
+
+
+def _shell_code_mask(text: str) -> str:
+    """`text` with quoted literals, comments and heredoc bodies blanked, offsets unchanged.
+
+    A `$(...)` inside double quotes stays code. A blanked character becomes a space and a newline
+    stays a newline, so an offset in the mask is the same offset in `text`.
+    """
+    out: list[str] = []
+    stack = ["code"]
+    heredocs: list[tuple[str, bool]] = []
+    i, n = 0, len(text)
+    while i < n:
+        c, top = text[i], stack[-1]
+        if top == "sq":
+            if c == "'":
+                stack.pop()
+            out.append(c if c in "'\n" else " ")
+        elif top == "dq":
+            if c == "\\" and i + 1 < n:
+                out.append(" " + ("\n" if text[i + 1] == "\n" else " "))
+                i += 1
+            elif c == '"':
+                stack.pop()
+                out.append(c)
+            elif text.startswith("$(", i):
+                stack.append("sub")
+                out.append("$(")
+                i += 1
+            else:
+                out.append(c if c == "\n" else " ")
+        elif c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 1
+        elif c in "'\"":
+            stack.append("sq" if c == "'" else "dq")
+            out.append(c)
+        elif text.startswith("$(", i):
+            stack.append("sub")
+            out.append("$(")
+            i += 1
+        elif c == "(":
+            stack.append("paren")
+            out.append(c)
+        elif c == ")" and top in ("sub", "paren"):
+            stack.pop()
+            out.append(c)
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;|&("):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+            continue
+        elif text.startswith("<<", i) and not text.startswith("<<<", i) and \
+                (m := re.match(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2", text[i:])):
+            heredocs.append((m.group(3), m.group(1) == "-"))
+            out.append(m.group(0))
+            i += m.end()
+            continue
+        elif c == "\n" and heredocs:
+            out.append(c)
+            i += 1
+            for word, strip_tabs in heredocs:
+                while i < n:
+                    j = text.find("\n", i)
+                    j = n if j < 0 else j
+                    line = text[i:j]
+                    out.append(" " * len(line) + ("\n" if j < n else ""))
+                    i = j + 1
+                    if (line.lstrip("\t") if strip_tabs else line) == word:
+                        break
+            heredocs = []
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)[:n]
+
+
+def _early_consumer(text: str, mask: str, at: int) -> str | None:
+    """The command at `at` if it can stop reading before its input ends, else None.
+
+    The command ends at the first `|`, `;`, `&`, newline or `)` that is code in `mask`, so a
+    quoted `sed -n '1{p;q}'` is read whole.
+    """
+    end = re.search(r"[|;&\n)]", mask[at:at + 400])
+    rest = text[at:at + (end.start() if end else 400)]
+    if re.match(r"head\b(?![)|])", text[at:at + 8]):  # `head)` and `head|` are case patterns
+        return "head"
+    m = _EARLY_GREP.match(rest)
+    if m:
+        for opt in m.group(1).split():
+            if opt.startswith("--"):
+                if opt.split("=")[0] in ("--quiet", "--silent", "--max-count", "--files-with-matches"):
+                    return "grep " + opt
+            elif re.search(r"[qml]", opt[1:]):
+                return "grep " + opt
+    m = re.match(r"sed\b(.*)", rest, re.S)
+    if m:
+        scripts = re.findall(r"'([^']*)'|\"([^\"]*)\"|(?:^|\s)(\d*q)\b", m.group(1))
+        if any(_SED_QUIT.search(s) for group in scripts for s in group if s):
+            return "sed ...q"
+    m = re.match(r"awk\b(.*)", rest, re.S)
+    if m and re.search(r"\bexit\b", re.sub(r"END\s*\{[^}]*\}", "", m.group(1))):
+        return "awk ... exit"
+    return None
+
+
+def check_shell_pipes_read_to_the_end(root: pathlib.Path) -> list[Finding]:
+    files = [rel for rel in _tracked_files(root) if rel.endswith((".sh", ".bash"))
+             and not any(d in _NAMED_REF_SKIP_DIRS for d in rel.split("/"))]
+    pipes, offenders = 0, []
+    for rel in files:
+        text = _read_path(root / rel)
+        mask = _shell_code_mask(text)
+        if len(mask) != len(text):
+            offenders.append(f"{rel} (the scanner lost its place: read it by hand)")
+            continue
+        for m in _PIPE_INTO.finditer(mask):
+            pipes += 1
+            kind = _early_consumer(text, mask, m.end())
+            if kind:
+                offenders.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1} ({kind})")
+    if not files or not pipes:
+        return _fail("shell_pipes_read_to_the_end",
+                     f"read {len(files)} shell files and {pipes} pipelines: a scan that saw nothing proves nothing")
+    if offenders:
+        return _fail("shell_pipes_read_to_the_end",
+                     f"{len(offenders)} pipe(s) into a consumer that can stop reading early; under pipefail the "
+                     "writer's SIGPIPE fails the pipeline after a match (read to the end instead: `sed -n 1p` "
+                     "for `head -1`, `grep ... >/dev/null` for `grep -q`): " + ", ".join(offenders[:12])
+                     + (" ..." if len(offenders) > 12 else ""))
+    return _ok("shell_pipes_read_to_the_end",
+               f"{pipes} pipelines in {len(files)} shell files: none feeds a consumer that stops reading early")
 
 
 # A psql that runs INSIDE a container (a run_psql routed through `docker compose ... exec`)
@@ -7577,6 +7826,92 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
                "CI upgrades the previous release's own try.sh stack to this commit the documented way and "
                "requires nothing pending, every image rebuilt, and credentials from before and after verifying; "
                "a release that cannot start is rolled back, on the containerd image store")
+
+# Lab record 017 (gate row OP-29): a PostgreSQL major-version upgrade is drilled as OPERATIONS.md writes it, there and
+# back. Before scripts/polaris-pg-upgrade-drill.sh the procedure had never run end to end: the restore's schema check
+# reported every migration missing, pgBackRest's stanza stayed on the other cluster after the move and after a
+# rollback, and a deploy on another major's image took the database down. The drill runs the document's own blocks;
+# these pins keep the drill, its control, the document and the deploy's refusal from drifting apart.
+_PG_UPGRADE_DRILL_PINS = (
+    ('s.index("### Postgres version upgrade")', "read its steps from OPERATIONS.md's section"),
+    ('bash -e "${WORK}/step5-run.sh"', "run the document's step 5 and stop at its first failing line"),
+    ('bash "${WORK}/rollback.sh"', "run the document's rollback block"),
+    ('diff -q "${WORK}/state-16.txt" "${WORK}/state-new.txt"', "compare the state across the move"),
+    ('diff -q "${WORK}/state-16-backed-up.txt" "${WORK}/state-back.txt"', "compare the state across the rollback"),
+    ('fail "the backup changed more than its own record', "allow between its two reads only the backup's own record"),
+    ('|| fail "the state could not copy ${t}"', "fail when a table's copy cannot be read"),
+    ("e3b0c44298fc1c149afbf4c8996fb924 ]]", "refuse an empty copy of a table with rows"),
+    ('[[ "${probe}" == drill_probe_empty ]]', "show that its emptiness test names an empty table, and only it"),
+    ('pgbackrest_current "${NEW:0:2}"', "require pgBackRest healthy, with a full backup, on the new major"),
+    ('pgbackrest_current "${OLD:0:2}"', "require pgBackRest healthy, with a full backup, after the rollback"),
+    ('grep -q "holds a PostgreSQL ${OLD:0:2} cluster"', "require a deploy on the new major to refuse the old cluster"),
+    ('grep -q "holds a PostgreSQL ${NEW:0:2} cluster"', "require a deploy back on the old major to refuse the new one"),
+    ('fail "CONTROL FAILED: one audit row was changed and the comparison saw nothing"',
+     "fail its control when a changed audit row goes unseen"),
+    ('the state read no ${kind} facts', "refuse a state that read no facts of a kind it compares"),
+    ("pg_temp.read_back(c.oid)", "compare CHECK constraints as each server reads them back, not as a dump printed them"),
+    ('"${t}" "${n}" "${d}"', "record each table's row count and the digest of its rows"),
+    ("for kind in seq trigger constraint index function owner grant execute seqgrant colgrant defacl; do",
+     "refuse a state missing any kind of fact it compares, each role's privileges on tables, columns, sequences "
+     "and routines and the default privileges included"),
+    ('    fail "the state changed across the upgrade: ', "fail when the state changed across the upgrade"),
+    ('    || fail "the state after the rollback differs from 16', "fail when the state after the rollback differs"),
+)
+_PG_UPGRADE_WORKFLOW_PATHS = ("scripts/polaris-pg-upgrade-drill.sh", "docs/operator/OPERATIONS.md",
+                              "polaris_web/Dockerfile.postgres", "scripts/polaris-deploy.sh",
+                              "scripts/polaris-restore.sh", "scripts/polaris-backup.sh")
+
+
+def check_pg_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
+    name = "pg_upgrade_drilled"
+    drill = _read(root, "scripts/polaris-pg-upgrade-drill.sh")
+    if not drill:
+        return _fail(name, "scripts/polaris-pg-upgrade-drill.sh is missing: nothing runs the PostgreSQL major upgrade")
+    for pin, what in _PG_UPGRADE_DRILL_PINS:
+        if pin not in drill:
+            return _fail(name, f"the PostgreSQL upgrade drill must {what} ({pin!r} is gone)")
+    wf = _read(root, ".github/workflows/pg-upgrade.yml")
+    runs = {r.strip() for r in re.findall(r"(?m)^\s+run: (.+)$", wf)}
+    if not {"bash scripts/polaris-pg-upgrade-drill.sh", "bash scripts/polaris-pg-upgrade-drill.sh --prove-control"} <= runs:
+        return _fail(name, ".github/workflows/pg-upgrade.yml must run the drill and, as a step of its own, its control")
+    if not re.search(r"(?m)^  schedule:\n\s+- cron:", wf) or not re.search(r"(?m)^  push:\n\s+branches: \[main\]", wf):
+        return _fail(name, "the PostgreSQL upgrade drill must run nightly and on every push to main")
+    missing = [p for p in _PG_UPGRADE_WORKFLOW_PATHS if f'- "{p}"' not in wf]
+    if missing:
+        return _fail(name, f"a pull request changing {', '.join(missing)} must run the PostgreSQL upgrade drill")
+    ops = _read(root, "docs/operator/OPERATIONS.md")
+    if "### Postgres version upgrade" not in ops or "### TLS certificate renewal" not in ops:
+        return _fail(name, "docs/operator/OPERATIONS.md has no 'Postgres version upgrade' section for the drill to run")
+    sec = ops[ops.index("### Postgres version upgrade"):ops.index("### TLS certificate renewal")]
+    if "# 5. Rebuild" not in sec or "# 6. Only once step 5" not in sec or "To go back" not in sec:
+        return _fail(name, "the upgrade section must keep its step 5, step 6 and rollback, which the drill runs")
+    step5 = sec[sec.index("# 5. Rebuild"):sec.index("# 6. Only once step 5")]
+    at = [step5.find(s) for s in ("./scripts/polaris-deploy.sh prod --no-pull", "pgbackrest --stanza=polaris stanza-upgrade",
+                                  "polaris-restore.sh /var/backups", "pgbackrest --stanza=polaris --type=full backup")]
+    if min(at) < 0 or at != sorted(at):
+        return _fail(name, "OPERATIONS.md's step 5 must deploy, upgrade pgBackRest's stanza, restore, then take a "
+                           "full backup, in that order: until the stanza is upgraded WAL archiving fails")
+    rollback = sec[sec.index("To go back"):]
+    if not re.search(r"cp -a /from/\. /to/'\s*&&\s*\n\s*\./scripts/polaris-deploy\.sh prod --no-pull &&", rollback):
+        return _fail(name, "the rollback must deploy only over a completed copy (copy && deploy)")
+    dep_at = rollback.find("./scripts/polaris-deploy.sh prod --no-pull")
+    if not dep_at < rollback.find("pgbackrest --stanza=polaris stanza-upgrade") \
+            < rollback.find("pgbackrest --stanza=polaris --type=full backup"):
+        return _fail(name, "the rollback must upgrade pgBackRest's stanza back to the old cluster after its deploy, "
+                           "then take a full backup")
+    dep = _read(root, "scripts/polaris-deploy.sh")
+    fn = re.search(r"(?ms)^pg_major_check\(\) \{\n.*?^\}\n", dep)
+    call = dep.find("\npg_major_check || exit 1\n")
+    build = dep.find('bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod')
+    if not fn or "cat /d/PG_VERSION" not in fn.group(0) or "FROM postgres:([0-9]+)" not in fn.group(0) \
+            or call < 0 or build < 0 or call > build:
+        return _fail(name, "polaris-deploy.sh must compare the pg_data volume's PG_VERSION with Dockerfile.postgres's "
+                           "major, and refuse a difference, before it builds anything")
+    return _ok(name, "the PostgreSQL major upgrade is drilled as OPERATIONS.md writes it, there and back, nightly, on "
+                     "main and on pull requests that change what it runs: the document's blocks are run as written; "
+                     "the state is compared with reads that fail closed; pgBackRest is healthy with a full backup "
+                     "after the move and the rollback; a deploy refuses another major's cluster both ways; and a "
+                     "control must name one changed audit row")
 
 
 # Lab record 017 (gate rows OP-18 and OP-19): a Helm upgrade runs the migrations. The postgres image
@@ -11621,14 +11956,22 @@ def check_drill_plan_is_binding(root: pathlib.Path) -> list[Finding]:
         if needle not in ship:
             findings.extend(_fail(name, why))
 
-    # The receipt store must sit outside the working tree.
+    # The receipt store must sit outside the working tree: in the clone's git directory, named by
+    # `git rev-parse --git-common-dir` (which a worktree shares; 2026-10-10), or <root>/.git.
+    inside = ("receipts are stored inside the working tree, so one could be committed and assert a "
+              "drill ran on a machine that never ran it")
     m = re.search(r"RECEIPTS\s*=\s*os\.path\.join\(ROOT,\s*([^)]*)\)", ship)
-    if not m:
+    fn = re.search(r"(?ms)^def _receipts_dir\(.*?(?=^\S)", ship)
+    if m:
+        if '".git"' not in m.group(1):
+            findings.extend(_fail(name, inside))
+    elif re.search(r"(?m)^RECEIPTS\s*=\s*_receipts_dir\(\)", ship) and fn:
+        joins = re.findall(r"os\.path\.join\(([^\n]*)\)", fn.group(0))
+        if '"--git-common-dir"' not in fn.group(0) or not joins \
+                or any('".git"' not in j and "common" not in j for j in joins):
+            findings.extend(_fail(name, inside))
+    else:
         findings.extend(_fail(name, "the receipt store is not declared"))
-    elif '".git"' not in m.group(1):
-        findings.extend(_fail(name, "receipts are stored inside the working tree, so one could "
-                                    "be committed and assert a drill ran on a machine that "
-                                    "never ran it"))
 
     # And preflight must act on it.
     # v9.430: the same rule for the lint step, which had the same hole. It printed a
@@ -22203,6 +22546,8 @@ _GATE_PASS_PINS = {
               ("check:client_ip_behind_proxies",)),
     "OP-27": ('Contributors need no Kubernetes',
               ("file:Polaris.command",)),
+    "OP-29": ('A PostgreSQL major-version upgrade is drilled, there and back',
+              ("drill:scripts/polaris-pg-upgrade-drill.sh", "check:pg_upgrade_drilled")),
 }
 
 
@@ -26231,6 +26576,54 @@ def check_verification_plan_covers_published_artifacts(root: pathlib.Path) -> li
                % (len(artifacts), ", ".join(artifacts)))
 
 
+# A test that spawns git from a hook inherits the hook's GIT_INDEX_FILE and GIT_DIR, which name
+# the repository whose commit is being made, so its scratch repository's `git add` and `git commit`
+# write into THAT index: from a linked worktree the tool-tests hook replaced a 1680-entry index with
+# a scratch repository's one file (2026-10-10), the third time after 2026-09-28's two. A class-level
+# guard covers only its own class, and the 10-10 tests were new classes beside a guarded one; the
+# scrub is module-wide (setUpModule, or an autouse fixture) and drops every GIT_* by prefix.
+_SPAWNS_GIT = re.compile(r"[\[(]\s*[\"']git[\"']\s*,")
+
+
+def check_git_spawning_tests_drop_the_hook_environment(root: pathlib.Path) -> list[Finding]:
+    name = "git_spawning_tests_drop_the_hook_environment"
+    spawning, unguarded = [], []
+    for rel in _tracked_files(root):
+        if not re.search(r"(^|/)test_[^/]*\.py$", rel) or any(d in _NAMED_REF_SKIP_DIRS for d in rel.split("/")):
+            continue
+        text = _read_path(root / rel)
+        if not _SPAWNS_GIT.search(text):
+            continue
+        spawning.append(rel)
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            unguarded.append(rel + " (does not parse)")
+            continue
+        guarded = False
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            autouse = any("autouse=True" in ast.unparse(d).replace(" ", "") for d in node.decorator_list)
+            body = ast.get_source_segment(text, node) or ""
+            # The guard has to take the variables out, not only name them: a `.get(k)` in place of
+            # `.pop(k)` keeps the shape and drops nothing.
+            if (node.name == "setUpModule" or autouse) and \
+                    re.search(r"startswith\(\s*[\"']GIT_[\"']\s*\)", body) and \
+                    re.search(r"os\.environ\.pop\(|del\s+os\.environ\[|os\.environ\.clear\(\)|\.delenv\(", body):
+                guarded = True
+        if not guarded:
+            unguarded.append(rel)
+    if not spawning:
+        return _fail(name, "found no test module that spawns git: a scan that read nothing proves nothing")
+    if unguarded:
+        return _fail(name, "%d test module(s) spawn git without dropping GIT_* module-wide (setUpModule or an "
+                           "autouse fixture); run from a hook, their scratch repositories write into the index "
+                           "of the commit being made: %s" % (len(unguarded), ", ".join(unguarded)))
+    return _ok(name, "the %d test modules that spawn git each drop every GIT_* module-wide (%s)"
+               % (len(spawning), ", ".join(spawning)))
+
+
 def _safe_search(pattern: str, text: str) -> bool:
     """re.search that treats an unparseable pattern as no match rather than raising."""
     try:
@@ -27885,6 +28278,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_install_instructions_reach_the_current_candidate,
     check_precommit_config_wires_what_the_docs_claim,
     check_pre_commit_folded_entries_stay_one_line,
+    check_git_spawning_tests_drop_the_hook_environment,
     check_verification_plan_covers_the_check_layer,
     check_verification_plan_covers_published_artifacts,
     check_path_gated_drills_are_named_in_the_plan,
@@ -28101,6 +28495,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_cookie_secure_in_production,
     check_prod_app_password_synced,
     check_prod_hardening,
+    check_external_postgres_initialised,
     check_backup_encryption,
     check_table_count_matches_doc,
     check_launcher_current,
@@ -28108,6 +28503,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_purge_binds_archive_to_database,
     check_archive_version_derived,
     check_no_grep_q_transaction_scrape,
+    check_shell_pipes_read_to_the_end,
     check_container_psql_reads_sql_from_stdin,
     check_psql_status_capture_set_e_safe,
     check_recover_admin_refuses_self_pairing,
@@ -28140,6 +28536,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_doctor_names_failures,
     check_evaluate_wired,
     check_upgrade_drilled,
+    check_pg_upgrade_drilled,
     check_helm_upgrade_migrates,
     check_infra_alerts,
     check_session_key_rotation,

@@ -81,80 +81,257 @@ class _Base(unittest.TestCase):
         return p
 
 
-class BuildTests(_Base):
+# A stand-in docker: each call recorded; FAKE_* say what the container does.
+DOCKER = r"""#!/bin/sh
+printf '%s\n' "$*" >> "$STUB_DIR/docker-calls"
+case "$1" in
+    rm) exit 0 ;;
+    run) exit "${FAKE_RUN_RC:-0}" ;;
+    inspect) echo "${FAKE_RUNNING:-true}"; exit 0 ;;
+    logs) echo "fake first-boot log"; exit 0 ;;
+    exec)
+        case "$*" in
+            *pg_isready*) exit "${FAKE_READY_RC:-0}" ;;
+            *polaris-migrate.sh*)
+                case "$*" in *"polaris-migrate.sh ${FAKE_MIGRATE_FAIL:-none}"*) exit 1 ;; esac
+                exit 0 ;;
+            *appuser*) echo "${FAKE_ADMIN_ACTIVE:-0}"; exit 0 ;;
+        esac
+        exit 0 ;;
+esac
+exit 0
+"""
 
-    def test_the_reference_is_this_release_loaded_migrated_and_synced_in_order(self):
-        r = self.bash('polaris_db_reference_build polaris_reference "%s"' % self.log)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        calls = self.calls()
-        self.assertEqual(len(calls), 5, calls)
-        drop, create, init, up, sync = calls
-        self.assertIn("-d postgres -c DROP DATABASE IF EXISTS polaris_reference WITH (FORCE)", drop)
-        self.assertIn("-d postgres -c CREATE DATABASE polaris_reference", create)
-        self.assertTrue(init.endswith("bash /docker-entrypoint-initdb.d/00-init.sh"), init)
-        for call, mode in ((up, "--up"), (sync, "--sync-objects")):
-            self.assertIn("POLARIS_DB_NAME=polaris_reference", call)
-            self.assertIn("POLARIS_DB_HOST=/var/run/postgresql", call)
-            self.assertTrue(call.endswith("/opt/polaris/scripts/polaris-migrate.sh " + mode), call)
-        # Every step's output went to the log, none to the caller's stdout.
-        self.assertEqual(r.stdout, "")
-        self.assertEqual(self.log.read_text().count("stub output of:"), 5)
 
-    def test_the_init_runs_on_the_reference_with_only_the_containers_polaris_env(self):
-        # The image's init, played by a script that writes down the environment it was given.
-        image = self.tmp / "image"
-        (image / "sql").mkdir(parents=True)
-        seen = self.tmp / "init-env"
-        (image / "00-init.sh").write_text("env > %s\n" % seen)
-        r = self.bash('polaris_db_reference_build polaris_reference "%s"' % self.log, STUB_IMAGE=str(image),
-                      POLARIS_ENV="production", POLARIS_APP_PASSWORD_FILE="/run/secrets/polaris_db_password",
-                      POLARIS_APP_PASSWORD="a-live-secret-0123456789", PGPASSWORD="superuser",
-                      POLARIS_REPLICATOR_PASSWORD_FILE="/run/secrets/polaris_replicator_password",
-                      POSTGRES_DB="polaris")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        env = dict(line.split("=", 1) for line in seen.read_text().splitlines() if "=" in line)
-        self.assertEqual(env.get("POSTGRES_DB"), "polaris_reference")
-        self.assertEqual(env.get("POLARIS_INIT_MANAGED_BY"), "patroni")
-        self.assertEqual(env.get("POLARIS_ENV"), "production")
-        self.assertEqual(env.get("POSTGRES_USER"), "postgres")
-        for name in ("POLARIS_APP_PASSWORD_FILE", "POLARIS_APP_PASSWORD", "PGPASSWORD",
-                     "POLARIS_REPLICATOR_PASSWORD_FILE", "STUB_DIR"):
-            self.assertNotIn(name, env, "the init was handed the container's %s" % name)
-        # A container with no POLARIS_ENV gives the init none: a sample install, as its own boot would be.
-        seen.unlink()
-        r = self.bash('polaris_db_reference_build polaris_reference "%s"' % self.log, STUB_IMAGE=str(image))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        env = dict(line.split("=", 1) for line in seen.read_text().splitlines() if "=" in line)
-        self.assertEqual(env.get("POLARIS_ENV"), "")
+class RunTests(_Base):
+    """The reference is this release installed fresh in a throwaway cluster of its own."""
 
-    def test_a_name_that_is_not_a_reference_is_refused_before_anything_runs(self):
-        for name in ("polaris", "postgres", "polaris_test", "polaris_reference;drop", "polaris_referencex",
-                     "Polaris_reference", ""):
-            for fn in ('polaris_db_reference_build "%s" "%s"' % (name, self.log),
-                       'polaris_db_reference_drop "%s"' % name):
+    def setUp(self):
+        super().setUp()
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        (self.bin / "docker").write_text(DOCKER)
+        (self.bin / "docker").chmod(0o755)
+        self.secrets = self.tmp / "ref-secrets"
+
+    def run_ref(self, name="polaris-reference-test", **env):
+        env.setdefault("PATH", "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin)
+        return self.bash('polaris_db_reference_run polaris-postgres:prod %s "%s" "%s"' % (name, self.secrets, self.log), **env)
+
+    def docker_calls(self):
+        p = self.tmp / "docker-calls"
+        return p.read_text().splitlines() if p.exists() else []
+
+    def test_a_production_first_boot_in_its_own_cluster_then_a_deploys_migrate_and_sync(self):
+        r = self.run_ref()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = self.docker_calls()
+        run = [c for c in calls if c.startswith("run ")]
+        self.assertEqual(len(run), 1, calls)
+        for part in ("--name polaris-reference-test", "--network none", "-e POLARIS_ENV=production",
+                     "-e POLARIS_PGBACKREST_ENABLED=0", "-e POSTGRES_PASSWORD_FILE=/run/secrets/polaris_db_root_password",
+                     "-e POLARIS_APP_PASSWORD_FILE=/run/secrets/polaris_db_password",
+                     "-v %s:/run/secrets:ro polaris-postgres:prod" % self.secrets):
+            self.assertIn(part, run[0])
+        # Its passwords are its own: generated, non-empty, not one another, readable by its server.
+        values = [(self.secrets / s).read_text().strip() for s in ("polaris_db_root_password", "polaris_db_password")]
+        self.assertTrue(all(len(v) == 48 for v in values), values)
+        self.assertNotEqual(values[0], values[1])
+        self.assertEqual((self.secrets / "polaris_db_password").stat().st_mode & 0o044, 0o044)
+        # Started first, migrated and synced as production after its first boot, then read.
+        migrate = [c for c in calls if "polaris-migrate.sh" in c]
+        self.assertEqual([c.split()[-1] for c in migrate], ["--up", "--sync-objects"])
+        self.assertTrue(all("POLARIS_ENV=production" in c and "POLARIS_DB_NAME=polaris" in c for c in migrate), migrate)
+        self.assertLess(calls.index(run[0]), calls.index(migrate[0]))
+        self.assertTrue(any("appuser" in c for c in calls[calls.index(migrate[1]):]))
+
+    def test_the_stacks_other_password_files_are_mirrored_with_values_of_its_own(self):
+        r = self.bash('polaris_db_reference_run polaris-postgres:prod polaris-reference-test "%s" "%s" '
+                      'POLARIS_REPLICATOR_PASSWORD_FILE=polaris_replicator_password' % (self.secrets, self.log),
+                      PATH="%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        run = [c for c in self.docker_calls() if c.startswith("run ")][0]
+        self.assertIn("-e POLARIS_REPLICATOR_PASSWORD_FILE=/run/secrets/polaris_replicator_password", run)
+        self.assertEqual(len((self.secrets / "polaris_replicator_password").read_text().strip()), 48)
+        for bad in ("POLARIS_REPLICATOR_PASSWORD_FILE=../escape", "PGPASSWORD=x", "POLARIS_X_FILE"):
+            with self.subTest(bad=bad):
+                (self.tmp / "docker-calls").unlink(missing_ok=True)
+                r = self.bash('polaris_db_reference_run polaris-postgres:prod polaris-reference-test "%s" "%s" %s'
+                              % (self.secrets, self.log, bad), PATH="%s:/usr/bin:/bin" % self.bin)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertEqual(self.docker_calls(), [])
+
+    def test_a_reference_that_is_not_a_production_install_is_refused(self):
+        # The production block retires the sample's administrator: a reference without it would hide
+        # every fact only production's first boot sets.
+        r = self.run_ref(FAKE_ADMIN_ACTIVE="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not a production install", r.stderr)
+
+    def test_a_first_boot_that_stops_fails_with_its_log(self):
+        r = self.run_ref(FAKE_RUNNING="false")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("stopped during its first boot", r.stderr)
+        self.assertIn("fake first-boot log", self.log.read_text())
+        self.assertFalse([c for c in self.docker_calls() if "polaris-migrate.sh" in c])
+
+    def test_a_first_boot_that_never_answers_times_out(self):
+        r = self.run_ref(FAKE_READY_RC="1", POLARIS_REFERENCE_BOOT_SECONDS="2")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("did not finish its first boot in 2 s", r.stderr)
+
+    def test_each_failed_step_fails_the_run_and_names_itself(self):
+        for step, says in (("--up", "--up failed"), ("--sync-objects", "--sync-objects failed")):
+            with self.subTest(step=step):
+                (self.tmp / "docker-calls").unlink(missing_ok=True)
+                r = self.run_ref(FAKE_MIGRATE_FAIL=step)
+                self.assertEqual(r.returncode, 1)
+                self.assertIn(says, r.stderr)
+        r = self.run_ref(FAKE_RUN_RC="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("could not start", r.stderr)
+
+    def test_a_name_that_is_not_a_reference_is_refused_before_docker_runs(self):
+        for name in ("polaris-postgres", "polaris-try-postgres-1", "polaris_reference", "polaris-reference;rm", ""):
+            for fn in ('polaris_db_reference_run polaris-postgres:prod "%s" "%s" "%s"' % (name, self.secrets, self.log),
+                       'polaris_db_reference_sql "%s" "SELECT 1"' % name,
+                       'polaris_db_reference_stop "%s" "%s"' % (name, self.secrets)):
                 with self.subTest(name=name, fn=fn.split()[0]):
-                    r = self.bash(fn)
+                    r = self.bash(fn, PATH="%s:/usr/bin:/bin" % self.bin)
                     self.assertEqual(r.returncode, 2, r.stderr)
-                    self.assertEqual(self.calls(), [], "a refused name reached pg_run")
-        r = self.bash('polaris_db_reference_build polaris_reference_upgrade_1 "%s"' % self.log)
+                    self.assertEqual(self.docker_calls(), [], "a refused name reached docker")
+
+    def test_stop_removes_the_container_and_its_passwords(self):
+        self.assertEqual(self.run_ref().returncode, 0)
+        r = self.bash('polaris_db_reference_stop polaris-reference-test "%s"' % self.secrets,
+                      PATH="%s:/usr/bin:/bin" % self.bin)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("rm -f polaris-reference-test", self.docker_calls()[-1])
+        self.assertFalse(self.secrets.exists())
+
+
+class RolesTests(_Base):
+
+    def init(self, text):
+        (self.tmp / "polaris_web").mkdir(exist_ok=True)
+        (self.tmp / "polaris_web" / "docker-init.sh").write_text(text)
+
+    def test_the_roles_polaris_sql_and_the_init_create(self):
+        sql = self.tmp / "polaris_sql"
+        (sql / "migrations").mkdir(parents=True)
+        self.init('psql -c "CREATE ROLE polaris_replicator WITH LOGIN REPLICATION PASSWORD x"\n')
+        (sql / "09_grants.sql").write_text("DO $$ BEGIN CREATE ROLE polaris_app WITH LOGIN; END $$;\n")
+        (sql / "migrations" / "x.up.sql").write_text("create role if not exists Polaris_Auditor;\n")
+        (sql / "README.md").write_text("CREATE ROLE not_sql\n")
+        r = self.bash('polaris_db_reference_roles "%s"' % sql)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split(), ["polaris_app", "polaris_auditor", "polaris_replicator"])
+
+    def test_no_role_created_is_a_failure_not_an_empty_list(self):
+        sql = self.tmp / "polaris_sql"
+        sql.mkdir()
+        self.init("echo no roles here\n")
+        (sql / "01_schema.sql").write_text("CREATE TABLE t (x int);\n")
+        r = self.bash('polaris_db_reference_roles "%s"' % sql)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no CREATE ROLE", r.stderr)
+
+    def test_without_the_init_the_roles_are_not_known(self):
+        sql = self.tmp / "polaris_sql"
+        sql.mkdir()
+        (sql / "09_grants.sql").write_text("CREATE ROLE polaris_app;\n")
+        r = self.bash('polaris_db_reference_roles "%s"' % sql)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("docker-init.sh cannot be read", r.stderr)
+
+    def test_the_real_tree_creates_polaris_app_and_polaris_replicator(self):
+        r = self.bash('polaris_db_reference_roles "%s"' % (ROOT / "polaris_sql"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split(), ["polaris_app", "polaris_replicator"])
+
+
+class CrossClusterTests(_Base):
+    """Two clusters: facts about a role only one has, and Polaris does not create, are left out."""
+
+    FRESH = ["database this PUBLIC CONNECT", "database this polaris_app CONNECT",
+             "owner public.agency r postgres",
+             "role polaris_app super=false inherit=true createrole=false createdb=false login=true replication=false bypassrls=false",
+             "table public.agency polaris_app SELECT"]
+    # The upgraded side's cluster has a role of its own that Polaris does not create.
+    UPGRADED = FRESH + ["database this infra_monitor CONNECT",
+                        "role infra_monitor super=false inherit=true createrole=false createdb=false login=true replication=false bypassrls=false"]
+
+    def cross(self, a, b, roles=("polaris_app",)):
+        ra, rb = self.state_file("a", a), self.state_file("b", b)
+        rf = self.state_file("roles", list(roles))
+        r = self.bash('polaris_db_state_cross_cluster "%s" "%s" "%s" "%s" "%s"'
+                      % (ra, rb, rf, self.tmp / "a.cmp", self.tmp / "b.cmp"))
+        return r
+
+    def same(self):
+        return self.bash('polaris_db_state_same_by_table "%s" "%s"' % (self.tmp / "a.cmp", self.tmp / "b.cmp"))
+
+    def with_partition(self, lines):
+        # same_by_table needs a partition fact to read the state as one.
+        return lines + ["partition public.verificationevent_default of public.verificationevent bound=DEFAULT"]
+
+    def test_a_role_only_one_cluster_has_is_left_out_and_named(self):
+        r = self.cross(self.with_partition(self.FRESH), self.with_partition(self.UPGRADED))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split(), ["infra_monitor"])
+        self.assertNotIn("infra_monitor", (self.tmp / "b.cmp").read_text())
+        self.assertEqual(self.same().returncode, 0, self.same().stderr)
+
+    def test_a_polaris_role_whose_attributes_changed_on_one_side_is_drift(self):
+        changed = [x.replace("bypassrls=false", "bypassrls=true") if x.startswith("role polaris_app") else x
+                   for x in self.UPGRADED]
+        r = self.cross(self.with_partition(self.FRESH), self.with_partition(changed))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        s = self.same()
+        self.assertEqual(s.returncode, 1)
+        self.assertIn("> role polaris_app", s.stderr)
+        self.assertIn("bypassrls=true", s.stderr)
+
+    def test_a_polaris_role_on_one_side_only_is_not_left_out(self):
+        extra = self.UPGRADED + ["role polaris_auditor super=false inherit=true createrole=false createdb=false login=true replication=false bypassrls=false",
+                                 "table public.agency polaris_auditor SELECT"]
+        r = self.cross(self.with_partition(self.FRESH), self.with_partition(extra), roles=("polaris_app", "polaris_auditor"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split(), ["infra_monitor"])
+        s = self.same()
+        self.assertEqual(s.returncode, 1)
+        self.assertIn("> table public.agency polaris_auditor SELECT", s.stderr)
+
+    def test_a_polaris_role_the_upgrade_lost_is_not_left_out(self):
+        fresh = self.FRESH + ["role polaris_auditor super=false inherit=true createrole=false createdb=false login=true replication=false bypassrls=false"]
+        r = self.cross(self.with_partition(fresh), self.with_partition(self.UPGRADED), roles=("polaris_app", "polaris_auditor"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split(), ["infra_monitor"])
+        s = self.same()
+        self.assertEqual(s.returncode, 1)
+        self.assertIn("< role polaris_auditor", s.stderr)
+
+    def test_the_replication_role_the_stack_has_and_the_reference_lacks_is_drift(self):
+        stack = self.UPGRADED + ["role polaris_replicator super=false inherit=true createrole=false createdb=false login=true replication=true bypassrls=false"]
+        r = self.cross(self.with_partition(self.FRESH), self.with_partition(stack), roles=("polaris_app", "polaris_replicator"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("polaris_replicator", r.stdout.split(), "Polaris's own replication role was left out")
+        s = self.same()
+        self.assertEqual(s.returncode, 1)
+        self.assertIn("> role polaris_replicator", s.stderr)
+
+    def test_a_shared_role_stays_whoever_it_is(self):
+        # The superuser both clusters have owns objects: its facts are compared, not left out.
+        r = self.cross(self.with_partition(self.FRESH), self.with_partition(self.UPGRADED))
+        self.assertIn("owner public.agency r postgres", (self.tmp / "b.cmp").read_text())
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_a_build_without_a_log_is_misuse(self):
-        r = self.bash("polaris_db_reference_build polaris_reference")
+    def test_no_polaris_role_named_or_read_is_misuse(self):
+        r = self.cross(self.with_partition(self.FRESH), self.with_partition(self.UPGRADED), roles=("",))
         self.assertEqual(r.returncode, 2)
-        self.assertEqual(self.calls(), [])
-
-    def test_each_failed_step_fails_the_build_names_itself_and_stops_it(self):
-        steps = [("DROP DATABASE", "could not drop", 1), ("CREATE DATABASE", "could not create", 2),
-                 ("00-init.sh", "init did not complete", 3), ("--up", "--up failed", 4),
-                 ("--sync-objects", "--sync-objects failed", 5)]
-        for word, message, ran in steps:
-            with self.subTest(step=word):
-                (self.tmp / "calls").unlink(missing_ok=True)
-                r = self.bash('polaris_db_reference_build polaris_reference "%s"' % self.log, STUB_FAIL=word)
-                self.assertEqual(r.returncode, 1, r.stderr)
-                self.assertIn(message, r.stderr)
-                self.assertEqual(len(self.calls()), ran, "a step ran after %s failed" % word)
+        r = self.cross(self.with_partition(self.FRESH), self.with_partition(self.UPGRADED), roles=("polaris_ghost",))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("neither state holds role polaris_ghost", r.stderr)
 
 
 class ByParentTests(_Base):

@@ -108,8 +108,8 @@ SQL
 RC=$?
 set -e
 [ $RC -eq 0 ] || fail "throughput block errored (rc=$RC): $OUT"
-echo "$OUT" | grep -q 'BULK_THROUGHPUT' || fail "throughput block did not report; output: $OUT"
-LINE="$(echo "$OUT" | sed -n 's/.*\(BULK_THROUGHPUT[^\\]*\).*/\1/p' | head -1)"
+echo "$OUT" | grep 'BULK_THROUGHPUT' >/dev/null || fail "throughput block did not report; output: $OUT"
+LINE="$(echo "$OUT" | sed -n 's/.*\(BULK_THROUGHPUT[^\\]*\).*/\1/p' | sed -n 1p)"
 RATE="$(echo "$LINE" | sed -n 's/.*rate=\([0-9]*\).*/\1/p')"
 NROWS="$(echo "$LINE" | sed -n 's/.*rows=\([0-9]*\).*/\1/p')"
 SECS="$(echo "$LINE" | sed -n 's/.*secs=\([0-9.]*\).*/\1/p')"

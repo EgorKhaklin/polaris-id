@@ -7,6 +7,32 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ---
 
+## Unreleased
+
+### Security
+
+- The application role's password reached the database as plain text on psql's command line at first start; the server now receives a SCRAM verifier.
+
+### Fixed
+
+- A deploy whose PostgreSQL image was another major than its cluster's (a FROM line moved and deployed, as a dependency bump proposes) recreated the database on a cluster that server refuses, and it stayed down until the line went back. `polaris-deploy.sh` now refuses before building, either way, and names the documented upgrade; a Helm upgrade does not check.
+- After the documented major-version upgrade, and after its rollback, pgBackRest's stanza still named the other cluster, so WAL archiving failed (error [028]) until an operator found the stanza upgrade. Both now upgrade the stanza and take a full backup, asking the stack whether it archives; the deploy prints pgBackRest's error and, on [028], the two commands.
+- A managed PostgreSQL, whose owner is not a superuser, could not load the schema as ENCRYPTION-AT-REST.md said; `scripts/polaris-db-init.sh` initialises one after a single grant.
+- A weak application-role password stopped the database's first start after the schema had loaded; it now stops before anything is written.
+- The application role briefly had the public development password while the schema loaded, and kept it if a migration failed; it now gets its own before the load, and an empty one is refused in production.
+- Under pipefail, a pipe into `head`, `grep -q`, `grep -m` or `grep -l`, or an `awk` that exits, failed when the writer outlived the match (SIGPIPE, exit 141), so a check such as the edge-limits drill's "the upstream served the slow body" could pass without firing; 101 such pipes in 40 shell files now read to the end, and `check_shell_pipes_read_to_the_end` refuses a new one.
+- The deploy's secret pre-flight read one compose file and a list kept in the script, so the HA and DR profiles' secrets and the TLS certificates went unchecked, and a deploy that pulled checked the release it started from. It now reads the stack as `docker compose config` resolves it, with its overlays, requires every file the stack mounts from the secrets directory, refuses a setting that names a secret its service does not mount, and checks again after its own `git pull`.
+- OPERATIONS.md's PostgreSQL major-version upgrade read the compose project with `config --no-interpolate`, which Compose 2.38 refuses on the production file's secret binds, so steps 4 and 6 and the rollback stopped before they began; they read it as the deploy does, with polaris.env loaded.
+- The patronictl shorthand in OPERATIONS.md and FAILOVER.md loaded the HA overlay without the blue-green file it extends, so Compose refused it ("app-green has neither an image nor a build context") on the first HA command; it loads the blue-green file before the HA one, as LINUX-SERVER.md and DEPLOYMENT.md do.
+
+### Added
+
+- `scripts/polaris-pg-upgrade-drill.sh` runs OPERATIONS.md's PostgreSQL major-version upgrade (16 to 17) and its rollback as written, and requires every table's rows, the sequences, the catalogue, roles and grants, a credential issued before and pgBackRest's health to be the same on each side; its control must name one audit row changed on the new major. CI runs both nightly and on pull requests that change what they run.
+
+### Changed
+
+- The operability gate in PRODUCTION-READINESS has 29 criteria, 22 PASS: OP-29, a PostgreSQL major-version upgrade drilled there and back as OPERATIONS.md writes it, passes.
+
 ## v1.0.0-rc.71 — 2026-10-10 (the application's database role keeps only what it is granted, through restores, deploys and upgrades)
 
 A restore and a deploy no longer give the application's database role back what the schema revokes, and the role reads an event partition only through its parent; an upgrade raises a production database's anonymity floor of one to twenty; an offsite bucket is an encrypted second repository (breaking), and ZK proofs from earlier binaries no longer verify (breaking). The full list follows: 25 security, 89 fixed, 75 added and 42 changed entries.

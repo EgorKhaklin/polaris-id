@@ -334,7 +334,7 @@ UNSHARDED_SUITES = {
                 "test_trigger_drill", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
                 "test_event_partition_migration", "test_database_settings", "test_db_state", "test_db_reference",
-                "test_pgbackrest_conf"],
+                "test_pgbackrest_conf", "test_db_init"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
@@ -484,6 +484,53 @@ REDIS_BASE_PORT = 6400
 #: session however the run ends.
 RUN_LOCK = int.from_bytes(hashlib.sha256(("polaris-ship run " + DB_PREFIX).encode()).digest()[:8],
                           "big", signed=True)
+
+
+#: What the ZK prover is built from: a binary older than the last change to any of these reaching
+#: this branch was built from an earlier circuit.
+ZK_SOURCES = ("polaris_zk/src", "polaris_zk/Cargo.toml", "polaris_zk/Cargo.lock", "polaris_zk/rust-toolchain.toml")
+
+
+def zk_prover_stale(root=ROOT, env=None):
+    """Why the ZK prover ZKSnarkTests would run cannot be trusted, or None.
+
+    2026-10-10: a worktree's polaris_zk/target linked to the main checkout's ran a binary built on
+    09-23, before the 10-06 change to Plonky2's zero-knowledge configuration, so the tests checked
+    the old circuit. A missing binary is not a reason here: the tests skip, and the verdict counts
+    the tests that did not run. A source history that cannot be read is one: nothing then says the
+    binary is current."""
+    env = os.environ if env is None else env
+    binary = env.get("POLARIS_ZK_BINARY") or os.path.join(root, "polaris_zk", "target", "release", "polaris-zk")
+    if not os.path.isfile(binary):
+        return None
+    # --first-parent: a change made on a side branch reaches this one when it is merged, and a binary
+    # built in between is still the earlier circuit (the 10-06 change reached main on 10-07).
+    r = subprocess.run(["git", "-C", root, "log", "-1", "--first-parent", "--format=%ct %h", "--", *ZK_SOURCES],
+                       capture_output=True, text=True)
+    fields = r.stdout.split()
+    if r.returncode != 0 or len(fields) != 2 or not fields[0].isdigit():
+        return ("the history of %s could not be read, so nothing says %s is current"
+                % (", ".join(ZK_SOURCES), binary))
+    changed, commit = int(fields[0]), fields[1]
+    built = os.stat(binary).st_mtime
+    # Uncommitted changes to the sources count from when each file was last written.
+    st = subprocess.run(["git", "-C", root, "status", "--porcelain", "--", *ZK_SOURCES],
+                        capture_output=True, text=True)
+    if st.returncode != 0:
+        return "the working tree's state of %s could not be read" % ", ".join(ZK_SOURCES)
+    for line in st.stdout.splitlines():
+        path = os.path.join(root, line[3:].split(" -> ")[-1])
+        if os.path.exists(path) and os.stat(path).st_mtime > built:
+            return ("%s was built before an uncommitted change to %s: ZKSnarkTests would check the old "
+                    "circuit. Build it: cd polaris_zk && cargo build --release" % (binary, line[3:]))
+    if built >= changed:
+        return None
+    return ("%s was built %s, before %s changed the prover's source (%s): ZKSnarkTests would check the "
+            "old circuit. Build it: cd polaris_zk && cargo build --release (in a worktree, with "
+            "CARGO_TARGET_DIR set to a scratch directory, and polaris_zk/target linked to it); if cargo "
+            "reports nothing to build, the binary was built from this source already: touch it"
+            % (binary, time.strftime("%Y-%m-%d %H:%M", time.gmtime(built)), commit,
+               time.strftime("%Y-%m-%d %H:%M", time.gmtime(changed))))
 
 
 def hold_run_lock(env, key=RUN_LOCK):
@@ -697,6 +744,10 @@ def run(argv, out=None):
                      "POLARIS_TEST_RELOAD_USER": owner, "PGUSER": owner, "PYTHON_COLORS": "0", "NO_COLOR": "1"})
     if base_env["POLARIS_DB_PASSWORD"]:
         base_env["PGPASSWORD"] = base_env["POLARIS_DB_PASSWORD"]
+    stale = zk_prover_stale(ROOT, base_env)
+    if stale:
+        print("run: refused: %s." % stale, file=out)
+        return 2
     lock, why = hold_run_lock(base_env)
     if lock is None:
         print("run: refused: %s. Two runs drop each other's databases mid-suite; wait for it to "
@@ -1214,7 +1265,19 @@ def triage(run_id=None, out=None):
 # travelling to a machine that never ran anything.
 # --------------------------------------------------------------------------------------
 
-RECEIPTS = os.path.join(ROOT, ".git", "polaris-drill-receipts")
+def _receipts_dir(root=ROOT):
+    """The repository's own git directory, which its worktrees share. In a worktree .git is a
+    file, so <root>/.git/polaris-drill-receipts could not be made and no worktree could record a
+    drill (2026-10-10). A receipt fingerprints the contents it ran on, so one store serves every
+    worktree of the clone."""
+    r = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"], capture_output=True, text=True)
+    common = r.stdout.strip()
+    if r.returncode != 0 or not common:
+        return os.path.join(root, ".git", "polaris-drill-receipts")
+    return os.path.join(common if os.path.isabs(common) else os.path.join(root, common), "polaris-drill-receipts")
+
+
+RECEIPTS = _receipts_dir()
 
 #: A plan entry's `run` line is prose as often as a command. These are the shapes that
 #: name an actual drill this tool can execute and fingerprint.

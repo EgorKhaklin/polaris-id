@@ -13,9 +13,9 @@
 #      (templates/migrate-job.yaml) applies the migrations the release lacks, then syncs the
 #      database objects, before the new pods roll. The upgraded database's security state
 #      (scripts/lib/polaris-db-state.sh) must then equal, table by table, that of this commit
-#      installed fresh beside it in the leading member, from the files its image carries
-#      (scripts/lib/polaris-db-reference.sh): what an upgrade leaves different from a fresh
-#      install of the same release is drift.
+#      installed fresh, in a throwaway cluster of its own (a container on this host), from the
+#      postgres image the upgrade deployed (scripts/lib/polaris-db-reference.sh): what an upgrade
+#      leaves different from a fresh install of the same release is drift.
 #   4. Afterwards: no migration pending (the runner in the new image, asked inside a database pod),
 #      migrations recorded that the previous release did not have, the app healthy through the
 #      edge, the marker intact.
@@ -53,6 +53,7 @@ migrations_since() {
     else echo "the upgrade applied the $3 new since ${FROM} ($1 -> $2 recorded)"; fi
 }
 cleanup() {
+    docker rm -f polaris-reference-helm > /dev/null 2>&1 || true
     [[ -n "${PF_PID}" ]] && kill "${PF_PID}" 2> /dev/null || true
     [[ "${KEEP_CLUSTER:-0}" == 1 ]] || kind delete cluster --name "${CLUSTER}" > /dev/null 2>&1 || true
     git -C "${ROOT}" worktree remove --force "${WORK}/from" > /dev/null 2>&1 || true
@@ -132,7 +133,8 @@ psql_db() {  # psql_db <sql>: as the owner, inside the member that leads, over i
 source "${ROOT}/scripts/lib/polaris-db-state.sh"
 source "${ROOT}/scripts/lib/polaris-db-reference.sh"
 STATE_DB=polaris
-REFERENCE_DB=polaris_reference
+REFERENCE=polaris-reference-helm
+STATE_IN=stack
 # The drill's own fixture: written under FROM, and made the same way in the reference, so the two
 # states compare whole rather than through a filter that could hide something.
 MARKER_DDL="CREATE SCHEMA drill; CREATE TABLE drill.marker (note text)"
@@ -141,7 +143,15 @@ pg_run() {
     pod=$(leader_pod) || { echo "no member left recovery within 120s" >&2; return 1; }
     kubectl -n "${NS}" exec "${pod}" -c postgres -- "$@" < /dev/null
 }
-sql() { pg_run psql -X -q -At -v ON_ERROR_STOP=1 -h /var/run/postgresql -U postgres -d "${STATE_DB}" -c "$1"; }
+# STATE_IN=reference reads the fresh install in its own cluster instead (scripts/lib/
+# polaris-db-reference.sh).
+sql() {
+    if [[ "${STATE_IN}" == reference ]]; then
+        polaris_db_reference_sql "${REFERENCE}" "$1"
+    else
+        pg_run psql -X -q -At -v ON_ERROR_STOP=1 -h /var/run/postgresql -U postgres -d "${STATE_DB}" -c "$1"
+    fi
+}
 state() {  # NAME WHEN: the security state of ${STATE_DB} into ${WORK}/state-NAME
     polaris_db_state security > "${WORK}/state-$1" || fail "the security state could not be read $2"
 }
@@ -164,22 +174,38 @@ helm upgrade "${REL}" "${ROOT}/deploy/helm/polaris" -n "${NS}" "${COMMON[@]}" > 
          fail "helm upgrade"; }
 ok "helm upgrade finished; its pre-upgrade migration Job succeeded"
 state after "after the upgrade"
+# The leading member's image carries this commit's SQL and init, and the reference runs the image
+# the chart was upgraded to, loaded into kind from this host: polaris-postgres:prod.
 polaris_db_reference_carries "${ROOT}/polaris_sql" \
-    || { diagnose; fail "the leading member's image does not carry ${TARGET:0:8}'s SQL, so no reference can be built from it"; }
-polaris_db_reference_build "${REFERENCE_DB}" "${WORK}/reference.log" \
-    || { tail -20 "${WORK}/reference.log" >&2; fail "building a fresh ${TARGET:0:8} install beside the upgraded database"; }
-pg_run psql -X -q -v ON_ERROR_STOP=1 -h /var/run/postgresql -U postgres -d "${REFERENCE_DB}" -c "${MARKER_DDL}" > /dev/null \
+    || { diagnose; fail "the leading member's image does not carry ${TARGET:0:8}'s SQL and init"; }
+# Its first boot gets the stack's other password files too, so it creates what the stack's did:
+# with a replication password, the init (or Patroni, under the HA profile) made polaris_replicator.
+ref_env=()
+repl="$(pg_run printenv POLARIS_REPLICATOR_PASSWORD_FILE 2> /dev/null || true)"
+[[ -z "${repl}" ]] || ref_env+=("POLARIS_REPLICATOR_PASSWORD_FILE=$(basename "${repl}")")
+polaris_db_reference_run polaris-postgres:prod "${REFERENCE}" "${WORK}/reference-secrets" "${WORK}/reference.log" \
+        ${ref_env[@]+"${ref_env[@]}"} \
+    || { tail -20 "${WORK}/reference.log" >&2; fail "installing ${TARGET:0:8} fresh in a throwaway cluster"; }
+( pg_run() { docker exec -u postgres "${REFERENCE}" "$@" < /dev/null; }
+  polaris_db_reference_carries "${ROOT}/polaris_sql" ) \
+    || fail "polaris-postgres:prod does not carry ${TARGET:0:8}'s SQL and init, so it is no reference"
+polaris_db_reference_sql "${REFERENCE}" "${MARKER_DDL}" > /dev/null \
     || fail "making the drill's marker table in the reference"
-STATE_DB="${REFERENCE_DB}"
+STATE_IN=reference
 state reference "from the fresh ${TARGET:0:8} install"
-STATE_DB=polaris
-polaris_db_reference_drop "${REFERENCE_DB}" || fail "dropping the reference database"
-# Building and dropping the reference may change nothing the operator has: roles are the
-# cluster's, so this read would show one it added or altered.
-state after-again "after the reference was dropped"
+STATE_IN=stack
+polaris_db_reference_stop "${REFERENCE}" "${WORK}/reference-secrets"
+# The reference had a cluster of its own: the operator's database and roles read as before it.
+state after-again "after the reference"
 polaris_db_state_same "${WORK}/state-after" "${WORK}/state-after-again" \
     || fail "building the reference changed the upgraded database or the cluster's roles (< before it, > after)"
-polaris_db_state_same_by_table "${WORK}/state-reference" "${WORK}/state-after" \
+polaris_db_reference_roles "${ROOT}/polaris_sql" > "${WORK}/polaris-roles" \
+    || fail "the roles polaris_sql creates could not be read"
+left_out="$(polaris_db_state_cross_cluster "${WORK}/state-reference" "${WORK}/state-after" "${WORK}/polaris-roles" \
+              "${WORK}/state-reference.cmp" "${WORK}/state-after.cmp")" \
+    || fail "the two clusters' states could not be set side by side"
+[[ -z "${left_out}" ]] || ok "left out, a role one cluster has and Polaris does not create: $(echo ${left_out})"
+polaris_db_state_same_by_table "${WORK}/state-reference.cmp" "${WORK}/state-after.cmp" \
     || fail "the upgraded database's security state is not a fresh ${TARGET:0:8} install's (< fresh only, > upgrade only)"
 moved=$(diff "${WORK}/state-before" "${WORK}/state-after" | grep -c '^[<>]' || true)
 ok "the upgraded database's security state is a fresh ${TARGET:0:8} install's, table by table ($(grep -c . "${WORK}/state-after") facts; ${moved} moved since ${FROM})"

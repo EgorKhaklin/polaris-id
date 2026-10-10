@@ -74,7 +74,7 @@ recreate_apps() {
     for svc in $(compose config --services 2>/dev/null | grep -E '^app(-green)?$' | sort -r); do
         compose up -d --no-deps --force-recreate "${svc}"
         for _ in $(seq 1 60); do
-            cid=$(compose ps -q "${svc}" 2>/dev/null | head -1)
+            cid=$(compose ps -q "${svc}" 2>/dev/null | sed -n 1p)
             [[ -n "${cid}" ]] && [[ "$(docker inspect --format '{{.State.Health.Status}}' "${cid}" 2>/dev/null)" == "healthy" ]] && break
             sleep 2
         done
@@ -116,7 +116,7 @@ stack_running() {
     command -v docker >/dev/null 2>&1 || return 1
     local _
     for _ in 1 2 3 4 5; do
-        compose ps --status running --quiet 2>/dev/null | grep -q . && return 0
+        compose ps --status running --quiet 2>/dev/null | grep . >/dev/null && return 0
         sleep 2
     done
     return 1

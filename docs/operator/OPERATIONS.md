@@ -1029,7 +1029,7 @@ database is two Patroni members behind `pg-router`. The day-2 surface is
 `patronictl`, run inside either member:
 
 ```bash
-P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl -c /var/lib/postgresql/patroni.yml"
+P="docker compose -f polaris_web/docker-compose.prod.yml -f polaris_web/docker-compose.bluegreen.yml -f polaris_web/docker-compose.ha.yml exec postgres patronictl -c /var/lib/postgresql/patroni.yml"
 $P list                                   # members, roles, timeline, lag
 $P switchover --primary postgres --candidate postgres2   # planned; asks to confirm
 $P history                                # every timeline change and why
@@ -1655,8 +1655,9 @@ before 2.30 creates one at a secret file that is missing when the stack starts
 (2.30 and later refuse to start instead), and every version creates one at a
 missing bind-mounted file such as the pgBackRest fragment; the operator removes
 it. The deploy refuses to start while a secret
-file that `docker-compose.prod.yml` mounts and the production configuration
-validates is missing, and names it. A tag checkout has no branch,
+file the stack mounts is missing, and names it: it reads the stack as
+`docker compose config` resolves it, with the overlays in
+`POLARIS_COMPOSE_EXTRA`, and checks again after its own `git pull`. A tag checkout has no branch,
 so the deploy's own `git pull --ff-only` would fail; `--no-pull` skips it.
 On a host whose secrets are sealed (age or awskms), the generator writes to
 `polaris_web/secrets` in plaintext, and as adopting the store removed that
@@ -1736,9 +1737,11 @@ docker compose -f polaris_web/docker-compose.prod.yml down
 
 # 4. Set the old cluster aside, keeping it until step 6. Run this step once: it refuses when
 #    the copy already exists, because a second run would copy the new cluster over the only
-#    copy of the old one. The volume is found by its compose labels, as polaris-deploy.sh
-#    finds its project; a name match can pick another stack's volume on the same host.
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+#    copy of the old one. The volume is found by its compose labels, and the project is read
+#    as polaris-deploy.sh reads it, with polaris.env loaded (scripts/polaris-env.sh); the
+#    domain only lets the file parse and does not name the project. A name match can pick
+#    another stack's volume on the same host.
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
 V=$(docker volume ls -q --filter "label=com.docker.compose.project=$P" \
       --filter label=com.docker.compose.volume=pg_data)
 if [ -z "$P" ]; then
@@ -1755,25 +1758,37 @@ else
   docker volume rm "$V"
 fi
 
-# 5. Rebuild and bring the stack up on an empty cluster, then restore into it
+# 5. Rebuild and bring the stack up on an empty cluster, upgrade pgBackRest's stanza to it, then
+#    restore into it and take the new major's first full backup. Until the stanza is upgraded
+#    the deploy's pgBackRest step reports error [028] (the old cluster's stanza), and WAL would
+#    accumulate during the restore. Whether the stack archives (POLARIS_PGBACKREST_ENABLED, on
+#    unless 0) is asked of the stack: polaris.env sets it, and this shell may not have read it.
 ./scripts/polaris-deploy.sh prod --no-pull
+ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgres printenv POLARIS_PGBACKREST_ENABLED)
+[ "$ARCHIVING" = 0 ] ||
+  docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+    pgbackrest --stanza=polaris stanza-upgrade
 ./scripts/polaris-restore.sh /var/backups/polaris/<step-1 tarball> \
     --target=docker-stack --force --verify-schema-version
+[ "$ARCHIVING" = 0 ] ||
+  docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+    pgbackrest --stanza=polaris --type=full backup
 
 # 6. Only once step 5 printed "schema_version table matches migrations/ on disk" and the
 #    stack serves, delete the old cluster's copy. The names are looked up again, without
 #    needing the deploy's variables, so a new shell works; compose names the volume <project>_pg_data.
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
 if [ -n "$P" ]; then docker volume rm "${P}_pg_data_old"
 else echo "docker compose config failed: run this from the repository root, and check the compose file parses."; fi
 ```
 
 Until step 6, `<project>_pg_data_old` holds the old major's cluster untouched. To go back,
 restore the `FROM` line, then put the copy back into the cluster's volume (created with
-compose's labels if step 5 never made it) and redeploy. A new shell works here too:
+compose's labels if step 5 never made it), redeploy, and upgrade pgBackRest's stanza to the
+old cluster (step 5 moved it to the new one) with a full backup. A new shell works here too:
 
 ```bash
-P=$(cd polaris_web && docker compose -f docker-compose.prod.yml config --no-interpolate | sed -n 's/^name: //p' | head -n1)
+P=$(. scripts/polaris-env.sh && cd polaris_web && POLARIS_DOMAIN="${POLARIS_DOMAIN:-x}" docker compose -f docker-compose.prod.yml config | sed -n 's/^name: //p')
 V="${P}_pg_data"
 if [ -z "$P" ] || ! docker volume inspect "${V}_old" >/dev/null 2>&1; then
   echo "docker compose config failed (run from the repository root, check the compose file parses), or no ${V}_old to roll back to. Stop here."
@@ -1784,17 +1799,16 @@ else
       --label com.docker.compose.volume=pg_data "$V"
   docker run --rm -v "${V}_old:/from:ro" -v "$V:/to" \
     alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
-    sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'
-  ./scripts/polaris-deploy.sh prod --no-pull
+    sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/' &&
+  ./scripts/polaris-deploy.sh prod --no-pull &&
+  ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgres printenv POLARIS_PGBACKREST_ENABLED) &&
+  if [ "$ARCHIVING" != 0 ]; then
+    docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+      pgbackrest --stanza=polaris stanza-upgrade &&
+    docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
+      pgbackrest --stanza=polaris --type=full backup
+  fi
 fi
-```
-
-If continuous WAL archiving is enabled, run the stanza upgrade before the
-first new-major backup:
-
-```bash
-docker compose -f polaris_web/docker-compose.prod.yml exec -u postgres postgres \
-    pgbackrest --stanza=polaris stanza-upgrade
 ```
 
 ### TLS certificate renewal

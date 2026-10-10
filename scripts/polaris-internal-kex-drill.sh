@@ -62,11 +62,11 @@ _case() {   # _case <name> <expected> <actual>
 
 command -v docker >/dev/null 2>&1 || { echo "polaris-internal-kex-drill: docker is required" >&2; exit 1; }
 
-PG_IMAGE=$(sed -n 's/^FROM \(postgres:[^ @]*\)@\(sha256:[0-9a-f]*\).*/\1@\2/p' polaris_web/Dockerfile.postgres | head -1)
+PG_IMAGE=$(sed -n 's/^FROM \(postgres:[^ @]*\)@\(sha256:[0-9a-f]*\).*/\1@\2/p' polaris_web/Dockerfile.postgres | sed -n 1p)
 [ -n "$PG_IMAGE" ] || { echo "polaris-internal-kex-drill: cannot read the postgres base from Dockerfile.postgres" >&2; exit 1; }
-PSYCOPG=$(sed -n 's/^\(psycopg2-binary==[0-9.]*\).*/\1/p' polaris_web/requirements.txt | head -1)
+PSYCOPG=$(sed -n 's/^\(psycopg2-binary==[0-9.]*\).*/\1/p' polaris_web/requirements.txt | sed -n 1p)
 [ -n "$PSYCOPG" ] || { echo "polaris-internal-kex-drill: cannot read the pinned driver from requirements.txt" >&2; exit 1; }
-APP_BASE=$(sed -n 's/^FROM \(python:[^ @]*\)@\(sha256:[0-9a-f]*\) AS runtime.*/\1@\2/p' polaris_web/Dockerfile.prod | head -1)
+APP_BASE=$(sed -n 's/^FROM \(python:[^ @]*\)@\(sha256:[0-9a-f]*\) AS runtime.*/\1@\2/p' polaris_web/Dockerfile.prod | sed -n 1p)
 [ -n "$APP_BASE" ] || APP_BASE=python:3.12-slim-bookworm
 
 echo "Polaris internal-hop key exchange, measured"
@@ -104,11 +104,11 @@ docker exec -e PGPASSWORD=polariskex "$PG" psql -U postgres -q \
     -c "ALTER SYSTEM SET ssl_key_file='server.key'" -c "SELECT pg_reload_conf()" >/dev/null
 for _ in $(seq 1 30); do
     docker exec -e PGPASSWORD=polariskex "$PG" psql -U postgres -tAc "SHOW ssl" 2>/dev/null \
-        | tr -d '[:space:]' | grep -qx on && break
+        | tr -d '[:space:]' | grep -x on >/dev/null && break
     sleep 1
 done
 docker exec -e PGPASSWORD=polariskex "$PG" psql -U postgres -tAc "SHOW ssl" 2>/dev/null \
-    | tr -d '[:space:]' | grep -qx on \
+    | tr -d '[:space:]' | grep -x on >/dev/null \
     || { echo "polaris-internal-kex-drill: postgres did not come up with TLS on" >&2; { docker logs "$PG" 2>&1 || true; } | tail -20; exit 1; }
 
 docker build -q -f polaris_web/Dockerfile.pgbouncer -t polaris-pgbouncer:kexdrill polaris_web >/dev/null
@@ -123,7 +123,7 @@ probe_once() {
     docker run --rm --network "$NET" -v "$PWD/scripts:/probe:ro" "$APP_BASE" sh -c "
         pip install --quiet --disable-pip-version-check $PSYCOPG >/dev/null 2>&1
         python /probe/polaris_kex_probe.py $1 $2 ${3:-}" 2>/dev/null \
-        | sed -n -E 's/^RESULT TLSv1\.3 //p; s/^RESULT (handshake-failed|refused-tls|client-cannot-offer|no-context).*/\1/p' | head -1
+        | sed -n -E 's/^RESULT TLSv1\.3 //p; s/^RESULT (handshake-failed|refused-tls|client-cannot-offer|no-context).*/\1/p' | sed -n 1p
 }
 probe() {   # probe <host> <port> [groups] -> the group, or a failure token
     # An empty answer is not a measurement: the probe never reached a handshake (the driver

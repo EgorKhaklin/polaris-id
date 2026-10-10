@@ -60,12 +60,14 @@ repos:
         # spaces and the script is one line. Indent one of them further and YAML keeps the
         # newline instead, which silently turns the module names into commands of their own:
         # check_pre_commit_scripts_are_one_command_per_line exists because that happened.
+        # `unset` first: git hands a hook GIT_INDEX_FILE and GIT_DIR, and a suite's scratch
+        # repository would commit into the index of the commit being made (2026-10-10).
         entry: >-
-          bash -c 'cd scripts && python3 -m unittest
+          bash -c 'cd scripts && unset $(compgen -e GIT_) && python3 -m unittest
           test_ship_tool test_verify_conformance test_verify_p9 test_verify_refusals
           test_conformance_runner test_sbom_enrich test_issuance_scope
           test_relying_party test_wallet test_pin_chart_images test_chain_anchor_tool
-          test_migrate_runner test_coverage_script test_trigger_drill test_operator_env test_key_event test_doctor test_evaluate'
+          test_migrate_runner test_coverage_script test_trigger_drill test_operator_env test_key_event test_doctor test_evaluate test_db_init'
         language: system
         pass_filenames: false
         files: '^scripts/'

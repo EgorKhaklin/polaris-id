@@ -122,20 +122,20 @@ elif [[ -n "${SECRETS_AT}" ]]; then
     esac
     leftover="${POLARIS_ROOT}/polaris_web/secrets"
     if [[ "${SECRETS_AT}" != "${leftover}" && -d "${leftover}" ]] \
-            && [[ -n "$(find "${leftover}" -type f 2> /dev/null | head -1)" ]]; then
+            && [[ -n "$(find "${leftover}" -type f 2> /dev/null | sed -n 1p)" ]]; then
         warn "secrets at rest" "a plaintext copy remains in ${leftover}; shred it (docs/operator/SECRETS.md, section 5.1)"
     fi
 fi
 
 # --- configuration: the production contract, in a one-off container (answers when the app cannot start)
-if echo "${SERVICES}" | grep -qx app; then
+if echo "${SERVICES}" | grep -x app >/dev/null; then
     CONFIG_OUT=$(compose run --rm --no-deps -T --entrypoint python app config_schema.py check --production 2>&1)
     CONFIG_RC=$?
     if [[ ${CONFIG_RC} -eq 0 ]]; then
         ok configuration "the production contract holds (docs/operator/CONFIG.md)"
     else
         named=$(printf '%s\n' "${CONFIG_OUT}" | sed -n 's/^ *- \(POLARIS_[A-Z0-9_]*\):.*/\1/p' | sort -u | tr '\n' ' ')
-        bad configuration "${named:-the contract check could not run}: $(printf '%s\n' "${CONFIG_OUT}" | grep -m1 '^ *- ' | sed 's/^ *- //')"
+        bad configuration "${named:-the contract check could not run}: $(printf '%s\n' "${CONFIG_OUT}" | sed -n 's/^ *- //p' | sed -n 1p)"
     fi
 fi
 
@@ -144,7 +144,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${CURL_TLS[@]}" "${
 if [[ "${code}" == 200 ]]; then
     ok edge "${URL} serves /api/health/live"
 else
-    why=$(curl -sS -o /dev/null --max-time 10 "${CURL_TLS[@]}" "${URL}/api/health/live" 2>&1 | head -1)
+    why=$(curl -sS -o /dev/null --max-time 10 "${CURL_TLS[@]}" "${URL}/api/health/live" 2>&1 | sed -n 1p)
     bad edge "${URL}/api/health/live answered ${code}${why:+ (${why})}"
 fi
 

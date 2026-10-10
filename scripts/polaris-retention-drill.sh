@@ -121,7 +121,7 @@ ARCHIVE=$(ls "${WORK}"/polaris-archive-*.tar.gz | tail -1)
 [[ -f "${ARCHIVE}" ]] || fail "no archive produced"
 
 mkdir -p "${WORK}/x" && tar -xzf "${ARCHIVE}" -C "${WORK}/x"
-MANIFEST=$(ls "${WORK}"/x/*/MANIFEST.json | head -1)
+MANIFEST=$(ls "${WORK}"/x/*/MANIFEST.json | sed -n 1p)
 python3 - "${MANIFEST}" <<'PY' || fail "the manifest does not carry four distinct-class cutoffs"
 import json, sys
 m = json.load(open(sys.argv[1]))
@@ -143,7 +143,7 @@ pass "archive taken from policy; manifest carries two horizons and the oldest sc
 #    passing through untrusted hands looks like.
 # ---------------------------------------------------------------------------
 mkdir -p "${WORK}/t" && tar -xzf "${ARCHIVE}" -C "${WORK}/t"
-TDIR=$(find "${WORK}/t" -maxdepth 1 -mindepth 1 -type d -name 'polaris-archive-*' | head -1)
+TDIR=$(find "${WORK}/t" -maxdepth 1 -mindepth 1 -type d -name 'polaris-archive-*' | sed -n 1p)
 printf 'tampered,row,appended\n' >> "${TDIR}/lifecycle.csv"
 (cd "${WORK}/t" && tar -czf "${WORK}/tampered.tar.gz" "$(basename "${TDIR}")")
 if POLARIS_DB_NAME="${DB}" POLARIS_DB_USER="${DB_USER}" POLARIS_DB_HOST="${DB_HOST}" \

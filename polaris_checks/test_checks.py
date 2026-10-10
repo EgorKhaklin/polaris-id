@@ -2043,11 +2043,14 @@ def test_prod_app_password_synced_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
 
+    GATE = '[ ${#POLARIS_APP_PASSWORD} -lt 16 ] && { echo "must be at least 16 characters"; exit 2; }\n'
+    LOAD = 'psql -f "$SQL_DIR/00_load_all.sql"\n'
+    ROTATE = ('verifier=$(printf "%s" "$POLARIS_APP_PASSWORD" | python3 -c "print(\'SCRAM-SHA-256$4096:...\')")\n'
+              'printf "ALTER ROLE polaris_app WITH PASSWORD \'%s\';" "$verifier" | psql\n')
     GOOD_INIT = (
         'if [ -n "$POLARIS_APP_PASSWORD_FILE" ]; then\n'
         '  POLARIS_APP_PASSWORD="$(cat "$POLARIS_APP_PASSWORD_FILE")"\n'
-        'fi\n'
-        'psql -c "ALTER ROLE polaris_app WITH PASSWORD \'$POLARIS_APP_PASSWORD\'"\n')
+        'fi\n' + GATE + LOAD + ROTATE)
 
     def write(compose, init=GOOD_INIT):
         (web / "docker-compose.prod.yml").write_text(compose)
@@ -2078,9 +2081,93 @@ def test_prod_app_password_synced_check_discriminates(tmp_path):
         "must FAIL when docker-init.sh does not ALTER ROLE polaris_app"
 
     # 5. all wired and matching -> OK.
+    # 5. the password itself in the ALTER ROLE statement (psql's command line, any statement log),
+    #    no verifier at all, or the password judged only after the schema loaded -> FAIL.
+    plaintext = GOOD_INIT.replace(ROTATE, 'psql -c "ALTER ROLE polaris_app WITH PASSWORD \'$POLARIS_APP_PASSWORD\'"\n'
+                                  '# SCRAM-SHA-256$ mentioned only here\n')
+    braced = GOOD_INIT.replace(ROTATE, ROTATE + 'psql -c "ALTER ROLE polaris_app PASSWORD \'${POLARIS_APP_PASSWORD}\'"\n')
+    no_verifier = GOOD_INIT.replace(ROTATE, 'printf "ALTER ROLE polaris_app WITH PASSWORD \'%s\';" "$hashed" | psql\n')
+    judged_late = GOOD_INIT.replace(GATE + LOAD, LOAD + GATE)
+    for init in (plaintext, braced, no_verifier, judged_late):
+        write(app_line + role_line, init=init)
+        assert checks.check_prod_app_password_synced(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the password reaches a statement or is judged after the load:\n" + init
+
+    # 6. all wired and matching -> OK.
     write(app_line + role_line)
     assert checks.check_prod_app_password_synced(tmp_path)[0].level == "OK", \
         "must PASS when the role password is synced to the app's secret and rotated at init"
+
+
+def test_external_postgres_check_discriminates(tmp_path):
+    for d in ("scripts", "polaris_web", ".github/workflows", "docs/operator"):
+        (tmp_path / d).mkdir(parents=True)
+    settings = ("polaris.min_epoch_anonymity_set", "polaris.default_max_revoke_percent",
+                "polaris.default_window_days")
+    SCRIPT = ("".join("has_parameter_privilege('%s', 'SET')\n" % s for s in settings)
+              + "SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace\n"
+              + "  + (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace)\n"
+              + 'if [[ "${app_exists}" == t && "${POLARIS_DB_INIT_REUSE_APP_ROLE:-}" != 1 ]]; then refuse; fi\n'
+              + 'if [[ -z "${APP_PW}" ]]; then\n    exit 2\nfi\n'
+              + 'POLARIS_INIT_MANAGED_BY=external POLARIS_ENV=production bash polaris_web/docker-init.sh\n')
+    INIT = ('SQL_DIR="${POLARIS_SQL_DIR:-/docker-entrypoint-initdb.d/sql}"\n'
+            'if [ "${POLARIS_ENV:-}" = "production" ] \\\n        && { [ -z "$POLARIS_APP_PASSWORD" ] || false; }; then exit 2; fi\n'
+            'app_role_sql="CREATE ROLE polaris_app WITH LOGIN PASSWORD \'%s\';\\n"\n'
+            'psql -f "$SQL_DIR/00_load_all.sql"\n'
+            'if [ "$MANAGED" = "patroni" ]; then\n    echo "skip"\n'
+            'elif [ "$MANAGED" = "external" ]; then\n    echo "the provider\'s"\nfi\n'
+            'if [ -z "$MANAGED" ] && [ -n "$REPL_PWFILE" ]; then :; fi\n'
+            'if [ -z "$MANAGED" ] && [ "${POLARIS_PGBACKREST_ENABLED:-1}" = "1" ]; then :; fi\n')
+    CI = ("jobs:\n  managed-postgres:\n    steps:\n"
+          "      - run: bash scripts/polaris-db-init.sh; [ $? = 3 ] || echo 'expected the refusal (exit 3)'\n"
+          "      - run: psql -c 'GRANT SET ON PARAMETER x TO o' && bash scripts/polaris-db-init.sh\n"
+          "      - run: POLARIS_APP_PASSWORD_FILE=/tmp/empty.pw bash scripts/polaris-db-init.sh\n"
+          "      - run: echo 'after a failed load polaris_app answers to the development password'\n"
+          "      - run: echo \"polaris_app's password reached the server's statement log\"\n"
+          "      - run: echo 'the check above measured nothing'\n"
+          "  other:\n    steps: []\n")
+    DOC = "initialise it with scripts/polaris-db-init.sh after GRANT SET ON PARAMETER ...\n"
+
+    def write(script=SCRIPT, init=INIT, ci=CI, doc=DOC):
+        (tmp_path / "scripts" / "polaris-db-init.sh").write_text(script)
+        (tmp_path / "polaris_web" / "docker-init.sh").write_text(init)
+        (tmp_path / ".github" / "workflows" / "ci.yml").write_text(ci)
+        (tmp_path / "docs" / "operator" / "ENCRYPTION-AT-REST.md").write_text(doc)
+
+    write()
+    assert checks.check_external_postgres_initialised(tmp_path)[0].level == "OK", \
+        "must PASS on the wired path"
+    broken = [
+        dict(script=SCRIPT.replace("has_parameter_privilege('polaris.default_window_days', 'SET')\n", "")),
+        dict(script=SCRIPT.replace("pg_class WHERE relnamespace = 'public'::regnamespace", "pg_tables")),
+        dict(script=SCRIPT.replace("pronamespace = 'public'::regnamespace", "true")),
+        dict(script=SCRIPT.replace(' && "${POLARIS_DB_INIT_REUSE_APP_ROLE:-}" != 1', "")),
+        dict(script=SCRIPT.replace('if [[ -z "${APP_PW}" ]]; then', 'if false; then')),
+        dict(init=INIT.replace('[ -z "$POLARIS_APP_PASSWORD" ]', '[ "$X" = 1 ]')),
+        dict(init=INIT.replace('app_role_sql="CREATE ROLE polaris_app WITH LOGIN PASSWORD \'%s\';\\n"\n'
+                               'psql -f "$SQL_DIR/00_load_all.sql"\n',
+                               'psql -f "$SQL_DIR/00_load_all.sql"\n'
+                               'app_role_sql="CREATE ROLE polaris_app WITH LOGIN PASSWORD \'%s\';\\n"\n')),
+        dict(ci=CI.replace("POLARIS_APP_PASSWORD_FILE=/tmp/empty.pw", "POLARIS_APP_PASSWORD_FILE=/tmp/app.pw")),
+        dict(ci=CI.replace("after a failed load polaris_app answers to the development password", "x")),
+        dict(ci=CI.replace("polaris_app's password reached the server's statement log", "x")),
+        dict(ci=CI.replace("the check above measured nothing", "x")),
+        dict(script=SCRIPT.replace("POLARIS_INIT_MANAGED_BY=external", "POLARIS_INIT_MANAGED_BY=patroni")),
+        dict(script=SCRIPT.replace("POLARIS_ENV=production ", "")),
+        dict(init=INIT.replace('elif [ "$MANAGED" = "external" ]; then\n    echo "the provider\'s"\n', "")),
+        dict(init=INIT.replace("POLARIS_SQL_DIR", "SQL_PATH")),
+        dict(init=INIT.replace('if [ -z "$MANAGED" ] && [ -n "$REPL_PWFILE" ]', 'if [ -n "$REPL_PWFILE" ]')),
+        dict(init=INIT.replace('if [ -z "$MANAGED" ] && [ "${POLARIS_PGBACKREST_ENABLED',
+                               'if [ "$MANAGED" != "patroni" ] && [ "${POLARIS_PGBACKREST_ENABLED')),
+        dict(ci=CI.replace("      - run: bash scripts/polaris-db-init.sh; [ $? = 3 ] || echo 'expected the refusal (exit 3)'\n", "")),
+        dict(ci=CI.replace("GRANT SET ON PARAMETER", "GRANT ALL")),
+        dict(ci=CI.replace("managed-postgres", "something-else")),
+        dict(doc="load polaris_sql/ by hand\n"),
+    ]
+    for case in broken:
+        write(**case)
+        assert checks.check_external_postgres_initialised(tmp_path)[0].level == "FAIL", \
+            "must FAIL when the external path loses a part: %r" % (case,)
 
 
 def test_coercion_evidence_retained_check_discriminates(tmp_path):
@@ -3757,7 +3844,7 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when a stopped app is read as a first deploy")
     broken(dep, 'docker tag "${ROLLBACK_IMAGE}" polaris-app:prod', 'docker tag "${PREV_IMAGE_ID}" polaris-app:prod',
            "must FAIL when the rollback re-tags the bare image ID again")
-    broken(dep, "PREV_APP=$(compose ps -a -q app 2>/dev/null | head -n1 || true)", "PREV_APP=polaris-app",
+    broken(dep, "PREV_APP=$(compose ps -a -q app 2>/dev/null | sed -n 1p || true)", "PREV_APP=polaris-app",
            "must FAIL when the deploy finds the running app by a fixed container name")
     broken(dep, """docker inspect --format='{{.Image}}' "${PREV_APP}\"""", "docker inspect --format='{{.Image}}' polaris-app",
            "must FAIL when the image is read from the container named polaris-app")
@@ -3780,6 +3867,65 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
            "must FAIL when the drill does not require the app back on the image it replaced")
     broken(".github/workflows/upgrade.yml", '["containerd-snapshotter"] = True', '["containerd-snapshotter"] = False',
            "must FAIL when CI drills on the classic image store, where the bare ID still resolves")
+
+def test_pg_upgrade_drilled_check_discriminates(tmp_path):
+    files = ("scripts/polaris-pg-upgrade-drill.sh", ".github/workflows/pg-upgrade.yml", "docs/operator/OPERATIONS.md",
+             "scripts/polaris-deploy.sh")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_pg_upgrade_drilled(tmp_path)[0].level == "OK", \
+        "must PASS on the real drill, its workflow, OPERATIONS.md and the deploy script"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_pg_upgrade_drilled(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    drill = "scripts/polaris-pg-upgrade-drill.sh"
+    broken(drill, 'bash -e "${WORK}/step5-run.sh"', 'bash "${WORK}/step5-run.sh"',
+           "must FAIL when step 5 runs past a failing line")
+    broken(drill, 'bash "${WORK}/rollback.sh"', 'true "${WORK}/rollback.sh"', "must FAIL when the rollback is not run")
+    broken(drill, 'diff -q "${WORK}/state-16-backed-up.txt" "${WORK}/state-back.txt"', 'true',
+           "must FAIL when the state after the rollback is not compared")
+    broken(drill, '|| fail "the state could not copy ${t}"', '|| true',
+           "must FAIL when a copy that cannot be read passes")
+    broken(drill, "e3b0c44298fc1c149afbf4c8996fb924 ]]", "0 ]]", "must FAIL when an empty copy of a table with rows passes")
+    broken(drill, '[[ "${probe}" == drill_probe_empty ]]', 'true',
+           "must FAIL when the emptiness test is not shown to fire")
+    broken(drill, 'pgbackrest_current "${OLD:0:2}"', 'true', "must FAIL when pgBackRest is not required after the rollback")
+    broken(drill, 'grep -q "holds a PostgreSQL ${NEW:0:2} cluster"', 'true',
+           "must FAIL when the deploy's refusal is not required on the way back")
+    broken(drill, 'fail "CONTROL FAILED: one audit row was changed and the comparison saw nothing"', 'exit 0',
+           "must FAIL when the control passes without naming the changed row")
+    broken(drill, " grant execute seqgrant colgrant defacl; do", " grant; do",
+           "must FAIL when the privileges on routines, sequences and columns are no longer required")
+    broken(drill, '    fail "the state changed across the upgrade: ', '    echo "the state changed across the upgrade: ',
+           "must FAIL when a changed state is only reported")
+    broken(drill, '    || fail "the state after the rollback differs from 16', '    || echo "the state after the rollback differs from 16',
+           "must FAIL when a state changed by the rollback is only reported")
+    broken(drill, '"${t}" "${n}" "${d}"', '"${t}" "${n}"', "must FAIL when a table's rows are counted but not digested")
+    broken(drill, 'fail "the backup changed more than its own record', 'echo "the backup changed more than its own record',
+           "must FAIL when the rollback's baseline may differ from step 2's by more than the backup's record")
+    wf = ".github/workflows/pg-upgrade.yml"
+    broken(wf, "run: bash scripts/polaris-pg-upgrade-drill.sh --prove-control", "run: true",
+           "must FAIL when CI does not run the control")
+    broken(wf, '      - "scripts/polaris-deploy.sh"\n', "", "must FAIL when a deploy change does not run the drill")
+    broken(wf, "  schedule:", "  workflow_call:", "must FAIL when the drill does not run nightly")
+    ops = "docs/operator/OPERATIONS.md"
+    broken(ops, "    pgbackrest --stanza=polaris stanza-upgrade\n./scripts/polaris-restore.sh",
+           "    pgbackrest --stanza=polaris check\n./scripts/polaris-restore.sh",
+           "must FAIL when step 5 restores without upgrading the stanza first")
+    broken(ops, "cp -a /from/. /to/' &&", "cp -a /from/. /to/'", "must FAIL when the rollback deploys over a failed copy")
+    broken(ops, "      pgbackrest --stanza=polaris stanza-upgrade &&", "      true &&",
+           "must FAIL when the rollback leaves pgBackRest's stanza on the new cluster")
+    dep = "scripts/polaris-deploy.sh"
+    broken(dep, "\npg_major_check || exit 1\n", "\npg_major_check || true\n",
+           "must FAIL when the deploy goes ahead on another major's cluster")
+    broken(dep, "cat /d/PG_VERSION", "cat /d/postmaster.pid", "must FAIL when the deploy no longer reads the cluster's major")
 
 
 def test_client_ip_behind_proxies_check_discriminates(tmp_path):
@@ -4237,6 +4383,16 @@ def test_prod_hardening_check_discriminates(tmp_path):
     write(GOOD_INIT, GOOD_COMPOSE)
     assert checks.check_prod_hardening(tmp_path)[0].level == "OK", \
         "must PASS when demo accounts are neutralized, the floor restored and Redis wired"
+
+    # 5. An earlier production block that hardens nothing (docker-init.sh refuses a missing password in
+    #    production before it loads anything) neither hides the hardening block nor stands in for it.
+    EARLY = 'if [ "${POLARIS_ENV:-}" = "production" ] && [ -z "$PW" ]; then\n    exit 2\nfi\n'
+    write(EARLY + GOOD_INIT, GOOD_COMPOSE)
+    assert checks.check_prod_hardening(tmp_path)[0].level == "OK", \
+        "must PASS when the hardening block follows an earlier production block"
+    write(EARLY + 'echo "no prod hardening"\n', GOOD_COMPOSE)
+    assert checks.check_prod_hardening(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the only production block hardens nothing"
 
 
 def test_backup_encryption_check_discriminates(tmp_path):
@@ -6406,6 +6562,63 @@ def test_no_grep_q_psql_check_discriminates(tmp_path):
         "must PASS for a read-only psql listing piped into grep -q"
 
 
+def test_shell_pipes_read_to_the_end_check_discriminates(tmp_path):
+    def level(root):
+        return checks.check_shell_pipes_read_to_the_end(root)[0]
+
+    # Nothing to read proves nothing: no shell file, then shell files with no pipeline.
+    assert level(tmp_path).level == "FAIL", "must FAIL when it reads no shell file"
+    (tmp_path / "scripts").mkdir()
+    sh = tmp_path / "scripts" / "drill.sh"
+    sh.write_text("set -euo pipefail\necho ok\n")
+    assert level(tmp_path).level == "FAIL", "must FAIL when the shell files hold no pipeline"
+
+    good = ("set -euo pipefail\n"
+            "v=$(compose ps -q app | sed -n 1p)\n"
+            'docker logs x 2>&1 | grep "served" >/dev/null && bad "served"\n'
+            "grep -E 'a|head' f | grep -c x\n"
+            "printf '%s' \"$x\" | sed 's/q/x/' | grep -v y\n"
+            "# docker logs x | head -1, in a comment\n"
+            'case "$k" in foo|head) ;; esac\n'
+            "x | awk '{s += $1} END {print s; exit}'\n"
+            "cat <<'EOF'\nps | head -1\nEOF\n"
+            'sh -c "find . | head -1"\n'
+            "x=$(echo a |\n  sed -n 1p)\n")
+    sh.write_text(good)
+    found = level(tmp_path)
+    assert found.level == "OK", f"must PASS consumers that read to the end, quoted text, comments, case " \
+                                f"patterns, END-only exits and heredoc bodies: {found.message}"
+
+    for line in ('if docker logs x 2>&1 | grep -q "served"; then bad; fi',
+                 "v=$(find . -name x | head -1)",
+                 'v="$(compose ps -q app | head -n1)"',
+                 "cmd | grep -m1 x",
+                 "cmd | grep -qx x",
+                 "cmd | grep --quiet x",
+                 "cmd | egrep -q x",
+                 "cmd | grep -l x",
+                 "cmd | sed -n '1{p;q}'",
+                 "cmd | sed 1q",
+                 "cmd | awk '{print; exit}'",
+                 "cmd \\\n  | head -1",
+                 "cmd |\n  head -1",
+                 "cmd |& head -1"):
+        sh.write_text(good + line + "\n")
+        found = level(tmp_path)
+        want = f"drill.sh:{good.count(chr(10)) + 1 + line[:line.index('|')].count(chr(10))} "  # the pipe's line
+        assert found.level == "FAIL" and want in found.message, \
+            f"must FAIL and name {want!r} for {line!r}: {found.message}"
+
+    # A sourced library runs under its caller's pipefail, so it is held without setting it.
+    sh.write_text(good)
+    lib = tmp_path / "scripts" / "lib" / "helpers.sh"
+    lib.parent.mkdir()
+    lib.write_text("first_app() { compose ps -q app | head -1; }\n")
+    found = level(tmp_path)
+    assert found.level == "FAIL" and "helpers.sh:1 " in found.message, \
+        f"must FAIL a library that sets no pipefail itself: {found.message}"
+
+
 def test_psql_status_set_e_check_discriminates(tmp_path):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
@@ -6745,10 +6958,10 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
           "a mounted repo.conf skips the cipher rule", "operator-mounted")
     fails({"polaris_web/pgbackrest-conf.sh": GEN.replace('require_cipher "the configuration"', ': "the configuration"')},
           "a fragment's repository skips the cipher rule", "operator-mounted")
-    # The drill overriding the retention on the command line instead of proving the rendered value.
     # The cipher clause's polarity inverted (-n to -z): it would stop requiring each refusal's own pattern.
     fails({"scripts/polaris-offsite-drill.sh": DRILL.replace('[ -n "$cipher" ]', '[ -z "$cipher" ]')},
           "the cipher clause's test is inverted", "cipher-specific pattern")
+    # The drill overriding the retention on the command line instead of proving the rendered value.
     fails({"scripts/polaris-offsite-drill.sh": DRILL + "pgbackrest --stanza=polaris --repo=2 --repo2-retention-full=1 expire\n"},
           "the drill overrides the retention on the command line", "override the retention")
     # The drill, step by step.
@@ -18168,6 +18381,23 @@ def test_drill_plan_binding_check_discriminates(tmp_path):
     assert level("inside the working tree") == "FAIL", \
         "must FAIL when receipts live where they could be committed"
 
+    # The store a worktree can use: the clone's git directory, by --git-common-dir.
+    COMMON = ('def _receipts_dir(root=ROOT):\n'
+              '    r = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"], capture_output=True, text=True)\n'
+              '    common = r.stdout.strip()\n'
+              '    if r.returncode != 0 or not common:\n'
+              '        return os.path.join(root, ".git", "polaris-drill-receipts")\n'
+              '    return os.path.join(common if os.path.isabs(common) else os.path.join(root, common), "polaris-drill-receipts")\n'
+              '\n\nRECEIPTS = _receipts_dir()\n')
+    old_decl = 'RECEIPTS = os.path.join(ROOT, ".git", "polaris-drill-receipts")\n'
+    write(ship=SHIP.replace(old_decl, COMMON))
+    assert level() == "OK", "must PASS with the store in the clone's git directory"
+    write(ship=SHIP.replace(old_decl, COMMON.replace('"--git-common-dir"', '"--show-toplevel"')))
+    assert level("inside the working tree") == "FAIL", "must FAIL when the directory is the working tree's top"
+    write(ship=SHIP.replace(old_decl, COMMON.replace('os.path.join(root, ".git", "polaris-drill-receipts")',
+                                                     'os.path.join(root, "drill-receipts")')))
+    assert level("inside the working tree") == "FAIL", "must FAIL when the fallback is inside the working tree"
+
     # Preflight never asks.
     write(pre="echo nothing\n")
     assert level("never asks") == "FAIL", "must FAIL when preflight does not ask"
@@ -21353,6 +21583,50 @@ def test_precommit_folded_entry_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "missing" in out[0].message, \
         "must FAIL when the config is absent"
+
+
+def test_git_spawning_tests_drop_the_hook_environment_check_discriminates(tmp_path):
+    fn = checks.check_git_spawning_tests_drop_the_hook_environment
+    (tmp_path / "scripts").mkdir()
+    mod = tmp_path / "scripts" / "test_tool.py"
+    mod.write_text("import os\n")
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL when no test module spawns git: it read nothing"
+
+    spawn = ("import os, subprocess\n\n"
+             "class T:\n"
+             "    def test_x(self):\n"
+             "        subprocess.run([\"git\", \"-C\", \"/tmp/x\", \"init\", \"-q\"], check=True)\n")
+    module_scrub = ("\n_SAVED = {}\n\n\ndef setUpModule():\n"
+                    "    _SAVED.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith(\"GIT_\")})\n")
+    mod.write_text(spawn)
+    found = fn(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/test_tool.py" in found.message, \
+        f"must FAIL a module that spawns git and drops nothing: {found.message}"
+
+    class_scrub = spawn.replace("class T:\n", "class T:\n    def setUp(self):\n"
+                                "        [os.environ.pop(k) for k in list(os.environ) if k.startswith(\"GIT_\")]\n\n")
+    mod.write_text(class_scrub)
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL a class-level scrub: the next class in the module has none"
+
+    mod.write_text(spawn + module_scrub)
+    assert fn(tmp_path)[0].level == "OK", f"must PASS a setUpModule that drops GIT_*: {fn(tmp_path)[0].message}"
+
+    mod.write_text("import os, pytest, subprocess\n\n\n@pytest.fixture(autouse=True)\n"
+                   "def _no_git(monkeypatch):\n"
+                   "    for k in [k for k in os.environ if k.startswith(\"GIT_\")]:\n"
+                   "        monkeypatch.delenv(k)\n\n\n"
+                   "def test_x():\n    subprocess.run([\"git\", \"status\"])\n")
+    assert fn(tmp_path)[0].level == "OK", f"must PASS an autouse fixture that drops GIT_*: {fn(tmp_path)[0].message}"
+
+    mod.write_text(spawn + module_scrub.replace("GIT_", "GIT_DIR"))
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL a scrub of one named variable: the prefix is the guard"
+
+    mod.write_text(spawn + module_scrub.replace("os.environ.pop(k)", "os.environ.get(k)"))
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL a guard that reads GIT_* and removes nothing"
+
+    mod.write_text(spawn + "\n\ndef setUpModule():\n"
+                   "    for k in [k for k in os.environ if k.startswith(\"GIT_\")]:\n        del os.environ[k]\n")
+    assert fn(tmp_path)[0].level == "OK", f"must PASS a guard that deletes them: {fn(tmp_path)[0].message}"
 
 
 def test_drill_case_counts_check_discriminates(tmp_path):

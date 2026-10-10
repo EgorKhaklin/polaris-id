@@ -17,6 +17,21 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+# Run from a git hook, the environment names the repository being committed (GIT_INDEX_FILE,
+# GIT_DIR, GIT_WORK_TREE). A scratch repository's `git add` or `git commit` here then writes into
+# THAT index: from a linked worktree, where its path is absolute, the tool-tests hook replaced a
+# 1680-entry index with a scratch repository's one file (2026-10-10). No test here sees any of it.
+_HOOK_GIT_ENV = {}
+
+
+def setUpModule():
+    _HOOK_GIT_ENV.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")})
+
+
+def tearDownModule():
+    os.environ.update(_HOOK_GIT_ENV)
+
+
 def _load():
     spec = importlib.util.spec_from_file_location(
         "polaris_ship_tool", os.path.join(_HERE, "polaris-ship.py"))
@@ -548,6 +563,139 @@ class ClassSkipTests(unittest.TestCase):
         self.assertEqual(ship.class_skips(log), [])
 
 
+
+class DrillReceiptsLiveInTheClonesGitDirectory(unittest.TestCase):
+    """A worktree's .git is a file: receipts go to the git directory the clone's worktrees share."""
+
+    def test_a_worktree_and_its_clone_share_one_receipt_store(self):
+        import subprocess, tempfile, shutil
+        root = tempfile.mkdtemp(prefix="polaris-receipts-")
+        self.addCleanup(shutil.rmtree, root, True)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org")
+        clone, tree = os.path.join(root, "clone"), os.path.join(root, "tree")
+        os.makedirs(clone)
+        for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "x"], ["worktree", "add", "-q", "--detach", tree]):
+            subprocess.run(["git", "-C", clone, *args], env=env, check=True, capture_output=True)
+        self.assertTrue(os.path.isfile(os.path.join(tree, ".git")), "fixture: a worktree's .git is a file")
+        in_clone, in_tree = ship._receipts_dir(clone), ship._receipts_dir(tree)
+        self.assertEqual(os.path.realpath(in_clone), os.path.realpath(os.path.join(clone, ".git", "polaris-drill-receipts")))
+        self.assertEqual(os.path.realpath(in_tree), os.path.realpath(in_clone))
+        os.makedirs(in_tree, exist_ok=True)  # what `drills --run` does first; it raised in a worktree
+
+
+class ZkProverStale(unittest.TestCase):
+    """A run refuses a ZK prover built before its source last changed: ZKSnarkTests would check the
+    old circuit (2026-10-10, a worktree linked to a 09-23 binary)."""
+
+    CHANGED = 1_800_000_000  # the commit to polaris_zk/src, as a Unix time
+
+    def setUp(self):
+        import subprocess, tempfile
+        self.root = tempfile.mkdtemp(prefix="polaris-zk-stale-")
+        self.addCleanup(__import__("shutil").rmtree, self.root, True)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org",
+                   GIT_AUTHOR_DATE="@%d +0000" % self.CHANGED, GIT_COMMITTER_DATE="@%d +0000" % self.CHANGED)
+        def git(*args):
+            subprocess.run(["git", "-C", self.root, *args], env=env, check=True, capture_output=True)
+        git("init", "-q")
+        os.makedirs(os.path.join(self.root, "polaris_zk", "src"))
+        with open(os.path.join(self.root, "polaris_zk", "src", "lib.rs"), "w") as f:
+            f.write("// the circuit\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "circuit")
+        self.binary = os.path.join(self.root, "polaris_zk", "target", "release", "polaris-zk")
+
+    def build(self, at):
+        os.makedirs(os.path.dirname(self.binary), exist_ok=True)
+        with open(self.binary, "w") as f:
+            f.write("binary\n")
+        os.utime(self.binary, (at, at))
+
+    def test_a_binary_built_before_the_source_changed_is_refused(self):
+        self.build(self.CHANGED - 3600)
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why)
+        self.assertIn("old circuit", why)
+        self.assertIn("cargo build --release", why)
+
+    def test_a_binary_built_after_it_is_current(self):
+        self.build(self.CHANGED + 3600)
+        self.assertIsNone(ship.zk_prover_stale(self.root, {}))
+
+    def test_no_binary_is_left_to_the_tests_skip(self):
+        self.assertIsNone(ship.zk_prover_stale(self.root, {}))
+
+    def test_the_binary_named_in_the_environment_is_the_one_judged(self):
+        self.build(self.CHANGED + 3600)
+        other = os.path.join(self.root, "old-polaris-zk")
+        with open(other, "w") as f:
+            f.write("binary\n")
+        os.utime(other, (self.CHANGED - 3600, self.CHANGED - 3600))
+        self.assertIn("old circuit", ship.zk_prover_stale(self.root, {"POLARIS_ZK_BINARY": other}))
+
+    def test_a_run_refuses_a_stale_prover_before_it_touches_a_database(self):
+        import io
+        import sys
+        calls = []
+        saved = ship.zk_prover_stale, ship.hold_run_lock, ship._python
+        ship.zk_prover_stale = lambda root, env: "the prover is stale (stand-in)"
+        ship.hold_run_lock = lambda env, *a, **k: calls.append("lock") or (None, "stand-in")
+        # run() first requires an interpreter with flask and psycopg2; the hook's python3 has
+        # neither, and the refusal under test comes before anything uses it.
+        ship._python = lambda: sys.executable
+        try:
+            out = io.StringIO()
+            rc = ship.run(["--shards", "1"], out)
+        finally:
+            ship.zk_prover_stale, ship.hold_run_lock, ship._python = saved
+        self.assertEqual(rc, 2)
+        self.assertIn("run: refused: the prover is stale (stand-in).", out.getvalue())
+        self.assertEqual(calls, [], "the run went on to take the database lock")
+
+    def test_a_change_merged_later_counts_from_its_merge(self):
+        # A side branch's commit to the circuit, dated before the binary, reaches this branch with a
+        # merge dated after it: the binary in between was built from the earlier circuit.
+        import subprocess
+        def git(when, *args):
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org",
+                       GIT_AUTHOR_DATE="@%d +0000" % when, GIT_COMMITTER_DATE="@%d +0000" % when)
+            subprocess.run(["git", "-C", self.root, *args], env=env, check=True, capture_output=True)
+        main = subprocess.run(["git", "-C", self.root, "rev-parse", "--abbrev-ref", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        git(self.CHANGED, "checkout", "-q", "-b", "side")
+        with open(os.path.join(self.root, "polaris_zk", "src", "lib.rs"), "a") as f:
+            f.write("// the zero-knowledge configuration\n")
+        git(self.CHANGED + 1000, "commit", "-q", "-am", "circuit change on a side branch")
+        git(self.CHANGED + 1000, "checkout", "-q", main)
+        git(self.CHANGED + 9000, "merge", "-q", "--no-ff", "-m", "merge the circuit change", "side")
+        self.build(self.CHANGED + 5000)
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why, "a binary built before the merge passed as current")
+        self.assertIn("old circuit", why)
+
+    def test_an_uncommitted_change_newer_than_the_binary_is_refused(self):
+        self.build(self.CHANGED + 3600)
+        src = os.path.join(self.root, "polaris_zk", "src", "lib.rs")
+        with open(src, "a") as f:
+            f.write("// edited, not committed\n")
+        os.utime(src, (self.CHANGED + 7200, self.CHANGED + 7200))
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why)
+        self.assertIn("uncommitted change", why)
+        os.utime(src, (self.CHANGED + 60, self.CHANGED + 60))
+        self.assertIsNone(ship.zk_prover_stale(self.root, {}), "an edit older than the binary was refused")
+
+    def test_an_unreadable_history_is_not_a_current_binary(self):
+        import shutil
+        self.build(self.CHANGED + 3600)
+        shutil.rmtree(os.path.join(self.root, ".git"))
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why)
+        self.assertIn("could not be read", why)
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -761,8 +909,11 @@ class RunLockTests(unittest.TestCase):
 
         out = io.StringIO()
         refused = (None, "another polaris-ship run holds the shard databases (polaris_test_s*) on this server")
+        # The prover check comes first and reads git history where a built prover exists (a worktree
+        # linking polaris_zk/target): ZkProverStale holds that refusal; this one holds the lock's.
         with mock.patch.dict(os.environ, {"POLARIS_DB_USER": "drill"}), \
                 mock.patch.object(ship, "_python", return_value="python3"), \
+                mock.patch.object(ship, "zk_prover_stale", return_value=None), \
                 mock.patch.object(ship, "hold_run_lock", return_value=refused), \
                 mock.patch.object(ship.subprocess, "Popen", side_effect=no_process), \
                 mock.patch.object(ship.subprocess, "run", side_effect=no_process):
@@ -980,9 +1131,44 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertNotIn("systemctl", upgrade)
         # Generic: which files one release lacks belongs in that release's CHANGELOG line, not here.
         self.assertNotIn("rc.70", upgrade)
-        self.assertIn("a secret file the production compose file mounts", upgrade)
+        self.assertIn("a secret file the stack mounts is missing", upgrade)
         self.assertIn("/blob/v9.9.9/docs/operator/OPERATIONS.md#polaris-version-upgrade", upgrade)
 
     def test_a_block_with_no_intro_has_no_summary(self):
         head = self.render("").split("### Breaking changes")[0]
         self.assertNotIn("Security", head)
+
+
+class AHookIndexIsLeftAlone(unittest.TestCase):
+    """setUpModule's effect, not its shape. The suites that build scratch repositories run as the
+    tool-tests hook runs them, with GIT_INDEX_FILE and GIT_DIR naming the repository whose commit
+    is being made, and that repository's index must come out byte for byte as it went in. Without
+    the scrub they wrote their scratch trees into it (2026-10-10: 1680 entries became 1)."""
+
+    def test_the_scratch_repository_suites_leave_the_hook_s_index_unchanged(self):
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+        root = tempfile.mkdtemp(prefix="polaris-hook-index-")
+        self.addCleanup(shutil.rmtree, root, True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org")
+        with open(os.path.join(root, "staged.txt"), "w") as f:
+            f.write("the commit being made\n")
+        for args in (["init", "-q"], ["add", "staged.txt"]):
+            subprocess.run(["git", "-C", root, *args], env=env, check=True, capture_output=True)
+        index = os.path.join(root, ".git", "index")
+        with open(index, "rb") as f:
+            before = f.read()
+        self.assertTrue(before, "fixture: the hook's index holds the staged file")
+        hook = dict(env, GIT_INDEX_FILE=index, GIT_DIR=os.path.join(root, ".git"))
+        r = subprocess.run([sys.executable, "-m", "unittest", "test_ship_tool.ZkProverStale",
+                            "test_ship_tool.DrillReceiptsLiveInTheClonesGitDirectory",
+                            "test_operator_env.DeployRechecksTheSecretsAfterItsOwnPull"],
+                           cwd=_HERE, env=hook, capture_output=True, text=True, timeout=600)
+        with open(index, "rb") as f:
+            after = f.read()
+        self.assertEqual(after, before, "a scratch repository wrote into the index of the commit being made")
+        self.assertEqual(r.returncode, 0, "the suites failed under a hook's environment:\n" + r.stderr[-3000:])

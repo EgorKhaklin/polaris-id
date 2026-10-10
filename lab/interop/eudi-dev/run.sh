@@ -243,7 +243,7 @@ start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exi
   TUNNEL_PID=$!
   TUNNEL_URL=""
   for _ in $(seq 1 60); do
-    TUNNEL_URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "cloudflared-$TUNNELS.log" | head -1 || true)"
+    TUNNEL_URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "cloudflared-$TUNNELS.log" | sed -n 1p || true)"
     [ -n "$TUNNEL_URL" ] && grep -q 'Registered tunnel connection' "cloudflared-$TUNNELS.log" && return 0
     sleep 1
   done
@@ -298,7 +298,7 @@ EOF
 # not check it has no such flag, so the flag is read off the wallet's own help. Behind a tunnel
 # the public certificate needs nothing.
 TLS_CA=() TLS_CHECKED=""
-if [ "$TUNNEL" != 1 ] && wallet accept --help 2>&1 | grep -q -- '--tls-ca'; then
+if [ "$TUNNEL" != 1 ] && wallet accept --help 2>&1 | grep -- '--tls-ca' >/dev/null; then
   TLS_CA=(--tls-ca "$(in_wallet_view pki/tls.pem)") TLS_CHECKED=1
   echo "TLS        the wallet checks the verifier's; it trusts keygen's listener certificate"
 fi

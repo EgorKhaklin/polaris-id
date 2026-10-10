@@ -8,9 +8,12 @@ the schema revokes, and every deploy's object sync gave back DELETE on `Enrollme
 
 Each row below names a procedure, the drill that runs it, and what that drill compares. A drill
 fails on any difference it does not expect: a lost fact, a gained one, or a changed definition.
-Where a row compares against a fresh install, it is this release installed in the same cluster from
-the files its database image carries, and partitions are compared by their table, since which
-months exist depends on the date.
+Where a row compares against a fresh install, it is this release installed in a throwaway cluster
+of its own from the database image the upgrade deployed, initialised as a production install is,
+and partitions are compared by their table, since which months exist depends on the date. The two
+clusters' roles are compared for the roles Polaris creates (`polaris_app`, and `polaris_replicator`
+when the stack has a replication password); a role only one cluster has and Polaris does not create
+is left out, and the drill names it.
 
 The state is read by [`scripts/lib/polaris-db-state.sh`](../../scripts/lib/polaris-db-state.sh) unless the row says otherwise. Its
 security kinds: role, member, table, column, sequence, execute, schema, database, defacl,

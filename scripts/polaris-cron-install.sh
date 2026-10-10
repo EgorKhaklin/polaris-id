@@ -125,7 +125,7 @@ ${MARKER_BEGIN}
 
 # Quarterly restore rehearsal (dry-run) at 03:00 1st of Jan/Apr/Jul/Oct. The measured DR
 # drill (RPO/RTO) is polaris-dr-drill.sh under the systemd timer in deploy/linux/.
-0 3 1 1,4,7,10 *   ${SCRIPTS_DIR}/polaris-restore.sh --dry-run \$(ls -t ${BACKUP_DEST}/polaris-*.tar.gz ${BACKUP_DEST}/polaris-*.tar.gz.enc 2>/dev/null | head -1) 2>&1 | logger -t polaris-dr-drill
+0 3 1 1,4,7,10 *   ${SCRIPTS_DIR}/polaris-restore.sh --dry-run \$(ls -t ${BACKUP_DEST}/polaris-*.tar.gz ${BACKUP_DEST}/polaris-*.tar.gz.enc 2>/dev/null | sed -n 1p) 2>&1 | logger -t polaris-dr-drill
 
 ${MARKER_END}
 EOF

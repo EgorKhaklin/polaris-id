@@ -115,7 +115,7 @@ This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROA
 
 Whether an operator who is not the author can install, run, upgrade and recover Polaris, one criterion per row ([lab record 017](../lab/strategy/017-production-operability.md)). A PASS row cites evidence that `check_operability_gate` resolves: a check, a test, a drill or a file. This gate is about operating the software; it is not readiness for real identity data, which the status line above and the last row keep separate.
 
-28 criteria: 21 PASS, 5 PARTIAL, 2 FAIL, 0 UNKNOWN.
+29 criteria: 22 PASS, 5 PARTIAL, 2 FAIL, 0 UNKNOWN.
 
 | ID | Criterion | Status | Evidence |
 |---|---|---|---|
@@ -147,6 +147,7 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 | OP-26 | The client address is correct behind load balancers and NAT | PASS | `drill:scripts/polaris-client-ip-drill.sh`, `check:client_ip_behind_proxies`, `check:edge_settings_reach_the_edge`: the client's own address behind an L7 balancer the operator names, and behind an L4 balancer that rewrites source addresses and sends a PROXY protocol header; forged headers and forged PROXY lines refused, directly and through the balancer. The metrics surfaces are refused through an SNAT hop (`drill:scripts/polaris-metrics-edge-drill.sh`). |
 | OP-27 | Contributors need no Kubernetes | PASS | `file:Polaris.command` |
 | OP-28 | Real identity data | FAIL | Needs an external security review, the operator's DPIA and a pilot (above). |
+| OP-29 | A PostgreSQL major-version upgrade is drilled, there and back | PASS | `drill:scripts/polaris-pg-upgrade-drill.sh` runs OPERATIONS.md's upgrade from 16 to 17 and its rollback as written, and requires the same rows, sequences, catalogue, roles and privileges on each side, a credential issued before still valid, pgBackRest healthy after both, and the deploy to refuse another major's cluster both ways; its control must name one changed audit row (`check:pg_upgrade_drilled`); `.github/workflows/pg-upgrade.yml` runs both on CI's Docker Compose nightly, on main, and for every change to the procedure |
 
 ## What is already production-grade
 
