@@ -119,8 +119,28 @@ HSM-sole-signer profile refuses to start with wallet-copy keys configured, since
 a signer outside the HSM. The credential issuer identifier is read from the leaf, not
 configured: the one https URI subjectAltName whose path is `/api/v1/oid4vci/<agency_id>`. A leaf
 that names none, or two, is a fault, so the `iss` a copy carries is always the name its
-certificate gives. `polaris-oid4vp` refuses a credential whose `iss` its `x5c` leaf does not
-name (`dd57b8c1`).
+certificate gives. `polaris-oid4vp` refuses a credential whose `x5c` leaf names an issuer other
+than its `iss` (`dd57b8c1`). A leaf that names none leaves the `iss` unbound. Since 2026-10-10 the
+verifier accepts that, because the EU reference PID issuer's certificates have no
+subjectAltName: it names the issuer by the certificate's subject and anchor, and keeps the
+unbound `iss` out of the claims and away from the status resolver.
+
+Prior art for the same case. The EU reference verifier (eudi-srv-verifier-endpoint at `df07af2f`,
+on eudi-lib-jvm-sdjwt-kt 0.20.1 at `e8a94cb6`) takes the key from the `x5c` leaf once its trust
+check passes and compares `iss` with nothing (`NimbusSdJwtVcVerifierFactory.kt`,
+`fromX509CertChain`); its subjectAltName match was removed by PR #435 (`da33339a`). Credo (credo-ts
+at `e3788dc4`, as in v0.7.2) refuses an `iss` that is neither a URI subjectAltName of the leaf nor
+the host of a DNS one, with no option to relax it (`SdJwtVcService.ts`,
+`assertValidX5cJwtIssuer`), so it refuses the reference issuer's PIDs. Neither reads the leaf's
+extended key usage (Credo's `X509Service.ts`: "Extended Key Usage is parsed but not enforced").
+Where this verifier is stricter, and why:
+
+- A leaf that names another issuer is refused, as Credo does and the reference verifier does
+  not: that is one issuer's key signing as another (`dd57b8c1`).
+- An unbound `iss` is kept out of the claims and the status resolver, where the reference
+  verifier passes it on: a status authority keyed by issuer would read the named issuer's list.
+- An extended key usage, when stated, must name an issuer's purpose, which neither checks:
+  otherwise every TLS certificate a trusted CA issued would sign credentials.
 
 ## Privacy
 

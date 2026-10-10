@@ -57,7 +57,8 @@ def _general_names(*specs):
     """("uri", value) and ("dns", value) pairs as x509 general names; a flat pair is one spec."""
     if specs and isinstance(specs[0], str):
         specs = (specs,)
-    kinds = {"uri": x509.UniformResourceIdentifier, "dns": x509.DNSName}
+    kinds = {"uri": x509.UniformResourceIdentifier, "dns": x509.DNSName,
+             "email": x509.RFC822Name}
     out = []
     for spec in specs:
         if spec and isinstance(spec[0], str):
@@ -69,6 +70,32 @@ def _general_names(*specs):
 def _disclosure(salt, name, value):
     raw = json.dumps([salt, name, value], separators=(",", ":")).encode()
     return b64u_encode(raw)
+
+
+#: Leaves `iss` out of a credential, where None would sign a JSON null into it.
+_ABSENT = object()
+
+
+def _x5c_presentation(leaf, leaf_key, iss=_ABSENT, status=None):
+    """A presentation, key binding included, of a credential `leaf_key` signs with `leaf` as its
+    `x5c`, carrying `iss` unless it is _ABSENT and a `status` claim when one is given."""
+    holder_key = ec.generate_private_key(ec.SECP256R1())
+    disclosures = [_disclosure("salt0", "given_name", "Jean")]
+    digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest()) for d in disclosures]
+    payload = {"vct": "urn:eudi:pid:1", "iat": int(time.time()), "_sd": digests,
+               "_sd_alg": "sha-256", "cnf": {"jwk": _public_jwk(holder_key)}}
+    if iss is not _ABSENT:
+        payload["iss"] = iss
+    if status is not None:
+        payload["status"] = status
+    der = leaf.public_bytes(serialization.Encoding.DER)
+    issuer_jwt = _jws(leaf_key, {"alg": "ES256", "typ": "dc+sd-jwt",
+                                 "x5c": [base64.b64encode(der).decode()]}, payload)
+    presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
+    kb = _jws(holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+              {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
+               "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
+    return presented + kb
 
 
 class Wallet:
@@ -750,6 +777,9 @@ class X5CTests(unittest.TestCase):
                 self.assertEqual(at(now).code, "issuer_key")
 
     def test_a_leaf_from_another_anchor_is_refused(self):
+        """The refusal that names the chain. An integrator debugs from this text, and until
+        2026-10-10 a leaf the anchor HAD certified, refused for its extended key usage, read the
+        same; that one now names the usage (IssuerCertificateTests)."""
         _, leaf, leaf_key = self._chain()
         other_ca, _, _ = self._chain()
         presentation = self._present_with_x5c(leaf, leaf_key)
@@ -757,6 +787,7 @@ class X5CTests(unittest.TestCase):
                                 trust_anchors=[other_ca])
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_key")
+        self.assertEqual(v.reason, "the x5c leaf does not chain to any configured trust anchor")
 
     def test_an_x5c_with_no_anchor_configured_is_refused(self):
         _, leaf, leaf_key = self._chain()
@@ -770,30 +801,23 @@ class IssuerNamedByItsCertificateTests(unittest.TestCase):
     """With `x5c` the issuer is the certificate's (SD-JWT VC draft 19, section 2.5), so an
     `iss` must be a name the leaf gives: one of its URI subjectAltNames exactly, or, for a leaf
     that names only DNS hosts, an https URL on one of them. Found 2026-09-28: issuer A's leaf
-    signed a credential naming issuer B, and it verified as B's, B's status list included."""
+    signed a credential naming issuer B, and it verified as B's, B's status list included.
+
+    A leaf that gives no such name leaves `iss` unbound (2026-10-10, the EU reference PID
+    issuer's shape): the verdict names the certificate and its anchor, and the `iss` stays out
+    of `claims` and away from the status resolver."""
 
     A = "https://a.example/api/v1/oid4vci/1"
     B = "https://b.example/api/v1/oid4vci/2"
     NO_ISS = object()
+    STATUS = {"status_list": {"uri": "https://status.example/lists/1", "idx": 3}}
 
-    def _verify(self, san, iss):
+    def _verify(self, san, iss, status=None, **kw):
         ca, leaf, leaf_key = X5CTests._chain(san=san)
-        w = Wallet()
-        disclosures = [_disclosure("salt0", "given_name", "Jean")]
-        digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest()) for d in disclosures]
-        payload = {"vct": "urn:eudi:pid:1", "iat": int(time.time()), "_sd": digests,
-                   "_sd_alg": "sha-256", "cnf": {"jwk": _public_jwk(w.holder_key)}}
-        if iss is not self.NO_ISS:
-            payload["iss"] = iss
-        der = leaf.public_bytes(serialization.Encoding.DER)
-        issuer_jwt = _jws(leaf_key, {"alg": "ES256", "typ": "dc+sd-jwt",
-                                     "x5c": [base64.b64encode(der).decode()]}, payload)
-        presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
-        kb = _jws(w.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
-                  {"iat": int(time.time()), "aud": AUDIENCE, "nonce": NONCE,
-                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
-        return verify_presentation(presented + kb, expected_nonce=NONCE,
-                                   expected_audience=AUDIENCE, trust_anchors=[ca])
+        presentation = _x5c_presentation(leaf, leaf_key, _ABSENT if iss is self.NO_ISS else iss,
+                                         status)
+        return verify_presentation(presentation, expected_nonce=NONCE,
+                                   expected_audience=AUDIENCE, trust_anchors=[ca], **kw)
 
     def assertAuthentic(self, v):
         self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
@@ -807,24 +831,124 @@ class IssuerNamedByItsCertificateTests(unittest.TestCase):
         v = self._verify(("uri", self.A), self.A)
         self.assertAuthentic(v)
         self.assertEqual(v.claims.get("iss"), self.A)
+        self.assertEqual((v.iss_bound, v.unbound_iss), (True, None))
+        self.assertEqual((v.issuer_subject, v.issuer_anchor), ("CN=issuer", "CN=test anchor"))
 
     def test_an_iss_another_certificate_names_is_refused(self):
         v = self._verify(("uri", self.A), self.B)
         self.assertRefused(v)
-        self.assertIn(self.B, v.reason)
+        self.assertEqual(v.reason, "the credential names issuer %r and the certificate that "
+                                   "signed it names %r" % (self.B, self.A))
 
     def test_without_an_iss_the_leaf_is_the_issuer(self):
         """The shape OID4VCgo's issuer produces: x5c, no `iss`, a leaf that names nothing."""
-        self.assertAuthentic(self._verify(None, self.NO_ISS))
+        v = self._verify(None, self.NO_ISS)
+        self.assertAuthentic(v)
+        self.assertEqual((v.issuer_subject, v.issuer_anchor), ("CN=issuer", "CN=test anchor"))
+        self.assertEqual((v.iss_bound, v.unbound_iss), (None, None))
 
-    def test_a_leaf_that_names_no_issuer_cannot_carry_an_iss(self):
-        self.assertRefused(self._verify(None, self.A))
+    def test_a_leaf_that_names_no_issuer_leaves_iss_unbound(self):
+        """The EU reference PID issuer's shape (oauth-sd-jwt-vc issue #433): x5c, an https `iss`,
+        and a leaf with no subjectAltName. Refused until 2026-10-10 as "nothing binds the two".
+        It verifies, and nothing in the verdict calls the `iss` the issuer; the certificate is."""
+        v = self._verify(None, self.A)
+        self.assertAuthentic(v)
+        self.assertEqual((v.issuer_subject, v.issuer_anchor), ("CN=issuer", "CN=test anchor"))
+        self.assertEqual((v.iss_bound, v.unbound_iss), (False, self.A))
+        # `claims` carries what the issuer signed and the wallet disclosed, less the unbound iss.
+        self.assertEqual(sorted(v.claims), ["cnf", "given_name", "iat", "vct"])
+        self.assertEqual({k: v.as_dict()[k] for k in ("iss_bound", "unbound_iss")},
+                         {"iss_bound": False, "unbound_iss": self.A})
+
+    def test_a_leaf_naming_no_uri_or_host_leaves_iss_unbound_too(self):
+        """A subjectAltName with neither a URI nor a DNS name (an e-mail address here) gives no
+        name an `iss` could be, so it binds nothing, as no subjectAltName at all does."""
+        v = self._verify(("email", "pid@a.example"), self.A)
+        self.assertAuthentic(v)
+        self.assertEqual((v.iss_bound, v.unbound_iss), (False, self.A))
+        self.assertNotIn("iss", v.claims)
+
+    def test_issuer_as_key_naming_issuer_b_is_refused_or_reported_as_a(self):
+        """dd57b8c1's attack, both ways. A's key signs a credential naming issuer B. Where A's
+        leaf names A, it is refused, as since 2026-09-28. Where it names nothing, it verifies as
+        A's certificate under A's anchor; B is the issuer nowhere in the verdict, and the status
+        resolver is not given B."""
+        self.assertRefused(self._verify(("uri", self.A), self.B))
+        asked = []
+
+        def resolver(**kw):
+            asked.append(kw)
+            return {"checked": False, "code": "no_authority", "reason": "nothing is stated"}
+        v = self._verify(None, self.B, status=self.STATUS, status_resolver=resolver)
+        self.assertAuthentic(v)
+        self.assertEqual((v.issuer_subject, v.issuer_anchor), ("CN=issuer", "CN=test anchor"))
+        self.assertNotIn("iss", v.claims)
+        self.assertEqual((v.iss_bound, v.unbound_iss), (False, self.B))
+        self.assertEqual([call["issuer"] for call in asked], [None])
+        self.assertNotIn(self.B, repr(asked))
+
+    def _stated(self, issuer, calls):
+        """A resolver for the one list at STATUS's uri, with `status.StatedAuthority` stating its
+        key for `issuer` alone, that records every call it gets."""
+        from polaris_oid4vp import status as S
+        from polaris_oid4vp.sdjwt import _verify_es256
+        uri = self.STATUS["status_list"]["uri"]
+        list_key = ec.generate_private_key(ec.SECP256R1())
+        authority = S.StatedAuthority().state(
+            credential_issuer=issuer, status_uri=uri,
+            verify=lambda signing_input, signature, header: _verify_es256(
+                list_key.public_key(), bytes(signing_input), signature),
+            why="the test states this key for this issuer")
+        token = _jws(list_key, {"alg": "ES256", "typ": "statuslist+jwt"},
+                     {"sub": uri, "iat": int(time.time()),
+                      "status_list": {"bits": 1, "lst": S.encode_status_list([0] * 8)}})
+
+        def resolver(*, uri, idx, issuer):
+            calls.append({"uri": uri, "idx": idx, "issuer": issuer})
+            return S.decide(token, index=idx, expected_uri=uri, authority=authority,
+                            now=int(time.time()), credential_issuer=issuer)
+        return resolver
+
+    def test_a_bound_iss_still_reaches_the_resolver_and_resolves(self):
+        """The half a regression takes silently. `StatedAuthority` is keyed by issuer, so a
+        resolver given no issuer finds nothing stated: an `iss` the leaf names, and the `iss` of a
+        credential under the operator's configured keys, must still be passed as before."""
+        calls = []
+        v = self._verify(("uri", self.A), self.A, status=self.STATUS,
+                         status_resolver=self._stated(self.A, calls))
+        self.assertAuthentic(v)
+        self.assertEqual((v.revocation["state"], v.revocation["status"]), ("checked", 0))
+        self.assertEqual([call["issuer"] for call in calls], [self.A])
+        calls = []
+        w = Wallet()
+        v = w.verify(w.present(payload_extra={"status": self.STATUS}),
+                     status_resolver=self._stated("https://issuer.example", calls))
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual((v.revocation["state"], v.revocation["status"]), ("checked", 0))
+        self.assertEqual([call["issuer"] for call in calls], ["https://issuer.example"])
+        self.assertEqual((v.issuer_subject, v.issuer_anchor, v.iss_bound, v.unbound_iss),
+                         (None, None, None, None))
+
+    def test_an_unbound_iss_reaches_no_resolver(self):
+        """Every call the resolver gets is recorded, and the unbound `iss` is in none of them, so
+        a list stated for that name is not read as this credential's: no authority is found."""
+        calls = []
+        v = self._verify(None, self.A, status=self.STATUS,
+                         status_resolver=self._stated(self.A, calls))
+        self.assertAuthentic(v)
+        self.assertEqual([call["issuer"] for call in calls], [None])
+        self.assertNotIn(self.A, repr(calls))
+        self.assertEqual(v.revocation["state"], "no_authority")
 
     def test_a_leaf_naming_only_hosts_binds_an_https_iss_on_one_of_them(self):
         hosts = (("dns", "a.example"), ("dns", "c.example"))
         self.assertAuthentic(self._verify(hosts, self.A))
         self.assertAuthentic(self._verify(hosts, "https://A.EXAMPLE:8443/tenant"))
-        self.assertRefused(self._verify(hosts, self.B))
+        v = self._verify(hosts, self.B)
+        self.assertRefused(v)
+        self.assertEqual(v.reason, "the credential names issuer %r and the certificate that "
+                                   "signed it names only the host(s) 'a.example', 'c.example'"
+                                   % (self.B,))
         self.assertRefused(self._verify(hosts, "http://a.example/api"))
         self.assertRefused(self._verify(hosts, "https://someone@a.example/api"))
 
@@ -838,9 +962,39 @@ class IssuerNamedByItsCertificateTests(unittest.TestCase):
         self.assertRefused(self._verify(san, other))
 
     def test_an_iss_that_is_not_a_string_is_refused_not_raised(self):
-        for iss in (None, 5, [self.A], {"iss": self.A}, ""):
-            with self.subTest(iss=iss):
-                self.assertRefused(self._verify(("uri", self.A), iss))
+        """Whether or not the leaf names anything: an `iss` that is not an identifier is not
+        reported as an unbound one."""
+        for san in (("uri", self.A), None):
+            for iss in (None, 5, [self.A], {"iss": self.A}, ""):
+                with self.subTest(san=san, iss=iss):
+                    v = self._verify(san, iss)
+                    self.assertRefused(v)
+                    self.assertEqual(v.reason, "the credential's iss is %r, which is not an "
+                                               "issuer identifier" % (iss,))
+
+    def test_a_name_that_does_not_parse_refuses_by_name(self):
+        """Defence in depth behind `_not_an_issuer_leaf`, which reads every extension first and
+        refuses a leaf whose extensions do not parse ("basic constraints do not parse"), so no
+        presentation reaches these two; each says what failed when it is reached directly."""
+        from polaris_oid4vp import sdjwt as S
+        from cryptography.x509.oid import ExtensionOID
+        for oid, check, said in (
+                (ExtensionOID.SUBJECT_ALTERNATIVE_NAME, lambda leaf: S._leaf_names(leaf, self.A),
+                 "the issuer certificate's subjectAltName does not parse, so it names no issuer"),
+                (ExtensionOID.EXTENDED_KEY_USAGE, S._leaf_eku_refusal,
+                 "the x5c leaf's extended key usage does not parse, so it permits no credential "
+                 "signing")):
+            with self.subTest(extension=oid.dotted_string):
+                key = ec.generate_private_key(ec.SECP256R1())
+                name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "issuer")])
+                now = datetime.datetime.now(datetime.timezone.utc)
+                leaf = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                        .public_key(key.public_key()).serial_number(1).not_valid_before(now)
+                        .not_valid_after(now + datetime.timedelta(days=1))
+                        .add_extension(x509.UnrecognizedExtension(oid, b"\x30\x03\x02\x01\x05"),
+                                       critical=False)
+                        .sign(key, hashes.SHA256()))
+                self.assertEqual(check(leaf), said)
 
 
 class RefusalsCoverageFoundTests(unittest.TestCase):
@@ -1684,6 +1838,10 @@ class IssuerCertificateTests(unittest.TestCase):
         v = self._verify(leaf, leaf_key, ca)
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_key")
+        # The anchor certified this leaf, so "does not chain" (the text until 2026-10-10) sent an
+        # integrator to the wrong certificate. The refusal names the usage it found.
+        self.assertEqual(v.reason, "the x5c leaf's extended key usage permits no credential "
+                                   "signing: 1.3.6.1.5.5.7.3.1")
 
     #: ISO/IEC 18013-5's document signer EKU, as EUDI issuers mark their signing certificates.
     MDL_DS = x509.ObjectIdentifier("1.0.18013.5.1.2")
@@ -1725,6 +1883,30 @@ class IssuerCertificateTests(unittest.TestCase):
         v = self._verify(leaf, leaf_key, ca)
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_key")
+        self.assertEqual(v.reason, "the x5c leaf's extended key usage permits no credential "
+                                   "signing: 1.3.6.1.5.5.7.3.8")
+
+    def test_the_reference_pid_document_signer_usage_is_an_issuers(self):
+        """1.3.130.2.0.0.1.2, the ARF PID Rulebook's id-eudi-iso-pid-kp-DS, critical and alone, as
+        the EU reference PID issuer's document signers carry it. Refused until 2026-10-10."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (self.SIGN_ONLY, True),
+            (x509.ExtendedKeyUsage([x509.ObjectIdentifier("1.3.130.2.0.0.1.2")]), True)))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_the_reference_pid_ca_usage_is_still_not_an_issuers(self):
+        """One OID was added, not its arc. 1.3.130.2.0.0.1.7, id-eudi-iso-pid-kp-IACA, is on the
+        reference issuer's CA certificate: a CA's purpose, refused on a leaf by name."""
+        ca_key, ca_name, ca = self._ca()
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=(
+            (self.SIGN_ONLY, True),
+            (x509.ExtendedKeyUsage([x509.ObjectIdentifier("1.3.130.2.0.0.1.7")]), True)))
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.reason, "the x5c leaf's extended key usage permits no credential "
+                                   "signing: 1.3.130.2.0.0.1.7")
 
     def test_a_leaf_whose_key_usage_permits_signing_is_accepted(self):
         """The other direction: a certificate that states its usage AND names signing is a
@@ -1752,6 +1934,135 @@ class IssuerCertificateTests(unittest.TestCase):
                                 expected_audience=AUDIENCE, trust_anchors=[ca])
         self.assertIsInstance(v, Verdict)
         self.assertFalse(v.authentic)
+
+
+class ReferencePidIssuerCertificateTests(unittest.TestCase):
+    """The EU reference PID issuer's published document-signer certificates, refused until
+    2026-10-10 twice over: their extended key usage, 1.3.130.2.0.0.1.2 (the ARF PID Rulebook's
+    id-eudi-iso-pid-kp-DS), was not one an issuer may hold, and they have no subjectAltName while
+    the issuer's PIDs carry `iss` (oauth-sd-jwt-vc issue #433). testdata/README.md records where
+    each file came from. Their private keys were not taken, so a credential here is signed by a
+    throwaway key under a test CA, in a certificate with the published subject and extensions.
+
+    R1 to R4 are the measurement that found this, on PID-DS-0002's extensions: R1 and R2 carry
+    them as published, R3 and R4 with the extended key usage swapped for ISO 18013-5's document
+    signer; R1 and R3 carry `iss`, R2 and R4 do not. Until 2026-10-10 R1 and R2 were refused at
+    the extended key usage, R3 at the iss rule, and R4 verified."""
+
+    DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata", "eudi-pid-ds")
+    #: The files as fetched (testdata/README.md), so a changed file fails as a changed file.
+    SHA256 = {
+        "PID-DS-0002.cert.der": "77c89447a275b9d23634e66c2ecfeee11b0f98d551ac6b1f2b27966afaf8dd8f",
+        "PID-DS-0003.cert.der": "a5f46f401f953a602e102784b8b2a19b2a834924ba9e9edfdb179bd04a452fc0",
+        "PIDIssuerCAUT01.pem": "3b04635db064490bf4cf22538de024189982065413a7d5bb002e99644c11b8af",
+    }
+    DS_EKU = x509.ObjectIdentifier("1.3.130.2.0.0.1.2")
+    MDL_DS = x509.ObjectIdentifier("1.0.18013.5.1.2")
+    #: The `iss` oauth-sd-jwt-vc issue #433 shows on a PID from the reference deployment.
+    ISS = "https://backend.issuer.eudiw.dev"
+    #: Inside both document signers' validity, 2024-07-01 to 2025-09-24; both have expired since.
+    WHILE_VALID = datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc).timestamp()
+    SINCE_EXPIRED = datetime.datetime(2026, 10, 10, tzinfo=datetime.timezone.utc).timestamp()
+    NO_CHAIN = "the x5c leaf does not chain to any configured trust anchor"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.raw = {}
+        for name in cls.SHA256:
+            with open(os.path.join(cls.DIR, name), "rb") as fh:
+                cls.raw[name] = fh.read()
+        cls.signers = [x509.load_der_x509_certificate(cls.raw[name])
+                       for name in ("PID-DS-0002.cert.der", "PID-DS-0003.cert.der")]
+        cls.ca = x509.load_pem_x509_certificate(cls.raw["PIDIssuerCAUT01.pem"])
+
+    @staticmethod
+    def _header(leaf):
+        der = leaf.public_bytes(serialization.Encoding.DER)
+        return {"alg": "ES256", "typ": "dc+sd-jwt", "x5c": [base64.b64encode(der).decode()]}
+
+    def test_the_fixtures_are_the_published_files(self):
+        for name, digest in sorted(self.SHA256.items()):
+            with self.subTest(name=name):
+                self.assertEqual(hashlib.sha256(self.raw[name]).hexdigest(), digest)
+
+    def test_they_carry_what_was_refused(self):
+        """So that the tests below are about these certificates: the extended key usage critical
+        and alone, and no subjectAltName."""
+        for leaf in self.signers:
+            with self.subTest(leaf=leaf.subject.rfc4514_string()):
+                eku = leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage)
+                self.assertTrue(eku.critical)
+                self.assertEqual(list(eku.value), [self.DS_EKU])
+                with self.assertRaises(x509.ExtensionNotFound):
+                    leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+
+    def test_each_chains_to_the_published_ca_while_valid(self):
+        """The chain step `verify_presentation` takes, on the real certificates and their real
+        CA. Until 2026-10-10 its answer was the NO_CHAIN sentence, for the extended key usage."""
+        from polaris_oid4vp import sdjwt as S
+        for leaf in self.signers:
+            with self.subTest(leaf=leaf.subject.rfc4514_string()):
+                keys, why, certified = S._issuer_public_keys(
+                    self._header(leaf), None, [self.ca], self.WHILE_VALID)
+                self.assertEqual(why, "")
+                self.assertEqual(len(keys), 1)
+                self.assertEqual(certified, (leaf, self.ca))
+
+    def test_their_own_validity_still_governs(self):
+        from polaris_oid4vp import sdjwt as S
+        for leaf in self.signers:
+            with self.subTest(leaf=leaf.subject.rfc4514_string()):
+                keys, why, _ = S._issuer_public_keys(
+                    self._header(leaf), None, [self.ca], self.SINCE_EXPIRED)
+                self.assertEqual((keys, why), ([], self.NO_CHAIN))
+
+    def test_they_leave_iss_unbound_rather_than_refuse_it(self):
+        from polaris_oid4vp import sdjwt as S
+        for leaf in self.signers:
+            with self.subTest(leaf=leaf.subject.rfc4514_string()):
+                self.assertIsNone(S._leaf_names(leaf, self.ISS))
+
+    @staticmethod
+    def _under_a_test_ca(source, eku=None):
+        """(ca, leaf, key): `source`'s subject and every one of its extensions as published, `eku`
+        replacing the extended key usage, in a leaf a throwaway key holds under a fresh test CA."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ca_key = ec.generate_private_key(ec.SECP256R1())
+        ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test PID Issuer CA")])
+        ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
+              .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
+              .not_valid_before(now - datetime.timedelta(days=1))
+              .not_valid_after(now + datetime.timedelta(days=30))
+              .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+              .sign(ca_key, hashes.SHA256()))
+        key = ec.generate_private_key(ec.SECP256R1())
+        builder = (x509.CertificateBuilder().subject_name(source.subject).issuer_name(ca_name)
+                   .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(now - datetime.timedelta(days=1))
+                   .not_valid_after(now + datetime.timedelta(days=30)))
+        for ext in source.extensions:
+            value = ext.value
+            if eku is not None and isinstance(value, x509.ExtendedKeyUsage):
+                value = x509.ExtendedKeyUsage([eku])
+            builder = builder.add_extension(value, critical=ext.critical)
+        return ca, builder.sign(ca_key, hashes.SHA256()), key
+
+    def test_r1_to_r4_verify_and_report_iss_as_unbound(self):
+        for label, eku, iss in (("R1", None, self.ISS), ("R2", None, _ABSENT),
+                                ("R3", self.MDL_DS, self.ISS), ("R4", self.MDL_DS, _ABSENT)):
+            with self.subTest(label):
+                ca, leaf, key = self._under_a_test_ca(self.signers[0], eku)
+                v = verify_presentation(_x5c_presentation(leaf, key, iss), expected_nonce=NONCE,
+                                        expected_audience=AUDIENCE, trust_anchors=[ca])
+                self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+                self.assertEqual(v.issuer_subject,
+                                 "C=UT,O=EUDI Wallet Reference Implementation,CN=PID DS - 0002")
+                self.assertEqual(v.issuer_anchor, "CN=test PID Issuer CA")
+                self.assertEqual((v.iss_bound, v.unbound_iss),
+                                 (None, None) if iss is _ABSENT else (False, self.ISS))
+                # What `claims` carries: what the issuer signed and the wallet disclosed, and an
+                # `iss` only where something binds it, which here nothing does.
+                self.assertEqual(sorted(v.claims), ["cnf", "given_name", "iat", "vct"])
 
 
 class IntermediateChainTests(unittest.TestCase):

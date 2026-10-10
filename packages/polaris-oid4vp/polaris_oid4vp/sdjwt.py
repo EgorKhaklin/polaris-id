@@ -108,12 +108,22 @@ MAX_RESOLVE_DEPTH = 64
 #: own CA) was refused as "does not chain to any configured trust anchor": the first
 #: credential here signed by an issuer this repository did not write was refused for naming
 #: exactly the purpose it is for.
+#:
+#: 1.3.130.2.0.0.1.2 is id-eudi-iso-pid-kp-DS, "for document signer certificates, used by PID
+#: Providers": the EUDI Wallet ARF's PID Rulebook (Annex 3.1, section 3.2.1, in ARF 1.4.0 and
+#: 1.4.1) defines it as {id-eudi-iso-pid-kp 2} under european-commission(130), for PIDs in the
+#: ISO/IEC 18013-5 format, and notes the arc "will have to be officially registered"; ARF 1.5.0
+#: removed the section. The EU reference PID issuer (eudi-srv-web-issuing-eudiw-py) signs its
+#: SD-JWT VCs with its configured document signer's certificate in `x5c`, and the test
+#: document-signer certificates it publishes carry this OID, critical and alone (PID-DS-0002 and
+#: PID-DS-0003 are in testdata/eudi-pid-ds/). Until 2026-10-10 they were refused here.
 if _HAVE_CRYPTO:
     _ISSUER_EKUS = frozenset((
         x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH,
         x509.oid.ExtendedKeyUsageOID.CODE_SIGNING,
         x509.oid.ExtendedKeyUsageOID.EMAIL_PROTECTION,
         x509.ObjectIdentifier("1.0.18013.5.1.2"),
+        x509.ObjectIdentifier("1.3.130.2.0.0.1.2"),
     ))
 else:  # pragma: no cover
     _ISSUER_EKUS = frozenset()
@@ -159,12 +169,33 @@ class Verdict:
     check should cost is a policy only the relying party can set. A verifier library that
     made that call for them would be choosing, silently, that their traffic stops when a
     third party's endpoint does.
+
+    WHO SIGNED, when the key came from an `x5c` leaf (added 2026-10-10; each is None for a
+    configured JWK and for a refusal). With `x5c` the issuer is the leaf's subject under the
+    anchor it chained to (SD-JWT VC section 2.5), and `iss` is a name for it only when the leaf
+    gives that name:
+
+        issuer_subject  the leaf's subject, RFC 4514
+        issuer_anchor   the subject of the configured trust anchor its chain ended at, RFC 4514
+        iss_bound       True: `iss` is a name the leaf gives (a URI subjectAltName, or an https
+                        URL on a DNS one). False: the leaf gives no such name, so nothing binds
+                        `iss` to the key; it is then left out of `claims` and is not handed to
+                        the status resolver, and `unbound_iss` carries it. None: no `iss`.
+        unbound_iss     the credential's `iss` when `iss_bound` is False, else None
+
+    A leaf that names an issuer other than `iss` is refused (`issuer_key`), as before. Every
+    other field means what it meant: `claims["iss"]`, when present, is the issuer that signed.
+    Unbound iss: delegated status lists are not consulted; status is established only by a list
+    signed with the credential's own key. (`status.StatedAuthority` is keyed by issuer, and the
+    resolver is given None.)
     """
 
-    __slots__ = ("authentic", "code", "reason", "claims", "revocation", "disclosed")
+    __slots__ = ("authentic", "code", "reason", "claims", "revocation", "disclosed",
+                 "issuer_subject", "issuer_anchor", "iss_bound", "unbound_iss")
 
     def __init__(self, authentic, code="", reason="", claims=None, revocation=None,
-                 disclosed=None):
+                 disclosed=None, issuer_subject=None, issuer_anchor=None, iss_bound=None,
+                 unbound_iss=None):
         self.authentic = authentic
         self.code = code
         self.reason = reason
@@ -174,6 +205,10 @@ class Verdict:
         # array elements. What the issuer signed in clear text is not among them. A verifier
         # reads it to hold a wallet to OpenID4VP 1.0 section 6.4 (see Verifier).
         self.disclosed = frozenset(disclosed or ())
+        self.issuer_subject = issuer_subject
+        self.issuer_anchor = issuer_anchor
+        self.iss_bound = iss_bound
+        self.unbound_iss = unbound_iss
 
     def __repr__(self):
         if self.authentic:
@@ -183,7 +218,9 @@ class Verdict:
 
     def as_dict(self):
         return {"authentic": self.authentic, "code": self.code, "reason": self.reason,
-                "claims": self.claims, "revocation": self.revocation}
+                "claims": self.claims, "revocation": self.revocation,
+                "issuer_subject": self.issuer_subject, "issuer_anchor": self.issuer_anchor,
+                "iss_bound": self.iss_bound, "unbound_iss": self.unbound_iss}
 
 
 #: The three states a relying party has to be able to tell apart. A verifier that collapses
@@ -203,8 +240,12 @@ LIST_REFUSED = "list_refused"              # a list was obtained and is not usab
 #: publishes none.
 
 
-def _revocation_state(payload, resolver=None):
+def _revocation_state(payload, resolver=None, issuer=None):
     """What this verifier can say about revocation.
+
+    `issuer` is what the resolver is told the issuer is: the credential's `iss` when something
+    binds it to the signing key, else None. An `iss` an x5c leaf does not bind is a claim, and a
+    resolver keyed by issuer (`status.StatedAuthority` is) must not read a list under it.
 
     Reads the credential's own issuer-signed `status` claim. With no resolver it opens no
     socket and never answers "not revoked", and the state it returns says so, because a
@@ -240,7 +281,7 @@ def _revocation_state(payload, resolver=None):
                               "this credential is UNKNOWN, not false"
                               % (ref["uri"], ref["idx"])}
         try:
-            answer = resolver(uri=ref["uri"], idx=ref["idx"], issuer=payload.get("iss"))
+            answer = resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)
         except Exception as exc:
             return {"state": UNREACHABLE, "checked": False,
                     "uri": ref["uri"], "idx": ref["idx"],
@@ -448,8 +489,9 @@ def _not_an_es256_verification_key(jwk):
 
 
 def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
-    """(keys, reason, leaf): the keys the issuer JWS may be checked under, or why there are
-    none, and the x5c leaf they came from (None for configured JWKs).
+    """(keys, reason, certified): the keys the issuer JWS may be checked under, or why there
+    are none, and for an x5c key the pair (leaf, anchor) it came from, the anchor being the
+    configured one its chain ended at (None for configured JWKs).
 
     Two ways, both explicit: an `x5c` chain whose leaf chains to a configured trust anchor,
     or JWKs the caller configured out of band. A verifier that takes the key from the token
@@ -487,7 +529,13 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
             return [], why, None
         for anchor in trust_anchors:
             if _chains_to(leaf, anchor, now, intermediates):
-                return [leaf.public_key()], "", leaf
+                # After the chain, so that this refusal names the extended key usage. Inside
+                # `_chains_to` it read "does not chain to any configured trust anchor" for a
+                # leaf the anchor had certified (the EU reference PID issuer's, until 2026-10-10).
+                why = _leaf_eku_refusal(leaf)
+                if why:
+                    return [], why, None
+                return [leaf.public_key()], "", (leaf, anchor)
         return [], "the x5c leaf does not chain to any configured trust anchor", None
     if issuer_jwks:
         kid = header.get("kid")
@@ -701,24 +749,35 @@ def _chains_to(leaf, anchor, now=None, intermediates=()):
         pass
     except Exception:  # noqa: BLE001  a malformed extension is not a usable permission
         return False
-
-    # And an extended key usage that names purposes without naming this one. serverAuth
-    # alone is the TLS certificate case above.
-    try:
-        ekus = leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
-        oids = set(ekus)
-        if (x509.oid.ExtendedKeyUsageOID.ANY_EXTENDED_KEY_USAGE not in oids
-                and not oids & _ISSUER_EKUS):
-            return False
-    except x509.ExtensionNotFound:
-        pass
-    except Exception:  # noqa: BLE001
-        return False
+    # The leaf's extended key usage is `_leaf_eku_refusal`'s, read once a chain is found, so that
+    # its refusal says what it is.
     return True
 
 
+def _leaf_eku_refusal(leaf):
+    """"" when the x5c leaf's extended key usage admits an issuer's signature, else why not.
+
+    An extended key usage that names purposes without naming this one is a certificate for
+    something else; serverAuth alone is the TLS certificate case in `_chains_to`. A leaf that
+    states none is not restricted by one. Until 2026-10-10 this was the last step of `_chains_to`,
+    and its refusal read "does not chain to any configured trust anchor".
+    """
+    try:
+        oids = list(leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value)
+    except x509.ExtensionNotFound:
+        return ""
+    except Exception:  # noqa: BLE001  a malformed extension is not a usable permission
+        return ("the x5c leaf's extended key usage does not parse, so it permits no credential "
+                "signing")
+    if x509.oid.ExtendedKeyUsageOID.ANY_EXTENDED_KEY_USAGE in oids or set(oids) & _ISSUER_EKUS:
+        return ""
+    return ("the x5c leaf's extended key usage permits no credential signing: %s"
+            % (", ".join(oid.dotted_string for oid in oids) or "it names no purpose"))
+
+
 def _leaf_names(leaf, iss):
-    """"" when the x5c `leaf` gives `iss` as one of its own names, else why it does not.
+    """"" when the x5c `leaf` gives `iss` as one of its own names, None when it gives no name an
+    `iss` could be, else why the credential is refused.
 
     With `x5c`, the issuer of an SD-JWT VC IS the subject of the end-entity certificate (SD-JWT
     VC draft 19, section 2.5) and `iss` is optional. Until 2026-09-28 an `iss` was never
@@ -729,8 +788,15 @@ def _leaf_names(leaf, iss):
     A URI subjectAltName is a name and is matched exactly. A leaf that names only DNS hosts
     binds an https `iss` on one of them. URI names come first: a Polaris wallet-copy leaf
     names its issuer URL and also the host every agency on it shares, and the host must not
-    make one agency's key name another agency's URL. A leaf that names neither cannot carry an
-    `iss`, because nothing binds the two.
+    make one agency's key name another agency's URL.
+
+    A leaf that names neither leaves `iss` unbound (None). Until 2026-10-10 it could carry no
+    `iss` at all, and the EU reference PID issuer's document-signer certificates have no
+    subjectAltName while its PIDs carry `iss` (oauth-sd-jwt-vc issue #433). The issuer is then the
+    leaf, its subject under the anchor it chained to, and the verdict reports `iss` as unbound:
+    out of `claims` and away from the status resolver, so B's name in A's credential still reaches
+    nothing keyed by issuer. A leaf that names an issuer still has to name this one; a name that
+    disagrees is the case above, not an absence.
     """
     if not isinstance(iss, str) or not iss:
         return "the credential's iss is %r, which is not an issuer identifier" % (iss,)
@@ -758,8 +824,16 @@ def _leaf_names(leaf, iss):
             return ""
         return ("the credential names issuer %r and the certificate that signed it names only "
                 "the host(s) %s" % (iss, ", ".join(repr(h) for h in hosts)))
-    return ("the credential names issuer %r and the certificate that signed it names no issuer "
-            "(no URI or DNS subjectAltName), so nothing binds the two" % (iss,))
+    return None
+
+
+def _subject_of(cert):
+    """A certificate's subject as an RFC 4514 string, or None when it does not read as one. For
+    the verdict's issuer fields, which must not turn a verdict into an exception."""
+    try:
+        return cert.subject.rfc4514_string()
+    except Exception:  # noqa: BLE001  an unreadable subject names nobody
+        return None
 
 
 # ------------------------------------------------------------------------- disclosures
@@ -989,16 +1063,26 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     if header.get("alg") not in ACCEPTED_ALGS:
         return _refuse("issuer_alg", "the issuer JWT declares alg=%r, which is not in the "
                                      "accepted set %r" % (header.get("alg"), ACCEPTED_ALGS))
-    keys, why, leaf = _issuer_public_keys(header, issuer_jwks, trust_anchors, now)
+    keys, why, certified = _issuer_public_keys(header, issuer_jwks, trust_anchors, now)
     if not keys:
         return _refuse("issuer_key", why)
     if not any(_verify_es256(key, signing_input, signature) for key in keys):
         return _refuse("issuer_signature", "the issuer signature over the credential does "
                                            "not verify under any trusted issuer key")
+    leaf, anchor = certified or (None, None)
+    iss_bound = None
     if leaf is not None and "iss" in payload:
         why = _leaf_names(leaf, payload["iss"])
         if why:
             return _refuse("issuer_key", why)
+        iss_bound = why == ""            # None: the leaf names no issuer, so nothing binds iss
+    # Who signed, for the verdict. An `iss` nothing binds is left out of `claims` and away from
+    # the status resolver: it is the credential's word about itself, and every decision keyed by
+    # issuer would otherwise take it as the issuer's name (2026-10-10).
+    signer = {} if leaf is None else {
+        "issuer_subject": _subject_of(leaf), "issuer_anchor": _subject_of(anchor),
+        "iss_bound": iss_bound, "unbound_iss": payload["iss"] if iss_bound is False else None}
+    issuer = None if iss_bound is False else payload.get("iss")
     # RFC 7515 4.1.11: a JWS whose `crit` names an extension the recipient does not
     # implement is invalid, and this verifier implements none. The response JWE was held to
     # that in 1.0.0rc12; the credential and its key binding JWT were not, so an extension
@@ -1117,6 +1201,9 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                        "a disclosure is named %r, which the credential already carries in "
                        "clear text. A disclosure that overwrites an existing claim is "
                        "refused rather than applied" % collisions[0])
+    if iss_bound is False:
+        # `claims["iss"]` is whose credential this is, and an unbound `iss` is not that.
+        claims.pop("iss", None)
 
     # 3. key binding, which is what makes this a presentation rather than a copy
     if not kb_jwt:
@@ -1130,8 +1217,8 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
             return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
                                          "in the credential" % len(orphans))
         return Verdict(True, claims=claims,
-                       revocation=_revocation_state(payload, status_resolver),
-                       disclosed=disclosed)
+                       revocation=_revocation_state(payload, status_resolver, issuer),
+                       disclosed=disclosed, **signer)
 
     cnf = payload.get("cnf")
     if not isinstance(cnf, dict) or not isinstance(cnf.get("jwk"), dict):
@@ -1229,5 +1316,6 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
                                      "in the credential" % len(orphans))
 
-    return Verdict(True, claims=claims, revocation=_revocation_state(payload, status_resolver),
-                   disclosed=disclosed)
+    return Verdict(True, claims=claims,
+                   revocation=_revocation_state(payload, status_resolver, issuer),
+                   disclosed=disclosed, **signer)

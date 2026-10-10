@@ -68,6 +68,14 @@ CC0-1.0 or Unicode-3.0, or a choice of licenses that includes MIT or
 Apache-2.0. None is incompatible with this work's Apache 2.0 license, and
 none imposes a copyleft obligation on it.
 
+The test fixtures in packages/polaris-oid4vp/testdata/eudi-pid-ds/ are
+certificates the EU reference PID issuer, eudi-srv-web-issuing-eudiw-py
+(https://github.com/eu-digital-identity-wallet/eudi-srv-web-issuing-eudiw-py),
+publishes under the Apache License 2.0, used unmodified. Its NOTICE reads:
+
+    EU Digital Identity Wallet
+    Copyright (c) 2023 European Commission
+
 The macOS launcher (Polaris.command + polaris_mac_launch.sh) is original
 to this work.
 
