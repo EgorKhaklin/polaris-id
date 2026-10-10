@@ -6745,10 +6745,10 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
           "a mounted repo.conf skips the cipher rule", "operator-mounted")
     fails({"polaris_web/pgbackrest-conf.sh": GEN.replace('require_cipher "the configuration"', ': "the configuration"')},
           "a fragment's repository skips the cipher rule", "operator-mounted")
-    # The drill overriding the retention on the command line instead of proving the rendered value.
     # The cipher clause's polarity inverted (-n to -z): it would stop requiring each refusal's own pattern.
     fails({"scripts/polaris-offsite-drill.sh": DRILL.replace('[ -n "$cipher" ]', '[ -z "$cipher" ]')},
           "the cipher clause's test is inverted", "cipher-specific pattern")
+    # The drill overriding the retention on the command line instead of proving the rendered value.
     fails({"scripts/polaris-offsite-drill.sh": DRILL + "pgbackrest --stanza=polaris --repo=2 --repo2-retention-full=1 expire\n"},
           "the drill overrides the retention on the command line", "override the retention")
     # The drill, step by step.
