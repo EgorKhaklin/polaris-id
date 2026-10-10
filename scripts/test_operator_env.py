@@ -603,9 +603,10 @@ class UpgradesRunTheSyncAsProduction(unittest.TestCase):
 
 
 class TheInstallerStopsAtAFailedStep(unittest.TestCase):
-    """install.sh's image build and secrets steps, cut from the script and run under its options:
-    each failure stops the install there, naming the command to re-run. Until 2026-10-10 both ran as
-    `( ... ) && ok`, which set -e does not stop, so the install went on without its images or secrets."""
+    """install.sh's docker.service, image build and secrets steps, cut from the script and run under its
+    options: each failure stops the install there, naming the command to re-run. Until 2026-10-10 each
+    ran as `... && ok`, which set -e does not stop, so the install went on without a running Docker,
+    its images or its secrets."""
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-install-steps-"))
@@ -614,6 +615,7 @@ class TheInstallerStopsAtAFailedStep(unittest.TestCase):
         (self.tmp / "scripts").mkdir()
         (self.tmp / "bin").mkdir()
         for path, rc in ((self.tmp / "bin" / "docker", "STUB_BUILD_RC"),
+                         (self.tmp / "bin" / "systemctl", "STUB_SYSTEMCTL_RC"),
                          (self.tmp / "scripts" / "polaris-generate-secrets.sh", "STUB_SECRETS_RC")):
             path.write_text('#!/bin/sh\necho "$(basename "$0") $*" >> "%s"\nexit "${%s:-0}"\n'
                             % (self.tmp / "calls.log", rc))
@@ -634,6 +636,22 @@ class TheInstallerStopsAtAFailedStep(unittest.TestCase):
         full = {"PATH": "%s:/usr/bin:/bin" % (self.tmp / "bin"), "HOME": str(self.tmp)}
         full.update(env)
         return subprocess.run(["bash", "-c", script], env=full, capture_output=True, text=True, timeout=30)
+
+    def test_a_docker_service_that_does_not_start_stops_the_install(self):
+        step = self.cut("systemctl enable --now docker", 'ok "docker.service enabled and running"')
+        ok = self.run_step(step)
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        self.assertIn("ok   docker.service enabled and running", ok.stdout)
+        self.assertIn("systemctl enable --now docker", (self.tmp / "calls.log").read_text())
+        r = self.run_step(step, STUB_SYSTEMCTL_RC="1")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("install: docker.service could not be enabled and started (systemctl enable --now docker",
+                      r.stderr)
+        self.assertNotIn("REACHED THE NEXT STEP", r.stdout)
+        self.assertNotIn("docker.service enabled and running", r.stdout)
+
+    def test_no_step_reports_ok_through_an_and_list(self):
+        self.assertEqual([line for line in self.text.splitlines() if "&& ok" in line], [])
 
     def test_a_failed_image_build_stops_the_install(self):
         step = self.cut("docker-compose.prod.yml build -q )", 'ok "production images built"')

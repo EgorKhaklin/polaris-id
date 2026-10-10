@@ -171,7 +171,9 @@ REPO
         ok "docker-ce + compose plugin installed from Docker's official repository"
     fi
     if have systemctl && [ -d /run/systemd/system ]; then
-        systemctl enable --now docker >/dev/null 2>&1 && ok "docker.service enabled and running"
+        systemctl enable --now docker >/dev/null 2>&1 \
+            || die "docker.service could not be enabled and started (systemctl enable --now docker; journalctl -u docker)"
+        ok "docker.service enabled and running"
     else
         skip "no systemd here (container?): docker.service not enabled"
     fi
