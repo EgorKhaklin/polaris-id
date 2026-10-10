@@ -14,7 +14,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | none |
 | Use | 0 outside users |
-| Findings from outside | 1 filed, 2 fixed |
+| Findings from outside | 2, both fixed |
 | Independent security review | none |
 | Pilot | none |
 

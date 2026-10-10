@@ -133,7 +133,7 @@ run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relyin
                                        test_verify_conformance test_verify_p9 test_verify_refusals test_ship_tool \
                                        test_pgbouncer_entrypoint test_issuance_scope test_sbom_enrich \
                                        test_conformance_runner test_pin_chart_images test_chain_anchor_tool test_migrate_runner \
-                                       test_coverage_script test_trigger_drill test_operator_env test_key_event test_doctor test_evaluate \
+                                       test_coverage_script test_trigger_drill test_procedure_drill test_compose_parse test_operator_env test_key_event test_doctor test_evaluate \
                                        test_sync_objects_parity test_event_partition_migration test_database_settings \
                                        test_db_state test_db_reference test_pgbackrest_conf test_db_init
 # Verbose, so the log names each restore case that passed (docs/operator/SECURITY-STATE-DRILLS.md cites it).

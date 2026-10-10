@@ -58,6 +58,7 @@ jobs:
   test-core:
     name: "Product suite: checks and drills"
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     services:
       postgres:
@@ -232,7 +233,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -664,6 +665,7 @@ jobs:
     name: "Product suite: Python suites under coverage + floor gate"
     # Split out of the product suite so it runs beside the other parts (same database setup).
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     services:
       postgres:
@@ -776,7 +778,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -795,10 +797,21 @@ jobs:
           BRANCH_FLOOR: "84"
         run: bash scripts/polaris-coverage.sh
 
-  test-procedures:
-    name: "Product suite: procedure mutation drill"
+  test-procedures-shard:
+    name: "Product suite: procedure mutation drill, shard ${{ matrix.shard }} of 6"
     # Split out of the product suite: on a pull request that changes procedures this drill alone runs 2+ hours.
+    # Sharded 2026-10-10: 103 refusals, 1h45m in one job; each of six shards mutates every sixth refusal
+    # (scripts/test_procedure_drill.py proves the six cover all of them once) and repeats only the
+    # baseline and the negative control. test-procedures below is the gate over the six.
     runs-on: ubuntu-latest
+    # Every part is bounded at an hour (the longest unsharded part took 35 minutes in the last six
+    # green runs; a shard is about 31). The unsharded drill had no bound, so a mutation that hung
+    # the suite held the train until GitHub's six-hour limit.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
 
     services:
       postgres:
@@ -911,7 +924,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -940,7 +953,8 @@ jobs:
           # as a no-op on a push whose procedure change was in its second-to-last
           # commit (scripts/polaris_changed_base.py).
           POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: python scripts/polaris-procedure-mutation-drill.py --changed
+          POLARIS_DRILL_SHARD: "${{ matrix.shard }}/6"
+        run: python scripts/polaris-procedure-mutation-drill.py --changed --shard "$POLARIS_DRILL_SHARD"
 
       # A killed drill cannot restore what it mutated. 05_procedures.sql is the
       # canonical source, so reinstalling it leaves the database trustworthy for
@@ -949,10 +963,26 @@ jobs:
         if: always()
         run: psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f polaris_sql/05_procedures.sql
 
+  test-procedures:
+    # The procedure drill's part of the product suite, under the name it always had. It runs no
+    # drill itself: it passes only if the matrix above passed, which GitHub reports as success
+    # only when every one of its six shards did.
+    name: "Product suite: procedure mutation drill"
+    needs: [test-procedures-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard of the procedure mutation drill passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -c 'import json, sys; r = {k: v["result"] for k, v in json.load(sys.stdin).items()}; print(r); sys.exit(0 if len(r) == 1 and all(v == "success" for v in r.values()) else 1)'
+
   test-app-role:
     name: "Product suite: the web suite as the application role"
     # Split out of the core part (2026-10-08): the whole web suite again, 23 minutes on its own.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     services:
       postgres:
@@ -1065,7 +1095,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1092,6 +1122,7 @@ jobs:
     name: "Product suite: the ZK library, its coverage floor and its mutation drill"
     # Split out of the core part (2026-10-08): the Rust crate's suite, coverage and drill.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     services:
       postgres:
@@ -1204,7 +1235,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master  # zizmor: ignore[ref-version-mismatch] -- the action publishes no tags: a master commit, pinned by its SHA
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1351,7 +1382,7 @@ jobs:
       # without checking what that job installs is how the mdoc drill (cbor2) and the
       # quantum-event drill (psycopg2) each went red after they were added.
       - name: Set up Node (for the pinned axe-core)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
 
@@ -3109,7 +3140,7 @@ jobs:
       # the drill refuses to report -- correctly, but the job dies on setup rather than
       # on a finding. node itself is preinstalled on the runner; the dependencies are not.
       - name: Set up Node (the drill inverts the TypeScript SDK too)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -3398,7 +3429,7 @@ jobs:
       # The drill's npm leg packs the TypeScript SDK and installs the tarball into a bare
       # project. npm ci here builds the dist/ the package now points `exports` at.
       - name: Set up Node (the drill packs and installs the TypeScript SDK too)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
@@ -3466,7 +3497,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - name: Install pinned dependencies
@@ -3503,6 +3534,13 @@ jobs:
           # pytest, and PyYAML for the one detection test that parses the pre-commit config.
           pip install --require-hashes -r polaris_web/requirements-test.txt
           python3 -m pytest polaris_checks/test_checks.py -q -p no:cacheprovider
+      # Every documented `docker compose -f` file set, parsed by the runner's Compose with Docker
+      # pointed at a socket that does not exist: nothing starts and nothing is pulled. Two documented
+      # commands failed only when run on 2026-10-10 (scripts/polaris-compose-parse.py says which).
+      - name: Every documented compose file set parses under the runner's Compose
+        run: |
+          python3 scripts/polaris-compose-parse.py
+          cd scripts && python3 -m unittest test_compose_parse
 
   dco:
     # OpenSSF Baseline OSPS-LE-01.01: every commit a person contributes asserts, with a
