@@ -137,24 +137,50 @@ fi
 # The postgres image renders its pgBackRest repositories at every start and refuses to start on a
 # configuration it cannot keep encrypted: a bucket with no repo2-cipher-pass, or one under 32
 # characters, in secrets/pgbackrest_repo_creds.conf (a fragment still naming repo1-s3-*, from before
-# the bucket became repo2, is one); a secret in env; a repository off this host with no cipher. Found
-# there, that is the database down in the middle of a deploy. The same renderer runs here first,
-# after the pull so it is this release's, against this host's fragment and the postgres service's
-# resolved settings, and its refusal stops the deploy before anything is started.
+# the bucket became repo2, is one); a secret in env; a repository off this host with no cipher, an
+# operator-mounted repo.conf's included. Found there, that is the database down in the middle of a
+# deploy. The same renderer runs here first, after the pull so it is this release's, against this
+# host's fragment and the postgres service's settings as compose resolves them (.env and overlays
+# included), and its refusal stops the deploy before anything is started. A host file compose mounts
+# over /etc/pgbackrest/conf.d/repo.conf is checked as the container checks it: the renderer is shown
+# a mount table that names it. A resolved configuration that cannot be read is refused rather than
+# guessed from this shell's environment, where a bucket set in .env alone is invisible.
 pgbr_preflight() {
-    local tmp env_lines line rc=0
+    local tmp resolved line mounted="" rc=0
     local -a env_args=()
-    env_lines="$(compose config --format json 2>/dev/null | python3 -c '
+    if ! resolved="$(compose config --format json 2>/dev/null | python3 -c '
 import json, sys
-env = json.load(sys.stdin)["services"]["postgres"].get("environment") or {}
-for k, v in sorted(env.items()):
+svc = json.load(sys.stdin)["services"]["postgres"]
+for k, v in sorted((svc.get("environment") or {}).items()):
     if k.startswith(("POLARIS_PGBACKREST_", "PGBACKREST_")) and v is not None and "\n" not in str(v):
-        print("%s=%s" % (k, v))' 2>/dev/null)" \
-        || env_lines="$(env | grep -E '^(POLARIS_)?PGBACKREST_' || true)"
-    while IFS= read -r line; do [[ -n "${line}" ]] && env_args+=("${line}"); done <<< "${env_lines}"
+        print("ENV %s=%s" % (k, v))
+for vol in svc.get("volumes") or []:
+    if isinstance(vol, dict) and vol.get("target") == "/etc/pgbackrest/conf.d/repo.conf":
+        print("MOUNT %s" % vol.get("source", ""))')"; then
+        echo "  ✗ could not read the postgres service's resolved configuration (docker compose config --format json)," >&2
+        echo "    so its pgBackRest settings cannot be checked against what the image accepts." >&2
+        return 1
+    fi
+    while IFS= read -r line; do
+        case "${line}" in
+            "ENV "*)   env_args+=("${line#ENV }") ;;
+            "MOUNT "*) mounted="${line#MOUNT }" ;;
+        esac
+    done <<< "${resolved}"
     tmp="$(mktemp -d)"
     mkdir -p "${tmp}/conf.d"
-    if ! env -i PATH="${PATH}" ${env_args[@]+"${env_args[@]}"} bash "${POLARIS_ROOT}/polaris_web/pgbackrest-conf.sh" \
+    : > "${tmp}/mountinfo"
+    if [[ -n "${mounted}" ]]; then
+        if [[ ! -r "${mounted}" ]]; then
+            echo "  ✗ compose mounts ${mounted} over the image's repo.conf, and it cannot be read here" >&2
+            rm -rf "${tmp}"
+            return 1
+        fi
+        cp "${mounted}" "${tmp}/conf.d/repo.conf"
+        printf '1 0 0:0 / %s ro - bind %s ro\n' "${tmp}/conf.d/repo.conf" "${mounted}" > "${tmp}/mountinfo"
+    fi
+    if ! env -i PATH="${PATH}" POLARIS_PGBACKREST_MOUNTINFO="${tmp}/mountinfo" ${env_args[@]+"${env_args[@]}"} \
+            bash "${POLARIS_ROOT}/polaris_web/pgbackrest-conf.sh" \
             "${tmp}/conf.d/repo.conf" "${SECRETS_DIR}/pgbackrest_repo_creds.conf" > "${tmp}/out" 2>&1; then
         sed 's/^/      /' "${tmp}/out" >&2
         rc=1

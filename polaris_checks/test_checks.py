@@ -6584,6 +6584,8 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
         "refused_restore nopass \"$WORK/repo-creds-nopass.conf\"\n"
         "refused_restore wrong \"$WORK/repo-creds-wrongpass.conf\"\n"
         "grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n"
+        "CIPHER_REFUSED=\"is or was the repo encrypted|CryptoError\"\n"
+        "grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n"
         "RESTORE_REPO2='pgbackrest --stanza=polaris --repo=2 restore'\n"
         "echo \"done\"\n")
     BACKUP = ('repos=$(cat /etc/pgbackrest/conf.d/repo.conf | sed -nE "s/^repo([0-9]+)-.*/\\1/p")\n'
@@ -6741,6 +6743,9 @@ def test_offsite_backup_env_driven_check_discriminates(tmp_path):
              "rendered retention"),
             ("refuses mounted \"configures repo2 (repo2-type=s3) with no cipher\"\n", "mounted repo.conf"),
             ("grep -qF -- \"$says\" \"$WORK/refused-restore.log\"\n", "own error text"),
+            ("CIPHER_REFUSED=\"is or was the repo encrypted|CryptoError\"\n", "cipher-specific error"),
+            ("grep -qE 'HostConnectError|ServiceError|FileMissingError' \"$WORK/refused-restore.log\"\n",
+             "missing info file"),
             ("[ \"$(head -c 8 /tmp/obj)\" != \"Salted__\" ] && echo NOT-CIPHERTEXT\n", "cipher header"),
             ("if grep -qF \"$MARKER\" /tmp/obj; then echo PLAINTEXT; fi\n", "marker row's plaintext"),
             ("put canary/plaintext\n", "plaintext canary"),

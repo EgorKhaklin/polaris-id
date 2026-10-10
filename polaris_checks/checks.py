@@ -8185,6 +8185,8 @@ def check_offsite_backup_env_driven(root: pathlib.Path) -> list[Finding]:
         (r"repo-creds-nopass\.conf", "refuse a restore from repo2 with no passphrase"),
         (r"repo-creds-wrongpass\.conf", "refuse a restore from repo2 with a wrong passphrase"),
         (r'grep -qF -- "\$says"', "require each refused restore's own error text, not any failure"),
+        (r"is or was the repo encrypted\|CryptoError", "require a cipher-specific error for the wrong-passphrase and no-cipher restores"),
+        (r"FileMissingError", "not count a missing info file as a cipher refusal"),
         (r"configures repo2 \(repo2-type=s3\) with no cipher", "refuse a mounted repo.conf naming an S3 repo with no cipher"),
         (r"--repo=2 restore", "restore a fresh postgres from repo2 alone"),
         (r'^echo "done"$', "print a final done line"),

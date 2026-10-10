@@ -242,6 +242,7 @@ resolve() {   # NAME-OR-ID -> the one file it names, or nothing
 }
 case "$*" in
   "compose version") exit 0 ;;
+  *" config --format json") cat "%(json)s"; exit $? ;;
   *" config") echo "name: %(project)s"; exit 0 ;;
   *" ps -a -q app") echo cid-app; exit 0 ;;
   "inspect --format={{.Image}} cid-app") echo sha256:feed; exit 0 ;;
@@ -274,8 +275,12 @@ exit 99
             (secrets / name).write_text("x\n")
         self.env_text = ("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
                          "POLARIS_SECRETS_DIR=%s\n" % secrets)
+        # The postgres service as `compose config --format json` resolves it: no bucket.
+        self.compose_json = self.tmp / "compose.json"
+        self.compose_json.write_text(json.dumps({"name": self.project, "services": {"postgres": {
+            "environment": {"POLARIS_PGBACKREST_S3_BUCKET": ""}}}}))
         (self.bin / "docker").write_text(self.DOCKER % {"log": self.docker_log, "nets": self.nets,
-                                                        "project": self.project})
+                                                        "project": self.project, "json": self.compose_json})
         (self.bin / "docker").chmod(0o755)
 
     def _deploy(self, **env):
@@ -432,7 +437,7 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
     there, that is the database down in the middle of a deploy, so polaris-deploy.sh runs the same
     renderer against the host's fragment and the postgres service's resolved settings first, and
     stops before it starts anything. The stand-in Docker is DeploysTakeTurns', which also answers
-    `compose config --format json` with the postgres service's environment."""
+    `compose config --format json` with the postgres service as the test writes it."""
 
     PASS = "an-offsite-test-passphrase-0123456789"
     FULL = "[global]\nrepo2-s3-key=AKIATEST\nrepo2-s3-key-secret=test-secret\nrepo2-cipher-pass=%s\n" % PASS
@@ -445,20 +450,25 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
         for name in ("polaris_secret_key", "polaris_db_password", "polaris_db_root_password"):
             (self.secrets / name).write_text("x\n")
         self.compose_json = self.tmp / "compose.json"
-        docker = DeploysTakeTurns.DOCKER.replace(
-            '  *" config") ', '  *" config --format json") cat "%(json)s"; exit 0 ;;\n  *" config") ')
-        (self.bin / "docker").write_text(docker % {"log": self.docker_log, "nets": self.nets,
-                                                   "project": "offsite", "json": self.compose_json})
+        (self.bin / "docker").write_text(DeploysTakeTurns.DOCKER % {
+            "log": self.docker_log, "nets": self.nets, "project": "offsite", "json": self.compose_json})
         (self.bin / "docker").chmod(0o755)
 
-    def _deploy(self, creds, bucket):
+    def _deploy(self, creds, bucket, mounted=None, compose_json=None):
         (self.secrets / "pgbackrest_repo_creds.conf").write_text(creds)
         env = {"POLARIS_PGBACKREST_ENABLED": "1", "POLARIS_DB_PASSWORD_FILE": "/run/secrets/polaris_db_password",
                "POLARIS_PGBACKREST_S3_BUCKET": bucket}
         if bucket:
             env.update(POLARIS_PGBACKREST_S3_ENDPOINT="s3.eu-central-1.amazonaws.com",
                        POLARIS_PGBACKREST_S3_REGION="eu-central-1")
-        self.compose_json.write_text(json.dumps({"name": "offsite", "services": {"postgres": {"environment": env}}}))
+        volumes = [{"type": "bind", "source": str(self.secrets / "pgbackrest_repo_creds.conf"),
+                    "target": "/etc/pgbackrest/conf.d/repo-creds.conf", "read_only": True}]
+        if mounted is not None:
+            (self.tmp / "operator-repo.conf").write_text(mounted)
+            volumes.append({"type": "bind", "source": str(self.tmp / "operator-repo.conf"),
+                            "target": "/etc/pgbackrest/conf.d/repo.conf", "read_only": True})
+        self.compose_json.write_text(compose_json if compose_json is not None else json.dumps(
+            {"name": "offsite", "services": {"postgres": {"environment": env, "volumes": volumes}}}))
         self.env_file.write_text("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
                                  "POLARIS_SECRETS_DIR=%s\n" % self.secrets)
         return subprocess.run(["bash", str(ROOT / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
@@ -491,6 +501,40 @@ class DeployRefusesAnOffsiteRepoThePostgresImageWouldRefuse(_Base):
         self.assertIn("At least 32 are required", r.stderr)
         self.assertNotIn("too-short", r.stdout + r.stderr)
         self._started_nothing(r)
+
+    def test_a_mounted_repo_conf_off_this_host_without_a_cipher_stops_it(self):
+        # The image does not rewrite a mounted repo.conf, and refuses one naming an S3 repo with no
+        # cipher; the deploy reads which host file compose mounts there, and refuses it first.
+        conf = "[global]\nrepo1-path=/var/lib/pgbackrest\nrepo2-type=s3\nrepo2-s3-bucket=b\nrepo2-path=/p\n"
+        r = self._deploy(self.FULL, "", mounted=conf)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("configures repo2 (repo2-type=s3) with no cipher", r.stderr)
+        self._started_nothing(r)
+        r = self._deploy(self.FULL, "", mounted=conf + "repo2-cipher-type=aes-256-cbc\n")
+        self.assertIn("is one the postgres image accepts", r.stdout, r.stdout + r.stderr)
+
+    def test_a_resolved_configuration_that_cannot_be_read_stops_it(self):
+        # A bucket set only in polaris_web/.env is in no shell's environment: a deploy that fell back
+        # to its own environment would pass a configuration the image refuses.
+        for what, text in (("compose failed", None), ("not json", "name: offsite\n"),
+                           ("no postgres service", json.dumps({"services": {"app": {}}}))):
+            with self.subTest(what=what):
+                self.docker_log.unlink(missing_ok=True)
+                if text is None:
+                    self.compose_json.unlink(missing_ok=True)
+                    (self.secrets / "pgbackrest_repo_creds.conf").write_text(self.FULL)
+                    self.env_file.write_text("POLARIS_DOMAIN=polaris.example.org\nPOLARIS_SECRETS_BACKEND=file\n"
+                                             "POLARIS_SECRETS_DIR=%s\n" % self.secrets)
+                    r = subprocess.run(["bash", str(ROOT / "scripts" / "polaris-deploy.sh"), "prod", "--no-pull"],
+                                       capture_output=True, text=True, timeout=60,
+                                       env={"PATH": "%s:/usr/bin:/bin:/usr/sbin:/sbin" % self.bin,
+                                            "HOME": str(self.tmp), "STUB_WD": str(ROOT / "polaris_web"),
+                                            "STUB_EF": str(self.env_file)})
+                else:
+                    r = self._deploy(self.FULL, "polaris-dr", compose_json=text)
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn("could not read the postgres service's resolved configuration", r.stderr)
+                self._started_nothing(r)
 
     def test_a_configuration_the_image_accepts_goes_on(self):
         for creds, bucket in ((self.FULL, "polaris-dr"), ("# commented template\n", "")):

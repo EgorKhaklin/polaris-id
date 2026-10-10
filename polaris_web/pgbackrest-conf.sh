@@ -56,8 +56,9 @@ CONFD="$(dirname "$OUT")"
 CREDS="${2:-${CONFD}/repo-creds.conf}"
 MAIN_CONF="$(dirname "$CONFD")/pgbackrest.conf"
 LOCAL_REPO=/var/lib/pgbackrest
-# Where the mount table is read. Tests point it at a fixture; a mounted file is validated, not
-# trusted, so naming another table cannot skip the cipher rule below.
+# Where the mount table is read. polaris-deploy.sh's preflight and the tests point it at a table
+# that names OUT, to check a file compose will mount; a mounted file is validated, not trusted, so
+# naming another table cannot skip the cipher rule below.
 MOUNTINFO="${POLARIS_PGBACKREST_MOUNTINFO:-/proc/self/mountinfo}"
 
 # Every other configuration pgBackRest reads besides OUT: the main file, the other conf.d

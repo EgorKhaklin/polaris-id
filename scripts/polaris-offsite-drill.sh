@@ -333,8 +333,8 @@ echo "  repo1 wiped: the bucket is the only copy"
 RESTORE_REPO2='rm -rf /var/lib/postgresql/data/* && pgbackrest --stanza=polaris --repo=2 restore'
 # Each refusal must be the one it names, not any failure: a restore that failed for another reason
 # (the endpoint unreachable, a mistake in this script) would otherwise pass for a refusal.
-refused_restore() {  # refused_restore <what> <expected text> <secret fragment> image|own [docker run args...]
-    local what="$1" says="$2" fragment="$3" how="$4"; shift 4
+refused_restore() {  # refused_restore <what> <expected text> <and this ERE, or ""> <secret fragment> image|own [docker run args...]
+    local what="$1" says="$2" cipher="$3" fragment="$4" how="$5"; shift 5
     local -a run=(docker run --rm --network "$NET" --user postgres "${S3_ENV[@]}" "${BASE_MOUNTS[@]}"
                   -v "$fragment:/etc/pgbackrest/conf.d/repo-creds.conf:ro" -v "$REPO1_VOL:/var/lib/pgbackrest" "$@")
     if [ "$how" = own ]; then
@@ -348,28 +348,33 @@ refused_restore() {  # refused_restore <what> <expected text> <secret fragment> 
         tail -5 "$WORK/refused-restore.log" >&2
         fail "a restore from repo2 $what SUCCEEDED: the offsite copy must be unreadable without its passphrase"
     fi
+    # Not a refusal by the cipher: the endpoint unreachable or refusing (HostConnectError,
+    # ServiceError), or the info files not found where they were written (FileMissingError).
     if ! grep -qF -- "$says" "$WORK/refused-restore.log" \
-            || grep -qE 'HostConnectError|ServiceError' "$WORK/refused-restore.log"; then
+            || { [ -n "$cipher" ] && ! grep -qE -- "$cipher" "$WORK/refused-restore.log"; } \
+            || grep -qE 'HostConnectError|ServiceError|FileMissingError' "$WORK/refused-restore.log"; then
         tail -20 "$WORK/refused-restore.log" >&2
-        fail "a restore from repo2 $what failed, but not with the refusal it names ($says)"
+        fail "a restore from repo2 $what failed, but not with the refusal it names ($says${cipher:+, $cipher})"
     fi
-    echo "  refused: a restore from repo2 $what ($says)"
+    echo "  refused: a restore from repo2 $what ($says${cipher:+, $cipher})"
 }
 # pgBackRest's text when it cannot load repo2's backup.info: the cipher is wrong, or absent and the
-# file read as plaintext. Taken from pgBackRest's info-file loader, not yet from a run of this
-# drill (it has not run since this step was written): the first real run's log confirms it, and
-# may narrow it to the cipher error that follows it.
+# file read as plaintext. INFO_REFUSED is its info-file loader's error, and CIPHER_REFUSED what makes
+# it the cipher's: a CryptoError, or the loader's hint for a file it could not parse. Both are taken
+# from pgBackRest's own messages, not from a run of this drill, which has not run since this step was
+# written: the first live run pins the exact text (narrow these to what its log shows).
 INFO_REFUSED="unable to load info file"
+CIPHER_REFUSED="is or was the repo encrypted|CryptoError"
 
 echo "== 8. (d) a restore from repo2 without the passphrase is refused =="
 # No passphrase: the image's own path refuses before pgBackRest runs (fail closed).
-refused_restore "with no passphrase" "repo2-cipher-pass. The offsite repo" "$WORK/repo-creds-nopass.conf" image
+refused_restore "with no passphrase" "repo2-cipher-pass. The offsite repo" "" "$WORK/repo-creds-nopass.conf" image
 # A wrong passphrase: the image renders as always, and pgBackRest cannot decrypt the repo.
-refused_restore "with a wrong passphrase" "$INFO_REFUSED" "$WORK/repo-creds-wrongpass.conf" image
+refused_restore "with a wrong passphrase" "$INFO_REFUSED" "$CIPHER_REFUSED" "$WORK/repo-creds-wrongpass.conf" image
 # The bucket and its key pair with no cipher configured at all: pgBackRest reading the objects as
 # plaintext.
 grep -v '^repo2-cipher-type=' "$WORK/rendered.conf" > "$WORK/repo-nocipher.conf"
-refused_restore "with no cipher configured" "$INFO_REFUSED" "$WORK/repo-creds-nopass.conf" own \
+refused_restore "with no cipher configured" "$INFO_REFUSED" "$CIPHER_REFUSED" "$WORK/repo-creds-nopass.conf" own \
     -v "$WORK/repo-nocipher.conf:/etc/pgbackrest/conf.d/repo.conf:ro"
 
 echo "== 9. (b) restore into a FRESH postgres from repo2 ONLY =="
