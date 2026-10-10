@@ -7571,6 +7571,91 @@ def check_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
                "requires nothing pending, every image rebuilt, and credentials from before and after verifying; "
                "a release that cannot start is rolled back, on the containerd image store")
 
+# Lab record 017 (gate row OP-29): a PostgreSQL major-version upgrade is drilled as OPERATIONS.md writes it, there and
+# back. Before scripts/polaris-pg-upgrade-drill.sh the procedure had never run end to end: the restore's schema check
+# reported every migration missing, pgBackRest's stanza stayed on the other cluster after the move and after a
+# rollback, and a deploy on another major's image took the database down. The drill runs the document's own blocks;
+# these pins keep the drill, its control, the document and the deploy's refusal from drifting apart.
+_PG_UPGRADE_DRILL_PINS = (
+    ('s.index("### Postgres version upgrade")', "read its steps from OPERATIONS.md's section"),
+    ('bash -e "${WORK}/step5-run.sh"', "run the document's step 5 and stop at its first failing line"),
+    ('bash "${WORK}/rollback.sh"', "run the document's rollback block"),
+    ('diff -q "${WORK}/state-16.txt" "${WORK}/state-new.txt"', "compare the state across the move"),
+    ('diff -q "${WORK}/state-16.txt" "${WORK}/state-back.txt"', "compare the state across the rollback"),
+    ('|| fail "the state could not copy ${t}"', "fail when a table's copy cannot be read"),
+    ("e3b0c44298fc1c149afbf4c8996fb924 ]]", "refuse an empty copy of a table with rows"),
+    ('[[ "${probe}" == drill_probe_empty ]]', "show that its emptiness test names an empty table, and only it"),
+    ('pgbackrest_current "${NEW:0:2}"', "require pgBackRest healthy, with a full backup, on the new major"),
+    ('pgbackrest_current "${OLD:0:2}"', "require pgBackRest healthy, with a full backup, after the rollback"),
+    ('grep -q "holds a PostgreSQL ${OLD:0:2} cluster"', "require a deploy on the new major to refuse the old cluster"),
+    ('grep -q "holds a PostgreSQL ${NEW:0:2} cluster"', "require a deploy back on the old major to refuse the new one"),
+    ('fail "CONTROL FAILED: one audit row was changed and the comparison saw nothing"',
+     "fail its control when a changed audit row goes unseen"),
+    ('the state read no ${kind} facts', "refuse a state that read no facts of a kind it compares"),
+    ("pg_temp.read_back(c.oid)", "compare CHECK constraints as each server reads them back, not as a dump printed them"),
+    ('"${t}" "${n}" "${d}"', "record each table's row count and the digest of its rows"),
+    ("for kind in seq trigger constraint index function owner grant execute seqgrant colgrant defacl; do",
+     "refuse a state missing any kind of fact it compares, each role's privileges on tables, columns, sequences "
+     "and routines and the default privileges included"),
+    ('    fail "the state changed across the upgrade: ', "fail when the state changed across the upgrade"),
+    ('    || fail "the state after the rollback differs from 16', "fail when the state after the rollback differs"),
+)
+_PG_UPGRADE_WORKFLOW_PATHS = ("scripts/polaris-pg-upgrade-drill.sh", "docs/operator/OPERATIONS.md",
+                              "polaris_web/Dockerfile.postgres", "scripts/polaris-deploy.sh",
+                              "scripts/polaris-restore.sh", "scripts/polaris-backup.sh")
+
+
+def check_pg_upgrade_drilled(root: pathlib.Path) -> list[Finding]:
+    name = "pg_upgrade_drilled"
+    drill = _read(root, "scripts/polaris-pg-upgrade-drill.sh")
+    if not drill:
+        return _fail(name, "scripts/polaris-pg-upgrade-drill.sh is missing: nothing runs the PostgreSQL major upgrade")
+    for pin, what in _PG_UPGRADE_DRILL_PINS:
+        if pin not in drill:
+            return _fail(name, f"the PostgreSQL upgrade drill must {what} ({pin!r} is gone)")
+    wf = _read(root, ".github/workflows/pg-upgrade.yml")
+    runs = {r.strip() for r in re.findall(r"(?m)^\s+run: (.+)$", wf)}
+    if not {"bash scripts/polaris-pg-upgrade-drill.sh", "bash scripts/polaris-pg-upgrade-drill.sh --prove-control"} <= runs:
+        return _fail(name, ".github/workflows/pg-upgrade.yml must run the drill and, as a step of its own, its control")
+    if not re.search(r"(?m)^  schedule:\n\s+- cron:", wf) or not re.search(r"(?m)^  push:\n\s+branches: \[main\]", wf):
+        return _fail(name, "the PostgreSQL upgrade drill must run nightly and on every push to main")
+    missing = [p for p in _PG_UPGRADE_WORKFLOW_PATHS if f'- "{p}"' not in wf]
+    if missing:
+        return _fail(name, f"a pull request changing {', '.join(missing)} must run the PostgreSQL upgrade drill")
+    ops = _read(root, "docs/operator/OPERATIONS.md")
+    if "### Postgres version upgrade" not in ops or "### TLS certificate renewal" not in ops:
+        return _fail(name, "docs/operator/OPERATIONS.md has no 'Postgres version upgrade' section for the drill to run")
+    sec = ops[ops.index("### Postgres version upgrade"):ops.index("### TLS certificate renewal")]
+    if "# 5. Rebuild" not in sec or "# 6. Only once step 5" not in sec or "To go back" not in sec:
+        return _fail(name, "the upgrade section must keep its step 5, step 6 and rollback, which the drill runs")
+    step5 = sec[sec.index("# 5. Rebuild"):sec.index("# 6. Only once step 5")]
+    at = [step5.find(s) for s in ("./scripts/polaris-deploy.sh prod --no-pull", "pgbackrest --stanza=polaris stanza-upgrade",
+                                  "polaris-restore.sh /var/backups", "pgbackrest --stanza=polaris --type=full backup")]
+    if min(at) < 0 or at != sorted(at):
+        return _fail(name, "OPERATIONS.md's step 5 must deploy, upgrade pgBackRest's stanza, restore, then take a "
+                           "full backup, in that order: until the stanza is upgraded WAL archiving fails")
+    rollback = sec[sec.index("To go back"):]
+    if not re.search(r"cp -a /from/\. /to/'\s*&&\s*\n\s*\./scripts/polaris-deploy\.sh prod --no-pull &&", rollback):
+        return _fail(name, "the rollback must deploy only over a completed copy (copy && deploy)")
+    dep_at = rollback.find("./scripts/polaris-deploy.sh prod --no-pull")
+    if not dep_at < rollback.find("pgbackrest --stanza=polaris stanza-upgrade") \
+            < rollback.find("pgbackrest --stanza=polaris --type=full backup"):
+        return _fail(name, "the rollback must upgrade pgBackRest's stanza back to the old cluster after its deploy, "
+                           "then take a full backup")
+    dep = _read(root, "scripts/polaris-deploy.sh")
+    fn = re.search(r"(?ms)^pg_major_check\(\) \{\n.*?^\}\n", dep)
+    call = dep.find("\npg_major_check || exit 1\n")
+    build = dep.find('bash "${SCRIPT_DIR}/polaris-image-build.sh" --stack prod')
+    if not fn or "cat /d/PG_VERSION" not in fn.group(0) or "FROM postgres:([0-9]+)" not in fn.group(0) \
+            or call < 0 or build < 0 or call > build:
+        return _fail(name, "polaris-deploy.sh must compare the pg_data volume's PG_VERSION with Dockerfile.postgres's "
+                           "major, and refuse a difference, before it builds anything")
+    return _ok(name, "the PostgreSQL major upgrade is drilled as OPERATIONS.md writes it, there and back, nightly, on "
+                     "main and on pull requests that change what it runs: the document's blocks are run as written; "
+                     "the state is compared with reads that fail closed; pgBackRest is healthy with a full backup "
+                     "after the move and the rollback; a deploy refuses another major's cluster both ways; and a "
+                     "control must name one changed audit row")
+
 
 # Lab record 017 (gate rows OP-18 and OP-19): a Helm upgrade runs the migrations. The postgres image
 # applies them at a cluster's first init and nowhere else, so an upgrade brought a new app up against
@@ -22082,6 +22167,8 @@ _GATE_PASS_PINS = {
               ("check:client_ip_behind_proxies",)),
     "OP-27": ('Contributors need no Kubernetes',
               ("file:Polaris.command",)),
+    "OP-29": ('A PostgreSQL major-version upgrade is drilled, there and back',
+              ("drill:scripts/polaris-pg-upgrade-drill.sh", "check:pg_upgrade_drilled")),
 }
 
 
@@ -28019,6 +28106,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_doctor_names_failures,
     check_evaluate_wired,
     check_upgrade_drilled,
+    check_pg_upgrade_drilled,
     check_helm_upgrade_migrates,
     check_infra_alerts,
     check_session_key_rotation,

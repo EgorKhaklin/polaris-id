@@ -561,27 +561,57 @@ class DeployRefusesAnotherMajorsCluster(_CutBlock):
     """A PostgreSQL server refuses a cluster another major initialised. A FROM line moved to a new major
     and deployed recreated postgres on a cluster it could not open, and the database stayed down until the
     line went back. The deploy's check, cut from polaris-deploy.sh, with a stand-in docker that lists the
-    project's pg_data volumes and reads PG_VERSION from one."""
+    project's pg_data volumes and reads PG_VERSION from one, with the stack's postgres image or, when that
+    image is absent, the pinned alpine, whose pull can fail as Docker Hub's rate limit makes it fail."""
 
     FN = _cut("scripts/polaris-deploy.sh", "pg_major_check() {")
     DOCKER = r'''PROJECT=proj
+compose() { [ "$*" = "config --format json" ] && echo '{"services": {"postgres": {"image": "polaris-postgres:prod"}}}'; }
 docker() {
+    echo "docker $*" >> "$STUB_CALLS"
     case "$1 $2" in
       "volume ls") printf '%s' "${STUB_VOLS:-}" ;;
-      "run --rm") [ -z "${STUB_RUN_FAILS:-}" ] || return 125; printf '%s\n' "$STUB_PG_VERSION" ;;
+      "image inspect") [ -n "${STUB_IMAGE_PRESENT:-}" ] ;;
+      "run --rm")
+        case "$*" in
+          *"--pull=never "*polaris-postgres:prod*) ;;
+          *"--pull=missing "*alpine:3.24@sha256:*)
+            [ -z "${STUB_PULL_FAILS:-}" ] || { echo "docker: toomanyrequests: You have reached your unauthenticated pull rate limit" >&2; return 125; } ;;
+          *) echo "unexpected docker run $*" >&2; return 99 ;;
+        esac
+        [ -z "${STUB_RUN_FAILS:-}" ] || { echo "docker: Error response from daemon: mounts denied" >&2; return 125; }
+        printf '%s\n' "$STUB_PG_VERSION" ;;
       *) echo "unexpected docker $*" >&2; return 99 ;;
     esac
 }
 '''
 
-    def check(self, from_line, vols="proj_pg_data", pg_version="16", run_fails=""):
+    def check(self, from_line, vols="proj_pg_data", pg_version="16", run_fails="", image_present="1", pull_fails=""):
         (self.dir / "polaris_web").mkdir(exist_ok=True)
         (self.dir / "polaris_web" / "Dockerfile.postgres").write_text("# the base\n%s\nENTRYPOINT [\"x\"]\n" % from_line)
+        self.calls = self.dir / "calls"
+        self.calls.write_text("")
         r = self.run_bash(self.DOCKER + self.FN + '\nif pg_major_check; then echo PASSED; else echo REFUSED; fi\n',
                           POLARIS_ROOT=self.tmp.name, STUB_VOLS=vols, STUB_PG_VERSION=pg_version,
-                          STUB_RUN_FAILS=run_fails)
+                          STUB_RUN_FAILS=run_fails, STUB_IMAGE_PRESENT=image_present, STUB_PULL_FAILS=pull_fails,
+                          STUB_CALLS=str(self.calls), TMPDIR=self.tmp.name)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir() if p.name.startswith("polaris-pg-major")), [],
+                         "the check left its error file behind")
         return r.stdout.strip(), r.stderr
+
+    def test_a_same_major_deploy_needs_no_registry(self):
+        """Read with the stack's own image, never pulled: Docker Hub's rate limit cannot refuse a correct deploy."""
+        base = "FROM postgres:16-alpine@sha256:%s" % ("ab" * 32)
+        got, err = self.check(base, pull_fails="1")
+        self.assertEqual(got, "PASSED", err)
+        self.assertIn("run --rm --pull=never --entrypoint sh -v proj_pg_data:/d:ro polaris-postgres:prod",
+                      self.calls.read_text())
+        got, err = self.check(base, image_present="", pull_fails="")
+        self.assertEqual(got, "PASSED", "without the stack's image the pinned alpine reads it: " + err)
+        got, err = self.check(base, image_present="", pull_fails="1")
+        self.assertEqual(got, "REFUSED", err)
+        self.assertIn("pull rate limit", err, "docker's own words must be in the refusal")
 
     def test_a_cluster_of_another_major_is_refused_both_ways(self):
         for cluster, image in (("16", "17"), ("17", "16")):
@@ -674,12 +704,14 @@ class PgUpgradeDrillStateFailsClosed(_CutBlock):
 
     FN = _cut("scripts/polaris-pg-upgrade-drill.sh", "state() {")
     DB = r'''fail() { echo "FAIL: $*" >&2; exit 1; }
+CANONICAL_CONSTRAINTS="SELECT the constraints, each read back"
 sql() {
     case "$*" in
       *"format('%I.%I'"*) for i in $(seq 10 51); do echo "public.t$i"; done ;;
       *"count(*) FROM public.t${STUB_COUNT_FAILS:-none}") return 2 ;;
       *"count(*) FROM"*) echo 2 ;;
-      *) echo fact ;;
+      *) for kind in ${STUB_KINDS-seq trigger constraint index function owner grant execute seqgrant colgrant defacl}; do
+             echo "${kind} a b"; done ;;
     esac
 }
 compose() {
@@ -707,7 +739,9 @@ compose() {
     def test_a_failed_read_fails_and_names_its_table(self):
         for env, says in (({"STUB_COPY_FAILS": "23"}, "could not copy public.t23"),
                           ({"STUB_COUNT_FAILS": "11"}, "could not count public.t11"),
-                          ({"STUB_COPY_EMPTY": "37"}, "public.t37 counts 2 rows, but its copy read none")):
+                          ({"STUB_COPY_EMPTY": "37"}, "public.t37 counts 2 rows, but its copy read none"),
+                          ({"STUB_KINDS": "seq trigger index function owner grant execute seqgrant colgrant defacl"},
+                           "the state read no constraint facts")):
             with self.subTest(**env):
                 r, _ = self.state(**env)
                 self.assertEqual(r.returncode, 1, r.stdout + r.stderr)

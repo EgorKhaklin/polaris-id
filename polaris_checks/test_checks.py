@@ -3770,6 +3770,63 @@ def test_upgrade_drilled_check_discriminates(tmp_path):
     broken(".github/workflows/upgrade.yml", '["containerd-snapshotter"] = True', '["containerd-snapshotter"] = False',
            "must FAIL when CI drills on the classic image store, where the bare ID still resolves")
 
+def test_pg_upgrade_drilled_check_discriminates(tmp_path):
+    files = ("scripts/polaris-pg-upgrade-drill.sh", ".github/workflows/pg-upgrade.yml", "docs/operator/OPERATIONS.md",
+             "scripts/polaris-deploy.sh")
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_pg_upgrade_drilled(tmp_path)[0].level == "OK", \
+        "must PASS on the real drill, its workflow, OPERATIONS.md and the deploy script"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        assert checks.check_pg_upgrade_drilled(tmp_path)[0].level == "FAIL", why
+        path.write_text(good)
+
+    drill = "scripts/polaris-pg-upgrade-drill.sh"
+    broken(drill, 'bash -e "${WORK}/step5-run.sh"', 'bash "${WORK}/step5-run.sh"',
+           "must FAIL when step 5 runs past a failing line")
+    broken(drill, 'bash "${WORK}/rollback.sh"', 'true "${WORK}/rollback.sh"', "must FAIL when the rollback is not run")
+    broken(drill, 'diff -q "${WORK}/state-16.txt" "${WORK}/state-back.txt"', 'true',
+           "must FAIL when the state after the rollback is not compared")
+    broken(drill, '|| fail "the state could not copy ${t}"', '|| true',
+           "must FAIL when a copy that cannot be read passes")
+    broken(drill, "e3b0c44298fc1c149afbf4c8996fb924 ]]", "0 ]]", "must FAIL when an empty copy of a table with rows passes")
+    broken(drill, '[[ "${probe}" == drill_probe_empty ]]', 'true',
+           "must FAIL when the emptiness test is not shown to fire")
+    broken(drill, 'pgbackrest_current "${OLD:0:2}"', 'true', "must FAIL when pgBackRest is not required after the rollback")
+    broken(drill, 'grep -q "holds a PostgreSQL ${NEW:0:2} cluster"', 'true',
+           "must FAIL when the deploy's refusal is not required on the way back")
+    broken(drill, 'fail "CONTROL FAILED: one audit row was changed and the comparison saw nothing"', 'exit 0',
+           "must FAIL when the control passes without naming the changed row")
+    broken(drill, " grant execute seqgrant colgrant defacl; do", " grant; do",
+           "must FAIL when the privileges on routines, sequences and columns are no longer required")
+    broken(drill, '    fail "the state changed across the upgrade: ', '    echo "the state changed across the upgrade: ',
+           "must FAIL when a changed state is only reported")
+    broken(drill, '    || fail "the state after the rollback differs from 16', '    || echo "the state after the rollback differs from 16',
+           "must FAIL when a state changed by the rollback is only reported")
+    broken(drill, '"${t}" "${n}" "${d}"', '"${t}" "${n}"', "must FAIL when a table's rows are counted but not digested")
+    wf = ".github/workflows/pg-upgrade.yml"
+    broken(wf, "run: bash scripts/polaris-pg-upgrade-drill.sh --prove-control", "run: true",
+           "must FAIL when CI does not run the control")
+    broken(wf, '      - "scripts/polaris-deploy.sh"\n', "", "must FAIL when a deploy change does not run the drill")
+    broken(wf, "  schedule:", "  workflow_call:", "must FAIL when the drill does not run nightly")
+    ops = "docs/operator/OPERATIONS.md"
+    broken(ops, "    pgbackrest --stanza=polaris stanza-upgrade\n./scripts/polaris-restore.sh",
+           "    pgbackrest --stanza=polaris check\n./scripts/polaris-restore.sh",
+           "must FAIL when step 5 restores without upgrading the stanza first")
+    broken(ops, "cp -a /from/. /to/' &&", "cp -a /from/. /to/'", "must FAIL when the rollback deploys over a failed copy")
+    broken(ops, "      pgbackrest --stanza=polaris stanza-upgrade &&", "      true &&",
+           "must FAIL when the rollback leaves pgBackRest's stanza on the new cluster")
+    dep = "scripts/polaris-deploy.sh"
+    broken(dep, "\npg_major_check || exit 1\n", "\npg_major_check || true\n",
+           "must FAIL when the deploy goes ahead on another major's cluster")
+    broken(dep, "cat /d/PG_VERSION", "cat /d/postmaster.pid", "must FAIL when the deploy no longer reads the cluster's major")
+
 
 def test_client_ip_behind_proxies_check_discriminates(tmp_path):
     files = ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",

@@ -174,7 +174,7 @@ fi
 #     initialises it); a cluster whose major cannot be read is refused.
 # ---------------------------------------------------------------------------
 pg_major_check() {
-    local vols cluster want
+    local vols cluster want image pull err
     want=$(sed -n -E 's/^FROM postgres:([0-9]+)[^0-9].*/\1/p' "${POLARIS_ROOT}/polaris_web/Dockerfile.postgres")
     [[ "${want}" =~ ^[0-9]+$ ]] || { echo "  ✗ polaris_web/Dockerfile.postgres has no single 'FROM postgres:<major>' line" >&2; return 1; }
     vols=$(docker volume ls -q --filter "label=com.docker.compose.project=${PROJECT}" \
@@ -183,10 +183,25 @@ pg_major_check() {
     [[ -n "${vols}" ]] || return 0
     [[ "$(printf '%s\n' "${vols}" | grep -c .)" -eq 1 ]] \
         || { echo "  ✗ more than one pg_data volume in project ${PROJECT}: ${vols//$'\n'/ }" >&2; return 1; }
-    cluster=$(docker run --rm -v "${vols}:/d:ro" \
-                  alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
-                  sh -c 'cat /d/PG_VERSION 2>/dev/null || echo none') \
-        || { echo "  ✗ could not read ${vols}'s PG_VERSION, so its cluster's major is unknown" >&2; return 1; }
+    # Read with the stack's own postgres image, never pulled, so a same-major deploy needs no registry
+    # here (step 4 pulls with --ignore-pull-failures); the pinned alpine only when that image is absent.
+    image=$(compose config --format json 2>/dev/null \
+                | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["postgres"]["image"])' 2>/dev/null) \
+        || image=""
+    pull=never
+    if [[ -z "${image}" ]] || ! docker image inspect "${image}" > /dev/null 2>&1; then
+        image=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+        pull=missing
+    fi
+    err=$(mktemp "${TMPDIR:-/tmp}/polaris-pg-major.XXXXXX")
+    if ! cluster=$(docker run --rm --pull="${pull}" --entrypoint sh -v "${vols}:/d:ro" "${image}" \
+                       -c 'cat /d/PG_VERSION 2>/dev/null || echo none' 2>"${err}"); then
+        echo "  ✗ could not read ${vols}'s PG_VERSION with ${image}, so its cluster's major is unknown:" >&2
+        sed -n '1,3p' "${err}" | sed 's/^/      /' >&2
+        rm -f "${err}"
+        return 1
+    fi
+    rm -f "${err}"
     [[ "${cluster}" != none && "${cluster}" != "${want}" ]] || return 0
     echo "  ✗ ${vols} holds a PostgreSQL ${cluster} cluster, and polaris_web/Dockerfile.postgres is PostgreSQL ${want}." >&2
     echo "    A server refuses another major's cluster: recreating postgres would take the database down." >&2
@@ -305,7 +320,7 @@ if [[ "${POLARIS_PGBACKREST_ENABLED:-1}" == "1" ]]; then
     fi
     # As the postgres user: the server archives WAL as postgres, so a repo
     # created by root here would refuse every later archive-push.
-    stanza_log="$(mktemp)"
+    stanza_log="$(mktemp "${TMPDIR:-/tmp}/polaris-stanza.XXXXXX")"
     if compose exec -T -u postgres postgres pgbackrest --stanza=polaris stanza-create >"$stanza_log" 2>&1 \
        && compose exec -T -u postgres postgres pgbackrest --stanza=polaris check >>"$stanza_log" 2>&1; then
         echo "  ✓ pgBackRest stanza ready (archive-push validated)"

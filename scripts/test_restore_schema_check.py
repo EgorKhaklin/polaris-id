@@ -59,12 +59,19 @@ class _RestoreHarness(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp(prefix="polaris-%s-" % prefix)
         cls.prefix = "polaris_%s_%d" % (prefix, os.getpid())
         cls.dbs = []
+        # A class cleanup runs when setUpClass fails too, which tearDownClass does not: the databases
+        # named for this process would otherwise outlive it, since nothing reuses the name.
+        cls.addClassCleanup(cls._drop_all)
 
     @classmethod
-    def tearDownClass(cls):
-        for db in getattr(cls, "dbs", []):
-            _run(["dropdb", "--if-exists", db], cls.env)
-        shutil.rmtree(getattr(cls, "tmp", ""), ignore_errors=True)
+    def _drop_all(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        failed = []
+        for db in cls.dbs:
+            r = _run(["dropdb", "--if-exists", "--force", db], cls.env)
+            if r.returncode != 0:
+                failed.append("%s: %s" % (db, r.stderr.strip()))
+        assert not failed, "test databases left behind: %s" % failed
 
     @classmethod
     def _createdb(cls, suffix):

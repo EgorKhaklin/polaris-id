@@ -108,17 +108,47 @@ grep -q 'polaris-deploy.sh prod --no-pull' "${WORK}/step5.sh" || fail "OPERATION
 grep -q -- '--verify-schema-version' "${WORK}/step5.sh" || fail "OPERATIONS.md step 5 no longer verifies the schema"
 grep -q 'polaris-deploy.sh prod --no-pull' "${WORK}/rollback.sh" || fail "the rollback block no longer redeploys"
 
+# A CHECK constraint's definition as its own server reads it back. pg_dump writes each CHECK as the server
+# prints it, and that text can read back printed differently (a constant array cast element by element),
+# so a database restored from a dump differs in text from the one it came from, on any major (79 of the
+# schema's 229 CHECKs, 16 to 16). Each side reads its own definitions back once, through a scratch table
+# LIKE the constraint's, and those are compared: a changed constant, operator or column still differs.
+CANONICAL_CONSTRAINTS=$(cat <<'SQL'
+CREATE FUNCTION pg_temp.read_back(con oid) RETURNS text LANGUAGE plpgsql AS $read_back$
+DECLARE rel regclass; def text; back text;
+BEGIN
+    SELECT conrelid::regclass, pg_get_constraintdef(oid) INTO rel, def FROM pg_constraint WHERE oid = con;
+    EXECUTE format('CREATE TEMP TABLE read_back_probe (LIKE %s)', rel);
+    EXECUTE format('ALTER TABLE read_back_probe ADD CONSTRAINT read_back_check %s', def);
+    SELECT pg_get_constraintdef(oid) INTO back FROM pg_constraint
+     WHERE conrelid = 'read_back_probe'::regclass AND conname = 'read_back_check';
+    DROP TABLE read_back_probe;
+    RETURN back;
+END
+$read_back$;
+SELECT 'constraint ' || c.conrelid::regclass || ' ' || c.conname || ' '
+       || md5(CASE WHEN c.contype = 'c' AND c.conrelid <> 0 THEN pg_temp.read_back(c.oid) ELSE pg_get_constraintdef(c.oid) END)
+  FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+ ORDER BY 1;
+SQL
+)
+
 state() {  # state FILE: everything that must survive the move, one line per fact
     {
         sql -c "SELECT 'db ' || pg_encoding_to_char(encoding) || ' ' || datcollate || ' ' || datctype FROM pg_database WHERE datname = 'polaris'"
         sql -c "SELECT 'role ' || rolname || ' ' || rolsuper || rolinherit || rolcreaterole || rolcreatedb || rolcanlogin || rolreplication || rolbypassrls FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY 1"
         sql -c "SELECT 'seq ' || schemaname || '.' || sequencename || ' ' || coalesce(last_value::text, 'unset') FROM pg_sequences ORDER BY 1"
         sql -c "SELECT 'trigger ' || tgrelid::regclass || ' ' || tgname || ' ' || tgenabled::text || ' ' || md5(pg_get_triggerdef(oid)) FROM pg_trigger WHERE NOT tgisinternal ORDER BY 1"
-        sql -c "SELECT 'constraint ' || conrelid::regclass || ' ' || conname || ' ' || md5(pg_get_constraintdef(c.oid)) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1"
+        sql -c "${CANONICAL_CONSTRAINTS}"
         sql -c "SELECT 'index ' || i.indexrelid::regclass || ' ' || md5(pg_get_indexdef(i.indexrelid)) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') ORDER BY 1"
         sql -c "SELECT 'function ' || p.oid::regprocedure || ' ' || md5(p.prosrc) || ' ' || p.proowner::regrole || ' ' || p.prosecdef || ' ' || coalesce(array_to_string(p.proconfig, ','), '') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1"
         sql -c "SELECT 'owner ' || c.oid::regclass || ' ' || c.relkind::text || ' ' || c.relowner::regrole FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') AND c.relkind IN ('r', 'p', 'v', 'm', 'S') ORDER BY 1"
         sql -c "SELECT 'grant ' || r.rolname || ' ' || c.oid::regclass || ' ' || has_table_privilege(r.oid, c.oid, 'SELECT') || has_table_privilege(r.oid, c.oid, 'INSERT') || has_table_privilege(r.oid, c.oid, 'UPDATE') || has_table_privilege(r.oid, c.oid, 'DELETE') || has_table_privilege(r.oid, c.oid, 'TRUNCATE') FROM pg_roles r CROSS JOIN pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE r.rolname !~ '^pg_' AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') AND c.relkind IN ('r', 'p') ORDER BY 1"
+        sql -c "SELECT 'execute ' || r.rolname || ' ' || p.oid::regprocedure || ' ' || has_function_privilege(r.oid, p.oid, 'EXECUTE')::text FROM pg_roles r CROSS JOIN pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE r.rolname !~ '^pg_' AND n.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1"
+        sql -c "SELECT 'seqgrant ' || r.rolname || ' ' || c.oid::regclass || ' ' || has_sequence_privilege(r.oid, c.oid, 'USAGE')::text || has_sequence_privilege(r.oid, c.oid, 'SELECT')::text || has_sequence_privilege(r.oid, c.oid, 'UPDATE')::text FROM pg_roles r CROSS JOIN pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE r.rolname !~ '^pg_' AND c.relkind = 'S' AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') ORDER BY 1"
+        sql -c "SELECT 'colgrant ' || r.rolname || ' ' || c.oid::regclass || '.' || quote_ident(a.attname) || ' ' || has_column_privilege(r.oid, c.oid, a.attnum, 'SELECT')::text || has_column_privilege(r.oid, c.oid, a.attnum, 'INSERT')::text || has_column_privilege(r.oid, c.oid, a.attnum, 'UPDATE')::text FROM pg_roles r CROSS JOIN pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE r.rolname !~ '^pg_' AND c.relkind IN ('r', 'p', 'v', 'm') AND a.attnum > 0 AND NOT a.attisdropped AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') ORDER BY 1"
+        sql -c "SELECT 'defacl ' || d.defaclrole::regrole || ' ' || coalesce(d.defaclnamespace::regnamespace::text, '-') || ' ' || d.defaclobjtype::text || ' ' || d.defaclacl::text FROM pg_default_acl d ORDER BY 1"
         local t n d
         for t in $(sql -c "SELECT format('%I.%I', n.nspname, c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') AND c.relkind IN ('r', 'p') ORDER BY 1"); do
             # Assigned first, so a failed count or copy fails the drill. As printf's arguments their
@@ -132,6 +162,11 @@ state() {  # state FILE: everything that must survive the move, one line per fac
         done
     } > "$1"
     [[ $(grep -c '^rows ' "$1") -ge 40 ]] || fail "the state read only $(grep -c '^rows ' "$1") tables"
+    # Each kind of fact compares something, or the comparison would hold for it with nothing read.
+    local kind
+    for kind in seq trigger constraint index function owner grant execute seqgrant colgrant defacl; do
+        grep -q "^${kind} " "$1" || fail "the state read no ${kind} facts, so comparing them would prove nothing"
+    done
 }
 
 pgbackrest_current() {  # pgbackrest_current MAJOR: check passes, and the repository's current database is MAJOR with a full backup
@@ -171,7 +206,7 @@ step "3/5 OPERATIONS.md steps 1 to 5, as written"
 cd "${ROOT}"
 W0=$(date +%s)
 bash "${WORK}/step1.sh" > "${WORK}/step1.log" 2>&1 || { tail -10 "${WORK}/step1.log" >&2; fail "step 1 (backup)"; }
-TARBALL=$(ls -1t "${WORK}"/backups/polaris-*.tar.gz* | head -1); [[ -n "${TARBALL}" ]] || fail "step 1 wrote no tarball"
+TARBALL=$({ ls -1t "${WORK}"/backups/polaris-*.tar.gz* 2>/dev/null || true; } | sed -n 1p); [[ -n "${TARBALL}" ]] || fail "step 1 wrote no tarball"
 D0=$(date +%s)
 bash "${WORK}/step2.sh" > "${WORK}/step2.log" 2>&1 || fail "step 2 (stop)"
 MOVED=1
@@ -211,7 +246,7 @@ fi
 step "4/5 the state on the new major, and credential A"
 state "${WORK}/state-new.txt"
 if ! diff -q "${WORK}/state-16.txt" "${WORK}/state-new.txt" > /dev/null; then
-    changed=$(diff "${WORK}/state-16.txt" "${WORK}/state-new.txt" | grep '^[<>]' | awk '{print $2 " " $3}' | sort -u | head -12)
+    changed=$({ diff "${WORK}/state-16.txt" "${WORK}/state-new.txt" || true; } | { grep '^[<>]' || true; } | awk '{print $2 " " $3}' | sort -u | sed -n 1,12p)
     if [[ "${PROVE_CONTROL}" -eq 1 ]] && grep -q '^rows public.agencyevent' <<< "${changed}"; then
         echo "CONTROL HELD: the comparison named the changed table: $(echo "${changed}" | tr '\n' ';')"
         exit 0
@@ -221,16 +256,19 @@ fi
 [[ "${PROVE_CONTROL}" -eq 0 ]] || fail "CONTROL FAILED: one audit row was changed and the comparison saw nothing"
 ok "rows, sequences, catalogue, roles and grants: identical ($(wc -l < "${WORK}/state-16.txt" | tr -d ' ') facts)"
 BASE=https://localhost:8443 CA="${OUT}/caddy-root.crt" JAR="${WORK}/cookies"
-CSRF=$(curl -s --cacert "${CA}" -c "${JAR}" -b "${JAR}" "${BASE}/login" \
-       | { grep -o 'name="csrf_token" value="[^"]*"' || true; } | head -1 | sed 's/.*value="//;s/"$//')
+CSRF=$({ curl -s --cacert "${CA}" -c "${JAR}" -b "${JAR}" "${BASE}/login" || true; } \
+       | { grep -o 'name="csrf_token" value="[^"]*"' || true; } | sed -n 1p | sed 's/.*value="//;s/"$//')
 [[ "$(curl -s --cacert "${CA}" -c "${JAR}" -b "${JAR}" -o /dev/null -w '%{http_code}' \
       --data-urlencode "csrf_token=${CSRF}" --data-urlencode "username=try-operator" \
       --data-urlencode "password@"<(tr -d '\r\n' < "${OUT}/operator-password") "${BASE}/login")" == 302 ]] \
     || fail "signing in as try-operator on the new major"
-valid=$(curl -s --cacert "${CA}" -b "${JAR}" "${BASE}/api/tokens/${A}/verify" \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("signature_valid"))')
+valid=$({ curl -s --cacert "${CA}" -b "${JAR}" "${BASE}/api/tokens/${A}/verify" || true; } \
+        | python3 -c 'import json, sys
+try: print(json.load(sys.stdin).get("signature_valid"))
+except ValueError as e: print("unreadable (%s)" % e)')
 [[ "${valid}" == True ]] || fail "on the new major the app says credential #${A}'s signature_valid is ${valid}"
-curl -s --cacert "${CA}" -b "${JAR}" "${BASE}/api/tokens/${A}/authenticity-pack" > "${WORK}/pack-A-after.json"
+curl -sf --cacert "${CA}" -b "${JAR}" "${BASE}/api/tokens/${A}/authenticity-pack" > "${WORK}/pack-A-after.json" \
+    || fail "could not read credential #${A}'s pack on the new major"
 python3 - "${WORK}/pack-A-before.json" "${WORK}/pack-A-after.json" <<'PY' || fail "credential #${A}'s pack changed across the upgrade"
 import json, sys
 before, after = (json.load(open(p)) for p in sys.argv[1:])
@@ -256,7 +294,7 @@ grep -q 'Stop here' "${WORK}/rollback.log" && { cat "${WORK}/rollback.log" >&2; 
 [[ "$(sql -c "SHOW server_version_num")" == "${OLD}" ]] || fail "the rollback did not bring back PostgreSQL ${OLD}"
 state "${WORK}/state-back.txt"
 diff -q "${WORK}/state-16.txt" "${WORK}/state-back.txt" > /dev/null \
-    || fail "the state after the rollback differs from 16's: $(diff "${WORK}/state-16.txt" "${WORK}/state-back.txt" | grep '^[<>]' | awk '{print $2 " " $3}' | sort -u | head -8 | tr '\n' ';')"
+    || fail "the state after the rollback differs from 16's: $({ diff "${WORK}/state-16.txt" "${WORK}/state-back.txt" || true; } | { grep '^[<>]' || true; } | awk '{print $2 " " $3}' | sort -u | sed -n 1,8p | tr '\n' ';')"
 ok "back on PostgreSQL $(sql -c 'SHOW server_version') with the state step 2 read"
 pgbackrest_current "${OLD:0:2}"
 ok "pgBackRest after the rollback: check passes, and the repository's current database, ${OLD:0:2}, has a full backup"
