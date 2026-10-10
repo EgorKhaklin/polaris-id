@@ -1134,3 +1134,38 @@ class ReleaseNotesTests(unittest.TestCase):
     def test_a_block_with_no_intro_has_no_summary(self):
         head = self.render("").split("### Breaking changes")[0]
         self.assertNotIn("Security", head)
+
+
+class AHookIndexIsLeftAlone(unittest.TestCase):
+    """setUpModule's effect, not its shape. The suites that build scratch repositories run as the
+    tool-tests hook runs them, with GIT_INDEX_FILE and GIT_DIR naming the repository whose commit
+    is being made, and that repository's index must come out byte for byte as it went in. Without
+    the scrub they wrote their scratch trees into it (2026-10-10: 1680 entries became 1)."""
+
+    def test_the_scratch_repository_suites_leave_the_hook_s_index_unchanged(self):
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+        root = tempfile.mkdtemp(prefix="polaris-hook-index-")
+        self.addCleanup(shutil.rmtree, root, True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.org",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.org")
+        with open(os.path.join(root, "staged.txt"), "w") as f:
+            f.write("the commit being made\n")
+        for args in (["init", "-q"], ["add", "staged.txt"]):
+            subprocess.run(["git", "-C", root, *args], env=env, check=True, capture_output=True)
+        index = os.path.join(root, ".git", "index")
+        with open(index, "rb") as f:
+            before = f.read()
+        self.assertTrue(before, "fixture: the hook's index holds the staged file")
+        hook = dict(env, GIT_INDEX_FILE=index, GIT_DIR=os.path.join(root, ".git"))
+        r = subprocess.run([sys.executable, "-m", "unittest", "test_ship_tool.ZkProverStale",
+                            "test_ship_tool.DrillReceiptsLiveInTheClonesGitDirectory",
+                            "test_operator_env.DeployRechecksTheSecretsAfterItsOwnPull"],
+                           cwd=_HERE, env=hook, capture_output=True, text=True, timeout=600)
+        with open(index, "rb") as f:
+            after = f.read()
+        self.assertEqual(after, before, "a scratch repository wrote into the index of the commit being made")
+        self.assertEqual(r.returncode, 0, "the suites failed under a hook's environment:\n" + r.stderr[-3000:])

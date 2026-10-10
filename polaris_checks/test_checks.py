@@ -21528,6 +21528,43 @@ def test_precommit_folded_entry_check_discriminates(tmp_path):
         "must FAIL when the config is absent"
 
 
+def test_git_spawning_tests_drop_the_hook_environment_check_discriminates(tmp_path):
+    fn = checks.check_git_spawning_tests_drop_the_hook_environment
+    (tmp_path / "scripts").mkdir()
+    mod = tmp_path / "scripts" / "test_tool.py"
+    mod.write_text("import os\n")
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL when no test module spawns git: it read nothing"
+
+    spawn = ("import os, subprocess\n\n"
+             "class T:\n"
+             "    def test_x(self):\n"
+             "        subprocess.run([\"git\", \"-C\", \"/tmp/x\", \"init\", \"-q\"], check=True)\n")
+    module_scrub = ("\n_SAVED = {}\n\n\ndef setUpModule():\n"
+                    "    _SAVED.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith(\"GIT_\")})\n")
+    mod.write_text(spawn)
+    found = fn(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/test_tool.py" in found.message, \
+        f"must FAIL a module that spawns git and drops nothing: {found.message}"
+
+    class_scrub = spawn.replace("class T:\n", "class T:\n    def setUp(self):\n"
+                                "        [os.environ.pop(k) for k in list(os.environ) if k.startswith(\"GIT_\")]\n\n")
+    mod.write_text(class_scrub)
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL a class-level scrub: the next class in the module has none"
+
+    mod.write_text(spawn + module_scrub)
+    assert fn(tmp_path)[0].level == "OK", f"must PASS a setUpModule that drops GIT_*: {fn(tmp_path)[0].message}"
+
+    mod.write_text("import os, pytest, subprocess\n\n\n@pytest.fixture(autouse=True)\n"
+                   "def _no_git(monkeypatch):\n"
+                   "    for k in [k for k in os.environ if k.startswith(\"GIT_\")]:\n"
+                   "        monkeypatch.delenv(k)\n\n\n"
+                   "def test_x():\n    subprocess.run([\"git\", \"status\"])\n")
+    assert fn(tmp_path)[0].level == "OK", f"must PASS an autouse fixture that drops GIT_*: {fn(tmp_path)[0].message}"
+
+    mod.write_text(spawn + module_scrub.replace("GIT_", "GIT_DIR"))
+    assert fn(tmp_path)[0].level == "FAIL", "must FAIL a scrub of one named variable: the prefix is the guard"
+
+
 def test_drill_case_counts_check_discriminates(tmp_path):
     """A drill that records no cases must not print its verdict and exit 0.
 

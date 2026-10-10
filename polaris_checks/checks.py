@@ -26424,6 +26424,50 @@ def check_verification_plan_covers_published_artifacts(root: pathlib.Path) -> li
                % (len(artifacts), ", ".join(artifacts)))
 
 
+# A test that spawns git from a hook inherits the hook's GIT_INDEX_FILE and GIT_DIR, which name
+# the repository whose commit is being made, so its scratch repository's `git add` and `git commit`
+# write into THAT index: from a linked worktree the tool-tests hook replaced a 1680-entry index with
+# a scratch repository's one file (2026-10-10), the third time after 2026-09-28's two. A class-level
+# guard covers only its own class, and the 10-10 tests were new classes beside a guarded one; the
+# scrub is module-wide (setUpModule, or an autouse fixture) and drops every GIT_* by prefix.
+_SPAWNS_GIT = re.compile(r"[\[(]\s*[\"']git[\"']\s*,")
+
+
+def check_git_spawning_tests_drop_the_hook_environment(root: pathlib.Path) -> list[Finding]:
+    name = "git_spawning_tests_drop_the_hook_environment"
+    spawning, unguarded = [], []
+    for rel in _tracked_files(root):
+        if not re.search(r"(^|/)test_[^/]*\.py$", rel) or any(d in _NAMED_REF_SKIP_DIRS for d in rel.split("/")):
+            continue
+        text = _read_path(root / rel)
+        if not _SPAWNS_GIT.search(text):
+            continue
+        spawning.append(rel)
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            unguarded.append(rel + " (does not parse)")
+            continue
+        guarded = False
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            autouse = any("autouse=True" in ast.unparse(d).replace(" ", "") for d in node.decorator_list)
+            if (node.name == "setUpModule" or autouse) and \
+                    re.search(r"startswith\(\s*[\"']GIT_[\"']\s*\)", ast.get_source_segment(text, node) or ""):
+                guarded = True
+        if not guarded:
+            unguarded.append(rel)
+    if not spawning:
+        return _fail(name, "found no test module that spawns git: a scan that read nothing proves nothing")
+    if unguarded:
+        return _fail(name, "%d test module(s) spawn git without dropping GIT_* module-wide (setUpModule or an "
+                           "autouse fixture); run from a hook, their scratch repositories write into the index "
+                           "of the commit being made: %s" % (len(unguarded), ", ".join(unguarded)))
+    return _ok(name, "the %d test modules that spawn git each drop every GIT_* module-wide (%s)"
+               % (len(spawning), ", ".join(spawning)))
+
+
 def _safe_search(pattern: str, text: str) -> bool:
     """re.search that treats an unparseable pattern as no match rather than raising."""
     try:
@@ -28078,6 +28122,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_install_instructions_reach_the_current_candidate,
     check_precommit_config_wires_what_the_docs_claim,
     check_pre_commit_folded_entries_stay_one_line,
+    check_git_spawning_tests_drop_the_hook_environment,
     check_verification_plan_covers_the_check_layer,
     check_verification_plan_covers_published_artifacts,
     check_path_gated_drills_are_named_in_the_plan,
