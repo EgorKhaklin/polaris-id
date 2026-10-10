@@ -688,6 +688,70 @@ class ZkProverStale(unittest.TestCase):
         os.utime(src, (self.CHANGED + 60, self.CHANGED + 60))
         self.assertIsNone(ship.zk_prover_stale(self.root, {}), "an edit older than the binary was refused")
 
+    def stamped(self, at, tree):
+        """A prover that reports the source tree build.rs stamped into it, built at `at`."""
+        os.makedirs(os.path.dirname(self.binary), exist_ok=True)
+        with open(self.binary, "w") as f:
+            f.write('#!/bin/sh\n[ "$1" = source-tree ] && { echo %s; exit 0; }\nexit 2\n' % tree)
+        os.chmod(self.binary, 0o755)
+        os.utime(self.binary, (at, at))
+
+    def test_a_binary_stamped_with_the_working_copy_s_source_is_current_whatever_its_time(self):
+        self.stamped(self.CHANGED - 3600, ship.zk_source_tree(self.root))
+        self.assertIsNone(ship.zk_prover_stale(self.root, {}), "an exact stamp was overruled by a file time")
+
+    def test_a_binary_stamped_with_other_source_is_refused_whatever_its_time(self):
+        self.stamped(self.CHANGED + 3600, "0" * 40)
+        why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why, "a newer file time hid a binary built from other source")
+        self.assertIn("built from source tree 000000000000", why)
+        self.assertIn("old circuit", why)
+
+    def test_an_uncommitted_edit_makes_an_exact_stamp_stale(self):
+        self.stamped(self.CHANGED + 3600, ship.zk_source_tree(self.root))
+        with open(os.path.join(self.root, "polaris_zk", "src", "lib.rs"), "a") as f:
+            f.write("// edited, not committed\n")
+        self.assertIn("built from source tree", ship.zk_prover_stale(self.root, {}))
+
+    def test_a_binary_built_outside_git_falls_back_to_file_times(self):
+        self.stamped(self.CHANGED - 3600, "unknown")
+        self.assertIn("old circuit", ship.zk_prover_stale(self.root, {}))
+        self.stamped(self.CHANGED + 3600, "unknown")
+        self.assertIsNone(ship.zk_prover_stale(self.root, {}))
+
+    def test_the_stamp_and_the_gate_read_the_same_paths(self):
+        import re
+        build_rs = open(os.path.join(_HERE, "..", "polaris_zk", "build.rs")).read()
+        m = re.search(r"const SOURCES: \[&str; \d+\] = \[([^\]]*)\]", build_rs)
+        self.assertIsNotNone(m, "build.rs no longer lists the paths it stamps")
+        stamped = re.findall(r'"([^"]+)"', m.group(1))
+        self.assertTrue(stamped, "build.rs's list parsed empty")
+        self.assertEqual(stamped, [p[len("polaris_zk/"):] for p in ship.ZK_SOURCES])
+
+    def test_a_stamp_the_gate_cannot_compare_is_refused(self):
+        from unittest import mock
+        self.stamped(self.CHANGED + 3600, "0" * 40)
+        with mock.patch.object(ship, "zk_source_tree", return_value=None):
+            why = ship.zk_prover_stale(self.root, {})
+        self.assertIsNotNone(why, "an unreadable source tree passed a stamped binary as current")
+        self.assertIn("could not be read", why)
+
+    def test_the_tree_is_the_one_build_rs_writes(self):
+        """build.rs stamps polaris_zk/'s own subtree (write-tree --prefix): the same object, or every stamp differs."""
+        import subprocess
+        tree = ship.zk_source_tree(self.root)
+        r = subprocess.run(["git", "-C", self.root, "ls-tree", "-r", "--name-only", tree], capture_output=True, text=True)
+        self.assertEqual(r.stdout.split(), ["src/lib.rs"])
+
+    def test_the_gate_s_tree_ignores_a_hook_s_git_environment(self):
+        """A hook exports GIT_DIR and GIT_INDEX_FILE; read under them, the tree would be another repository's."""
+        from unittest import mock
+        clean = ship.zk_source_tree(self.root)
+        self.assertIsNotNone(clean)
+        hook = {"GIT_DIR": "/nonexistent", "GIT_INDEX_FILE": "/nonexistent/index", "GIT_OBJECT_DIRECTORY": "/nonexistent"}
+        with mock.patch.dict(os.environ, hook):
+            self.assertEqual(ship.zk_source_tree(self.root), clean)
+
     def test_an_unreadable_history_is_not_a_current_binary(self):
         import shutil
         self.build(self.CHANGED + 3600)
