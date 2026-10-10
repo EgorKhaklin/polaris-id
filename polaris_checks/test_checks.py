@@ -8699,6 +8699,14 @@ def test_stated_counts_check_measures_the_artifacts(tmp_path):
     write({"README.md": readme, ".github/workflows/ci.yml": ci + "  deploy:\n    needs: [test, build]\n"})
     assert checks.check_stated_counts(tmp_path)[0].level == "FAIL", "must FAIL when a CI job is added and no doc follows"
 
+    # Every drifted document is named, so fixing the first does not hide the next.
+    write({".github/workflows/ci.yml": ci, "README.md": readme.replace("| CI jobs | 2 |", "| CI jobs | 3 |"),
+           "docs/reference/SYSTEM-MAP.md": "```\n├── .github/workflows/  ← ci.yml (3 jobs)\n```\n"})
+    found = checks.check_stated_counts(tmp_path)[0]
+    assert found.level == "FAIL" and "README.md states [3]" in found.message \
+        and "docs/reference/SYSTEM-MAP.md states [3]" in found.message, \
+        f"must name both drifted documents, the system map's diagram included: {found.message}"
+
 
 def test_c1c10_objects_check_resolves_names_against_the_code(tmp_path):
     def write(files):

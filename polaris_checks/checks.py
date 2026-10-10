@@ -4673,6 +4673,9 @@ def check_stated_counts(root: pathlib.Path) -> list[Finding]:
     if real["CI jobs"] == 0 or real["routes"] == 0:
         return _fail("stated_counts", "cannot measure CI jobs or routes (ci.yml / app.py missing)")
     seen_in_readme: set[str] = set()
+    # Every drifted document is named, not the first: on 2026-10-10 the README's job count was
+    # fixed, SYSTEM-MAP's was fixed before the next run, and its own failure was never seen.
+    drifted = []
     for rel in _STATED_COUNT_DOCS:
         text = _prose(_read(root, rel))
         if not text:
@@ -4683,8 +4686,9 @@ def check_stated_counts(root: pathlib.Path) -> list[Finding]:
                 seen_in_readme.add(kind)
             wrong = sorted(set(s for s in stated if s != real[kind]))
             if wrong:
-                return _fail("stated_counts",
-                             f"{rel} states {wrong} {kind} but the repo measures {real[kind]}")
+                drifted.append(f"{rel} states {wrong} {kind} but the repo measures {real[kind]}")
+    if drifted:
+        return _fail("stated_counts", "; ".join(drifted))
     for kind in ("invariant checks", "CI jobs"):
         if kind not in seen_in_readme:
             return _fail("stated_counts", f"README.md no longer states the {kind} count")
