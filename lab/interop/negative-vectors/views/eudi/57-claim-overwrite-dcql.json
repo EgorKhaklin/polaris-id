@@ -11,16 +11,19 @@
         },
         "claims": [
           {
+            "id": "given_name",
             "path": [
               "given_name"
             ]
           },
           {
+            "id": "family_name",
             "path": [
               "family_name"
             ]
           },
           {
+            "id": "birthdate",
             "path": [
               "birthdate"
             ]

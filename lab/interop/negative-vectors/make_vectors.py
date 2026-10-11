@@ -390,6 +390,18 @@ def bind(*, audience=None, nonce=None, now=None, issuer_key=None, holder_key=Non
 
 # --- the views: the same vectors in the layouts other suites read; derived here, never edited by hand ------
 EUDI_FIRST = 50  # the EU verifier's test resources number theirs from 00; ours start where nothing collides
+# The EU reference verifier's own test binding, read at eudi-srv-verifier-endpoint df07af2f: the client_id its
+# InitDCApiTransactionTest configures (x509_hash over the access certificate in its test keystore.jks), and the
+# nonce its 08-invalidStatusList-dcql.json sends. eudi/README.md gives the command that binds the vectors to them.
+EUDI_REPO = "eu-digital-identity-wallet/eudi-srv-verifier-endpoint"
+EUDI_COMMIT = "df07af2f"
+EUDI_TEST_CLIENT_HASH = "i7jZiSqa4GXNh1LzBwD2lVtKIcIhpinRQRo8BHSVMx0"
+EUDI_TEST_AUDIENCE = "x509_hash:" + EUDI_TEST_CLIENT_HASH
+EUDI_TEST_NONCE = "706f6c4d-c92d-4472-9dbf-d814c94f90c2"
+EUDI_README_IS = ("**What this is:** Polaris-generated negative vectors (lab record 018), rendered in the EU verifier "
+                  "endpoint's test-resource layout, each with its expected outcome and the spec clause it cites.")
+EUDI_README_IS_NOT = ("**What this is not:** the EU project's own vectors. The EU project has not run them, and "
+                      "nothing here claims how their verifier behaves.")
 
 
 def _view_json(obj):
@@ -413,7 +425,8 @@ def views(doc, rejected):
     settings = doc["settings"]
     dcql = _view_json({"dcql_query": {"credentials": [{"id": "pid", "format": "dc+sd-jwt",
                                                        "meta": {"vct_values": [settings["vct"]]},
-                                                       "claims": [{"path": [name]} for name, _ in CLAIMS]}]},
+                                                       "claims": [{"id": name, "path": [name]}
+                                                                  for name, _ in CLAIMS]}]},
                        "nonce": settings["nonce"], "request_uri_method": "post"})
     out, entries = {}, []
     for n, v in enumerate(doc["vectors"], EUDI_FIRST):
@@ -433,8 +446,65 @@ def views(doc, rejected):
                         "settings": settings, "vectors": entries})
     out["index.json"] = index
     out["eudi/INDEX.json"] = index
+    out["eudi/README.md"] = _eudi_readme(doc)
     out["expected-failures.example.json"] = "[]\n"
     return out
+
+
+def _eudi_readme(doc):
+    """eudi/README.md: what the view is and is not, the binding it carries, and how to re-bind it."""
+    st = doc["settings"]
+    when = datetime.datetime.fromtimestamp(st["now"], UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    n = len(doc["vectors"])
+    last = "%02d" % (EUDI_FIRST + n - 1) if n else "none"
+    return "\n".join([
+        "# Record 018's negative vectors in the EU verifier endpoint's test-resource layout",
+        "",
+        EUDI_README_IS,
+        "",
+        EUDI_README_IS_NOT,
+        "",
+        "`make_vectors.py --out` writes this directory from `vectors.json`'s generator; never edit it by hand.",
+        "",
+        "## Files",
+        "",
+        "The layout is the one in `src/test/resources/` of %s at %s." % (EUDI_REPO, EUDI_COMMIT),
+        "",
+        "- `NN-<id>-dcql.json`: the transaction-init body: `dcql_query` (one `dc+sd-jwt` query, id `pid`, vct "
+        "`%s`), `nonce`, `request_uri_method`." % st["vct"],
+        "- `NN-<id>-vpToken.json`: `{\"pid\": [<presentation>]}`.",
+        "- `INDEX.json`: per vector, `expected` (`accept` or `reject`), `clauses` (the spec text), `trust` and "
+        "`files` (its pair).",
+        "",
+        "%d vectors, numbered %02d to %s in `vectors.json`'s order. The %d `accept-*` controls come first: a "
+        "refusal counts only where the controls are accepted."
+        % (n, EUDI_FIRST, last, sum(v["expected"] == "accept" for v in doc["vectors"])),
+        "",
+        "## The binding",
+        "",
+        "Every Key Binding JWT names `aud` `%s`, `nonce` `%s` and the instant %s (%d). A verifier with another "
+        "client_id, nonce or clock refuses even the controls." % (st["audience"], st["nonce"], when, st["now"]),
+        "",
+        "## Bind them to the EU test harness",
+        "",
+        "Its KB-JWT check reads the verifier's clock (`kbJwt.clock.skew` PT5S), so no committed view stays bound. "
+        "Make one just before the run (it lands in `DIR/views/eudi/`):",
+        "",
+        "```bash",
+        "python3 make_vectors.py --audience %s --nonce %s --now \"$(date +%%s)\" --out DIR"
+        % (EUDI_TEST_AUDIENCE, EUDI_TEST_NONCE),
+        "```",
+        "",
+        "and configure the harness with:",
+        "",
+        "- `verifier.clientIdPrefix=x509_hash` and `verifier.originalClientId=%s`, as their "
+        "InitDCApiTransactionTest does. The default client_id (`pre-registered`) has no Client Identifier Prefix, "
+        "which `kb-aud-no-prefix` needs." % EUDI_TEST_CLIENT_HASH,
+        "- The test root in `INDEX.json`'s `settings.trust_anchors_pem` as an issuer trust anchor: every x5c "
+        "chain ends there, whichever key `--issuer-key` signs with. `accept-jwks` also needs "
+        "`settings.issuer_jwks`; without it, run the `trust: x5c` vectors.",
+        "",
+    ])
 
 
 def write(doc, out_dir):
