@@ -1,9 +1,15 @@
 // How Cloudflare publishes the project site: `npx wrangler deploy`, run by Cloudflare's build on
 // every push to main. The site is site/ exactly as committed. site/_headers is its security
-// policy; an unknown path gets site/404.html with a 404 status.
+// policy; an unknown path gets site/404.html with a 404 status. It answers at polaris-id.org (www
+// redirects there by a zone rule) and, for links published before 2026-10-11, at its workers.dev address.
 {
   "name": "polaris-id",
   "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "polaris-id.org", "custom_domain": true },
+    { "pattern": "www.polaris-id.org", "custom_domain": true }
+  ],
   "assets": {
     "directory": "./site",
     "not_found_handling": "404-page"

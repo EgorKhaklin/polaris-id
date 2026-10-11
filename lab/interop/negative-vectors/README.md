@@ -36,6 +36,9 @@ python3 run_vectors.py vectors.json --adapter polaris-oid4vp
 
 The `polaris-oid4vp` adapter uses the installed package when there is one (for a release:
 `pip install polaris-oid4vp==1.0.0rc16`), else this tree's, and prints the version and path it used.
+For it the refusal code counts too: each negative must be refused with the code `POLARIS_OID4VP_CODES` names.
+The run fails when a control is refused or a negative accepted, and also when the file holds no vectors, no
+control, or no negative the adapter judged; a run that passes ends `done`.
 
 An adapter is one function, `(vector, settings) -> ("accept" | "reject", reason)`. `settings` holds the
 instant, nonce, audience, credential type, trust anchors (PEM) and issuer JWKs every vector assumes.
@@ -52,7 +55,9 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 **The keys and certificates are test material: never trust them.**
 [`test_vectors.py`](test_vectors.py), run in CI:
 - the file has not drifted from its generator;
-- `polaris-oid4vp` reaches all 25 verdicts, under the default binding and under another verifier's;
+- `polaris-oid4vp` reaches all 25 verdicts with the expected refusal codes, under the default binding, under
+  another verifier's, and under the EU test harness's;
+- a run with no vectors, no control or no judged negative fails;
 - the views equal the generator's output, and a view with no vectors or a missing pair file fails;
 - each certificate defect is the only one, because the same chain repaired is accepted.
 
@@ -92,7 +97,8 @@ Without binding flags, `python3 make_vectors.py > vectors.json` reproduces `vect
   (from 0) is the pair `<50+N>-<id>-dcql.json` (the transaction-init body: the DCQL query for the control's
   claims, the nonce, `request_uri_method` post) and `<50+N>-<id>-vpToken.json` (`{"pid": [<presentation>]}`).
   Numbering starts at 50 so it collides with nothing there, and follows the file's order so an added vector
-  never renumbers one. `INDEX.json` is the index below.
+  never renumbers one. `INDEX.json` is the index below. Its [`README.md`](views/eudi/README.md) gives the
+  binding it carries and the command and settings that bind it to the EU test harness.
 - [`views/index.json`](views/index.json): one entry per vector, `id`, `spec_section` (the first clause),
   `target` (the layer), `input` (the presentation), `expected`, `hardening` (true for `spec-implied`),
   `reference_rejected_at_mint`, `clauses`, `trust`, `profile`, and `files` (its EU pair). `profile` is `haip`
@@ -120,7 +126,7 @@ suite's expected-failures files (MIT). Nothing of theirs is copied into this dir
 
 - One credential type and one issuer profile; the response layer (`direct_post.jwt` encryption) and the
   Token Status List have no vectors yet.
-- A verdict is pass or refuse; why a verifier refused is not compared, so a refusal for the wrong
-  reason counts as a pass.
+- A verdict is pass or refuse. Why a verifier refused is compared for polaris-oid4vp only; for any other
+  adapter, a refusal for the wrong reason counts as a pass.
 - Version 0.2.0 (0.1.0 plus `kb-aud-missing` and `kb-nonce-missing`). Vectors may be added, and none will change
   meaning under the same id.

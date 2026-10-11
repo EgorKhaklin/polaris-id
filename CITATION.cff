@@ -8,7 +8,7 @@ authors:
 version: "1.0.0-rc.72"
 date-released: "2026-10-10"
 repository-code: "https://github.com/EgorKhaklin/polaris-id"
-url: "https://polaris-id.e-khaklin.workers.dev/"
+url: "https://polaris-id.org/"
 license: Apache-2.0
 keywords:
   - digital identity
