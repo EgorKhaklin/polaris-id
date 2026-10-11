@@ -88,9 +88,10 @@ git -C axle -c advice.detachedHead=false checkout -q FETCH_HEAD
 
 # The harness and Axle's modules, built together into a copy of harness/ so the tree stays clean.
 # Gradle's cache is a named volume of its own, so a second run does not download again.
+# lift.init.gradle.kts lifts, in both builds, the dependencies OSV lists advisories against.
 rm -rf harness && cp -R "$HERE/harness" harness
 if ! docker run --rm -v "$WORK/harness":/w -v "$WORK/axle":/axle -w /w -e AXLE_KOTLIN=/axle/kotlin \
-    -v polaris-axle-gradle-cache:/home/gradle/.gradle "$IMAGE" gradle --no-daemon -q installDist > build.log 2>&1; then
+    -v polaris-axle-gradle-cache:/home/gradle/.gradle "$IMAGE" gradle --no-daemon -q --init-script /w/lift.init.gradle.kts installDist > build.log 2>&1; then
   tail -30 build.log >&2
   echo "the build failed; see $WORK/build.log" >&2
   exit 2

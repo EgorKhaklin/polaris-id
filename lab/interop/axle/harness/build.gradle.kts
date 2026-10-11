@@ -2,8 +2,9 @@
 // Copyright 2026 Egor Khaklin and the Polaris contributors
 // A harness written here that drives Axle's Kotlin OpenID4VP client, to present to polaris-oid4vp.
 plugins {
-    // The Kotlin version Axle's own build declares (kotlin/build.gradle.kts at the pinned commit).
-    kotlin("jvm") version "2.2.21"
+    // Axle's own build declares 2.2.21, which OSV lists an advisory against (fixed in 2.4.20);
+    // lift.init.gradle.kts lifts both builds to this version.
+    kotlin("jvm") version "2.4.20"
     application
 }
 

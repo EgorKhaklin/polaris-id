@@ -3592,9 +3592,11 @@ jobs:
   osv-scan:
     # OpenSSF Baseline OSPS-VM-05.03: every change is checked for malicious packages (the OpenSSF
     # Malicious Packages data in OSV) and known vulnerabilities, in the Python sets the images
-    # actually install (each resolved in its own environment, so indirect dependencies count) and in
-    # the npm and Rust lockfiles. Any finding fails the job; one that does not affect Polaris is
-    # declared, with its reason, in osv-scanner.toml. The scanner image is pinned by digest.
+    # actually install (each resolved in its own environment, so indirect dependencies count), in
+    # the npm and Rust lockfiles, and in every lab gradle/verification-metadata.xml (the files
+    # Scorecard's Vulnerabilities check reads). Any finding fails the job; one that does not affect
+    # Polaris is declared, with its reason, in osv-scanner.toml (the Gradle files have none). The
+    # scanner image is pinned by digest.
     name: Malicious packages and known vulnerabilities (OSV)
     runs-on: ubuntu-latest
     steps:
@@ -3624,6 +3626,12 @@ jobs:
             -L requirements.txt:/scan/installed-patroni.txt \
             -L /src/sdk/typescript/package-lock.json \
             -L /src/polaris_zk/Cargo.lock
+      - name: Scan every Gradle verification-metadata file (detection fixture first)
+        # The self-test must see a known-vulnerable file fail, an empty and a missing file fail,
+        # and a clean file pass, before the tree's files are scanned; no file found also fails.
+        run: |
+          bash scripts/polaris-osv-gradle.sh --self-test
+          bash scripts/polaris-osv-gradle.sh
 
   # --------------------------------------------------------------------------
   # Dependency CVE scan. The dependency surface was pinned but never audited,
