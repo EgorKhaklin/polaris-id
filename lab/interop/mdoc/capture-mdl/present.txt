@@ -1,0 +1,9 @@
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+resolved   client=x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE mode=direct_post.jwt query=pid format=dc+sd-jwt claims=[given_name, family_name]
+spec       the SessionTranscript construction reproduces the OpenID4VP 1.0 B.2.6.1 example
+Signed message: d28443a10126a1182180586cd8185868847444657669636541757468656e7469636174696f6e83f6f682714f70656e494434565048616e646f7665725820c5a46e732416612c7acb9732d12bd24969fb18c79a0ea6f6c4ce7b9f58b3b552756f72672e69736f2e31383031332e352e312e6d444cd81841a058401d5a1532e20451090ba1b0087626f94715561b649480113b9b6ad35f14ee5cf73c9c40553308be3bda8f189a40aaad42fd5807ad031f5b8e40e806a58bd4e00e
+built      DeviceResponse 2414 bytes, docType org.iso.18013.5.1.mDL, namespace org.iso.18013.5.1, items [given_name, family_name]
+CAPTURED   /in/capture
+DISPATCHED Rejected(redirectURI=null)

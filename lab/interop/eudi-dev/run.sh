@@ -29,9 +29,18 @@
 # should be. A run that only printed the success line would say nothing: a verifier that
 # accepts everything prints it too.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 # The last line of every run, whichever way it ends: a run that stops early is the report most worth having.
 report_line() { echo "Tell us how it went, success or failure: https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml"; }
-trap report_line EXIT
+trap 'exit_rc=$?; report_line; exit_trap "$exit_rc"' EXIT
 
 IMAGE="${EUDI_IMAGE:-ghcr.io/dominikschlosser/eudi-dev:v2.3.7}"
 EUDI_VERSION="${EUDI_VERSION:-v2.3.7}"
@@ -259,7 +268,7 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
     TUNNEL_PID=""
   fi
 }
-trap 'stop_verifier; report_line' EXIT
+trap 'exit_rc=$?; stop_verifier; report_line; exit_trap "$exit_rc"' EXIT
 
 start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exits 2
   TUNNELS=$((TUNNELS + 1))
@@ -400,4 +409,5 @@ stop_verifier
 if [ "$fail" -ne 0 ]; then echo "RESULT: FAILED"
 elif [ -n "$TLS_CHECKED" ]; then echo "RESULT: accepted, and all four controls refused"
 else echo "RESULT: accepted, and all three controls refused"; fi
+finished=1
 exit "$fail"

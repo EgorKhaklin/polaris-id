@@ -3484,6 +3484,11 @@ jobs:
       # holder keys are Ed25519 only; it stays what its generator makes and each file checks out.
       - name: The Ed25519-holder fixture (lab/interop/fixtures/ed25519-holder), each file checked
         run: python -m unittest lab/interop/fixtures/ed25519-holder/test_fixture.py
+      # lab/interop/*/run.sh: a harness that stops early must not exit 0. macOS bash 3.2 exits with
+      # the EXIT trap's status after a set -u failure, so each harness's trap fails a run that did
+      # not reach its last line; this holds all sixteen to it and runs the shape under /bin/bash.
+      - name: The lab harnesses' EXIT traps (lab/interop/test_exit_trap.py), an early stop fails
+        run: python -m unittest lab/interop/test_exit_trap.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.
@@ -3592,9 +3597,11 @@ jobs:
   osv-scan:
     # OpenSSF Baseline OSPS-VM-05.03: every change is checked for malicious packages (the OpenSSF
     # Malicious Packages data in OSV) and known vulnerabilities, in the Python sets the images
-    # actually install (each resolved in its own environment, so indirect dependencies count) and in
-    # the npm and Rust lockfiles. Any finding fails the job; one that does not affect Polaris is
-    # declared, with its reason, in osv-scanner.toml. The scanner image is pinned by digest.
+    # actually install (each resolved in its own environment, so indirect dependencies count), in
+    # the npm and Rust lockfiles, and in every lab gradle/verification-metadata.xml (the files
+    # Scorecard's Vulnerabilities check reads). Any finding fails the job; one that does not affect
+    # Polaris is declared, with its reason, in osv-scanner.toml (the Gradle files have none). The
+    # scanner image is pinned by digest.
     name: Malicious packages and known vulnerabilities (OSV)
     runs-on: ubuntu-latest
     steps:
@@ -3624,6 +3631,12 @@ jobs:
             -L requirements.txt:/scan/installed-patroni.txt \
             -L /src/sdk/typescript/package-lock.json \
             -L /src/polaris_zk/Cargo.lock
+      - name: Scan every Gradle verification-metadata file (detection fixture first)
+        # The self-test must see a known-vulnerable file fail, an empty and a missing file fail,
+        # and a clean file pass, before the tree's files are scanned; no file found also fails.
+        run: |
+          bash scripts/polaris-osv-gradle.sh --self-test
+          bash scripts/polaris-osv-gradle.sh
 
   # --------------------------------------------------------------------------
   # Dependency CVE scan. The dependency surface was pinned but never audited,

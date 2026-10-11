@@ -20,6 +20,15 @@
 #
 # Exits 0 only if the genuine presentation is accepted AND every control is refused.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 
 VERSION="${OID4VCGO_VERSION:-v0.12.0}"
 PY_FOR_LATEST="${PYTHON:-python3}"
@@ -108,7 +117,7 @@ stop_verifier() {
   fi
 }
 stop_all() { stop_verifier; docker rm -f polaris-oid4vcgo-wallet >/dev/null 2>&1 || true; }
-trap stop_all EXIT
+trap 'exit_rc=$?; stop_all; exit_trap "$exit_rc"' EXIT
 
 start_verifier() {  # $1 issuer trust anchor, $2 log file
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host host.docker.internal \
@@ -181,4 +190,5 @@ if [ "$CHECKS_VERIFIER" = 1 ]; then
 fi
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and every control refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

@@ -13,9 +13,18 @@
 #
 # Exits 0 only if the presentation is accepted AND every control is refused.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 # Every exit path ends with "done", success and failure alike: a run whose output does not end in
 # "done" did not finish, and is never a pass.
-trap 'echo "done"' EXIT
+trap 'exit_rc=$?; echo "done"; exit_trap "$exit_rc"' EXIT
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
@@ -41,7 +50,7 @@ npm ci --no-audit --no-fund --loglevel=error
 if [ -n "${CREDO_VERSION:-}" ]; then
   # Another release in place of the pinned one, without touching package.json or the lock; the
   # pinned install comes back at the end.
-  trap 'npm ci --no-audit --no-fund --loglevel=error >/dev/null 2>&1 || true; echo "done"' EXIT
+  trap 'exit_rc=$?; npm ci --no-audit --no-fund --loglevel=error >/dev/null 2>&1 || true; echo "done"; exit_trap "$exit_rc"' EXIT
   npm install --no-save --no-audit --no-fund --loglevel=error \
     "@credo-ts/core@$CREDO_VERSION" "@credo-ts/node@$CREDO_VERSION" "@credo-ts/openid4vc@$CREDO_VERSION"
 fi
@@ -59,4 +68,5 @@ for control in "" wrong-issuer foreign-holder replay untrusted-verifier; do
   fi
 done
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and all four controls refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

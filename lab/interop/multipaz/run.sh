@@ -17,6 +17,15 @@
 #
 # Exits 0 only if the presentation is accepted AND every control is refused where it should be.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 
 IMAGE="${JDK_IMAGE:-gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7}"
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
@@ -141,7 +150,7 @@ stop_verifier() {
     VERIFIER_PID=""
   fi
 }
-trap stop_verifier EXIT
+trap 'exit_rc=$?; stop_verifier; exit_trap "$exit_rc"' EXIT
 
 start_verifier() {  # $1 the issuer CA the verifier trusts, $2 log
   # --verbose logs each request's method and path, which shows how the wallet fetched the request.
@@ -208,4 +217,5 @@ expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: iss
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and all three controls refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

@@ -3210,6 +3210,18 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
     (tmp_path / "tools/newtool/package-lock.json").write_text("{}\n")
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
         "must FAIL when a new npm lockfile appears that Dependabot does not read"
+    (tmp_path / "tools/newtool/package-lock.json").unlink()
+    # A Go, Gradle or Swift manifest Dependabot does not read is a pin nothing refreshes.
+    for manifest, why in (("go.mod", "a go.mod"), ("build.gradle.kts", "a Gradle build"),
+                          ("settings.gradle", "a Gradle settings file"), ("Package.swift", "a Swift package")):
+        d = tmp_path / "lab/harness-x"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / manifest).write_text("// fixture\n")
+        assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when {why} appears that Dependabot does not read"
+        (d / manifest).unlink()
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS again once the unread manifests are gone"
 
 
 def test_release_provenance_check_discriminates(tmp_path):
@@ -4690,11 +4702,29 @@ def test_cve_scanning_check_discriminates(tmp_path):
     assert checks.check_cve_scanning(tmp_path)[0].level == "FAIL", \
         "must FAIL when Dependabot is not configured"
 
-    # 4. Gating audit + dependabot -> OK.
+    # 4. Gating audit + dependabot, no Gradle OSV scan -> FAIL.
     write_ci("jobs:\n  scan:\n    steps:\n" + GATING)
     write_dependabot()
+    assert checks.check_cve_scanning(tmp_path)[0].level == "FAIL", \
+        "must FAIL when CI does not scan the Gradle verification-metadata files"
+
+    # 5. The Gradle scan without its detection self-test -> FAIL.
+    SCAN = "      run: |\n        bash scripts/polaris-osv-gradle.sh\n"
+    SELF = "        bash scripts/polaris-osv-gradle.sh --self-test\n"
+    write_ci("jobs:\n  scan:\n    steps:\n" + GATING + SCAN)
+    assert checks.check_cve_scanning(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the Gradle scan runs without its detection self-test"
+
+    # 6. The self-test without the scan of the tree -> FAIL.
+    write_ci("jobs:\n  scan:\n    steps:\n" + GATING + "      run: |\n" + SELF)
+    assert checks.check_cve_scanning(tmp_path)[0].level == "FAIL", \
+        "must FAIL when only the self-test runs"
+
+    # 7. Gating audit + dependabot + self-test + Gradle scan -> OK.
+    write_ci("jobs:\n  scan:\n    steps:\n" + GATING + "      run: |\n" + SELF
+             + "        bash scripts/polaris-osv-gradle.sh\n")
     assert checks.check_cve_scanning(tmp_path)[0].level == "OK", \
-        "must PASS with a gating runtime audit and Dependabot configured"
+        "must PASS with a gating runtime audit, the Gradle OSV scan and Dependabot configured"
 
 
 def test_image_cve_scanning_check_discriminates(tmp_path):

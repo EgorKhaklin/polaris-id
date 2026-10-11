@@ -55,9 +55,21 @@ on:
   schedule:
     - cron: "23 5 * * 2"
   workflow_dispatch:
+  # A change to an interop harness runs here before it merges, against the same published verifier.
+  # The README badge reads only the scheduled runs on main, so a pull request run cannot colour it.
+  pull_request:
+    paths:
+      - "lab/interop/**"
+      - ".github/workflows/wallet-canary.yml"
 
 permissions:
   contents: read
+
+# A newer push to the same pull request cancels the run it supersedes; a scheduled or dispatched
+# run is its own group and always runs to the end (ci.yml's shape).
+concurrency:
+  group: wallet-canary-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   present:

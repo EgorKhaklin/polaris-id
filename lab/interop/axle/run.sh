@@ -22,6 +22,15 @@
 # should be.
 # shellcheck disable=SC2329  # report_line and stop_all run from the EXIT trap
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 # The last lines of every run, whichever way it ends: a run that stops early is the report most
 # worth having, and a run whose output does not end in "done" did not finish.
 report_line() { echo "Tell us how it went, success or failure: https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml"; }
@@ -34,7 +43,7 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
   fi
 }
 stop_all() { stop_verifier; docker rm -f "$HARNESS" >/dev/null 2>&1 || true; }
-trap 'stop_all || true; report_line; echo "done"' EXIT
+trap 'exit_rc=$?; stop_all || true; report_line; echo "done"; exit_trap "$exit_rc"' EXIT
 
 AXLE_REPO="https://github.com/openwallet-foundation-labs/axle"
 AXLE_SHA="${AXLE_SHA:-f7b8054171bb49f3c27589d0b19b03285ed1dcc1}"
@@ -88,9 +97,10 @@ git -C axle -c advice.detachedHead=false checkout -q FETCH_HEAD
 
 # The harness and Axle's modules, built together into a copy of harness/ so the tree stays clean.
 # Gradle's cache is a named volume of its own, so a second run does not download again.
+# lift.init.gradle.kts lifts, in both builds, the dependencies OSV lists advisories against.
 rm -rf harness && cp -R "$HERE/harness" harness
 if ! docker run --rm -v "$WORK/harness":/w -v "$WORK/axle":/axle -w /w -e AXLE_KOTLIN=/axle/kotlin \
-    -v polaris-axle-gradle-cache:/home/gradle/.gradle "$IMAGE" gradle --no-daemon -q installDist > build.log 2>&1; then
+    -v polaris-axle-gradle-cache:/home/gradle/.gradle "$IMAGE" gradle --no-daemon -q --init-script /w/lift.init.gradle.kts installDist > build.log 2>&1; then
   tail -30 build.log >&2
   echo "the build failed; see $WORK/build.log" >&2
   exit 2
@@ -252,4 +262,5 @@ if [ "$fail" -eq 0 ]; then
 else
   echo "RESULT: FAILED (Axle's Kotlin OpenID4VP client, driven by a harness written here)"
 fi
+finished=1
 exit "$fail"

@@ -16,6 +16,15 @@
 #
 # Exits 0 only if the presentation is accepted AND every control is refused where it should be.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 
 IMAGE="${RUST_IMAGE:-rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1}"
 ONE_CORE_TAG=v1.87.2
@@ -119,7 +128,7 @@ stop_holder() {
   docker logs "$CONTAINER" >> procivis.log 2>&1 || true
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 }
-trap 'stop_verifier; stop_holder' EXIT
+trap 'exit_rc=$?; stop_verifier; stop_holder; exit_trap "$exit_rc"' EXIT
 
 start_holder() {  # $1 the certificate the holder trusts for the verifier's TLS listener
   # core-server, with tls_front.py terminating TLS for its base URL (https://procivis.test, which
@@ -222,4 +231,5 @@ expect "because the listener's certificate did not verify" holder-d-server.log '
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and all four controls refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

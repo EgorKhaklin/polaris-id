@@ -17,6 +17,15 @@
 #
 # Exits 0 only if the presentation is accepted AND every negative case is refused where it should be.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 
 ERICA_REPO="${ERICA_REPO:-https://gitlab.opencode.de/bmi/eudi-wallet/erica.git}"
 ERICA_COMMIT="${ERICA_COMMIT:-2c27dc9254d7fc97c20ac4677747014519aa48ba}"
@@ -188,7 +197,7 @@ cleanup() {
   for c in ${CONTAINERS[@]+"${CONTAINERS[@]}"}; do docker logs "$c" > "$c.log" 2>&1 || true; docker rm -f "$c" >/dev/null 2>&1 || true; done
   docker network rm "$NAME" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+trap 'exit_rc=$?; cleanup; exit_trap "$exit_rc"' EXIT
 
 # ERICA refuses to fetch a request_uri on loopback or in the RFC 1918 ranges (its SSRF guard,
 # src/security/URLValidator.ts). So it reaches the verifier by a name it resolves to an address on
@@ -354,4 +363,5 @@ verdict verifier-other.log
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and every negative case refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

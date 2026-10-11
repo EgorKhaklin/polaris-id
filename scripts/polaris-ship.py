@@ -162,6 +162,9 @@ VERIFICATION = [
     (r"^lab/interop/fixtures/ed25519-holder/",
      ["python3 -m unittest lab/interop/fixtures/ed25519-holder/test_fixture.py"],
      "the Ed25519-holder fixture moved: regenerated, and each file checked"),
+    (r"^lab/interop/([^/]+/run\.sh|test_exit_trap\.py)$",
+     ["python3 -m unittest lab/interop/test_exit_trap.py"],
+     "a lab harness moved: its EXIT trap must still fail a run that stops early"),
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
@@ -366,6 +369,7 @@ UNSHARDED_SUITES = {
     "lab/interop/negative-vectors": ["test_vectors"],
     "lab/interop/status-list/revoked": ["test_fixture"],
     "lab/interop/fixtures/ed25519-holder": ["test_fixture"],
+    "lab/interop": ["test_exit_trap"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
@@ -398,6 +402,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/negative-vectors": ("unittest", None),
     "lab/interop/status-list/revoked": ("unittest", None),
     "lab/interop/fixtures/ed25519-holder": ("unittest", None),
+    "lab/interop":              ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
 }

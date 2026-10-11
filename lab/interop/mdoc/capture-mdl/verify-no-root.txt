@@ -1,0 +1,6 @@
+instant    2026-10-11T04:52:32+00:00; roots: NONE
+  ok   spec vector        session_transcript() reproduces the OpenID4VP 1.0 B.2.6.1 example
+  ok   session transcript client_id x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE, response_uri https://host.docker.internal:9491/response, nonce QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg, jwk thumbprint G4y5lw8Nt2xZk0InnfdGf0UE3YxJ3oFJylVah9L84fU
+       note: wallet       the wallet's own SessionTranscript bytes are identical to ours
+REFUSED    issuer chain: no IACA root configured
+done
