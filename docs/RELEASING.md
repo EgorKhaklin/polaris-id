@@ -13,9 +13,9 @@ when something externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc7, 2026-10-01 | 1.0.0rc6, 2026-10-01 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc16, 2026-10-04 | 1.0.0rc15, 2026-10-04 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc7, 2026-10-01 | 1.0.0rc6, 2026-10-01 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc18, 2026-10-11 | 1.0.0rc16, 2026-10-04 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
 | `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.9, 2026-10-03 | 1.0.0-rc.8, 2026-10-01 |
 
@@ -362,6 +362,10 @@ worse state to be in than three runs.
 | 37214911849 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc15 | dispatched from 8a351b21, before 1.0.0rc16 reached main, and approved at the gate; PyPI refused the upload, the version already existed, and nothing changed |
 | 37215403979 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc15 | the same, from 8a351b21 again; refused, nothing changed |
 | 37219760678 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc16 | approved by the maintainer at the environment gate, published by trusted publishing from main (794a5c43); read back: a clean venv install passes all 422 package tests; the EU iOS library with the wallet kit's encryption setting and the OpenWallet Foundation's large status list are accepted where 1.0.0rc15 refused them; the wallet canary passes against it (run 37220600561). Not certified: 1.0.0rc7 stays the certified version |
+| 38091215489 | 2026-10-10 | dry run | built and gated all four Python packages and the npm tarball at the new versions (polaris-verify 1.0.0rc8, polaris-sdk-python 1.0.0rc8, polaris-oid4vp 1.0.0rc18); nothing published |
+| 38091364797 | 2026-10-11 | `polaris-verify` 1.0.0rc8 | approved by the maintainer account under the owner's standing publish grant, published by trusted publishing from main (dbc708a8); read back from the live registry and installed into a clean environment outside the tree |
+| 38091377062 | 2026-10-11 | `polaris-sdk-python` 1.0.0rc8 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree |
+| 38091379847 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc18 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree; the wallet canary passes against it (run 38099791825). Not certified: 1.0.0rc7 stays the certified version |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
