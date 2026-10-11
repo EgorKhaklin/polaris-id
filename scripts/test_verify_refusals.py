@@ -207,16 +207,27 @@ class Witnesses(unittest.TestCase):
 
     @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
     def test_cryptography_witness_refuses_a_signature_that_is_not_bytes(self):
-        # Not InvalidSignature: the library raises a TypeError, and that arm must refuse too.
+        # Refused at the size check since 2026-10-10 (a signature that is not bytes has no
+        # length to check); the library's own error arm is driven by the test below.
         self.assertIs(V._verify_cryptography(self.digest, self.sig.hex(), self.pk), False)
+
+    @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+    def test_cryptography_witness_refuses_what_the_library_throws_on(self):
+        # Not InvalidSignature: a key and signature of the right length (arbitrary bytes) pass the
+        # size check, the message is not bytes, so the library itself raises and its error arm
+        # must refuse. The drill's environment has the library, so this never skips there.
+        self.assertIs(V._verify_cryptography("not bytes", b"\x02" * 3309, b"\x01" * 1952), False)
 
     def test_liboqs_witness_refuses_what_the_library_throws_on(self):
         try:
             V._import_oqs()
         except Exception:  # noqa: BLE001
-            self.skipTest("liboqs absent")
+            self.skipTest("liboqs absent (the drill's environment has it)")
         self.assertIs(V._verify_liboqs(self.digest, self.sig, self.pk), True)
-        self.assertIs(V._verify_liboqs(self.digest, self.sig.hex(), self.pk), False)   # the library raises TypeError
+        self.assertIs(V._verify_liboqs(self.digest, self.sig.hex(), self.pk), False)   # refused at the size check
+        # A key and signature of the right length (arbitrary bytes) pass the size check; the
+        # message is not bytes, so the library itself raises and its error arm must refuse.
+        self.assertIs(V._verify_liboqs("not bytes", b"\x02" * 3309, b"\x01" * 1952), False)
 
     def test_an_unknown_provider_is_not_available(self):
         for name in ("bogus", "", None, "OQS"):
@@ -245,12 +256,14 @@ class ExactSizeIsCheckedBeforeEitherWitness(unittest.TestCase):
             oqs = V._import_oqs()
         except Exception:  # noqa: BLE001
             self.skipTest("liboqs absent")
+        enabled = set(oqs.get_enabled_sig_mechanisms())
         for alg, (_cls, pk_len, sig_len) in V._ACCEPTED.items():
-            if alg not in set(oqs.get_enabled_sig_mechanisms()):
-                continue
-            with oqs.Signature(alg) as s:
-                self.assertEqual((pk_len, sig_len),
-                                 (s.details["length_public_key"], s.details["length_signature"]), alg)
+            with self.subTest(alg=alg):
+                if alg not in enabled:
+                    self.skipTest("%s not enabled in this liboqs build" % alg)   # counted, never silent
+                with oqs.Signature(alg) as s:
+                    self.assertEqual((pk_len, sig_len),
+                                     (s.details["length_public_key"], s.details["length_signature"]), alg)
 
     def test_size_problem_names_a_wrong_length_and_passes_the_exact_one(self):
         self.assertIsNone(V._size_problem("ML-DSA-65", b"\x01" * self.PK_LEN, b"\x02" * self.SIG_LEN))
