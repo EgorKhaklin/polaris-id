@@ -163,8 +163,53 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
       background: conic-gradient(from 300deg, transparent 0 62%, rgba(143, 179, 232, 0.28) 84%, transparent 85%); }
 .t6 { inset: -7%; animation-duration: 120s;
       background: conic-gradient(from 200deg, transparent 0 50%, rgba(221, 202, 155, 0.20) 68%, transparent 69%); }
-.pole { position: absolute; z-index: 1; left: 50%; top: 50%; width: 38%; transform: translate(-50%, -50%);
-        filter: drop-shadow(0 0 28px rgba(221, 202, 155, 0.22)) drop-shadow(0 18px 40px rgba(0, 0, 0, 0.6)); }
+.pole { position: absolute; z-index: 1; left: 50%; top: 50%; width: 46%; transform: translate(-50%, -50%);
+        filter: drop-shadow(0 0 34px rgba(221, 202, 155, 0.26)) drop-shadow(0 18px 40px rgba(0, 0, 0, 0.6));
+        animation: rise 1.6s cubic-bezier(.2, .7, .2, 1) both; }
+/* A slow light passes over the star every few seconds; the star itself never moves. */
+.glint { position: absolute; z-index: 2; left: 50%; top: 50%; width: 46%; aspect-ratio: 1; border-radius: 50%;
+         transform: translate(-50%, -50%); pointer-events: none; overflow: hidden; mix-blend-mode: screen;
+         background: linear-gradient(115deg, transparent 38%, rgba(255, 246, 222, 0.30) 50%, transparent 62%)
+                     no-repeat -160% 0 / 220% 100%;
+         animation: glint 9s ease-in-out 2.2s infinite; }
+/* A faint spiral behind the star: its arms turn with the sky. */
+.spiral { position: absolute; inset: -26%; border-radius: 50%; pointer-events: none; opacity: 0.55;
+    background:
+        conic-gradient(from 0deg, transparent 0 6%, rgba(143, 179, 232, 0.10) 14%, transparent 24%,
+                       transparent 31%, rgba(221, 202, 155, 0.08) 39%, transparent 49%,
+                       transparent 56%, rgba(143, 179, 232, 0.09) 64%, transparent 74%,
+                       transparent 81%, rgba(221, 202, 155, 0.07) 89%, transparent 99%);
+    -webkit-mask: radial-gradient(closest-side, transparent 18%, #000 40%, transparent 100%);
+            mask: radial-gradient(closest-side, transparent 18%, #000 40%, transparent 100%);
+    filter: blur(10px); animation: turn 300s linear infinite; will-change: transform; }
+@keyframes glint { 0% { background-position: -160% 0; } 22%, 100% { background-position: 260% 0; } }
+@keyframes rise {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(0.9); filter: blur(6px); }
+    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+
+/* Distant galaxies and a faint band of the Milky Way, behind everything; they turn far slower
+   than the trails, so the sky has depth. Gradients only: the page loads no image for them. */
+.cosmos { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.milky { position: absolute; left: -20%; top: 34%; width: 140%; height: 34%; transform: rotate(-16deg);
+         background:
+            radial-gradient(ellipse 50% 50% at 50% 50%, rgba(143, 179, 232, 0.07), transparent 70%),
+            radial-gradient(ellipse 30% 40% at 62% 46%, rgba(221, 202, 155, 0.05), transparent 70%);
+         filter: blur(8px); }
+.galaxy { position: absolute; border-radius: 50%; animation: turn linear infinite; }
+.galaxy::before { content: ""; position: absolute; inset: 0; border-radius: 50%;
+    background:
+        radial-gradient(closest-side, rgba(255, 244, 220, 0.85) 0 3%, rgba(221, 202, 155, 0.32) 9%, transparent 22%),
+        conic-gradient(from 0deg, transparent 0 8%, rgba(143, 179, 232, 0.16) 18%, transparent 30%,
+                       transparent 50%, rgba(221, 202, 155, 0.12) 64%, transparent 78%),
+        radial-gradient(closest-side, rgba(143, 179, 232, 0.10), transparent 75%);
+    -webkit-mask: radial-gradient(closest-side, #000 30%, transparent 100%);
+            mask: radial-gradient(closest-side, #000 30%, transparent 100%); }
+.g1 { left: 2%; top: 4%; width: 170px; height: 170px; animation-duration: 420s; }
+.g1::before { transform: scaleY(0.42) rotate(0deg); }
+.g2 { left: 40%; top: 3%; width: 96px; height: 96px; animation-duration: 520s; animation-direction: reverse; opacity: 0.75; }
+.g2::before { transform: scaleY(0.55); }
+.g3 { right: 3%; top: 8%; width: 130px; height: 130px; animation-duration: 600s; opacity: 0.75; }
+.g3::before { transform: scaleY(0.35); }
 /* The glow behind the pole star breathes: brighter, then dying down. Opacity and scale only,
    so the compositor animates it without repainting. */
 .halo { position: absolute; left: 50%; top: 50%; width: 64%; aspect-ratio: 1; border-radius: 50%;
@@ -335,7 +380,11 @@ code, .term code { font-variant-ligatures: none; }
     body { font-size: 16px; }
     .gh { display: none; }
     .gh.gh-keep { display: inline-block; }
-    .sky { width: min(190px, 48vw); margin-top: 20px; }
+    .sky { width: min(214px, 56vw); margin-top: 12px; }
+    .g1 { width: 110px; height: 110px; left: -6%; top: 9%; }
+    .g2 { display: none; }
+    .g3 { width: 90px; height: 90px; right: -4%; top: 3%; }
+    .eyebrow .nw { display: none; }
     .hero-copy { padding-top: 12px; }
     .cta .btn { flex: 1 1 100%; justify-content: center; text-align: center; }
     .lead { font-size: 17px; }
@@ -349,7 +398,8 @@ code, .term code { font-variant-ligatures: none; }
 }
 @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
-    .trail, .sky::before, .sky::after, .halo { animation: none; }
+    .trail, .sky::before, .sky::after, .halo, .galaxy, .glint, .pole, .spiral { animation: none; }
+    .glint { display: none; }
     .halo { opacity: 0.6; }
     .btn, .paths a { transition: none; }
 }
