@@ -341,6 +341,9 @@ def main() -> int:
                 print("       %-14s %s" % (name, verdict.claims[name]))
             print("  ================================================================\n",
                   flush=True)
+        elif getattr(verdict, "wallet_error", None) is not None:
+            # A wallet's error response, answered 200 since 1.0.0rc19 and accepted as nothing.
+            print("  <- %d wallet error: %s" % (status, verdict.reason), flush=True)
         elif verdict:
             print("  <- %d refused: %s: %s" % (status, verdict.code, verdict.reason),
                   flush=True)

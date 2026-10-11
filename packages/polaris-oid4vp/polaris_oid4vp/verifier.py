@@ -76,6 +76,17 @@ JTI_RETENTION_SECONDS = 24 * 3600
 #: alphanumeric, underscore (_), or hyphen (-) characters."
 _DCQL_ID = re.compile(r"[A-Za-z0-9_-]+")
 
+#: The `error` of an Authorization Error Response this verifier processes. OpenID4VP 1.0
+#: section 8.5 follows RFC 6749, whose syntax is one or more of %x20-21 / %x23-5B / %x5D-7E
+#: (section 4.1.2.1); every code RFC 6749, OpenID Connect and OpenID4VP define, and every one in
+#: IANA's OAuth Extensions Error Registry, is letters and underscores. This is that shape,
+#: bounded at 64. The rest of the syntax, a space or a `<` among them, would let a sender write
+#: `<- 200 authentic` into the line `serve` prints, which is what the lab walks grep for.
+_ERROR_CODE = re.compile(r"[A-Za-z0-9_]{1,64}")
+
+#: The most of a wallet's `error_description` an operator is shown (`_printable`).
+ERROR_DESCRIPTION_MAX = 200
+
 #: TS12's payment transaction type (section 4.3.1).
 TS12_PAYMENT = "urn:eudi:sca:payment:1"
 
@@ -771,6 +782,27 @@ def request_object_encryption(wallet_metadata):
     return None
 
 
+def _form_values(form, name):
+    """Every value a posted form gives `name`: `urllib.parse.parse_qs` makes a list, and a
+    framework that keeps one value per name, a string. A blank value is no value, as parse_qs
+    has it."""
+    value = form.get(name)
+    values = list(value) if isinstance(value, (list, tuple)) else [value]
+    return [v for v in values if v is not None and v != ""]
+
+
+def _printable(text, limit=ERROR_DESCRIPTION_MAX):
+    """`text` as an operator's terminal and log may show it. The characters RFC 6749 allows an
+    `error_description` (%x20-21 / %x23-5B / %x5D-7E) are kept, except `<`; anything else, a
+    control byte, the ESC that starts a terminal escape sequence, a line break, a quote, a
+    letter outside ASCII, becomes `?`, and so does `<`: `serve` prints each answer as
+    `<- STATUS ...`, and text that could carry `<-` could read as another answer to a grep. It
+    is cut to `limit` characters."""
+    kept = "".join(ch if " " <= ch <= "~" and ch not in "\"\\<" else "?"
+                   for ch in text[:limit + 1])
+    return kept if len(kept) <= limit else kept[:limit - 3] + "..."
+
+
 class Verifier:
     """Builds requests and judges responses. Holds no socket: see `serve()` for that.
 
@@ -958,13 +990,27 @@ class Verifier:
     # ----------------------------------------------------------------- the response
 
     def handle_direct_post(self, form):
-        """Judge one `direct_post.jwt` response. Returns (http_status, body_dict).
+        """Judge one `direct_post.jwt` response. Returns (http_status, body_dict, verdict).
 
         200 with only a `redirect_uri` when the presentation is authentic, 400 with an OAuth
         error otherwise. Nothing returns 500: every way this can go wrong is the response
         being unacceptable, and a 5xx would tell the wallet to retry something that will
         never work.
+
+        One exception to the 400: a wallet's Authorization Error Response (OpenID4VP 1.0
+        section 8.5) naming an outstanding request is processed, and section 8.2 answers a
+        processed one "with an HTTP status code of 200 with Content-Type of application/json and
+        a JSON object in the response body". The object is `{}`: no `redirect_uri`, because the
+        page it leads to says the presentation is complete. The verdict is never authentic and
+        carries no claims; its code is `wallet_error`, and `verdict.wallet_error` holds what the
+        response said. So a 200 is not an acceptance. `verdict.authentic` is. Neither form of
+        it, encrypted or in the clear, closes the request: anyone who saw the request could
+        have sent either.
         """
+        # An error response sent in the clear: `error` and `state` as form parameters, where a
+        # wallet that can encrypt sends `response` (section 8.3.1).
+        if _form_values(form, "error"):
+            return self._error_in_the_clear(form)
         token = (form.get("response") or [""])[0] if isinstance(form.get("response"), list) \
             else form.get("response") or ""
         if not token:
@@ -996,6 +1042,20 @@ class Verifier:
             return self._error("invalid_request",
                                "the response's state does not match the request its "
                                "encryption key belongs to")
+
+        # An error response encrypted to this request's key is answered as the same response in
+        # the clear is: 200, recorded, and the request left open, before anything below can
+        # close it. The key is in the request object, which anyone who saw the request can
+        # fetch, so encryption says nothing about who sent it. Beside a vp_token it is neither
+        # an error nor a presentation, and it is refused, the request again left open: nothing
+        # that carries an error is accepted. JSON null is no value, as a blank one is in a form.
+        if body.get("error") is not None:
+            if body.get("vp_token") is not None:
+                return self._error("invalid_request", "the response carries both an error and "
+                                                      "a vp_token")
+            return self._wallet_error(session, body["error"], body.get("error_description"),
+                                      encrypted=True)
+
         with self._lock:
             if session.answered:
                 return self._error("invalid_request",
@@ -1101,6 +1161,64 @@ class Verifier:
                 return None
             value = value[0]
         return value if isinstance(value, str) and value else None
+
+    def _error_in_the_clear(self, form):
+        """An Authorization Error Response posted without encryption, as OpenID4VP 1.0 section
+        8.3.1 allows a wallet that cannot encrypt: `error`, `state` and an optional
+        `error_description` as form parameters.
+
+        It is processed only when its `state` names an outstanding request (section 14.3.2:
+        "checking that the value of the received state parameter corresponds to a recent
+        Authorization Request"), and processing it changes nothing: the request stays open for
+        the wallet's own response. The `state` is in the request_uri a wallet is launched with,
+        the QR code a person scans, so anyone who saw the request could send this. If it closed
+        the request, an onlooker could cancel a presentation they could not make, or get in
+        before the wallet does, and the record would say the holder declined. An error response
+        encrypted to the request's key is answered the same way, for the same reason: the key
+        is in the request object, which anyone who saw the request can fetch.
+        """
+        values = {name: _form_values(form, name)
+                  for name in ("error", "error_description", "state")}
+        if _form_values(form, "response") or _form_values(form, "vp_token"):
+            return self._error("invalid_request", "the response carries both an error and a "
+                                                  "presentation")
+        # RFC 6749 section 3.1: "Request and response parameters MUST NOT be included more
+        # than once."
+        repeated = sorted(name for name, given in values.items() if len(given) > 1)
+        if repeated:
+            return self._error("invalid_request", "the error response repeats %s"
+                                                  % ", ".join(repeated))
+        state = values["state"][0] if values["state"] else None
+        session = None
+        if isinstance(state, str) and state:
+            with self._lock:
+                self._expire_locked()
+                session = self._sessions.get(state)
+        if session is None:
+            return self._error("invalid_request", "the error response names no outstanding "
+                                                  "request")
+        description = values["error_description"][0] if values["error_description"] else None
+        return self._wallet_error(session, values["error"][0], description, encrypted=False)
+
+    def _wallet_error(self, session, error, description, *, encrypted):
+        """Answer an Authorization Error Response for `session`: 200, `{}`, and a verdict that is
+        never authentic. Refused instead when its `error` is not a code of the shape `_ERROR_CODE`
+        holds, or its `error_description` is not a string. What the operator is shown of the
+        description is `_printable`: it is the sender's free text."""
+        if not isinstance(error, str) or not _ERROR_CODE.fullmatch(error):
+            return self._error("invalid_request", "the error response's error is not an error "
+                                                  "code: 1 to 64 letters, digits or underscores")
+        if description is not None and not isinstance(description, str):
+            return self._error("invalid_request", "the error response's error_description is "
+                                                  "not a string")
+        shown = _printable(description) if description else None
+        reason = ("%s for request %s, which anyone who saw the request could send, so it does not "
+                  "close the request" % (error, session.state))
+        if shown is not None:
+            reason += '; error_description "%s"' % shown
+        return 200, {}, Verdict(False, "wallet_error", reason, wallet_error={
+            "error": error, "error_description": shown, "state": session.state,
+            "encrypted": encrypted})
 
     #: What every refused presentation gets back, whatever was wrong with it. One constant
     #: string, one status. Anything that varies with the CAUSE is an oracle: an attacker

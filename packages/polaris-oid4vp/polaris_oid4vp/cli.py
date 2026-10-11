@@ -34,6 +34,7 @@ import json
 import pathlib
 import sys
 import time
+import urllib.parse
 
 try:
     from cryptography import x509
@@ -60,6 +61,13 @@ FILES = {
     "tls_cert": "tls.pem",           # the listener's certificate; may be self-signed
     "tls_key": "tls-key.pem",
 }
+
+#: The schemes `serve --once` prints a launch link for, the same query behind each. `openid4vp://`
+#: is OpenID4VP 1.0's own (section 9); `haip-vp://` is HAIP 1.0's (section 5.1, which leaves it a
+#: MAY); `eu-eaap://` is the one ETSI TS 119 472-2 mandates (clause 6.4.1, requirement
+#: OIDFVP-HAIP-REDIRECTS-03), and WE BUILD CS-02 v1.2 has a verifier support it beside
+#: `openid4vp://`.
+LAUNCH_SCHEMES = ("openid4vp", "haip-vp", "eu-eaap")
 
 
 def _now():
@@ -264,6 +272,19 @@ def _cmd_keygen(args) -> int:
     return 0
 
 
+def _operator_line(verdict):
+    """What `serve` prints after `<- STATUS` for one answer at the response URI. Only an
+    authentic presentation reads `authentic`: the lab walks grep `<- 200 authentic` for an
+    acceptance, and a wallet's error response is answered 200 too (OpenID4VP 1.0 section 8.2)."""
+    if verdict is None:
+        return "refused"
+    if verdict.authentic:
+        return "authentic, claims %s" % sorted(verdict.claims)
+    if getattr(verdict, "wallet_error", None) is not None:
+        return "wallet error: %s" % verdict.reason
+    return "refused: %s: %s" % (verdict.code, verdict.reason)
+
+
 def _cmd_serve(args) -> int:
     pki = pathlib.Path(args.pki)
     missing = [name for name in FILES.values() if not (pki / name).is_file()]
@@ -348,11 +369,7 @@ def _cmd_serve(args) -> int:
                   # The operator sees the reason; the wallet never does. body carries the
                   # same constant refusal whatever went wrong.
                   on_verdict=lambda status, body, verdict: print(
-                      "  <- %d %s" % (status,
-                                      "authentic, claims %s" % sorted(verdict.claims)
-                                      if verdict and verdict.authentic
-                                      else "refused: %s: %s" % (verdict.code, verdict.reason)
-                                      if verdict else "refused")))
+                      "  <- %d %s" % (status, _operator_line(verdict))))
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     if args.no_local_tls:
@@ -380,6 +397,13 @@ def _cmd_serve(args) -> int:
             print("  the request object carries %d transaction_data entr%s, which the key "
                   "binding JWT must bind" % (len(session.transaction_data),
                                              "y" if len(session.transaction_data) == 1 else "ies"))
+        # After the parameters, which the lab walks read: the three lines under the heading, the
+        # first `x509_hash:` and the last `state=` in the log. A link's values are
+        # percent-encoded, so it carries neither, and those reads find what they found before.
+        print("\nlaunch links, the same request behind each scheme:")
+        query = urllib.parse.urlencode(params)
+        for scheme in LAUNCH_SCHEMES:
+            print("  %s://?%s" % (scheme, query))
     try:
         while True:
             time.sleep(3600)
@@ -525,7 +549,8 @@ and one that judges a response already captured:
                         "given, or a JSON object, encoded here. The key binding JWT must bind "
                         "every one; a TS12 payment must satisfy TS12's schema")
     s.add_argument("--once", action="store_true",
-                   help="print one authorization request's parameters at startup")
+                   help="start one authorization request at startup and print its parameters "
+                        "and its launch links (openid4vp://, haip-vp://, eu-eaap://)")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
 

@@ -3,8 +3,8 @@
 """serve.py -- the smallest HTTPS surface an OpenID4VP verifier can present.
 
 Three paths and nothing else: the `request_uri` a wallet fetches the signed request object
-from, the `response_uri` it POSTs the encrypted response to, and the constant page an accepted
-wallet is redirected to afterwards (`DONE_PATH`). Built on the standard
+from, the `response_uri` it POSTs the encrypted response (or its error response) to, and the
+constant page an accepted wallet is redirected to afterwards (`DONE_PATH`). Built on the standard
 library, so a relying party running this installs `polaris-oid4vp` and no web framework.
 
 This is a REFERENCE listener. `http.server` is single-threaded per connection and has no
@@ -146,6 +146,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # where the person running the verifier can read it and an attacker cannot.
             if status != 200 and verdict is not None:
                 self.log_error("refused: %s: %s", verdict.code, verdict.reason)
+            elif getattr(verdict, "wallet_error", None) is not None:
+                # A wallet's error response, answered 200 and accepted as nothing. Its reason
+                # carries the sender's text only as verifier.py's _printable left it.
+                self.log_error("wallet error: %s", verdict.reason)
         except Exception:  # noqa: BLE001
             # The wallet must never see a 5xx for a response it sent: a 5xx says "retry",
             # and nothing it can retry will help. An unexpected exception here is this
