@@ -1,6 +1,7 @@
 # polaris-oid4vp
 
 [![PyPI](https://img.shields.io/pypi/v/polaris-oid4vp?include_prereleases&label=PyPI&color=3775a9&labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-oid4vp/)
+[![Status: pre-pilot](https://img.shields.io/badge/status-pre--pilot-9a6b2f?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md)
 [![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified)
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/EgorKhaklin/polaris-id?label=stars&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id)
@@ -19,10 +20,10 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
 **Status:** This release, 1.0.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
-It is pre-pilot and [not production-ready](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md).
 The newest release runs against the OpenID Foundation's conformance suite every week in CI. It is re-run weekly against the outside implementations in the table
 below. One outside project, IDFoundry/OID4VCgo, runs it in its CI, daily and on each of its
-releases, since 2026-10-11; no relying party uses it, and no independent security review exists.
+releases, since 2026-10-11; no relying party uses it, Polaris has never held real identity data,
+and no independent security review exists ([readiness](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md)).
 Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 **Try it in ten minutes, without cloning anything:**

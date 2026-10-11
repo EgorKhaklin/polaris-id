@@ -507,7 +507,7 @@
     {
       "id": "pre-pilot-notional-data",
       "kind": "statement",
-      "claim": "pre-pilot software on notional data: it has never held real identity data, and no authority or relying party operates it.",
+      "claim": "notional data: it has never held real identity data, and no authority or relying party operates it.",
       "surfaces": [
         "README.md",
         "site/llms.txt"

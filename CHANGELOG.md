@@ -11,7 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 
-1.0.0 is the contract milestone docs/RELEASING.md set: "That operator makes 1.0.0." IDFoundry/OID4VCgo's CI runs polaris-oid4vp, built from this repository's source at a commit it reviewed, daily and on each of its releases, since 2026-10-11. 1.0.0 is not a readiness claim: Polaris is still pre-pilot, on notional data, not production-ready and not independently audited. polaris-oid4vp is 1.0.0, the verifier that was used; polaris-verify, polaris-sdk-python, polaris-id-cli and polaris-sdk-ts keep their release candidates, since no outside operator has used them. The OpenID certification stays polaris-oid4vp 1.0.0rc7 (certifications do not expire); the newest release runs against the OpenID Foundation's conformance suite every week in CI.
+1.0.0 is the contract milestone docs/RELEASING.md set: "That operator makes 1.0.0." IDFoundry/OID4VCgo's CI runs polaris-oid4vp, built from this repository's source at a commit it reviewed, daily and on each of its releases, since 2026-10-11. Polaris has never held real identity data and has had no independent security review; what a deployment on real data still needs is listed in [PRODUCTION-READINESS](docs/PRODUCTION-READINESS.md). polaris-oid4vp is 1.0.0, the verifier that was used; polaris-verify, polaris-sdk-python, polaris-id-cli and polaris-sdk-ts keep their release candidates, since no outside operator has used them. The OpenID certification stays polaris-oid4vp 1.0.0rc7 (certifications do not expire); the newest release runs against the OpenID Foundation's conformance suite every week in CI.
 
 ### Fixed
 

@@ -46,7 +46,7 @@ An authority issues a credential signed with **ML-DSA-65**; the person holds it;
 - **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 383 machine-checked invariants and 31 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
 
-It is **pre-pilot software on notional data**: it has never held real identity data, and no authority or relying party operates it. One outside project runs its verifier in CI (OID4VCgo, since 2026-10-11).
+It runs on **notional data**: it has never held real identity data, and no authority or relying party operates it. One outside project runs its verifier in CI (OID4VCgo, since 2026-10-11).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -142,7 +142,7 @@ The migration path is tested beyond these: in the lab, one population moved thro
 - The verifier the EU reference wallets are built against: [eudi-srv-verifier-endpoint](https://github.com/eu-digital-identity-wallet/eudi-srv-verifier-endpoint).
 - mdoc (ISO/IEC 18013-5) or the browser's Digital Credentials API: `polaris-oid4vp` supports neither;
   [Multipaz](https://github.com/openwallet-foundation/multipaz) does.
-- Real identity data in production today: Polaris is pre-pilot (see [Limits](#limits-stated-plainly)).
+- Real identity data in production today: not yet (see [Limits](#limits-stated-plainly)).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -151,7 +151,7 @@ The migration path is tested beyond these: in the lab, one population moved thro
 - **Zero knowledge means two specific things:** no token identifier stored, and a membership proof. Polaris is not a general selective-disclosure or anonymous-credential system.
 - **Relying-party correlation is bounded, not eliminated.** What a verifier is **shown** differs from what it has to **store**: a full presentation still shows a stable `token_value`, so two relying parties keeping raw material can correlate; per-relying-party identifiers make what a verifier writes down unrecognisable at the next. [lab/linkability](lab/linkability/README.md).
 - **Offline status trades revocation latency for issuer non-observation:** a revoked credential's last assertion stays valid until it expires (an hour by default).
-- **Not production-ready.** What stands between this repository and real identity data: [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
+- **Real identity data.** What stands between this repository and real identity data: [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
