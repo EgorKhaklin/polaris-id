@@ -17,7 +17,9 @@ Run: python3 -m unittest test_pqc_signing
 import hashlib
 import os
 import sys
+import types
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pqc_signing
@@ -515,6 +517,98 @@ class ExactSizeIsCheckedTests(unittest.TestCase):
         for bad_pk in (b"", b"\x01", b"\x01" * 32, b"\x01" * (pk_len - 1)):
             self.assertIs(pqc_signing._verify_second_witness(msg, (b"\x02" * sig_len).hex(),
                                                              bad_pk.hex(), algorithm="ML-DSA-65"), False, len(bad_pk))
+
+
+class SelfCheckNamesASizeRefusalTests(unittest.TestCase):
+    """2026-10-10: the three signing self-checks (issuance, a status assertion, a migration) said a
+    key or signature of the wrong size "failed two-witness self-verification", though verify_both
+    refuses those bytes before either witness runs. They now raise with _size_problem's reason, and
+    keep the two-witness message for a refusal the witnesses made. The signer and the witnesses are
+    stand-ins and the bytes are arbitrary, so no backend is needed."""
+
+    PK_LEN, SIG_LEN = pqc_signing.custody.ALGORITHM_SIZES["ML-DSA-65"]
+
+    def setUp(self):
+        patches = [unittest.mock.patch.dict(os.environ, {"POLARIS_USE_REAL_PQC": "1"}),
+                   unittest.mock.patch.object(pqc_signing, "_OQS_AVAILABLE", True),
+                   unittest.mock.patch.object(pqc_signing, "_WITNESS_AVAILABLE", True)]
+        if "oqs" not in sys.modules:   # the migration signer imports oqs before it asks custody
+            patches.append(unittest.mock.patch.dict(sys.modules, {"oqs": types.ModuleType("oqs")}))
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def refusals(self, pk, sig):
+        """What each self-checking signer raises when its key gives `pk` and `sig`."""
+        result = pqc_signing.SigningResult(algorithm_name="ML-DSA-65", public_key_hex=pk.hex(),
+                                           signature_hex=sig.hex(), message_hash_hex="00" * 32)
+
+        class Key:
+            algorithm = "ML-DSA-65"
+
+            def public_key(self):
+                return pk
+
+            def sign(self, digest):
+                return sig
+
+        signers = (("issuance", lambda: pqc_signing.signature_with_key_for_token("TKN-SELF-CHECK")),
+                   ("status assertion", lambda: pqc_signing.signature_over_message(b"a status assertion")),
+                   ("migration", lambda: pqc_signing.signature_for_migration("TKN-SELF-CHECK", "ML-DSA-65")))
+        said = {}
+        with unittest.mock.patch.object(pqc_signing, "sign", return_value=result), \
+                unittest.mock.patch.object(pqc_signing.custody, "get_custody_for_algorithm", return_value=Key()):
+            for label, signer in signers:
+                with self.assertRaises(pqc_signing.SigningError, msg=label) as raised:
+                    signer()
+                said[label] = str(raised.exception)
+        return said
+
+    def test_a_key_of_the_wrong_size_is_refused_with_its_size(self):
+        pk, sig = bytes(range(32)), b"\x02" * self.SIG_LEN
+        reason = pqc_signing._size_problem("ML-DSA-65", pk, sig)
+        self.assertEqual(reason, "the public key is 32 bytes; ML-DSA-65 takes exactly 1952")
+        said = self.refusals(pk, sig)
+        for label, made, refusing in (("issuance", "the produced ML-DSA-65 signature", "refusing to issue"),
+                                      ("status assertion", "the produced ML-DSA-65 status assertion", "refusing to sign"),
+                                      ("migration", "the ML-DSA-65 migration signature", "refusing to write it")):
+            with self.subTest(label):
+                self.assertEqual(said[label], "%s is refused before either witness runs: %s; %s"
+                                 % (made, reason, refusing))
+
+    def test_a_witness_disagreement_keeps_the_two_witness_message(self):
+        with unittest.mock.patch.object(pqc_signing, "verify", return_value=True), \
+                unittest.mock.patch.object(pqc_signing, "_verify_second_witness", return_value=False):
+            said = self.refusals(b"\x01" * self.PK_LEN, b"\x02" * self.SIG_LEN)
+        for label, message in (
+                ("issuance", "produced ML-DSA-65 signature failed two-witness self-verification; refusing to issue"),
+                ("status assertion", "produced ML-DSA-65 status assertion failed two-witness self-verification; "
+                                     "refusing to sign"),
+                ("migration", "an ML-DSA-65 migration signature failed two-witness self-verification; "
+                              "refusing to write it")):
+            with self.subTest(label):
+                self.assertEqual(said[label], message)
+
+    def test_the_migration_message_takes_its_sets_article(self):
+        pk_len, sig_len = pqc_signing.custody.EXPERIMENTAL_ALGORITHM_SIZES["Falcon-padded-1024"]
+
+        class Key:
+            algorithm = "Falcon-padded-1024"
+
+            def public_key(self):
+                return b"\x01" * pk_len
+
+            def sign(self, digest):
+                return b"\x02" * sig_len
+
+        with unittest.mock.patch.object(pqc_signing, "_signs_under", return_value=True), \
+                unittest.mock.patch.object(pqc_signing.custody, "get_custody_for_algorithm", return_value=Key()), \
+                unittest.mock.patch.object(pqc_signing, "verify", return_value=True), \
+                unittest.mock.patch.object(pqc_signing, "_verify_second_witness", return_value=False):
+            with self.assertRaises(pqc_signing.SigningError) as raised:
+                pqc_signing.signature_for_migration("TKN-SELF-CHECK", "Falcon-padded-1024")
+        self.assertEqual(str(raised.exception), "a Falcon-padded-1024 migration signature failed two-witness "
+                                                "self-verification; refusing to write it")
 
 
 class HexFieldTests(unittest.TestCase):

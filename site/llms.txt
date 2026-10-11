@@ -39,7 +39,7 @@ It prints a JSON verdict and exits 0. The tampered vectors beside it (`ml-dsa-65
 
 ## Certification, in its scope
 
-`polaris-oid4vp 1.0.0rc7` is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026): a self-certification the OpenID Foundation reviewed and published, for that package version in that role. It is not an endorsement, not an audit, and not a certification of the rest of Polaris.
+`polaris-oid4vp 1.0.0rc7` is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026): a self-certification the OpenID Foundation approved and lists, for that package version in that role. It is not an endorsement, not an audit, and not a certification of the rest of Polaris.
 
 ## Packages
 

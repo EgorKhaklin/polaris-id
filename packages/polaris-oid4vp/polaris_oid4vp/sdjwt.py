@@ -35,6 +35,7 @@ import datetime
 import hashlib
 import json
 import math
+import threading
 import time
 import urllib.parse
 
@@ -206,11 +207,11 @@ class Verdict:
     """
 
     __slots__ = ("authentic", "code", "reason", "claims", "revocation", "disclosed",
-                 "issuer_subject", "issuer_anchor", "iss_bound", "unbound_iss")
+                 "issuer_subject", "issuer_anchor", "iss_bound", "unbound_iss", "transaction_data")
 
     def __init__(self, authentic, code="", reason="", claims=None, revocation=None,
                  disclosed=None, issuer_subject=None, issuer_anchor=None, iss_bound=None,
-                 unbound_iss=None):
+                 unbound_iss=None, transaction_data=None):
         self.authentic = authentic
         self.code = code
         self.reason = reason
@@ -224,6 +225,10 @@ class Verdict:
         self.issuer_anchor = issuer_anchor
         self.iss_bound = iss_bound
         self.unbound_iss = unbound_iss
+        # What the key binding JWT was held to for the request's transaction_data, when the
+        # request carried any: which entries it had to bind and under which reading, the hash
+        # algorithm it used and its `jti`. None when the request carried none.
+        self.transaction_data = transaction_data
 
     def __repr__(self):
         if self.authentic:
@@ -232,10 +237,15 @@ class Verdict:
         return "Verdict(refused, %s: %s)" % (self.code, self.reason)
 
     def as_dict(self):
-        return {"authentic": self.authentic, "code": self.code, "reason": self.reason,
-                "claims": self.claims, "revocation": self.revocation,
-                "issuer_subject": self.issuer_subject, "issuer_anchor": self.issuer_anchor,
-                "iss_bound": self.iss_bound, "unbound_iss": self.unbound_iss}
+        out = {"authentic": self.authentic, "code": self.code, "reason": self.reason,
+               "claims": self.claims, "revocation": self.revocation,
+               "issuer_subject": self.issuer_subject, "issuer_anchor": self.issuer_anchor,
+               "iss_bound": self.iss_bound, "unbound_iss": self.unbound_iss}
+        # Only when there is one, so a verdict on a request without transaction_data has the
+        # same members it always had.
+        if self.transaction_data is not None:
+            out["transaction_data"] = self.transaction_data
+        return out
 
 
 #: The three states a relying party has to be able to tell apart. A verifier that collapses
@@ -407,8 +417,11 @@ def _nesting_depth(raw):
     return maximum
 
 
-def _json_bounded(raw, what):
-    """`json.loads` with the two bounds it has none of: size and nesting depth."""
+def _json_bounded(raw, what, unique_keys=False):
+    """`json.loads` with the two bounds it has none of: size and nesting depth.
+
+    `unique_keys` also refuses an object that names a member twice, which `json.loads` settles
+    silently by keeping the last. Off by default, so every existing caller parses as before."""
     if len(raw) > MAX_JSON_BYTES:
         raise ValueError("the %s is %d bytes, over the %d byte limit"
                          % (what, len(raw), MAX_JSON_BYTES))
@@ -423,7 +436,17 @@ def _json_bounded(raw, what):
     # one field at a time.
     def _no_constants(name):
         raise ValueError("the %s contains the non-JSON literal %s" % (what, name))
-    return json.loads(text, parse_constant=_no_constants)
+    if not unique_keys:
+        return json.loads(text, parse_constant=_no_constants)
+
+    def _one_of_each(pairs):
+        seen = set()
+        for name, _ in pairs:
+            if name in seen:
+                raise ValueError("the %s names the member %r more than once" % (what, name))
+            seen.add(name)
+        return dict(pairs)
+    return json.loads(text, parse_constant=_no_constants, object_pairs_hook=_one_of_each)
 
 
 def _parse_jws(token):
@@ -1039,13 +1062,369 @@ def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None, path=()
     return node
 
 
+# -------------------------------------------------------------------- transaction data
+
+#: The hash functions `transaction_data_hashes` may be computed with, by their names in the IANA
+#: "Named Information Hash Algorithm" registry. OpenID4VP 1.0 Appendix B.3.3.1: "If this
+#: parameter is not present, a default value of sha-256 MUST be used. To promote
+#: interoperability, implementations MUST support the sha-256 hash algorithm."
+TRANSACTION_DATA_HASH_ALGS = {"sha-256": hashlib.sha256, "sha-384": hashlib.sha384,
+                              "sha-512": hashlib.sha512}
+DEFAULT_TRANSACTION_DATA_HASH_ALG = "sha-256"
+
+#: The transaction data types of EU TS12 ("Specification of Strong Customer Authentication (SCA)
+#: Implementation with the Wallet", v1.0.1) all live under this prefix: urn:eudi:sca:payment:1,
+#: login_risk_transaction:1, account_access:1 and emandate:1. A key binding JWT that binds one
+#: for the credential it names carries TS12 section 3.6's three claims as well.
+TS12_TYPE_PREFIX = "urn:eudi:sca:"
+
+#: TS12 section 3.6, `amr`: "at least two different objects representing authentication
+#: categories. Each object consists of a key representing the category and a value specifying
+#: the method used." The categories and methods the specification defines:
+TS12_AMR = {
+    "knowledge": frozenset(("pin_less_than_6_digits", "pin_6_or_more_digits",
+                            "passphrase_less_than_8_chars", "passphrase_8_to_11_chars",
+                            "passphrase_12_or_more_chars", "pattern", "other")),
+    "possession": frozenset(("key_in_remote_wscd", "key_in_local_external_wscd",
+                             "key_in_local_internal_wscd", "key_in_local_native_wscd", "other")),
+    "inherence": frozenset(("fingerprint_device", "fingerprint_external", "face_device",
+                            "face_external", "other")),
+}
+
+# WHICH ENTRIES A KEY BINDING JWT BINDS, when a response presents more than one credential. SIROS
+# calls it B8 (sirosfoundation/wallet-frontend #354, #361) and openid/OpenID4VP #754 asks it too.
+# With one credential there is no question: every entry names it. With several, the text is:
+#
+#   5.1      credential_ids: "Non-empty array of strings each referencing a Credential requested
+#            by the Verifier that can be used to authorize this transaction. [...] If there is
+#            more than one element in the array, the Wallet MUST use only one of the referenced
+#            Credentials for transaction authorization."
+#   8.4      "The Wallet that received the transaction_data parameter in the request MUST include
+#            a representation or reference to the data in the respective Credential presentation.
+#            How this is done is transaction data type specific."
+#   B.3.3.1  transaction_data_hashes: "Each of these hashes is calculated using a hash function
+#            over the string received in the transaction_data request parameter (base64url
+#            decoding is not performed before hashing). Each hash value ensures the integrity of,
+#            and maps to, the respective transaction data object."
+#
+# "The respective Credential presentation" reads as the presentation of a credential the entry
+# names, which is the per-credential reading; no sentence says the presentation of a credential
+# the entry does NOT name must leave it out, which is the room the all-entries reading stands in;
+# and 8.4 hands the rest to the transaction data type, where TS12 says nothing. So this verifier
+# implements both and the caller names one; nothing is accepted under a reading nobody chose:
+#
+#   per_credential  SIROS's (#354: "the entries whose credential_ids include that credential's
+#                   query id"): a key binding JWT carries the entries that name its credential, in
+#                   request order. An entry naming two or more PRESENTED credentials is bound by
+#                   exactly one of them, the wallet's choice, because 5.1 decides that case: "If
+#                   there is more than one element in the array, the Wallet MUST use only one of
+#                   the referenced Credentials for transaction authorization." Read literally,
+#                   SIROS's rule would put it in both; a response that binds it twice, or not at
+#                   all, is refused (verify_response).
+#   all_entries     SUNET/vc's (pkg/openid4vp/validator.go validateTransactionData at 0e637904,
+#                   which requires len(transaction_data_hashes) == len(TransactionData)): every key
+#                   binding JWT carries every entry, in request order.
+#
+# Elsewhere: multipaz files each entry under every query id it names and requires the exact count
+# in each key binding JWT, zipped in order (openwallet-foundation/multipaz cd9578b3,
+# sdjwt/SdJwtKb.kt L122, L136; verification/VerificationUtil.kt L892): per_credential, as here.
+# The EU reference verifier filters per query id too, then accepts any non-empty subset in any
+# order (eudi-srv-verifier-endpoint df07af2f, port/input/PostWalletResponse.kt L166,
+# ValidateSdJwtVcOrMsoMdocVerifiablePresentation.kt L274-276). Here every expected entry is
+# required, in the request's order: a subset leaves a transaction the verifier sent unbound,
+# where 8.4 says the wallet MUST include it.
+PER_CREDENTIAL = "per_credential"
+ALL_ENTRIES = "all_entries"
+TRANSACTION_DATA_SCOPES = (PER_CREDENTIAL, ALL_ENTRIES)
+
+
+def transaction_data_hash(raw, alg=DEFAULT_TRANSACTION_DATA_HASH_ALG):
+    """base64url(HASH(the ASCII bytes of one transaction_data entry as the request sent it)).
+
+    The STRING, never the JSON it decodes to (OpenID4VP 1.0 B.3.3.1, quoted above): two encodings
+    of one object are two transactions, and a wallet that hashes the decoded bytes, or a
+    re-serialisation of them, binds something the verifier never sent. SUNET/vc's
+    HashTransactionData (pkg/openid4vp/request_object.go) hashes the string the same way.
+    """
+    return b64u_encode(TRANSACTION_DATA_HASH_ALGS[alg](raw.encode("ascii")).digest())
+
+
+class TransactionDataEntry:
+    """One entry of a request's `transaction_data` (OpenID4VP 1.0 section 5.1), as sent and as read.
+
+    `raw` is the base64url string exactly as the request carries it, and it is the only thing
+    hashed. The rest is what it decodes to: `type`, `credential_ids` (the DCQL credential query ids
+    that may authorize it), `hashes_alg` (the algorithms it allows, or None for the sha-256
+    default) and the decoded object, `document`. Raises ValueError on an entry that is not one:
+    not canonical base64url, not a JSON object (one naming a member twice included), or without
+    a non-empty string `type` and a non-empty array of non-empty string `credential_ids`.
+
+    A `transaction_data_hashes_alg` that is a bare string is read as a list of one, as wallets
+    tolerate it (SIROS's vector `hash_alg_string`); B.3.3.1 makes it an array, and a request this
+    package builds is held to that (verifier.transaction_data_entries).
+    """
+
+    __slots__ = ("raw", "type", "credential_ids", "hashes_alg", "document")
+
+    def __init__(self, raw):
+        if not isinstance(raw, str) or not raw:
+            raise ValueError("a transaction_data entry is a non-empty base64url string")
+        try:
+            document = _json_bounded(b64u_decode(raw), "transaction_data entry", unique_keys=True)
+        except ValueError as exc:  # binascii, Unicode and JSON errors are all ValueErrors
+            raise ValueError("a transaction_data entry does not decode to JSON: %s" % exc) from None
+        if not isinstance(document, dict):
+            raise ValueError("a transaction_data entry decodes to a JSON %s, not an object"
+                             % type(document).__name__)
+        kind, ids = document.get("type"), document.get("credential_ids")
+        if not isinstance(kind, str) or not kind:
+            raise ValueError("a transaction_data entry's type must be a non-empty string")
+        if (not isinstance(ids, list) or not ids
+                or not all(isinstance(i, str) and i for i in ids)):
+            raise ValueError("a transaction_data entry's credential_ids must be a non-empty array "
+                             "of non-empty strings")
+        algs = document.get("transaction_data_hashes_alg")
+        if isinstance(algs, str):
+            algs = [algs]
+        if algs is not None and (not isinstance(algs, list) or not algs
+                                 or not all(isinstance(a, str) and a for a in algs)):
+            raise ValueError("a transaction_data entry's transaction_data_hashes_alg must be a "
+                             "non-empty array of algorithm names")
+        self.raw = raw
+        self.type = kind
+        self.credential_ids = tuple(ids)
+        self.hashes_alg = None if algs is None else tuple(algs)
+        self.document = document
+
+    @property
+    def is_ts12(self):
+        return self.type.startswith(TS12_TYPE_PREFIX)
+
+    def allowed_algs(self):
+        """The algorithms a key binding JWT may hash this entry with (B.3.3.1)."""
+        return set(self.hashes_alg or (DEFAULT_TRANSACTION_DATA_HASH_ALG,))
+
+
+class TransactionDataBinding:
+    """What ONE key binding JWT must carry for a request's transaction_data.
+
+    `entries` are the request's entries (TransactionDataEntry), in the request's order;
+    `query_id` is the DCQL credential query the presentation answers; `scope` is PER_CREDENTIAL
+    or ALL_ENTRIES (above); `response_mode` is the request's; `jti_fresh` is called with a
+    TS12 `jti` and says whether it is new, recording it (a JtiMemory); `presented` is the query
+    ids of every credential the response presents, this one alone by default.
+
+    `expected` is the positions of the entries this key binding JWT must hash, in order.
+    `optional`, under PER_CREDENTIAL only, is the positions of entries naming this credential and
+    another presented one: OpenID4VP 1.0 section 5.1, "If there is more than one element in the
+    array, the Wallet MUST use only one of the referenced Credentials for transaction
+    authorization." This JWT may bind such an entry or leave it to the other; that exactly one
+    of them binds it is a property of the response, and verify_response holds it there.
+    `ts12` says whether TS12's claims are due whatever optional entries it binds: they are when
+    a TS12 entry it must bind names this credential, the one TS12 calls the SCA attestation.
+    """
+
+    __slots__ = ("entries", "query_id", "scope", "expected", "optional", "readings_agree", "ts12",
+                 "response_mode", "jti_fresh")
+
+    def __init__(self, entries, query_id, *, scope, response_mode, jti_fresh, presented=None):
+        if scope not in TRANSACTION_DATA_SCOPES:
+            raise ValueError("the transaction_data scope is %r; it is one of %s"
+                             % (scope, ", ".join(TRANSACTION_DATA_SCOPES)))
+        self.entries = tuple(entries)
+        self.query_id = query_id
+        self.scope = scope
+        presented = {query_id} | set(presented or ())
+        candidates = [set(e.credential_ids) & presented for e in self.entries]
+        named = tuple(i for i, c in enumerate(candidates) if query_id in c)
+        alone = tuple(i for i in named if candidates[i] == {query_id})
+        every = tuple(range(len(self.entries)))
+        if scope == ALL_ENTRIES:
+            self.expected, self.optional = every, ()
+        else:
+            self.expected = alone
+            self.optional = tuple(i for i in named if i not in alone)
+        self.readings_agree = alone == every
+        self.ts12 = any(self.entries[i].is_ts12 for i in (named if scope == ALL_ENTRIES
+                                                          else self.expected))
+        self.response_mode = response_mode
+        self.jti_fresh = jti_fresh
+
+    def report(self, alg=None, jti=None, bound=None, ts12=None):
+        return {"credential": self.query_id, "scope": self.scope, "expected": list(self.expected),
+                "optional": list(self.optional),
+                "bound": list(self.expected if bound is None else bound),
+                "readings_agree": self.readings_agree, "alg": alg,
+                "ts12": self.ts12 if ts12 is None else ts12, "jti": jti}
+
+    def describe(self, positions=None):
+        positions = self.expected if positions is None else positions
+        return ("entries %s of the request's %d (%s)"
+                % (", ".join(str(i) for i in positions) or "none", len(self.entries), self.scope))
+
+
+class JtiMemory:
+    """The `jti` values already used, for TS12 section 3.6: "A fresh, cryptographically random
+    value [...] This value SHALL be unique for each presentation."
+
+    Called with a jti, it records it and answers True when it had not been seen. Thread-safe.
+    `retention_seconds` bounds how long one is remembered (None: for the object's life), so a
+    verifier holds a jti for that long and no longer: it is not a register of every jti ever
+    used, and a deployment that needs one checks `verdict.transaction_data["jti"]` in its own.
+    """
+
+    def __init__(self, retention_seconds=None):
+        self.retention_seconds = retention_seconds
+        self._seen = {}
+        self._lock = threading.Lock()
+
+    def __call__(self, jti):
+        now = time.time()
+        with self._lock:
+            if self.retention_seconds is not None:
+                cutoff = now - self.retention_seconds
+                for old in [j for j, at in self._seen.items() if at < cutoff]:
+                    del self._seen[old]
+            if jti in self._seen:
+                return False
+            self._seen[jti] = now
+            return True
+
+
+def _check_transaction_data(kb_payload, binding):
+    """The key binding JWT against `binding`: a refusal Verdict, or the report of what it bound.
+
+    Order: whether the hashes are there at all, the algorithm they were made with, which optional
+    entries it took, then each hash in turn, then TS12's claims. The jti is recorded last, so only
+    a key binding JWT that passed every other check of verify_presentation uses one up; a Verifier
+    that then refuses the presentation for its claims or its status has still seen that jti.
+    """
+    present = "transaction_data_hashes" in kb_payload
+    hashes = kb_payload.get("transaction_data_hashes")
+    if not binding.expected and not binding.optional:
+        if present:
+            return _refuse("transaction_data_extra",
+                           "the key binding JWT carries transaction_data_hashes and the request "
+                           "asked this credential (%r) to bind no entry under the %s reading"
+                           % (binding.query_id, binding.scope))
+        return binding.report()
+    if not present:
+        if binding.expected:
+            return _refuse("transaction_data_missing",
+                           "the key binding JWT carries no transaction_data_hashes, and the request "
+                           "asked it to bind %s" % binding.describe())
+        # Only entries another presented credential may bind instead, and it bound none of them.
+        return binding.report(bound=())
+    if not isinstance(hashes, list) or not all(isinstance(h, str) for h in hashes):
+        return _refuse("transaction_data_mismatch",
+                       "the key binding JWT's transaction_data_hashes is not an array of strings")
+
+    # B.3.3.1: the algorithm "MUST be one of" the values the request allowed, sha-256 when it named
+    # none, and the claim is "REQUIRED when this parameter was present in the transaction_data
+    # request parameter". Every entry this one JWT binds must allow the one it used.
+    alg = kb_payload.get("transaction_data_hashes_alg")
+    if "transaction_data_hashes_alg" in kb_payload:
+        if not isinstance(alg, str):
+            return _refuse("transaction_data_alg",
+                           "the key binding JWT's transaction_data_hashes_alg is a JSON %s, not "
+                           "the string naming the one algorithm its hashes were made with"
+                           % type(alg).__name__)
+        if alg not in TRANSACTION_DATA_HASH_ALGS:
+            offered = set().union(*(binding.entries[i].allowed_algs()
+                                    for i in binding.expected + binding.optional))
+            if alg not in offered:
+                return _refuse("transaction_data_alg",
+                               "the key binding JWT hashed with %r, which is not an algorithm every "
+                               "entry it binds allows (%s)" % (alg, ", ".join(sorted(offered))))
+            return _refuse("transaction_data_alg",
+                           "the key binding JWT hashed with %r, which the request allowed and this "
+                           "verifier cannot compute (%s)"
+                           % (alg, ", ".join(sorted(TRANSACTION_DATA_HASH_ALGS))))
+    used = DEFAULT_TRANSACTION_DATA_HASH_ALG if alg is None else alg
+    # The optional entries it took (5.1, one presented credential of several binds each), then
+    # everything it binds, in the request's order.
+    taken = tuple(i for i in binding.optional
+                  if transaction_data_hash(binding.entries[i].raw, used) in hashes)
+    bound = tuple(sorted(binding.expected + taken))
+    if not bound:
+        return _refuse("transaction_data_extra",
+                       "the key binding JWT carries transaction_data_hashes and binds none of the "
+                       "entries it may bind (%s)" % binding.describe(binding.optional))
+    covered = [binding.entries[i] for i in bound]
+    allowed = set.intersection(*(e.allowed_algs() for e in covered))
+    if alg is not None and alg not in allowed:
+        return _refuse("transaction_data_alg",
+                       "the key binding JWT hashed with %r, which is not an algorithm every "
+                       "entry it binds allows (%s)" % (alg, ", ".join(sorted(allowed)) or "none"))
+    if alg is None and any(e.hashes_alg is not None for e in covered):
+        return _refuse("transaction_data_alg",
+                       "the key binding JWT names no transaction_data_hashes_alg, which B.3.3.1 "
+                       "requires when the request named algorithms (%s)"
+                       % (", ".join(sorted(allowed)) or "none",))
+
+    wanted = [transaction_data_hash(e.raw, used) for e in covered]
+    if len(hashes) < len(wanted):
+        return _refuse("transaction_data_missing",
+                       "the key binding JWT carries %d transaction_data_hashes and the request "
+                       "asked it to bind %s" % (len(hashes), binding.describe(bound)))
+    if len(hashes) > len(wanted):
+        return _refuse("transaction_data_extra",
+                       "the key binding JWT carries %d transaction_data_hashes and the request "
+                       "asked it to bind %s" % (len(hashes), binding.describe(bound)))
+    for position, (got, want) in enumerate(zip(hashes, wanted)):
+        if got != want:
+            entry = covered[position]
+            decoded = b64u_encode(TRANSACTION_DATA_HASH_ALGS[used](b64u_decode(entry.raw)).digest())
+            why = (": it is the hash of the decoded JSON, and B.3.3.1 hashes the string as sent"
+                   if got == decoded else
+                   ": it is another entry's, so the order is not the request's" if got in wanted
+                   else "")
+            return _refuse("transaction_data_mismatch",
+                           "transaction_data_hashes[%d] is not the %s hash of entry %d as the "
+                           "request sent it%s" % (position, used, bound[position], why))
+
+    jti = None
+    ts12 = binding.ts12 or any(binding.entries[i].is_ts12 for i in taken)
+    if ts12:
+        # TS12 section 3.6, for the presentation of the credential a TS12 entry names: "jti:
+        # REQUIRED", "response_mode: REQUIRED The value of the response_mode parameter given in
+        # the [OID4VP] Authorization Request", "amr: REQUIRED".
+        jti = kb_payload.get("jti")
+        if not isinstance(jti, str) or not jti:
+            return _refuse("ts12_jti",
+                           "the key binding JWT binds a TS12 transaction and carries no jti "
+                           "(TS12 3.6 requires one, unique to the presentation)")
+        if kb_payload.get("response_mode") != binding.response_mode:
+            return _refuse("ts12_response_mode",
+                           "the key binding JWT's response_mode is %r and the request's was %r "
+                           "(TS12 3.6)" % (kb_payload.get("response_mode"), binding.response_mode))
+        amr = kb_payload.get("amr")
+        if not isinstance(amr, list) or not all(
+                isinstance(m, dict) and len(m) == 1 and isinstance(next(iter(m.values())), str)
+                for m in amr):
+            return _refuse("ts12_amr",
+                           "the key binding JWT's amr is not an array of single-member objects, "
+                           "each naming one authentication method (TS12 3.6)")
+        categories = sorted({k for m in amr for k, v in m.items() if v in TS12_AMR.get(k, ())})
+        if len(categories) < 2:
+            return _refuse("ts12_amr",
+                           "the key binding JWT's amr names %d of TS12's authentication "
+                           "categories (%s); TS12 3.6 requires at least two"
+                           % (len(categories), ", ".join(categories) or "none"))
+        if not binding.jti_fresh(jti):
+            return _refuse("ts12_jti",
+                           "the key binding JWT's jti has been used before; TS12 3.6 makes it "
+                           "unique to each presentation")
+    return binding.report(alg=used, jti=jti, bound=bound, ts12=ts12)
+
+
 # ------------------------------------------------------------------------ the verifier
 
 def verify_presentation(presentation, *, expected_nonce, expected_audience,
                         issuer_jwks=None, trust_anchors=None, now=None,
                         max_skew_seconds=DEFAULT_MAX_SKEW_SECONDS,
                         require_key_binding=True, expected_vct=None,
-                        status_resolver=None):
+                        status_resolver=None, transaction_data=None):
     """Verify one SD-JWT VC presentation. Returns a Verdict and never raises on bad input.
 
     `presentation` is the `~`-separated string a wallet sent. `expected_nonce` and
@@ -1059,6 +1438,14 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     identification credential accepted any credential the same issuer signed, and returned
     `given_name` off a loyalty card as though it came from a PID. Left None it is not
     checked, which is what a caller doing its own type selection wants.
+
+    `transaction_data` is a TransactionDataBinding when the request carried `transaction_data`
+    (OpenID4VP 1.0 section 8.4), and then the key binding JWT is held to it once every other
+    check has passed: the hashes of exactly the entries it must bind, over each string as sent,
+    in the request's order, made with an algorithm the request allowed; and, for a TS12 entry
+    naming this credential, a fresh `jti`, the request's `response_mode` and two `amr`
+    categories. None, the default, looks at none of those claims: a request without
+    transaction_data is verified exactly as it was before this parameter existed.
     """
     if not _HAVE_CRYPTO:
         return _refuse("no_backend", "the cryptography package is not installed, so no "
@@ -1265,9 +1652,17 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         if orphans:
             return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
                                          "in the credential" % len(orphans))
+        # OpenID4VP 1.0 B.3.3: "The transaction data mechanism requires the use of an SD-JWT VC
+        # with Cryptographic Holder Binding." With no key binding JWT nothing binds an entry.
+        if transaction_data is not None and transaction_data.expected:
+            return _refuse("transaction_data_missing",
+                           "the presentation carries no key binding JWT, and the request asked it "
+                           "to bind %s" % transaction_data.describe())
         return Verdict(True, claims=claims,
                        revocation=_revocation_state(payload, status_resolver, issuer),
-                       disclosed=disclosed, **signer)
+                       disclosed=disclosed,
+                       transaction_data=None if transaction_data is None else transaction_data.report(),
+                       **signer)
 
     cnf = payload.get("cnf")
     if not isinstance(cnf, dict) or not isinstance(cnf.get("jwk"), dict):
@@ -1365,6 +1760,13 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         return _refuse("disclosure", "%d disclosure(s) were presented that resolve to nothing "
                                      "in the credential" % len(orphans))
 
+    # 4. transaction data, last, so every refusal above keeps the order and the reason it had.
+    bound = None
+    if transaction_data is not None:
+        bound = _check_transaction_data(kb_payload, transaction_data)
+        if isinstance(bound, Verdict):
+            return bound
+
     return Verdict(True, claims=claims,
                    revocation=_revocation_state(payload, status_resolver, issuer),
-                   disclosed=disclosed, **signer)
+                   disclosed=disclosed, transaction_data=bound, **signer)

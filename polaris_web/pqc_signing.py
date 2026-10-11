@@ -595,6 +595,19 @@ def migration_signature(token_value: str, algorithm: str, agency_id=None) -> Cre
     return CredentialSignature(sig, public_key_hex, algorithm)
 
 
+def _refuse_a_wrong_size(algorithm, public_key_hex, signature_hex, made, refusing):
+    """Raise SigningError with _size_problem's reason when the key or signature a signer just made
+    is not `algorithm`'s exact size; return when both are.
+
+    verify_both refuses such bytes before either witness runs and answers False, and the three
+    self-checks below read every False as "failed two-witness self-verification" (2026-10-10).
+    Asked first, under the set the signature is recorded under, the refusal names its cause, and
+    that message is left to what the witnesses refuse. verify_both and its answer are unchanged."""
+    problem = _size_problem(algorithm, unhex(public_key_hex), unhex(signature_hex))
+    if problem is not None:
+        raise SigningError("%s is refused before either witness runs: %s; %s" % (made, problem, refusing))
+
+
 def signature_with_key_for_token(token_value: str, agency_id=None) -> tuple:
     """Like `signature_bytes_for_token`, but also returns the signing PUBLIC KEY.
 
@@ -642,6 +655,8 @@ def signature_with_key_for_token(token_value: str, agency_id=None) -> tuple:
         # a real signature that fails to self-verify means broken key material or
         # liboqs, and a two-witness DISAGREEMENT means one implementation is wrong —
         # either way, refuse to persist a signature the two verifiers do not both accept.
+        _refuse_a_wrong_size(result.algorithm_name, result.public_key_hex, result.signature_hex,
+                             "the produced %s signature" % result.algorithm_name, "refusing to issue")
         if not verify_both(token_value.encode("utf-8"), result.signature_hex,
                            result.public_key_hex, require_witness=True):
             raise SigningError(
@@ -672,6 +687,8 @@ def signature_over_message(message: bytes, agency_id=None) -> tuple:
                 f"({_WITNESS_IMPORT_ERROR or 'no ML-DSA support'}). Install cryptography>=48 on "
                 "OpenSSL 3.5+, or use the placeholder path (unset POLARIS_USE_REAL_PQC).")
         result = sign(message, agency_id=agency_id)
+        _refuse_a_wrong_size(result.algorithm_name, result.public_key_hex, result.signature_hex,
+                             "the produced %s status assertion" % result.algorithm_name, "refusing to sign")
         if not verify_both(message, result.signature_hex, result.public_key_hex, require_witness=True):
             raise SigningError(
                 "produced ML-DSA-65 status assertion failed two-witness self-verification; refusing to sign")
@@ -736,11 +753,13 @@ def signature_for_migration(token_value: str, algorithm: str, agency_id=None) ->
     # Self-verify under BOTH witnesses before the row is written. A migration writes once
     # across a whole population; a signature nobody checked at the moment it was made is a
     # population-wide defect discovered by holders.
+    _refuse_a_wrong_size(algorithm, public_key_hex, signature_hex,
+                         "the %s migration signature" % algorithm, "refusing to write it")
     if not verify_both(token_value.encode("utf-8"), signature_hex, public_key_hex,
                        require_witness=True, algorithm=algorithm):
         raise SigningError(
-            f"a {algorithm} migration signature failed two-witness self-verification; "
-            "refusing to write it")
+            f"{'an' if algorithm.startswith('ML-') else 'a'} {algorithm} migration signature failed "
+            "two-witness self-verification; refusing to write it")
     return signature, algorithm, public_key_hex
 
 

@@ -1,4 +1,6 @@
-# testdata: material this project did not make
+# testdata
+
+## conformance-suite-capture.json: material this project did not make
 
 `conformance-suite-capture.json` is one complete `direct_post.jwt` authorization response,
 produced by the **OpenID Foundation conformance suite's** fake wallet during a local run of
@@ -58,3 +60,15 @@ with a critical extended key usage of 1.3.130.2.0.0.1.7. `test_sdjwt.py`
 (`ReferencePidIssuerCertificateTests`) checks these hashes first, so a changed file fails as a
 changed file. It verifies the real chain at a time inside the certificates' validity, and signs
 credentials with throwaway keys under copies of their extensions, because their keys are not here.
+
+## transaction-data-two-credentials.json: a vector this project made
+
+No published transaction_data vector presents more than one credential, and whether each key
+binding JWT hashes only the entries naming its credential or all of them (SIROS's question B8)
+only arises when one does. This file asks for two credentials, `pid` and `pay`, with one EU TS12
+payment entry naming `pay`, and gives what each key binding JWT must carry under each reading and
+one response written each way. It was written by
+[`lab/interop/transaction-data/two_credentials.py`](../../../lab/interop/transaction-data/two_credentials.py),
+which mints with its own code rather than this package's; the private keys were discarded.
+`TwoCredentialVectorTests` and `VerdictCommandTests` judge it at its own `at`, as the capture is
+judged at its `iat`.

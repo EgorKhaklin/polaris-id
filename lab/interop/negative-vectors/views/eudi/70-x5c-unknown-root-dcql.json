@@ -1,0 +1,34 @@
+{
+  "dcql_query": {
+    "credentials": [
+      {
+        "id": "pid",
+        "format": "dc+sd-jwt",
+        "meta": {
+          "vct_values": [
+            "urn:eudi:pid:1"
+          ]
+        },
+        "claims": [
+          {
+            "path": [
+              "given_name"
+            ]
+          },
+          {
+            "path": [
+              "family_name"
+            ]
+          },
+          {
+            "path": [
+              "birthdate"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "nonce": "nV7cX2q-0bQ5mT9sKe4wLz",
+  "request_uri_method": "post"
+}

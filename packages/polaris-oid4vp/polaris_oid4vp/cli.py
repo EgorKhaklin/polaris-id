@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
-"""cli.py -- `polaris-oid4vp keygen` and `polaris-oid4vp serve`.
+"""cli.py -- `polaris-oid4vp keygen`, `polaris-oid4vp serve` and `polaris-oid4vp verdict`.
 
 Installing this package used to leave you with a library and no way to run a verifier.
 Standing one up meant writing the PKI, constructing a `Verifier` and calling `serve()`
@@ -44,9 +44,12 @@ try:
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
-from .sdjwt import _es256_public_key, _not_an_es256_verification_key
+from .jwe import _loads_depth_bounded
+from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
+                    b64u_decode)
 from .serve import REQUEST_PATH, RESPONSE_PATH, serve
-from .verifier import Verifier, claim_query, verifier_info_entries
+from .verifier import (Verifier, claim_query, transaction_data_entries, verifier_info_entries,
+                       verify_response)
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -182,7 +185,7 @@ def parse_claim(text):
 
 def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
                   issuer_trust_anchors=None, public_base_url=None, claims=None,
-                  vct_values=None, verifier_info=None) -> Verifier:
+                  vct_values=None, verifier_info=None, credential_query_id=None) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
@@ -195,7 +198,8 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
         issuer_trust_anchors=issuer_trust_anchors or [],
         **({"claims": claims} if claims else {}),
         **({"vct_values": vct_values} if vct_values else {}),
-        **({"verifier_info": verifier_info} if verifier_info is not None else {}))
+        **({"verifier_info": verifier_info} if verifier_info is not None else {}),
+        **({"credential_query_id": credential_query_id} if credential_query_id is not None else {}))
 
 
 def _load_trust_anchors(paths):
@@ -275,13 +279,31 @@ def _cmd_serve(args) -> int:
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
+    query_id = (Verifier.DCQL_QUERY_ID if args.credential_query_id is None
+                else args.credential_query_id)
     verifier_info = None
     if args.verifier_info:
         try:
             with open(args.verifier_info, encoding="utf-8") as fh:
-                verifier_info = verifier_info_entries(json.load(fh), (Verifier.DCQL_QUERY_ID,))
+                verifier_info = verifier_info_entries(json.load(fh), (query_id,))
         except (OSError, ValueError) as exc:
             print("polaris-oid4vp: --verifier-info %s: %s" % (args.verifier_info, exc),
+                  file=sys.stderr)
+            return 2
+    # The entries of the request --once starts, checked now so that one a wallet would refuse
+    # stops the command before it listens, as a bad --verifier-info does.
+    transaction_data = None
+    if args.transaction_data:
+        if not args.once:
+            print("polaris-oid4vp: --transaction-data is carried by the request --once starts; "
+                  "add --once", file=sys.stderr)
+            return 2
+        try:
+            with open(args.transaction_data, encoding="utf-8") as fh:
+                transaction_data = json.load(fh)
+            transaction_data_entries(transaction_data, (query_id,))
+        except (OSError, ValueError) as exc:
+            print("polaris-oid4vp: --transaction-data %s: %s" % (args.transaction_data, exc),
                   file=sys.stderr)
             return 2
     # Keys named and none usable is a configuration that cannot be what was meant: every
@@ -296,9 +318,14 @@ def _cmd_serve(args) -> int:
             return 2
         print("polaris-oid4vp: %s; only issuers whose x5c chains to --issuer-trust-anchor can be "
               "verified." % why, file=sys.stderr)
-    verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors,
-                             public_base_url=args.public_base_url, claims=claims,
-                             vct_values=args.vct, verifier_info=verifier_info)
+    try:
+        verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors,
+                                 public_base_url=args.public_base_url, claims=claims,
+                                 vct_values=args.vct, verifier_info=verifier_info,
+                                 credential_query_id=args.credential_query_id)
+    except ValueError as exc:
+        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        return 2
     if not issuer_jwks and not anchors:
         print("polaris-oid4vp: no --issuer-jwks or --issuer-trust-anchor given, so no "
               "credential can be verified: "
@@ -328,11 +355,15 @@ def _cmd_serve(args) -> int:
     print("  anchor to register: %s" % (pki / FILES["anchor"]))
     print("\nStart a request with --once to print the parameters a wallet is launched with.")
     if args.once:
-        session, _ = verifier.new_request()
+        session, _ = verifier.new_request(transaction_data=transaction_data)
         params = verifier.authorization_request_params(session)
         print("\nauthorization request parameters:")
         for key, value in params.items():
             print("  %-18s %s" % (key, value))
+        if session.transaction_data:
+            print("  the request object carries %d transaction_data entr%s, which the key "
+                  "binding JWT must bind" % (len(session.transaction_data),
+                                             "y" if len(session.transaction_data) == 1 else "ies"))
     try:
         while True:
             time.sleep(3600)
@@ -342,6 +373,58 @@ def _cmd_serve(args) -> int:
         httpd.shutdown()
         httpd.server_close()
     return 0
+
+
+def _read_request(path):
+    """The authorization request's claims: a JSON object, or the compact request object JWS as
+    served, whose payload is read as it stands. Its signature is not checked here: this is the
+    caller's own request, given to say what the wallet was asked."""
+    text = pathlib.Path(path).read_text(encoding="utf-8").strip()
+    if text.startswith("{"):
+        return _loads_depth_bounded(text, "request")
+    parts = text.split(".")
+    if len(parts) != 3:
+        raise ValueError("%s is neither a JSON object nor a compact JWS" % path)
+    return _loads_depth_bounded(b64u_decode(parts[1]), "request object payload")
+
+
+def _verdict_json(verdict):
+    out = {"authentic": verdict.authentic, "code": verdict.code, "reason": verdict.reason,
+           "claims": sorted(verdict.claims)}
+    if verdict.transaction_data is not None:
+        out["transaction_data"] = verdict.transaction_data
+    return out
+
+
+def _cmd_verdict(args) -> int:
+    try:
+        request = _read_request(args.request)
+        token = _loads_depth_bounded(pathlib.Path(args.vp_token).read_text(encoding="utf-8"),
+                                     "vp_token")
+        if isinstance(token, dict) and "vp_token" in token:   # a whole direct_post body
+            token = token["vp_token"]
+        issuer_jwks = _load_issuer_jwks(args.issuer_jwks) if args.issuer_jwks else []
+        anchors = _load_trust_anchors(args.issuer_trust_anchor)
+        result = verify_response(request, token, transaction_data_scope=args.transaction_data_scope,
+                                 issuer_jwks=issuer_jwks, trust_anchors=anchors, now=args.now)
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    except (OSError, ValueError) as exc:
+        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        return 2
+    print(json.dumps({
+        "accepted": result["accepted"], "scope": result["scope"], "problem": result["problem"],
+        "expected": result["expected"], "either": result["either"],
+        "verdicts": {qid: _verdict_json(v) for qid, v in result["verdicts"].items()},
+        "readings": {scope: {qid: _verdict_json(v) for qid, v in verdicts.items()}
+                     for scope, verdicts in result["readings"].items()},
+        "response_refusals": result["response_refusals"],
+    }, indent=2))
+    if result["accepted"] is None:
+        print("polaris-oid4vp: %s" % result["problem"], file=sys.stderr)
+        return 2
+    return 0 if result["accepted"] else 1
 
 
 def main(argv=None) -> int:
@@ -366,7 +449,15 @@ def main(argv=None) -> int:
   polaris-oid4vp serve --pki ./pki --port 9443 --issuer-jwks issuers.json
       Serves the signed request object and the response endpoint. With no --issuer-jwks it
       trusts no issuer and refuses every presentation, which is correct and is a trap, so
-      it says so on stderr.""")
+      it says so on stderr.
+
+and one that judges a response already captured:
+
+  polaris-oid4vp verdict --request request.json --vp-token vp_token.json --issuer-jwks i.json
+      Checks every presentation in the vp_token against the request, its transaction_data
+      under both readings of which entries each key binding JWT binds; with more than one
+      credential, --transaction-data-scope names the reading that decides. Exit 0 accepted,
+      1 refused, 2 when it cannot decide.""")
     sub = ap.add_subparsers(dest="command", required=True)
 
     g = sub.add_parser("keygen", help="make the certificates the HAIP profile requires")
@@ -403,10 +494,36 @@ def main(argv=None) -> int:
                    help="verifier attestations to put in the request object: a JSON array "
                         "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
                         "guide shows), e.g. {\"format\": \"registration_cert\", \"data\": \"<JWT>\"}")
+    s.add_argument("--credential-query-id", default=None, metavar="ID",
+                   help="the id of the request's DCQL credential query (default pid), which "
+                        "transaction_data entries name in credential_ids")
+    s.add_argument("--transaction-data", default=None, metavar="FILE",
+                   help="a JSON array of transaction_data entries (OpenID4VP 1.0 section 8.4) for "
+                        "the request --once starts: each a base64url string, sent exactly as "
+                        "given, or a JSON object, encoded here. The key binding JWT must bind "
+                        "every one; a TS12 payment must satisfy TS12's schema")
     s.add_argument("--once", action="store_true",
                    help="print one authorization request's parameters at startup")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
+
+    d = sub.add_parser("verdict", help="judge a captured response against its request")
+    d.add_argument("--request", required=True, metavar="FILE",
+                   help="the authorization request: its claims as a JSON object, or the request "
+                        "object JWS as served (its signature is not checked here)")
+    d.add_argument("--vp-token", required=True, metavar="FILE",
+                   help="the vp_token as a JSON object, or the decrypted response carrying one")
+    d.add_argument("--issuer-jwks", default=None,
+                   help="a JSON file of issuer public JWKs to trust")
+    d.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",
+                   help="a PEM file of CA certificates an issuer's x5c leaf must chain to")
+    d.add_argument("--transaction-data-scope", choices=TRANSACTION_DATA_SCOPES, default=None,
+                   help="which entries each key binding JWT must bind: per_credential, those "
+                        "naming its credential query; all_entries, every one. Needed when the "
+                        "two differ")
+    d.add_argument("--now", type=float, default=None, metavar="SECONDS",
+                   help="judge as of this POSIX time, such as when the response was captured")
+    d.set_defaults(func=_cmd_verdict)
 
     args = ap.parse_args(argv)
     return args.func(args)
