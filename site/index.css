@@ -580,6 +580,7 @@ code, .term code { font-variant-ligatures: none; }
 .still-label:hover, .still:focus-visible + .still-label { color: var(--ink); border-color: var(--gold-deep); }
 .still:checked + .still-label::before { content: "Play motion"; }
 body:has(#still:checked) .sky-film, body:has(#still:checked) .meteor { display: none; }
+body:has(#still:checked) .btn-gold::after { animation-play-state: paused; }
 body:has(#still:checked) .sky::before { content: ""; position: absolute; inset: -12%; mix-blend-mode: screen;
     background: url(sky-poster.webp) center / 100% 100% no-repeat;
     -webkit-mask: radial-gradient(closest-side, #000 78%, transparent 100%); mask: radial-gradient(closest-side, #000 78%, transparent 100%); }
