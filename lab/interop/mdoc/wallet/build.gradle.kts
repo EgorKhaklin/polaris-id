@@ -21,16 +21,16 @@ dependencies {
     implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vp-kt:0.16.2")
     implementation("id.walt.mdoc-credentials:waltid-mdoc-credentials-jvm:0.11.0")
     implementation("com.augustcellars.cose:cose-java:1.1.0") // walt.id's COSE, at its version; the wallet names its AlgorithmID
-    implementation("io.ktor:ktor-client-okhttp:3.3.3")
-    implementation("io.ktor:ktor-client-content-negotiation:3.3.3")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.3.3")
+    implementation("io.ktor:ktor-client-okhttp:3.6.0")
+    implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
     constraints {
         listOf("bcprov", "bcpkix", "bcutil").forEach {
             implementation("org.bouncycastle:$it-jdk18on:1.86") { because("advisories fixed in 1.85") }
         }
         // cose-java 1.1.0 brings com.upokecenter:cbor 4.0.1, which OSV lists (GHSA-fj2w-wfgv-mwq6,
         // fixed in 4.5.1): lifted, as ../../axle/harness lifts its dependencies, not ignored.
-        implementation("com.upokecenter:cbor:4.5.1") { because("GHSA-fj2w-wfgv-mwq6 fixed in 4.5.1") }
+        implementation("com.upokecenter:cbor:4.5.6") { because("GHSA-fj2w-wfgv-mwq6 fixed in 4.5.1") }
     }
 }
 
