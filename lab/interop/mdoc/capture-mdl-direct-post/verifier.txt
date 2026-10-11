@@ -1,0 +1,14 @@
+polaris-oid4vp serving on https://host.docker.internal:9491 (listening on 0.0.0.0:9491)
+  client_id     x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE
+  request_uri   https://host.docker.internal:9491/request.jwt
+  response_uri  https://host.docker.internal:9491/response
+  anchor to register: pki/anchor.pem
+
+Start a request with --once to print the parameters a wallet is launched with.
+
+authorization request parameters:
+  client_id          x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE
+  request_uri        https://host.docker.internal:9491/request.jwt?state=6-epdkX2BdUC4UEtzlDo3Q
+  request_uri_method post
+polaris-oid4vp: refused: invalid_request: no 'response' parameter was posted
+  <- 400 refused: invalid_request: no 'response' parameter was posted
