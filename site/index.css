@@ -132,10 +132,9 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
 
 .sky { grid-area: sky; position: relative; align-self: center; justify-self: center;
        width: min(520px, 100%); aspect-ratio: 1; }
-/* The orbits and the starfield are a rendered film: a seamless 72-second loop on black, drawn at
-   twice the display size. Screen blending makes its black vanish, so only the light shows over
-   the sky. One decoded video layer replaces a dozen animated ones; the emblem stays a still image
-   above it. Phones get a lighter 600 px cut. */
+/* The sky is a rendered film: faint orbit rings and a starfield whose stars each drift on their own,
+   a seamless 72-second loop on black at twice the display size. Screen blending makes the black
+   vanish, so only the light shows. The emblem stays a still image above it; phones get a 960 px cut. */
 .sky-film { position: absolute; inset: -12%; width: 124%; height: 124%; object-fit: cover;
             mix-blend-mode: screen; pointer-events: none;
             /* no fade-in: Safari will not autoplay a video that starts invisible; its first frame is the poster */
