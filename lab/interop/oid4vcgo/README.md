@@ -99,6 +99,25 @@ drives it through its `/authorize` endpoint. It
 exits 0 only if the genuine presentation is accepted and every control is refused. Ports 9443
 and 8443 (`PORT`, `WALLET_PORT`).
 
+## A wallet before its release
+
+OID4VCgo runs this script in its own CI, and asked to run it on a pull request before a release
+([issue 312](https://github.com/IDFoundry/OID4VCgo/issues/312)). The wallet comes from one of
+three inputs:
+
+| | The wallet | Example |
+|---|---|---|
+| `OID4VCGO_VERSION` | a release, built with `go install` at that version; the default, unchanged (v0.12.0) | `OID4VCGO_VERSION=v0.25.0 lab/interop/oid4vcgo/run.sh` |
+| `OID4VCGO_BIN` | a prebuilt binary, run as is in `alpine:3.20`, so a static Linux one (`CGO_ENABLED=0`) | `OID4VCGO_BIN=$PWD/conformance-wallet-vp lab/interop/oid4vcgo/run.sh` |
+| `OID4VCGO_SRC` | a checkout, built with `go build ./cmd/conformance-wallet-vp` in `golang:1.26`, mounted read-only | `OID4VCGO_SRC=$GITHUB_WORKSPACE lab/interop/oid4vcgo/run.sh` |
+
+`OID4VCGO_BIN` and `OID4VCGO_SRC` replace the version, and are taken as v0.22.0 or newer, so
+control (d) runs: an older binary fails it, as v0.12.0 did when measured (2026-10-11). The log's `wallet` line says what was tested: the version, the binary's path and
+SHA-256, or the checkout's path and git commit. The run stops before building anything, with
+the reason, if both are set, if the binary is missing or not executable, or if the checkout has
+no `go.mod` or no `cmd/conformance-wallet-vp`. [`test_wallet_inputs.py`](test_wallet_inputs.py)
+holds each input to being the wallet that runs, without Docker.
+
 ## Controls
 
 | | What changed | Refused by | What it said |

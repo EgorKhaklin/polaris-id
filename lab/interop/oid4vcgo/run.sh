@@ -17,6 +17,8 @@
 #   OID4VCGO_VERSION=v0.22.0 lab/interop/oid4vcgo/run.sh         # also checks the verifier's chain
 #   OID4VCGO_VERSION=v0.23.0 lab/interop/oid4vcgo/run.sh         # and holds its leaf to HAIP
 #   OID4VCGO_VERSION=latest lab/interop/oid4vcgo/run.sh          # the newest release
+#   OID4VCGO_BIN=/path/to/conformance-wallet-vp lab/interop/oid4vcgo/run.sh   # a prebuilt binary
+#   OID4VCGO_SRC=/path/to/a/checkout lab/interop/oid4vcgo/run.sh  # built from that module
 #
 # Exits 0 only if the genuine presentation is accepted AND every control is refused.
 set -euo pipefail
@@ -31,8 +33,27 @@ exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early wi
 }
 
 VERSION="${OID4VCGO_VERSION:-v0.12.0}"
+# A wallet before its release: OID4VCGO_BIN, a prebuilt binary run as is, or OID4VCGO_SRC, a
+# checkout built here. Either replaces the version; both at once, or one that is not what it
+# names, stops the run before anything is built.
+WALLET_BIN="${OID4VCGO_BIN:-}"
+WALLET_SRC="${OID4VCGO_SRC:-}"
+if [ -n "$WALLET_BIN" ] && [ -n "$WALLET_SRC" ]; then
+  echo "OID4VCGO_BIN and OID4VCGO_SRC are both set; set one, so the run tests one wallet" >&2
+  exit 2
+fi
+if [ -n "$WALLET_BIN" ]; then
+  [ -f "$WALLET_BIN" ] || { echo "OID4VCGO_BIN=$WALLET_BIN: no such file" >&2; exit 2; }
+  [ -x "$WALLET_BIN" ] || { echo "OID4VCGO_BIN=$WALLET_BIN: not executable" >&2; exit 2; }
+  WALLET_BIN="$(cd "$(dirname "$WALLET_BIN")" && pwd)/$(basename "$WALLET_BIN")"
+elif [ -n "$WALLET_SRC" ]; then
+  [ -f "$WALLET_SRC/go.mod" ] || { echo "OID4VCGO_SRC=$WALLET_SRC: not a Go module (no go.mod)" >&2; exit 2; }
+  [ -d "$WALLET_SRC/cmd/conformance-wallet-vp" ] || {
+    echo "OID4VCGO_SRC=$WALLET_SRC: no cmd/conformance-wallet-vp in it" >&2; exit 2; }
+  WALLET_SRC="$(cd "$WALLET_SRC" && pwd)"
+fi
 PY_FOR_LATEST="${PYTHON:-python3}"
-if [ "$VERSION" = latest ]; then
+if [ -z "$WALLET_BIN$WALLET_SRC" ] && [ "$VERSION" = latest ]; then
   # The newest release as the Go module proxy states it, so the rest of the walk, which reads the
   # version, sees a real one.
   VERSION="$(curl -fsSL https://proxy.golang.org/github.com/idfoundry/oid4vcgo/@latest \
@@ -57,7 +78,15 @@ for p in "$PORT" "$WALLET_PORT"; do
 done
 
 echo "work dir   $WORK"
-echo "wallet     github.com/idfoundry/oid4vcgo $VERSION, cmd/conformance-wallet-vp"
+if [ -n "$WALLET_BIN" ]; then
+  echo "wallet     binary $WALLET_BIN, sha256 $( (sha256sum "$WALLET_BIN" 2>/dev/null || shasum -a 256 "$WALLET_BIN") | cut -d' ' -f1)"
+elif [ -n "$WALLET_SRC" ]; then
+  SRC_COMMIT="$(git -C "$WALLET_SRC" rev-parse HEAD 2>/dev/null || echo "not a git checkout")"
+  [ -n "$(git -C "$WALLET_SRC" status --porcelain 2>/dev/null || true)" ] && SRC_COMMIT="$SRC_COMMIT, with uncommitted changes"
+  echo "wallet     source $WALLET_SRC, commit $SRC_COMMIT, cmd/conformance-wallet-vp built with go build"
+else
+  echo "wallet     github.com/idfoundry/oid4vcgo $VERSION, cmd/conformance-wallet-vp"
+fi
 echo "verifier   $PKG, built as a wheel; its dependencies by hash"
 mkdir -p "$WORK" && cd "$WORK"
 "$PY" -m venv venv
@@ -85,9 +114,20 @@ venv/bin/polaris-oid4vp serve --help | grep -- --issuer-trust-anchor >/dev/null 
 # The wallet, built at exactly $VERSION for the container's own architecture inside the official
 # Go image. `go install pkg@version` pins the module version with no go.mod of our own.
 # GOTOOLCHAIN=auto: a release needing a newer Go than a cached image holds (v0.39.0: 1.26.9) fetches it.
-docker run --rm -v "$WORK:/out" -e CGO_ENABLED=0 -e GOBIN=/out -e GOTOOLCHAIN=auto golang:1.26 \
-  go install "github.com/idfoundry/oid4vcgo/cmd/conformance-wallet-vp@$VERSION"
-mv "$WORK/conformance-wallet-vp" "$WORK/wallet"
+# OID4VCGO_BIN is copied in as is; it runs in alpine, so it must be a static Linux binary.
+# OID4VCGO_SRC is built the same way from the checkout, mounted read-only; -buildvcs=false, since
+# git in the container refuses a checkout another user owns (its commit is printed above).
+if [ -n "$WALLET_BIN" ]; then
+  cp "$WALLET_BIN" "$WORK/wallet"
+elif [ -n "$WALLET_SRC" ]; then
+  docker run --rm -v "$WALLET_SRC:/src:ro" -v "$WORK:/out" -w /src -e CGO_ENABLED=0 -e GOTOOLCHAIN=auto \
+    golang:1.26 go build -buildvcs=false -o /out/conformance-wallet-vp ./cmd/conformance-wallet-vp
+  mv "$WORK/conformance-wallet-vp" "$WORK/wallet"
+else
+  docker run --rm -v "$WORK:/out" -e CGO_ENABLED=0 -e GOBIN=/out -e GOTOOLCHAIN=auto golang:1.26 \
+    go install "github.com/idfoundry/oid4vcgo/cmd/conformance-wallet-vp@$VERSION"
+  mv "$WORK/conformance-wallet-vp" "$WORK/wallet"
+fi
 
 venv/bin/python "$HERE/setup_pki.py" "$WORK" >/dev/null
 venv/bin/polaris-oid4vp keygen --out pki --host host.docker.internal --port "$PORT" >/dev/null
@@ -96,7 +136,9 @@ venv/bin/polaris-oid4vp keygen --out pki --host host.docker.internal --port "$PO
 # (OpenID4VP 5.9.3, HAIP 5), added after our report (idfoundry/oid4vcgo#312, #314). From that
 # version on it is told to trust keygen's CA, the anchor HAIP keeps out of the chain, and control
 # (d) tells it an unrelated one instead.
-CHECKS_VERIFIER=$(venv/bin/python -c 'import sys; v = tuple(int(x) for x in sys.argv[1].lstrip("v").split(".")); print(int(v >= (0, 22, 0)))' "$VERSION")
+# A binary or a checkout is taken as v0.22.0 or newer: it is tested before its release.
+CHECKS_VERIFIER=1
+[ -n "$WALLET_BIN$WALLET_SRC" ] || CHECKS_VERIFIER=$(venv/bin/python -c 'import sys; v = tuple(int(x) for x in sys.argv[1].lstrip("v").split(".")); print(int(v >= (0, 22, 0)))' "$VERSION")
 set_verifier_anchor() {  # $1 the CA the wallet trusts for the verifier's request object
   venv/bin/python - "$1" <<'EOF'
 import json, pathlib, sys

@@ -3489,6 +3489,11 @@ jobs:
       # not reach its last line; this holds all sixteen to it and runs the shape under /bin/bash.
       - name: The lab harnesses' EXIT traps (lab/interop/test_exit_trap.py), an early stop fails
         run: python -m unittest lab/interop/test_exit_trap.py
+      # lab/interop/oid4vcgo/run.sh runs in OID4VCgo's own CI, which tests a pull request before its
+      # release with OID4VCGO_BIN or OID4VCGO_SRC: each input is the wallet that runs, a wrong one
+      # stops the run with its reason, and the default stays the pinned version. No Docker.
+      - name: The OID4VCgo harness's wallet inputs (lab/interop/oid4vcgo), each one the wallet that runs
+        run: python -m unittest lab/interop/oid4vcgo/test_wallet_inputs.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.
