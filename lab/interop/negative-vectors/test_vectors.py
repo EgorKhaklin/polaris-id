@@ -3,7 +3,9 @@
 """test_vectors.py: the vectors and their views are what make_vectors.py makes, byte for byte; polaris-oid4vp
 reaches every expected verdict, under the default binding and under another verifier's; and the vectors whose
 defect is inside a certificate fail for that defect alone, because the same chain with it repaired is accepted."""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -17,6 +19,11 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "packages", "polaris-oid
 
 
 VIEWS = os.path.join(HERE, "views")
+# What eudi/README.md must say it is and is not, word for word (make_vectors.py renders them).
+EUDI_IS = ("**What this is:** Polaris-generated negative vectors (lab record 018), rendered in the EU verifier "
+           "endpoint's test-resource layout, each with its expected outcome and the spec clause it cites.")
+EUDI_IS_NOT = ("**What this is not:** the EU project's own vectors. The EU project has not run them, and nothing "
+               "here claims how their verifier behaves.")
 # Another verifier: every binding setting differs from the default one.
 OTHER = {"audience": "x509_san_dns:verifier.test", "nonce": "other-verifier-nonce-7Qm",
          "now": 1830297600}  # 2028-01-01
@@ -41,9 +48,65 @@ class Vectors(unittest.TestCase):
         self.assertEqual(self.mv.build(), self.doc, "vectors.json drifted from make_vectors.py: regenerate it")
 
     def test_polaris_oid4vp_reaches_every_expected_verdict(self):
+        self.assertEqual(sorted(self.rv.POLARIS_OID4VP_CODES),
+                         sorted(v["id"] for v in self.doc["vectors"] if v["expected"] == "reject"))
         for vector in self.doc["vectors"]:
             got, why = self.rv.polaris_oid4vp(vector, self.doc["settings"])
             self.assertEqual(got, vector["expected"], "%s: %s" % (vector["id"], why))
+            self.assertTrue(self.rv.judge("polaris-oid4vp", vector, got, why), "%s: %s" % (vector["id"], why))
+
+    def test_a_refusal_for_another_reason_fails(self):
+        vector = next(v for v in self.doc["vectors"] if v["id"] == "kb-nonce-missing")
+        self.assertTrue(self.rv.judge("polaris-oid4vp", vector, "reject", "nonce: missing"))
+        self.assertFalse(self.rv.judge("polaris-oid4vp", vector, "reject", "audience: wrong verifier"))
+        self.assertFalse(self.rv.judge("polaris-oid4vp", dict(vector, id="not-in-the-table"), "reject", "nonce: x"))
+        self.assertTrue(self.rv.judge("sd-jwt-python", vector, "reject", "anything"))
+
+    def _main(self, doc, adapter=None):
+        """run_vectors.main over doc, with polaris-oid4vp replaced by `adapter` when given: (exit, stdout)."""
+        rv = _load("run_vectors_main", "run_vectors.py")
+        if adapter:
+            rv.ADAPTERS["polaris-oid4vp"] = adapter
+        tmp = tempfile.mkdtemp(prefix="main-")
+        self.addCleanup(shutil.rmtree, tmp)
+        path = os.path.join(tmp, "vectors.json")
+        with open(path, "w") as fh:
+            json.dump(doc, fh)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rv.main([path, "--adapter", "polaris-oid4vp"])
+        return code, out.getvalue()
+
+    def test_the_run_passes_and_says_done(self):
+        code, out = self._main(self.doc)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.endswith("done\n"))
+
+    def test_the_run_fails_without_a_control(self):
+        negatives = [v for v in self.doc["vectors"] if v["expected"] == "reject"]
+        code, out = self._main(dict(self.doc, vectors=negatives))
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("done", out)
+
+    def test_the_run_fails_when_no_negative_is_judged(self):
+        def controls_only(vector, settings):
+            return ("accept", "") if vector["expected"] == "accept" else ("n/a", "")
+        code, out = self._main(self.doc, controls_only)
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("done", out)
+        code, out = self._main(self.doc, lambda vector, settings: ("n/a", ""))
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("done", out)
+
+    def test_the_run_fails_on_an_empty_vector_list(self):
+        tmp = tempfile.mkdtemp(prefix="empty-")
+        self.addCleanup(shutil.rmtree, tmp)
+        path = os.path.join(tmp, "vectors.json")
+        with open(path, "w") as fh:
+            json.dump(dict(self.doc, vectors=[]), fh)
+        run = _run_runner(path, check=False)
+        self.assertEqual(run.returncode, 1, run.stderr)
+        self.assertNotIn(b"done", run.stdout)
 
     def test_each_certificate_defect_is_the_only_one(self):
         from polaris_oid4vp.sdjwt import verify_presentation
@@ -63,6 +126,11 @@ class Vectors(unittest.TestCase):
         self.assertFalse(authentic((mv.EXPIRED_LEAF, mv.INTERMEDIATE)))
 
 
+def _run_runner(path, check=True):
+    return subprocess.run([sys.executable, os.path.join(HERE, "run_vectors.py"), path, "--adapter", "polaris-oid4vp"],
+                          capture_output=True, check=check)
+
+
 def _read_tree(root):
     out = {}
     for dirpath, _, names in os.walk(root):
@@ -76,7 +144,7 @@ def _read_tree(root):
 def drift_problems(generated, root):
     """What differs between the generator's views and the files under root; empty when they are equal."""
     problems = []
-    if not [k for k in generated if k.startswith("eudi/") and k != "eudi/INDEX.json"]:
+    if not [k for k in generated if k.startswith("eudi/") and k.endswith("-vpToken.json")]:
         problems.append("the generator made no pair files")
     committed = _read_tree(root) if os.path.isdir(root) else {}
     if not committed:
@@ -102,7 +170,15 @@ def structure_problems(root):
         problems.append("index.json holds no vectors")
     if eudi_index != index:
         problems.append("eudi/INDEX.json is not index.json")
-    on_disk = sorted(n for n in os.listdir(os.path.join(root, "eudi")) if n != "INDEX.json")
+    on_disk = sorted(n for n in os.listdir(os.path.join(root, "eudi")) if n not in ("INDEX.json", "README.md"))
+    try:
+        with open(os.path.join(root, "eudi", "README.md")) as fh:
+            readme = fh.read()
+    except OSError:
+        readme = ""
+    for line in (EUDI_IS, EUDI_IS_NOT, index["settings"]["audience"], index["settings"]["nonce"]):
+        if line not in readme:
+            problems.append("eudi/README.md does not say: %s" % line)
     named = []
     for entry in entries:
         pair = entry["files"]["eudi"]
@@ -122,6 +198,11 @@ def structure_problems(root):
                 problems.append("%s: the dcql file does not carry the index's nonce and a query" % entry["id"])
             if token != {"pid": [entry["input"]]}:
                 problems.append("%s: the vpToken file does not carry the entry's input" % entry["id"])
+            # The EU harness reads exactly these keys, and the vpToken's key is the query's id.
+            if not set(dcql) <= {"dcql_query", "nonce", "request_uri_method", "intended_use_id"}:
+                problems.append("%s: the dcql file has keys the EU layout lacks: %s" % (entry["id"], sorted(dcql)))
+            if list(token) != [q["id"] for q in dcql["dcql_query"]["credentials"]]:
+                problems.append("%s: the vpToken key is not the query's id" % entry["id"])
     if sorted(named) != on_disk:
         problems.append("eudi/ holds %d pair files and the index names %d" % (len(on_disk), len(named)))
     return problems
@@ -212,6 +293,7 @@ class Rebinding(unittest.TestCase):
         for vector in doc["vectors"]:
             got, why = rv.polaris_oid4vp(vector, doc["settings"])
             self.assertEqual(got, vector["expected"], "%s: %s" % (vector["id"], why))
+            self.assertTrue(rv.judge("polaris-oid4vp", vector, got, why), "%s: %s" % (vector["id"], why))
 
     def test_another_verifier_accepts_the_controls_and_refuses_every_negative(self):
         from cryptography.hazmat.primitives import serialization
@@ -242,6 +324,8 @@ class Rebinding(unittest.TestCase):
         self.assertEqual({k: settings["issuer_jwks"][0][k] for k in ("x", "y")},
                          {k: mv._jwk(keys["issuer"])[k] for k in ("x", "y")})
         self._assert_verdicts(doc, rv)
+        run = _run_runner(os.path.join(out, "vectors.json"))
+        self.assertTrue(run.stdout.endswith(b"done\n"), run.stdout[-200:])
         # The binding is real: each verifier refuses the other's controls.
         for control in [v for v in doc["vectors"] if v["expected"] == "accept"]:
             self.assertEqual(rv.polaris_oid4vp(control, default["settings"])[0], "reject", control["id"])
@@ -274,6 +358,26 @@ class Rebinding(unittest.TestCase):
         self._assert_verdicts(doc, rv)
         stripped = next(v for v in doc["vectors"] if v["id"] == "kb-aud-no-prefix")
         self.assertIn("origin: prefix", stripped["changed"])
+
+    def test_the_eu_harness_binding_the_readme_names(self):
+        # The audience and nonce eudi/README.md tells a consumer to bind to, at an instant other than the default.
+        rv = _load("run_vectors_eudi", "run_vectors.py")
+        mv = _load("make_vectors_eudi", "make_vectors.py")
+        now = 1800000000
+        mv.bind(audience=mv.EUDI_TEST_AUDIENCE, nonce=mv.EUDI_TEST_NONCE, now=now)
+        doc = mv.build()
+        self._assert_verdicts(doc, rv)
+        self.assertEqual(mv.EUDI_README_IS, EUDI_IS)
+        self.assertEqual(mv.EUDI_README_IS_NOT, EUDI_IS_NOT)
+        view = mv.views(doc, mv.reference_verdicts(doc))
+        readme = view["eudi/README.md"]
+        self.assertIn("--audience %s --nonce %s" % (mv.EUDI_TEST_AUDIENCE, mv.EUDI_TEST_NONCE), readme)
+        self.assertIn("`aud` `%s`, `nonce` `%s`" % (mv.EUDI_TEST_AUDIENCE, mv.EUDI_TEST_NONCE), readme)
+        self.assertIn("(%d)" % now, readme)
+        pair = [k for k in view if k.startswith("eudi/") and k.endswith("-dcql.json")]
+        self.assertEqual(len(pair), len(doc["vectors"]))
+        for name in pair:
+            self.assertEqual(json.loads(view[name])["nonce"], mv.EUDI_TEST_NONCE, name)
 
     def test_an_audience_without_a_client_identifier_prefix_is_refused(self):
         mv = _load("make_vectors_noprefix", "make_vectors.py")

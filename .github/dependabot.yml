@@ -85,6 +85,15 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # cffi 2.1 and pycparser 3 require Python >= 3.10, and these requirements install with
+      # --require-hashes on the system Python 3.9 that the stranger's path promises
+      # (docs/STRANGER-PATH.md). Proposed and closed on 2026-10-11 (#353, #354). Remove this
+      # block when the stranger's path moves past Python 3.9.
+      - dependency-name: "cffi"
+        versions: [">=2.1"]
+      - dependency-name: "pycparser"
+        versions: [">=3"]
 
   # The dependency-audit tools the CVE-scan job runs (pip-audit, bandit), hash-pinned by
   # pip-compile in .github/ci; Dependabot recompiles the hashes.
@@ -310,6 +319,11 @@ updates:
         patterns:
           - "*"
 
+  # Dependabot cannot regenerate gradle/verification-metadata.xml, so its lab-gradle pull requests
+  # fail dependency verification in every harness, and the OSV gate would scan stale pins. They are
+  # never merged directly: a maintainer batch takes their versions, regenerates each directory's
+  # metadata with `--write-verification-metadata sha256` in the pinned Gradle container, then runs
+  # the OSV gate (scripts/polaris-osv-gradle.sh). #357 (2026-10-11) was closed this way.
   - package-ecosystem: gradle
     directories:
       - /lab/interop/axle/harness

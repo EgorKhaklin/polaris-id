@@ -1,7 +1,8 @@
 # The old project-site address, https://egorkhaklin.github.io/polaris-id/, kept as a redirect.
-# Since 2026-09-29 the site is served by Cloudflare from site/ (wrangler.jsonc), at
-# https://polaris-id.e-khaklin.workers.dev/, because GitHub Pages cannot send the security
-# headers in site/_headers. Links already published (posts, applications, papers) still arrive.
+# Since 2026-09-29 the site is served by Cloudflare from site/ (wrangler.jsonc), because GitHub
+# Pages cannot send the security headers in site/_headers; since 2026-10-11 at https://polaris-id.org/.
+# The earlier https://polaris-id.e-khaklin.workers.dev/ keeps serving the same site, so links already
+# published (posts, applications, papers, released package metadata) still arrive.
 #
 # The verify job keeps running on every push to main: the page states counts that live
 # elsewhere in the tree (the schema, the check layer, ci.yml), so it recomputes them and checks
@@ -51,7 +52,7 @@ jobs:
     steps:
       - name: Write the redirect
         env:
-          SITE: https://polaris-id.e-khaklin.workers.dev/
+          SITE: https://polaris-id.org/
         run: |
           mkdir redirect
           for page in index.html 404.html; do

@@ -1,0 +1,6 @@
+Contact: mailto:security@polaris-id.org
+Contact: https://github.com/EgorKhaklin/polaris-id/security/advisories/new
+Expires: 2027-10-01T00:00:00Z
+Preferred-Languages: en, ru
+Canonical: https://polaris-id.org/.well-known/security.txt
+Policy: https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md

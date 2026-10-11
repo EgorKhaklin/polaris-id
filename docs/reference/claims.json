@@ -317,7 +317,7 @@
       "evidence": [
         "file:site/index.html",
         "file:wrangler.jsonc",
-        "url:https://polaris-id.e-khaklin.workers.dev/"
+        "url:https://polaris-id.org/"
       ],
       "reproduce": null,
       "why": "A link to the project site, which is site/ as committed."

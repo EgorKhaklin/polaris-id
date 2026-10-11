@@ -7,8 +7,9 @@ vector, the verdict it should reach and the one it reached.
     python3 run_vectors.py vectors.json --adapter polaris-oid4vp [--json results.json]
 
 An adapter is one function: (vector, settings) -> ("accept" | "reject", a short reason). The run fails
-(exit 1) when a control is refused, because then every refusal it reports measured nothing, and when a
-negative vector is accepted. Exit 2: the adapter could not run.
+(exit 1) when a control is refused, because then every refusal it reports measured nothing, when a
+negative vector is accepted, when polaris-oid4vp refuses one with another code than POLARIS_OID4VP_CODES
+names, and when the file holds no vectors, no control, or no negative the adapter judged. Exit 2: the adapter could not run. A run that passes ends "done".
 """
 import argparse
 import json
@@ -19,6 +20,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 _POLARIS_SEEN = []
+# polaris-oid4vp's refusal code for each negative vector: it must refuse for the vector's reason, not for any.
+POLARIS_OID4VP_CODES = {
+    "issuer-crit": "crit", "kb-crit": "crit",
+    "kb-aud-array": "audience", "kb-aud-no-prefix": "audience", "kb-aud-missing": "audience",
+    "kb-nonce-missing": "nonce",
+    "digest-twice": "disclosure", "claim-overwrite": "disclosure", "disclosed-exp": "disclosure",
+    "disclosed-iss": "disclosure", "disclosure-four-elements": "disclosure", "disclosure-named-sd": "disclosure",
+    "kb-typ-jwt": "kb_typ", "kb-alg-none": "kb_alg", "kb-alg-hs256": "kb_alg",
+    "kb-iat-nan": "malformed", "kb-exp-string": "kb_freshness",
+    "issuer-sig-der": "issuer_signature",
+    "x5c-self-signed": "issuer_key", "x5c-includes-anchor": "issuer_key", "x5c-unknown-root": "issuer_key",
+    "x5c-leaf-expired": "issuer_key", "x5c-intermediate-not-ca": "issuer_key",
+}
 
 
 def polaris_oid4vp(vector, settings):
@@ -82,6 +96,18 @@ def sd_jwt_js(vector, settings):
 
 _JS_FILE = []
 ADAPTERS = {"polaris-oid4vp": polaris_oid4vp, "sd-jwt-python": sd_jwt_python, "sd-jwt-js": sd_jwt_js}
+CODED = {"polaris-oid4vp": POLARIS_OID4VP_CODES}  # adapters whose refusal code is compared too
+
+
+def judge(adapter, vector, got, why):
+    """True when the verdict (and, for a coded adapter, the refusal code) is the expected one; None for n/a."""
+    if got == "n/a":
+        return None
+    if got != vector["expected"]:
+        return False
+    if got == "reject" and adapter in CODED:
+        return why.split(":", 1)[0] == CODED[adapter].get(vector["id"])
+    return True
 
 
 def main(argv=None):
@@ -90,7 +116,11 @@ def main(argv=None):
     ap.add_argument("--adapter", choices=sorted(ADAPTERS), required=True)
     ap.add_argument("--json", help="write the results here")
     args = ap.parse_args(argv)
-    doc = json.load(open(args.vectors))
+    with open(args.vectors) as fh:
+        doc = json.load(fh)
+    if not doc.get("vectors"):
+        print("%s holds no vectors: a run over none measures nothing" % args.vectors, file=sys.stderr)
+        return 1
     _JS_FILE.append(os.path.abspath(args.vectors))
     run = ADAPTERS[args.adapter]
     results, wrong = [], []
@@ -100,13 +130,21 @@ def main(argv=None):
         except Exception as e:  # noqa: BLE001: an adapter that cannot judge a vector stops the run
             print("could not run %s: %s: %s" % (vector["id"], type(e).__name__, e), file=sys.stderr)
             return 2
-        ok = None if got == "n/a" else got == vector["expected"]
+        ok = judge(args.adapter, vector, got, why)
         results.append({"id": vector["id"], "expected": vector["expected"], "got": got, "ok": ok, "reason": why})
+        if ok is False and got == vector["expected"]:
+            why = "expected code %s, got %s" % (CODED[args.adapter].get(vector["id"]), why)
         print("%-4s %-26s expected %-6s got %-6s %s" % ({True: "ok", False: "FAIL", None: "n/a"}[ok], vector["id"],
                                                        vector["expected"], got, why[:90]))
         if ok is False:
             wrong.append(vector["id"])
     controls = [r for r in results if r["id"].startswith("accept-")]
+    negatives = [r for r in results if not r["id"].startswith("accept-") and r["ok"] is not None]
+    if not controls or not negatives:
+        # No control means a verifier that refuses everything passes; no judged negative means nothing was refused.
+        print("the run judged %d controls and %d negatives: it measured nothing" % (len(controls), len(negatives)),
+              file=sys.stderr)
+        return 1
     if args.json:
         with open(args.json, "w") as fh:
             json.dump({"adapter": args.adapter, "vectors_version": doc["version"], "results": results}, fh, indent=1)
@@ -116,7 +154,10 @@ def main(argv=None):
     judged = [r for r in results if r["ok"] is not None]
     print("%d of %d as expected; %d not applicable to this verifier" % (len(judged) - len(wrong), len(judged),
                                                                       len(results) - len(judged)))
-    return 1 if wrong else 0
+    if wrong:
+        return 1
+    print("done")
+    return 0
 
 
 if __name__ == "__main__":
