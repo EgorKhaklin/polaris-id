@@ -18,6 +18,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import unittest
@@ -30,7 +31,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  #
 from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.jwe import b64u_decode, b64u_encode, decrypt_compact, encrypt_compact  # noqa: E402
-from polaris_oid4vp.verifier import Verifier, claim_query  # noqa: E402
+from polaris_oid4vp.verifier import (DEFAULT_REQUEST_TTL_SECONDS, Verifier,  # noqa: E402
+                                     VerifierInfoError, claim_query)
 from polaris_oid4vp import sdjwt  # noqa: E402
 
 #: A claim value that removes the claim (Wallet.binding_claims).
@@ -113,6 +115,24 @@ class Wallet:
                 "vp_token": {query_id: [presentation]} if vp_token is None else vp_token}
         token = encrypt_compact(json.dumps(body).encode(), enc_public, enc)
         return {"response": [token]}
+
+    def respond_error(self, jar, error="access_denied", *, state=None, encrypted=True,
+                      extra=None):
+        """An Authorization Error Response (OpenID4VP 1.0 section 8.5) to the request object
+        `jar`: encrypted to the request's key, as `respond` sends a presentation, or in the clear,
+        as section 8.3.1 allows a wallet that cannot encrypt. `extra` adds members, or form
+        parameters (a list is sent as repeated values)."""
+        _, claims = self.read_request(jar)
+        body = {"error": error, "state": claims["state"] if state is None else state}
+        body.update(extra or {})
+        if not encrypted:
+            return {name: value if isinstance(value, list) else [value]
+                    for name, value in body.items()}
+        enc_jwk = claims["client_metadata"]["jwks"]["keys"][0]
+        enc_public = ec.EllipticCurvePublicNumbers(
+            int.from_bytes(b64u_decode(enc_jwk["x"]), "big"),
+            int.from_bytes(b64u_decode(enc_jwk["y"]), "big"), ec.SECP256R1()).public_key()
+        return {"response": [encrypt_compact(json.dumps(body).encode(), enc_public)]}
 
     @staticmethod
     def binding_claims(request, overrides=None):
@@ -395,6 +415,576 @@ class VerifierInfoTests(unittest.TestCase):
                     [{"format": "f", "data": "x", "other": 1}]):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.verifier(verifier_info=bad)
+
+
+#: ETSI TS 119 472-2 verifier_info as test material. Every identifier is in example.invalid, and
+#: the registration certificate is a JWT signed by a key made for this run, never a registrar's.
+_RC_KEY = ec.generate_private_key(ec.SECP256R1())
+_PID = {"format": "dc+sd-jwt", "meta": {"vct_values": ["urn:eudi:pid:1"]}}
+_NAMES = [{"path": ["given_name"]}, {"path": ["family_name"]}]
+#: An ETSI TS 119 472-2 V1.2.1 requirement, as a refusal names it.
+RO = "OIDFVP-HAIP-COMMON-REQ-RO-%02d"
+#: The label check's reason, as the refusal gives it.
+TYP_AS_FORMAT = ("rc-wrp+jwt is the registration certificate's JWT typ (ETSI TS 119 475); its "
+                 "verifier_info format is registration_cert (ETSI TS 119 472-2 RO-15)")
+
+
+def _registration_cert(credentials=None, typ="rc-wrp+jwt", payload=None):
+    """A registration certificate (ETSI TS 119 475) for a test: a JWT whose `credentials` register
+    what the default request asks for, unless given others or a whole `payload`."""
+    if payload is None:
+        payload = {"sub": "rp-0001.example.invalid",
+                   "credentials": [dict(_PID, claim=_NAMES)] if credentials is None else credentials}
+    return _jws(_RC_KEY, dict({"alg": "ES256"}, **({"typ": typ} if typ else {})), payload)
+
+
+def _registrar(**members):
+    """The registrar_dataset element: its six members and a credential. A member given replaces
+    the default, and DROP removes it."""
+    data = {"identifier": [{"type": "https://registry.example.invalid/identifier-types/number",
+                            "identifier": "rp-0001.example.invalid"}],
+            "srvDescription": [{"lang": "en", "content": "Example service (test material)"}],
+            "registryURI": "https://registry.example.invalid/api/v1",
+            "intendedUseIdentifier": "https://registry.example.invalid/intended-use/0001",
+            "purpose": [{"lang": "en", "content": "Confirm the holder's name (test material)"}],
+            "policyURI": "https://rp.example.invalid/privacy-policy",
+            "credential": [_PID]}
+    for name, value in members.items():
+        if value is DROP:
+            data.pop(name)
+        else:
+            data[name] = value
+    return {"format": "registrar_dataset", "data": data}
+
+
+def _certificate(data=None, **members):
+    """The registration_cert element; DROP as `data` leaves data out."""
+    element = {"format": "registration_cert"}
+    if data is not DROP:
+        element["data"] = _registration_cert() if data is None else data
+    element.update(members)
+    return element
+
+
+class _EtsiProfile(unittest.TestCase):
+
+    PROFILE = "etsi-119472-2"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chain = _client_chain()
+
+    def verifier(self, verifier_info, profile=PROFILE, **kw):
+        return Verifier(client_cert_pem=self.chain[0], client_key_pem=self.chain[1],
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response",
+                        verifier_info=verifier_info, verifier_info_profile=profile, **kw)
+
+    def refused(self, verifier_info, *says, **kw):
+        """The refusal's message, after asserting it names each of `says`. Every refusal test
+        names its requirement: one that asserted ValueError alone would pass on another rule's
+        refusal, and could not see this rule's absence."""
+        with self.assertRaises(VerifierInfoError) as caught:
+            self.verifier(verifier_info, **kw)
+        for text in says:
+            self.assertIn(text, str(caught.exception))
+        return str(caught.exception)
+
+
+class EtsiVerifierInfoTests(_EtsiProfile):
+    """verifier_info_profile="etsi-119472-2": ETSI TS 119 472-2 V1.2.1's requirements for
+    verifier_info in its HAIP-common request object, OIDFVP-HAIP-COMMON-REQ-RO-01 to -16. Each
+    has a case it accepts and single defects it refuses, by the requirement's ID. Shape and labels
+    only: the registration certificate's signature, chain and registry are not checked."""
+
+    def test_the_control_constructs_and_is_carried_byte_for_byte(self):
+        """A registrar_dataset with its six members and a credential, and a registration
+        certificate: accepted, and the request object carries them byte for byte, fresh and
+        minted for a wallet nonce."""
+        info = [_registrar(), _certificate()]
+        v = self.verifier(info)
+        session, jar = v.new_request()
+        sent = b'"verifier_info":' + json.dumps(info, separators=(",", ":")).encode()
+        for token in (jar, v.request_object(session.state, wallet_nonce="w-1")):
+            self.assertIn(sent, b64u_decode(token.split(".")[1]))
+
+    def test_ro01_verifier_info_is_present(self):
+        self.verifier([_registrar(), _certificate()])
+        self.refused(None, RO % 1 + ":", "the request carries no verifier_info")
+        self.refused([], RO % 1 + ":", "verifier_info is an empty array")
+
+    def test_ro03_ro14_it_is_an_array(self):
+        """RO-03 and RO-14 speak of "the element in the verifier_info array". The single object
+        the German developer guide shows stays carried outside the profile."""
+        self.verifier([_registrar()])
+        self.refused(_registrar(), RO % 3 + " and " + RO % 14 + ":", "a single object")
+        self.refused("registrar_dataset", RO % 3 + " and " + RO % 14 + ":")
+        self.assertEqual(self.verifier(_registrar(), profile=None).verifier_info, _registrar())
+
+    def test_ro03_ro14_a_string_element_is_refused(self):
+        """Every element is an object: a string beside valid ones names no element."""
+        self.verifier([_registrar(), _certificate()])
+        for stray in ("registration_cert", "", 7, None, ["registration_cert"]):
+            with self.subTest(stray=stray):
+                self.refused([_registrar(), _certificate(), stray], RO % 3 + " and " + RO % 14 + ":",
+                             "verifier_info element 2 is")
+                self.refused([stray, _registrar()], "verifier_info element 0 is")
+
+    def test_ro02_ro04_exactly_one_registrar_dataset(self):
+        self.verifier([_registrar(), _certificate()])
+        both = RO % 2 + " and " + RO % 4 + ":"
+        self.refused([_certificate()], both, "has 0 elements with format registrar_dataset")
+        self.refused([_registrar(), _registrar(), _certificate()], both, "has 2 elements")
+        self.refused([dict(_registrar(), format="Registrar_Dataset")], both, "has 0 elements")
+
+    def test_ro05_the_registrar_data_is_a_non_empty_object(self):
+        self.verifier([_registrar(), _certificate()])
+        for data in ({}, [], "registrar data", DROP):
+            with self.subTest(data=data):
+                element = {"format": "registrar_dataset"}
+                if data is not DROP:
+                    element["data"] = data
+                self.refused([element, _certificate()], RO % 5 + ":", "not a non-empty JSON object")
+
+    def test_ro03_ro14_neither_element_carries_credential_ids(self):
+        self.verifier([_registrar(), _certificate()])
+        self.refused([dict(_registrar(), credential_ids=["pid"]), _certificate()], RO % 3 + ":",
+                     "the registrar_dataset element carries credential_ids")
+        self.refused([_registrar(), _certificate(credential_ids=["pid"])], RO % 14 + ":",
+                     "the registration_cert element carries credential_ids")
+
+    def test_ro06_identifier(self):
+        self.verifier([_registrar(identifier=[{"type": "t1", "identifier": "a.example.invalid"},
+                                              {"type": "t2", "identifier": "b.example.invalid"}])])
+        for bad in ([], [{"type": "t"}], [{"type": "t", "identifier": ""}],
+                    [{"type": 1, "identifier": "i"}], ["rp-0001"], {"type": "t", "identifier": "i"},
+                    "rp-0001", DROP):
+            with self.subTest(identifier=bad):
+                self.refused([_registrar(identifier=bad)], RO % 6 + ":", "data.identifier is")
+
+    def test_ro07_srv_description(self):
+        self.verifier([_registrar(srvDescription=[{"lang": "en", "content": "Service"},
+                                                  {"lang": "de", "content": "Dienst"}])])
+        for bad in ([], [{"lang": "en"}], [{"content": "Service"}], [{"lang": "", "content": "x"}],
+                    [{"lang": "en", "content": ""}], ["Service"], "Service", DROP):
+            with self.subTest(srvDescription=bad):
+                self.refused([_registrar(srvDescription=bad)], RO % 7 + ":", "data.srvDescription is")
+
+    def test_ro08_registry_uri(self):
+        for good in ("https://registry.example.invalid/api?v=1", "urn:example:registry",
+                     "https://registry.example.invalid/a%20b"):
+            with self.subTest(registryURI=good):
+                self.verifier([_registrar(registryURI=good)])
+        for bad in ("", "/api/v1", "registry.example.invalid/api", "https:",
+                    "https://registry.example.invalid/api#v1", "https://registry example.invalid",
+                    "https://registry.example.invalid/%zz", "1https://registry.example.invalid",
+                    "https://registry.example.invalid/\n", 7, DROP):
+            with self.subTest(registryURI=bad):
+                self.refused([_registrar(registryURI=bad)], RO % 8 + ":", "data.registryURI is")
+
+    def test_ro09_intended_use_identifier(self):
+        self.verifier([_registrar(intendedUseIdentifier="0001")])
+        for bad in ("", 7, ["0001"], DROP):
+            with self.subTest(intendedUseIdentifier=bad):
+                self.refused([_registrar(intendedUseIdentifier=bad)], RO % 9 + ":",
+                             "data.intendedUseIdentifier is")
+
+    def test_ro10_purpose(self):
+        self.verifier([_registrar(purpose=[{"lang": "en", "content": "Age check"},
+                                           {"lang": "fr", "content": "Contrôle de l'âge"}])])
+        for bad in ([], [{"lang": "en"}], [{"content": "Age check"}], [{"lang": "en", "content": 1}],
+                    "Age check", DROP):
+            with self.subTest(purpose=bad):
+                self.refused([_registrar(purpose=bad)], RO % 10 + ":", "data.purpose is")
+
+    def test_ro11_policy_uri(self):
+        self.verifier([_registrar(policyURI="https://rp.example.invalid/privacy?lang=en")])
+        for bad in ("", "privacy-policy", "rp.example.invalid/privacy-policy",
+                    "https://rp.example.invalid/privacy#retention", " https://rp.example.invalid",
+                    7, DROP):
+            with self.subTest(policyURI=bad):
+                self.refused([_registrar(policyURI=bad)], RO % 11 + ":", "data.policyURI is")
+
+    def test_ro12_credential_may_be_absent_and_is_otherwise_objects(self):
+        self.verifier([_registrar(credential=DROP)])
+        self.verifier([_registrar(credential=[_PID, {"format": "mso_mdoc"}])])
+        for bad in ([], [7], [_PID, "pid"], _PID, "pid"):
+            with self.subTest(credential=bad):
+                self.refused([_registrar(credential=bad)], RO % 12 + ":", "data.credential is")
+
+    def test_ro13_ro15_a_format_naming_a_certificate_is_registration_cert(self):
+        """A certificate this does not recognise by its typ (a CWT, or a JWT not typed
+        rc-wrp+jwt) under a label that names one. Typed rc-wrp+jwt, the label check refuses it
+        first, in every mode (test_ro15_...)."""
+        self.verifier([_registrar(), _certificate()])
+        opaque = b64u_encode(b"\xd2\x84test material, not a certificate")
+        for label in ("WRPRC", "registration_certificate", "Registration_Cert", "registration-cert",
+                      "rc_wrp_cwt", "RegistrationCert"):
+            for data in (opaque, _registration_cert(typ="JWT"), _registration_cert(typ=None)):
+                with self.subTest(label=label, data=data[:12]):
+                    self.refused([_registrar(), {"format": label, "data": data}],
+                                 RO % 13 + " and " + RO % 15 + ":", "%r, which names a "
+                                 "registration certificate" % label)
+        # A format that names something else is not judged by this rule.
+        self.verifier([_registrar(), {"format": "policy", "data": opaque}])
+
+    def test_ro15_the_label_check_holds_in_both_modes(self):
+        """German EUDI Wallet iOS issue #38: a certificate under its own JWT typ is refused with
+        the reason, profile or none, and the same data under registration_cert passes."""
+        jwt = _registration_cert()
+        for profile in (self.PROFILE, None):
+            for label in ("rc-wrp+jwt", "RC-WRP+JWT", "application/rc-wrp+jwt"):
+                with self.subTest(profile=profile, label=label):
+                    self.refused([_registrar(), {"format": label, "data": jwt}], RO % 15 + ":",
+                                 "entry 1 has format %r: " % label + TYP_AS_FORMAT, profile=profile)
+            self.refused([_registrar(), {"format": "rc-wrp+cwt", "data": "0oRDoQEm"}],
+                         "rc-wrp+cwt is the registration certificate's CWT typ", profile=profile)
+            self.verifier([_registrar(), {"format": "registration_cert", "data": jwt}],
+                          profile=profile)
+        self.refused({"format": "rc-wrp+jwt", "data": jwt}, "the entry has format", TYP_AS_FORMAT,
+                     profile=None)
+        self.verifier({"format": "registration_cert", "data": jwt}, profile=None)
+
+    def test_ro15_a_jws_typed_rc_wrp_jwt_is_a_certificate_under_any_label(self):
+        """In both modes, and in both forms RO-16 can be read as: the compact serialization, or
+        that serialization base64url-encoded once more."""
+        jwt = _registration_cert()
+        for profile in (self.PROFILE, None):
+            for data in (jwt, b64u_encode(jwt.encode("ascii"))):
+                for label in ("jwt", "attestation", "WRPRC"):
+                    with self.subTest(profile=profile, label=label, form=len(data.split("."))):
+                        self.refused([_registrar(), {"format": label, "data": data}],
+                                     RO % 15 + ":", "its data is a JWS typed rc-wrp+jwt",
+                                     profile=profile)
+        self.verifier([{"format": "attestation", "data": _registration_cert(typ="JWT")}],
+                      profile=None)
+
+    def test_ro16_the_certificate_data_is_a_non_empty_string(self):
+        self.verifier([_registrar(), _certificate()])
+        for data in ("", {}, {"jwt": _registration_cert()}, [_registration_cert()], 7, DROP):
+            with self.subTest(data=str(data)[:12]):
+                self.refused([_registrar(), _certificate(data)], RO % 16 + ":",
+                             "the registration_cert element's data is")
+
+    def test_ro13_at_most_one_registration_certificate(self):
+        """RO-13's "a" registration certificate: two separately issued ones cannot be combined.
+        None is allowed, since RO-13 applies when the relying party has one."""
+        self.verifier([_registrar(), _certificate()])
+        self.verifier([_registrar()])
+        self.refused([_registrar(), _certificate(), _certificate()], RO % 13 + ":",
+                     "has 2 registration_cert elements", "at most one registration certificate")
+
+    def test_empty_or_missing_input_is_refused_never_passed(self):
+        """Nothing passes on empty input: the profile with no verifier_info, an empty array, an
+        empty or missing data, and each of the six members present but empty."""
+        self.refused(None, RO % 1 + ":")
+        self.refused([], RO % 1 + ":")
+        self.refused([{"format": "registrar_dataset", "data": {}}], RO % 5 + ":")
+        self.refused([{"format": "registrar_dataset"}], RO % 5 + ":")
+        for member, empty, number in (("identifier", [], 6), ("srvDescription", [], 7),
+                                      ("registryURI", "", 8), ("intendedUseIdentifier", "", 9),
+                                      ("purpose", [], 10), ("policyURI", "", 11)):
+            with self.subTest(member=member):
+                self.refused([_registrar(**{member: empty})], RO % number + ":", "data.%s is"
+                             % member)
+        all_empty = _registrar(identifier=[], srvDescription=[], registryURI="",
+                               intendedUseIdentifier="", purpose=[], policyURI="")
+        self.refused([all_empty], RO % 6 + ":")
+        self.refused([_registrar(), _certificate(DROP)], RO % 16 + ":", "data is absent")
+        self.refused([_registrar(), _certificate("")], RO % 16 + ":")
+
+    def test_an_unknown_profile_is_refused_not_ignored(self):
+        for profile in ("etsi", "ETSI-119472-2", "etsi-119472-2 ", ""):
+            with self.subTest(profile=profile):
+                self.refused([_registrar()], "is not a profile this verifier knows", profile=profile)
+
+    def test_without_the_profile_only_section_5_1_and_the_label_check_apply(self):
+        """Outside the profile, verifier_info the profile refuses is carried as given, so long as
+        section 5.1 allows it: the registrar data, its members and the over-asking check are the
+        profile's alone."""
+        for info in ([_certificate("eyJhbGciOiJFUzI1NiJ9.e30.c2ln")],
+                     [_registrar(identifier=DROP, registryURI="/api")],
+                     [_registrar(), _certificate(), _certificate()],
+                     [_registrar(), _certificate(_registration_cert([dict(_PID, claims=_NAMES)]))],
+                     [{"format": "WRPRC", "data": "opaque"}]):
+            with self.subTest(info=str(info)[:40]):
+                v = self.verifier(info, profile=None)
+                _, jar = v.new_request()
+                self.assertEqual(Wallet.read_request(jar)[1]["verifier_info"], info)
+
+
+class OverAskingTests(_EtsiProfile):
+    """Under the profile, a request whose DCQL query asks for a credential, or a claim path, that
+    its registration certificate does not register is refused before it is made. The German EUDI
+    Wallet refuses one (iOS 0.3.9; Android #40). The certificate is the operator's own and its
+    payload is read without checking its signature, which every refusal says."""
+
+    def verifier(self, certificate, **kw):
+        return super().verifier([_registrar(), _certificate(certificate)], **kw)
+
+    def refused(self, certificate, *says, **kw):
+        return super().refused(certificate, "the over-asking check refuses this request",
+                               "its signature is NOT checked", *says, **kw)
+
+    def test_a_certificate_registering_what_is_asked_passes(self):
+        self.verifier(_registration_cert())
+        self.verifier(_registration_cert([dict(
+            _PID, meta={"vct_values": ["urn:eudi:pid:de:1", "urn:eudi:pid:1"]},
+            claim=_NAMES + [{"path": ["birthdate"]}])]))
+        self.verifier(_registration_cert([dict(_PID, claim=[{"path": ["given_name"]}])]),
+                      claims=["given_name"])
+        self.verifier(_registration_cert([dict(_PID, claim=[{"path": ["age_equal_or_over", "18"],
+                                                             "values": [True]}])]),
+                      claims=[{"path": ["age_equal_or_over", "18"], "values": [True]}])
+
+    def test_a_claim_path_it_does_not_register_is_refused(self):
+        self.refused(_registration_cert([dict(_PID, claim=[{"path": ["given_name"]}])]),
+                     "credential query 'pid' asks for the claim path [\"family_name\"], which the "
+                     "certificate's credential of that type does not register")
+        # Paths compare exactly, as the Android wallet compares them: a member is not its object.
+        self.refused(_registration_cert([dict(_PID, claim=[{"path": ["age_equal_or_over"]}])]),
+                     "[\"age_equal_or_over\", \"18\"]", claims=[["age_equal_or_over", "18"]])
+        # One credential registers the whole query; two halves in two credentials do not.
+        self.refused(_registration_cert([dict(_PID, claim=[{"path": ["given_name"]}]),
+                                         dict(_PID, claim=[{"path": ["family_name"]}])]),
+                     "asks for the claim path")
+
+    def test_without_claim_only_the_format_and_meta_are_held(self):
+        """ETSI TS 119 475: "If claim is absent, the WRPRC does not declare any specific
+        attributes intended to be requested by the WRP"."""
+        self.verifier(_registration_cert([dict(_PID)]))
+        self.verifier(_registration_cert([dict(_PID)]), claims=["given_name", "birthdate"])
+        self.refused(_registration_cert([dict(_PID, meta={"vct_values": ["urn:eudi:pid:de:1"]})]),
+                     "none of the certificate's credentials registers that")
+
+    def test_claims_in_the_certificate_is_not_etsis_key(self):
+        """A certificate that says `claims` is reported, never read as registering no claim."""
+        for claims in (_NAMES, []):
+            with self.subTest(claims=claims):
+                self.refused(_registration_cert([dict(_PID, claims=claims)]),
+                             "credentials[0] has `claims`, which is not ETSI's key")
+        self.refused(_registration_cert([dict(_PID, claim=_NAMES, claims=_NAMES)]),
+                     "not ETSI's key")
+
+    def test_a_credential_it_does_not_register_is_refused(self):
+        for registered in ([dict(_PID, format="mso_mdoc", claim=_NAMES)],
+                           [dict(_PID, format="vc+sd-jwt", claim=_NAMES)],
+                           [dict(_PID, meta={"vct_values": ["urn:eudi:pid:de:1"]}, claim=_NAMES)],
+                           [dict(_PID, meta={"vct_values": "urn:eudi:pid:1"}, claim=_NAMES)],
+                           [dict(_PID, meta={"vct_values": ["urn:eudi:pid:1"],
+                                             "doctype_value": "eu.europa.ec.eudi.pid.1"},
+                                 claim=_NAMES)]):
+            with self.subTest(registered=registered):
+                self.refused(_registration_cert(registered), "credential query 'pid' asks for "
+                             "format \"dc+sd-jwt\" with meta", "none of the certificate's "
+                             "credentials registers that")
+        # A credential that states no meta, or an empty one, restricts none of it.
+        self.verifier(_registration_cert([{"format": "dc+sd-jwt", "claim": _NAMES}]))
+        self.verifier(_registration_cert([dict(_PID, meta={}, claim=_NAMES)]))
+
+    def test_a_certificate_it_cannot_read_is_refused_not_passed(self):
+        header = b64u_encode(b'{"alg":"ES256","typ":"rc-wrp+jwt"}')
+        for data in ("not-a-jwt", "a.b", header + ".e30", header + ".W10.c2ln",
+                     header + ".bm90IGpzb24.c2ln", header + ".%%%.c2ln",
+                     "eyJhbGciOiJFUzI1NiJ9.e30.c2ln.extra"):
+            with self.subTest(data=data[-16:]):
+                self.refused(data, "the registration certificate is not a JWT")
+        for payload, shown in (({"sub": "rp"}, "absent"), ({"credentials": []}, "[]"),
+                               ({"credentials": {"format": "dc+sd-jwt"}}, "{"),
+                               ({"credentials": "pid"}, '"pid"')):
+            with self.subTest(payload=payload):
+                self.refused(_registration_cert(payload=payload),
+                             "credentials are %s" % shown, "registers no credential to ask for")
+        self.refused(_registration_cert([7]), "credentials[0] is 7, not an object")
+        self.refused(_registration_cert([dict(_PID), "pid"]), "credentials[1] is \"pid\"")
+        for claim in ("given_name", [{"name": "given_name"}], [["given_name"]],
+                      [{"path": "given_name"}]):
+            with self.subTest(claim=claim):
+                self.refused(_registration_cert([dict(_PID, claim=claim)]),
+                             "credentials[0].claim is", "not an array of claims each with a path")
+        self.refused(_registration_cert([dict(_PID, meta="urn:eudi:pid:1", claim=_NAMES)]),
+                     "credentials[0].meta is \"urn:eudi:pid:1\", not an object")
+
+    def test_both_readings_of_ro16_are_read(self):
+        """RO-16: "the base64url encoding of the serialized RP registration certificate". A JWT's
+        compact serialization is base64url already, or it is encoded once more: both are read,
+        and the second must decode to an ASCII compact serialization."""
+        once_more = b64u_encode(_registration_cert().encode("ascii"))
+        self.assertEqual(len(once_more.split(".")), 1)
+        self.verifier(once_more)
+        narrow = _registration_cert([dict(_PID, claim=[{"path": ["given_name"]}])])
+        self.refused(b64u_encode(narrow.encode("ascii")),
+                     "asks for the claim path [\"family_name\"]")
+        # The signature is never decoded here, so non-ASCII there would pass unseen if the
+        # second reading took any bytes: a payload this registers, under a signature that is not.
+        signed = _registration_cert().rsplit(".", 1)[0]
+        for name, data in (("not ASCII", b64u_encode("\u00e9.\u00e9.\u00e9".encode("utf-8"))),
+                           ("a signature not ASCII",
+                            b64u_encode((signed + ".sig\u00e9").encode("utf-8"))),
+                           ("two parts", b64u_encode(narrow.rsplit(".", 1)[0].encode("ascii"))),
+                           ("four parts", b64u_encode((narrow + ".x").encode("ascii"))),
+                           ("not base64url", narrow.replace(".", "!"))):
+            with self.subTest(name):
+                self.refused(data, "is not a JWT this check can read", "as it is or base64url-"
+                             "encoded once more")
+
+    def test_it_holds_the_query_the_request_sends(self):
+        v = self.verifier(_registration_cert([dict(_PID, claim=[{"path": ["given_name"]}])]),
+                          claims=["given_name"], credential_query_id="pid")
+        _, jar = v.new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["dcql_query"], v._dcql_query())
+        self.refused(_registration_cert([dict(_PID, claim=[{"path": ["given_name"]}])]),
+                     "credential query 'age' asks for", claims=["given_name", "birthdate"],
+                     credential_query_id="age")
+
+    def test_outside_the_profile_it_is_not_applied(self):
+        over = _registration_cert([dict(_PID, claim=[{"path": ["given_name"]}])])
+        super().verifier([_registrar(), _certificate(over)], profile=None)
+        super().verifier([_certificate("not-a-jwt")], profile=None)
+
+
+VERIFIER_INFO_VECTORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata",
+                                     "verifier-info")
+
+
+def verifier_info_vectors():
+    """testdata/verifier-info: (file name, vector) for each case, the control first."""
+    out = []
+    for name in sorted(os.listdir(VERIFIER_INFO_VECTORS)):
+        if name.endswith(".json"):
+            with open(os.path.join(VERIFIER_INFO_VECTORS, name), encoding="utf-8") as fh:
+                out.append((name, json.load(fh)))
+    return out
+
+
+class VerifierInfoVectorTests(_EtsiProfile):
+    """testdata/verifier-info: the control, one single-defect case per rule, a certificate
+    without `claim` and the same verifier_info outside the profile, as JSON another verifier can
+    read. Each reaches its verdict here, and each refusal says what its file says."""
+
+    def test_every_vector_reaches_its_verdict(self):
+        vectors = verifier_info_vectors()
+        self.assertEqual(sorted(v["expect"] for _, v in vectors), ["accept"] * 3 + ["refuse"] * 17,
+                         "three accepted, and one refusal per rule")
+        for name, vector in vectors:
+            s = vector["settings"]
+            kw = dict(profile=s["verifier_info_profile"], vct_values=s["vct_values"],
+                      claims=s["claims"], credential_query_id=s["credential_query_id"])
+            with self.subTest(vector=name):
+                if vector["expect"] == "accept":
+                    self.verifier(vector["verifier_info"], **kw)
+                    continue
+                self.refused(vector["verifier_info"], vector["says"],
+                             *([vector["requirement"] + ":"] if vector["requirement"] else []),
+                             **kw)
+
+    def test_they_are_test_material(self):
+        """Every URI in example.invalid, every certificate typed rc-wrp+jwt carrying no key."""
+        for name, vector in verifier_info_vectors():
+            text = json.dumps(vector["verifier_info"])
+            with self.subTest(vector=name):
+                for uri in re.findall(r"https?://[^\"/]+", text):
+                    self.assertTrue(uri.endswith(".example.invalid"), uri)
+                self.assertNotIn('"d":', text)
+                self.assertNotIn("PRIVATE KEY", text)
+
+
+class WhatTheGermanWalletRefusesTests(VerifierTestCase):
+    """Shapes the German EUDI Wallet refuses, which this request already avoids, pinned so a
+    regression is caught: the DCQL key `claim` (Android #36: "By putting them in `claim` the
+    wallet will ignore it"), `trusted_authorities` (iOS #27), a `claim_sets` fallback (Android
+    #21), `response_mode` `direct_post` (iOS #29), and an x5c carrying more than the access
+    certificate (the German guide: "Only include the access certificate and no other certificate
+    in the header!")."""
+
+    def test_every_credential_query_names_claims_never_claim(self):
+        _, jar = self.verifier.new_request()
+        for query in Wallet.read_request(jar)[1]["dcql_query"]["credentials"]:
+            self.assertIn("claims", query)
+            self.assertNotIn("claim", query)
+
+    def test_the_dcql_query_has_no_trusted_authorities_or_claim_sets(self):
+        _, jar = self.verifier.new_request()
+        dcql = Wallet.read_request(jar)[1]["dcql_query"]
+        self.assertEqual(set(dcql), {"credentials"})
+        for query in dcql["credentials"]:
+            self.assertEqual(set(query), {"id", "format", "meta", "claims"})
+
+    def test_the_response_mode_is_direct_post_jwt(self):
+        _, jar = self.verifier.new_request()
+        self.assertEqual(Wallet.read_request(jar)[1]["response_mode"], "direct_post.jwt")
+
+    def test_x5c_is_the_signing_leaf_alone(self):
+        _, jar = self.verifier.new_request()
+        header, _ = Wallet.read_request(jar)
+        self.assertEqual(len(header["x5c"]), 1)
+        leaf = x509.load_der_x509_certificate(base64.b64decode(header["x5c"][0]))
+        self.assertEqual(leaf, self.verifier.cert)
+        signing_input, _, signature = jar.rpartition(".")
+        raw = b64u_decode(signature)
+        leaf.public_key().verify(
+            asym_utils.encode_dss_signature(int.from_bytes(raw[:32], "big"),
+                                            int.from_bytes(raw[32:], "big")),
+            signing_input.encode("ascii"), ec.ECDSA(hashes.SHA256()))
+
+
+class TheDefaultRequestIsUnchangedTests(VerifierTestCase):
+    """Without a verifier_info profile, the request object is byte for byte the one 1.0.0rc19
+    built: these templates were checked against that release's code before the profile existed.
+    Only what is fresh per request is filled in, and each of those is checked against its source."""
+
+    HEADER = '{"alg":"ES256","typ":"oauth-authz-req+jwt","x5c":["<X5C>"]}'
+    PAYLOAD = ('{"iss":"<CLIENT_ID>","aud":"https://self-issued.me/v2","client_id":"<CLIENT_ID>",'
+               '"response_type":"vp_token","response_mode":"direct_post.jwt",'
+               '"response_uri":"https://verifier.test/response","nonce":"<NONCE>",'
+               '"state":"<STATE>","iat":<IAT>,"exp":<EXP>,"client_metadata":{"jwks":{"keys":[{'
+               '"kty":"EC","crv":"P-256","use":"enc","alg":"ECDH-ES","kid":"enc-<STATE>",'
+               '"x":"<X>","y":"<Y>"}]},"vp_formats_supported":{"dc+sd-jwt":{"sd-jwt_alg_values":'
+               '["ES256"],"kb-jwt_alg_values":["ES256"]}},"encrypted_response_enc_values_supported":'
+               '["A128GCM","A256GCM"]},"dcql_query":{"credentials":[{"id":"pid","format":'
+               '"dc+sd-jwt","meta":{"vct_values":["urn:eudi:pid:1"]},"claims":[{"path":'
+               '["given_name"]},{"path":["family_name"]}]}]}<TAIL>}')
+
+    def assert_as_before(self, verifier, tail=""):
+        before = int(time.time())
+        session, jar = verifier.new_request()
+        header, payload, _ = jar.split(".")
+        iat = json.loads(b64u_decode(payload))["iat"]
+        self.assertTrue(before <= iat <= time.time())
+        numbers = session.enc_key.public_key().public_numbers()
+        fill = {"<CLIENT_ID>": verifier.client_id, "<NONCE>": session.nonce,
+                "<STATE>": session.state, "<IAT>": str(iat),
+                "<EXP>": str(iat + DEFAULT_REQUEST_TTL_SECONDS),
+                "<X>": b64u_encode(numbers.x.to_bytes(32, "big")),
+                "<Y>": b64u_encode(numbers.y.to_bytes(32, "big")),
+                "<X5C>": verifier.x5c[0], "<TAIL>": tail}
+        expected_header, expected_payload = self.HEADER, self.PAYLOAD
+        for slot, value in fill.items():
+            expected_header = expected_header.replace(slot, value)
+            expected_payload = expected_payload.replace(slot, value)
+        self.assertEqual(b64u_decode(header).decode("ascii"), expected_header)
+        self.assertEqual(b64u_decode(payload).decode("ascii"), expected_payload)
+
+    def test_the_default_request_object_is_as_before(self):
+        self.assert_as_before(self.verifier)
+
+    def test_verifier_info_without_a_profile_is_carried_as_before(self):
+        cert_pem, key_pem = _client_chain()
+        for info in ([{"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"}],
+                     {"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"}):
+            with self.subTest(info=type(info).__name__):
+                v = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                             request_uri="https://verifier.test/request.jwt",
+                             response_uri="https://verifier.test/response", verifier_info=info)
+                self.assert_as_before(v, ',"verifier_info":' + json.dumps(info, separators=(",", ":")))
+
+    def test_naming_no_profile_is_the_default(self):
+        cert_pem, key_pem = _client_chain()
+        v = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                     request_uri="https://verifier.test/request.jwt",
+                     response_uri="https://verifier.test/response", verifier_info_profile=None)
+        self.assertIsNone(v.verifier_info_profile)
+        self.assert_as_before(v)
 
 
 class TheRequestTests(VerifierTestCase):
@@ -1120,6 +1710,287 @@ class TheResponsePathReturnsRatherThanRaisesTests(VerifierTestCase):
             self.fail("handle_direct_post raised %r" % exc)
         self.assertEqual(status, 400)
         self.assertEqual(body, Verifier.REFUSAL_BODY)
+
+
+# ------------------------------------------------------------- the wallet's error response
+
+
+class AWalletsErrorResponseTests(VerifierTestCase):
+    """OpenID4VP 1.0 section 8.2: "If the Response URI has successfully processed the
+    Authorization Response or Authorization Error Response, it MUST respond with an HTTP status
+    code of 200 with Content-Type of application/json and a JSON object in the response body."
+    Until 2026-10-11 an error response got 400, encrypted or in the clear (measured on
+    1.0.0rc18, lab/interop/response-uri-statuses/). Processed means its state names an
+    outstanding request. It is answered `{}`, is never authentic, carries no claims, is recorded
+    in `verdict.wallet_error`, and in neither form closes the request. The tests marked THREAT
+    MODEL are the attacks the design was held to."""
+
+    def _record(self, form):
+        """Post `form`; it must be processed as an error response. Returns the verdict."""
+        status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (200, {}), verdict.reason if verdict else None)
+        self.assertFalse(verdict.authentic)
+        self.assertEqual((verdict.code, verdict.claims), ("wallet_error", {}))
+        return verdict
+
+    def _genuine(self, jar):
+        _, claims = self.wallet.read_request(jar)
+        return self.wallet._presentation(
+            nonce=claims["nonce"], audience=claims["client_id"], iat=None, sd_hash=None,
+            corrupt_issuer_sig=False, corrupt_kb_sig=False, extra_disclosure=None)
+
+    def test_an_encrypted_error_is_answered_200_and_accepts_nothing(self):
+        session, jar = self.verifier.new_request()
+        verdict = self._record(self.wallet.respond_error(
+            jar, extra={"error_description": "The holder declined"}))
+        self.assertEqual(verdict.wallet_error, {
+            "error": "access_denied", "error_description": "The holder declined",
+            "state": session.state, "encrypted": True})
+        self.assertEqual(verdict.as_dict()["wallet_error"], verdict.wallet_error)
+        self.assertIn("anyone who saw the request could send, so it does not close the request",
+                      verdict.reason)
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+
+    def test_an_error_in_the_clear_is_answered_200_and_accepts_nothing(self):
+        session, jar = self.verifier.new_request()
+        verdict = self._record(self.wallet.respond_error(jar, "vp_formats_not_supported",
+                                                         encrypted=False))
+        self.assertEqual(verdict.wallet_error, {
+            "error": "vp_formats_not_supported", "error_description": None,
+            "state": session.state, "encrypted": False})
+        self.assertIn("anyone who saw the request could send", verdict.reason)
+
+    def test_a_forged_encrypted_error_does_not_cancel_the_presentation(self):
+        """THREAT MODEL. The key a response is encrypted to is in the request object, served to
+        anyone with the request_uri: an onlooker fetches it, encrypts error=access_denied to the
+        request's own key and posts it before the wallet answers, and again. Encryption says
+        nothing about the sender, so the request stays open and takes the genuine presentation;
+        once that has answered it, the forgery finds no key to open it."""
+        session, jar = self.verifier.new_request()
+        served = self.verifier.request_object(session.state)
+        forged = Wallet().respond_error(served)
+        for _ in range(2):
+            self.assertTrue(self._record(forged).wallet_error["encrypted"])
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+        self.assertFalse(session.answered)
+        self.assertEqual(self.verifier.request_object(session.state), jar)
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual((status, body), (200, {"redirect_uri": self.verifier.redirect_uri}))
+        self.assertTrue(verdict.authentic)
+        self.assertEqual(verdict.claims["given_name"], "Jean")
+        status, body, verdict = self.verifier.handle_direct_post(forged)
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertIn("did not decrypt", verdict.reason)
+
+    def test_a_forged_error_in_the_clear_does_not_cancel_the_presentation(self):
+        """THREAT MODEL. The state is in the request_uri, so in the QR code: an onlooker posts
+        error=access_denied&state=... before the wallet answers, and again. The request stays
+        open, is served as before, and takes the genuine presentation."""
+        session, jar = self.verifier.new_request()
+        forged = self.wallet.respond_error(jar, encrypted=False)
+        for _ in range(2):
+            self.assertFalse(self._record(forged).wallet_error["encrypted"])
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+        self.assertFalse(session.answered)
+        self.assertEqual(self.verifier.request_object(session.state), jar)
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual((status, body), (200, {"redirect_uri": self.verifier.redirect_uri}))
+        self.assertTrue(verdict.authentic)
+        self.assertEqual(verdict.claims["given_name"], "Jean")
+        # Answered now, the request is gone, and the error has nothing to name.
+        status, body, verdict = self.verifier.handle_direct_post(forged)
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertIn("names no outstanding request", verdict.reason)
+
+    def test_an_error_naming_no_outstanding_request_is_the_constant_400(self):
+        """Section 14.3.2: "checking that the value of the received state parameter corresponds
+        to a recent Authorization Request". Without one there is nothing to process, and the
+        refusal is the constant one, whatever the cause."""
+        session, _ = self.verifier.new_request()
+        cases = {
+            "an unknown state": {"error": ["access_denied"], "state": ["not-a-request"]},
+            "an empty state": {"error": "access_denied", "state": ""},
+            "no state": {"error": ["access_denied"]},
+            "a state that is not a string": {"error": "access_denied", "state": 7},
+            # Unhashable: looked up, it would raise out of a method that promises to return.
+            "a state that is an object": {"error": "access_denied", "state": {"a": 1}},
+            "the request's state less a character": {"error": ["access_denied"],
+                                                     "state": [session.state[:-1]]},
+        }
+        for label, form in cases.items():
+            with self.subTest(label):
+                status, body, verdict = self.verifier.handle_direct_post(form)
+                self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                self.assertIn("names no outstanding request", verdict.reason)
+        self._record({"error": ["access_denied"], "state": [session.state]})
+
+    def test_an_error_for_an_expired_request_is_the_constant_400(self):
+        from unittest import mock
+        from polaris_oid4vp import verifier as verifier_module
+        t0 = time.time()
+        with mock.patch.object(verifier_module.time, "time", return_value=t0):
+            _, jar = self.verifier.new_request()
+        form = self.wallet.respond_error(jar, encrypted=False)
+        ttl = self.verifier.request_ttl_seconds
+        with mock.patch.object(verifier_module.time, "time", return_value=t0 + ttl - 1):
+            self._record(form)
+        with mock.patch.object(verifier_module.time, "time", return_value=t0 + ttl + 1):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertIn("names no outstanding request", verdict.reason)
+
+    BAD_CODES = ("", " ", "access_denied ", "access_denied\n", "access\x1b[31mdenied",
+                 "acc\u00e8s_refus\u00e9", "x" * 65, "access-denied",
+                 # Each of these is RFC 6749 syntax, and each could put another answer's marker
+                 # into the operator's line: the counterexample that narrowed the shape.
+                 "access denied", "x <- 200 authentic", "!#[]~")
+
+    def test_an_error_that_is_not_an_error_code_is_refused(self):
+        """OpenID4VP 1.0 section 8.5 follows RFC 6749, and every code they define is letters and
+        underscores. Processed here: 1 to 64 letters, digits or underscores."""
+        for encrypted in (True, False):
+            codes = self.BAD_CODES + ((7, True, ["access_denied"], {"error": "x"})
+                                      if encrypted else ())
+            for code in codes:
+                with self.subTest(code=code, encrypted=encrypted):
+                    _, jar = self.verifier.new_request()
+                    status, body, verdict = self.verifier.handle_direct_post(
+                        self.wallet.respond_error(jar, code, encrypted=encrypted))
+                    self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                    self.assertFalse(verdict.authentic)
+                    # A blank form value is no value, so that form is no error response at all.
+                    self.assertIn("no 'response' parameter" if code == "" and not encrypted
+                                  else "is not an error code", verdict.reason)
+        session, _ = self.verifier.new_request()
+        status, _, verdict = self.verifier.handle_direct_post({"error": 7, "state": session.state})
+        self.assertEqual(status, 400)
+        self.assertIn("is not an error code", verdict.reason)
+        # The boundary, both ways: 64 characters, capitals, digits.
+        for code in ("x" * 64, "Access_Denied", "a1_"):
+            for encrypted in (True, False):
+                with self.subTest(code=code, encrypted=encrypted):
+                    _, jar = self.verifier.new_request()
+                    verdict = self._record(self.wallet.respond_error(jar, code,
+                                                                     encrypted=encrypted))
+                    self.assertEqual(verdict.wallet_error["error"], code)
+
+    def test_an_error_beside_a_presentation_is_never_accepted(self):
+        """THREAT MODEL. A response that says both no and yes, as no wallet would, is refused
+        whichever half is genuine. In either form it changes nothing, and the genuine
+        presentation alone still gets through."""
+        session, jar = self.verifier.new_request()
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond_error(
+            jar, extra={"vp_token": {"pid": [self._genuine(jar)]}}))
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertFalse(verdict.authentic)
+        self.assertIn("both an error and a vp_token", verdict.reason)
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual(status, 200)
+        self.assertTrue(verdict.authentic)
+
+        session, jar = self.verifier.new_request()
+        presentation = self.wallet.respond(jar)["response"][0]
+        for label, extra in (("response", {"response": presentation}),
+                             ("vp_token", {"vp_token": json.dumps(
+                                 {"pid": [self._genuine(jar)]})})):
+            with self.subTest(label):
+                status, body, verdict = self.verifier.handle_direct_post(
+                    self.wallet.respond_error(jar, encrypted=False, extra=extra))
+                self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                self.assertIn("both an error and a presentation", verdict.reason)
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+        status, _, verdict = self.verifier.handle_direct_post({"response": [presentation]})
+        self.assertEqual(status, 200)
+        self.assertTrue(verdict.authentic)
+
+        # JSON null is no value: an error beside a null vp_token is an error, and a null error
+        # beside a genuine presentation is a presentation.
+        _, jar = self.verifier.new_request()
+        self._record(self.wallet.respond_error(jar, extra={"vp_token": None}))
+        _, jar = self.verifier.new_request()
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond_error(
+            jar, None, extra={"vp_token": {"pid": [self._genuine(jar)]}}))
+        self.assertEqual(status, 200)
+        self.assertTrue(verdict.authentic)
+
+    def test_a_repeated_parameter_is_refused(self):
+        """RFC 6749 section 3.1: "Request and response parameters MUST NOT be included more than
+        once." Which of two states, or two codes, would be the answer?"""
+        session, jar = self.verifier.new_request()
+        other, _ = self.verifier.new_request()
+        for label, extra in (("two codes", {"error": ["access_denied", "invalid_request"]}),
+                             ("two states", {"state": [session.state, other.state]}),
+                             ("two descriptions", {"error_description": ["one", "two"]})):
+            with self.subTest(label):
+                status, body, verdict = self.verifier.handle_direct_post(
+                    self.wallet.respond_error(jar, encrypted=False, extra=extra))
+                self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                self.assertIn("repeats", verdict.reason)
+        verdict = self._record(self.wallet.respond_error(
+            jar, encrypted=False, extra={"error_description": ["once"]}))
+        self.assertEqual(verdict.wallet_error["error_description"], "once")
+
+    HOSTILE = ("\x1b[2J\x1b[31mACCEPTED\x1b[0m\r\n  <- 200 authentic, claims ['given_name']"
+               "\x00\u202e\u00e9\"\\" + "x" * 5000)
+
+    def test_the_description_reaches_the_operator_only_as_printable_ascii(self):
+        """THREAT MODEL. error_description is the sender's free text, in the clear from anyone
+        who saw the request, and it lands on the operator's terminal and log: an escape sequence
+        repaints the terminal, a line break and a `<-` forge another answer's line, and a long
+        one floods both. The operator is shown RFC 6749's characters but `<`, cut to 200;
+        anything else is `?`."""
+        expected = ("?[2J?[31mACCEPTED?[0m??  ?- 200 authentic, claims ['given_name']?????"
+                    + "x" * 200)[:197] + "..."
+        for encrypted in (True, False):
+            with self.subTest(encrypted=encrypted):
+                _, jar = self.verifier.new_request()
+                verdict = self._record(self.wallet.respond_error(
+                    jar, encrypted=encrypted, extra={"error_description": self.HOSTILE}))
+                self.assertEqual(verdict.wallet_error["error_description"], expected)
+                for ch in ("\x1b", "\r", "\n", "\x00", "\u202e", "<- 200", "x" * 198):
+                    self.assertNotIn(ch, verdict.reason)
+        # An empty one is none; one that is not a string refuses the response.
+        _, jar = self.verifier.new_request()
+        verdict = self._record(self.wallet.respond_error(jar, extra={"error_description": ""}))
+        self.assertIsNone(verdict.wallet_error["error_description"])
+        session, _ = self.verifier.new_request()
+        # In a form, a list is the values the parameter was given, so ["x"] is JSON's alone.
+        for value, channels in ((5, (True, False)), ({"a": 1}, (True, False)),
+                                (True, (True, False)), (["x"], (True,))):
+            for encrypted in channels:
+                with self.subTest(value=value, encrypted=encrypted):
+                    _, jar = self.verifier.new_request()
+                    form = (self.wallet.respond_error(jar, extra={"error_description": value})
+                            if encrypted else {"error": "access_denied", "state": session.state,
+                                               "error_description": value})
+                    status, body, verdict = self.verifier.handle_direct_post(form)
+                    self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                    self.assertIn("error_description is not a string", verdict.reason)
+
+    def test_the_cut_is_at_200_characters_and_not_before(self):
+        from polaris_oid4vp.verifier import ERROR_DESCRIPTION_MAX, _printable
+        self.assertEqual(ERROR_DESCRIPTION_MAX, 200)
+        self.assertEqual(_printable("x" * 200), "x" * 200)
+        self.assertEqual(_printable("x" * 201), "x" * 197 + "...")
+        self.assertEqual(_printable(" !#[]~"), " !#[]~")
+        self.assertEqual(_printable("\x1f\x7f\"\\<"), "?????")
+
+    def test_the_wire_answers_every_error_with_the_same_empty_object(self):
+        """No code, state or description goes back, and no redirect_uri: the page it leads to
+        says the presentation is complete."""
+        bodies = set()
+        for encrypted in (True, False):
+            for code, description in (("access_denied", None),
+                                      ("invalid_request", "unsupported client_id_prefix"),
+                                      ("wallet_unavailable", "x" * 300)):
+                _, jar = self.verifier.new_request()
+                status, body, _ = self.verifier.handle_direct_post(self.wallet.respond_error(
+                    jar, code, encrypted=encrypted,
+                    extra={"error_description": description} if description else None))
+                self.assertEqual(status, 200)
+                bodies.add(json.dumps(body))
+        self.assertEqual(bodies, {"{}"})
 
 
 # ------------------------------------------------------------------- transaction data

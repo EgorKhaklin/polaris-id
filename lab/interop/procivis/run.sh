@@ -185,7 +185,7 @@ start_verifier issuer-ca.pem verifier.log
 present "$(launch_uri verifier.log openid4vp)" holder.log
 expect "the holder dispatched" holder.log '^DISPATCHED'
 expect "the verifier accepted it" verifier.log '<- 200 authentic'
-{ grep -E '<- 200' verifier.log || true; } | sed 's/^/        /'
+{ grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 stop_verifier
 
 echo "== genuine presentation, haip-vp:// (Procivis's OPENID4VP_FINAL1_HAIP profile)"
@@ -194,7 +194,7 @@ URI=$(launch_uri verifier-haip.log haip-vp)
 present "$URI" holder-haip.log
 expect "the holder dispatched, under the HAIP profile" holder-haip.log '^REQUEST .*OPENID4VP_FINAL1_HAIP'
 expect "the verifier accepted it" verifier-haip.log '<- 200 authentic'
-{ grep -E '<- 200' verifier-haip.log || true; } | sed 's/^/        /'
+{ grep -E '<- 200 authentic' verifier-haip.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
 present "$URI" holder-replay.log

@@ -12,10 +12,17 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Fixed
 
 - `polaris-verify --verify-dir` reported a pack it refused before either witness ran (a public key of the wrong length, hex that does not decode) as SKIPPED, so a vector set holding such a negative could not pass on a correct verifier; every pack's verdict is now held to its expectation. Only a file that is not a pack is skipped (another artifact, whose row names the flag that checks it, or an object with none of a pack's fields), and a pack no backend can verify. A directory in which no real witness decided anything, such as the placeholder alone, exited 0, as did a genuine pack beside an object with no pack field expecting invalid; both now exit 2. A run that does not pass ends with "N of M as expected" and a line naming each cause, where it printed "verified with the app's real witnesses" beside a skipped or mismatched vector. The application's signing self-checks (issuance, status assertions, migration) refuse a key or signature of the wrong size with that reason instead of reporting a two-witness failure.
+- `polaris-oid4vp` answered a wallet's Authorization Error Response with 400, encrypted or in the clear, where OpenID4VP 1.0 section 8.2 requires 200 for one the Response URI processes. One naming an outstanding request is now answered 200 with `{}` and no `redirect_uri`, and reported in `verdict.wallet_error` (never authentic, no claims). Neither form, encrypted or in the clear (section 8.3.1), closes the request: the key and the state are in the request, so anyone who saw it could send one. An unknown or expired `state`, a malformed `error` or an error beside a presentation still gets the constant 400.
 
 ### Added
 
 - polaris-oid4vp checks OpenID4VP 1.0 `transaction_data`, opt-in per request: the key-binding JWT must hash each entry's string as sent, with an offered algorithm, and for an EU TS12 (SCA) entry carry a fresh `jti`, the request's `response_mode` and two `amr` categories; which entries each credential binds is a named option, and `polaris-oid4vp verdict` judges a captured response under both.
+- polaris-oid4vp `verifier_info_profile="etsi-119472-2"` (`serve --verifier-info-profile etsi-119472-2`) refuses to start a request whose `verifier_info` does not meet ETSI TS 119 472-2 V1.2.1's OIDFVP-HAIP-COMMON-REQ-RO-01 to -16, naming the requirement, or whose DCQL query asks for more than its registration certificate registers; it checks shape and labels, not the certificate's signature, chain or registry. In either mode a registration certificate labelled with its own media type (`rc-wrp+jwt`, `rc-wrp+cwt`) instead of `registration_cert` is refused.
+- `polaris-oid4vp serve --once` prints the request it starts as three launch links, `openid4vp://?`, `haip-vp://?` and `eu-eaap://?` (ETSI TS 119 472-2, which WE BUILD CS-02 v1.2 requires beside `openid4vp://`), one query behind each, after the parameters it printed before.
+
+### Changed
+
+- `polaris-oid4vp`: a 200 from `Verifier.handle_direct_post` no longer means an accepted presentation, since a wallet's error response is answered 200 too. Acceptance is `verdict.authentic`; `serve` prints `<- 200 authentic` for an accepted presentation only.
 
 ## v1.0.0-rc.72 — 2026-10-10 (an ML-DSA key or signature of the wrong size is refused, and a PostgreSQL major-version upgrade runs as written)
 

@@ -1,0 +1,62 @@
+{
+  "id": "accept-control",
+  "changed": "nothing: the control, a registrar_dataset with its six members and a credential, and a registration certificate registering the two claims the request asks for",
+  "class": "control",
+  "clauses": [],
+  "requirement": null,
+  "says": null,
+  "settings": {
+    "verifier_info_profile": "etsi-119472-2",
+    "credential_query_id": "pid",
+    "vct_values": [
+      "urn:eudi:pid:1"
+    ],
+    "claims": [
+      "given_name",
+      "family_name"
+    ]
+  },
+  "verifier_info": [
+    {
+      "format": "registrar_dataset",
+      "data": {
+        "identifier": [
+          {
+            "type": "https://registry.example.invalid/identifier-types/registration-number",
+            "identifier": "rp-0001.example.invalid"
+          }
+        ],
+        "srvDescription": [
+          {
+            "lang": "en",
+            "content": "Example relying party service (test material)"
+          }
+        ],
+        "registryURI": "https://registry.example.invalid/api/v1",
+        "intendedUseIdentifier": "https://registry.example.invalid/intended-use/0001",
+        "purpose": [
+          {
+            "lang": "en",
+            "content": "Confirm the holder's name (test material)"
+          }
+        ],
+        "policyURI": "https://rp.example.invalid/privacy-policy",
+        "credential": [
+          {
+            "format": "dc+sd-jwt",
+            "meta": {
+              "vct_values": [
+                "urn:eudi:pid:1"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "format": "registration_cert",
+      "data": "eyJhbGciOiJFUzI1NiIsInR5cCI6InJjLXdycCtqd3QifQ.eyJzdWIiOiJycC0wMDAxLmV4YW1wbGUuaW52YWxpZCIsIm5hbWUiOiJFeGFtcGxlIHJlbHlpbmcgcGFydHkgKHRlc3QgbWF0ZXJpYWwpIiwiaWF0IjoxNzkxNjc2ODAwLCJjcmVkZW50aWFscyI6W3siZm9ybWF0IjoiZGMrc2Qtand0IiwibWV0YSI6eyJ2Y3RfdmFsdWVzIjpbInVybjpldWRpOnBpZDoxIl19LCJjbGFpbSI6W3sicGF0aCI6WyJnaXZlbl9uYW1lIl19LHsicGF0aCI6WyJmYW1pbHlfbmFtZSJdfV19XX0.Yk4-WUluwLcX39jtUYiMDyQJNXo_bVwx_wPAkgF6x-jmIIupqZ80kLL5FSogMJgSObhC1jnkhEeiiow-nczuLQ"
+    }
+  ],
+  "expect": "accept"
+}

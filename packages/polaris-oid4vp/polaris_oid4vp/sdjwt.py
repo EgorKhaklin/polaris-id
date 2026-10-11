@@ -204,14 +204,28 @@ class Verdict:
     Unbound iss: delegated status lists are not consulted; status is established only by a list
     signed with the credential's own key. (`status.StatedAuthority` is keyed by issuer, and the
     resolver is given None.)
+
+    A WALLET'S ERROR RESPONSE (added 2026-10-11) is not a presentation and is never authentic:
+    `Verifier` answers one 200 and returns a verdict with code `wallet_error`, no claims, and
+    `wallet_error` holding what the response said (None on every other verdict):
+
+        error              its `error` (OpenID4VP 1.0 section 8.5): 1 to 64 letters, digits or
+                           underscores, the shape of every code RFC 6749 and OpenID4VP define
+        error_description  its `error_description` as printable ASCII without `<`, cut to 200
+                           characters, or None
+        state              the outstanding request it names
+        encrypted          True: it arrived encrypted to that request's key; False: in the
+                           clear (section 8.3.1). Neither says who sent it, since the key and
+                           the state are both in the request, and neither closes the request
     """
 
     __slots__ = ("authentic", "code", "reason", "claims", "revocation", "disclosed",
-                 "issuer_subject", "issuer_anchor", "iss_bound", "unbound_iss", "transaction_data")
+                 "issuer_subject", "issuer_anchor", "iss_bound", "unbound_iss", "transaction_data",
+                 "wallet_error")
 
     def __init__(self, authentic, code="", reason="", claims=None, revocation=None,
                  disclosed=None, issuer_subject=None, issuer_anchor=None, iss_bound=None,
-                 unbound_iss=None, transaction_data=None):
+                 unbound_iss=None, transaction_data=None, wallet_error=None):
         self.authentic = authentic
         self.code = code
         self.reason = reason
@@ -229,6 +243,8 @@ class Verdict:
         # request carried any: which entries it had to bind and under which reading, the hash
         # algorithm it used and its `jti`. None when the request carried none.
         self.transaction_data = transaction_data
+        # A wallet's error response, as `Verifier` recorded it (see above). None otherwise.
+        self.wallet_error = wallet_error
 
     def __repr__(self):
         if self.authentic:
@@ -245,6 +261,8 @@ class Verdict:
         # same members it always had.
         if self.transaction_data is not None:
             out["transaction_data"] = self.transaction_data
+        if self.wallet_error is not None:
+            out["wallet_error"] = self.wallet_error
         return out
 
 

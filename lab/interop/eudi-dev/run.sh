@@ -348,7 +348,7 @@ present "$URI" wallet.log
 expect "the wallet submitted and was answered 200" wallet.log 'Response: 200'
 expect "the verifier accepted it" verifier.log '<- 200 authentic'
 # A refused presentation prints nothing here; the controls still run and RESULT says FAILED.
-{ grep -E '<- 200' verifier.log || true; } | sed 's/^/        /'
+{ grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 if [ -n "$CAPTURE" ]; then
   # Not a control: a run asked to capture that wrote less than all of it has not done what it
   # was asked. Every file must be there and non-empty, and the wrapper must not have said FAILED.

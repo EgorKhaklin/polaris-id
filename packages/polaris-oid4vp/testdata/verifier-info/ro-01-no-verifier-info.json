@@ -1,0 +1,23 @@
+{
+  "id": "ro-01-no-verifier-info",
+  "changed": "the request carries no verifier_info",
+  "class": "spec",
+  "clauses": [
+    "ETSI TS 119 472-2 V1.2.1 OIDFVP-HAIP-COMMON-REQ-RO-01"
+  ],
+  "requirement": "OIDFVP-HAIP-COMMON-REQ-RO-01",
+  "says": "the request carries no verifier_info",
+  "settings": {
+    "verifier_info_profile": "etsi-119472-2",
+    "credential_query_id": "pid",
+    "vct_values": [
+      "urn:eudi:pid:1"
+    ],
+    "claims": [
+      "given_name",
+      "family_name"
+    ]
+  },
+  "verifier_info": null,
+  "expect": "refuse"
+}

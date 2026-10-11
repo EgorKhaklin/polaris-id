@@ -9,7 +9,7 @@ function to the promise its own docstring makes:
 | `fuzz_presentation.py` | `sdjwt.verify_presentation` | returns a Verdict and never raises; nothing accepted differs from what the issuer signed |
 | `fuzz_signed.py` | `sdjwt.verify_presentation` | the same, with the fuzzer's bytes signed as the issuer's payload or the holder's key binding JWT |
 | `fuzz_jwe.py` | `jwe.decrypt_response` | raises nothing but `JweError` |
-| `fuzz_response.py` | `Verifier.handle_direct_post` | answers 200 or 400, never an exception; 200 only for an authentic presentation |
+| `fuzz_response.py` | `Verifier.handle_direct_post` | answers 200 or 400, never an exception; 200 only for an authentic presentation, or for a wallet's error response with an empty body and no claims |
 | `fuzz_status.py` | `status.decide` | total on hostile input; a checked verdict carries a status |
 
 Keys and the clock are fixed (`_genuine.py`), so an input that crashes a target reproduces
