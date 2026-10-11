@@ -27,7 +27,7 @@
 [![npm](https://img.shields.io/badge/npm-polaris--sdk--ts-cb3837?labelColor=0a1421&style=flat-square)](sdk/typescript)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
 
-<a href="https://polaris-id.e-khaklin.workers.dev/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
+<a href="https://polaris-id.org/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
 <a href="#try-it"><img src="docs/assets/nav/try-it.svg" alt="Try it"></a>
 <a href="#status"><img src="docs/assets/nav/status.svg" alt="Status"></a>
 <a href="#the-ten-guarantees"><img src="docs/assets/nav/the-ten-guarantees.svg" alt="The ten guarantees"></a>
