@@ -28618,6 +28618,80 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
                      f"each result; they share runner, services, environment and {shared} setup steps verbatim")
 
 
+# 2026-10-11: docs/reference/INTEROP.md gives each outside implementation's latest run, one row each, so its rows are
+# the outward count a second time. The page's own sentence, its rows, the scoreboard's Wallets summary, the README's
+# badge and the claims manifest's lists must name the same implementations, split the same way: the wallets that ran
+# unmodified, and the rest.
+_INTEROP_PAGE = "docs/reference/INTEROP.md"
+
+
+def _interop_rows(text: str) -> list[tuple[str, str]]:
+    """The (Implementation, Kind) cells of the table under the page's `## Measured` heading."""
+    if "\n## Measured\n" not in text:
+        return []
+    body = text.split("\n## Measured\n", 1)[1].split("\n## ", 1)[0]
+    rows: list[tuple[str, str]] = []
+    header = False
+    for line in body.splitlines():
+        if not line.startswith("|"):
+            if rows:
+                break
+            continue
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip())[1:-1]]
+        if not header:
+            header = cells[:2] == ["Implementation", "Kind"]
+            continue
+        if len(cells) < 2 or not "".join(cells).strip("-: "):
+            continue
+        rows.append((cells[0], cells[1]))
+    return rows
+
+
+def check_interop_page_matches_the_count(root: pathlib.Path) -> list[Finding]:
+    name = "interop_page_count"
+    page, board, readme = _read(root, _INTEROP_PAGE), _read(root, "lab/EXTERNAL-NOUNS.md"), _read(root, "README.md")
+    try:
+        entries = {e["id"]: e for e in json.loads(_read(root, "docs/reference/claims.json"))["claims"]}
+    except Exception:
+        entries = {}
+    if not (page and board and readme and entries):
+        return _fail(name, f"{_INTEROP_PAGE}, lab/EXTERNAL-NOUNS.md, README.md or docs/reference/claims.json is missing")
+    rows = _interop_rows(page)
+    if not rows:
+        return _fail(name, f"{_INTEROP_PAGE} has no Implementation | Kind table under ## Measured")
+    wallets = sum(1 for _, kind in rows if _claim_text(kind) == "wallet")
+    split = (wallets, len(rows) - wallets)
+
+    said = re.search(r"\b(\w+) wallets and (\w+) more outside implementations\b", _claim_text(page))
+    stated = (_claim_first_number(said.group(1)), _claim_first_number(said.group(2))) if said else None
+    if stated != split:
+        return _fail(name, f"{_INTEROP_PAGE} says {stated} (wallets, more); its rows are {split}")
+    summary = re.search(r"^\|\s*Wallets\s*\|\s*(\d+) unmodified wallets\b[^|]*?\band (\d+) more implementations\b",
+                        board, re.M)
+    scored = (int(summary.group(1)), int(summary.group(2))) if summary else None
+    if scored != split:
+        return _fail(name, f"the scoreboard's Wallets summary counts {scored} (wallets, more); {_INTEROP_PAGE} has {split}")
+    badges = [_claim_first_number(label) for label in map(_shields_label, _readme_badges(readme).values())
+              if label and "outside implementation" in label.casefold()]
+    if badges != [len(rows)]:
+        return _fail(name, f"the README's outside-implementations badge says {badges}; {_INTEROP_PAGE} has {len(rows)} rows")
+
+    counted = entries.get(_CLAIMS_COUNTED_ID, {}).get("count_of") or []
+    terms = [i.get("scoreboard", "") for c in counted for i in (entries.get(c, {}).get("implementations") or [])]
+    if len(terms) != len(rows):
+        return _fail(name, f"the claims manifest counts {len(terms)} implementations; {_INTEROP_PAGE} has {len(rows)} rows")
+    matched: dict[int, str] = {}
+    for term in terms:
+        hits = [n for n, (impl, _) in enumerate(rows) if term and _claim_phrase_in(_claim_text(term), _claim_text(impl), r"[\w-]")]
+        if len(hits) != 1:
+            return _fail(name, f"{term!r} names {len(hits)} rows of {_INTEROP_PAGE}; it must name exactly one")
+        if hits[0] in matched:
+            return _fail(name, f"{term!r} and {matched[hits[0]]!r} both name the row {rows[hits[0]][0]!r}")
+        matched[hits[0]] = term
+    return _ok(name, f"{_INTEROP_PAGE} has one row for each of the {len(rows)} counted implementations, "
+                     f"{split[0]} wallets and {split[1]} more, as its sentence, the scoreboard, the badge and the manifest say")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pooler_keeps_the_operator_scope,
     check_publishable_packages_keep_their_dependency_budget,
@@ -29001,6 +29075,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_database_instants_read_the_utc_clock,
     check_openapi_covers_api_v1,
     check_product_suite_parts_share_setup,
+    check_interop_page_matches_the_count,
 ]
 
 

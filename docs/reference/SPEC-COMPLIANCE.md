@@ -5,6 +5,7 @@ scoped on purpose: implementing a standard is not a certification, and a certifi
 package version in one role, never the whole system. The evidence marks (implemented, experimental,
 externally exercised) are the vocabulary of [PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md);
 what outside parties have actually run is [EXTERNAL-NOUNS.md](../../lab/EXTERNAL-NOUNS.md).
+Each outside implementation's latest run, with its version and controls: [INTEROP.md](INTEROP.md).
 
 | Standard | Role | Where | Evidence (suite, version) | Exceptions | Run by | Date |
 |---|---|---|---|---|---|---|
