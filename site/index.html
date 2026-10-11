@@ -19,8 +19,8 @@
 <meta name="theme-color" content="#09090b">
 <meta name="color-scheme" content="dark">
 <link rel="canonical" href="https://polaris-id.org/">
-<link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="apple-touch-icon" href="polaris_logo_clean.png">
+<link rel="icon" type="image/png" href="polaris_logo_180.png">
+<link rel="apple-touch-icon" href="polaris_logo_180.png">
 <link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="index.css">
@@ -32,7 +32,6 @@
 <header class="bar">
     <div class="bar-in">
         <a class="mark" href="#top" aria-label="Polaris ID, top of page">
-            <img src="polaris_logo_clean.png" alt="" width="28" height="28">
             <span>Polaris</span>
         </a>
         <nav aria-label="Sections">
@@ -43,7 +42,6 @@
             <a href="#partners">Work with us</a>
         </nav>
         <span class="tag">Pre-pilot</span>
-        <a class="gh" href="https://discord.gg/ragewuCKj">Discord</a>
         <a class="gh gh-keep" href="https://github.com/EgorKhaklin/polaris-id">GitHub</a>
     </div>
 </header>
@@ -56,29 +54,32 @@
     <span class="galaxy g1"></span><span class="galaxy g2"></span><span class="galaxy g3"></span>
     <span class="meteor m1"></span><span class="meteor m2"></span>
 </div>
+<input type="checkbox" id="still" class="still">
+<label for="still" class="still-label"><span class="visually-hidden">Pause or play the moving sky</span></label>
 <div class="hero">
     <div class="sky" aria-hidden="true">
-        <span class="trail t1"></span><span class="trail t2"></span><span class="trail t3"></span>
-        <span class="trail t4"></span><span class="trail t5"></span><span class="trail t6"></span>
+        <video class="sky-film" autoplay muted loop playsinline disablepictureinpicture preload="metadata" poster="sky-poster.webp">
+            <source src="sky-960.mp4" type="video/mp4" media="(max-width: 560px) and (prefers-reduced-motion: no-preference)">
+            <source src="sky-1440.mp4" type="video/mp4" media="(prefers-reduced-motion: no-preference)">
+        </video>
         <span class="halo"></span>
-        <img class="pole" src="polaris_logo_clean.png" alt="" width="220" height="220" fetchpriority="high">
+        <img class="pole" src="polaris_logo.webp" alt="" width="220" height="220" fetchpriority="high">
     </div>
     <div class="hero-copy">
         <p class="eyebrow">Open-source identity infrastructure</p>
         <h1 id="hero-h">Identity built to be <span class="nb"><em>checked</em>, not trusted.</span></h1>
-        <p class="lead">Polaris issues identity credentials signed with ML-DSA-65 and checks them offline,
-            against published keys, with no server and no network. Its verifier is built for the banks,
-            platforms and public services that will accept Europe&rsquo;s digital identity wallets.</p>
+        <p class="lead">For the banks, platforms and public services that will accept Europe&rsquo;s digital
+            identity wallets.</p>
         <div class="cta">
             <a class="btn btn-gold" href="#verify">Check it in one minute</a>
             <a class="btn btn-line" href="#partners">Work with us</a>
         </div>
     </div>
     <ul class="proof" aria-label="Outside evidence">
-        <li><b>OpenID Certified</b><span>OpenID4VP 1.0 + HAIP 1.0 verifier, rc7</span></li>
-        <li><b>6 independent wallets</b><span>unmodified, presented and accepted</span></li>
-        <li><b>EU reference software</b><span>the Commission&rsquo;s wallet libraries and PID issuer, run against it</span></li>
-        <li><b>Apache-2.0</b><span>on PyPI and npm</span></li>
+        <li><a class="proof-cert" href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified" width="140" height="77"></a></li>
+        <li><a href="#evidence"><b>15 outside projects</b></a></li>
+        <li><a href="#evidence"><b>EU reference software</b></a></li>
+        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/LICENSE"><b>Apache-2.0</b></a></li>
     </ul>
 </div>
 </section>
@@ -86,66 +87,38 @@
 <section class="band" id="evidence" aria-labelledby="evidence-h">
     <div class="wrap">
         <p class="num">I</p>
-        <h2 id="evidence-h">What other people's software did with it.</h2>
-        <p class="intro">Everything else on this page is the project describing itself. These are the
-            results that are not. The authors of that software took no part in the runs, though this
-            project has written to some of them: two fixed a defect reported from here, and later runs
-            re-test the fix. Every run carried controls that had to be refused, because a verifier that
-            accepts everything prints the same success line.</p>
+        <h2 id="evidence-h">Tested in the open.</h2>
 
-        <div class="roster">
-            <div class="roster-col">
-                <h3>Wallets, unmodified</h3>
-                <ul>
-                    <li><b>walt.id Wallet API</b><span>Kotlin</span></li>
-                    <li><b>Credo</b><span>TypeScript &middot; OpenWallet Foundation</span></li>
-                    <li><b>eudi-dev</b><span>Go &middot; OpenID Certified wallet</span></li>
-                    <li><b>OID4VCgo</b><span>Go &middot; OpenID Certified wallet</span></li>
-                    <li><b>ProtocolSoup</b><span>Go &middot; OpenID Certified wallet</span></li>
-                    <li><b>Procivis One Core</b><span>Rust</span></li>
-                </ul>
-            </div>
-            <div class="roster-col">
-                <h3>Libraries, services and test tools</h3>
-                <ul>
-                    <li><b>EUDI Wallet OpenID4VP library</b><span>Kotlin &middot; European Commission</span></li>
-                    <li><b>EUDI Wallet OpenID4VP library</b><span>Swift &middot; European Commission</span></li>
-                    <li><b>EUDI PID issuer</b><span>European Commission reference issuer</span></li>
-                    <li><b>vck</b><span>Kotlin &middot; A-SIT Plus</span></li>
-                    <li><b>Multipaz</b><span>Kotlin &middot; OpenWallet Foundation</span></li>
-                    <li><b>irmago</b><span>Go &middot; Yivi</span></li>
-                    <li><b>Axle</b><span>Kotlin &middot; driven by a harness written here</span></li>
-                    <li><b>openid4vp</b><span>Rust &middot; SpruceID conformance adapter</span></li>
-                    <li><b>ERICA</b><span>TypeScript &middot; verifier testing tool</span></li>
-                </ul>
-            </div>
-        </div>
-        <p class="src">Dated runs, versions, controls and transcripts:
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md">the scoreboard</a>,
-            15 September to 10 October 2026. It is also listed among the IETF SD-JWT implementations.</p>
-
-        <div class="cert">
-            <a class="cert-mark" href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified" width="140" height="77"></a>
-            <p><b>OpenID&reg; Certified&trade; by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0
-                Verifier profile:</b> <code>polaris-oid4vp 1.0.0rc7</code>, 24 September 2026
-                (<a href="https://openid.net/certification/certified-oid4vp-haip-final/">listing</a>).
-                A self-certification the OpenID Foundation approved and lists: not an endorsement, not an audit, and not
-                a certification of the rest of Polaris. The newest release runs against the OpenID Foundation&rsquo;s
-                conformance suite every week in CI. OpenID&reg; and OpenID&reg; Certified&trade; are
-                trademarks of the OpenID Foundation, used under its
-                <a href="https://openid.net/certification/mark/">certification terms</a>.</p>
-        </div>
+        <details class="roster">
+            <summary><span>From the European Commission, the OpenWallet Foundation, walt.id, SpruceID, Yivi and more</span><span class="show" data-closed="Show all 15" data-opened="Hide"></span></summary>
+            <ul>
+                <li><b><a href="https://github.com/walt-id/waltid-identity">walt.id Wallet API</a></b><span>Kotlin &middot; wallet</span></li>
+                <li><b><a href="https://github.com/openwallet-foundation/credo-ts">Credo</a></b><span>TypeScript &middot; wallet &middot; OpenWallet Foundation</span></li>
+                <li><b><a href="https://github.com/dominikschlosser/eudi-dev">eudi-dev</a></b><span>Go &middot; OpenID Certified wallet</span></li>
+                <li><b><a href="https://github.com/IDFoundry/OID4VCgo">OID4VCgo</a></b><span>Go &middot; OpenID Certified wallet</span></li>
+                <li><b><a href="https://github.com/ParleSec/ProtocolSoup">ProtocolSoup</a></b><span>Go &middot; OpenID Certified wallet</span></li>
+                <li><b><a href="https://github.com/procivis/one-core">Procivis One Core</a></b><span>Rust &middot; wallet</span></li>
+                <li><b><a href="https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vp-kt">EUDI Wallet OpenID4VP library</a></b><span>Kotlin &middot; European Commission</span></li>
+                <li><b><a href="https://github.com/eu-digital-identity-wallet/eudi-lib-ios-openid4vp-swift">EUDI Wallet OpenID4VP library</a></b><span>Swift &middot; European Commission</span></li>
+                <li><b><a href="https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer">EUDI PID issuer</a></b><span>European Commission reference issuer</span></li>
+                <li><b><a href="https://github.com/a-sit-plus/vck">vck</a></b><span>Kotlin library &middot; A-SIT Plus</span></li>
+                <li><b><a href="https://github.com/openwallet-foundation/multipaz">Multipaz</a></b><span>Kotlin library &middot; OpenWallet Foundation</span></li>
+                <li><b><a href="https://github.com/privacybydesign/irmago">irmago</a></b><span>Go library &middot; Yivi</span></li>
+                <li><b><a href="https://github.com/openwallet-foundation-labs/axle">Axle</a></b><span>Kotlin &middot; driven by a harness written here</span></li>
+                <li><b><a href="https://github.com/spruceid/openid4vp">openid4vp</a></b><span>Rust &middot; SpruceID conformance adapter</span></li>
+                <li><b><a href="https://gitlab.opencode.de/bmi/eudi-wallet/erica">ERICA</a></b><span>TypeScript &middot; verifier testing tool</span></li>
+            </ul>
+        </details>
+        <p class="src">Every run is dated in <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md">the scoreboard</a>. Also listed among the IETF SD-JWT implementations.</p>
 
         <div class="zeros">
             <h3>Where it stands</h3>
             <dl>
                 <div><dt>Stage</dt><dd>1.0.0</dd></div>
-                <div><dt>Next</dt><dd>Independent security review</dd></div>
-                <div><dt>Then</dt><dd>First pilot</dd></div>
-                <div><dt>Findings from outside</dt><dd>2, both fixed</dd></div>
+                <div><dt>OpenID Certified verifier</dt><dd>1.0.0rc7</dd></div>
+                <div><dt>First outside operator</dt><dd><a href="https://github.com/IDFoundry/OID4VCgo/issues/312">OID4VCgo&rsquo;s CI, daily</a></dd></div>
+                <div><dt>Ahead</dt><dd><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">Pilot, security review, real data</a></dd></div>
             </dl>
-            <p>The <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md">scoreboard</a>
-                counts only what a named outside party did, on a date, that can be pointed at.</p>
         </div>
     </div>
 </section>
@@ -157,25 +130,13 @@
         <h2 id="why-h" class="statement">Every EU member state must provide a digital identity wallet.</h2>
         <div class="zeros stats">
             <dl>
-                <div><dt>EU member states that must provide a wallet</dt><dd>27</dd></div>
+                <div><dt>EU member states</dt><dd>27</dd></div>
                 <div><dt>People with no official ID</dt><dd>~800M</dd></div>
                 <div><dt>Without a government digital ID usable online</dt><dd>2.8B+</dd></div>
             </dl>
         </div>
-        <div class="split">
-            <p class="intro">Every EU member state is now obliged to provide at least one European Digital
-                Identity Wallet (<a href="https://eur-lex.europa.eu/eli/reg/2024/1183/oj">Regulation (EU) 2024/1183</a>,
-                Article 5a). Banks, platforms and public services that accept those wallets need a verifier
-                they can check rather than trust. Polaris&rsquo;s is open source, already exercised by wallets
-                nobody here wrote, and polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 +
-                HAIP 1.0 Verifier profile.</p>
-            <p class="intro">The need is not only European. The World Bank estimates that about 800 million
-                people have no official ID at all, and that at least 2.8 billion have no government-recognised
-                digital identity with which to transact online
-                (<a href="https://id4d.worldbank.org/global-dataset">ID4D Global Dataset</a>, 2025). Polaris
-                implements enrolment through a trusted referee for a person with no documents (no proofing has
-                been performed with it yet), and checks every credential against published keys.</p>
-        </div>
+        <p class="answer">Polaris is built to enrol a person with no documents through a trusted referee.</p>
+        <p class="src">Sources: <a href="https://eur-lex.europa.eu/eli/reg/2024/1183/oj">Regulation (EU) 2024/1183</a>, Article 5a; the World Bank&rsquo;s <a href="https://id4d.worldbank.org/global-dataset">ID4D Global Dataset</a>, 2025.</p>
     </div>
 </section>
 
@@ -184,11 +145,7 @@
         <div>
             <p class="num">III</p>
             <h2 id="verify-h">One minute, from an empty folder.</h2>
-            <p>Do not take this page's word for anything. The script below installs the verifier from
-                PyPI, every dependency checked against a pinned hash. It runs
-                <a href="https://github.com/dominikschlosser/eudi-dev">eudi-dev</a>, a wallet nobody
-                here wrote that the OpenID Foundation lists as certified, has it present a credential,
-                then sends three tampered presentations that must each be refused.</p>
+            <p>Don&rsquo;t take our word for it. One script runs an outside wallet against the verifier, then sends three controls that must each be refused.</p>
             <p>It needs <code>python3</code> and a free port. Docker is optional.</p>
             <p class="more"><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md">The ten-minute version, step by step</a>
                 <a href="https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml">Tell us where it broke</a></p>
@@ -213,9 +170,7 @@
 <span class="l">== control (a): the verifier trusts a different issuer key under the same kid</span>
 <span class="l">  <span class="ok">ok</span>    the verifier refused the issuer</span>
 <span class="l"><span class="res">RESULT: accepted, and all three controls refused</span></span></code></pre>
-            <figcaption>Recorded 5 October 2026 on macOS with the system Python 3.9: 13 seconds, from
-                an empty folder. Abridged: the full output also shows each step's request and
-                answer.</figcaption>
+            <figcaption>Recorded 5 October 2026, abridged: 13 seconds from an empty folder.</figcaption>
         </figure>
     </div>
 </section>
@@ -223,28 +178,24 @@
 <section class="band" id="how" aria-labelledby="how-h">
     <div class="wrap">
         <p class="num">IV</p>
-        <h2 id="how-h">How it works.</h2>
+        <h2 id="how-h">Issue. Hold. Verify.</h2>
         <ol class="flow">
             <li><span class="step">Issue</span>
-                <p>An authority issues a credential and signs it with ML-DSA-65 under its registered
-                    key. Which algorithm signed it is data, not code: algorithm agility under an
-                    audited migration path.</p></li>
+                <p>An authority signs it with ML-DSA-65; the algorithm is data, so it can change.</p></li>
             <li><span class="step">Hold</span>
-                <p>The person holds it, in a wallet over OpenID4VP or as a signed pack, and chooses
-                    what to disclose. In zero-knowledge mode the verifier learns no credential
-                    identifier at all, so the issuer cannot link where it was shown.</p></li>
+                <p>The person keeps it and shows only what they choose; zero-knowledge mode shows no identifier at all.</p></li>
             <li><span class="step">Verify</span>
-                <p>Anyone checks it two ways. <b>Authenticity</b> is offline: the standalone
-                    verifier checks the signature against published keys, with no database and no
-                    network. <b>Authorization</b>, whether it counts right now, comes from a
-                    relying-party API or a short-lived signed status assertion.</p></li>
+                <p>Anyone checks it offline, against published keys: no server, no network.</p></li>
         </ol>
+        <details class="more-box">
+            <summary><span>Install it</span><span class="show" data-closed="Show" data-opened="Hide"></span></summary>
         <div class="kit">
             <code>pip install --pre polaris-oid4vp</code>
             <code>pip install --pre "polaris-verify[cryptography]"</code>
             <code>pip install --pre polaris-sdk-python</code>
             <code>npm install polaris-sdk-ts@next</code>
         </div>
+        </details>
     </div>
 </section>
 
@@ -252,12 +203,10 @@
     <div class="wrap">
         <p class="num">V</p>
         <h2 id="design-h">The rules live in the database.</h2>
-        <p class="intro">A rule enforced by a trigger, a CHECK constraint or a unique index binds every
-            client and survives every restore. The constitutional guarantees sit there, not in
-            application code, and each is pinned by a check that fails the build if it stops being
-            true.</p>
+        <p class="intro">Enforced by the database itself, and checked on every build.</p>
+        <details class="more-box">
+            <summary><span>The five guarantees</span><span class="show" data-closed="Show" data-opened="Hide"></span></summary>
         <table class="rules">
-            <thead><tr><th scope="col">Guarantee</th><th scope="col">Where it is enforced</th></tr></thead>
             <tbody>
                 <tr><th scope="row">The audit of record is append-only</th><td>A trigger on every audit table; the application role cannot reach the purge path</td></tr>
                 <tr><th scope="row">A zero-knowledge verification stores no credential identifier</th><td>A two-way CHECK constraint on the verification table</td></tr>
@@ -266,70 +215,43 @@
                 <tr><th scope="row">Identity is not money</th><td>Structural absence: no monetary table or column exists</td></tr>
             </tbody>
         </table>
+        </details>
 
         <div class="hard">
             <div>
-                <h3>Coercion</h3>
-                <p>A second code yields a verification that looks identical and quietly records a
-                    duress event. Duress-aware, not a defence against everyone: it works on a coercer
-                    who does not know the mechanism exists, and the
-                    <a href="https://github.com/EgorKhaklin/polaris-id/tree/main/lab/duress">lab measured</a>
-                    where it does not.</p>
+                <h3>Duress-aware</h3>
+                <p>A second code verifies normally and silently records duress. It works against a coercer who doesn&rsquo;t know it exists.</p>
             </div>
             <div>
                 <h3>Total loss</h3>
-                <p>A person who loses every device is recovered through three independent channels,
-                    a cool-down and a witness from another authority, never by one operator.</p>
+                <p>Lose every device and come back through three channels and a second authority, never by one operator.</p>
             </div>
             <div>
                 <h3>Algorithm migration</h3>
-                <p>Credentials can carry an old and a new signature while an authority moves between
-                    algorithms, with a database rule that exactly one is active. Whether ML-DSA itself
-                    holds is mathematics, not a property of this repository.</p>
+                <p>Two signatures during a move between algorithms; the database keeps exactly one active.</p>
             </div>
         </div>
     </div>
 </section>
 
-<section class="band limits" id="limits" aria-labelledby="limits-h">
-    <div class="wrap">
-        <p class="num">VI</p>
-        <h2 id="limits-h">Status, stated once.</h2>
-        <ul class="nots">
-            <li><b>Real data ahead.</b> It runs end to end on notional data and has not yet held real identity data (<a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">readiness</a>).</li>
-            <li><b>Review ahead.</b> An independent security review has not happened yet; the red-team scope is published.</li>
-            <li><b>Pilot ahead.</b> No authority operates it yet; one outside project runs its verifier in CI (OID4VCgo, since 11 October 2026).</li>
-            <li><b>Certified in one place.</b> One package version is certified to one profile.</li>
-        </ul>
-        <p class="intro">What remains cannot be built here: the legal basis, key custody, the
-            retention schedule a regulator signs, and an independent penetration test belong to the
-            organization that deploys it. The bound on every claim on this page, including what a
-            break of the underlying lattice problem would and would not cost, is the
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">readiness ledger</a>.</p>
-    </div>
-</section>
 
 <section class="band" id="start" aria-labelledby="start-h">
     <div class="wrap">
-        <p class="num">VII</p>
+        <p class="num">VI</p>
         <h2 id="start-h">Where to start.</h2>
         <div class="paths">
             <a href="https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp">
                 <span class="who">Building a wallet or a verifier</span>
-                <b>polaris-oid4vp</b>
-                <span>An OpenID4VP 1.0 + HAIP verifier for SD-JWT VC, as a library or a server.</span></a>
+                <b>polaris-oid4vp</b></a>
             <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md">
                 <span class="who">Accepting credentials</span>
-                <b>The SDKs and the offline verifier</b>
-                <span>Python and TypeScript, checked against published keys with no network.</span></a>
+                <b>The SDKs and the offline verifier</b></a>
             <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/MISSION.md">
                 <span class="who">Assessing it for an authority</span>
-                <b>The constitution and the ledger</b>
-                <span>The ten guarantees, what may never be built, and what is not done.</span></a>
+                <b>The constitution and the ledger</b></a>
             <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md">
                 <span class="who">Trying to break it</span>
-                <b>Security policy and red-team scope</b>
-                <span>How to report, what is in scope, and the response window.</span></a>
+                <b>Security policy and red-team scope</b></a>
         </div>
         <p class="src">Run the whole stack locally:
             <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/INSTALL.md">installation</a> &middot;
@@ -339,27 +261,14 @@
     </div>
 </section>
 
-<section class="band" id="partners" aria-labelledby="partners-h">
+<section class="band closing" id="partners" aria-labelledby="partners-h">
     <div class="wrap">
-        <p class="num">VIII</p>
+        <p class="num">VII</p>
         <h2 id="partners-h">Work with us.</h2>
-        <div class="paths">
-            <a href="mailto:egor@polaris-id.org?subject=Polaris%20design%20partner">
-                <span class="who">Relying parties</span>
-                <b>Become a design partner</b>
-                <span>Accepting EU wallet presentations? We run Polaris against your flow and report what it finds.</span></a>
-            <a href="mailto:egor@polaris-id.org?subject=Polaris">
-                <span class="who">Investors and funders</span>
-                <b>egor@polaris-id.org</b>
-                <span>Egor Khaklin, founder, Khaklin Technologies.</span></a>
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/CONTRIBUTING.md">
-                <span class="who">Engineers</span>
-                <b>Contribute</b>
-                <span>Every change is a pull request with its evidence.</span></a>
-            <a href="mailto:security@polaris-id.org">
-                <span class="who">Security researchers</span>
-                <b>security@polaris-id.org</b>
-                <span>Or a private advisory on GitHub; see the security policy.</span></a>
+        <p class="intro">Accepting EU wallet presentations? We run Polaris against your flow and report what it finds.</p>
+        <div class="cta">
+            <a class="btn btn-gold" href="mailto:egor@polaris-id.org?subject=Polaris%20design%20partner">Become a design partner</a>
+            <a class="btn btn-line" href="mailto:egor@polaris-id.org?subject=Polaris">Investors: egor@polaris-id.org</a>
         </div>
     </div>
 </section>
@@ -372,18 +281,14 @@
         <p class="motto">Fixus inter mutabilia &middot; fixed amid the mutable</p>
         <nav class="foot-links" aria-label="Footer">
             <a href="https://github.com/EgorKhaklin/polaris-id">GitHub</a>
+            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/CONTRIBUTING.md">Contribute</a>
             <a href="https://discord.gg/ragewuCKj">Discord</a>
             <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md">Security policy</a>
-            <a href=".well-known/security.txt">security.txt</a>
             <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/LICENSE">License</a>
             <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/TRADEMARKS.md">Trademarks</a>
             <a href="mailto:egor@polaris-id.org">Contact</a>
         </nav>
-        <p class="fine">&copy; 2026 Egor Khaklin and the Polaris contributors. Apache-2.0 covers the files, not
-            the marks: the Polaris and Polaris ID names, the logo, the owl and the Khaklin Technologies&trade; name
-            (see <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/TRADEMARKS.md">Trademarks</a>).
-            OpenID&reg; and OpenID&reg; Certified&trade; are trademarks of the OpenID Foundation. This page runs no
-            script and loads nothing from another site.</p>
+        <p class="fine">&copy; 2026 Egor Khaklin and the Polaris contributors.</p>
     </div>
 </footer>
 
