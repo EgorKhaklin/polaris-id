@@ -138,8 +138,7 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
    above it. Phones get a lighter 600 px cut. */
 .sky-film { position: absolute; inset: -12%; width: 124%; height: 124%; object-fit: cover;
             mix-blend-mode: screen; pointer-events: none;
-            /* the whole film turns once every four minutes, as the old star layers did: one layer, nearly free */
-            animation: fade 1.8s ease-out both, spin 240s linear infinite;
+            /* no fade-in: Safari will not autoplay a video that starts invisible; its first frame is the poster */
             /* a soft round edge: the film's box never shows as a square against the sky */
             -webkit-mask: radial-gradient(closest-side, #000 78%, transparent 100%);
                     mask: radial-gradient(closest-side, #000 78%, transparent 100%); }
@@ -523,7 +522,6 @@ code, .term code { font-variant-ligatures: none; }
 .more-box .rules tr > :first-child { padding-left: 26px; }
 .more-box .rules tr > :last-child { padding-right: 26px; }
 
-@keyframes spin { to { rotate: 360deg; } }
 
 /* The page ends on an invitation, centred, not on a second grid of cards. */
 .closing .wrap { text-align: center; }
@@ -569,19 +567,3 @@ code, .term code { font-variant-ligatures: none; }
 .more-box[open] .kit code { animation: unfold .6s cubic-bezier(.2, .7, .2, 1) both; }
 .more-box[open] .kit code:nth-child(n+3) { animation-delay: .08s; }
 
-/* A pause for the moving sky (WCAG 2.2.2), without script: the checkbox sits in the hero, and the
-   page reads its state with :has(). Paused, the film and the meteors stop and the still poster shows. */
-.still { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
-.still-label { position: absolute; right: 24px; bottom: 24px; z-index: 3; cursor: pointer; display: inline-flex;
-               align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid var(--line-strong); border-radius: 999px;
-               font: 500 11px/1 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
-               background: rgba(0, 0, 0, 0.35); transition: color .2s, border-color .2s; }
-.still-label::before { content: "Pause motion"; }
-.still-label:hover, .still:focus-visible + .still-label { color: var(--ink); border-color: var(--gold-deep); }
-.still:checked + .still-label::before { content: "Play motion"; }
-body:has(#still:checked) .sky-film, body:has(#still:checked) .meteor { display: none; }
-body:has(#still:checked) .btn-gold::after { animation-play-state: paused; }
-body:has(#still:checked) .sky::before { content: ""; position: absolute; inset: -12%; mix-blend-mode: screen;
-    background: url(sky-poster.webp) center / 100% 100% no-repeat;
-    -webkit-mask: radial-gradient(closest-side, #000 78%, transparent 100%); mask: radial-gradient(closest-side, #000 78%, transparent 100%); }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

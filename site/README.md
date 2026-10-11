@@ -37,8 +37,8 @@ broken under it fails the build.
 | `polaris_logo.webp` | The emblem polished for large, sharp screens: 880 x 880, its colour steps smoothed and its rim a clean circle | `index.html` (the hero's pole star) |
 | `polaris_logo_180.png` | The polished emblem at 180 x 180 | `index.html`, `404.html` (the tab and home-screen icons) |
 | `polaris_logo_clean.png` | The emblem as first published, 440 x 440 | the Open Graph preview, `docs/assets/hero.svg` (the source of the polished copies) |
-| `sky-1440.mp4`, `sky-960.mp4` | The sky's orbits and starfield: a rendered 72-second loop on black (30 fps, H.264) that the page screen-blends, so only the light shows; phones get the 960 px cut | `index.html` (the hero) |
-| `sky-poster.webp` | The film's first frame: shown before it plays, and alone for a reader who asks for reduced motion | `index.html` |
+| `film/sky-1440.mp4`, `film/sky-960.mp4` | The sky's orbits and drifting starfield: a rendered 72-second loop on black (30 fps, H.264) that the page screen-blends, so only the light shows; served through edge/film.js so Safari can stream it; phones get the 960 px cut | `index.html` (the hero) |
+| `sky-poster.webp` | A calm still of the sky (its faint orbits and stars, no moving lights): shown before the film plays, wherever it cannot autoplay, and for a reader who asks for reduced motion | `index.html` |
 | `openid-certified-mark-on-white.png` | The OpenID Certified mark in the Foundation's published form: the first proof tile, linked to the listing | `index.html` |
 
 ## Conventions
