@@ -16,7 +16,7 @@ dependencies {
     implementation("com.hopae.eudi:openid4vp:0.0.1-SNAPSHOT")
     implementation("com.hopae.eudi:trust:0.0.1-SNAPSHOT")
     implementation("com.hopae.eudi:testkit:0.0.1-SNAPSHOT")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 }
 
 kotlin { jvmToolchain(17) }

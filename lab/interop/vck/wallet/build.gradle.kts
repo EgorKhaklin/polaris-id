@@ -13,7 +13,7 @@ repositories { mavenCentral() }
 dependencies {
     implementation("at.asitplus.wallet:vck-openid-ktor:8.0.0")
     // vck-openid-ktor uses this engine internally; the wallet names it to hand vck its client.
-    implementation("io.ktor:ktor-client-cio:3.5.2")
+    implementation("io.ktor:ktor-client-cio:3.6.0")
 }
 
 kotlin { jvmToolchain(21) }

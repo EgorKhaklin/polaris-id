@@ -13,7 +13,7 @@ dependencies {
     implementation("org.multipaz:multipaz:0.101.0")
     // Multipaz's own HTTP engine on the JVM (a runtime dependency of it); the wallet names it to
     // hand it to uriSchemePresentment().
-    implementation("io.ktor:ktor-client-java:3.3.3")
+    implementation("io.ktor:ktor-client-java:3.6.0")
 }
 
 kotlin { jvmToolchain(21) }
