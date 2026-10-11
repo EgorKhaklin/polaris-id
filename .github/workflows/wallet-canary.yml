@@ -65,6 +65,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request cancels the run it supersedes; a scheduled or dispatched
+# run is its own group and always runs to the end (ci.yml's shape).
+concurrency:
+  group: wallet-canary-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   present:
     name: eudi-dev ${{ matrix.wallet.label }} presents to polaris-oid4vp from PyPI
