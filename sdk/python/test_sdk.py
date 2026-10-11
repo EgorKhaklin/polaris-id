@@ -39,6 +39,14 @@ def _falcon_available():
         return False
 
 
+def _liboqs_available():
+    try:
+        pv._import_oqs()
+        return True
+    except Exception:
+        return False
+
+
 def _conformance_vector(name):
     with open(os.path.join(_ROOT, "conformance", "vectors", name)) as f:
         return json.load(f)
@@ -262,6 +270,18 @@ class RefusalsAreTestedTests(unittest.TestCase):
                 with self.subTest(signature=label, backend=backend.__name__):
                     self.assertIsNot(backend(b"a digest", sig, pk, pv.ALGORITHM), True,
                                      "an unexpected error must never verify")
+        # Since 2026-10-10 the inputs above are refused at the size check, before the library
+        # sees them, so they no longer reach the `except Exception` arm. A key and a signature
+        # of the right length (arbitrary bytes) pass the size check; a message that is not
+        # bytes then makes the library itself raise, and that arm must refuse.
+        sig = b"\x02" * 3309   # an ML-DSA-65 signature length
+        for backend, present, library in ((pv._verify_cryptography, _mldsa_available(), "cryptography with ML-DSA"),
+                                          (pv._verify_liboqs, _liboqs_available(), "liboqs")):
+            with self.subTest(arm="the library's own error", backend=backend.__name__):
+                if not present:
+                    self.skipTest("%s not installed" % library)   # counted, never a silent pass
+                self.assertIs(backend("not bytes", sig, pk, pv.ALGORITHM), False,
+                              "an error inside the library must be a refusal")
 
     # -- Merkle inclusion -------------------------------------------------
 
