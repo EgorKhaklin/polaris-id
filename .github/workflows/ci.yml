@@ -3480,6 +3480,10 @@ jobs:
       # verifier's revocation check; it stays what its generator makes and reads as revoked here.
       - name: The revoked-credential fixture (lab/interop/status-list/revoked), revoked at index 3
         run: python -m unittest lab/interop/status-list/revoked/test_fixture.py
+      # lab/interop/fixtures/ed25519-holder: an SD-JWT VC whose holder key is Ed25519, for projects whose
+      # holder keys are Ed25519 only; it stays what its generator makes and each file checks out.
+      - name: The Ed25519-holder fixture (lab/interop/fixtures/ed25519-holder), each file checked
+        run: python -m unittest lab/interop/fixtures/ed25519-holder/test_fixture.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.

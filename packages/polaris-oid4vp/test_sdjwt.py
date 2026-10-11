@@ -462,6 +462,77 @@ class IssuerKeyChoiceTests(unittest.TestCase):
                 self.assertEqual(v.code, "issuer_key")
                 self.assertIn("x5c is present but is not a non-empty array", v.reason)
 
+
+#: An ML-DSA-65 public key is 1952 bytes. These are not a key anyone holds: deterministic bytes of
+#: the right length, enough for a syntactically valid AKP JWK, so no ML-DSA library is needed.
+_AKP_PUB = b64u_encode(hashlib.shake_256(b"polaris test AKP ML-DSA-65 public key").digest(1952))
+
+
+class KeysTheVerifierCannotUseTests(unittest.TestCase):
+    """A JWK Set that also lists keys this verifier does not use: they are passed over, and the
+    P-256 EC key beside them still verifies, in either order.
+
+    Pinned for the question of mixed sets during a post-quantum migration: an issuer that
+    publishes an AKP (ML-DSA-65) key beside its EC key must not break ES256 verification, and a
+    set holding only keys it cannot use must be refused by name, never read as a set with a key.
+    """
+
+    def setUp(self):
+        self.w = Wallet()
+        self.ec = self.w.issuer_jwk
+        self.akp = {"kty": "AKP", "alg": "ML-DSA-65", "pub": _AKP_PUB}
+        self.unknown = {"kty": "XYZ", "x": b64u_encode(b"\x07" * 32)}
+        self.okp = {"kty": "OKP", "crv": "Ed25519",
+                    "x": b64u_encode(hashlib.sha256(b"polaris test Ed25519 x").digest())}
+
+    def _verifies_beside(self, other):
+        presentation = self.w.present()
+        for where, jwks in (("before", [other, self.ec]), ("after", [self.ec, other])):
+            with self.subTest(where=where):
+                v = self.w.verify(presentation, issuer_jwks=jwks)
+                self.assertTrue(v.authentic, "%s the EC key: %s: %s" % (where, v.code, v.reason))
+                self.assertEqual(v.claims.get("given_name"), "Jean")
+
+    def test_the_akp_pub_is_the_ml_dsa_65_length(self):
+        self.assertEqual(len(base64.urlsafe_b64decode(_AKP_PUB + "=" * (-len(_AKP_PUB) % 4))), 1952)
+
+    def test_an_akp_key_before_or_after_the_ec_key(self):
+        self._verifies_beside(self.akp)
+
+    def test_an_unknown_kty_before_or_after_the_ec_key(self):
+        self._verifies_beside(self.unknown)
+
+    def test_an_okp_ed25519_key_before_or_after_the_ec_key(self):
+        self._verifies_beside(self.okp)
+
+    def test_an_akp_key_reusing_the_ec_keys_kid(self):
+        self.assertEqual(self.ec["kid"], "issuer-1")
+        self._verifies_beside(dict(self.akp, kid=self.ec["kid"]))
+
+    def test_the_ec_key_is_the_one_used(self):
+        """The control on the controls above: the same sets with a forged issuer signature are
+        refused at the signature, so the EC key was read and checked, not skipped."""
+        presentation = self.w.present(corrupt_issuer_sig=True)
+        for other in (self.akp, self.unknown, self.okp):
+            for jwks in ([other, self.ec], [self.ec, other]):
+                with self.subTest(kty=other["kty"], first=jwks[0]["kty"]):
+                    v = self.w.verify(presentation, issuer_jwks=jwks)
+                    self.assertFalse(v.authentic)
+                    self.assertEqual(v.code, "issuer_signature")
+
+    def test_a_set_holding_only_the_akp_key_is_refused(self):
+        """The negative control: with the EC key gone nothing in the set can verify ES256, and
+        the refusal says so rather than reaching the signature check with no key."""
+        for akp in (self.akp, dict(self.akp, kid=self.ec["kid"])):
+            with self.subTest(kid=akp.get("kid")):
+                v = self.w.verify(self.w.present(), issuer_jwks=[akp])
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.code, "issuer_key")
+                self.assertIn("no configured issuer JWK that matches this credential's kid can "
+                              "verify it", v.reason)
+                self.assertIn("1 marked for another use by use, key_ops or alg", v.reason)
+
+
 class KeysTheCredentialNamesForItselfTests(unittest.TestCase):
     """The verifier trusts the keys it was given and the anchors it was given, never a key the
     credential supplies about itself: a `jwk` in the header is not a trust decision, and a `jku`

@@ -17435,6 +17435,9 @@ _PRIVATE_KEY_FIXTURES = {
     "lab/interop/credo/adversarial/eudi-dev/capture.json": _REPLAY_KEY,
     "lab/interop/credo/adversarial/oid4vcgo/capture.json": _REPLAY_KEY,
     "lab/interop/credo/adversarial/waltid/capture.json": _REPLAY_KEY,
+    "lab/interop/fixtures/ed25519-holder/holder-private.test-only.jwk.json":
+        "the Ed25519-holder fixture's holder key, from a public seed, published so a consumer can "
+        "sign its own key binding JWTs",
     "lab/interop/eudi-dev/capture/verifier-decryption-key.test-only.jwk.json":
         "the eudi-dev capture's response-decryption JWK, made for that one request, kept to decrypt "
         "its captured response",

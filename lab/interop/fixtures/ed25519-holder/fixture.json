@@ -1,0 +1,34 @@
+{
+ "audience": "x509_san_dns:verifier.example",
+ "claims": {
+  "birthdate": "1964-08-12",
+  "family_name": "Mustermann",
+  "given_name": "Erika"
+ },
+ "exp": 4102358400,
+ "files": {
+  "credential.dc+sd-jwt": "issuer-signed SD-JWT VC, typ dc+sd-jwt, all three disclosures, no KB-JWT",
+  "credential.vc+sd-jwt": "the same, typ vc+sd-jwt; only typ and the issuer signature differ",
+  "example-presentation.dc+sd-jwt": "given_name and family_name disclosed, KB-JWT signed EdDSA",
+  "fixture.json": "this file",
+  "holder-private.test-only.jwk.json": "the Ed25519 holder key with its private d: TEST ONLY, published",
+  "trust-anchor.pem": "the test CA; the issuer JWT's x5c holds the leaf it signed"
+ },
+ "generated": "by make_fixture.py from public seeds; not from an exchange, and every key is test material",
+ "holder_did_key": "did:key:z6MknwqL599bRd27ZDisWzzwscBZkrYXqnaGL6Aby1T6M1eV",
+ "holder_public_jwk": {
+  "crv": "Ed25519",
+  "kty": "OKP",
+  "x": "fi9kf_9O4fEtAuGFA8avhS8hdSmzPDT_4T_dxydYWy4"
+ },
+ "issuer": "https://issuer.example",
+ "issuer_alg": "ES256",
+ "kb_alg": "EdDSA",
+ "nonce": "ed25519-holder-fixture-nonce-1",
+ "now": 1790812800,
+ "presented_claims": [
+  "given_name",
+  "family_name"
+ ],
+ "vct": "urn:example:vct:ed25519-holder-test"
+}
