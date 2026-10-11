@@ -30,7 +30,7 @@ SPDX-License-Identifier = "LicenseRef-OpenID-Certified-Mark"
 
 # The hero's sky film and its poster: rendered by the project, not marks.
 [[annotations]]
-path = ["site/sky-1440.mp4", "site/sky-960.mp4", "site/sky-poster.webp"]
+path = ["site/film/sky-1440.mp4", "site/film/sky-960.mp4", "site/sky-poster.webp"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin and the Polaris contributors"
 SPDX-License-Identifier = "Apache-2.0"

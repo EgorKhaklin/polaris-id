@@ -85,6 +85,7 @@ polaris/
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── site/               ← the published project page (Cloudflare, wrangler.jsonc) and its logo
+├── edge/               ← film.js: answers byte-range requests for the site's /film/*, so Safari can play it
 │
 ├── .github/workflows/  ← ci.yml (31 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
