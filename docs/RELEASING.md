@@ -14,7 +14,7 @@ when something externally observable changes.
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc20, 2026-10-11 | 1.0.0rc18, 2026-10-11 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0, 2026-10-11 | 1.0.0rc20, 2026-10-11 |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
 | `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.9, 2026-10-03 | 1.0.0-rc.8, 2026-10-01 |
@@ -129,13 +129,13 @@ From the registries. Nothing here needs this repository:
 
 ```bash
 pip install --pre "polaris-verify[cryptography]"
-pip install --pre polaris-oid4vp
+pip install polaris-oid4vp
 pip install --pre polaris-sdk-python
 npm install polaris-sdk-ts@next
 ```
 
-`--pre` because the current version is a release candidate and pip skips pre-releases unless
-told; without it pip installs 0.1.0, the previous release, which also works. npm refuses to
+`polaris-oid4vp` is at 1.0.0. The others take `--pre` because their current version is a release
+candidate and pip skips pre-releases unless told; without it pip installs 0.1.0, the previous release, which also works. npm refuses to
 publish a prerelease without a dist-tag, so a candidate goes out under `next`: `latest` stays
 on the last full release, and the candidate is `polaris-sdk-ts@next`.
 
@@ -370,6 +370,7 @@ worse state to be in than three runs.
 | 38091377062 | 2026-10-11 | `polaris-sdk-python` 1.0.0rc8 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree |
 | 38091379847 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc18 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree; the wallet canary passes against it (run 38099791825). Not certified: 1.0.0rc7 stays the certified version |
 | 38113072995 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc20 | dispatched from main (84a805ff), approved and published the same way; read back from the live registry: the stranger's path, walked from empty directories outside the tree, installed 1.0.0rc20 from PyPI, and its one-minute script (with Docker and without) and its ten-minute half each answered `200 authentic`, with all three controls refused. Not certified: 1.0.0rc7 stays the certified version |
+| 38131929094 | 2026-10-11 | `polaris-oid4vp` 1.0.0 | dispatched from main (6f2b890a, tagged v1.0.0), approved and published the same way; read back from the live registry: a bare `pip install polaris-oid4vp` from an empty directory installs 1.0.0 (wheel sha256 34542f4d82753901303cb040a9d158a489559d5bef46059c2ab6c2c48f193afe), and the stranger's path, walked from empty directories outside the tree, installed 1.0.0 from PyPI; its one-minute script (with Docker and without) and its ten-minute half (without `--pre`) each answered `200 authentic`, with all three controls refused. The certified version stays 1.0.0rc7 |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
@@ -398,8 +399,9 @@ Actions → **Release images and chart** → Run workflow, from the release tag
 
 A published digest cannot be withdrawn, so each publish is the maintainer's decision. One-time
 setup: create the `ghcr` environment with the maintainer as its required reviewer, deployments
-limited to tags matching `v*`; after the first publish, make the six packages public (GitHub →
-Packages → each package → visibility), since a new package starts private. The workflow runs from
+limited to tags matching `v*`. The six packages came up public on the first publish: published by
+this public repository's workflow, they are linked to it (2026-10-11, ghcr.io answered an anonymous
+pull of each). The workflow runs from
 the tag, so the first tag it can publish is the first one cut after it reached `main`. Operators
 verify with [docs/operator/VERIFY-RELEASE.md](operator/VERIFY-RELEASE.md).
 
@@ -412,7 +414,11 @@ re-run, their digests are reused, and the tag lands where it was. Never dispatch
 published tag (the guard refuses it). A change to what was built is a new version, and its entry
 here records the earlier version's digests that no tag names any more.
 
-**The record:** no publish yet.
+**The record:**
+
+| Run | Date | Tag | What happened |
+|---|---|---|---|
+| 38131951637 | 2026-10-11 | v1.0.0 | dispatched on the tag and approved at the `ghcr` environment; the tag guard proceeded for each image (the tag was absent); published polaris-app `sha256:0368d5eb21a1bf391db166abca2af97d3b769de7ca342c02ea4f8631ff419a05`, polaris-caddy `sha256:147cfdc0abd76c09ffca19eefb31850cf5cc6a89a222c1d6d136b580cea474f2`, polaris-pgbouncer `sha256:29ad959d93b21d22dc9838e9cd86dfe8367f53d3c77a8a6f0c1bfff71253b768`, polaris-postgres `sha256:7568d73a3ceb2e9eccb4bb655a1cec59e3a948b5e92ad7808229e34913c1ecc6`, polaris-etcd `sha256:9329f0e6600ae7badd0ae3740a03cbd4ac9d19c96bdc65c223ba26975ebbb285` and the chart 1.0.0 `sha256:4ced715b9c22c25903259229dce74fa9f4cd5d3737bfac9e2f378350be8cce6f`; the run's verify job passed with both controls refused. Verified again from outside the run, anonymously (no registry login, cosign 3.1.3): each digest under the tag is the one above, each index's signature and SLSA provenance and each architecture's SBOM verify against the tag's identity, and so does the chart's signature; with a GitHub login, `gh attestation verify` passes and refuses provenance asked of an architecture's digest or under another tag |
 
 ---
 

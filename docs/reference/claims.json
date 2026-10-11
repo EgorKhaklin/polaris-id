@@ -413,20 +413,17 @@
       ]
     },
     {
-      "id": "site-six-wallets",
-      "kind": "statement",
-      "claim": "6 independent wallets unmodified, presented and accepted",
-      "surfaces": [
-        "site/index.html"
-      ],
-      "evidence": [
-        "file:lab/EXTERNAL-NOUNS.md",
-        "file:lab/interop"
-      ],
-      "reproduce": "Find each of the six wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
-      "count_of": [
-        "readme-six-wallets"
-      ]
+     "id": "site-fifteen-projects",
+     "kind": "statement",
+     "claim": "15 outside projects",
+     "surfaces": [
+      "site/index.html"
+     ],
+     "evidence": [
+      "file:docs/reference/INTEROP.md",
+      "file:lab/EXTERNAL-NOUNS.md"
+     ],
+     "reproduce": "Count the fifteen projects in the list under section I of site/index.html; each has a dated row in docs/reference/INTEROP.md."
     },
     {
       "id": "site-six-wallets-description",
@@ -463,9 +460,8 @@
     {
       "id": "authors-took-no-part",
       "kind": "statement",
-      "claim": "took no part in the runs, though this project has written to some of them: two",
+      "claim": "took no part in the runs",
       "surfaces": [
-        "site/index.html",
         "lab/EXTERNAL-NOUNS.md"
       ],
       "evidence": [
@@ -541,7 +537,6 @@
       "surfaces": [
         "README.md",
         "site/llms.txt",
-        "site/index.html",
         "docs/reference/SPEC-COMPLIANCE.md"
       ],
       "evidence": [

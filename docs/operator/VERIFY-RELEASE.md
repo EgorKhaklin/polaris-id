@@ -12,8 +12,8 @@ provenance to the index and an SPDX SBOM to each architecture's image, at the re
 chart, its images pinned to those signed digests, is pushed to
 `oci://ghcr.io/egorkhaklin/charts/polaris` and signed the same way.
 
-**Status:** the workflow exists; no release has been published with it yet. Until one is, there
-is nothing at these references to verify, and the [deployment guide](DEPLOYMENT.md) builds the
+**Status:** v1.0.0 is published (2026-10-11): the five images and the chart, public, signed, with
+their provenance and SBOMs at the registry. The [deployment guide](DEPLOYMENT.md) still builds the
 images from source.
 
 ## What a signature proves, and what it does not
@@ -31,7 +31,7 @@ exact release you are installing. Use cosign 3 or later: the signatures are Sigs
 stored as OCI 1.1 referrers, which cosign 2.6 reads only with `--new-bundle-format=true`.
 
 ```bash
-TAG=v1.0.0-rc.71        # the release you are installing
+TAG=v1.0.0              # the release you are installing
 IMAGE=ghcr.io/egorkhaklin/polaris-app
 DIGEST=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
 
@@ -55,7 +55,18 @@ gh attestation verify "oci://$IMAGE@$PLATFORM" --repo EgorKhaklin/polaris-id \
 ```
 
 Each attestation is also stored at the registry beside the image it describes; add
-`--bundle-from-oci` to read it from there instead of from GitHub.
+`--bundle-from-oci` to read it from there instead of from GitHub. `gh attestation verify` asks for
+a GitHub login either way (`gh auth login`, any account). Without one, cosign reads the same
+attestations from the registry:
+
+```bash
+cosign verify-attestation "$IMAGE@$DIGEST" --type https://slsa.dev/provenance/v1 \
+  --certificate-identity "https://github.com/EgorKhaklin/polaris-id/.github/workflows/release-images.yml@refs/tags/$TAG" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+cosign verify-attestation "$IMAGE@$PLATFORM" --type https://spdx.dev/Document/v2.3 \
+  --certificate-identity "https://github.com/EgorKhaklin/polaris-id/.github/workflows/release-images.yml@refs/tags/$TAG" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
 
 ## Verify the chart
 

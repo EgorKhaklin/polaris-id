@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- Polaris mark: the fixed star on deep navy. Fixus inter mutabilia. -->
-  <rect width="32" height="32" rx="6" fill="#0a1421"/>
-  <path d="M16 4 L18.2 13.8 L28 16 L18.2 18.2 L16 28 L13.8 18.2 L4 16 L13.8 13.8 Z"
-        fill="#e8be64"/>
-  <circle cx="16" cy="16" r="2.1" fill="#0a1421"/>
-  <circle cx="16" cy="16" r="1.1" fill="#5dd6ff"/>
-</svg>

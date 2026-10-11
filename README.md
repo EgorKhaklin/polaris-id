@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg?v=tm1" width="100%" alt="Polaris ID">
+<img src="docs/assets/hero.svg?v=tm2" width="100%" alt="Polaris ID">
 
 **Polaris ID is identity infrastructure built to be checked, not trusted.**
 
@@ -76,7 +76,7 @@ polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack 
 # signature_valid: True, issuer_trusted: True, exit 0
 ```
 
-`pip install --pre polaris-oid4vp` · `pip install --pre polaris-sdk-python` · `npm install polaris-sdk-ts@next`. The verifier refuses to start until you name its cryptography, and without a trust anchor it abstains rather than report success. Step by step, with a ten-minute version: [STRANGER-PATH.md](docs/STRANGER-PATH.md).
+`pip install polaris-oid4vp` · `pip install --pre polaris-sdk-python` · `npm install polaris-sdk-ts@next`. The verifier refuses to start until you name its cryptography, and without a trust anchor it abstains rather than report success. Step by step, with a ten-minute version: [STRANGER-PATH.md](docs/STRANGER-PATH.md).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 

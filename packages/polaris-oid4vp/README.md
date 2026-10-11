@@ -69,7 +69,7 @@ builds, against 1.0.0rc16 installed from PyPI on 2026-10-06, and every walk pass
 ## Install and run
 
 ```bash
-pip install --pre polaris-oid4vp
+pip install polaris-oid4vp
 polaris-oid4vp keygen --out ./pki --host verifier.example
 polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 ```
