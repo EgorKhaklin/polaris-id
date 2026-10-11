@@ -315,6 +315,7 @@ updates:
       - /lab/interop/axle/harness
       - /lab/interop/eudi-issuer/wallet
       - /lab/interop/eudi-kt/wallet
+      - /lab/interop/mdoc/wallet
       - /lab/interop/multipaz/wallet
       - /lab/interop/vck/wallet
     schedule:
