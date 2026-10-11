@@ -14,7 +14,7 @@ when something externally observable changes.
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0rc20, 2026-10-11 | 1.0.0rc18, 2026-10-11 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0, 2026-10-11 | 1.0.0rc20, 2026-10-11 |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
 | `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.9, 2026-10-03 | 1.0.0-rc.8, 2026-10-01 |
@@ -129,13 +129,13 @@ From the registries. Nothing here needs this repository:
 
 ```bash
 pip install --pre "polaris-verify[cryptography]"
-pip install --pre polaris-oid4vp
+pip install polaris-oid4vp
 pip install --pre polaris-sdk-python
 npm install polaris-sdk-ts@next
 ```
 
-`--pre` because the current version is a release candidate and pip skips pre-releases unless
-told; without it pip installs 0.1.0, the previous release, which also works. npm refuses to
+`polaris-oid4vp` is at 1.0.0. The others take `--pre` because their current version is a release
+candidate and pip skips pre-releases unless told; without it pip installs 0.1.0, the previous release, which also works. npm refuses to
 publish a prerelease without a dist-tag, so a candidate goes out under `next`: `latest` stays
 on the last full release, and the candidate is `polaris-sdk-ts@next`.
 
@@ -370,6 +370,7 @@ worse state to be in than three runs.
 | 38091377062 | 2026-10-11 | `polaris-sdk-python` 1.0.0rc8 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree |
 | 38091379847 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc18 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree; the wallet canary passes against it (run 38099791825). Not certified: 1.0.0rc7 stays the certified version |
 | 38113072995 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc20 | dispatched from main (84a805ff), approved and published the same way; read back from the live registry: the stranger's path, walked from empty directories outside the tree, installed 1.0.0rc20 from PyPI, and its one-minute script (with Docker and without) and its ten-minute half each answered `200 authentic`, with all three controls refused. Not certified: 1.0.0rc7 stays the certified version |
+| 38131929094 | 2026-10-11 | `polaris-oid4vp` 1.0.0 | dispatched from main (6f2b890a, tagged v1.0.0), approved and published the same way; read back from the live registry: a bare `pip install polaris-oid4vp` from an empty directory installs 1.0.0 (wheel sha256 34542f4d82753901303cb040a9d158a489559d5bef46059c2ab6c2c48f193afe), and the stranger's path, walked from empty directories outside the tree, installed 1.0.0 from PyPI; its one-minute script (with Docker and without) and its ten-minute half (without `--pre`) each answered `200 authentic`, with all three controls refused. The certified version stays 1.0.0rc7 |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
