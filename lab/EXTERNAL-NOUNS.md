@@ -12,8 +12,8 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
-| External relying party / operator | none |
-| Use | 0 outside users |
+| External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. Relying party: none. |
+| Use | 1 outside project (OID4VCgo's CI, since 2026-10-11); production users 0 |
 | Findings from outside | 2, both fixed |
 | Independent security review | none |
 | Pilot | none |
@@ -193,13 +193,24 @@ and the FIDES organization and relying-party catalogs. A listing is not use eith
 
 ### External relying party / operator
 
-None.
+Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since
+2026-10-11 (see Use). Relying party: none. Nobody acts on a verdict in production.
 
 ### Use
 
-    Unique outside users:            0
-    Presentations outside CI:        0
-    Distinct days used:              0
+    Outside projects running it:   1 (IDFoundry/OID4VCgo's CI, since 2026-10-11)
+    Production users:              0
+    Presentations outside CI:      0
+
+1. 2026-10-11: IDFoundry/OID4VCgo (maintainer osanderson) added
+   [polaris-interop.yml](https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml):
+   on a GitHub-hosted runner with a read-only token, it builds polaris-oid4vp from this repository's
+   source pinned at `84a805ff` and runs `lab/interop/oid4vcgo/run.sh` against its
+   `conformance-wallet-vp`, daily and on each release. Its first run
+   ([38117001474](https://github.com/IDFoundry/OID4VCgo/actions/runs/38117001474)): OID4VCgo v0.39.0
+   against polaris-oid4vp 1.0.0rc20, the presentation accepted and all four controls refused, as
+   [their comment on #312](https://github.com/IDFoundry/OID4VCgo/issues/312#issuecomment-6106407596)
+   reports.
 
 ### Findings from outside
 

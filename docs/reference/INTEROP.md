@@ -37,8 +37,9 @@ because a verifier that accepts everything prints the same success line.
 at the versions it pins (for some also at their newest release), against the newest
 `polaris-oid4vp` on PyPI, with the OpenID Foundation conformance suite.
 Each job installs the package from PyPI, presents, then runs that walk's controls. Its latest run,
-[38100123895](https://github.com/EgorKhaklin/polaris-id/actions/runs/38100123895) on 2026-10-11,
-started 27 minutes after 1.0.0rc18 reached PyPI, the newest release then: 22 of 22 jobs passed.
+[38122154107](https://github.com/EgorKhaklin/polaris-id/actions/runs/38122154107) on 2026-10-11,
+ran against 1.0.0rc20, the newest release then and the only version its logs name: 22 of 22 jobs
+passed.
 
 ## Reported upstream
 
@@ -54,7 +55,8 @@ Defects found in a row's implementation and reported in public, with their state
 
 ## What no row establishes
 
-- The author drove every run, on one machine. No row is an outside party using Polaris.
+- The author drove every run, on one machine. No row is an outside party using Polaris; the one
+  exception, OID4VCgo's CI running its own walk, is in [the scoreboard's Use section](../../lab/EXTERNAL-NOUNS.md#use).
 - One credential format (SD-JWT VC), one response mode (`direct_post.jwt`), ES256. Nothing about
   mdoc, the Digital Credentials API or the post-quantum path.
 - A row is dated: a newer release of its implementation is unmeasured until a row says otherwise.

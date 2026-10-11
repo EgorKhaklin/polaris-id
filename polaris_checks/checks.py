@@ -25815,6 +25815,10 @@ def check_package_readmes_state_their_own_version(root: pathlib.Path) -> list[Fi
     versions that produced them. Forbidding that would push the file toward claiming results
     for an artifact that never produced them, which is the failure this check is against,
     one level up. A README naming no version at all is left alone, since it claims nothing.
+    A final release (no candidate suffix) counts when the README names that exact version,
+    as a whole token: not inside 11.0.0, 1.0.0rc7, 1.0.0-rc.7, 1.0.0.post1 or 1.0.01. The
+    candidate filter is there so that an unrelated version number cannot make a README look
+    as if it names one.
     """
     name = "package_readme_version"
     problems, checked = [], 0
@@ -25836,6 +25840,9 @@ def check_package_readmes_state_their_own_version(root: pathlib.Path) -> list[Fi
             continue
         checked += 1
         found = {v for v in _VERSION_IN_README.findall(readme) if "rc" in v.lower()}
+        if re.fullmatch(r"\d+\.\d+\.\d+", declared) and re.search(
+                r"(?<![\w.])%s(?![\w-]|\.\w)" % re.escape(declared), readme):
+            found.add(declared)
         if not found:
             continue                          # names no version in the series; claims nothing
         if not any(_same_version(v, declared) for v in found):

@@ -18,9 +18,11 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** this release, 1.0.0rc20, is the certified rc7 verifier plus the fixes and additions
-made since; the certification names rc7. It is re-run weekly against the outside implementations in the table
-below. No operator other than the author has run it and no independent security review exists.
+**Status:** This release, 1.0.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
+It is pre-pilot and [not production-ready](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md).
+The newest release runs against the OpenID Foundation's conformance suite every week in CI. It is re-run weekly against the outside implementations in the table
+below. One outside project, IDFoundry/OID4VCgo, runs it in its CI, daily and on each of its
+releases, since 2026-10-11; no relying party uses it, and no independent security review exists.
 Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
 **Try it in ten minutes, without cloning anything:**
@@ -56,8 +58,8 @@ the walks against the newest release on PyPI.
 | [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |
 | [The OpenID Foundation's conformance suite](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | eleven of eleven HAIP verifier modules clean against 1.0.0rc15, both controls noticed (2026-10-04); 1.0.0rc7 certified (2026-09-24) |
 
-The author drove every walk: interoperability with those implementations, not use by their
-maintainers. Each walk is one script you can run against your own copy; to test your wallet,
+The author drove every walk but one, which OID4VCgo's CI runs itself: interoperability with
+those implementations, not use by their maintainers. Each walk is one script you can run against your own copy; to test your wallet,
 point it at `polaris-oid4vp serve` as below. The "Last walk" column records the walks driven
 by hand. The weekly canary last walked every implementation in the table, at pinned and latest
 builds, against 1.0.0rc16 installed from PyPI on 2026-10-06, and every walk passed

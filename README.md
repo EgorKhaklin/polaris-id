@@ -46,7 +46,7 @@ An authority issues a credential signed with **ML-DSA-65**; the person holds it;
 - **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 383 machine-checked invariants and 31 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
 
-It is **pre-pilot software on notional data**: it has never held real identity data, and nobody but the author has operated it.
+It is **pre-pilot software on notional data**: it has never held real identity data, and no authority or relying party operates it. One outside project runs its verifier in CI (OID4VCgo, since 2026-10-11).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -84,13 +84,13 @@ polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack 
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="150"></a>
 
-**`polaris-oid4vp 1.0.0rc7` is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the OpenID Foundation approved and lists, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
+**`polaris-oid4vp 1.0.0rc7` is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the OpenID Foundation approved and lists, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris. The newest release runs against the OpenID Foundation's conformance suite every week in CI. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Tested against software nobody here wrote.** Six wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup and Procivis One Core. Nine more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. The author drove every walk: this is interoperability, not use. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
+**Tested against software nobody here wrote.** Six wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup and Procivis One Core. Nine more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. The author drove every walk but one, which OID4VCgo's CI runs itself: this is interoperability, not use. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
 
 **Per implementation:** the version, date, result and controls of each one's latest run, in [INTEROP.md](docs/reference/INTEROP.md).
 
-**Not yet:** an independent security review, an operator other than the author, a pilot. What separates the release candidates from 1.0.0 is one outside operator reaching a verified result without help. Versions: [RELEASING.md](docs/RELEASING.md).
+**Not yet:** an independent security review, a relying party, a pilot. The 1.0.0 condition, an operator who is not the author running the verifier, was met on 2026-10-11: OID4VCgo's CI runs it daily and on each of its releases ([the scoreboard](lab/EXTERNAL-NOUNS.md#use)). Versions: [RELEASING.md](docs/RELEASING.md).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 

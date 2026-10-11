@@ -22403,6 +22403,52 @@ def test_package_readme_version_check_detects_its_absence(tmp_path):
     assert out[0].level == "FAIL", "an empty tree must not read as four agreeing READMEs"
 
 
+def test_package_readme_version_check_reads_a_final_release(tmp_path):
+    """2026-10-11: polaris-oid4vp moved to 1.0.0 while its README must keep naming 1.0.0rc7,
+    the certified version. The check kept only candidate versions, so a manifest declaring a
+    final release could never match: it failed whatever the README said. A final release now
+    counts when the README names that exact version as a whole token.
+    """
+    fn = checks.check_package_readmes_state_their_own_version
+
+    def write(oid4vp_readme):
+        for rel, manifest, body, readme in (
+                ("packages/polaris-verify", "pyproject.toml", '[project]\nversion = "1.0.0rc3"\n',
+                 "This is 1.0.0rc3.\n"),
+                ("packages/polaris-oid4vp", "pyproject.toml", '[project]\nversion = "1.0.0"\n',
+                 oid4vp_readme),
+                ("sdk/python", "pyproject.toml", '[project]\nversion = "1.0.0rc3"\n',
+                 "This is 1.0.0rc3.\n"),
+                ("sdk/typescript", "package.json", '{\n  "version": "1.0.0-rc.3"\n}\n',
+                 "This is 1.0.0-rc.3.\n")):
+            d = tmp_path / rel
+            d.mkdir(parents=True, exist_ok=True)
+            (d / manifest).write_text(body)
+            (d / "README.md").write_text("# pkg\n\n" + readme)
+
+    # The README names the exact final version, beside the certified candidate: the honest page.
+    for ok in ("This release, 1.0.0, follows 1.0.0rc7, the certified version.\n",
+               "1.0.0rc7 is the certified version. This release is 1.0.0.\n",
+               "1.0.0rc7 is the certified version. This release is `1.0.0`\n"):
+        write(ok)
+        assert fn(tmp_path)[0].level == "OK", "must PASS at 1.0.0: %r" % ok
+
+    # Nothing names the exact 1.0.0: a prefix, a longer number or a later suffix is not it.
+    for decoy in ("1.0.0rc7", "1.0.0-rc.7", "11.0.0", "21.0.0", "1.0.0.post1", "1.0.01"):
+        text = "1.0.0rc7 is the certified version. See %s here.\n" % decoy
+        write(text)
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL", "%r must not read as naming 1.0.0" % decoy
+    assert checks._VERSION_IN_README.findall("see 1.0.0rc7.") == ["1.0.0rc7"], \
+        "the regex must capture the whole token, never its 1.0.0 prefix"
+
+    # Only candidates named: the page announces versions the artifact is not.
+    write("This release, 1.0.0rc20, follows 1.0.0rc7, the certified version.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "1.0.0rc20" in out[0].message, \
+        "a README naming only 1.0.0rc7 and 1.0.0rc20 must FAIL at 1.0.0"
+
+
 def test_c8_bounds_the_rows_at_the_query_not_only_the_parameters(tmp_path):
     # 2026-09-23: the cluster grid is "clamped" at 90 degrees, but a coarser grid is FEWER
     # cells; the route is bounded only by the cap it passes to the SQL. Replacing that cap

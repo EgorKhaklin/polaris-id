@@ -130,7 +130,8 @@
                 Verifier profile:</b> <code>polaris-oid4vp 1.0.0rc7</code>, 24 September 2026
                 (<a href="https://openid.net/certification/certified-oid4vp-haip-final/">listing</a>).
                 A self-certification the OpenID Foundation approved and lists: not an endorsement, not an audit, and not
-                a certification of the rest of Polaris. OpenID&reg; and OpenID&reg; Certified&trade; are
+                a certification of the rest of Polaris. The newest release runs against the OpenID Foundation&rsquo;s
+                conformance suite every week in CI. OpenID&reg; and OpenID&reg; Certified&trade; are
                 trademarks of the OpenID Foundation, used under its
                 <a href="https://openid.net/certification/mark/">certification terms</a>.</p>
         </div>
@@ -138,9 +139,9 @@
         <div class="zeros">
             <h3>Where it stands</h3>
             <dl>
-                <div><dt>Stage</dt><dd>Release candidate</dd></div>
-                <div><dt>Next</dt><dd>First outside operator</dd></div>
-                <div><dt>Then</dt><dd>Security review, first pilot</dd></div>
+                <div><dt>Stage</dt><dd>1.0.0</dd></div>
+                <div><dt>Next</dt><dd>Independent security review</dd></div>
+                <div><dt>Then</dt><dd>First pilot</dd></div>
                 <div><dt>Findings from outside</dt><dd>2, both fixed</dd></div>
             </dl>
             <p>The <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md">scoreboard</a>
@@ -295,9 +296,9 @@
         <p class="num">VI</p>
         <h2 id="limits-h">Status, stated once.</h2>
         <ul class="nots">
-            <li><b>Pre-pilot.</b> It runs end to end on notional data and has not yet held real identity data.</li>
+            <li><b>Pre-pilot, not production-ready.</b> It runs end to end on notional data and has not yet held real identity data.</li>
             <li><b>Review ahead.</b> An independent security review has not happened yet; the red-team scope is published.</li>
-            <li><b>Pilot ahead.</b> No authority operates it yet, and no outside operator has run it yet.</li>
+            <li><b>Pilot ahead.</b> No authority operates it yet; one outside project runs its verifier in CI (OID4VCgo, since 11 October 2026).</li>
             <li><b>Certified in one place.</b> One package version is certified to one profile.</li>
         </ul>
         <p class="intro">What remains cannot be built here: the legal basis, key custody, the

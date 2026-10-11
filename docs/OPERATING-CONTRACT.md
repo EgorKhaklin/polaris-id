@@ -102,6 +102,9 @@ rc.2 on 2026-09-17; nothing else moves the number. Since 2026-09-26 the number m
 candidate is released, not per defect: fixes land as commits, and a release (one tag, one GitHub
 Release) collects the defects found since the last. Between rc.3 and rc.62 the version moved per
 fix with no release, and the Releases page went eight days and fifty-nine versions behind the tree.
+Update 2026-10-11: an operator who is not the author runs the verifier, IDFoundry/OID4VCgo's CI,
+daily and on each of its releases ([the scoreboard](../lab/EXTERNAL-NOUNS.md#use)); the tree and
+`polaris-oid4vp` moved to 1.0.0, and the other four packages keep their release candidates.
 
 ## 5. Cryptographic mode
 

@@ -10,7 +10,7 @@ Each outside implementation's latest run, with its version and controls: [INTERO
 | Standard | Role | Where | Evidence (suite, version) | Exceptions | Run by | Date |
 |---|---|---|---|---|---|---|
 | OpenID4VP 1.0 + HAIP 1.0 | Verifier | `polaris-oid4vp` 1.0.0rc7 | polaris-oid4vp 1.0.0rc7: self-certification to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (sd_jwt_vc, direct_post.jwt), approved and listed by the OpenID Foundation, 2026-09-24 (OCS-3049). The Foundation's conformance suite, hosted plan `oid4vp-1final-verifier-haip-test-plan` (7hXWngaA7f0QO): 11 of 11 modules finished without failure ([listing](https://openid.net/certification/certified-oid4vp-haip-final/), [record](../../lab/EXTERNAL-NOUNS.md#conformance-profile)) | `sd_jwt_vc` only, no mdoc; no Digital Credentials API; one DCQL credential query; no array indices or null wildcard in claim paths | self (OIDF conformance suite), listed by OIDF | 2026-09-24 |
-| OpenID4VP 1.0 + HAIP 1.0 | Verifier | `polaris-oid4vp` 1.0.0rc20 (not certified) | [`test_verifier.py`](../../packages/polaris-oid4vp/test_verifier.py), 159 tests; [`test_jwe.py`](../../packages/polaris-oid4vp/test_jwe.py), 38 tests | `sd_jwt_vc` only, no mdoc; no Digital Credentials API; one DCQL credential query; no array indices or null wildcard in claim paths | self | 2026-10-11 |
+| OpenID4VP 1.0 + HAIP 1.0 | Verifier | `polaris-oid4vp` 1.0.0 | [`test_verifier.py`](../../packages/polaris-oid4vp/test_verifier.py), 159 tests; [`test_jwe.py`](../../packages/polaris-oid4vp/test_jwe.py), 38 tests | `sd_jwt_vc` only, no mdoc; no Digital Credentials API; one DCQL credential query; no array indices or null wildcard in claim paths | self | 2026-10-11 |
 | SD-JWT VC (IETF draft 19) | verify + issue | `polaris-oid4vp` (verify), wallet copies (issue) | verify: [`test_sdjwt.py`](../../packages/polaris-oid4vp/test_sdjwt.py), 235 tests at polaris-oid4vp 1.0.0rc20; [lab record 018](../../lab/strategy/018-negative-vectors.md)'s [`vectors.json`](../../lab/interop/negative-vectors/vectors.json) 0.2.0, 25 of 25 verdicts as expected against polaris-oid4vp 1.0.0rc20 issue: [`test_wallet_copy.py`](../../polaris_web/test_wallet_copy.py) `CopyTests`, 3 tests on main after v1.0.0-rc.72 | `dc+sd-jwt` only (`vc+sd-jwt` refused); ES256 only | self | 2026-10-11 |
 | OpenID4VCI 1.0 | Issuer | `/api/v1/oid4vci` | [`test_wallet_copy.py`](../../polaris_web/test_wallet_copy.py), 12 tests on main after v1.0.0-rc.72; [lab record 005, step 5](../../lab/strategy/005/STEP5.md): Credo 0.6.3 and walt.id Wallet API v2 1.0.0 each received a wallet copy from `polaris_web` | pre-authorized code only; not HAIP; `dc+sd-jwt` signed ES256 only | self | 2026-10-10; step 5 2026-09-28 |
 | Token Status List (IETF draft) | publish + check | `polaris-oid4vp` (check), issuer (publish) | check: [`test_status.py`](../../packages/polaris-oid4vp/test_status.py), 56 tests at polaris-oid4vp 1.0.0rc20; [lab/interop/status-list](../../lab/interop/status-list/README.md): draft-ietf-oauth-status-list-21's vectors and signed example, and lists made by `@sd-jwt/jwt-status-list` 0.19.0, every status matched (5,447 decisions). publish: [`test_wallet_copy.py`](../../polaris_web/test_wallet_copy.py) `StatusListTests`, 2 tests on main after v1.0.0-rc.72, the issuer's list read by `polaris-oid4vp` | a draft, not an RFC; the verifier checks status only when given a resolver | self | 2026-10-11; status-list 2026-10-04 |
@@ -28,9 +28,10 @@ release named, on the row's date. Self means the author ran it; what outside par
 Foundation on 24 September 2026
 ([listing](https://openid.net/certification/certified-oid4vp-haip-final/)). It is a
 self-certification for that package version in that role: not an endorsement, not an audit, and not
-a certification of the rest of Polaris. A later package version is not certified until it is
-re-tested and re-submitted. OpenID® and OpenID® Certified™ are trademarks of the OpenID
-Foundation, used under its [certification terms](https://openid.net/certification/mark/).
+a certification of the rest of Polaris. Certifications do not expire, and the listing names
+1.0.0rc7. The newest release on PyPI runs against the OpenID Foundation's conformance suite (the
+HAIP verifier plan's sd_jwt_vc modules) every week in CI. OpenID® and OpenID® Certified™ are
+trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
 ## OpenID4VP 1.0
 
