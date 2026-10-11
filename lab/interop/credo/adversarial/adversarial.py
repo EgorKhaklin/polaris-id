@@ -136,7 +136,10 @@ class Harness:
         self._session()
         out = self.v.handle_direct_post({"response": token})
         verdict = out[2] if len(out) > 2 else None
-        return out[0], (getattr(verdict, "reason", None) or out[1].get("error_description"))
+        # Accepted is a 200 for an authentic verdict: a wallet's error response is answered 200
+        # too (OpenID4VP 1.0 section 8.2, since 1.0.0rc20), and it accepts nothing.
+        accepted = out[0] == 200 and (verdict is None or verdict.authentic)
+        return accepted, (getattr(verdict, "reason", None) or out[1].get("error_description"))
 
     def post_body(self, body):
         return self.post_token(encrypt_compact(json.dumps(body).encode(), self.key.public_key()))
@@ -225,9 +228,9 @@ def main():
     results, bad = [], 0
     for label, kind, value, expect in cases(capture):
         try:
-            status, reason = {"token": hz.post_token, "body": hz.post_body,
-                              "presentation": hz.post_presentation}[kind](value)
-            got = "accept" if status == 200 else "reject"
+            accepted, reason = {"token": hz.post_token, "body": hz.post_body,
+                                "presentation": hz.post_presentation}[kind](value)
+            got = "accept" if accepted else "reject"
         except Exception as exc:          # a crash is a finding too: the handler promises none
             got, reason = "CRASH", "%s: %s" % (type(exc).__name__, exc)
         ok = got == expect

@@ -136,7 +136,8 @@ def end_to_end(vector, pki):
                   "%s: the hash of the decoded JSON is refused (%d %s)"
                   % (vector["name"], status, verdict.code))
         else:
-            check(sent and status == 200 and verdict.transaction_data["alg"] == alg,
+            check(sent and status == 200 and verdict.authentic
+                  and verdict.transaction_data["alg"] == alg,
                   "%s: raw sent as given, bound with the vector's %s hash, answered %d"
                   % (vector["name"], alg, status))
 

@@ -224,7 +224,7 @@ start_verifier issuer-ca.pem verifier.log
 authorize verifier.log "" wallet.out
 expect "the wallet reports the response was taken" wallet.out '^HTTP 200$'
 expect "the verifier accepted it" verifier.log '<- 200 authentic'
-{ grep -E '<- 200' verifier.log || true; } | sed 's/^/        /'
+{ grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
 authorize verifier.log "" replay.out

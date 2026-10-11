@@ -90,6 +90,8 @@ DECLARED_SURVIVORS = {
 #:   _refuse(code, reason)        -> an authentic Verdict carrying the same code
 #:   raise JweError(...)          -> return the plaintext of a token that did not authenticate
 #:   self._error(code, ...)       -> a 200 with a redirect_uri, which is what a pass looks like
+#:   raise VerifierInfoError(...) -> the Verifier constructed, so a request carrying it goes out
+#:     (and its builders _etsi_refusal, _over_asking_refusal)
 #:
 #: A refusal turned into a `pass` would only be caught if something downstream fails; turned
 #: into an ACCEPTANCE it is caught only if a test asserts the refusal. That is the question.
@@ -98,6 +100,12 @@ _PATTERNS = (
     (re.compile(r"^(\s*)raise JweError\("), r"\1return b'{}'  # MUTANT\n\1raise JweError("),
     (re.compile(r"^(\s*)return self\._error\("),
      r"\1return 200, {'redirect_uri': self.redirect_uri}, None  # MUTANT\n\1return self._error("),
+    # 2026-10-11: verifier_info refused at construction, before any request carries it (the
+    # ETSI TS 119 472-2 profile and the label check, verifier.py). Accepting there means the
+    # Verifier is built and its requests go out, so the raise becomes a bare call: the error is
+    # built and dropped, and the statement, however many lines it spans, stays whole.
+    (re.compile(r"^(\s*)raise (VerifierInfoError|_etsi_refusal|_over_asking_refusal)\("),
+     r"\1pass  # MUTANT\n\1\2("),
 )
 
 

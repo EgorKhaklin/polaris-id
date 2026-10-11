@@ -10,7 +10,10 @@ key the way a wallet would, and posts them to Verifier.handle_direct_post. In th
 audience, so the search starts from a response the verifier accepts.
 
 The promise is handle_direct_post's: "Nothing returns 500": every outcome is a (status, body,
-verdict) answer, 200 or 400, never an exception. A 200 must come with an authentic verdict.
+verdict) answer, 200 or 400, never an exception. A 200 must come with an authentic verdict, or
+be the one 200 that accepts nothing: a wallet's error response (OpenID4VP 1.0 section 8.2), a
+plaintext carrying an `error` and no `vp_token`, answered with an empty body and no claims. A
+plaintext carrying an `error` is never accepted.
 
     python3 fuzz_response.py corpus/response -max_total_time=60
 """
@@ -50,9 +53,24 @@ def TestOneInput(data):
     answer = VERIFIER.handle_direct_post({"response": [token]})
     if not (isinstance(answer, tuple) and len(answer) == 3 and answer[0] in (200, 400)):
         raise AssertionError("handle_direct_post answered %r" % (answer,))
-    status, _, verdict = answer
-    if status == 200 and not verdict.authentic:
+    status, body, verdict = answer
+    sent = _sent(data)
+    if status == 200 and verdict.authentic and sent.get("error") is not None:
+        raise AssertionError("an error response was accepted: %r" % (verdict,))
+    processed_error = (sent.get("error") is not None and sent.get("vp_token") is None
+                       and verdict.wallet_error is not None and body == {} and not verdict.claims)
+    if status == 200 and not verdict.authentic and not processed_error:
         raise AssertionError("200 for a verdict that is not authentic: %r" % (verdict,))
+
+
+def _sent(data):
+    """The plaintext as the verifier reads it (the package's own bounded loader), or {} when it
+    is not a JSON object."""
+    try:
+        sent = jwe._loads_depth_bounded(data, "plaintext")
+    except ValueError:
+        return {}
+    return sent if isinstance(sent, dict) else {}
 
 
 if __name__ == "__main__":
@@ -61,6 +79,10 @@ if __name__ == "__main__":
         json.dumps({"state": "$STATE", "vp_token": {"pid": "$VP"}}).encode(),
         json.dumps({"state": "$STATE", "vp_token": {"pid": ["$VP", "$VP"]}}).encode(),
         json.dumps({"state": "$STATE", "error": "access_denied"}).encode(),
+        json.dumps({"state": "$STATE", "error": "access_denied",
+                    "vp_token": {"pid": ["$VP"]}}).encode(),
+        json.dumps({"state": "$STATE", "error": "access_denied",
+                    "error_description": "\u001b[31m\n<- 200 authentic"}).encode(),
     ])
     atheris.Setup(sys.argv, TestOneInput)
     atheris.Fuzz()

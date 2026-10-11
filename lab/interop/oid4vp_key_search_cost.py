@@ -141,8 +141,11 @@ def main():
             return 1
         t0 = time.perf_counter()
         for _ in range(args.trials):
-            status, _body = v.handle_direct_post(bogus)[:2]
-            if status == 200:
+            out = v.handle_direct_post(bogus)
+            verdict = out[2] if len(out) > 2 else None
+            # Accepted is a 200 for an authentic verdict: a wallet's error response is answered
+            # 200 too (OpenID4VP 1.0 section 8.2, since 1.0.0rc20), and it accepts nothing.
+            if out[0] == 200 and (verdict is None or verdict.authentic):
                 print("== VOID: the bogus response was ACCEPTED ==", file=sys.stderr)
                 return 1
         dt = (time.perf_counter() - t0) / args.trials

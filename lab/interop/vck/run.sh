@@ -135,7 +135,7 @@ URI=$(launch_uri verifier.log)
 present "$URI" wallet.log pki/anchor.pem
 expect "the wallet dispatched" wallet.log '^DISPATCHED'
 expect "the verifier accepted it" verifier.log '<- 200 authentic'
-{ grep -E '<- 200' verifier.log || true; } | sed 's/^/        /'
+{ grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
 present "$URI" wallet-replay.log pki/anchor.pem

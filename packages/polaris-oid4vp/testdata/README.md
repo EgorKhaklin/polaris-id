@@ -72,3 +72,22 @@ one response written each way. It was written by
 which mints with its own code rather than this package's; the private keys were discarded.
 `TwoCredentialVectorTests` and `VerdictCommandTests` judge it at its own `at`, as the capture is
 judged at its `iat`.
+
+## verifier-info/: verifier_info cases for ETSI TS 119 472-2, made by this project
+
+One JSON file per case for the opt-in `etsi-119472-2` profile (the package README's "verifier_info
+under ETSI TS 119 472-2"): the control, a `registrar_dataset` with its six members and a credential
+plus a registration certificate registering the two claims the request asks for; one case per rule,
+each the control with a single defect; a certificate without `claim`, held to its format and `meta`
+only; and the same `verifier_info` outside the profile. Each file holds `id`, `changed` (what differs
+from the control), `class` (`control`; `spec` or `spec-implied` when a cited requirement states or
+implies the verdict; `lint` for the over-asking check; `off-profile`), `clauses`, `requirement` (the
+ID a refusal names), `says` (text the refusal carries), `settings` (the profile, and the DCQL query's
+id, credential types and claims), `verifier_info`, and `expect`, `accept` or `refuse`, after the
+vectors of [lab record 018](../../../lab/strategy/018-negative-vectors.md).
+
+They are test material. Every identifier is in example.invalid, and each registration certificate is
+a JWT typed `rc-wrp+jwt` signed by a throwaway P-256 key made for these files and discarded, never a
+registrar's. Nothing checks that signature: the profile checks no certificate's signature.
+`VerifierInfoVectorTests` judges every file through `Verifier`, and `VerifierInfoProfileServeTests`
+through `serve`.

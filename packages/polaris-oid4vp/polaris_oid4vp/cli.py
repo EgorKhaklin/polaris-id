@@ -34,6 +34,7 @@ import json
 import pathlib
 import sys
 import time
+import urllib.parse
 
 try:
     from cryptography import x509
@@ -48,8 +49,8 @@ from .jwe import _loads_depth_bounded
 from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
                     b64u_decode)
 from .serve import REQUEST_PATH, RESPONSE_PATH, serve
-from .verifier import (Verifier, claim_query, transaction_data_entries, verifier_info_entries,
-                       verify_response)
+from .verifier import (VERIFIER_INFO_PROFILES, Verifier, claim_query, transaction_data_entries,
+                       verifier_info_entries, verify_response)
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -60,6 +61,13 @@ FILES = {
     "tls_cert": "tls.pem",           # the listener's certificate; may be self-signed
     "tls_key": "tls-key.pem",
 }
+
+#: The schemes `serve --once` prints a launch link for, the same query behind each. `openid4vp://`
+#: is OpenID4VP 1.0's own (section 9); `haip-vp://` is HAIP 1.0's (section 5.1, which leaves it a
+#: MAY); `eu-eaap://` is the one ETSI TS 119 472-2 mandates (clause 6.4.1, requirement
+#: OIDFVP-HAIP-REDIRECTS-03), and WE BUILD CS-02 v1.2 has a verifier support it beside
+#: `openid4vp://`.
+LAUNCH_SCHEMES = ("openid4vp", "haip-vp", "eu-eaap")
 
 
 def _now():
@@ -185,7 +193,8 @@ def parse_claim(text):
 
 def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
                   issuer_trust_anchors=None, public_base_url=None, claims=None,
-                  vct_values=None, verifier_info=None, credential_query_id=None) -> Verifier:
+                  vct_values=None, verifier_info=None, credential_query_id=None,
+                  verifier_info_profile=None) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
@@ -199,7 +208,9 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
         **({"claims": claims} if claims else {}),
         **({"vct_values": vct_values} if vct_values else {}),
         **({"verifier_info": verifier_info} if verifier_info is not None else {}),
-        **({"credential_query_id": credential_query_id} if credential_query_id is not None else {}))
+        **({"credential_query_id": credential_query_id} if credential_query_id is not None else {}),
+        **({"verifier_info_profile": verifier_info_profile}
+           if verifier_info_profile is not None else {}))
 
 
 def _load_trust_anchors(paths):
@@ -261,6 +272,19 @@ def _cmd_keygen(args) -> int:
     return 0
 
 
+def _operator_line(verdict):
+    """What `serve` prints after `<- STATUS` for one answer at the response URI. Only an
+    authentic presentation reads `authentic`: the lab walks grep `<- 200 authentic` for an
+    acceptance, and a wallet's error response is answered 200 too (OpenID4VP 1.0 section 8.2)."""
+    if verdict is None:
+        return "refused"
+    if verdict.authentic:
+        return "authentic, claims %s" % sorted(verdict.claims)
+    if getattr(verdict, "wallet_error", None) is not None:
+        return "wallet error: %s" % verdict.reason
+    return "refused: %s: %s" % (verdict.code, verdict.reason)
+
+
 def _cmd_serve(args) -> int:
     pki = pathlib.Path(args.pki)
     missing = [name for name in FILES.values() if not (pki / name).is_file()]
@@ -285,7 +309,11 @@ def _cmd_serve(args) -> int:
     if args.verifier_info:
         try:
             with open(args.verifier_info, encoding="utf-8") as fh:
-                verifier_info = verifier_info_entries(json.load(fh), (query_id,))
+                verifier_info = json.load(fh)
+            # Under a profile the verifier holds it to the profile first, below, so a refusal
+            # names the requirement it fails; without one it is checked here, as before.
+            if args.verifier_info_profile is None:
+                verifier_info = verifier_info_entries(verifier_info, (query_id,))
         except (OSError, ValueError) as exc:
             print("polaris-oid4vp: --verifier-info %s: %s" % (args.verifier_info, exc),
                   file=sys.stderr)
@@ -322,7 +350,8 @@ def _cmd_serve(args) -> int:
         verifier = verifier_from(pki, args.host, args.port, issuer_jwks, anchors,
                                  public_base_url=args.public_base_url, claims=claims,
                                  vct_values=args.vct, verifier_info=verifier_info,
-                                 credential_query_id=args.credential_query_id)
+                                 credential_query_id=args.credential_query_id,
+                                 verifier_info_profile=args.verifier_info_profile)
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
@@ -340,11 +369,7 @@ def _cmd_serve(args) -> int:
                   # The operator sees the reason; the wallet never does. body carries the
                   # same constant refusal whatever went wrong.
                   on_verdict=lambda status, body, verdict: print(
-                      "  <- %d %s" % (status,
-                                      "authentic, claims %s" % sorted(verdict.claims)
-                                      if verdict and verdict.authentic
-                                      else "refused: %s: %s" % (verdict.code, verdict.reason)
-                                      if verdict else "refused")))
+                      "  <- %d %s" % (status, _operator_line(verdict))))
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     if args.no_local_tls:
@@ -353,6 +378,14 @@ def _cmd_serve(args) -> int:
     print("  request_uri   %s%s" % (verifier.request_uri, ""))
     print("  response_uri  %s" % verifier.response_uri)
     print("  anchor to register: %s" % (pki / FILES["anchor"]))
+    if verifier.verifier_info_profile:
+        print("  verifier_info meets %s: ETSI TS 119 472-2 V1.2.1 RO-01 to RO-16, shape and labels "
+              "only (the registration certificate's signature, chain and registry are not "
+              "checked)" % verifier.verifier_info_profile)
+        # Claimed only when it ran: with no certificate carried there was nothing to hold to.
+        print("  %s" % ("the request asks for no more than its registration certificate registers"
+                        if verifier.over_asking_checked else
+                        "no registration certificate carried; the over-asking check did not run"))
     print("\nStart a request with --once to print the parameters a wallet is launched with.")
     if args.once:
         session, _ = verifier.new_request(transaction_data=transaction_data)
@@ -364,6 +397,13 @@ def _cmd_serve(args) -> int:
             print("  the request object carries %d transaction_data entr%s, which the key "
                   "binding JWT must bind" % (len(session.transaction_data),
                                              "y" if len(session.transaction_data) == 1 else "ies"))
+        # After the parameters, which the lab walks read: the three lines under the heading, the
+        # first `x509_hash:` and the last `state=` in the log. A link's values are
+        # percent-encoded, so it carries neither, and those reads find what they found before.
+        print("\nlaunch links, the same request behind each scheme:")
+        query = urllib.parse.urlencode(params)
+        for scheme in LAUNCH_SCHEMES:
+            print("  %s://?%s" % (scheme, query))
     try:
         while True:
             time.sleep(3600)
@@ -494,6 +534,12 @@ and one that judges a response already captured:
                    help="verifier attestations to put in the request object: a JSON array "
                         "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
                         "guide shows), e.g. {\"format\": \"registration_cert\", \"data\": \"<JWT>\"}")
+    s.add_argument("--verifier-info-profile", default=None, choices=VERIFIER_INFO_PROFILES,
+                   help="hold --verifier-info to a profile before listening, and exit 2 naming the "
+                        "requirement it fails: etsi-119472-2, ETSI TS 119 472-2 V1.2.1's RO-01 to "
+                        "RO-16 (shape and labels only; the registration certificate's signature, "
+                        "chain and registry are not checked), and, when a registration "
+                        "certificate is carried, a request asking for no more than it registers")
     s.add_argument("--credential-query-id", default=None, metavar="ID",
                    help="the id of the request's DCQL credential query (default pid), which "
                         "transaction_data entries name in credential_ids")
@@ -503,7 +549,8 @@ and one that judges a response already captured:
                         "given, or a JSON object, encoded here. The key binding JWT must bind "
                         "every one; a TS12 payment must satisfy TS12's schema")
     s.add_argument("--once", action="store_true",
-                   help="print one authorization request's parameters at startup")
+                   help="start one authorization request at startup and print its parameters "
+                        "and its launch links (openid4vp://, haip-vp://, eu-eaap://)")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
 

@@ -160,7 +160,7 @@ start_verifier issuer-ca.pem verifier.log
 authorize verifier.log "" wallet.html >/dev/null
 expect "the wallet reports it presented" wallet.html 'Presented'
 expect "the verifier accepted it" verifier.log '<- 200 authentic'
-grep -E '<- 200' verifier.log | sed 's/^/        /'
+grep -E '<- 200 authentic' verifier.log | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
 authorize verifier.log "" replay.html >/dev/null
@@ -185,7 +185,7 @@ if [ "$CHECKS_VERIFIER" = 1 ]; then
   start_verifier issuer-ca.pem verifier-untrusted.log
   authorize verifier-untrusted.log "" untrusted.html >/dev/null
   echo "        wallet answered: $(head -c 300 untrusted.html | tr -s '\n' ' ')"
-  if grep -q '<- 200' verifier-untrusted.log; then echo "  FAIL  the verifier received a presentation"; fail=1
+  if grep -q '<- 200 authentic' verifier-untrusted.log; then echo "  FAIL  the verifier received a presentation"; fail=1
   else echo "  ok    the wallet presented nothing to a verifier outside its anchors"; fi
 fi
 
