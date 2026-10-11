@@ -110,6 +110,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 - `--no-local-tls` serves the local listener over plain HTTP, for when that proxy or tunnel
   terminates TLS and provides the public HTTPS. The listener still binds `--bind` (localhost by
   default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
+- `--once` starts one request and prints the parameters a wallet is launched with, then the same
+  request as three launch links: `openid4vp://?` (OpenID4VP 1.0), `haip-vp://?` (HAIP 1.0) and
+  `eu-eaap://?` (ETSI TS 119 472-2, which WE BUILD CS-02 v1.2 requires beside `openid4vp://`).
 - `--claim` names a claim to ask for (repeatable; without it, `given_name` and `family_name`): a
   name, a dotted path of object keys, or a JSON array of keys, optionally `=VALUE` (JSON) for
   the value it must have. A path asks for one member of a nested claim and nothing around it:
@@ -195,6 +198,19 @@ one constant body, so the verifier is not a per-check oracle:
 
 **Open:** response timing still differs by which check refused; this is not measured.
 
+**A 200 is not an acceptance: a wallet's error response is answered 200 `{}` (OpenID4VP 1.0
+section 8.2). Read `verdict.authentic`.** An Authorization Error Response (`error`, `state`, and
+optionally `error_description`), encrypted to the request's key or in the clear (section 8.3.1, for
+a wallet that cannot encrypt), naming an outstanding request gets 200 and `{}`, with no
+`redirect_uri`. Its verdict is never authentic and has no claims: `code` is `wallet_error`, and
+`verdict.wallet_error` holds `error`, `error_description` (printable ASCII without `<`, at most 200
+characters), `state` and `encrypted`. Neither form closes the request, which still takes the
+wallet's own response: the `state` is in the request URI and the key is in the request object, so
+anyone who saw the QR code could have sent either. This follows OID4VCgo's verifier, which leaves
+the request open on an error response for the same reason. An unknown or expired `state`, an
+`error` that is not 1 to 64 letters, digits or underscores, a repeated parameter, or an error
+beside a presentation gets the constant 400 above. `serve` prints `<- 200 wallet error: ...`.
+
 The response JWE (`jwe.py`) accepts only ECDH-ES over P-256 with A128GCM or A256GCM, with a
 fresh encryption key per request. The listener (`verifier.py`, `serve.py`) is standard library
 only.
@@ -264,6 +280,13 @@ encode, and JSON Schema `format` (an annotation). A `Verifier` remembers a `jti`
   list signed with the credential's own key. The resolver is given `issuer=None` for such a
   credential, so a `StatedAuthority` entry for the name in its `iss` is never found.
 
+## What it does not check
+
+It does not receive or validate a wallet unit attestation (WIA/KA): per
+[WE BUILD CS-04 lines 93-94](https://github.com/webuild-consortium/wp4-architecture/blob/2c234782170ae136db0aedb747c4b04da201b401/conformance-specs/cs-04-wua-lifecycle.md?plain=1#L93-L94)
+the verifier checks the credential's key binding (`cnf`), and the issuer checks the attestation.
+A `cnf` that carries more than `jwk`, such as a key attestation, is judged on `cnf.jwk` alone.
+
 ## Conformance run
 
 ```bash
@@ -288,11 +311,11 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 528 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 549 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 124 refusals accept and requires a
-  test to fail: 120 are caught, and the 4 survivors are declared with their reasons (measured
-  2026-10-10; CI runs it on every push).
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 148 refusals accept and requires a
+  test to fail: 144 are caught, and the 4 survivors are declared with their reasons (measured
+  2026-10-11; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

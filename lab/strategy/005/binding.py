@@ -238,7 +238,8 @@ def main():
     note("C: offer for an ACTIVE credential", "copy", "copy" if cred else "no copy", why or "issued")
     if cred:
         status, verdict, rev = present(holder, cred)
-        got = "accepted/%s" % rev.get("meaning") if status == 200 and rev.get("checked") else \
+        accepted = status == 200 and verdict.authentic   # a 200 also answers a wallet's error
+        got = "accepted/%s" % rev.get("meaning") if accepted and rev.get("checked") else \
             "status %d, revocation %s" % (status, rev.get("state"))
         note("C: that copy presented to polaris-oid4vp", "accepted/VALID", got, rev.get("reason") or "")
         record.revoke(tv_c)

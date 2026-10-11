@@ -467,6 +467,66 @@ class ServeCommandHeldOutTests(unittest.TestCase):
                     on_verdict(200 if verdict and verdict.authentic else 400, b"", verdict)
                 self.assertIn(expected, out.getvalue())
 
+    def test_once_prints_its_request_as_three_launch_links(self):
+        """`openid4vp://?`, `haip-vp://?` and `eu-eaap://?` (ETSI TS 119 472-2, which WE BUILD
+        CS-02 v1.2 requires): each the same three parameters of the request --once starts,
+        printed after them, so what the lab walks read from the log reads as it did."""
+        import re
+        import urllib.parse
+        rc, seen, out, _ = self._serve("--once")
+        self.assertEqual(rc, 0)
+        verifier = seen["verifier"]
+        (session,) = verifier._sessions.values()
+        request_uri = "%s?state=%s" % (verifier.request_uri, session.state)
+        lines = out.splitlines()
+        at = lines.index("authorization request parameters:")
+        links = [(n, line.strip()) for n, line in enumerate(lines) if "://?" in line]
+        self.assertEqual([urllib.parse.urlsplit(link).scheme for _, link in links],
+                         ["openid4vp", "haip-vp", "eu-eaap"])
+        for n, link in links:
+            with self.subTest(link=link.split("?")[0]):
+                parts = urllib.parse.urlsplit(link)
+                self.assertEqual((parts.netloc, parts.path, parts.fragment), ("", "", ""))
+                self.assertEqual(urllib.parse.parse_qs(parts.query, strict_parsing=True),
+                                 {"client_id": [verifier.client_id], "request_uri": [request_uri],
+                                  "request_uri_method": ["post"]})
+                self.assertEqual(parts.query, urllib.parse.urlencode(
+                    [("client_id", verifier.client_id), ("request_uri", request_uri),
+                     ("request_uri_method", "post")]))
+                self.assertGreater(n, at + 3, "a link was printed before the parameters")
+        self.assertIsNotNone(verifier.request_object(session.state),
+                             "the links name no outstanding request")
+        # What the walks read, the same with the links as without them.
+        self.assertEqual([line.split()[0] for line in lines[at + 1:at + 4]],
+                         ["client_id", "request_uri", "request_uri_method"])
+        self.assertEqual(re.search(r"x509_hash:[A-Za-z0-9_-]+", out).group(0), verifier.client_id)
+        self.assertEqual(re.findall(r"https://\S+request\.jwt\?state=[A-Za-z0-9_-]+", out)[-1],
+                         request_uri)
+        self.assertEqual(re.findall(r"state=[A-Za-z0-9_-]+", out)[-1], "state=" + session.state)
+        self.assertEqual(self._serve()[2].count("://?"), 0, "without --once there is no request")
+
+    def test_a_wallet_error_is_printed_as_one_and_never_as_authentic(self):
+        """A wallet's error response is answered 200 (OpenID4VP 1.0 section 8.2), and the lab
+        walks grep `<- 200 authentic` for an acceptance: the line says what it is, does not
+        match, and carries the wallet's text only as printable ASCII, on one line."""
+        import contextlib
+        import io
+        _, seen, _, _ = self._serve()
+        verifier, on_verdict = seen["verifier"], seen["kwargs"]["on_verdict"]
+        session, _ = verifier.new_request()
+        status, body, verdict = verifier.handle_direct_post({
+            "error": ["access_denied"], "state": [session.state],
+            "error_description": ["\x1b[32mauthentic\n  <- 200 authentic, claims ['x']"]})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            on_verdict(status, body, verdict)
+        line = out.getvalue()
+        self.assertTrue(line.startswith("  <- 200 wallet error: access_denied for request %s, "
+                                        % session.state), line)
+        self.assertNotIn("<- 200 authentic", line)
+        self.assertNotIn("\x1b", line)
+        self.assertEqual(line.count("\n"), 1, line)
+
 
 
 class TransactionDataServeTests(unittest.TestCase):

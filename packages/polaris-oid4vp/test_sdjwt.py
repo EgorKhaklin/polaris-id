@@ -507,6 +507,42 @@ class KeysTheCredentialNamesForItselfTests(unittest.TestCase):
         self.assertTrue(v.authentic, v.reason)
 
 
+class TheHolderKeyIsCnfJwkAloneTests(unittest.TestCase):
+    """A wallet unit attestation (WIA, KA) is not presented to a verifier and is not read here:
+    WE BUILD CS-04 v1.1, lines 93-94, has the issuer consume it and the verifier check the
+    presentation's key binding. A credential's `cnf` may carry more than `jwk`, such as a key
+    attestation the issuer kept; the key binding JWT is checked under cnf.jwk and nothing else."""
+
+    def setUp(self):
+        self.wallet = Wallet()
+        provider = ec.generate_private_key(ec.SECP256R1())
+        # A key attestation as a wallet provider signs one, attesting the holder's real key:
+        # well formed and signed, because looking valid is the point. Nothing here reads it.
+        self.attestation = _jws(provider, {"alg": "ES256", "typ": "key-attestation+jwt"},
+                                {"iss": "https://wallet-provider.example", "iat": int(time.time()),
+                                 "attested_keys": [_public_jwk(self.wallet.holder_key)],
+                                 "key_storage": ["iso_18045_high"],
+                                 "user_authentication": ["iso_18045_high"]})
+
+    def _with_cnf(self, cnf):
+        return self.wallet.verify(self.wallet.present(payload_extra={"cnf": cnf}))
+
+    def test_a_cnf_with_more_than_its_jwk_is_judged_on_the_jwk(self):
+        v = self._with_cnf({"jwk": _public_jwk(self.wallet.holder_key),
+                            "key_attestation": self.attestation, "kid": "holder-1"})
+        self.assertTrue(v.authentic, v.reason)
+        self.assertEqual(v.claims["cnf"]["key_attestation"], self.attestation)
+
+    def test_a_wrong_jwk_is_refused_whatever_else_cnf_attests(self):
+        stranger = ec.generate_private_key(ec.SECP256R1())
+        v = self._with_cnf({"jwk": _public_jwk(stranger), "key_attestation": self.attestation})
+        self.assertEqual((v.authentic, v.code), (False, "kb_signature"))
+
+    def test_an_attestation_does_not_stand_in_for_a_missing_jwk(self):
+        v = self._with_cnf({"key_attestation": self.attestation})
+        self.assertEqual((v.authentic, v.code), (False, "kb_cnf"))
+
+
 class TheSevenConformanceRefusalsTests(unittest.TestCase):
     """One test per negative module in oid4vp-1final-verifier-haip-test-plan."""
 

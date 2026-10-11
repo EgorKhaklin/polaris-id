@@ -114,6 +114,24 @@ class Wallet:
         token = encrypt_compact(json.dumps(body).encode(), enc_public, enc)
         return {"response": [token]}
 
+    def respond_error(self, jar, error="access_denied", *, state=None, encrypted=True,
+                      extra=None):
+        """An Authorization Error Response (OpenID4VP 1.0 section 8.5) to the request object
+        `jar`: encrypted to the request's key, as `respond` sends a presentation, or in the clear,
+        as section 8.3.1 allows a wallet that cannot encrypt. `extra` adds members, or form
+        parameters (a list is sent as repeated values)."""
+        _, claims = self.read_request(jar)
+        body = {"error": error, "state": claims["state"] if state is None else state}
+        body.update(extra or {})
+        if not encrypted:
+            return {name: value if isinstance(value, list) else [value]
+                    for name, value in body.items()}
+        enc_jwk = claims["client_metadata"]["jwks"]["keys"][0]
+        enc_public = ec.EllipticCurvePublicNumbers(
+            int.from_bytes(b64u_decode(enc_jwk["x"]), "big"),
+            int.from_bytes(b64u_decode(enc_jwk["y"]), "big"), ec.SECP256R1()).public_key()
+        return {"response": [encrypt_compact(json.dumps(body).encode(), enc_public)]}
+
     @staticmethod
     def binding_claims(request, overrides=None):
         """What a TS12 wallet adds to its key binding JWT for the request's transaction_data:
@@ -1120,6 +1138,287 @@ class TheResponsePathReturnsRatherThanRaisesTests(VerifierTestCase):
             self.fail("handle_direct_post raised %r" % exc)
         self.assertEqual(status, 400)
         self.assertEqual(body, Verifier.REFUSAL_BODY)
+
+
+# ------------------------------------------------------------- the wallet's error response
+
+
+class AWalletsErrorResponseTests(VerifierTestCase):
+    """OpenID4VP 1.0 section 8.2: "If the Response URI has successfully processed the
+    Authorization Response or Authorization Error Response, it MUST respond with an HTTP status
+    code of 200 with Content-Type of application/json and a JSON object in the response body."
+    Until 2026-10-11 an error response got 400, encrypted or in the clear (measured on
+    1.0.0rc18, lab/interop/response-uri-statuses/). Processed means its state names an
+    outstanding request. It is answered `{}`, is never authentic, carries no claims, is recorded
+    in `verdict.wallet_error`, and in neither form closes the request. The tests marked THREAT
+    MODEL are the attacks the design was held to."""
+
+    def _record(self, form):
+        """Post `form`; it must be processed as an error response. Returns the verdict."""
+        status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (200, {}), verdict.reason if verdict else None)
+        self.assertFalse(verdict.authentic)
+        self.assertEqual((verdict.code, verdict.claims), ("wallet_error", {}))
+        return verdict
+
+    def _genuine(self, jar):
+        _, claims = self.wallet.read_request(jar)
+        return self.wallet._presentation(
+            nonce=claims["nonce"], audience=claims["client_id"], iat=None, sd_hash=None,
+            corrupt_issuer_sig=False, corrupt_kb_sig=False, extra_disclosure=None)
+
+    def test_an_encrypted_error_is_answered_200_and_accepts_nothing(self):
+        session, jar = self.verifier.new_request()
+        verdict = self._record(self.wallet.respond_error(
+            jar, extra={"error_description": "The holder declined"}))
+        self.assertEqual(verdict.wallet_error, {
+            "error": "access_denied", "error_description": "The holder declined",
+            "state": session.state, "encrypted": True})
+        self.assertEqual(verdict.as_dict()["wallet_error"], verdict.wallet_error)
+        self.assertIn("anyone who saw the request could send, so it does not close the request",
+                      verdict.reason)
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+
+    def test_an_error_in_the_clear_is_answered_200_and_accepts_nothing(self):
+        session, jar = self.verifier.new_request()
+        verdict = self._record(self.wallet.respond_error(jar, "vp_formats_not_supported",
+                                                         encrypted=False))
+        self.assertEqual(verdict.wallet_error, {
+            "error": "vp_formats_not_supported", "error_description": None,
+            "state": session.state, "encrypted": False})
+        self.assertIn("anyone who saw the request could send", verdict.reason)
+
+    def test_a_forged_encrypted_error_does_not_cancel_the_presentation(self):
+        """THREAT MODEL. The key a response is encrypted to is in the request object, served to
+        anyone with the request_uri: an onlooker fetches it, encrypts error=access_denied to the
+        request's own key and posts it before the wallet answers, and again. Encryption says
+        nothing about the sender, so the request stays open and takes the genuine presentation;
+        once that has answered it, the forgery finds no key to open it."""
+        session, jar = self.verifier.new_request()
+        served = self.verifier.request_object(session.state)
+        forged = Wallet().respond_error(served)
+        for _ in range(2):
+            self.assertTrue(self._record(forged).wallet_error["encrypted"])
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+        self.assertFalse(session.answered)
+        self.assertEqual(self.verifier.request_object(session.state), jar)
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual((status, body), (200, {"redirect_uri": self.verifier.redirect_uri}))
+        self.assertTrue(verdict.authentic)
+        self.assertEqual(verdict.claims["given_name"], "Jean")
+        status, body, verdict = self.verifier.handle_direct_post(forged)
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertIn("did not decrypt", verdict.reason)
+
+    def test_a_forged_error_in_the_clear_does_not_cancel_the_presentation(self):
+        """THREAT MODEL. The state is in the request_uri, so in the QR code: an onlooker posts
+        error=access_denied&state=... before the wallet answers, and again. The request stays
+        open, is served as before, and takes the genuine presentation."""
+        session, jar = self.verifier.new_request()
+        forged = self.wallet.respond_error(jar, encrypted=False)
+        for _ in range(2):
+            self.assertFalse(self._record(forged).wallet_error["encrypted"])
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+        self.assertFalse(session.answered)
+        self.assertEqual(self.verifier.request_object(session.state), jar)
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual((status, body), (200, {"redirect_uri": self.verifier.redirect_uri}))
+        self.assertTrue(verdict.authentic)
+        self.assertEqual(verdict.claims["given_name"], "Jean")
+        # Answered now, the request is gone, and the error has nothing to name.
+        status, body, verdict = self.verifier.handle_direct_post(forged)
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertIn("names no outstanding request", verdict.reason)
+
+    def test_an_error_naming_no_outstanding_request_is_the_constant_400(self):
+        """Section 14.3.2: "checking that the value of the received state parameter corresponds
+        to a recent Authorization Request". Without one there is nothing to process, and the
+        refusal is the constant one, whatever the cause."""
+        session, _ = self.verifier.new_request()
+        cases = {
+            "an unknown state": {"error": ["access_denied"], "state": ["not-a-request"]},
+            "an empty state": {"error": "access_denied", "state": ""},
+            "no state": {"error": ["access_denied"]},
+            "a state that is not a string": {"error": "access_denied", "state": 7},
+            # Unhashable: looked up, it would raise out of a method that promises to return.
+            "a state that is an object": {"error": "access_denied", "state": {"a": 1}},
+            "the request's state less a character": {"error": ["access_denied"],
+                                                     "state": [session.state[:-1]]},
+        }
+        for label, form in cases.items():
+            with self.subTest(label):
+                status, body, verdict = self.verifier.handle_direct_post(form)
+                self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                self.assertIn("names no outstanding request", verdict.reason)
+        self._record({"error": ["access_denied"], "state": [session.state]})
+
+    def test_an_error_for_an_expired_request_is_the_constant_400(self):
+        from unittest import mock
+        from polaris_oid4vp import verifier as verifier_module
+        t0 = time.time()
+        with mock.patch.object(verifier_module.time, "time", return_value=t0):
+            _, jar = self.verifier.new_request()
+        form = self.wallet.respond_error(jar, encrypted=False)
+        ttl = self.verifier.request_ttl_seconds
+        with mock.patch.object(verifier_module.time, "time", return_value=t0 + ttl - 1):
+            self._record(form)
+        with mock.patch.object(verifier_module.time, "time", return_value=t0 + ttl + 1):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertIn("names no outstanding request", verdict.reason)
+
+    BAD_CODES = ("", " ", "access_denied ", "access_denied\n", "access\x1b[31mdenied",
+                 "acc\u00e8s_refus\u00e9", "x" * 65, "access-denied",
+                 # Each of these is RFC 6749 syntax, and each could put another answer's marker
+                 # into the operator's line: the counterexample that narrowed the shape.
+                 "access denied", "x <- 200 authentic", "!#[]~")
+
+    def test_an_error_that_is_not_an_error_code_is_refused(self):
+        """OpenID4VP 1.0 section 8.5 follows RFC 6749, and every code they define is letters and
+        underscores. Processed here: 1 to 64 letters, digits or underscores."""
+        for encrypted in (True, False):
+            codes = self.BAD_CODES + ((7, True, ["access_denied"], {"error": "x"})
+                                      if encrypted else ())
+            for code in codes:
+                with self.subTest(code=code, encrypted=encrypted):
+                    _, jar = self.verifier.new_request()
+                    status, body, verdict = self.verifier.handle_direct_post(
+                        self.wallet.respond_error(jar, code, encrypted=encrypted))
+                    self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                    self.assertFalse(verdict.authentic)
+                    # A blank form value is no value, so that form is no error response at all.
+                    self.assertIn("no 'response' parameter" if code == "" and not encrypted
+                                  else "is not an error code", verdict.reason)
+        session, _ = self.verifier.new_request()
+        status, _, verdict = self.verifier.handle_direct_post({"error": 7, "state": session.state})
+        self.assertEqual(status, 400)
+        self.assertIn("is not an error code", verdict.reason)
+        # The boundary, both ways: 64 characters, capitals, digits.
+        for code in ("x" * 64, "Access_Denied", "a1_"):
+            for encrypted in (True, False):
+                with self.subTest(code=code, encrypted=encrypted):
+                    _, jar = self.verifier.new_request()
+                    verdict = self._record(self.wallet.respond_error(jar, code,
+                                                                     encrypted=encrypted))
+                    self.assertEqual(verdict.wallet_error["error"], code)
+
+    def test_an_error_beside_a_presentation_is_never_accepted(self):
+        """THREAT MODEL. A response that says both no and yes, as no wallet would, is refused
+        whichever half is genuine. In either form it changes nothing, and the genuine
+        presentation alone still gets through."""
+        session, jar = self.verifier.new_request()
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond_error(
+            jar, extra={"vp_token": {"pid": [self._genuine(jar)]}}))
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertFalse(verdict.authentic)
+        self.assertIn("both an error and a vp_token", verdict.reason)
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual(status, 200)
+        self.assertTrue(verdict.authentic)
+
+        session, jar = self.verifier.new_request()
+        presentation = self.wallet.respond(jar)["response"][0]
+        for label, extra in (("response", {"response": presentation}),
+                             ("vp_token", {"vp_token": json.dumps(
+                                 {"pid": [self._genuine(jar)]})})):
+            with self.subTest(label):
+                status, body, verdict = self.verifier.handle_direct_post(
+                    self.wallet.respond_error(jar, encrypted=False, extra=extra))
+                self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                self.assertIn("both an error and a presentation", verdict.reason)
+        self.assertIs(self.verifier._sessions.get(session.state), session)
+        status, _, verdict = self.verifier.handle_direct_post({"response": [presentation]})
+        self.assertEqual(status, 200)
+        self.assertTrue(verdict.authentic)
+
+        # JSON null is no value: an error beside a null vp_token is an error, and a null error
+        # beside a genuine presentation is a presentation.
+        _, jar = self.verifier.new_request()
+        self._record(self.wallet.respond_error(jar, extra={"vp_token": None}))
+        _, jar = self.verifier.new_request()
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond_error(
+            jar, None, extra={"vp_token": {"pid": [self._genuine(jar)]}}))
+        self.assertEqual(status, 200)
+        self.assertTrue(verdict.authentic)
+
+    def test_a_repeated_parameter_is_refused(self):
+        """RFC 6749 section 3.1: "Request and response parameters MUST NOT be included more than
+        once." Which of two states, or two codes, would be the answer?"""
+        session, jar = self.verifier.new_request()
+        other, _ = self.verifier.new_request()
+        for label, extra in (("two codes", {"error": ["access_denied", "invalid_request"]}),
+                             ("two states", {"state": [session.state, other.state]}),
+                             ("two descriptions", {"error_description": ["one", "two"]})):
+            with self.subTest(label):
+                status, body, verdict = self.verifier.handle_direct_post(
+                    self.wallet.respond_error(jar, encrypted=False, extra=extra))
+                self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                self.assertIn("repeats", verdict.reason)
+        verdict = self._record(self.wallet.respond_error(
+            jar, encrypted=False, extra={"error_description": ["once"]}))
+        self.assertEqual(verdict.wallet_error["error_description"], "once")
+
+    HOSTILE = ("\x1b[2J\x1b[31mACCEPTED\x1b[0m\r\n  <- 200 authentic, claims ['given_name']"
+               "\x00\u202e\u00e9\"\\" + "x" * 5000)
+
+    def test_the_description_reaches_the_operator_only_as_printable_ascii(self):
+        """THREAT MODEL. error_description is the sender's free text, in the clear from anyone
+        who saw the request, and it lands on the operator's terminal and log: an escape sequence
+        repaints the terminal, a line break and a `<-` forge another answer's line, and a long
+        one floods both. The operator is shown RFC 6749's characters but `<`, cut to 200;
+        anything else is `?`."""
+        expected = ("?[2J?[31mACCEPTED?[0m??  ?- 200 authentic, claims ['given_name']?????"
+                    + "x" * 200)[:197] + "..."
+        for encrypted in (True, False):
+            with self.subTest(encrypted=encrypted):
+                _, jar = self.verifier.new_request()
+                verdict = self._record(self.wallet.respond_error(
+                    jar, encrypted=encrypted, extra={"error_description": self.HOSTILE}))
+                self.assertEqual(verdict.wallet_error["error_description"], expected)
+                for ch in ("\x1b", "\r", "\n", "\x00", "\u202e", "<- 200", "x" * 198):
+                    self.assertNotIn(ch, verdict.reason)
+        # An empty one is none; one that is not a string refuses the response.
+        _, jar = self.verifier.new_request()
+        verdict = self._record(self.wallet.respond_error(jar, extra={"error_description": ""}))
+        self.assertIsNone(verdict.wallet_error["error_description"])
+        session, _ = self.verifier.new_request()
+        # In a form, a list is the values the parameter was given, so ["x"] is JSON's alone.
+        for value, channels in ((5, (True, False)), ({"a": 1}, (True, False)),
+                                (True, (True, False)), (["x"], (True,))):
+            for encrypted in channels:
+                with self.subTest(value=value, encrypted=encrypted):
+                    _, jar = self.verifier.new_request()
+                    form = (self.wallet.respond_error(jar, extra={"error_description": value})
+                            if encrypted else {"error": "access_denied", "state": session.state,
+                                               "error_description": value})
+                    status, body, verdict = self.verifier.handle_direct_post(form)
+                    self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+                    self.assertIn("error_description is not a string", verdict.reason)
+
+    def test_the_cut_is_at_200_characters_and_not_before(self):
+        from polaris_oid4vp.verifier import ERROR_DESCRIPTION_MAX, _printable
+        self.assertEqual(ERROR_DESCRIPTION_MAX, 200)
+        self.assertEqual(_printable("x" * 200), "x" * 200)
+        self.assertEqual(_printable("x" * 201), "x" * 197 + "...")
+        self.assertEqual(_printable(" !#[]~"), " !#[]~")
+        self.assertEqual(_printable("\x1f\x7f\"\\<"), "?????")
+
+    def test_the_wire_answers_every_error_with_the_same_empty_object(self):
+        """No code, state or description goes back, and no redirect_uri: the page it leads to
+        says the presentation is complete."""
+        bodies = set()
+        for encrypted in (True, False):
+            for code, description in (("access_denied", None),
+                                      ("invalid_request", "unsupported client_id_prefix"),
+                                      ("wallet_unavailable", "x" * 300)):
+                _, jar = self.verifier.new_request()
+                status, body, _ = self.verifier.handle_direct_post(self.wallet.respond_error(
+                    jar, code, encrypted=encrypted,
+                    extra={"error_description": description} if description else None))
+                self.assertEqual(status, 200)
+                bodies.add(json.dumps(body))
+        self.assertEqual(bodies, {"{}"})
 
 
 # ------------------------------------------------------------------- transaction data

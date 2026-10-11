@@ -270,6 +270,80 @@ class ResponseUriTests(ServeTestCase):
         self.assertEqual(seen[1][1].code, "nonce")
 
 
+class ErrorResponseOnTheWireTests(ServeTestCase):
+    """OpenID4VP 1.0 section 8.2, where it is scored: a processed Authorization Error Response
+    gets "an HTTP status code of 200 with Content-Type of application/json and a JSON object in
+    the response body". Measured on 1.0.0rc18 through this listener: 400, both ways."""
+
+    def test_an_error_in_the_clear_is_200_json_and_leaves_the_request_open(self):
+        session, jar = self.verifier.new_request()
+        status, ctype, body = _post(self.base + "/response",
+                                    {"error": "access_denied", "state": session.state})
+        self.assertEqual((status, ctype, json.loads(body)), (200, "application/json", {}))
+        form = self.wallet.respond(jar)
+        status, _, body = _post(self.base + "/response", {"response": form["response"][0]})
+        self.assertEqual((status, set(json.loads(body))), (200, {"redirect_uri"}),
+                         "the error in the clear closed the request")
+
+    def test_an_encrypted_error_is_200_json_and_leaves_the_request_open(self):
+        _, jar = self.verifier.new_request()
+        token = self.wallet.respond_error(jar)["response"][0]
+        status, ctype, body = _post(self.base + "/response", {"response": token})
+        self.assertEqual((status, ctype, json.loads(body)), (200, "application/json", {}))
+        form = self.wallet.respond(jar)
+        status, _, body = _post(self.base + "/response", {"response": form["response"][0]})
+        self.assertEqual((status, set(json.loads(body))), (200, {"redirect_uri"}),
+                         "the encrypted error closed the request")
+        status, ctype, body = _post(self.base + "/response", {"response": token})
+        self.assertEqual((status, ctype, json.loads(body)),
+                         (400, "application/json", Verifier.REFUSAL_BODY))
+
+    def test_an_error_naming_no_outstanding_request_is_the_constant_400(self):
+        for form in ({"error": "access_denied", "state": "not-a-request"},
+                     {"error": "access_denied"},
+                     {"error": "access\x1bdenied", "state": self.verifier.new_request()[0].state}):
+            with self.subTest(form=form):
+                status, ctype, body = _post(self.base + "/response", form)
+                self.assertEqual((status, ctype, json.loads(body)),
+                                 (400, "application/json", Verifier.REFUSAL_BODY))
+
+    def test_the_operator_is_told_what_the_wallet_said_and_nothing_else_is(self):
+        """The callback gets the record and the log gets one line, with the sender's text as
+        printable ASCII: a line break in it cannot forge a second log line."""
+        import contextlib
+        import io
+        seen = []
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="http://127.0.0.1:0/request.jwt",
+                            response_uri="http://127.0.0.1:0/response",
+                            issuer_jwks=[self.wallet.issuer_jwk])
+        httpd = serve(verifier, host="127.0.0.1", port=0,
+                      on_verdict=lambda status, body, verdict: seen.append((status, body, verdict)))
+        base = "http://127.0.0.1:%d" % httpd.server_address[1]
+        session, _ = verifier.new_request()
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                status, _, _ = _post(base + "/response", {
+                    "error": "access_denied", "state": session.state,
+                    "error_description": "\x1b[31mno\npolaris-oid4vp: refused: forged"})
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        self.assertEqual(status, 200)
+        ((status, body, verdict),) = seen
+        self.assertEqual((status, body, verdict.authentic, verdict.claims), (200, {}, False, {}))
+        self.assertEqual(verdict.wallet_error, {
+            "error": "access_denied", "error_description": "?[31mno?polaris-oid4vp: refused: forged",
+            "state": session.state, "encrypted": False})
+        log = err.getvalue()
+        self.assertEqual(log.count("\n"), 1, log)
+        self.assertNotIn("\x1b", log)
+        self.assertIn("polaris-oid4vp: wallet error: access_denied for request %s, which anyone "
+                      "who saw the request could send" % session.state, log)
+
+
 class DonePageTests(ServeTestCase):
     """HAIP 5.1: an accepted response carries only a `redirect_uri`, and a same-device wallet
     follows it. Until 2026-09-28 this listener answered that path 404, measured with OID4VCgo's
