@@ -1,7 +1,7 @@
 # site/: the published project page and the images the repository shares
 
 **Reader:** anyone editing the public page at
-[polaris-id.e-khaklin.workers.dev](https://polaris-id.e-khaklin.workers.dev/),
+[polaris-id.org](https://polaris-id.org/),
 or looking for the logo.
 **Job:** hold one copy of each published artifact, so the page and the README
 can never disagree about what Polaris looks like.
