@@ -25,6 +25,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `polaris-oid4vp serve --once` prints the request it starts as three launch links, `openid4vp://?`, `haip-vp://?` and `eu-eaap://?` (ETSI TS 119 472-2, which WE BUILD CS-02 v1.2 requires beside `openid4vp://`), one query behind each, after the parameters it printed before.
 - `lab/interop/oid4vcgo/run.sh` takes a prebuilt wallet (`OID4VCGO_BIN`) or a source checkout (`OID4VCGO_SRC`) besides a released version, so a wallet project can run it on its pull requests.
 - docs/reference/INTEROP.md: each outside implementation, what ran against the verifier, and its evidence.
+- `release-images.yml` never moves a published release tag: before the publish job joins an image's index under the tag, `scripts/polaris-release-tag-guard.py` reads it at the registry, and only an absent tag or an index of the run's own two digests proceeds; a dry run reports what a publish would meet ([RELEASING](docs/RELEASING.md)).
 
 ### Changed
 

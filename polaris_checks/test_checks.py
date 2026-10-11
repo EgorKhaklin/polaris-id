@@ -3262,12 +3262,19 @@ def test_release_provenance_check_discriminates(tmp_path):
 def test_release_images_signed_check_discriminates(tmp_path):
     files = (".github/workflows/release-images.yml", ".github/workflows/sbom.yml",
              ".github/workflows/sbom-build.yml",
-             "docs/operator/VERIFY-RELEASE.md", "scripts/polaris-pin-chart-images.py")
+             "docs/operator/VERIFY-RELEASE.md", "scripts/polaris-pin-chart-images.py",
+             "scripts/polaris-release-tag-guard.py")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
     assert checks.check_release_images_signed(tmp_path)[0].level == "OK", \
-        "must PASS on the real workflow, its runbook and the pin script"
+        "must PASS on the real workflow, its runbook, the pin script and the tag guard"
+    guard = tmp_path / "scripts/polaris-release-tag-guard.py"
+    guard_text = guard.read_text()
+    guard.unlink()
+    assert checks.check_release_images_signed(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the tag guard the publish job runs does not exist"
+    guard.write_text(guard_text)
     wf = tmp_path / ".github/workflows/release-images.yml"
     doc = tmp_path / "docs/operator/VERIFY-RELEASE.md"
     good = {wf: wf.read_text(), doc: doc.read_text()}
@@ -3309,6 +3316,22 @@ def test_release_images_signed_check_discriminates(tmp_path):
            "must FAIL when the job that also runs dry can mint a signing identity")
     broken(wf, 'cosign sign --yes "$REF"', 'cosign sign --yes --key env://COSIGN_KEY "$REF"',
            "must FAIL when the index is signed with a key instead of keyless")
+    guard_call = ('          python3 scripts/polaris-release-tag-guard.py --repo "${REGISTRY#ghcr.io/}/polaris-$NAME" \\\n'
+                  '            --tag "$TAG" --amd64 "$AMD64" --arm64 "$ARM64"\n')
+    broken(wf, guard_call, "          echo unguarded\n",
+           "must FAIL when the publish job can move a published tag")
+    broken(wf, guard_call, guard_call.replace('--amd64 "$AMD64" ', ""),
+           "must FAIL when the guard is not given both digests the run built")
+    broken(wf, guard_call, guard_call.replace(' --tag "$TAG"', ' --dry --tag "$TAG"'),
+           "must FAIL when the publish job runs the guard in its never-blocking dry mode")
+    broken(wf, guard_call, guard_call.replace('"$ARM64"\n', '"$ARM64" || true\n'),
+           "must FAIL when the guard's refusal is swallowed")
+    broken(wf, "      - name: Refuse to move a published tag\n",
+           "      - name: Refuse to move a published tag\n        continue-on-error: true\n",
+           "must FAIL when the guard's step may fail without stopping the job")
+    broken(wf, guard_call + "\n      - name: Join the two architectures into one index\n",
+           "\n      - name: Join the two architectures into one index\n",
+           "must FAIL when the guard is gone from before the index is joined")
     broken(wf, "          subject-digest: ${{ steps.index.outputs.digest }}\n"
                "          push-to-registry: true\n",
            "          subject-digest: ${{ steps.index.outputs.digest }}\n",
