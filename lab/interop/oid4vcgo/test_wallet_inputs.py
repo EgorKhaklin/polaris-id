@@ -47,6 +47,7 @@ def wallet(token):
     os.chmod(p, 0o755)
 WALLET = %(wallet)r
 if args[:1] == ["run"] and "go" in args:
+    assert any(a.startswith("golang:1.26@sha256:") for a in args), args  # the Go image, by digest
     go = args[args.index("go"):]
     if go[1] == "install":
         wallet("INSTALLED " + go[-1])
@@ -56,7 +57,7 @@ if args[:1] == ["run"] and "go" in args:
         wallet("BUILT " + re.search(r"token: (\S+)", open(main).read()).group(1))
     sys.exit(0)
 if args[:2] == ["run", "-d"]:
-    i = args.index("alpine:3.20")
+    i = next(k for k, a in enumerate(args) if a.startswith("alpine:3.20@sha256:"))  # by digest
     assert args[i + 1] == "/w/wallet", args
     os.execv(os.path.join(mounts["/w"], "wallet"), [args[i + 1]] + args[i + 2:])
 sys.exit(0)

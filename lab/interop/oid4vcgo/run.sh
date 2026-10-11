@@ -63,6 +63,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # A clone's own package is the default, so a run tests the tree; POLARIS_OID4VP overrides it, and
 # --issuer-trust-anchor, which the run needs, is in every published release from 1.0.0rc8.
 PKG="${POLARIS_OID4VP:-$HERE/../../../packages/polaris-oid4vp}"
+# The images the wallet is built and run in, pinned by digest so a run is the run that was reviewed
+# (read from Docker Hub's manifest index on 2026-10-11: golang:1.26 and alpine:3.20).
+GO_IMAGE="golang:1.26@sha256:d7722066f0b60ceccb6c0643cbed1f5f9e15506ac237146c95333504d7805d89"
+ALPINE_IMAGE="alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
 PORT="${PORT:-9443}"
 WALLET_PORT="${WALLET_PORT:-8443}"
 WORK="${WORK:-$(mktemp -d)}"
@@ -121,10 +125,10 @@ if [ -n "$WALLET_BIN" ]; then
   cp "$WALLET_BIN" "$WORK/wallet"
 elif [ -n "$WALLET_SRC" ]; then
   docker run --rm -v "$WALLET_SRC:/src:ro" -v "$WORK:/out" -w /src -e CGO_ENABLED=0 -e GOTOOLCHAIN=auto \
-    golang:1.26 go build -buildvcs=false -o /out/conformance-wallet-vp ./cmd/conformance-wallet-vp
+    "$GO_IMAGE" go build -buildvcs=false -o /out/conformance-wallet-vp ./cmd/conformance-wallet-vp
   mv "$WORK/conformance-wallet-vp" "$WORK/wallet"
 else
-  docker run --rm -v "$WORK:/out" -e CGO_ENABLED=0 -e GOBIN=/out -e GOTOOLCHAIN=auto golang:1.26 \
+  docker run --rm -v "$WORK:/out" -e CGO_ENABLED=0 -e GOBIN=/out -e GOTOOLCHAIN=auto "$GO_IMAGE" \
     go install "github.com/idfoundry/oid4vcgo/cmd/conformance-wallet-vp@$VERSION"
   mv "$WORK/conformance-wallet-vp" "$WORK/wallet"
 fi
@@ -173,7 +177,7 @@ start_verifier() {  # $1 issuer trust anchor, $2 log file
 start_wallet() {
   docker rm -f polaris-oid4vcgo-wallet >/dev/null 2>&1 || true
   docker run -d --name polaris-oid4vcgo-wallet ${ADD_HOST[@]+"${ADD_HOST[@]}"} -p "$WALLET_PORT:8443" \
-    -v "$WORK:/w" alpine:3.20 /w/wallet -config /w/config.json >/dev/null
+    -v "$WORK:/w" "$ALPINE_IMAGE" /w/wallet -config /w/config.json >/dev/null
   for _ in $(seq 1 40); do docker logs polaris-oid4vcgo-wallet 2>&1 | grep "listening" >/dev/null && break; sleep 0.25; done
 }
 start_wallet
