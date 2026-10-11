@@ -16,6 +16,15 @@
 # Exits 0 only if the genuine presentation is accepted AND both controls are refused. A run that
 # only printed the success line would say nothing: a verifier that accepts everything prints it too.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 
 IMAGE="${WALTID_IMAGE:-waltid/wallet-api2:1.1.1@sha256:d5fab1868802c98a28ce2ccee5ac6cc282f0b3a7ad079382ed42934296b700b5}"
 # What a stranger installs: the newest release, candidates included. Pin it to repeat a run.
@@ -71,7 +80,7 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
   fi
 }
 cleanup() { stop_verifier; docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
+trap 'exit_rc=$?; cleanup; exit_trap "$exit_rc"' EXIT
 
 docker run -d --name "$CONTAINER" ${ADD_HOST[@]+"${ADD_HOST[@]}"} -p 7006:7006 "$IMAGE" >/dev/null
 for _ in $(seq 1 60); do curl -sf -m 2 "$WALTID/livez" >/dev/null 2>&1 && break; sleep 1; done
@@ -145,4 +154,5 @@ expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: iss
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and both controls refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

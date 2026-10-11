@@ -16,6 +16,15 @@
 # Exits 0 only if the presentation is accepted, the status list reads VALID, and every control is
 # refused where it should be.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG="${POLARIS_OID4VP:-polaris-oid4vp}"
@@ -68,7 +77,7 @@ cleanup() {
   stop_verifier
   [ -n "${KEEP_LOCALNET:-}" ] || bash "$HERE/localnet.sh" down
 }
-trap cleanup EXIT
+trap 'exit_rc=$?; cleanup; exit_trap "$exit_rc"' EXIT
 
 bash "$HERE/localnet.sh" up
 
@@ -156,4 +165,5 @@ fi
 sed 's/^/        /' status-revoked.log
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, the status list read VALID, and all four controls refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

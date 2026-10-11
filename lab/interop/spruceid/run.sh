@@ -18,6 +18,15 @@
 #
 # Exits 0 only if the presentation is accepted AND every control is refused where it should be.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 
 IMAGE="${RUST_IMAGE:-rust:1.99.0-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0}"
 COMMIT="${SPRUCEID_COMMIT:-e5f29b85f14ca0b3c6eb6852e4d2d158f601fd63}"
@@ -168,7 +177,7 @@ stop_all() {
   docker logs "$WALLET" > wallet-adapter.log 2>&1 || true
   docker rm -f "$WALLET" >/dev/null 2>&1 || true
 }
-trap stop_all EXIT
+trap 'exit_rc=$?; stop_all; exit_trap "$exit_rc"' EXIT
 
 # The adapter fetches the request object with the library's HTTP client, rustls with the public
 # web roots compiled in, and refuses keygen's self-signed listener certificate whatever the
@@ -236,4 +245,5 @@ expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: iss
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and all three controls refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

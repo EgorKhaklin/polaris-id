@@ -3484,6 +3484,11 @@ jobs:
       # holder keys are Ed25519 only; it stays what its generator makes and each file checks out.
       - name: The Ed25519-holder fixture (lab/interop/fixtures/ed25519-holder), each file checked
         run: python -m unittest lab/interop/fixtures/ed25519-holder/test_fixture.py
+      # lab/interop/*/run.sh: a harness that stops early must not exit 0. macOS bash 3.2 exits with
+      # the EXIT trap's status after a set -u failure, so each harness's trap fails a run that did
+      # not reach its last line; this holds all sixteen to it and runs the shape under /bin/bash.
+      - name: The lab harnesses' EXIT traps (lab/interop/test_exit_trap.py), an early stop fails
+        run: python -m unittest lab/interop/test_exit_trap.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.

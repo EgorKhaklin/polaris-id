@@ -19,9 +19,18 @@
 #
 # Exits 0 only if the presentation is accepted AND every control is refused where it should be.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 # Every exit path ends with "done", success and failure alike: a run whose output does not end in
 # "done" did not finish, and is never a pass.
-trap 'echo "done"' EXIT
+trap 'exit_rc=$?; echo "done"; exit_trap "$exit_rc"' EXIT
 
 PS_REPO="${PS_REPO:-https://github.com/ParleSec/ProtocolSoup.git}"
 PS_COMMIT="${PS_COMMIT:-97d306cafa3a005dd01c1641b13c9b5abb6bcc19}"   # tag v4.0.0
@@ -108,7 +117,7 @@ cleanup() {
     docker rm -f "$NAME-$w" >/dev/null 2>&1 || true
   done
 }
-trap 'cleanup || true; echo "done"' EXIT
+trap 'exit_rc=$?; cleanup || true; echo "done"; exit_trap "$exit_rc"' EXIT
 
 PYTHONUNBUFFERED=1 venv/bin/python "$HERE/walk.py" serve issuer "$ISSUER_PORT" > issuer.log 2>&1 &
 ISSUER_PID=$!
@@ -220,4 +229,5 @@ venv/bin/python "$HERE/walk.py" enrol "$API_A" walk-f issuer issuer/stranger-key
 expect "the harness refused to store it" import-f.log '^IMPORT REFUSED .*issuer signature'
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and all six controls refused" || echo "RESULT: FAILED"
+finished=1
 exit "$fail"

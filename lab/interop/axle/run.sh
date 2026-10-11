@@ -22,6 +22,15 @@
 # should be.
 # shellcheck disable=SC2329  # report_line and stop_all run from the EXIT trap
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 # The last lines of every run, whichever way it ends: a run that stops early is the report most
 # worth having, and a run whose output does not end in "done" did not finish.
 report_line() { echo "Tell us how it went, success or failure: https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml"; }
@@ -34,7 +43,7 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
   fi
 }
 stop_all() { stop_verifier; docker rm -f "$HARNESS" >/dev/null 2>&1 || true; }
-trap 'stop_all || true; report_line; echo "done"' EXIT
+trap 'exit_rc=$?; stop_all || true; report_line; echo "done"; exit_trap "$exit_rc"' EXIT
 
 AXLE_REPO="https://github.com/openwallet-foundation-labs/axle"
 AXLE_SHA="${AXLE_SHA:-f7b8054171bb49f3c27589d0b19b03285ed1dcc1}"
@@ -253,4 +262,5 @@ if [ "$fail" -eq 0 ]; then
 else
   echo "RESULT: FAILED (Axle's Kotlin OpenID4VP client, driven by a harness written here)"
 fi
+finished=1
 exit "$fail"
