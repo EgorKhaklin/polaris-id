@@ -1,0 +1,13 @@
+instant    2026-10-11T04:54:42+00:00; roots: CN=ISSUANCE ROOT
+  ok   spec vector        session_transcript() reproduces the OpenID4VP 1.0 B.2.6.1 example
+  ok   session transcript client_id x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs, response_uri https://host.docker.internal:9491/response, nonce z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8, jwk thumbprint _92hobyrodf1k3LKgE3gkFL4B0WO-420ky3Qewz5pnk
+       note: wallet       the wallet's own SessionTranscript bytes are identical to ours
+  ok   issuer chain       x5chain CN=ISSUANCE <- CN=ISSUANCE INTERMEDIATE -> configured root CN=ISSUANCE ROOT
+       note: DS profile   lacks SubjectKeyIdentifier and ExtendedKeyUsage id-mdl-ds (1.0.18013.5.1.2) (no DS profile stated for eu.europa.ec.eudi.pid.1)
+  ok   issuer signature   ES256 over the MSO under the x5chain leaf
+  ok   docType            eu.europa.ec.eudi.pid.1
+  ok   validity           signed 2026-10-11 04:54:32+00:00, valid 2026-10-11 04:54:32+00:00 .. 2026-11-11 04:54:32+00:00, checked at 2026-10-11T04:54:42+00:00
+  ok   digests            2 of 2 SHA-256 digests match, over the original tag-24 bytes: eu.europa.ec.eudi.pid.1/family_name, eu.europa.ec.eudi.pid.1/given_name
+  ok   device signature   ES256 over DeviceAuthentication with the OpenID4VP SessionTranscript, under the MSO deviceKey
+VERIFIED
+done

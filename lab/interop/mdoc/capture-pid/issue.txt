@@ -1,0 +1,5 @@
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+authorized DPoP access token for tneal
+ISSUED eu.europa.ec.eudi.pid_mso_mdoc, -1 disclosures, bound to the attested key

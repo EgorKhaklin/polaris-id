@@ -1,0 +1,7 @@
+instant    2026-10-11T04:56:57+00:00; roots: CN=ISSUANCE ROOT
+  ok   spec vector        session_transcript() reproduces the OpenID4VP 1.0 B.2.6.1 example
+  ok   session transcript client_id x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE, response_uri https://host.docker.internal:9491/response, nonce GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g, jwk thumbprint null
+       note: wallet       the wallet's own SessionTranscript bytes are identical to ours
+  ok   issuer chain       x5chain CN=ISSUANCE <- CN=ISSUANCE INTERMEDIATE -> configured root CN=ISSUANCE ROOT
+REFUSED    ds profile: the DS certificate lacks SubjectKeyIdentifier and ExtendedKeyUsage id-mdl-ds (1.0.18013.5.1.2), required for org.iso.18013.5.1.mDL
+done

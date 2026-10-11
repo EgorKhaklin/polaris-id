@@ -1,0 +1,14 @@
+polaris-oid4vp serving on https://host.docker.internal:9491 (listening on 0.0.0.0:9491)
+  client_id     x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE
+  request_uri   https://host.docker.internal:9491/request.jwt
+  response_uri  https://host.docker.internal:9491/response
+  anchor to register: pki/anchor.pem
+
+Start a request with --once to print the parameters a wallet is launched with.
+
+authorization request parameters:
+  client_id          x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE
+  request_uri        https://host.docker.internal:9491/request.jwt?state=QSPK0ADyfrS2gPHUW_G0Yw
+  request_uri_method post
+polaris-oid4vp: refused: malformed: the issuer-signed JWT does not parse: a compact JWS has three dot-separated parts, this has 1
+  <- 400 refused: malformed: the issuer-signed JWT does not parse: a compact JWS has three dot-separated parts, this has 1
