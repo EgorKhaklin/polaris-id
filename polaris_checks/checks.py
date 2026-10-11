@@ -6775,7 +6775,8 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 # workflow image and the Trivy scanner by digest (the wallet canary excepted: it walks the
 # wallets' latest builds by design). And Dependabot reads every manifest that pins something
 # (each npm lockfile, each published Python package, each Dockerfile directory, the compose
-# files), since a pin nothing refreshes stops receiving security updates.
+# files, and since 2026-10-11 each Go, Gradle and Swift manifest), since a pin nothing refreshes stops
+# receiving security updates.
 _UNPINNED_BY_DESIGN = {"wallet-canary.yml"}
 _PUBLISHED_PY = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python", "polaris_cli")
 _WALK_PRUNE = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "dist", "build"}
@@ -6842,6 +6843,12 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
             required.add(("docker", rel))
         if any(re.fullmatch(r"docker-compose(?:\.[\w-]+)?\.ya?ml", f) for f in filenames):
             required.add(("docker-compose", rel))
+        if "go.mod" in filenames:
+            required.add(("gomod", rel))
+        if any(re.fullmatch(r"(?:build|settings)\.gradle(?:\.kts)?", f) for f in filenames):
+            required.add(("gradle", rel))
+        if "Package.swift" in filenames:
+            required.add(("swift", rel))
     required |= {("pip", "/" + d) for d in _PUBLISHED_PY if (root / d / "pyproject.toml").is_file()}
     missing = sorted(required - covered)
     if missing:

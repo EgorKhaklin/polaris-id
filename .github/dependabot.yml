@@ -287,6 +287,67 @@ updates:
         patterns:
           - "*"
 
+  # The interop harnesses' own manifests: Go (the irmago wallet), Gradle (the Kotlin wallets and
+  # Axle's harness) and Swift (the EUDI iOS wallet). Each pins the outside implementation it drives;
+  # one grouped PR a week per ecosystem, run against the published verifier by the wallet canary's
+  # pull_request trigger on lab/interop/**. Dependabot does not rewrite Gradle's dependency
+  # verification (axle/harness/gradle/verification-metadata.xml): a PR that bumps that harness
+  # needs the metadata regenerated before it can pass.
+  - package-ecosystem: gomod
+    directories:
+      - /lab/interop/irmago/wallet
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      lab-gomod:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gradle
+    directories:
+      - /lab/interop/axle/harness
+      - /lab/interop/eudi-issuer/wallet
+      - /lab/interop/eudi-kt/wallet
+      - /lab/interop/multipaz/wallet
+      - /lab/interop/vck/wallet
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      lab-gradle:
+        patterns:
+          - "*"
+
+  - package-ecosystem: swift
+    directories:
+      - /lab/interop/eudi-ios/wallet
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      lab-swift:
+        patterns:
+          - "*"
+
   # The published Python packages declare open ranges, so only a release outside a
   # range (polaris-id-cli's psycopg2-binary <3.0, for one) is proposed.
   - package-ecosystem: pip

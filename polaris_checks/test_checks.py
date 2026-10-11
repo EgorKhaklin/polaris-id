@@ -3210,6 +3210,18 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
     (tmp_path / "tools/newtool/package-lock.json").write_text("{}\n")
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
         "must FAIL when a new npm lockfile appears that Dependabot does not read"
+    (tmp_path / "tools/newtool/package-lock.json").unlink()
+    # A Go, Gradle or Swift manifest Dependabot does not read is a pin nothing refreshes.
+    for manifest, why in (("go.mod", "a go.mod"), ("build.gradle.kts", "a Gradle build"),
+                          ("settings.gradle", "a Gradle settings file"), ("Package.swift", "a Swift package")):
+        d = tmp_path / "lab/harness-x"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / manifest).write_text("// fixture\n")
+        assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
+            f"must FAIL when {why} appears that Dependabot does not read"
+        (d / manifest).unlink()
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS again once the unread manifests are gone"
 
 
 def test_release_provenance_check_discriminates(tmp_path):

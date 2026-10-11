@@ -55,6 +55,12 @@ on:
   schedule:
     - cron: "23 5 * * 2"
   workflow_dispatch:
+  # A change to an interop harness runs here before it merges, against the same published verifier.
+  # The README badge reads only the scheduled runs on main, so a pull request run cannot colour it.
+  pull_request:
+    paths:
+      - "lab/interop/**"
+      - ".github/workflows/wallet-canary.yml"
 
 permissions:
   contents: read
