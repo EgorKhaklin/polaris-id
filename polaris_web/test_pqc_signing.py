@@ -454,12 +454,15 @@ class ExactSizeIsCheckedTests(unittest.TestCase):
         if not pqc_signing.is_available():
             self.skipTest("liboqs absent")
         import oqs  # type: ignore
+        enabled = set(oqs.get_enabled_sig_mechanisms())
+        self.assertTrue(pqc_signing.custody.ALGORITHM_SIZES, "the size table is empty")
         for alg, (pk_len, sig_len) in pqc_signing.custody.ALGORITHM_SIZES.items():
-            if alg not in set(oqs.get_enabled_sig_mechanisms()):
-                continue
-            with oqs.Signature(alg) as s:
-                self.assertEqual((pk_len, sig_len),
-                                 (s.details["length_public_key"], s.details["length_signature"]), alg)
+            with self.subTest(alg):
+                if alg not in enabled:
+                    self.skipTest("%s is not enabled in this liboqs" % alg)  # a counted skip, never a pass
+                with oqs.Signature(alg) as s:
+                    self.assertEqual((pk_len, sig_len),
+                                     (s.details["length_public_key"], s.details["length_signature"]), alg)
 
     def test_size_problem_names_a_wrong_length_and_passes_the_exact_one(self):
         pk_len, sig_len = pqc_signing.custody.ALGORITHM_SIZES["ML-DSA-65"]

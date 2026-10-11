@@ -159,6 +159,9 @@ VERIFICATION = [
     (r"^lab/interop/status-list/revoked/",
      ["python3 -m unittest lab/interop/status-list/revoked/test_fixture.py"],
      "the revoked-credential fixture moved: regenerated, and read as revoked at index 3"),
+    (r"^lab/interop/fixtures/ed25519-holder/",
+     ["python3 -m unittest lab/interop/fixtures/ed25519-holder/test_fixture.py"],
+     "the Ed25519-holder fixture moved: regenerated, and each file checked"),
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
@@ -362,6 +365,7 @@ UNSHARDED_SUITES = {
     "lab/interop/eudi-dev/capture": ["test_capture"],
     "lab/interop/negative-vectors": ["test_vectors"],
     "lab/interop/status-list/revoked": ["test_fixture"],
+    "lab/interop/fixtures/ed25519-holder": ["test_fixture"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
@@ -393,6 +397,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/eudi-dev/capture": ("unittest", None),
     "lab/interop/negative-vectors": ("unittest", None),
     "lab/interop/status-list/revoked": ("unittest", None),
+    "lab/interop/fixtures/ed25519-holder": ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
 }
