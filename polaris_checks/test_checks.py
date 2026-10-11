@@ -23558,3 +23558,57 @@ def test_edge_tls_state_shared_check_discriminates(tmp_path):
         write(**case)
         assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "FAIL", \
             "must FAIL when the edge's TLS state is no longer shared: %r" % (case,)
+
+
+def test_interop_page_count_check_discriminates(tmp_path):
+    """The interop page's rows, its sentence, the scoreboard's summary, the README badge and the claims manifest
+    must count and name the same implementations: each one changed, or the page emptied, must FAIL."""
+    files = {rel: (REPO / rel).read_text(encoding="utf-8") for rel in (
+        "README.md", "lab/EXTERNAL-NOUNS.md", "docs/reference/claims.json", "docs/reference/INTEROP.md")}
+
+    def write(**changes):
+        for rel, text in files.items():
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(changes.get(rel, text), encoding="utf-8")
+
+    def level():
+        return checks.check_interop_page_matches_the_count(tmp_path)[0].level
+
+    write()
+    assert level() == "OK"
+    page, board, readme, manifest = (files[r] for r in (
+        "docs/reference/INTEROP.md", "lab/EXTERNAL-NOUNS.md", "README.md", "docs/reference/claims.json"))
+    axle_row = next(ln for ln in page.splitlines() if ln.startswith("| Axle "))
+    broken = [
+        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more", "Seven wallets and nine more")},
+        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more", "Six wallets and eight more")},
+        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more outside", "Several outside")},
+        {"docs/reference/INTEROP.md": page.replace(axle_row + "\n", "")},
+        {"docs/reference/INTEROP.md": page.replace(axle_row, axle_row + "\n" + axle_row)},
+        {"docs/reference/INTEROP.md": page.replace("| walt.id Wallet API v2 | wallet |", "| walt.id Wallet API v2 | library |")},
+        {"docs/reference/INTEROP.md": page.replace("| vck (A-SIT Plus), `vck-openid-ktor` | library |", "| vck (A-SIT Plus), `vck-openid-ktor` | wallet |")},
+        {"docs/reference/INTEROP.md": page.replace("| Axle (OpenWallet", "| Axel (OpenWallet")},
+        {"docs/reference/INTEROP.md": page.replace("| Multipaz (OpenWallet Foundation), JVM target |", "| Multipaz and vck |")},
+        {"docs/reference/INTEROP.md": page.replace("| Implementation | Kind |", "| Name | Kind |")},
+        {"docs/reference/INTEROP.md": page.replace("\n## Measured\n", "\n## Runs\n")},
+        {"docs/reference/INTEROP.md": ""},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("| 6 unmodified wallets", "| 7 unmodified wallets", 1)},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("and 9 more implementations", "and 10 more implementations", 1)},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("| Wallets | 6 unmodified", "| Wallets | six unmodified", 1)},
+        {"README.md": readme.replace("tested_against-15_outside_implementations", "tested_against-16_outside_implementations")},
+        {"README.md": readme.replace("tested_against-15_outside_implementations", "tested_against-15_outside_wallets")},
+        {"docs/reference/claims.json": manifest.replace('"scoreboard": "Axle"', '"scoreboard": "Axel"')},
+        {"docs/reference/claims.json": manifest.replace('"scoreboard": "Multipaz"', '"scoreboard": "OpenWallet Foundation"')},
+        {"docs/reference/claims.json": manifest.replace('        "readme-six-wallets",\n        "readme-nine-more"\n',
+                                                         '        "readme-nine-more"\n', 1)},
+        {"docs/reference/claims.json": manifest.replace('        "readme-six-wallets",\n        "readme-nine-more"\n',
+                                                         '        "readme-six-wallets",\n        "readme-six-wallets",\n'
+                                                         '        "readme-nine-more"\n', 1)},
+        {"docs/reference/claims.json": ""},
+    ]
+    for case in broken:
+        (rel, text), = case.items()
+        assert text != files[rel], "the mutation did not apply: %r" % (case,)
+        write(**{rel: text})
+        assert level() == "FAIL", "must FAIL when the counts or names disagree: %r" % (case,)
