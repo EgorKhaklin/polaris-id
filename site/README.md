@@ -31,12 +31,15 @@ broken under it fails the build.
 | `_headers` | The security headers the host sends with every file | Cloudflare |
 | `robots.txt` | Crawl policy: one page, nothing private | Crawlers |
 | `llms.txt` | The project for a reading agent: what it is and is not, the one-minute offline check with its exit codes, and where the specifications and evidence live, as absolute links | Agents and tools that read `/llms.txt` |
-| `favicon.svg` | The tab icon | `index.html`, `404.html` |
 | `og.png` | The 1200 x 630 social card: the emblem, the page's headline, "pre-pilot" and the maker's mark, captured from the page's own styles | `index.html` (`og:image`) |
 | `khaklin.svg` | The KHAKLIN TECHNOLOGIES lockup in the site's gold, from the traced lettering and owl (never redrawn) | `index.html` (footer), `og.png` |
 | `fonts/` | Inter, Cinzel and JetBrains Mono: the console's own files from `polaris_web/static/vendor/fonts/`, byte for byte, each beside its SIL OFL licence | `index.css`, `404.css` |
-| `polaris_logo_clean.png` | The emblem, 440 x 440, unchanged; drawn at 28 to 220 CSS pixels | `index.html`, the Open Graph preview, `docs/assets/hero.svg` (embedded), the Helm chart icon |
-| `openid-certified-mark-on-white.png` | The OpenID Certified mark, shown beside the scoped certification statement | `index.html` |
+| `polaris_logo.webp` | The emblem polished for large, sharp screens: 880 x 880, its colour steps smoothed and its rim a clean circle | `index.html` (the hero's pole star) |
+| `polaris_logo_180.png` | The polished emblem at 180 x 180 | `index.html`, `404.html` (the tab and home-screen icons) |
+| `polaris_logo_clean.png` | The emblem as first published, 440 x 440 | the Open Graph preview, `docs/assets/hero.svg` (the source of the polished copies) |
+| `sky-1440.mp4`, `sky-960.mp4` | The sky's orbits and starfield: a rendered 72-second loop on black (30 fps, H.264) that the page screen-blends, so only the light shows; phones get the 960 px cut | `index.html` (the hero) |
+| `sky-poster.webp` | The film's first frame: shown before it plays, and alone for a reader who asks for reduced motion | `index.html` |
+| `openid-certified-mark-on-white.png` | The OpenID Certified mark in the Foundation's published form: the first proof tile, linked to the listing | `index.html` |
 
 ## Conventions
 

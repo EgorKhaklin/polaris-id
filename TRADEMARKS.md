@@ -9,7 +9,7 @@ what that means in practice.
 | Mark | Files |
 |---|---|
 | The Polaris and Polaris ID names, as the names of this project and its packages | throughout |
-| The Polaris logo and star mark | `site/polaris_logo_clean.png`, `site/favicon.svg`, `polaris_web/static/favicon.svg` |
+| The Polaris logo and star mark | `site/polaris_logo_clean.png`, `site/polaris_logo.webp`, `site/polaris_logo_180.png`, `polaris_web/static/favicon.svg` |
 | The owl emblem | `docs/assets/seal.svg` |
 | The Khaklin Technologies name and lockup, with the Polaris logo | `docs/assets/hero.svg` |
 

@@ -14,7 +14,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # The brand files: the Polaris logo and star mark, the owl emblem, and the Khaklin Technologies
 # lockup. The license covers the files, not the names and marks they carry (TRADEMARKS.md).
 [[annotations]]
-path = ["site/polaris_logo_clean.png", "site/favicon.svg", "polaris_web/static/favicon.svg",
+path = ["site/polaris_logo_clean.png", "site/polaris_logo.webp", "site/polaris_logo_180.png", "polaris_web/static/favicon.svg",
         "docs/assets/seal.svg", "docs/assets/hero.svg", "site/khaklin.svg", "site/og.png"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin"
@@ -27,3 +27,10 @@ path = ["docs/assets/openid-certified-mark-on-white.png", "site/openid-certified
 precedence = "closest"
 SPDX-FileCopyrightText = "OpenID Foundation"
 SPDX-License-Identifier = "LicenseRef-OpenID-Certified-Mark"
+
+# The hero's sky film and its poster: rendered by the project, not marks.
+[[annotations]]
+path = ["site/sky-1440.mp4", "site/sky-960.mp4", "site/sky-poster.webp"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Egor Khaklin and the Polaris contributors"
+SPDX-License-Identifier = "Apache-2.0"
