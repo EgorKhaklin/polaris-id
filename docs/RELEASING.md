@@ -381,7 +381,9 @@ Actions → **Release images and chart** → Run workflow, from the release tag
 `gh workflow run release-images.yml --ref <tag> -f confirm=PUBLISH`.
 
 - **Dry run** (the default, `confirm` empty), from any branch or tag: all five images build on
-  amd64 and arm64. Nothing is pushed, signed or attested.
+  amd64 and arm64. Nothing is pushed, signed or attested. It also reads each image's release
+  tag, read-only, and reports what a publish would meet there (on a branch, the tag this tree's
+  version would publish as).
 - **Real publish**: from a version tag, with `PUBLISH` typed into `confirm`. The run waits at the
   `ghcr` environment for the maintainer's approval before anything builds. Then each image is
   pushed to `ghcr.io/egorkhaklin/polaris-<name>` by digest, its two architectures are joined into
@@ -397,6 +399,15 @@ limited to tags matching `v*`; after the first publish, make the six packages pu
 Packages → each package → visibility), since a new package starts private. The workflow runs from
 the tag, so the first tag it can publish is the first one cut after it reached `main`. Operators
 verify with [docs/operator/VERIFY-RELEASE.md](operator/VERIFY-RELEASE.md).
+
+**A published tag never moves.** Before the publish job joins an image's index under the tag,
+[`scripts/polaris-release-tag-guard.py`](../scripts/polaris-release-tag-guard.py) reads the tag
+at the registry: an absent tag proceeds, an index of exactly the run's two digests proceeds, and
+anything else, or an answer it cannot read, stops the job before the tag can move. If a publish
+fails part way, use **Re-run failed jobs** in that same run: the build jobs that succeeded are not
+re-run, their digests are reused, and the tag lands where it was. Never dispatch a fresh run on a
+published tag (the guard refuses it). A change to what was built is a new version, and its entry
+here records the earlier version's digests that no tag names any more.
 
 **The record:** no publish yet.
 

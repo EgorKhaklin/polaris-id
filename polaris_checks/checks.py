@@ -7001,6 +7001,25 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
     i = index[0]
     if not re.search(r"cosign sign --yes \"\$REF\"", i):
         return _fail(name, f"{rel}: the publish job does not sign the image index it creates")
+    # `imagetools create -t` moves a tag that already exists. The guard runs first, publish mode
+    # (the tag and both digests built), and its refusal stops the job (2026-10-11, before 1.0.0's
+    # first publish: a guard added after a tag can never protect it, since a dispatch on the tag
+    # runs the workflow from the tag's tree).
+    gm = re.search(r"python3 scripts/polaris-release-tag-guard\.py((?:[^\n]*\\\n)*[^\n]*)", i)
+    gstep = ""
+    if gm:
+        start = i.rfind("\n      - ", 0, gm.start())
+        end = i.find("\n      - ", gm.end())
+        gstep = i[start: end if end >= 0 else len(i)]
+    if not (gm and 0 <= gm.start() < i.find("imagetools create")
+            and (root / "scripts/polaris-release-tag-guard.py").is_file()
+            and all(a in gm.group(1) for a in ('--tag "$TAG"', '--amd64 "$AMD64"', '--arm64 "$ARM64"'))
+            and "--dry" not in gm.group(1) and "||" not in gm.group(1)
+            and "continue-on-error" not in gstep):
+        return _fail(name, f"{rel}: before the publish job joins an index under the release tag "
+                     "it must run scripts/polaris-release-tag-guard.py with the tag and both "
+                     "digests it built, and stop on its refusal; `imagetools create -t` moves a "
+                     "published tag without a word")
     steps = {}
     for m in re.finditer(r"uses:\s*(actions/attest-[a-z-]+)@[^\n]*\n((?:\s{8,}[^\n]*\n)*)", i):
         steps.setdefault(m.group(1), []).append(m.group(2))
@@ -7063,7 +7082,8 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
     return _ok(name,
                "release-images.yml runs only by hand; a publish needs PUBLISH, a version tag and "
                "the maintainer's approval at the ghcr environment before any job can write to the "
-               "registry; each image index and the chart are signed keyless, provenance and "
+               "registry; a published tag never moves (the tag guard runs before each index is "
+               "joined); each image index and the chart are signed keyless, provenance and "
                "NTIA-checked per-architecture SBOMs are attached at the registry, the chart is "
                "pinned to the signed digests and everything published is verified with two "
                "negative controls refused, every action is pinned by commit, and "
