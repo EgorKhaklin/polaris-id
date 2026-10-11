@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cryptography import x509  # noqa: E402
 
 from polaris_oid4vp.cli import FILES, keygen, main, parse_claim, verifier_from  # noqa: E402
-from test_verifier import Wallet  # noqa: E402
+from test_verifier import TYP_AS_FORMAT, Wallet, verifier_info_vectors  # noqa: E402
 
 
 class KeygenTests(unittest.TestCase):
@@ -541,6 +541,123 @@ class TransactionDataServeTests(unittest.TestCase):
         path.write_text(json.dumps([{"format": "f", "data": "x", "credential_ids": ["pay"]}]))
         self.assertEqual(self._serve("--credential-query-id", "pay", "--verifier-info", str(path))[0], 0)
         self.assertEqual(self._serve("--verifier-info", str(path))[0], 2)
+
+
+class VerifierInfoProfileServeTests(unittest.TestCase):
+    """`serve --verifier-info-profile etsi-119472-2`: verifier_info held to ETSI TS 119 472-2
+    V1.2.1 before the listener starts. A refusal names its requirement, exits 2 and never listens,
+    and startup says what was checked and what was not. Without the flag, serve is as before."""
+
+    _serve = ServeCommandHeldOutTests._serve
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-vinfo-"))
+        keygen(self.tmp, "verifier.test")
+        self.vectors = dict(verifier_info_vectors())
+
+    def _file(self, content):
+        import json
+        path = self.tmp / "verifier-info.json"
+        path.write_text(json.dumps(content))
+        return str(path)
+
+    def _request_payload(self, verifier):
+        _, jar = verifier.new_request()
+        payload = jar.split(".")[1]
+        return base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+
+    def test_every_vector_is_judged_before_it_listens(self):
+        for name, vector in sorted(self.vectors.items()):
+            s = vector["settings"]
+            args = ["--credential-query-id", s["credential_query_id"]]
+            for vct in s["vct_values"]:
+                args += ["--vct", vct]
+            for claim in s["claims"]:
+                args += ["--claim", claim]
+            if s["verifier_info_profile"]:
+                args += ["--verifier-info-profile", s["verifier_info_profile"]]
+            if vector["verifier_info"] is not None:
+                args += ["--verifier-info", self._file(vector["verifier_info"])]
+            with self.subTest(vector=name):
+                rc, seen, _, err = self._serve(*args)
+                if vector["expect"] == "accept":
+                    self.assertEqual((rc, "verifier" in seen), (0, True), err)
+                    continue
+                self.assertEqual(rc, 2)
+                self.assertNotIn("verifier", seen, "a refused verifier_info reached the listener")
+                self.assertIn(vector["says"], err)
+                if vector["requirement"]:
+                    self.assertIn(vector["requirement"] + ":", err)
+
+    def test_the_control_is_carried_and_startup_says_what_was_checked(self):
+        import json
+        info = self.vectors["accept-control.json"]["verifier_info"]
+        rc, seen, out, _ = self._serve("--verifier-info-profile", "etsi-119472-2",
+                                       "--verifier-info", self._file(info))
+        self.assertEqual(rc, 0)
+        self.assertIn(b'"verifier_info":' + json.dumps(info, separators=(",", ":")).encode(),
+                      self._request_payload(seen["verifier"]))
+        self.assertIn("verifier_info meets etsi-119472-2: ETSI TS 119 472-2 V1.2.1 RO-01 to RO-16, "
+                      "shape and labels only (the registration certificate's signature, chain and "
+                      "registry are not checked)", out)
+        self.assertIn("the request asks for no more than its registration certificate registers",
+                      out)
+        self.assertNotIn("did not run", out)
+
+    def test_without_a_certificate_startup_says_the_over_asking_check_did_not_run(self):
+        registrar = self.vectors["accept-control.json"]["verifier_info"][:1]
+        rc, seen, out, _ = self._serve("--verifier-info-profile", "etsi-119472-2",
+                                       "--verifier-info", self._file(registrar))
+        self.assertEqual(rc, 0)
+        self.assertFalse(seen["verifier"].over_asking_checked)
+        self.assertIn("no registration certificate carried; the over-asking check did not run",
+                      out)
+        self.assertNotIn("asks for no more than", out)
+
+    def test_the_profile_with_no_verifier_info_does_not_start(self):
+        rc, seen, _, err = self._serve("--verifier-info-profile", "etsi-119472-2")
+        self.assertEqual(rc, 2)
+        self.assertNotIn("verifier", seen)
+        self.assertIn("OIDFVP-HAIP-COMMON-REQ-RO-01: the request carries no verifier_info", err)
+
+    def test_a_profile_it_does_not_know_stops_the_parser(self):
+        import contextlib
+        import io
+        err = io.StringIO()
+        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(err):
+            main(["serve", "--pki", str(self.tmp), "--verifier-info-profile", "etsi"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("etsi-119472-2", err.getvalue())
+
+    def test_without_the_profile_the_label_check_still_applies(self):
+        """German EUDI Wallet iOS issue #38, in either mode: the certificate under its own typ
+        stops serve before it listens, and the same data under registration_cert is carried."""
+        jwt = self.vectors["accept-control.json"]["verifier_info"][1]["data"]
+        for info in ([{"format": "rc-wrp+jwt", "data": jwt}], {"format": "rc-wrp+jwt", "data": jwt}):
+            with self.subTest(info=type(info).__name__):
+                rc, seen, _, err = self._serve("--verifier-info", self._file(info))
+                self.assertEqual(rc, 2)
+                self.assertNotIn("verifier", seen)
+                self.assertIn("--verifier-info", err)
+                self.assertIn(TYP_AS_FORMAT, err)
+        rc, seen, out, _ = self._serve("--verifier-info", self._file(
+            {"format": "registration_cert", "data": jwt}))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("verifier_info meets", out)
+        self.assertNotIn("over-asking", out)
+
+    def test_without_the_profile_its_rules_do_not_apply(self):
+        """Outside the profile, verifier_info the profile refuses is carried as given: a single
+        certificate with no registrar data, and one that registers less than is asked for."""
+        import json
+        over = self.vectors["over-asking-claim-path.json"]["verifier_info"]
+        for info in (over, over[1:], over[1]):
+            with self.subTest(info=str(info)[:30]):
+                rc, seen, out, _ = self._serve("--verifier-info", self._file(info))
+                self.assertEqual(rc, 0)
+                self.assertIsNone(seen["verifier"].verifier_info_profile)
+                self.assertIn(b'"verifier_info":' + json.dumps(info, separators=(",", ":")).encode(),
+                              self._request_payload(seen["verifier"]))
 
 
 class VerdictCommandTests(unittest.TestCase):

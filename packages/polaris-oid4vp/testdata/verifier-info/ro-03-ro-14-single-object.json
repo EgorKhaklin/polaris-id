@@ -1,0 +1,59 @@
+{
+  "id": "ro-03-ro-14-single-object",
+  "changed": "verifier_info is one object (the registrar_dataset element), not an array",
+  "class": "spec-implied",
+  "clauses": [
+    "ETSI TS 119 472-2 V1.2.1 OIDFVP-HAIP-COMMON-REQ-RO-03",
+    "ETSI TS 119 472-2 V1.2.1 OIDFVP-HAIP-COMMON-REQ-RO-14"
+  ],
+  "requirement": "OIDFVP-HAIP-COMMON-REQ-RO-03 and OIDFVP-HAIP-COMMON-REQ-RO-14",
+  "says": "not an array of elements",
+  "settings": {
+    "verifier_info_profile": "etsi-119472-2",
+    "credential_query_id": "pid",
+    "vct_values": [
+      "urn:eudi:pid:1"
+    ],
+    "claims": [
+      "given_name",
+      "family_name"
+    ]
+  },
+  "verifier_info": {
+    "format": "registrar_dataset",
+    "data": {
+      "identifier": [
+        {
+          "type": "https://registry.example.invalid/identifier-types/registration-number",
+          "identifier": "rp-0001.example.invalid"
+        }
+      ],
+      "srvDescription": [
+        {
+          "lang": "en",
+          "content": "Example relying party service (test material)"
+        }
+      ],
+      "registryURI": "https://registry.example.invalid/api/v1",
+      "intendedUseIdentifier": "https://registry.example.invalid/intended-use/0001",
+      "purpose": [
+        {
+          "lang": "en",
+          "content": "Confirm the holder's name (test material)"
+        }
+      ],
+      "policyURI": "https://rp.example.invalid/privacy-policy",
+      "credential": [
+        {
+          "format": "dc+sd-jwt",
+          "meta": {
+            "vct_values": [
+              "urn:eudi:pid:1"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "expect": "refuse"
+}

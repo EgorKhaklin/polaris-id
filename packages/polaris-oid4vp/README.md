@@ -18,7 +18,7 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** this release, 1.0.0rc19, is the certified rc7 verifier plus the fixes and additions
+**Status:** this release, 1.0.0rc20, is the certified rc7 verifier plus the fixes and additions
 made since; the certification names rc7. It is re-run weekly against the outside implementations in the table
 below. No operator other than the author has run it and no independent security review exists.
 Details: [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
@@ -86,7 +86,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   the registration certificate a registrar issues: a JSON array as OpenID4VP 1.0 section 5.1 has
   it, or one object, `{"format": "registration_cert", "data": "<JWT>"}`, as the German EUDI
   Wallet guide and its testing tool read it. The German ecosystem requires one for a PID request.
-  This package carries it as given and does not check it.
+  This package carries it as given, checking the shape section 5.1 asks for; a registration
+  certificate labelled with its own media type is refused. `--verifier-info-profile
+  etsi-119472-2` holds it to ETSI TS 119 472-2 (below).
 - `serve --issuer-trust-anchor ca.pem` trusts an issuer that signs with its certificate in `x5c`,
   as HAIP issuers do (repeatable; each file may hold several PEM certificates). The leaf must
   chain to an anchor, directly or through the CA certificates the `x5c` sends after it (at most
@@ -236,6 +238,45 @@ holds this to SIROS's published vectors and to a two-credential vector.
 Not covered: the DC API, mdoc, schemas for TS12's other three types, TS12 rules its schema does not
 encode, and JSON Schema `format` (an annotation). A `Verifier` remembers a `jti` for one day.
 
+## verifier_info under ETSI TS 119 472-2
+
+ETSI TS 119 472-2 V1.2.1 makes `verifier_info` mandatory in its HAIP-common request object
+(OIDFVP-HAIP-COMMON-REQ-RO-01 to -16), and the German EUDI Wallet (its core library 0.30, in iOS
+0.3.9 and Android 0.61.3) refuses every request from an `x509_hash` verifier, as this one is, that
+carries no registration certificate. `Verifier(..., verifier_info_profile="etsi-119472-2")`, or
+`serve --verifier-info-profile etsi-119472-2`, refuses to start a request whose `verifier_info`
+does not meet those requirements: a `ValueError` names the requirement's ID, and `serve` exits 2
+before it listens. Under the profile:
+
+- `verifier_info` is an array of objects with exactly one `registrar_dataset` element, whose
+  `data` holds `identifier`, `srvDescription`, `registryURI`, `intendedUseIdentifier`, `purpose`
+  and `policyURI`, each non-empty and the two URIs absolute, and optionally `credential`;
+- it carries at most one `registration_cert` element, its `data` a non-empty string; neither
+  element carries `credential_ids`, and a format naming a registration certificate otherwise
+  (`WRPRC`, `registration_certificate`) is refused;
+- with a registration certificate, the request may ask for nothing the certificate does not
+  register: the DCQL query's format and `meta`, and each claim path. The certificate's
+  `credentials` are read as ETSI TS 119 475 writes them, with `claim` (a certificate saying
+  `claims` is refused as not ETSI's key, never read as registering nothing; one without `claim`
+  holds the format and `meta` only). Claim paths compare exactly, the way the Android wallet
+  compares them: a registered `["age_equal_or_over"]` does not cover `["age_equal_or_over",
+  "18"]`, nor `["nationalities", null]` cover `["nationalities", 0]`. `values` are not compared.
+  `serve` says at startup whether this check ran.
+
+**Shape and labels only.** The profile does not validate the registration certificate's
+signature or chain, the registrar's data against its registry, or the access certificate that
+signs the request; it reads the certificate's payload, unverified, only to check this verifier's
+own request against it, and judges no wallet's behaviour. RO-16 has the certificate's `data` be
+"the base64url encoding of the serialized RP registration certificate", which leaves open whether
+a JWT goes as its compact serialization or encoded once more; both forms are read.
+
+In every mode, profile or none, a registration certificate labelled with its own media type
+(`rc-wrp+jwt` or `rc-wrp+cwt` as its format, or a JWS typed `rc-wrp+jwt` under another format) is
+refused, because its format is `registration_cert`. Otherwise a request without the profile is
+unchanged, byte for byte. The cases, as JSON another verifier can read, are in
+[testdata/verifier-info](https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp/testdata/verifier-info).
+The approach follows EUDIPLO's `registration_cert` configuration and ERICA's request checks.
+
 ## Revocation
 
 `verdict.revocation` is one of seven states:
@@ -288,11 +329,11 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 528 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 575 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 124 refusals accept and requires a
-  test to fail: 120 are caught, and the 4 survivors are declared with their reasons (measured
-  2026-10-10; CI runs it on every push).
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 170 refusals accept and requires a
+  test to fail: 166 are caught, and the 4 survivors are declared with their reasons (measured
+  2026-10-11; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

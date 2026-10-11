@@ -16,6 +16,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Added
 
 - polaris-oid4vp checks OpenID4VP 1.0 `transaction_data`, opt-in per request: the key-binding JWT must hash each entry's string as sent, with an offered algorithm, and for an EU TS12 (SCA) entry carry a fresh `jti`, the request's `response_mode` and two `amr` categories; which entries each credential binds is a named option, and `polaris-oid4vp verdict` judges a captured response under both.
+- polaris-oid4vp `verifier_info_profile="etsi-119472-2"` (`serve --verifier-info-profile etsi-119472-2`) refuses to start a request whose `verifier_info` does not meet ETSI TS 119 472-2 V1.2.1's OIDFVP-HAIP-COMMON-REQ-RO-01 to -16, naming the requirement, or whose DCQL query asks for more than its registration certificate registers; it checks shape and labels, not the certificate's signature, chain or registry. In either mode a registration certificate labelled with its own media type (`rc-wrp+jwt`, `rc-wrp+cwt`) instead of `registration_cert` is refused.
 
 ## v1.0.0-rc.72 — 2026-10-10 (an ML-DSA key or signature of the wrong size is refused, and a PostgreSQL major-version upgrade runs as written)
 
