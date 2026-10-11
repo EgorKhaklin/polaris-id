@@ -399,8 +399,9 @@ Actions → **Release images and chart** → Run workflow, from the release tag
 
 A published digest cannot be withdrawn, so each publish is the maintainer's decision. One-time
 setup: create the `ghcr` environment with the maintainer as its required reviewer, deployments
-limited to tags matching `v*`; after the first publish, make the six packages public (GitHub →
-Packages → each package → visibility), since a new package starts private. The workflow runs from
+limited to tags matching `v*`. The six packages came up public on the first publish: published by
+this public repository's workflow, they are linked to it (2026-10-11, ghcr.io answered an anonymous
+pull of each). The workflow runs from
 the tag, so the first tag it can publish is the first one cut after it reached `main`. Operators
 verify with [docs/operator/VERIFY-RELEASE.md](operator/VERIFY-RELEASE.md).
 
@@ -413,7 +414,11 @@ re-run, their digests are reused, and the tag lands where it was. Never dispatch
 published tag (the guard refuses it). A change to what was built is a new version, and its entry
 here records the earlier version's digests that no tag names any more.
 
-**The record:** no publish yet.
+**The record:**
+
+| Run | Date | Tag | What happened |
+|---|---|---|---|
+| 38131951637 | 2026-10-11 | v1.0.0 | dispatched on the tag and approved at the `ghcr` environment; the tag guard proceeded for each image (the tag was absent); published polaris-app `sha256:0368d5eb21a1bf391db166abca2af97d3b769de7ca342c02ea4f8631ff419a05`, polaris-caddy `sha256:147cfdc0abd76c09ffca19eefb31850cf5cc6a89a222c1d6d136b580cea474f2`, polaris-pgbouncer `sha256:29ad959d93b21d22dc9838e9cd86dfe8367f53d3c77a8a6f0c1bfff71253b768`, polaris-postgres `sha256:7568d73a3ceb2e9eccb4bb655a1cec59e3a948b5e92ad7808229e34913c1ecc6`, polaris-etcd `sha256:9329f0e6600ae7badd0ae3740a03cbd4ac9d19c96bdc65c223ba26975ebbb285` and the chart 1.0.0 `sha256:4ced715b9c22c25903259229dce74fa9f4cd5d3737bfac9e2f378350be8cce6f`; the run's verify job passed with both controls refused. Verified again from outside the run, anonymously (no registry login, cosign 3.1.3): each digest under the tag is the one above, each index's signature and SLSA provenance and each architecture's SBOM verify against the tag's identity, and so does the chart's signature; with a GitHub login, `gh attestation verify` passes and refuses provenance asked of an architecture's digest or under another tag |
 
 ---
 
