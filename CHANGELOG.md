@@ -9,6 +9,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
+
+1.0.0 is the contract milestone docs/RELEASING.md set: "That operator makes 1.0.0." IDFoundry/OID4VCgo's CI runs polaris-oid4vp, built from this repository's source at a commit it reviewed, daily and on each of its releases, since 2026-10-11. Polaris has never held real identity data and has had no independent security review; what a deployment on real data still needs is listed in [PRODUCTION-READINESS](docs/PRODUCTION-READINESS.md). polaris-oid4vp is 1.0.0, the verifier that was used; polaris-verify, polaris-sdk-python, polaris-id-cli and polaris-sdk-ts keep their release candidates, since no outside operator has used them. The OpenID certification stays polaris-oid4vp 1.0.0rc7 (certifications do not expire); the newest release runs against the OpenID Foundation's conformance suite every week in CI.
+
 ### Fixed
 
 - `polaris-verify --verify-dir` reported a pack it refused before either witness ran (a public key of the wrong length, hex that does not decode) as SKIPPED, so a vector set holding such a negative could not pass on a correct verifier; every pack's verdict is now held to its expectation. Only a file that is not a pack is skipped (another artifact, whose row names the flag that checks it, or an object with none of a pack's fields), and a pack no backend can verify. A directory in which no real witness decided anything, such as the placeholder alone, exited 0, as did a genuine pack beside an object with no pack field expecting invalid; both now exit 2. A run that does not pass ends with "N of M as expected" and a line naming each cause, where it printed "verified with the app's real witnesses" beside a skipped or mismatched vector. The application's signing self-checks (issuance, status assertions, migration) refuse a key or signature of the wrong size with that reason instead of reporting a two-witness failure.
@@ -19,10 +23,14 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp checks OpenID4VP 1.0 `transaction_data`, opt-in per request: the key-binding JWT must hash each entry's string as sent, with an offered algorithm, and for an EU TS12 (SCA) entry carry a fresh `jti`, the request's `response_mode` and two `amr` categories; which entries each credential binds is a named option, and `polaris-oid4vp verdict` judges a captured response under both.
 - polaris-oid4vp `verifier_info_profile="etsi-119472-2"` (`serve --verifier-info-profile etsi-119472-2`) refuses to start a request whose `verifier_info` does not meet ETSI TS 119 472-2 V1.2.1's OIDFVP-HAIP-COMMON-REQ-RO-01 to -16, naming the requirement, or whose DCQL query asks for more than its registration certificate registers; it checks shape and labels, not the certificate's signature, chain or registry. In either mode a registration certificate labelled with its own media type (`rc-wrp+jwt`, `rc-wrp+cwt`) instead of `registration_cert` is refused.
 - `polaris-oid4vp serve --once` prints the request it starts as three launch links, `openid4vp://?`, `haip-vp://?` and `eu-eaap://?` (ETSI TS 119 472-2, which WE BUILD CS-02 v1.2 requires beside `openid4vp://`), one query behind each, after the parameters it printed before.
+- `lab/interop/oid4vcgo/run.sh` takes a prebuilt wallet (`OID4VCGO_BIN`) or a source checkout (`OID4VCGO_SRC`) besides a released version, so a wallet project can run it on its pull requests.
+- docs/reference/INTEROP.md: each outside implementation, what ran against the verifier, and its evidence.
+- `release-images.yml` never moves a published release tag: before the publish job joins an image's index under the tag, `scripts/polaris-release-tag-guard.py` reads it at the registry, and only an absent tag or an index of the run's own two digests proceeds; a dry run reports what a publish would meet ([RELEASING](docs/RELEASING.md)).
 
 ### Changed
 
 - `polaris-oid4vp`: a 200 from `Verifier.handle_direct_post` no longer means an accepted presentation, since a wallet's error response is answered 200 too. Acceptance is `verdict.authentic`; `serve` prints `<- 200 authentic` for an accepted presentation only.
+- The scoreboard names its first outside operator, in test: IDFoundry/OID4VCgo's CI runs `lab/interop/oid4vcgo/run.sh` against the verifier (lab/EXTERNAL-NOUNS.md).
 
 ## v1.0.0-rc.72 — 2026-10-10 (an ML-DSA key or signature of the wrong size is refused, and a PostgreSQL major-version upgrade runs as written)
 

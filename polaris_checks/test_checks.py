@@ -3262,12 +3262,19 @@ def test_release_provenance_check_discriminates(tmp_path):
 def test_release_images_signed_check_discriminates(tmp_path):
     files = (".github/workflows/release-images.yml", ".github/workflows/sbom.yml",
              ".github/workflows/sbom-build.yml",
-             "docs/operator/VERIFY-RELEASE.md", "scripts/polaris-pin-chart-images.py")
+             "docs/operator/VERIFY-RELEASE.md", "scripts/polaris-pin-chart-images.py",
+             "scripts/polaris-release-tag-guard.py")
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
     assert checks.check_release_images_signed(tmp_path)[0].level == "OK", \
-        "must PASS on the real workflow, its runbook and the pin script"
+        "must PASS on the real workflow, its runbook, the pin script and the tag guard"
+    guard = tmp_path / "scripts/polaris-release-tag-guard.py"
+    guard_text = guard.read_text()
+    guard.unlink()
+    assert checks.check_release_images_signed(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the tag guard the publish job runs does not exist"
+    guard.write_text(guard_text)
     wf = tmp_path / ".github/workflows/release-images.yml"
     doc = tmp_path / "docs/operator/VERIFY-RELEASE.md"
     good = {wf: wf.read_text(), doc: doc.read_text()}
@@ -3309,6 +3316,22 @@ def test_release_images_signed_check_discriminates(tmp_path):
            "must FAIL when the job that also runs dry can mint a signing identity")
     broken(wf, 'cosign sign --yes "$REF"', 'cosign sign --yes --key env://COSIGN_KEY "$REF"',
            "must FAIL when the index is signed with a key instead of keyless")
+    guard_call = ('          python3 scripts/polaris-release-tag-guard.py --repo "${REGISTRY#ghcr.io/}/polaris-$NAME" \\\n'
+                  '            --tag "$TAG" --amd64 "$AMD64" --arm64 "$ARM64"\n')
+    broken(wf, guard_call, "          echo unguarded\n",
+           "must FAIL when the publish job can move a published tag")
+    broken(wf, guard_call, guard_call.replace('--amd64 "$AMD64" ', ""),
+           "must FAIL when the guard is not given both digests the run built")
+    broken(wf, guard_call, guard_call.replace(' --tag "$TAG"', ' --dry --tag "$TAG"'),
+           "must FAIL when the publish job runs the guard in its never-blocking dry mode")
+    broken(wf, guard_call, guard_call.replace('"$ARM64"\n', '"$ARM64" || true\n'),
+           "must FAIL when the guard's refusal is swallowed")
+    broken(wf, "      - name: Refuse to move a published tag\n",
+           "      - name: Refuse to move a published tag\n        continue-on-error: true\n",
+           "must FAIL when the guard's step may fail without stopping the job")
+    broken(wf, guard_call + "\n      - name: Join the two architectures into one index\n",
+           "\n      - name: Join the two architectures into one index\n",
+           "must FAIL when the guard is gone from before the index is joined")
     broken(wf, "          subject-digest: ${{ steps.index.outputs.digest }}\n"
                "          push-to-registry: true\n",
            "          subject-digest: ${{ steps.index.outputs.digest }}\n",
@@ -22403,6 +22426,52 @@ def test_package_readme_version_check_detects_its_absence(tmp_path):
     assert out[0].level == "FAIL", "an empty tree must not read as four agreeing READMEs"
 
 
+def test_package_readme_version_check_reads_a_final_release(tmp_path):
+    """2026-10-11: polaris-oid4vp moved to 1.0.0 while its README must keep naming 1.0.0rc7,
+    the certified version. The check kept only candidate versions, so a manifest declaring a
+    final release could never match: it failed whatever the README said. A final release now
+    counts when the README names that exact version as a whole token.
+    """
+    fn = checks.check_package_readmes_state_their_own_version
+
+    def write(oid4vp_readme):
+        for rel, manifest, body, readme in (
+                ("packages/polaris-verify", "pyproject.toml", '[project]\nversion = "1.0.0rc3"\n',
+                 "This is 1.0.0rc3.\n"),
+                ("packages/polaris-oid4vp", "pyproject.toml", '[project]\nversion = "1.0.0"\n',
+                 oid4vp_readme),
+                ("sdk/python", "pyproject.toml", '[project]\nversion = "1.0.0rc3"\n',
+                 "This is 1.0.0rc3.\n"),
+                ("sdk/typescript", "package.json", '{\n  "version": "1.0.0-rc.3"\n}\n',
+                 "This is 1.0.0-rc.3.\n")):
+            d = tmp_path / rel
+            d.mkdir(parents=True, exist_ok=True)
+            (d / manifest).write_text(body)
+            (d / "README.md").write_text("# pkg\n\n" + readme)
+
+    # The README names the exact final version, beside the certified candidate: the honest page.
+    for ok in ("This release, 1.0.0, follows 1.0.0rc7, the certified version.\n",
+               "1.0.0rc7 is the certified version. This release is 1.0.0.\n",
+               "1.0.0rc7 is the certified version. This release is `1.0.0`\n"):
+        write(ok)
+        assert fn(tmp_path)[0].level == "OK", "must PASS at 1.0.0: %r" % ok
+
+    # Nothing names the exact 1.0.0: a prefix, a longer number or a later suffix is not it.
+    for decoy in ("1.0.0rc7", "1.0.0-rc.7", "11.0.0", "21.0.0", "1.0.0.post1", "1.0.01"):
+        text = "1.0.0rc7 is the certified version. See %s here.\n" % decoy
+        write(text)
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL", "%r must not read as naming 1.0.0" % decoy
+    assert checks._VERSION_IN_README.findall("see 1.0.0rc7.") == ["1.0.0rc7"], \
+        "the regex must capture the whole token, never its 1.0.0 prefix"
+
+    # Only candidates named: the page announces versions the artifact is not.
+    write("This release, 1.0.0rc20, follows 1.0.0rc7, the certified version.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "1.0.0rc20" in out[0].message, \
+        "a README naming only 1.0.0rc7 and 1.0.0rc20 must FAIL at 1.0.0"
+
+
 def test_c8_bounds_the_rows_at_the_query_not_only_the_parameters(tmp_path):
     # 2026-09-23: the cluster grid is "clamped" at 90 degrees, but a coarser grid is FEWER
     # cells; the route is bounded only by the cap it passes to the SQL. Replacing that cap
@@ -23558,3 +23627,57 @@ def test_edge_tls_state_shared_check_discriminates(tmp_path):
         write(**case)
         assert checks.check_edge_tls_state_shared(tmp_path)[0].level == "FAIL", \
             "must FAIL when the edge's TLS state is no longer shared: %r" % (case,)
+
+
+def test_interop_page_count_check_discriminates(tmp_path):
+    """The interop page's rows, its sentence, the scoreboard's summary, the README badge and the claims manifest
+    must count and name the same implementations: each one changed, or the page emptied, must FAIL."""
+    files = {rel: (REPO / rel).read_text(encoding="utf-8") for rel in (
+        "README.md", "lab/EXTERNAL-NOUNS.md", "docs/reference/claims.json", "docs/reference/INTEROP.md")}
+
+    def write(**changes):
+        for rel, text in files.items():
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(changes.get(rel, text), encoding="utf-8")
+
+    def level():
+        return checks.check_interop_page_matches_the_count(tmp_path)[0].level
+
+    write()
+    assert level() == "OK"
+    page, board, readme, manifest = (files[r] for r in (
+        "docs/reference/INTEROP.md", "lab/EXTERNAL-NOUNS.md", "README.md", "docs/reference/claims.json"))
+    axle_row = next(ln for ln in page.splitlines() if ln.startswith("| Axle "))
+    broken = [
+        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more", "Seven wallets and nine more")},
+        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more", "Six wallets and eight more")},
+        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more outside", "Several outside")},
+        {"docs/reference/INTEROP.md": page.replace(axle_row + "\n", "")},
+        {"docs/reference/INTEROP.md": page.replace(axle_row, axle_row + "\n" + axle_row)},
+        {"docs/reference/INTEROP.md": page.replace("| walt.id Wallet API v2 | wallet |", "| walt.id Wallet API v2 | library |")},
+        {"docs/reference/INTEROP.md": page.replace("| vck (A-SIT Plus), `vck-openid-ktor` | library |", "| vck (A-SIT Plus), `vck-openid-ktor` | wallet |")},
+        {"docs/reference/INTEROP.md": page.replace("| Axle (OpenWallet", "| Axel (OpenWallet")},
+        {"docs/reference/INTEROP.md": page.replace("| Multipaz (OpenWallet Foundation), JVM target |", "| Multipaz and vck |")},
+        {"docs/reference/INTEROP.md": page.replace("| Implementation | Kind |", "| Name | Kind |")},
+        {"docs/reference/INTEROP.md": page.replace("\n## Measured\n", "\n## Runs\n")},
+        {"docs/reference/INTEROP.md": ""},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("| 6 unmodified wallets", "| 7 unmodified wallets", 1)},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("and 9 more implementations", "and 10 more implementations", 1)},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("| Wallets | 6 unmodified", "| Wallets | six unmodified", 1)},
+        {"README.md": readme.replace("tested_against-15_outside_implementations", "tested_against-16_outside_implementations")},
+        {"README.md": readme.replace("tested_against-15_outside_implementations", "tested_against-15_outside_wallets")},
+        {"docs/reference/claims.json": manifest.replace('"scoreboard": "Axle"', '"scoreboard": "Axel"')},
+        {"docs/reference/claims.json": manifest.replace('"scoreboard": "Multipaz"', '"scoreboard": "OpenWallet Foundation"')},
+        {"docs/reference/claims.json": manifest.replace('        "readme-six-wallets",\n        "readme-nine-more"\n',
+                                                         '        "readme-nine-more"\n', 1)},
+        {"docs/reference/claims.json": manifest.replace('        "readme-six-wallets",\n        "readme-nine-more"\n',
+                                                         '        "readme-six-wallets",\n        "readme-six-wallets",\n'
+                                                         '        "readme-nine-more"\n', 1)},
+        {"docs/reference/claims.json": ""},
+    ]
+    for case in broken:
+        (rel, text), = case.items()
+        assert text != files[rel], "the mutation did not apply: %r" % (case,)
+        write(**{rel: text})
+        assert level() == "FAIL", "must FAIL when the counts or names disagree: %r" % (case,)

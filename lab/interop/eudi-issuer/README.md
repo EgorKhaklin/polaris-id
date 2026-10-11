@@ -80,7 +80,7 @@ no `--claim`.
 - the test wallet provider's key, certificate and status list;
 - the issuer stack, and meanwhile the wallet, compiled in a JDK image pinned by digest. Every library
   is checked against [`wallet/gradle/verification-metadata.xml`](wallet/gradle/verification-metadata.xml)
-  (124 components), written by `gradle --write-verification-metadata sha256 installDist` from an
+  (142 components), written by `gradle --write-verification-metadata sha256 installDist` from an
   empty Gradle cache, so a dependency that changes under its version fails the build;
 - the issuance; a wait for the PID's `nbf`, which a verifier holds it to; the presentation and the
   four controls. The wallet runs inside HAProxy's network namespace, where `https://localhost` is

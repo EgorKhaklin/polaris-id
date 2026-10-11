@@ -77,6 +77,36 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: echo "approved to publish $TAG"
 
+  # A dry run reads what a publish would meet at each image's release tag, on the credentials
+  # the publish job uses, with read access only. On a branch the tag is the one this tree's
+  # version would publish as. It reports and never blocks; the publish job's guard refuses.
+  tag-state:
+    name: What a publish would meet at the release tag
+    needs: validate
+    if: inputs.confirm != 'PUBLISH'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read        # read the tag; nothing is written
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Read each image's release tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TYPE" = tag ]; then WHICH=(--tag "$TAG"); else WHICH=(--version-file polaris_web/__version__.py); fi
+          for NAME in app caddy pgbouncer postgres etcd; do
+            python3 scripts/polaris-release-tag-guard.py --dry --repo "${REGISTRY#ghcr.io/}/polaris-$NAME" "${WHICH[@]}"
+          done
+
   build:
     name: Build ${{ matrix.image.name }} (${{ matrix.arch }})
     needs: [validate, approve]
@@ -184,6 +214,22 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # `imagetools create -t` moves a tag that already exists, and the registry does not refuse.
+      # The tag must be absent, or name exactly this run's two digests ("Re-run failed jobs" in
+      # the run that published it); anything else, or any answer it cannot read, refuses before
+      # the tag can move. A change to what was built is a new version (docs/RELEASING.md).
+      - name: Refuse to move a published tag
+        env:
+          NAME: ${{ matrix.name }}
+          TAG: ${{ github.ref_name }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          AMD64=$(cat "digests/$NAME-amd64"); ARM64=$(cat "digests/$NAME-arm64")
+          python3 scripts/polaris-release-tag-guard.py --repo "${REGISTRY#ghcr.io/}/polaris-$NAME" \
+            --tag "$TAG" --amd64 "$AMD64" --arm64 "$ARM64"
 
       - name: Join the two architectures into one index
         id: index

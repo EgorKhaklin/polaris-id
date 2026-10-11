@@ -56,7 +56,7 @@
         "file:docs/PRODUCTION-READINESS.md",
         "file:lab/EXTERNAL-NOUNS.md"
       ],
-      "reproduce": "Read docs/PRODUCTION-READINESS.md, the bound on what the repository may claim, and the Pilot and External relying party / operator sections of lab/EXTERNAL-NOUNS.md, which read None."
+      "reproduce": "Read docs/PRODUCTION-READINESS.md, the bound on what the repository may claim, and the Pilot section of lab/EXTERNAL-NOUNS.md, which reads None, and its External relying party / operator section, which names no relying party."
     },
     {
       "id": "openid-certified-badge",
@@ -507,7 +507,7 @@
     {
       "id": "pre-pilot-notional-data",
       "kind": "statement",
-      "claim": "pre-pilot software on notional data: it has never held real identity data, and nobody but the author has operated it.",
+      "claim": "notional data: it has never held real identity data, and no authority or relying party operates it.",
       "surfaces": [
         "README.md",
         "site/llms.txt"
@@ -517,7 +517,7 @@
         "file:docs/PRODUCTION-READINESS.md",
         "file:lab/EXTERNAL-NOUNS.md"
       ],
-      "reproduce": "Read docs/PRODUCTION-READINESS.md and the External relying party / operator, Use and Pilot sections of lab/EXTERNAL-NOUNS.md: no operator, no outside user, no pilot."
+      "reproduce": "Read docs/PRODUCTION-READINESS.md and the External relying party / operator, Use and Pilot sections of lab/EXTERNAL-NOUNS.md: no relying party, no production user, no pilot; the one outside operator is OID4VCgo's CI, in test."
     },
     {
       "id": "openid-certified-scoped",
@@ -553,7 +553,7 @@
     {
       "id": "not-yet",
       "kind": "statement",
-      "claim": "Not yet: an independent security review, an operator other than the author, a pilot.",
+      "claim": "Not yet: an independent security review, a relying party, a pilot.",
       "surfaces": [
         "README.md",
         "site/llms.txt"
@@ -562,7 +562,7 @@
         "file:lab/EXTERNAL-NOUNS.md",
         "file:docs/PRODUCTION-READINESS.md"
       ],
-      "reproduce": "Read the Independent security review, External relying party / operator and Pilot sections of lab/EXTERNAL-NOUNS.md, which each read None."
+      "reproduce": "Read lab/EXTERNAL-NOUNS.md: the Independent security review and Pilot sections each read None, and the External relying party / operator section reads Relying party: none."
     }
   ]
 }

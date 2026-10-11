@@ -9,7 +9,7 @@ have done with it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 
 **Have, working, CI-proven:**
 
-- A 60-table constraint-enforced schema (67 in a migrated deployment) with append-only audit and 382 invariant checks (v1.0.0-rc.72), each with a detection test.
+- A 60-table constraint-enforced schema (67 in a migrated deployment) with append-only audit and 383 invariant checks (v1.0.0), each with a detection test.
 - A 131-route application with WebAuthn operator MFA, per-agency quotas and the Atlas; an operator CLI.
 - ML-DSA-65 signing checked by two implementations, behind a custody interface (file, PKCS#11, KMS).
 - A Plonky2 ZK membership proof with an independent Python second witness.
@@ -25,8 +25,8 @@ scale; a hardware HSM in CI; certified cryptography (liboqs is not FIPS-validate
 registry images and image signing; accessibility conformance; any external audit, pen test or
 pilot; an external team's docs-only integration against the wire specification; native wallet
 applications; a plain presentation that shows verifiers no stable value (the zero-knowledge path
-is bounded; blinded or one-time presentations are unbuilt); an operator, relying party or holder
-who is not the author; and every institutional prerequisite of a national system (statute,
+is bounded; blinded or one-time presentations are unbuilt); a relying party, holder or production
+operator who is not the author (one wallet project, OID4VCgo, runs the verifier in its CI); and every institutional prerequisite of a national system (statute,
 funding, enrollment workforce, manufacturing, authorization to operate).
 
 **Open engineering limit:** the database-to-pooler hop awaits PostgreSQL 18 for post-quantum key
@@ -57,7 +57,7 @@ sustained during rollout years; 99.99% availability on the verification path. Th
 
 | Needs | For |
 |---|---|
-| An operator who is not the author | 1.0.0, and P1 |
+| An operator who is not the author, running a Polaris node | P1 (1.0.0's operator of the verifier: met 2026-10-11, [the scoreboard](lab/EXTERNAL-NOUNS.md#use)) |
 | A penetration-testing firm, an audit firm, a red team | P1, P6 |
 | An external team integrating from the specification alone | P3, P8 |
 | Secure-element vendors and silicon | P4 |

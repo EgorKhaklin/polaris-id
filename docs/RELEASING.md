@@ -164,8 +164,8 @@ install is a clone: `cd sdk/typescript && npm ci`, then `npm install
 
 ## What the version number says
 
-The four packages are at 1.0.0-rc.1 (`1.0.0rc1` in the Python metadata, which is how PEP 440
-spells the same thing). The go-forward contract names five conditions for calling anything
+The packages went to 1.0.0-rc.1 on 15 September 2026 (`1.0.0rc1` in the Python metadata, which
+is how PEP 440 spells the same thing). The go-forward contract names five conditions for calling anything
 1.0.0, and all five hold:
 
 1. A clean-machine install works: the product boundary drill, on every push and before every
@@ -180,9 +180,12 @@ spells the same thing). The go-forward contract names five conditions for callin
    site and in the scoreboard. REVIEW is not PASSED.
 
 Why a candidate and not 1.0.0: the contract's 90-day objective also asks for an operator who
-is not the author to have used the verifier, and that row of the scoreboard is blank. A release
-candidate is the number that says both things at once. That operator makes 1.0.0; a defect
-found in the candidate makes the next candidate, which is what rc.2 was. Nothing else does.
+is not the author to have used the verifier. A release candidate was the number that said both
+things at once. That operator makes 1.0.0; a defect found in the candidate made the next
+candidate, which is what rc.2 was. Nothing else did. The condition was met on 2026-10-11:
+IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and on each of its releases
+([the scoreboard](../lab/EXTERNAL-NOUNS.md#use)), and the tree and polaris-oid4vp moved to 1.0.0.
+The other four packages keep their release candidates.
 The next candidate is cut as a release, one tag and one GitHub Release that collect every defect
 fixed since the last one, and not per fix (2026-09-26; rc.4 to rc.62 moved per fix, untagged, and
 v1.0.0-rc.62 was released as one candidate covering all of them).
@@ -381,7 +384,9 @@ Actions → **Release images and chart** → Run workflow, from the release tag
 `gh workflow run release-images.yml --ref <tag> -f confirm=PUBLISH`.
 
 - **Dry run** (the default, `confirm` empty), from any branch or tag: all five images build on
-  amd64 and arm64. Nothing is pushed, signed or attested.
+  amd64 and arm64. Nothing is pushed, signed or attested. It also reads each image's release
+  tag, read-only, and reports what a publish would meet there (on a branch, the tag this tree's
+  version would publish as).
 - **Real publish**: from a version tag, with `PUBLISH` typed into `confirm`. The run waits at the
   `ghcr` environment for the maintainer's approval before anything builds. Then each image is
   pushed to `ghcr.io/egorkhaklin/polaris-<name>` by digest, its two architectures are joined into
@@ -397,6 +402,15 @@ limited to tags matching `v*`; after the first publish, make the six packages pu
 Packages → each package → visibility), since a new package starts private. The workflow runs from
 the tag, so the first tag it can publish is the first one cut after it reached `main`. Operators
 verify with [docs/operator/VERIFY-RELEASE.md](operator/VERIFY-RELEASE.md).
+
+**A published tag never moves.** Before the publish job joins an image's index under the tag,
+[`scripts/polaris-release-tag-guard.py`](../scripts/polaris-release-tag-guard.py) reads the tag
+at the registry: an absent tag proceeds, an index of exactly the run's two digests proceeds, and
+anything else, or an answer it cannot read, stops the job before the tag can move. If a publish
+fails part way, use **Re-run failed jobs** in that same run: the build jobs that succeeded are not
+re-run, their digests are reused, and the tag lands where it was. Never dispatch a fresh run on a
+published tag (the guard refuses it). A change to what was built is a new version, and its entry
+here records the earlier version's digests that no tag names any more.
 
 **The record:** no publish yet.
 

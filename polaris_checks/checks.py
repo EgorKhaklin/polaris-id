@@ -7001,6 +7001,25 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
     i = index[0]
     if not re.search(r"cosign sign --yes \"\$REF\"", i):
         return _fail(name, f"{rel}: the publish job does not sign the image index it creates")
+    # `imagetools create -t` moves a tag that already exists. The guard runs first, publish mode
+    # (the tag and both digests built), and its refusal stops the job (2026-10-11, before 1.0.0's
+    # first publish: a guard added after a tag can never protect it, since a dispatch on the tag
+    # runs the workflow from the tag's tree).
+    gm = re.search(r"python3 scripts/polaris-release-tag-guard\.py((?:[^\n]*\\\n)*[^\n]*)", i)
+    gstep = ""
+    if gm:
+        start = i.rfind("\n      - ", 0, gm.start())
+        end = i.find("\n      - ", gm.end())
+        gstep = i[start: end if end >= 0 else len(i)]
+    if not (gm and 0 <= gm.start() < i.find("imagetools create")
+            and (root / "scripts/polaris-release-tag-guard.py").is_file()
+            and all(a in gm.group(1) for a in ('--tag "$TAG"', '--amd64 "$AMD64"', '--arm64 "$ARM64"'))
+            and "--dry" not in gm.group(1) and "||" not in gm.group(1)
+            and "continue-on-error" not in gstep):
+        return _fail(name, f"{rel}: before the publish job joins an index under the release tag "
+                     "it must run scripts/polaris-release-tag-guard.py with the tag and both "
+                     "digests it built, and stop on its refusal; `imagetools create -t` moves a "
+                     "published tag without a word")
     steps = {}
     for m in re.finditer(r"uses:\s*(actions/attest-[a-z-]+)@[^\n]*\n((?:\s{8,}[^\n]*\n)*)", i):
         steps.setdefault(m.group(1), []).append(m.group(2))
@@ -7063,7 +7082,8 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
     return _ok(name,
                "release-images.yml runs only by hand; a publish needs PUBLISH, a version tag and "
                "the maintainer's approval at the ghcr environment before any job can write to the "
-               "registry; each image index and the chart are signed keyless, provenance and "
+               "registry; a published tag never moves (the tag guard runs before each index is "
+               "joined); each image index and the chart are signed keyless, provenance and "
                "NTIA-checked per-architecture SBOMs are attached at the registry, the chart is "
                "pinned to the signed digests and everything published is verified with two "
                "negative controls refused, every action is pinned by commit, and "
@@ -25815,6 +25835,10 @@ def check_package_readmes_state_their_own_version(root: pathlib.Path) -> list[Fi
     versions that produced them. Forbidding that would push the file toward claiming results
     for an artifact that never produced them, which is the failure this check is against,
     one level up. A README naming no version at all is left alone, since it claims nothing.
+    A final release (no candidate suffix) counts when the README names that exact version,
+    as a whole token: not inside 11.0.0, 1.0.0rc7, 1.0.0-rc.7, 1.0.0.post1 or 1.0.01. The
+    candidate filter is there so that an unrelated version number cannot make a README look
+    as if it names one.
     """
     name = "package_readme_version"
     problems, checked = [], 0
@@ -25836,6 +25860,9 @@ def check_package_readmes_state_their_own_version(root: pathlib.Path) -> list[Fi
             continue
         checked += 1
         found = {v for v in _VERSION_IN_README.findall(readme) if "rc" in v.lower()}
+        if re.fullmatch(r"\d+\.\d+\.\d+", declared) and re.search(
+                r"(?<![\w.])%s(?![\w-]|\.\w)" % re.escape(declared), readme):
+            found.add(declared)
         if not found:
             continue                          # names no version in the series; claims nothing
         if not any(_same_version(v, declared) for v in found):
@@ -28618,6 +28645,80 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
                      f"each result; they share runner, services, environment and {shared} setup steps verbatim")
 
 
+# 2026-10-11: docs/reference/INTEROP.md gives each outside implementation's latest run, one row each, so its rows are
+# the outward count a second time. The page's own sentence, its rows, the scoreboard's Wallets summary, the README's
+# badge and the claims manifest's lists must name the same implementations, split the same way: the wallets that ran
+# unmodified, and the rest.
+_INTEROP_PAGE = "docs/reference/INTEROP.md"
+
+
+def _interop_rows(text: str) -> list[tuple[str, str]]:
+    """The (Implementation, Kind) cells of the table under the page's `## Measured` heading."""
+    if "\n## Measured\n" not in text:
+        return []
+    body = text.split("\n## Measured\n", 1)[1].split("\n## ", 1)[0]
+    rows: list[tuple[str, str]] = []
+    header = False
+    for line in body.splitlines():
+        if not line.startswith("|"):
+            if rows:
+                break
+            continue
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip())[1:-1]]
+        if not header:
+            header = cells[:2] == ["Implementation", "Kind"]
+            continue
+        if len(cells) < 2 or not "".join(cells).strip("-: "):
+            continue
+        rows.append((cells[0], cells[1]))
+    return rows
+
+
+def check_interop_page_matches_the_count(root: pathlib.Path) -> list[Finding]:
+    name = "interop_page_count"
+    page, board, readme = _read(root, _INTEROP_PAGE), _read(root, "lab/EXTERNAL-NOUNS.md"), _read(root, "README.md")
+    try:
+        entries = {e["id"]: e for e in json.loads(_read(root, "docs/reference/claims.json"))["claims"]}
+    except Exception:
+        entries = {}
+    if not (page and board and readme and entries):
+        return _fail(name, f"{_INTEROP_PAGE}, lab/EXTERNAL-NOUNS.md, README.md or docs/reference/claims.json is missing")
+    rows = _interop_rows(page)
+    if not rows:
+        return _fail(name, f"{_INTEROP_PAGE} has no Implementation | Kind table under ## Measured")
+    wallets = sum(1 for _, kind in rows if _claim_text(kind) == "wallet")
+    split = (wallets, len(rows) - wallets)
+
+    said = re.search(r"\b(\w+) wallets and (\w+) more outside implementations\b", _claim_text(page))
+    stated = (_claim_first_number(said.group(1)), _claim_first_number(said.group(2))) if said else None
+    if stated != split:
+        return _fail(name, f"{_INTEROP_PAGE} says {stated} (wallets, more); its rows are {split}")
+    summary = re.search(r"^\|\s*Wallets\s*\|\s*(\d+) unmodified wallets\b[^|]*?\band (\d+) more implementations\b",
+                        board, re.M)
+    scored = (int(summary.group(1)), int(summary.group(2))) if summary else None
+    if scored != split:
+        return _fail(name, f"the scoreboard's Wallets summary counts {scored} (wallets, more); {_INTEROP_PAGE} has {split}")
+    badges = [_claim_first_number(label) for label in map(_shields_label, _readme_badges(readme).values())
+              if label and "outside implementation" in label.casefold()]
+    if badges != [len(rows)]:
+        return _fail(name, f"the README's outside-implementations badge says {badges}; {_INTEROP_PAGE} has {len(rows)} rows")
+
+    counted = entries.get(_CLAIMS_COUNTED_ID, {}).get("count_of") or []
+    terms = [i.get("scoreboard", "") for c in counted for i in (entries.get(c, {}).get("implementations") or [])]
+    if len(terms) != len(rows):
+        return _fail(name, f"the claims manifest counts {len(terms)} implementations; {_INTEROP_PAGE} has {len(rows)} rows")
+    matched: dict[int, str] = {}
+    for term in terms:
+        hits = [n for n, (impl, _) in enumerate(rows) if term and _claim_phrase_in(_claim_text(term), _claim_text(impl), r"[\w-]")]
+        if len(hits) != 1:
+            return _fail(name, f"{term!r} names {len(hits)} rows of {_INTEROP_PAGE}; it must name exactly one")
+        if hits[0] in matched:
+            return _fail(name, f"{term!r} and {matched[hits[0]]!r} both name the row {rows[hits[0]][0]!r}")
+        matched[hits[0]] = term
+    return _ok(name, f"{_INTEROP_PAGE} has one row for each of the {len(rows)} counted implementations, "
+                     f"{split[0]} wallets and {split[1]} more, as its sentence, the scoreboard, the badge and the manifest say")
+
+
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pooler_keeps_the_operator_scope,
     check_publishable_packages_keep_their_dependency_budget,
@@ -29001,6 +29102,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_database_instants_read_the_utc_clock,
     check_openapi_covers_api_v1,
     check_product_suite_parts_share_setup,
+    check_interop_page_matches_the_count,
 ]
 
 

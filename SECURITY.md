@@ -55,10 +55,10 @@ interoperability work, not for protecting anything.
 
 ## Supported versions
 
-Security fixes go to the newest release of each package and to the newest release candidate of
-the tree. Until 1.0.0, an older version stops receiving security updates the day a newer one is
-published: the fix ships as a new version, and the table above lists what older versions still
-carry. `polaris-oid4vp` 1.0.0rc7 stays the certified version and is listed with its known defects;
+Security fixes go to the newest release of each package and to the newest release of the
+tree. An older version stops receiving security updates the day a newer one is published: the
+fix ships as a new version, and the table above lists what older versions still carry.
+`polaris-oid4vp` 1.0.0rc7 stays the certified version and is listed with its known defects;
 it is not patched in place.
 
 ---
@@ -205,5 +205,5 @@ bounty: Polaris is pre-pilot software, not a deployed service.
 ---
 
 *Maintainer: Egor Khaklin (VANTA)*
-*Last updated: 2026-10-10 (v1.0.0-rc.72)*
+*Last updated: 2026-10-11 (v1.0.0)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

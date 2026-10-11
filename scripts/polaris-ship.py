@@ -165,6 +165,10 @@ VERIFICATION = [
     (r"^lab/interop/([^/]+/run\.sh|test_exit_trap\.py)$",
      ["python3 -m unittest lab/interop/test_exit_trap.py"],
      "a lab harness moved: its EXIT trap must still fail a run that stops early"),
+    (r"^lab/interop/oid4vcgo/",
+     ["python3 -m unittest lab/interop/oid4vcgo/test_wallet_inputs.py",
+      "bash -n lab/interop/oid4vcgo/run.sh"],
+     "the OID4VCgo harness moved: OID4VCgo's CI runs it, with OID4VCGO_BIN / _SRC / _VERSION"),
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
@@ -348,7 +352,8 @@ UNSHARDED_SUITES = {
     "scripts": ["test_verify_load", "test_wallet", "test_relying_party",
                 "test_verify_conformance", "test_verify_p9", "test_verify_refusals",
                 "test_conformance_runner", "test_ship_tool", "test_pgbouncer_entrypoint",
-                "test_sbom_enrich", "test_issuance_scope", "test_pin_chart_images", "test_chain_anchor_tool",
+                "test_sbom_enrich", "test_issuance_scope", "test_pin_chart_images", "test_release_tag_guard",
+                "test_chain_anchor_tool",
                 "test_migrate_runner", "test_coverage_script",
                 "test_trigger_drill", "test_procedure_drill", "test_compose_parse", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
@@ -370,6 +375,7 @@ UNSHARDED_SUITES = {
     "lab/interop/status-list/revoked": ["test_fixture"],
     "lab/interop/fixtures/ed25519-holder": ["test_fixture"],
     "lab/interop": ["test_exit_trap"],
+    "lab/interop/oid4vcgo": ["test_wallet_inputs"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
@@ -403,6 +409,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/status-list/revoked": ("unittest", None),
     "lab/interop/fixtures/ed25519-holder": ("unittest", None),
     "lab/interop":              ("unittest", None),
+    "lab/interop/oid4vcgo":     ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
 }
