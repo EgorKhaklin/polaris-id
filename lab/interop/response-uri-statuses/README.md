@@ -32,7 +32,7 @@ version 0.1.0 (23 vectors): `git show dbc708a8:lab/interop/negative-vectors/vect
 ## Results
 
 2026-10-11, Python 3.12.13: 1.0.0rc18 installed from PyPI (cryptography 50.0.2) and this tree,
-1.0.0rc19 (cryptography 50.0.1).
+1.0.0rc20 (cryptography 50.0.1).
 
 | Response | 1.0.0rc18 | this tree |
 |---|---|---|
