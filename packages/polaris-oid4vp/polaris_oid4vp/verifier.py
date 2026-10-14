@@ -67,6 +67,12 @@ WALLET_AUDIENCE = "https://self-issued.me/v2"
 #: binding JWT of an SCA presentation repeat it.
 RESPONSE_MODE = "direct_post.jwt"
 
+#: The fresh value an accepted response's `redirect_uri` carries, as its `response_code`. OpenID4VP
+#: 1.0 section 8.2: a Verifier that answers with a redirect URI "MUST include a fresh,
+#: cryptographically random value in the URL", so that "only the receiver of the redirect can
+#: fetch and process the Authorization Response"; 128 bits or more is RECOMMENDED. 16 bytes.
+RESPONSE_CODE_BYTES = 16
+
 #: How long a verifier remembers a TS12 `jti` it has checked: a day. TS12 3.6 makes the value
 #: unique to each presentation; memory is per Verifier instance and bounded, and a relying party
 #: that needs a register for longer records `verdict.transaction_data["jti"]` in its own.
@@ -815,7 +821,7 @@ class Verifier:
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
                  vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
                  status_resolver=None, verifier_info=None, credential_query_id=None,
-                 verifier_info_profile=None):
+                 verifier_info_profile=None, redirect=True):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         # The id of the request's one DCQL credential query, "pid" unless named. A
@@ -835,6 +841,11 @@ class Verifier:
         self.request_uri = request_uri
         self.response_uri = response_uri
         self.redirect_uri = redirect_uri or (response_uri.rsplit("/", 1)[0] + "/done")
+        # Whether an accepted response is answered with a redirect_uri at all. OpenID4VP 1.0
+        # section 8.2 makes it OPTIONAL. A cross-device flow whose screen learns the result by
+        # polling has nobody to send there, so `redirect=False` answers `{}` and issues no
+        # response_code that nobody would redeem.
+        self.redirect = bool(redirect)
         self.issuer_jwks = list(issuer_jwks or [])
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
         self.request_ttl_seconds = request_ttl_seconds
@@ -861,6 +872,9 @@ class Verifier:
                               else verifier_info_entries(verifier_info, (self.query_id,)))
         self._sessions = {}
         self._by_request = {}
+        # Accepted responses waiting to be fetched with their response_code (`redeem`), keyed by
+        # the code's SHA-256 so the lookup compares no secret: digest -> (when, state, verdict).
+        self._results = {}
         self._lock = threading.Lock()
         self._jti_memory = JtiMemory(retention_seconds=JTI_RETENTION_SECONDS)
 
@@ -1142,9 +1156,50 @@ class Verifier:
                 False, "revoked", "the issuer's status list gives this credential the value %r, "
                                   "not VALID (0)" % (rev.get("status"),), revocation=rev)
 
+        # OpenID4VP 1.0 section 8.2: the redirect carries a fresh value only its receiver holds,
+        # and this request's result is fetched with it, once (`redeem`). Until 2026-10-14 every
+        # accepted response was sent to the same fixed URI, so in a same-device flow nothing
+        # told the browser the wallet came back to from any other browser waiting on a result;
+        # a request relayed to another person's wallet could complete the relayer's session
+        # (section 14.2). `verdict.response_code` hands the code to the operator as well.
+        if not self.redirect:
+            return 200, {}, verdict
+        code = secrets.token_urlsafe(RESPONSE_CODE_BYTES)
+        verdict.response_code = code
+        with self._lock:
+            self._results[_sha256(code.encode("ascii"))] = (time.time(), session.state, verdict)
         # HAIP 5.1: 200, application/json, and ONLY a redirect_uri. The suite checks that
         # last part, so anything helpful added here fails the test.
-        return 200, {"redirect_uri": self.redirect_uri}, verdict
+        return 200, {"redirect_uri": _with_response_code(self.redirect_uri, code)}, verdict
+
+    def redeem(self, response_code, state=None):
+        """The verdict an accepted response left, given the `response_code` its redirect carried
+        (OpenID4VP 1.0 section 8.2; section 13.3 has the reference design). Once: the second
+        time, the same code gets None. None, too, for a code this verifier never issued, one
+        older than the request lifetime, and, when `state` is given, one issued to another
+        request: pass the state your own session holds. `serve`, which holds no session, passes
+        none. A refusal, a wallet's error response and `redirect=False` issue no code.
+
+        In a same-device flow, show a result only to the browser that presents its code. A
+        cross-device flow cannot use it: the wallet's redirect lands on the wallet's device, not
+        on the screen that showed the request, and section 14.2 calls that flow susceptible to
+        a relayed request; its result reaches the operator through the returned verdict.
+        """
+        if not isinstance(response_code, str) or not response_code:
+            return None
+        if state is not None and not isinstance(state, str):
+            return None
+        key = _sha256(response_code.encode("utf-8"))
+        with self._lock:
+            self._expire_locked()
+            entry = self._results.get(key)
+            if entry is None:
+                return None
+            _, issued_to, verdict = entry
+            if state is not None and issued_to != state:
+                return None
+            del self._results[key]
+        return verdict
 
     #: The `id` of the one credential query in the request's DCQL, unless the verifier is given
     #: another (`credential_query_id`). OpenID4VP 1.0 section 8.1 keys `vp_token` by that id.
@@ -1250,6 +1305,8 @@ class Verifier:
         for state in [s for s, sess in self._sessions.items() if sess.created < cutoff]:
             self._sessions.pop(state, None)
             self._by_request.pop(state, None)
+        for key in [k for k, (when, _, _) in self._results.items() if when < cutoff]:
+            self._results.pop(key, None)
 
 
 def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jwks=None,
@@ -1413,6 +1470,14 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
 def _sha256(raw):
     import hashlib
     return hashlib.sha256(raw).digest()
+
+
+def _with_response_code(uri, code):
+    """`uri` with `response_code=<code>` added to its query, before any fragment, and nothing
+    else of it changed. The code is URL-safe base64, so it needs no escaping."""
+    base, hash_mark, fragment = uri.partition("#")
+    return "%s%sresponse_code=%s%s%s" % (base, "&" if "?" in base else "?", code, hash_mark,
+                                         fragment)
 
 
 def _sign_es256(key, header, claims):

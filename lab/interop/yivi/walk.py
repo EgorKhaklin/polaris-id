@@ -298,14 +298,18 @@ def walk(args, verifier, state, done, public, private, configured, ap_ca_path, r
         try:
             with urllib.request.urlopen(args.origin.rstrip("/") + "/done", timeout=10) as r:
                 ready = r.status == 200
+        except urllib.error.HTTPError as e:
+            # Since the redirect carries a response_code (OpenID4VP 1.0 section 8.2), the verifier
+            # answers /done without one 404 "no such result": that is the verifier answering.
+            ready = e.code == 404 and b"no such result" in e.read()
         except (urllib.error.URLError, OSError):
             pass
         if not ready:
             time.sleep(2)
     if not ready:
-        say("FAILED: %s/done did not answer 200 within %d s" % (args.origin, args.ready_timeout))
+        say("FAILED: the verifier did not answer %s/done within %d s" % (args.origin, args.ready_timeout))
         return 1
-    say("the tunnel answers: GET %s/done -> 200" % args.origin)
+    say("the tunnel answers: GET %s/done reaches the verifier" % args.origin)
 
     session, jar = verifier.new_request()
     state["session"] = session

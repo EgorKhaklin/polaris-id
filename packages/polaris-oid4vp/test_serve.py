@@ -349,22 +349,38 @@ class DonePageTests(ServeTestCase):
     follows it. Until 2026-09-28 this listener answered that path 404, measured with OID4VCgo's
     wallet (lab/interop/oid4vcgo/): a presentation that succeeded ended on an error page."""
 
-    def test_the_redirect_an_accepted_presentation_returns_is_served(self):
+    def accepted_redirect(self):
         _, jar = self.verifier.new_request()
         form = self.wallet.respond(jar)
         status, _, body = _post(self.base + "/response", {"response": form["response"][0]})
         self.assertEqual(status, 200)
-        path = urllib.parse.urlsplit(json.loads(body)["redirect_uri"]).path
-        status, ctype, page = _get(self.base + path)
+        parts = urllib.parse.urlsplit(json.loads(body)["redirect_uri"])
+        return parts.path + "?" + parts.query
+
+    def test_the_redirect_an_accepted_presentation_returns_is_served_once(self):
+        """OpenID4VP 1.0 section 8.2: only the receiver of the redirect fetches the result."""
+        target = self.accepted_redirect()
+        status, ctype, page = _get(self.base + target)
         self.assertEqual(status, 200)
         self.assertTrue(ctype.startswith("text/html"), ctype)
         self.assertIn(b"complete", page)
+        self.assertEqual(_get(self.base + target)[0], 404, "a reused response_code was served")
 
-    def test_the_page_is_the_same_whoever_asks(self):
-        """It varies with nothing, so it tells a prober nothing the 200 had not."""
-        first = _get(self.base + "/done")
-        self.assertEqual(first[0], 200)
-        self.assertEqual(first, _get(self.base + "/done?state=anything&x=1"))
+    def test_the_page_needs_the_redirects_own_code(self):
+        target = self.accepted_redirect()
+        code = urllib.parse.parse_qs(urllib.parse.urlsplit(target).query)["response_code"][0]
+        wrong = code[:-1] + ("A" if code[-1] != "A" else "B")
+        for asked in ("/done", "/done?response_code=", "/done?response_code=" + wrong,
+                      "/done?state=anything&x=1"):
+            with self.subTest(asked=asked):
+                self.assertEqual(_get(self.base + asked)[0], 404)
+        self.assertEqual(_get(self.base + target)[0], 200, "a wrong code spent the right one")
+
+    def test_the_page_varies_with_nothing_else(self):
+        """Two accepted responses' pages are the same bytes: the page tells its receiver no more
+        than the 200 had."""
+        first = _get(self.base + self.accepted_redirect())
+        self.assertEqual(first, _get(self.base + self.accepted_redirect()))
 
 
 def _self_signed_tls(tmp):
