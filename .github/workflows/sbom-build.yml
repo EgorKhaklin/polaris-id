@@ -97,9 +97,11 @@ jobs:
       # that are not on the SPDX list; scripts/polaris-sbom-enrich.py fills each from facts the
       # SBOM and the release hold (and fails, naming the component, where it holds none). The
       # SPDX project's checker then decides, and the verdict is read from its JSON report: the
-      # SBOM must be conformant AND carry no validation message. Its own non-zero exit would end
-      # the step before naming the SBOM and printing the report, so it is not what decides here.
-      # A failure leaves the draft.
+      # SBOM must be conformant AND carry no validation message AND have every listed component
+      # in the graph the checker judged (no floating component, no unknown pointer), since 6.0.0
+      # judges only what the DESCRIBES root reaches and leaves the rest out with a warning. Its
+      # own non-zero exit would end the step before naming the SBOM and printing the report, so
+      # it is not what decides here. A failure leaves the draft.
       - name: Meet the NTIA minimum elements, judged by the SPDX project's checker
         env:
           VERSION: ${{ inputs.version }}
@@ -126,7 +128,7 @@ jobs:
           fail=0
           for f in sbom/*.spdx.json; do
             "$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "$f" > "$RUNNER_TEMP/verdict.json" || true
-            if jq -e '.isConformant == true and (.validationMessages | length) == 0' \
+            if jq -e '.isConformant == true and (.validationMessages | length) == 0 and .graphValidation.floatingComponents.floatingComponentCount == 0 and .graphValidation.unknownPointers.hasUnknownPointers == false' \
                 "$RUNNER_TEMP/verdict.json" > /dev/null; then
               echo "$f: NTIA minimum elements met, valid SPDX 2.3"
             else
