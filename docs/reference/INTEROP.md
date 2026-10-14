@@ -36,10 +36,10 @@ because a verifier that accepts everything prints the same success line.
 [`wallet-canary.yml`](../../.github/workflows/wallet-canary.yml) runs the walk of every implementation above but Axle (for the Yivi app, the walk of irmago, the library under it),
 at the versions it pins (for some also at their newest release), against the newest
 `polaris-oid4vp` on PyPI, with the OpenID Foundation conformance suite.
-Each job installs the package from PyPI, presents, then runs that walk's controls. Its latest run,
-[38122154107](https://github.com/EgorKhaklin/polaris-id/actions/runs/38122154107) on 2026-10-11,
-ran against 1.0.0rc20, the newest release then and the only version its logs name: 22 of 22 jobs
-passed.
+Each job installs the package from PyPI, presents, then runs that walk's controls. Its latest
+scheduled run, [38399849299](https://github.com/EgorKhaklin/polaris-id/actions/runs/38399849299) on 2026-10-13,
+ran against 1.0.0, the version 20 of its 22 jobs print (the two Credo jobs print none): 22 of 22
+jobs passed.
 
 ## Reported upstream
 
