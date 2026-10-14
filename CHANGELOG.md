@@ -9,8 +9,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Added
+
+- The Yivi app 8.3.1 (developer mode, our verifier root added) presents a Yivi-issued SD-JWT VC to polaris-oid4vp, at 8e6f4834; it counts as an unmodified wallet in place of the irmago library row, so the count stays 15 (lab/interop/yivi). Not in the weekly canary.
+
 ### Changed
 
+- polaris-oid4vp's README: anchor the CA that signs issuers, not a root that also certifies relying parties (`IssuerAnchorScopeTests`); where one root certifies both roles, neither anchoring nor the package can separate them.
 - The project no longer uses the name VANTA in its current files: the maintainer is named as Egor Khaklin, and a local database user or path is written as `"$(whoami)"`, `<user>` or `<worktree>`. History and the released migrations (with the routine body in 06_triggers.sql that must match one of them) keep it; .mailmap shows the old commit identities under the project's commit identity.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)

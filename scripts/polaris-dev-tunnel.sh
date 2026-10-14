@@ -8,7 +8,15 @@
 # Dev and evaluation only: it refuses to run under POLARIS_ENV=production.
 #
 #   scripts/polaris-dev-tunnel.sh [--port 9443] [--pki ./pki-tunnel] \
-#       [--issuer-jwks issuers.json] [--issuer-trust-anchor ca.pem]
+#       [--issuer-jwks issuers.json] [--issuer-trust-anchor ca.pem] \
+#       [--once] [--vct TYPE] [--claim PATH[=VALUE]]
+#
+# --once, --vct and --claim go to `polaris-oid4vp serve` as given (repeatable where it repeats
+# them). A --pki directory that already holds a PKI is reused, not remade, so the anchor a wallet
+# was given stays valid across runs; the leaf then names the host it was made for, which an
+# x509_hash client_id does not depend on. keygen makes the leaf valid for 90 days: a reused PKI
+# whose leaf has expired (or cannot be read) is refused; remaking it makes a new anchor for the
+# wallet.
 #
 # What it does, in order:
 #   1. refuses to run in production, and refuses if cloudflared is absent (with how to get it);
@@ -31,7 +39,10 @@ while [ $# -gt 0 ]; do
         --pki) PKI="$2"; shift 2 ;;
         --issuer-jwks) EXTRA+=(--issuer-jwks "$2"); shift 2 ;;
         --issuer-trust-anchor) EXTRA+=(--issuer-trust-anchor "$2"); shift 2 ;;
-        -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+        --vct) EXTRA+=(--vct "$2"); shift 2 ;;
+        --claim) EXTRA+=(--claim "$2"); shift 2 ;;
+        --once) EXTRA+=(--once); shift ;;
+        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "polaris-dev-tunnel: unknown argument $1" >&2; exit 2 ;;
     esac
 done
@@ -78,8 +89,18 @@ fi
 HOST="${URL#https://}"
 echo ">> public URL: $URL"
 
-echo ">> minting a test certificate for $HOST"
-polaris-oid4vp keygen --out "$PKI" --host "$HOST" >/dev/null
+if [ -f "$PKI/anchor.pem" ] && [ -f "$PKI/client.pem" ] && [ -f "$PKI/client-key.pem" ] \
+    && [ -f "$PKI/tls.pem" ] && [ -f "$PKI/tls-key.pem" ]; then
+    if ! openssl x509 -checkend 0 -noout -in "$PKI/client.pem" >/dev/null 2>&1; then
+        echo "polaris-dev-tunnel: the test leaf in $PKI has expired or cannot be read; remove $PKI" \
+             "to remint (the wallet then needs the new anchor)" >&2
+        exit 2
+    fi
+    echo ">> reusing the test PKI in $PKI (its anchor stays valid; not remade)"
+else
+    echo ">> minting a test certificate for $HOST"
+    polaris-oid4vp keygen --out "$PKI" --host "$HOST" >/dev/null
+fi
 
 echo ">> serving the verifier (bound to 127.0.0.1:$PORT, advertised as $URL)"
 echo "   point a wallet at:  $URL"
