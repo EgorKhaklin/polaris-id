@@ -9,6 +9,14 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Added
+
+- The Yivi app 8.3.1 (developer mode, our verifier root added) presents a Yivi-issued SD-JWT VC to polaris-oid4vp, at 8e6f4834; it counts as an unmodified wallet in place of the irmago library row, so the count stays 15 (lab/interop/yivi). Not in the weekly canary.
+
+### Changed
+
+- polaris-oid4vp's README: anchor the CA that signs issuers, not a root that also certifies relying parties (`IssuerAnchorScopeTests`); where one root certifies both roles, neither anchoring nor the package can separate them.
+
 ### Fixed
 
 - On iOS Safari a dark disc could show behind the hero emblem before the sky film started; the poster is now transparent where it was black.

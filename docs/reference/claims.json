@@ -325,7 +325,7 @@
     {
       "id": "readme-six-wallets",
       "kind": "statement",
-      "claim": "Six wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup and Procivis One Core.",
+      "claim": "Seven wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup, Procivis One Core and the Yivi app (developer mode; built on irmago).",
       "surfaces": [
         "README.md"
       ],
@@ -358,13 +358,17 @@
         {
           "name": "Procivis One Core",
           "scoreboard": "Procivis One Core"
+        },
+        {
+          "name": "the Yivi app (developer mode; built on irmago)",
+          "scoreboard": "Yivi app"
         }
       ]
     },
     {
       "id": "readme-nine-more",
       "kind": "statement",
-      "claim": "Nine more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck, Multipaz and irmago through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses.",
+      "claim": "Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck and Multipaz through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses.",
       "surfaces": [
         "README.md"
       ],
@@ -372,7 +376,7 @@
         "file:lab/EXTERNAL-NOUNS.md",
         "file:lab/interop"
       ],
-      "reproduce": "Find each one's dated row in the Wallets table of lab/EXTERNAL-NOUNS.md: the Kotlin and Swift libraries, the PID issuer, vck, Multipaz and irmago rows say under a wallet built here; the Axle row says driven by a harness written here; the SpruceID and ERICA rows name their own harnesses.",
+      "reproduce": "Find each one's dated row in the Wallets table of lab/EXTERNAL-NOUNS.md: the Kotlin and Swift libraries, the PID issuer, vck and Multipaz rows say under a wallet built here; the Axle row says driven by a harness written here; the SpruceID and ERICA rows name their own harnesses.",
       "implementations": [
         {
           "name": "Kotlin",
@@ -393,10 +397,6 @@
         {
           "name": "Multipaz",
           "scoreboard": "Multipaz"
-        },
-        {
-          "name": "irmago",
-          "scoreboard": "irmago"
         },
         {
           "name": "Axle",
@@ -428,7 +428,7 @@
     {
       "id": "site-six-wallets-description",
       "kind": "statement",
-      "claim": "six wallets nobody here wrote have presented to it",
+      "claim": "seven wallets nobody here wrote have presented to it",
       "surfaces": [
         "site/index.html"
       ],
@@ -436,7 +436,7 @@
         "file:lab/EXTERNAL-NOUNS.md",
         "file:lab/interop"
       ],
-      "reproduce": "Find each of the six wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
+      "reproduce": "Find each of the seven wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
       "count_of": [
         "readme-six-wallets"
       ]
@@ -444,7 +444,7 @@
     {
       "id": "site-six-wallets-card",
       "kind": "statement",
-      "claim": "six independent wallets have presented to",
+      "claim": "seven independent wallets have presented to",
       "surfaces": [
         "site/index.html"
       ],
@@ -452,7 +452,7 @@
         "file:lab/EXTERNAL-NOUNS.md",
         "file:lab/interop"
       ],
-      "reproduce": "Find each of the six wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
+      "reproduce": "Find each of the seven wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
       "count_of": [
         "readme-six-wallets"
       ]

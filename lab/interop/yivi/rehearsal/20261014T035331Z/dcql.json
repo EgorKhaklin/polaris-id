@@ -1,0 +1,20 @@
+{
+  "credentials": [
+    {
+      "claims": [
+        {
+          "path": [
+            "domain"
+          ]
+        }
+      ],
+      "format": "dc+sd-jwt",
+      "id": "pid",
+      "meta": {
+        "vct_values": [
+          "pbdf.sidn-pbdf.email"
+        ]
+      }
+    }
+  ]
+}

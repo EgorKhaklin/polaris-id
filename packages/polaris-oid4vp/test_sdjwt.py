@@ -2363,6 +2363,89 @@ class IssuerCertificateTests(unittest.TestCase):
         self.assertFalse(v.authentic)
 
 
+class IssuerAnchorScopeTests(unittest.TestCase):
+    """The anchor is the only thing that tells an issuer from another role under the same root.
+
+    Yivi publishes a self-signed Requestors Root CA, an Attestation Providers CA beneath it that
+    signs credential issuers, and a Relying Parties CA beneath it for requestors. Yivi's own
+    issuer certificate carries EKU clientAuth, which a requestor's certificate may carry too, so
+    nothing in the leaf separates the two roles. Anchoring the shared root accepts a requestor's
+    certificate as an issuer; anchoring the issuer CA refuses it and still accepts a real issuer.
+    The README's trust-anchor advice rests on these four.
+    """
+
+    CLIENT_AUTH = x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH])
+
+    @staticmethod
+    def _sub_ca(root_key, root_name, cn):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(root_name)
+                .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=365))
+                .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+                .sign(root_key, hashes.SHA256()))
+        return key, name, cert
+
+    def _end_entity(self, ca_key, ca_name):
+        return IssuerCertificateTests._leaf(ca_key, ca_name, extensions=(
+            (x509.BasicConstraints(ca=False, path_length=None), True), (self.CLIENT_AUTH, False)))
+
+    def _verify(self, leaf, leaf_key, anchor):
+        presentation = X5CTests._present_with_x5c(self, leaf, leaf_key)
+        return verify_presentation(presentation, expected_nonce=NONCE,
+                                   expected_audience=AUDIENCE, trust_anchors=[anchor])
+
+    def setUp(self):
+        self.root_key, self.root_name, self.root = IssuerCertificateTests._ca()
+        self.issuer_ca_key, self.issuer_ca_name, self.issuer_ca = self._sub_ca(
+            self.root_key, self.root_name, "issuer CA")
+        # A requestor's certificate, issued under the root rather than the issuer CA.
+        self.requestor, self.requestor_key = self._end_entity(self.root_key, self.root_name)
+
+    def test_a_requestor_leaf_under_a_shared_root_is_accepted_when_the_root_is_anchored(self):
+        """The hazard the README warns of. If this ever refuses, revisit the README."""
+        v = self._verify(self.requestor, self.requestor_key, self.root)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_a_requestor_leaf_is_refused_when_only_the_issuer_ca_is_anchored(self):
+        v = self._verify(self.requestor, self.requestor_key, self.issuer_ca)
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key")
+        self.assertIn("does not chain", v.reason)
+
+    def test_a_genuine_issuer_leaf_is_accepted_under_the_issuer_ca(self):
+        leaf, leaf_key = self._end_entity(self.issuer_ca_key, self.issuer_ca_name)
+        v = self._verify(leaf, leaf_key, self.issuer_ca)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def test_a_relying_party_leaf_under_its_own_ca_follows_the_same_rule(self):
+        """The topology Yivi publishes: the root, a relying parties CA beneath it, and that CA's
+        leaf, sent as x5c [leaf, relying parties CA]. Anchoring the root accepts it as an issuer;
+        anchoring the issuer CA refuses it."""
+        chain = IntermediateChainTests
+        root_key = ec.generate_private_key(ec.SECP256R1())
+        root = chain._cert("requestors root", chain._name("requestors root"), root_key, root_key,
+                           ca=True)
+        issuer_ca_key = ec.generate_private_key(ec.SECP256R1())
+        issuer_ca = chain._cert("issuer CA", root.subject, root_key, issuer_ca_key, ca=True,
+                                path_length=0)
+        rp_ca_key = ec.generate_private_key(ec.SECP256R1())
+        rp_ca = chain._cert("relying parties CA", root.subject, root_key, rp_ca_key, ca=True,
+                            path_length=0)
+        leaf_key = ec.generate_private_key(ec.SECP256R1())
+        leaf = chain._cert("rp.example", rp_ca.subject, rp_ca_key, leaf_key, ca=False,
+                           usage="sign", extensions=((self.CLIENT_AUTH, False),))
+        accepted = chain._verify(self, root, [leaf, rp_ca], leaf_key)
+        self.assertTrue(accepted.authentic, "%s: %s" % (accepted.code, accepted.reason))
+        refused = chain._verify(self, issuer_ca, [leaf, rp_ca], leaf_key)
+        self.assertFalse(refused.authentic)
+        self.assertEqual(refused.code, "issuer_key")
+        self.assertIn("does not chain", refused.reason)
+
+
 class ReferencePidIssuerCertificateTests(unittest.TestCase):
     """The EU reference PID issuer's published document-signer certificates, refused until
     2026-10-10 twice over: their extended key usage, 1.3.130.2.0.0.1.2 (the ARF PID Rulebook's
