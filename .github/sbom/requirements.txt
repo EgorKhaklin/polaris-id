@@ -20,9 +20,9 @@ license-expression==30.4.4 \
     --hash=sha256:421788fdcadb41f049d2dc934ce666626265aeccefddd25e162a26f23bcbf8a4 \
     --hash=sha256:73448f0aacd8d0808895bdc4b2c8e01a8d67646e4188f887375398c761f340fd
     # via spdx-tools
-ntia-conformance-checker==5.0.3 \
-    --hash=sha256:080229acb305624a4aa69ef055df4d974f846bb0880b6d03db30793e91fc70d9 \
-    --hash=sha256:af4262a06560fcdaf05025522907977977c904538d4697fc44bc72bc29a853f2
+ntia-conformance-checker==6.0.0 \
+    --hash=sha256:6382e7b5ca0ca2103bbcba56ef7a69f11753396e3a4d8e786186a2a8b83518a0 \
+    --hash=sha256:718fc7a0fdb4e6ed16ef1e8a05c4e0a1fd086f5cacc6576ef9aa481e3972f8ff
     # via -r requirements.in
 ply==3.11 \
     --hash=sha256:00c7c1aaa88358b9c765b6d3000c6eec0ba42abca5351b095321aef446081da3 \
@@ -115,9 +115,9 @@ semantic-version==2.10.0 \
     --hash=sha256:bdabb6d336998cbb378d4b9db3a4b56a1e3235701dc05ea2690d9a997ed5041c \
     --hash=sha256:de78a3b8e0feda74cabc54aab2da702113e33ac9d9eb9d2389bcf1f58b7d9177
     # via spdx-tools
-spdx-python-model==0.0.4 \
-    --hash=sha256:64838eb98252ffbb2785ae3a42986a115dc0873a7550d0ff84f7487e99e2b44e \
-    --hash=sha256:bdec725398babcbdd4bcb7c16cf23497d06a48d0ef3ea1edb19a3b0d431ab8c1
+spdx-python-model==0.0.6 \
+    --hash=sha256:dd793ce0176e53af05f9c0d8624196f38da45bc263ccee5ee532b1812b3113e2 \
+    --hash=sha256:f1938eb08d08218278122849bba123b8993a0171e9b4f5ea6af7aeb71f3204d7
     # via ntia-conformance-checker
 spdx-tools==0.8.5 \
     --hash=sha256:7c2d5865941be9d2e898f5b084e8d5422dd298dc5a29320ddb198fec304f59c4 \
