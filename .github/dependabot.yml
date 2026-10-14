@@ -69,6 +69,25 @@ updates:
           - "minor"
           - "patch"
 
+  # The check-in example's hash-pinned set (fastapi, uvicorn, segno, cryptography), compiled by
+  # pip-compile from requirements.in; monthly, as the lab entries are.
+  - package-ecosystem: pip
+    directory: /packages/polaris-oid4vp/examples/yivi-checkin
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      pip-packages-polaris-oid4vp-examples-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
   # What lab/interop/*/run.sh install beside polaris-oid4vp: its one dependency (requirements.txt,
   # Python 3.9) and, for a run that builds it from the tree, the build backend
   # (requirements-build.txt, Python 3.10), hash-pinned by pip-compile; Dependabot recompiles both.
