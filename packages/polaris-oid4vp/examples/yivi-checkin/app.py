@@ -16,8 +16,8 @@ Configuration, from the environment:
     CHECKIN_EVENT       an event name over the headline, e.g. Technology Club (optional)
     CHECKIN_LOGO        the emblem on the desk (webp); defaults to the site's, site/polaris_logo.webp
 
-Nothing is written anywhere. An attempt lives in memory for its request's lifetime plus a minute,
-and holds only its outcome: the domain, or the refusal.
+Nothing is written anywhere, and no access log is kept. An attempt lives in memory for its
+request's lifetime plus a minute, and holds only its outcome: the domain, or the refusal.
 """
 import html
 import ipaddress
@@ -252,4 +252,6 @@ def from_env():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(from_env(), host="127.0.0.1", port=int(os.environ.get("CHECKIN_PORT", "8000")))
+    # No access log: uvicorn's default prints each request's client address, an attendee's IP.
+    uvicorn.run(from_env(), host="127.0.0.1", port=int(os.environ.get("CHECKIN_PORT", "8000")),
+                access_log=False)
