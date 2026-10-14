@@ -22,7 +22,7 @@ driver signed, and checks every signature before it is stored.
 
 | Driver | `POLARIS_CUSTODY_DRIVER` | The private key is | Use when |
 |---|---|---|---|
-| file | `file` (default when `POLARIS_PQC_SIGNING_KEY_FILE` is set) | a 0600 JSON file, in process memory while signing | development; small deployments that accept a file on disk |
+| file | `file` (default when `POLARIS_PQC_SIGNING_KEY_FILE` is set) | a JSON file, mode 0644 inside the 0700 secrets directory ([below](#file)), in process memory while signing | development; small deployments that accept a file on disk |
 | pkcs11 | `pkcs11` | inside a PKCS#11 v3.2 token, non-extractable; signing is `CKM_ML_DSA` in the token | an HSM (or a software token such as Kryoptic); on-premises authorities |
 | awskms | `awskms` | inside AWS KMS (`KeySpec ML_DSA_65`); signing is `Sign` with `ML_DSA_SHAKE_256` | AWS-hosted authorities |
 
@@ -80,8 +80,14 @@ cd /opt/polaris && sudo scripts/polaris-generate-secrets.sh      # writes polari
 sudo scripts/polaris-pqc-status.sh                                # custody: file  key=file:<fp>
 ```
 
-The file is the key. Back it up sealed (an encrypted copy in two locations,
-under dual control) before the first token is issued; a lost file means every
+The file is the key. It is mode 0644 inside the 0700 secrets directory: Compose mounts a file
+secret with the source file's mode and owner, so the app, running as uid 1000, cannot read a 0600
+file that another host user owns (measured on a Linux Docker Engine, 2026-10-14). On a Compose host
+the private key's confidentiality therefore rests on that directory against other unprivileged
+users on the host. Root and members of the `docker` group, which
+[HARDENING.md](HARDENING.md#5-the-docker-daemon) calls root-equivalent, can read it, and the app,
+which must read the key, reads it through the mount. Back it up sealed (an encrypted
+copy in two locations, under dual control) before the first token is issued; a lost file means every
 future token needs a new key and the old public key stays in the trust anchors
 forever. Restrict the host per [`HARDENING.md`](HARDENING.md) (auditd watches
 `polaris_web/secrets`).

@@ -24,11 +24,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- Outward documents restated to match the tree: SECURITY.md, ROADMAP and the Kubernetes guide now say v1.0.0's images and chart are published (2026-10-11); the review packet no longer says nothing was certified beside polaris-oid4vp 1.0.0rc7's OpenID certification; the red-team scope, assurance case, threat model and evaluation guide drop lines that had gone stale; the readiness ledger lists the zero-knowledge layer under its known limitations rather than as production-grade (no external cryptographic audit; demo-scale); KEY-CEREMONY.md gives the file custody key's real mode, 0644 inside the 0700 secrets directory, which the app needs to read it through Compose; and SECURITY.md says the PyPI attestation names the repository, workflow and commit that published each file.
 - The stranger path's eudi-dev walk (`lab/interop/eudi-dev/run.sh`): on rootful Docker Engine, when the caller's uid was not the wallet image's (1000), as on a GitHub runner (uid 1001), the wallet could not open the 0700 work dir to read its inputs. It now reads read-only copies of only those files (the credential and the verifier's public certificates). Docker Desktop and uid-1000 Linux hosts were not affected.
 - On iOS Safari a dark disc could show behind the hero emblem before the sky film started; the poster is now transparent where it was black.
 
 ### Security
 
+- polaris-oid4vp: an accepted presentation's `redirect_uri` now carries a fresh 128-bit `response_code` (OpenID4VP 1.0 section 8.2), and `Verifier.redeem` gives that request's verdict once, for that code. Before, every accepted response got the same fixed URI, so in a same-device `direct_post` flow nothing told the browser the wallet returned to from any other browser waiting on a result. Injecting a response into another request was already refused. `serve`'s `/done` page now answers only the redirect's own code, and a cross-device flow can answer `{}` with no redirect (`redirect=False`), as the check-in example now does.
 - Issuer binding compares DNS names as ASCII only; an issuer certificate with a non-ASCII DNS SAN is refused.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)

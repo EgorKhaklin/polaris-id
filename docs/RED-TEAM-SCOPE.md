@@ -273,12 +273,11 @@ break.
 - **The supply chain**: the SBOM and SLSA provenance workflow in
   [sbom.yml](../.github/workflows/sbom.yml) and the base images. The caddy
   ([Dockerfile.caddy](../polaris_web/Dockerfile.caddy)), postgres
-  ([Dockerfile.postgres](../polaris_web/Dockerfile.postgres)), and redis
-  images are pinned by digest; the app
+  ([Dockerfile.postgres](../polaris_web/Dockerfile.postgres)), redis, app
   ([Dockerfile.prod](../polaris_web/Dockerfile.prod)) and pgbouncer
   ([Dockerfile.pgbouncer](../polaris_web/Dockerfile.pgbouncer)) bases are
-  pinned by tag only. Attempt to introduce a dependency the CI gate does not
-  catch, and to substitute a tag-pinned base.
+  pinned by digest. Attempt to introduce a dependency the CI gate does not
+  catch, and to substitute a base image.
 
 ### Cryptographic layer
 

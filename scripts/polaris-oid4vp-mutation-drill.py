@@ -123,6 +123,40 @@ _STATUS_PATTERNS = (
 )
 
 
+#: Changes that are not refusals and must still be caught, each as (label, file, the exact text,
+#: what replaces it). 2026-10-14, OpenID4VP 1.0 section 8.2: an accepted response's redirect_uri
+#: carries a fresh response_code, and `Verifier.redeem` hands that request's result over once for
+#: it. Each mutant takes away one part of that, and the suite must fail. A mutant whose text no
+#: longer appears exactly once fails the drill: the code it guards has moved, and a pass would
+#: mean nothing.
+NAMED_MUTANTS = (
+    ("verifier:redirect-without-a-response-code", "polaris_oid4vp/verifier.py",
+     'return 200, {"redirect_uri": _with_response_code(self.redirect_uri, code)}, verdict',
+     'return 200, {"redirect_uri": self.redirect_uri}, verdict'),
+    ("verifier:the-same-code-every-time", "polaris_oid4vp/verifier.py",
+     "code = secrets.token_urlsafe(RESPONSE_CODE_BYTES)",
+     'code = "A" * 22'),
+    ("verifier:redeem-ignores-the-code", "polaris_oid4vp/verifier.py",
+     "entry = self._results.get(key)",
+     "entry = next(iter(self._results.values()), None)"),
+    ("verifier:redeem-ignores-the-request", "polaris_oid4vp/verifier.py",
+     "            if state is not None and issued_to != state:\n                return None\n",
+     ""),
+    ("verifier:redeem-twice", "polaris_oid4vp/verifier.py",
+     "            del self._results[key]\n",
+     ""),
+    ("verifier:redeem-after-expiry", "polaris_oid4vp/verifier.py",
+     "            self._expire_locked()\n            entry = self._results.get(key)",
+     "            entry = self._results.get(key)"),
+    ("verifier:redirect-false-still-redirects", "polaris_oid4vp/verifier.py",
+     "        if not self.redirect:\n            return 200, {}, verdict\n",
+     ""),
+    ("serve:done-page-without-the-code", "polaris_oid4vp/serve.py",
+     "            if self.verifier.redeem(code) is None:",
+     "            if False:"),
+)
+
+
 def _invert(line: str, source: str = ""):
     """The mutated form of a refusal line, or None if this line does not refuse."""
     if source.endswith("status.py"):
@@ -254,6 +288,32 @@ def main() -> int:
             if args.verbose:
                 print("  %-52s %s" % (label, "SURVIVED" if survivors and
                                       survivors[-1][0] == label else "caught"))
+
+        named_survivors = []
+        for label, source, old, new in NAMED_MUTANTS:
+            # serve.py is not among SOURCES (it has no refusal of its own), but its done page
+            # redeems the code, so a named mutant may live there.
+            text = originals.get(source) or (pkg / source).read_text(encoding="utf-8")
+            if text.count(old) != 1:
+                print("oid4vp-mutation drill: the named mutant %s matches its code %d time(s), "
+                      "not once: the code it guards has moved, and a clean result would mean "
+                      "nothing" % (label, text.count(old)), file=sys.stderr)
+                return 1
+            (pkg / source).write_text(text.replace(old, new), encoding="utf-8")
+            try:
+                if _suite_passes(pkg):
+                    again, proc = _confirm_survivor(pkg)
+                    if again:
+                        named_survivors.append(label)
+                        print("  ! %s survived twice. The suite's second run said:" % label)
+                        for out_line in (proc.stdout or proc.stderr).strip().splitlines()[-4:]:
+                            print("      %s" % out_line[:100])
+                    else:
+                        flaky.append(label)
+            finally:
+                (pkg / source).write_text(text, encoding="utf-8")
+            if args.verbose:
+                print("  %-52s %s" % (label, "SURVIVED" if label in named_survivors else "caught"))
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -266,6 +326,8 @@ def main() -> int:
         print("  %d mutation(s) passed once and failed on the re-run, so they are CAUGHT: %s"
               % (len(flaky), ", ".join(flaky)))
     print("  refusals inverted           %4d" % len(sites))
+    print("  named mutations             %4d  (%d survived)" % (len(NAMED_MUTANTS),
+                                                              len(named_survivors)))
     print("  ...accepted by the suite    %4d  (%d declared)"
           % (len(survivors), len(DECLARED_SURVIVORS)))
     for label, text in survivors:
@@ -276,6 +338,10 @@ def main() -> int:
         print("\n== OID4VP MUTATION DRILL FAILED: %d declared survivor(s) no longer survive, "
               "so the list describes a gap that is closed: %s =="
               % (len(stale), ", ".join(stale)), file=sys.stderr)
+        return 1
+    if named_survivors:
+        print("\n== OID4VP MUTATION DRILL FAILED: %d named mutation(s) pass with every test still "
+              "green: %s ==" % (len(named_survivors), ", ".join(named_survivors)), file=sys.stderr)
         return 1
     if undeclared:
         print("\n== OID4VP MUTATION DRILL FAILED: %d refusal(s) can be made to ACCEPT what "

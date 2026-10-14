@@ -72,7 +72,8 @@ are read from the `kubernetes` Endpoints at install time; set
     ```
 - The four images in a registry your nodes can pull from (`images.*` in
   values), or `kind load docker-image` for a local cluster. Polaris publishes
-  no registry images yet (P0.6 deferred image signing for that reason), so
+  signed release images from v1.0.0 on, with a chart pinned to their digests
+  ([VERIFY-RELEASE.md](VERIFY-RELEASE.md)); to run this checkout instead,
   build and push them yourself:
   ```bash
   V=$(python3 -c 'from polaris_web.__version__ import __version__; print(__version__)')   # tag images with the shipped version

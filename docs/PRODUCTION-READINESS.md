@@ -26,6 +26,7 @@ operator decisions below and the deployment-scale work in [ROADMAP.md](../ROADMA
 - A break in Module-LWE needs no schema change or new trust model, but it does need code: ML-DSA-87 rests on the same assumptions, and the hash-based SLH-DSA rows have no signer here and no verifier in `polaris-verify`. With those written, authorize the replacement per authority through `AgencyAlgorithmAuth`, provision a key under it, and migrate through `uc6_migrate` or the population runner, paths exercised on every push that record the algorithm of the key that signed and refuse a target no key is provisioned for (until 2026-10-02 the per-credential path recorded the algorithm it was asked for). It still costs every credential issued under the broken algorithm.
 - During a cutover a credential carries classical and ML-DSA signatures, and the **classical half** is protected by nothing here. The risk is forgery, not disclosure: a signature encrypts nothing, so harvest-now-decrypt-later does not apply to the credential, but once the classical algorithm falls anyone can forge that half, and a verifier that still accepts it accepts forgeries. Migration protects only verifiers that stop accepting it ([reference/PQC-POSTURE.md](reference/PQC-POSTURE.md)).
 - The default signing path, without `POLARIS_USE_REAL_PQC=1` and liboqs, writes a 32-byte SHA3-256 placeholder labelled `DETERMINISTIC-PLACEHOLDER-SHA3-256` that verifies against no key (real ML-DSA-65 is 3,309 bytes). This is the default in CI. Production fails closed at boot without real signing, and unnamed placeholder use warns loudly.
+- The zero-knowledge layer (a Plonky2 transparent-setup Merkle-inclusion circuit verified at use on `/api/zk/verify` with single-use nonces, plus an independent Python Poseidon/Merkle witness) is demo-scale and has had no external cryptographic audit. Its proof soundness rests on the `plonky2` 1.x crate, which is deprecated upstream, and the shipped configuration's bit-security is not independently derived. Do not protect real identities with it as shipped ([zk-soundness.md](design/zk-soundness.md)).
 
 **Algorithm migration**
 
@@ -88,7 +89,7 @@ Production with real identity data cannot proceed until each is recorded as made
 | Decision | Options | Where documented |
 |---|---|---|
 | Legal basis, DPIA, regulator approval | Named controller, jurisdiction, counsel-drafted DPIA, regulatory sign-off | Not an engineering task |
-| Signing-key custody | `file`, `pkcs11` (CI-tested against a real token) or `kms` driver; the HSM or KMS; key holder; rotation authority | [KEY-CEREMONY.md](operator/KEY-CEREMONY.md) |
+| Signing-key custody | `file`, `pkcs11` (CI-tested against a PKCS#11 v3.2 software token, Kryoptic) or `kms` driver; the HSM or KMS; key holder; rotation authority | [KEY-CEREMONY.md](operator/KEY-CEREMONY.md) |
 | Wallet copies | Whether to offer them at all (each is a classical ES256 credential that relying parties can link across presentations, with no duress path); per agency, the CA that issues the wallet-copy leaf, the leaf's lifetime, and the key's custodian (a file in this version, which the HSM-sole-signer profile refuses) | [oid4vci-issuer.md](design/oid4vci-issuer.md), [KEY-CEREMONY.md](operator/KEY-CEREMONY.md#wallet-copy-keys-es256) |
 | Postgres HA topology | Hosts for the two members and three etcd members; synchronous replication (zero loss) or lower commit latency | [FAILOVER.md](operator/FAILOVER.md) |
 | Encryption at rest | Host volume encryption (LUKS, TDE or fscrypt) and its key custodian | [ENCRYPTION-AT-REST.md](operator/ENCRYPTION-AT-REST.md) |
@@ -151,7 +152,6 @@ Whether an operator who is not the author can install, run, upgrade and recover 
 
 ## What is already production-grade
 
-- **ZK stack**: a Plonky2 transparent-setup Merkle-inclusion circuit verified at use on `/api/zk/verify` with single-use nonces, plus an independent Python Poseidon/Merkle witness.
 - **Authentication and access control**: scrypt hashing, atomic failed-login counting, enumeration resistance, per-session CSRF, session-fixation regeneration, audited role checks, a CSP with no inline scripts, a server-side session registry, per-role network allow-lists, a WebAuthn attestation policy and per-agency quotas enforced by trigger.
 - **Database constraints**: C1 revokes UPDATE and DELETE on every audit partition from `polaris_app`, whose only DELETE path is SECURITY DEFINER and which has no DDL; C2 is a CHECK, C3 a partial unique index, C7 a registry table, C10 an absence. C4, C5, C6, C8 and C9 live in the application, response policy and threaded tests, and all ten are pinned by a check.
 - **Credential expiry** is enforced at read time by one predicate on both endpoints: valid through the expiry date, a null expiry never expires, an unreadable one counts as expired.
