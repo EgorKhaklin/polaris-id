@@ -26,11 +26,12 @@ changed, re-signed wherever the change needs it, so the only reason to refuse it
 | Status goes dark | the Token Status List the credential names gives no answer; answers with an HTML page; has a `lst` whose ZLIB stream never ends; is signed by another issuer's key under the same root; sits at a uri no key is stated for; has expired; does not reach the credential's index |
 
 **The signer is not the named issuer** is the class of swiyu change dossier CD-008 (2026-07-31), in which a
-verifier accepted a credential signed by an attacker's key while its `iss` named a trusted issuer, here in its
-`x5c` form: SD-JWT VC draft-19 s2.5 makes the leaf's subject the issuer and requires the key to be the issuer's.
-The family targets verification whose issuer key comes from `x5c`. polaris-oid4vp refuses all three there; its
-`--issuer-jwks` mode is documented not to bind `iss` to a key (its README: "list one issuer's keys per
-verifier"), and each vector's `notes` says so.
+verifier accepted a credential signed by an attacker's key while its `iss` named a trusted issuer. Its shape
+differs: there the key was a DID named by `kid` and checked against `iss`; here it is an `x5c` leaf, where
+SD-JWT VC draft-19 s2.5 makes the leaf's subject the issuer and requires the key to be the issuer's. The family
+holds `x5c` cases only and targets verification whose issuer key comes from `x5c`. polaris-oid4vp refuses all
+three there; no vector is graded under its `--issuer-jwks` mode, which is documented not to bind `iss` to a key
+(its README: "list one issuer's keys per verifier"), and each vector's `notes` says so.
 
 **Status goes dark** vectors carry `status_list`: the `uri` the credential names and the `response` a GET of it
 returns (`null`: no answer). Each is judged under the `policy` it names, `status-required` (in the file's
@@ -39,13 +40,13 @@ returns (`null`: no answer). Each is judged under the `policy` it names, `status
 draft-ietf-oauth-status-list-21 says a failed check means the credential SHOULD be rejected (s8.3: "If any of
 these checks fails, no statement about the status of the Referenced Token can be made and the Referenced Token
 SHOULD be rejected."); its one MUST about the credential is an index past the list's end (s8.3 step 6). So those
-vectors are `should`, and that one is `spec`. polaris-oid4vp keeps each credential authentic and reports the
+vectors are graded `policy`, never `spec`, and that one is `spec`. polaris-oid4vp keeps each credential authentic and reports the
 revocation state (`unreachable`, `list_refused` with its code, `no_authority`, or `checked` for the control); its
 `Verifier` refuses on its own only a checked status that is not VALID (`revoked`), and leaves the other states
 to the relying party's policy. Each vector's `notes` names its state.
 
 `class` says how strong the requirement is: `spec` when a sentence requires the refusal, `spec-implied`
-when the sentence binds the issuer or the wallet, or a definition implies it, `should` when the text says the
+when the sentence binds the issuer or the wallet, or a definition implies it, `policy` when the text says the
 verifier SHOULD refuse and the verdict is the one the vector's `policy` reaches. `layer` says whose job the
 refusal is: `jose`, `sd-jwt` (RFC 9901), `sd-jwt-vc` (the profile), `openid4vp`, `haip-x509` (the
 issuer's certificate chain), `x5c-issuer` (the binding of `iss` to that chain's leaf) or `status-list` (the
@@ -130,7 +131,7 @@ Without binding flags, `python3 make_vectors.py > vectors.json` reproduces `vect
   never renumbers one. `INDEX.json` is the index below. Its [`README.md`](views/eudi/README.md) gives the
   binding it carries and the command and settings that bind it to the EU test harness.
 - [`views/index.json`](views/index.json): one entry per vector, `id`, `spec_section` (the first clause),
-  `target` (the layer), `input` (the presentation), `expected`, `hardening` (true for `spec-implied` and `should`),
+  `target` (the layer), `input` (the presentation), `expected`, `hardening` (true for `spec-implied` and `policy`),
   `reference_rejected_at_mint`, `clauses`, `trust`, `profile`, `files` (its EU pair), and `policy`, `status_list` and
   `notes` where the vector has them. `profile` is `haip`
   for every vector: the KB-JWT `typ` is `kb+jwt`, as the header's `scope` says. A verifier that requires another
@@ -164,10 +165,12 @@ suite's expected-failures files (MIT). Nothing of theirs is copied into this dir
   reports its `iss` apart as unbound.
 - The signer family is for `x5c`. A verifier configured with several issuers' JWKs can bind `iss` to a key only
   by a mapping the vectors do not carry.
+- The `sd-jwt-python` and `sd-jwt-js` adapters have not been run against 0.3.0, so nothing here says how they judge
+  the two new families.
 - A status-list vector needs its `response` served at its `uri` and the verifier held to its `policy`; the EU
   view carries neither, so a run of that view judges the credential alone.
 - A verdict is pass or refuse. Why a verifier refused is compared for polaris-oid4vp only; for any other
   adapter, a refusal for the wrong reason counts as a pass.
 - Version 0.3.0 (0.2.0 plus the signer and status-list families; `settings.status_list_keys`, `policies`, the
-  `should` class and the vector fields `policy`, `status_list` and `notes` are new). 0.2.0 added `kb-aud-missing`
+  `policy` class and the vector fields `policy`, `status_list` and `notes` are new). 0.2.0 added `kb-aud-missing`
   and `kb-nonce-missing`. Vectors may be added, and none will change meaning under the same id.

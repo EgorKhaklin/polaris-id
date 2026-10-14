@@ -50,7 +50,7 @@
   "control": "a valid presentation: a correct verifier accepts it",
   "spec": "a sentence of the cited text requires the refusal",
   "spec-implied": "the cited sentence binds the issuer or the wallet, or a definition implies the refusal",
-  "should": "the cited text says the verifier SHOULD refuse, and no sentence requires it: the verdict is the one the vector's policy reaches"
+  "policy": "the cited text says the verifier SHOULD refuse, and no sentence requires it: the verdict is the one the vector's policy reaches"
  },
  "policies": {
   "status-required": "the relying party checks status: a credential that names a Token Status List is accepted only when the list its uri answers with is a Status List Token, signed by the key settings.status_list_keys states for the credential's iss and that uri, not expired, covering the index, and VALID (0) there"
@@ -467,7 +467,7 @@
    "trust": "x5c",
    "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCalRDQ0FUT2dBd0lCQWdJQkNqQUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dLREVtTUNRR0ExVUVBd3dkVG1WbllYUnBkbVVnVm1WamRHOXljeUJQZEdobGNpQkpjM04xWlhJd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTbUpwQUdyTjA5TVdjK2N0R3k4TWVIcG5QeDg4bFFJcEpOVjZjS0dJMmhFS2ErSXptRGpBUER1Y2VtL2xsSmJ4VTF6dFBqSFFkNnI1N1M5LzZZYlo2SW8wa3dSekFNQmdOVkhSTUJBZjhFQWpBQU1BNEdBMVVkRHdFQi93UUVBd0lIZ0RBbkJnTlZIUkVFSURBZWhoeG9kSFJ3Y3pvdkwyOTBhR1Z5TFdsemMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBnQU1FVUNJUUNLWGdUNURwdDFBWGg3SUYyR3BGdU1QSGZHVSs1REQ1Q2lkWEFoV3hwRlV3SWdWV1ZEK0V2RGNDS3E4dG5BdERZRmp5MmtOS0pLWFQ5VnZDREZOT0ZwbGE0PSIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.SmQT2PUxsDZSPqBm8qFyHRhamTzitH3vwvxER8BMFuKG5LaNigVRK12QNq552LHf3nDmSnhegcUY1rHCY-d0ag~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6ImNKVENFRXd2TzV5SU0yTTJBM3luZ0R3UjYxUVJ0UXROb3N4U3JxcUlLbm8ifQ.eElbZ5ZziEBD2iM0R-sbxZY8WNrZnSm-YkDbOI58YgBt6TFSJExv-SHyq-NtCJhuv3NT8Sqwoc7GdUhEMZSv6A",
    "expected": "reject",
-   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), in its x5c form. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
   },
   {
    "id": "x5c-leaf-names-other-host",
@@ -491,7 +491,7 @@
    "trust": "x5c",
    "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCaFRDQ0FTdWdBd0lCQWdJQkN6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dLREVtTUNRR0ExVUVBd3dkVG1WbllYUnBkbVVnVm1WamRHOXljeUJQZEdobGNpQkpjM04xWlhJd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTbUpwQUdyTjA5TVdjK2N0R3k4TWVIcG5QeDg4bFFJcEpOVjZjS0dJMmhFS2ErSXptRGpBUER1Y2VtL2xsSmJ4VTF6dFBqSFFkNnI1N1M5LzZZYlo2SW8wRXdQekFNQmdOVkhSTUJBZjhFQWpBQU1BNEdBMVVkRHdFQi93UUVBd0lIZ0RBZkJnTlZIUkVFR0RBV2doUnZkR2hsY2kxcGMzTjFaWEl1WlhoaGJYQnNaVEFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBK3BKMkdDdGhzdWl1SVUvSVdpUTRkZjNpdXlSampQVXZUeSt5aTBuYnlQMENJR2ZhY3FaZllZb0pTVVQwcnZGK01KZGNRUGhUbHlrdVRtVnB4ZDdDWVdORyIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.pRiIBq96Rl1dvZFeEM0G8I4XhGrxhaq2YNxs3i9fIr_nzFVSkkiAXnp1R-UsiUZtH3iEPbCHdXnWaj7v0DnHyQ~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6ImFtQm9xTlVZeWpWaGhhM2JVMDNSc1R1YTk0d1BBbUFSb2x6OWdERVFBanMifQ.RQ1HL8rM64CnWDzVCWvlLyDVidFGByk4sj9G8DZ9fZSVcBfcsiTWFcxM-9_rN6NaJC3wbXTjkS8BraX2RPg1og",
    "expected": "reject",
-   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), in its x5c form. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
   },
   {
    "id": "x5c-leaf-uri-beats-host",
@@ -515,7 +515,7 @@
    "trust": "x5c",
    "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCblRDQ0FVT2dBd0lCQWdJQkREQUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dLREVtTUNRR0ExVUVBd3dkVG1WbllYUnBkbVVnVm1WamRHOXljeUJQZEdobGNpQkpjM04xWlhJd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTbUpwQUdyTjA5TVdjK2N0R3k4TWVIcG5QeDg4bFFJcEpOVjZjS0dJMmhFS2ErSXptRGpBUER1Y2VtL2xsSmJ4VTF6dFBqSFFkNnI1N1M5LzZZYlo2SW8xa3dWekFNQmdOVkhSTUJBZjhFQWpBQU1BNEdBMVVkRHdFQi93UUVBd0lIZ0RBM0JnTlZIUkVFTURBdWhoeG9kSFJ3Y3pvdkwyOTBhR1Z5TFdsemMzVmxjaTVsZUdGdGNHeGxnZzVwYzNOMVpYSXVaWGhoYlhCc1pUQUtCZ2dxaGtqT1BRUURBZ05JQURCRkFpRUE4YW9vUTV6SFhsV3NmekZJOUozdnN0Z282MlhGZU5xczlXUlE1YXZ2eWd3Q0lGemx3bm03bU9zN3hHR0xub3VOTm1pZFpPOUtZSGJjTGhpNDA3aVhpSFpsIiwiTUlJQlp6Q0NBUTJnQXdJQkFnSUJBakFLQmdncWhrak9QUVFEQWpBbE1TTXdJUVlEVlFRRERCcE9aV2RoZEdsMlpTQldaV04wYjNKeklGUmxjM1FnVW05dmREQWVGdzB5TmpBeE1ERXdNREF3TURCYUZ3MHpNREF4TURFd01EQXdNREJhTUMweEt6QXBCZ05WQkFNTUlrNWxaMkYwYVhabElGWmxZM1J2Y25NZ1ZHVnpkQ0JKYm5SbGNtMWxaR2xoZEdVd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTZE5nNWQzdVhQcTV0eU4rdWtvaC9NSUJLZFNhZnF3aU94UjNMRXdxNVc2ZDhwQ2Zra2ZPVEUzRWIwa0h3SS9oVTdHcEJwNDI2RExFdDU0eWpBU1A1RW95WXdKREFTQmdOVkhSTUJBZjhFQ0RBR0FRSC9BZ0VBTUE0R0ExVWREd0VCL3dRRUF3SUJCakFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBeW16dC9uMVVMbkltNVlVdFNpSG1lU0FTZkNLYmNBaGtUY1paR05hNEdvQUNJRWFlNWc2SVFNdlZsRTZiNWozaTB2b2tuWXNZbmVyMjNyTlEwQUJNS2hYMyJdfQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.EXHpSd7jib17DWyvIst3qVFpACV7_KITZvaJMREe_QtKzfk21f2-sq0dKwrCY9kLVoNn9Tyd5QN7H3fvz6P7_Q~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6ImMtY1FoY1BtNHV1SkFmem9ZTk0yWjFteENseWpmd2plVjA4SFNoUkZtOWsifQ.E7VEWOAMhe7T3_pTIZ7sZAOvCyKNOEhYCfEVjoJwNmAq8nBvulNk-lqNYRcP5MIkKpbhkzwcA3R-Dr1Nuxpq4g",
    "expected": "reject",
-   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), in its x5c form. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
   },
   {
    "id": "accept-status-list",
@@ -536,7 +536,7 @@
   {
    "id": "status-list-unreachable",
    "changed": "the status list's uri gives no answer",
-   "class": "should",
+   "class": "policy",
    "layer": "status-list",
    "clauses": [
     {
@@ -561,7 +561,7 @@
   {
    "id": "status-list-not-a-token",
    "changed": "the status list's uri answers with an HTML error page, not a Status List Token",
-   "class": "should",
+   "class": "policy",
    "layer": "status-list",
    "clauses": [
     {
@@ -586,7 +586,7 @@
   {
    "id": "status-list-lst-truncated",
    "changed": "the status list's compressed lst is cut short: the ZLIB stream never ends",
-   "class": "should",
+   "class": "policy",
    "layer": "status-list",
    "clauses": [
     {
@@ -611,7 +611,7 @@
   {
    "id": "status-list-wrong-key",
    "changed": "the status list at the stated uri is signed by another issuer's key, whose leaf chains to the same trusted root",
-   "class": "should",
+   "class": "policy",
    "layer": "status-list",
    "clauses": [
     {
@@ -636,7 +636,7 @@
   {
    "id": "status-list-no-authority",
    "changed": "the credential names a status list at https://other-issuer.example/statuslists/1, where no key is stated as entitled to publish its issuer's status; the list there is signed by another issuer's key",
-   "class": "should",
+   "class": "policy",
    "layer": "status-list",
    "clauses": [
     {
@@ -665,7 +665,7 @@
   {
    "id": "status-list-expired",
    "changed": "the status list expired a day before the verification instant",
-   "class": "should",
+   "class": "policy",
    "layer": "status-list",
    "clauses": [
     {

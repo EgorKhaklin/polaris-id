@@ -283,7 +283,8 @@ def _status(idx=STATUS_INDEX, uri=None):
 
 
 # What polaris-oid4vp is documented to do, recorded in each vector of the two 0.3.0 families (`notes`).
-SIGNER_NOTE = ("The class of swiyu change dossier CD-008 (2026-07-31), in its x5c form. polaris-oid4vp refuses it "
+SIGNER_NOTE = ("The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was "
+               "a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it "
                "(issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks "
                "mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), "
                "so this family targets x5c-bound verification.")
@@ -447,35 +448,35 @@ def _make_vectors():
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token()},
           "notes": "polaris-oid4vp returns authentic with revocation state checked, status 0 (VALID)."}, "accept"),
-        ("status-list-unreachable", "the status list's uri gives no answer", "should", "status-list",
+        ("status-list-unreachable", "the status list's uri gives no answer", "policy", "status-list",
          (SL_RESOLVE, SL_SHOULD),
          {"payload": _status(), "policy": "status-required", "status_list": {"uri": STATUS_URI, "response": None},
           "notes": _status_note("unreachable")}, "reject"),
         ("status-list-not-a-token", "the status list's uri answers with an HTML error page, not a Status List Token",
-         "should", "status-list", (SL_RESPONSE, SL_SHOULD),
+         "policy", "status-list", (SL_RESPONSE, SL_SHOULD),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": "<!doctype html><title>503 Service Unavailable</title>"},
           "notes": _status_note("unreachable (no list was obtained)")}, "reject"),
         ("status-list-lst-truncated", "the status list's compressed lst is cut short: the ZLIB stream never ends",
-         "should", "status-list", (SL_DECOMPRESS, SL_SHOULD),
+         "policy", "status-list", (SL_DECOMPRESS, SL_SHOULD),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token(truncated=True)},
           "notes": _status_note("list_refused (code lst)")}, "reject"),
         ("status-list-wrong-key", "the status list at the stated uri is signed by another issuer's key, whose leaf "
-         "chains to the same trusted root", "should", "status-list", (SL_SIGNATURE, SL_SHOULD),
+         "chains to the same trusted root", "policy", "status-list", (SL_SIGNATURE, SL_SHOULD),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token(key=OTHER_K,
                                                                             x5c=(OTHER_LEAF_URI, INTERMEDIATE))},
           "notes": _status_note("list_refused (code signature)")}, "reject"),
         ("status-list-no-authority", "the credential names a status list at %s, where no key is stated as entitled "
          "to publish its issuer's status; the list there is signed by another issuer's key" % UNVETTED_STATUS_URI,
-         "should", "status-list", (SL_KEY, SL_NO_MANDATE, SL_SHOULD),
+         "policy", "status-list", (SL_KEY, SL_NO_MANDATE, SL_SHOULD),
          {"payload": _status(uri=UNVETTED_STATUS_URI), "policy": "status-required",
           "status_list": {"uri": UNVETTED_STATUS_URI,
                           "response": _status_list_token(uri=UNVETTED_STATUS_URI, key=OTHER_K,
                                                          x5c=(OTHER_LEAF_URI, INTERMEDIATE))},
           "notes": _status_note("no_authority, and nothing was fetched")}, "reject"),
-        ("status-list-expired", "the status list expired a day before the verification instant", "should",
+        ("status-list-expired", "the status list expired a day before the verification instant", "policy",
          "status-list", (SL_EXP, SL_EXP_RELY, SL_SHOULD),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token(exp_days=-1)},
@@ -524,7 +525,7 @@ def build():
         "classes": {"control": "a valid presentation: a correct verifier accepts it",
                     "spec": "a sentence of the cited text requires the refusal",
                     "spec-implied": "the cited sentence binds the issuer or the wallet, or a definition implies the refusal",
-                    "should": "the cited text says the verifier SHOULD refuse, and no sentence requires it: the verdict is the one the vector's policy reaches"},
+                    "policy": "the cited text says the verifier SHOULD refuse, and no sentence requires it: the verdict is the one the vector's policy reaches"},
         "policies": {"status-required": "the relying party checks status: a credential that names a Token Status List is "
                                         "accepted only when the list its uri answers with is a Status List Token, signed by "
                                         "the key settings.status_list_keys states for the credential's iss and that uri, "
@@ -608,7 +609,7 @@ def reference_verdicts(doc):
 
 
 # The classes no sentence requires the refusal for: `hardening` in views/index.json.
-HARDENING = ("spec-implied", "should")
+HARDENING = ("spec-implied", "policy")
 
 
 def views(doc, rejected):

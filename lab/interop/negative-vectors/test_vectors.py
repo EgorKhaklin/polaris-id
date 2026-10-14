@@ -103,7 +103,8 @@ class Vectors(unittest.TestCase):
         self.assertNotIn("done", out)
 
     def test_a_control_left_to_the_caller_is_not_a_refusal(self):
-        # sd-jwt-python and sd-jwt-js leave the status-list layer to their caller, its control included.
+        # An adapter may leave the status-list layer to its caller, its control included (sd-jwt-python's
+        # layer rule does).
         rv = _load("run_vectors_na", "run_vectors.py")
         real = rv.polaris_oid4vp
 
@@ -244,11 +245,11 @@ class StatusGoesDark(unittest.TestCase):
         for vid in family:
             vector = self.by_id[vid]
             self.assertEqual(vector["policy"], "status-required", vid)
-            # SHOULD, except an index past the list's end, which the draft refuses with MUST.
+            # The draft's SHOULD is graded policy, never spec; only the index past the list's end is spec (MUST).
             self.assertEqual(vector["class"], {"accept-status-list": "control",
-                                               "status-list-index-past-end": "spec"}.get(vid, "should"), vid)
+                                               "status-list-index-past-end": "spec"}.get(vid, "policy"), vid)
             refs = [c["ref"] for c in vector["clauses"]]
-            if vector["class"] == "should":
+            if vector["class"] == "policy":
                 self.assertIn("draft-ietf-oauth-status-list-21 s8.3", refs, vid)
                 self.assertIn("SHOULD be rejected", vector["clauses"][-1]["text"], vid)
 
@@ -419,7 +420,7 @@ class Views(unittest.TestCase):
             self.assertEqual(entry["reference_rejected_at_mint"], entry["expected"] == "reject", entry["id"])
             self.assertEqual(entry["profile"], "haip", entry["id"])
             self.assertEqual(entry["hardening"], next(v["class"] for v in self.doc["vectors"]
-                                                      if v["id"] == entry["id"]) in ("spec-implied", "should"))
+                                                      if v["id"] == entry["id"]) in ("spec-implied", "policy"))
 
     def test_the_expected_failures_example_is_empty(self):
         with open(os.path.join(VIEWS, "expected-failures.example.json")) as fh:

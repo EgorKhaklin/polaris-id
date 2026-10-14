@@ -659,7 +659,7 @@
           "75-x5c-leaf-names-other-issuer-vpToken.json"
         ]
       },
-      "notes": "The class of swiyu change dossier CD-008 (2026-07-31), in its x5c form. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+      "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
     },
     {
       "id": "x5c-leaf-names-other-host",
@@ -691,7 +691,7 @@
           "76-x5c-leaf-names-other-host-vpToken.json"
         ]
       },
-      "notes": "The class of swiyu change dossier CD-008 (2026-07-31), in its x5c form. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+      "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
     },
     {
       "id": "x5c-leaf-uri-beats-host",
@@ -723,7 +723,7 @@
           "77-x5c-leaf-uri-beats-host-vpToken.json"
         ]
       },
-      "notes": "The class of swiyu change dossier CD-008 (2026-07-31), in its x5c form. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+      "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
     },
     {
       "id": "accept-status-list",
