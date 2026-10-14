@@ -5,7 +5,8 @@
 #
 # Everything runs from a scratch directory: a fresh venv with polaris-oid4vp from PyPI, the
 # verifier's test PKI, and the wallet's own state. The wallet generates its holder key itself;
-# this script reads only the public half, to bind the credential to it.
+# this script reads only the public half, to bind the credential to it. A run that passes removes
+# the directory it made; a run that fails keeps it for its logs and prints where it is.
 #
 #   lab/interop/eudi-dev/run.sh                       # eudi-dev v2.3.7, newest polaris-oid4vp
 #   EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
@@ -40,7 +41,30 @@ exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early wi
 }
 # The last line of every run, whichever way it ends: a run that stops early is the report most worth having.
 report_line() { echo "Tell us how it went, success or failure: https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml"; }
-trap 'exit_rc=$?; report_line; exit_trap "$exit_rc"' EXIT
+# The work dir holds the test wallet's holder key and its credential. A run that made the dir
+# removes it once every check passed; a run that stopped or failed keeps it for its logs and says
+# where. A WORK the caller named is never removed. Nothing here may stop the trap early.
+WORK_MADE=""
+clean_work() {  # $1 the run's exit status
+  [ -n "$WORK_MADE" ] && [ -d "$WORK" ] || return 0
+  if [ "$finished" = 1 ] && [ "$1" = 0 ]; then
+    cd /
+    # In Docker the wallet's state belongs to the image's user, which on Docker Engine is not this
+    # one, so the image empties the mount (rm cannot remove the mount point itself; that is ignored).
+    if [ "${MODE:-}" = docker ] && [ -d "$WORK/home" ]; then
+      docker run --rm -v "$WORK/home:/h" --entrypoint rm "$IMAGE" -rf /h >/dev/null 2>&1 || true
+    fi
+    rm -rf "$WORK" 2>/dev/null || true
+    [ ! -e "$WORK" ] || echo "could not remove the work dir $WORK: delete it, it holds the test wallet's key"
+  elif [ -n "$(ls -A "$WORK/home" 2>/dev/null || true)" ]; then
+    echo "work dir kept for its logs: $WORK (it holds the test wallet's key; delete it when done)"
+  else
+    echo "work dir kept for its logs: $WORK"
+  fi
+}
+trap 'exit_rc=$?; clean_work "$exit_rc"; report_line; exit_trap "$exit_rc"' EXIT
+# pip's upgrade notice is the loudest line of a run and says nothing about this walk.
+export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 IMAGE="${EUDI_IMAGE:-ghcr.io/dominikschlosser/eudi-dev:v2.3.7}"
 EUDI_VERSION="${EUDI_VERSION:-v2.3.7}"
@@ -70,7 +94,7 @@ if [ -z "$REQS" ]; then
   echo "requirements.txt not found: put it beside run.sh (docs/STRANGER-PATH.md downloads it)" >&2
   exit 2
 fi
-WORK="${WORK:-$(mktemp -d)}"
+if [ -z "${WORK:-}" ]; then WORK="$(mktemp -d)"; WORK_MADE=1; fi
 PY="${PYTHON:-python3}"
 if [ "${EUDI_NATIVE:-}" != 1 ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   MODE=docker
@@ -161,11 +185,16 @@ venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
 venv/bin/polaris-oid4vp keygen --out pki --host "$VHOST" --port "$PORT" >/dev/null
-mkdir -p home
+mkdir -p home in
 # In Docker the wallet runs as the image's own user and keeps its state in this directory.
 # Docker Desktop maps file ownership across the mount and Docker Engine does not, so on Linux
 # that user could not create its state here without this.
 chmod a+rwx home
+# The wallet reads its inputs from in/, mounted read-only, never from the work dir itself: mktemp
+# makes that dir 0700, which on Docker Engine the image's user (uid 1000) cannot open unless the
+# caller's uid is also 1000. in/ holds a readable copy of only each file the wallet reads
+# (in_wallet_view): the credential and the verifier's public certificates, never a private key.
+chmod a+rx in
 [ "$MODE" = native ] && fetch_wallet
 
 # No trust is configured for the verifier's TLS listener. keygen's listener certificate is
@@ -177,7 +206,7 @@ wallet() {
   # --storage flag and keeps files by default.
   if [ "$MODE" = docker ]; then
     # The ${a[@]+...} form because macOS's bash 3.2 calls an empty array unbound under set -u.
-    docker run --rm ${ADD_HOST[@]+"${ADD_HOST[@]}"} -v "$WORK/home:/home/app/.eudi-dev" -v "$WORK:/in" \
+    docker run --rm ${ADD_HOST[@]+"${ADD_HOST[@]}"} -v "$WORK/home:/home/app/.eudi-dev" -v "$WORK/in:/in:ro" \
       -e EUDI_DEV_STORAGE=file "$IMAGE" wallet "$@"
   else
     EUDI_DEV_STORAGE=file ./eudi wallet "$@" --wallet-dir "$WORK/home/wallet"
@@ -190,8 +219,13 @@ eudi() {  # a top-level eudi-dev command (issue), on the same wallet
     EUDI_DEV_STORAGE=file ./eudi "$@" --wallet-dir "$WORK/home/wallet"
   fi
 }
-in_wallet_view() {  # a file of the work dir, as the wallet sees it
-  if [ "$MODE" = docker ]; then echo "/in/$1"; else echo "$WORK/$1"; fi
+in_wallet_view() {  # a file of the work dir, as the wallet sees it: in Docker, a copy in in/
+  if [ "$MODE" = docker ]; then
+    local name="${1//\//-}"
+    cp "$WORK/$1" "$WORK/in/$name" && chmod a+r "$WORK/in/$name" && echo "/in/$name"
+  else
+    echo "$WORK/$1"
+  fi
 }
 
 wallet info >/dev/null
@@ -268,7 +302,7 @@ stop_verifier() {  # `wait` returns the killed server's 143, which set -e would 
     TUNNEL_PID=""
   fi
 }
-trap 'exit_rc=$?; stop_verifier; report_line; exit_trap "$exit_rc"' EXIT
+trap 'exit_rc=$?; stop_verifier; clean_work "$exit_rc"; report_line; exit_trap "$exit_rc"' EXIT
 
 start_tunnel() {  # a quick tunnel to the loopback port; sets TUNNEL_URL, or exits 2
   TUNNELS=$((TUNNELS + 1))

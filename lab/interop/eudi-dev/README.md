@@ -40,7 +40,8 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
     EUDI_TUNNEL=1 lab/interop/eudi-dev/run.sh                              # each verifier behind its own tunnel
 
 One command, about a minute once the image is local. It installs the verifier from PyPI into a
-fresh venv in a scratch directory (`WORK`, default a new temporary one), the newest release as
+fresh venv in a scratch directory (`WORK`, default a new temporary one, removed when the run passes
+and kept, with its path printed, when it fails), the newest release as
 `pip install --pre` gives a stranger unless `POLARIS_OID4VP` pins one, with its dependencies by hash
 from [`../requirements.txt`](../requirements.txt), and prints the version it got. A release arrives as
 its published wheel and builds nothing, so this runs on Python 3.9 or newer; with `POLARIS_OID4VP`
