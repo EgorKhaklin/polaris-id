@@ -79,6 +79,8 @@ code can answer it first.
 
 Nothing is written to disk. An outcome stays in memory for the request's lifetime (300 s) plus a
 minute. The example keeps no access log; an operator who adds one keeps attendees' IP addresses.
+The tunnel is not part of the example: Cloudflare, which carries each request, sees the attendee's
+IP address under its own terms.
 
 ## Test
 
