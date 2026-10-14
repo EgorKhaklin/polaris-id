@@ -12,7 +12,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Added
 
 - The Yivi app 8.3.1 (developer mode, our verifier root added) presents a Yivi-issued SD-JWT VC to polaris-oid4vp, at 8e6f4834; it counts as an unmodified wallet in place of the irmago library row, so the count stays 15 (lab/interop/yivi). Not in the weekly canary.
-- polaris-oid4vp `examples/yivi-checkin`: a door check-in on the public `Verifier`. The Yivi app discloses only its email `domain`, and the desk checks it in when the issuer is the pinned one (`iss_bound` and `claims["iss"]`) and the domain is on an allow-list. CI runs it end to end with the stand-in wallet: an allowed domain is checked in, and refused are a domain off the list, an untrusted CA, another provider under the same CA, and a leaf that does not name the issuer. Developer mode only; not in the published package.
+- polaris-oid4vp `examples/yivi-checkin`: a door check-in on the public `Verifier`. The Yivi app discloses its email `domain` and withholds the address, and the desk checks it in when the issuer is the pinned one (`iss_bound` and `claims["iss"]`) and the domain is on an allow-list. CI runs it end to end with the stand-in wallet: an allowed domain is checked in, and refused are a domain off the list, an untrusted CA, another provider under the same CA, and a leaf that does not name the issuer. Developer mode only; not in the published package.
 
 ### Changed
 

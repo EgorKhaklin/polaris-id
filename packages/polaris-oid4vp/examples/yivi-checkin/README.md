@@ -12,7 +12,8 @@ Yivi.
 
 ## Run it
 
-1. From this directory, install the app's requirements, then polaris-oid4vp from this checkout:
+1. With Python 3.11 or newer (the pinned starlette needs it), from this directory, install the
+   app's requirements, then polaris-oid4vp from this checkout:
    `python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.txt && .venv/bin/pip install ../..`
 2. Make the verifier's keys, once: `.venv/bin/polaris-oid4vp keygen --out pki --host localhost`.
 3. On the phone, once:
@@ -36,6 +37,11 @@ the Requestors Root also certifies relying parties.
 `https://is.yivi.app`. The CA certifies every Yivi attestation provider, and any of them can sign
 this credential type.
 
+`CHECKIN_EVENT` puts an event name over the headline, for example `Technology Club`.
+`CHECKIN_LOGO` sets the emblem on the desk. It defaults to the project site's,
+`site/polaris_logo.webp`, and the desk shows no emblem when that file is absent. The desk uses the
+site's colours, from `site/tokens.css`.
+
 ## What is checked
 
 - polaris-oid4vp judges the presentation:
@@ -52,16 +58,20 @@ this credential type.
   exact: a subdomain does not match.
 - Off the list, the wallet gets the verifier's usual refusal, and the desk shows the domain and
   that it is not on the list.
-- The desk pages answer only on the laptop, checked by the loopback address and the `Host`
-  header. Through the tunnel, only the wallet's paths answer: `/request/<id>`, `/response/<id>`
+- The desk pages, and the emblem they show, answer only on the laptop, checked by the loopback
+  address and the `Host` header. Through the tunnel, only the wallet's paths answer: `/request/<id>`, `/response/<id>`
   and `/done`.
 - Someone who sees the QR code can post to `/response/<id>`. If that post does not decrypt under
   the request's key, it changes nothing: the request stays open and the desk keeps waiting.
 
 ## What it shows and keeps
 
-The desk shows the domain and nothing else. The credential shows that the holder controlled an
-address at that domain when the credential was issued. It does not show current enrolment or
+The desk shows the domain and nothing else. It receives more than it shows: besides the
+disclosed domain, a presentation carries the credential's always-visible claims, which are its
+issuer (`iss`), type (`vct`) and dates (`iat`, `exp`), and `cnf`, a key from the phone that is the
+same at every presentation of that credential. The email address itself is never sent. The
+credential shows that the holder controlled an address at that domain when the credential was
+issued. It does not show current enrolment or
 membership. A check-in shows that someone answered this QR code with such a credential, not that
 it was the person at the desk: anyone who sees the code can answer it first.
 
