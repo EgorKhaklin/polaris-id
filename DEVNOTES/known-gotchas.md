@@ -151,7 +151,7 @@ If you migrate schemas via `pg_dump`, prepend `--no-owner
 
 ## Behavioral
 
-### "Larping": VANTA's named pattern to monitor
+### "Larping": Egor Khaklin's named pattern to monitor
 
 Cosmic-significance framing instead of concrete building. When I write
 "This represents a substrate-level shift in identity infrastructure
@@ -160,7 +160,7 @@ pattern when it appears, in either of us.
 
 ### Premature scope creep
 
-When VANTA asks for X and I do X+adjacent improvements, I burn budget
+When Egor Khaklin asks for X and I do X+adjacent improvements, I burn budget
 on stuff he didn't request. The marginal cost of completeness is near
 zero IF X is what was asked; adding Y costs token budget that could
 have been spent finishing X. Stick to scope unless the adjacency is

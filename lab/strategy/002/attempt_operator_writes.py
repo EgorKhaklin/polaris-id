@@ -18,6 +18,7 @@ need), and every SECURITY DEFINER routine the role can EXECUTE.
 
 Exit 0 when every operator write is refused with 42501; 1 otherwise. Writes out/attempts.json.
 """
+import getpass
 import json
 import os
 import sys
@@ -27,7 +28,7 @@ import psycopg2
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOST = os.environ.get('POLARIS_DB_HOST', 'localhost')
 DB = os.environ.get('POLARIS_DB_NAME', 'polaris_rpcomp')
-OWNER = os.environ.get('POLARIS_TEST_RELOAD_USER', 'vanta')
+OWNER = os.environ.get('POLARIS_TEST_RELOAD_USER') or getpass.getuser()
 RP = dict(host=HOST, dbname=DB, user='polaris_rp', password=os.environ.get('POLARIS_RP_PASSWORD', 'polaris_rp_lab'))
 
 KEY = 'ab' * 1952   # an ML-DSA-65-length public key the attacker holds

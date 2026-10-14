@@ -20,7 +20,7 @@
 -- succession trigger, the revocation-status trigger, the composite index and
 -- the TokensWithLifecycleSummary view, with no error to say so.
 --
--- Always load as the macOS default superuser (`vanta` on dev) or the
+-- Always load as the macOS default superuser (the login user on dev) or the
 -- Postgres superuser (`postgres` on Linux/Docker):
 --
 --   psql -d polaris_test -f 00_load_all.sql       # inherits OS user

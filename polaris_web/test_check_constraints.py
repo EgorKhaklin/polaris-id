@@ -1511,7 +1511,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
 
     These tests open an EXPLICIT polaris_app connection so the boundary is
     exercised even when the suite itself connects as a superuser (locally the
-    suite runs as `vanta`, which bypasses the ACL; in CI it is already
+    suite runs as the login user (a superuser), which bypasses the ACL; in CI it is already
     polaris_app). They skip cleanly if the polaris_app role is unreachable.
     """
 

@@ -184,7 +184,7 @@ Polaris consumes, not a defect in Polaris.
 
 The two findings worth carrying forward are questions, not features: whether an attribute
 credential belongs in Polaris at all, and whether `disclosure_level` should keep naming modes
-the product cannot produce. Both are decisions for VANTA, and neither is made here.
+the product cannot produce. Both are decisions for Egor Khaklin, and neither is made here.
 
 
 ---
@@ -293,7 +293,7 @@ from a broken measurement is worse than one that refuses.
 
 Adding the two expectations to `cases.json` changes a published contract, which is a product
 decision. It is cheap, the vectors already exist, and the gap is documented in
-`conformance/SPEC.md`. It is still VANTA's call and is not made here.
+`conformance/SPEC.md`. It is still Egor Khaklin's call and is not made here.
 
 
 ---
@@ -403,7 +403,7 @@ Changing a default is a product behaviour change and it would alter what existin
 get. It is not required by an external interoperability target, an external user, or an
 external security finding, and Polaris does not currently promise a bounded default, so it is
 not CORE-BUG either. Recorded, with the inconsistency against `grant_within_limits` named,
-for VANTA.
+for Egor Khaklin.
 
 ---
 

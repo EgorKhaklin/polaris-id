@@ -16153,7 +16153,7 @@ def check_cross_authority_zk(root: pathlib.Path) -> list[Finding]:
                "fixture and red on any wrong decision")
 
 
-# Positioning rule (VANTA, 2026-09-09): the tree describes the CLASS of a system it relates
+# Positioning rule (Egor Khaklin, 2026-09-09): the tree describes the CLASS of a system it relates
 # to, never a named country or its digital-state products. The P8 exchange-fabric arc was
 # informed by a gap analysis against a mature national digital-identity ecosystem; Polaris
 # must stand on its own terms rather than read as a derivative. Same discipline as the
@@ -25255,7 +25255,7 @@ def check_logs_exclude_pii(root: pathlib.Path) -> list[Finding]:
 # reached by neither: its rows survive the reload and its ids keep pointing into the
 # old world. RelyingPartyEvent had exactly that shape. After a reload the first party
 # registered got rp_id 1 and, with it, every event of the party that had held rp_id 1
-# in the previous life; test_check_constraints saw a registration "by vanta" that it
+# in the previous life; test_check_constraints saw a registration "by <user>" that it
 # had made with no actor declared. AppUserEvent was given the same fix in 10_auth.sql
 # when it was written. This is the rule both follow, so the next such table cannot be
 # missed by memory.

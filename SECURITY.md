@@ -204,6 +204,6 @@ bounty: Polaris is pre-pilot software, not a deployed service.
 
 ---
 
-*Maintainer: Egor Khaklin (VANTA)*
+*Maintainer: Egor Khaklin*
 *Last updated: 2026-10-11 (v1.0.0)*
 *Machine-readable: the live `/.well-known/security.txt` route (RFC 9116)*

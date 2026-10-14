@@ -24,7 +24,7 @@ It FAILS (exit 1) if any decision is wrong. Preconditions: two loaded Polaris da
 liboqs + cryptography for real ML-DSA. It launches the two instances itself (gunicorn) and
 tears them down. Exit 3 if a precondition is missing (skip).
 
-    POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta python3 scripts/polaris-federation-instances-drill.py
+    POLARIS_DB_HOST=localhost POLARIS_DB_USER="$(whoami)" python3 scripts/polaris-federation-instances-drill.py
 """
 import contextlib
 import importlib.util

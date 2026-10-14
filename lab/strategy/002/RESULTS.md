@@ -227,11 +227,11 @@ compromised relying-party service keeps):
 ## Reproduce
 
 ```bash
-createdb -h localhost -U vanta polaris_rpcomp        # already exists; left in place
-psql -h localhost -U vanta -d polaris_rpcomp -v ON_ERROR_STOP=1 -f lab/strategy/002/polaris_rp_grants.sql
+createdb -h localhost -U "$(whoami)" polaris_rpcomp        # already exists; left in place
+psql -h localhost -U "$(whoami)" -d polaris_rpcomp -v ON_ERROR_STOP=1 -f lab/strategy/002/polaris_rp_grants.sql
 PY=~/.local/share/polaris-venv312/bin/python
-POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_rpcomp POLARIS_DB_USER=vanta \
-  POLARIS_TEST_RELOAD_USER=vanta POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long \
+POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_rpcomp POLARIS_DB_USER="$(whoami)" \
+  POLARIS_TEST_RELOAD_USER="$(whoami)" POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long \
   POLARIS_STATE_DIR=/tmp/polaris-state-rpcomp POLARIS_PQC_PROFILE=placeholder \
   $PY lab/strategy/002/run_rp_as_polaris_rp.py --mode split     # also --mode owner, --mode asis
 $PY lab/strategy/002/probe_rp_statements.py

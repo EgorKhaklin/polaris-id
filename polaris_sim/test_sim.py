@@ -15,6 +15,7 @@ Two layers:
 from __future__ import annotations
 
 import datetime
+import getpass
 import os
 import re
 import unittest
@@ -163,7 +164,7 @@ class SignatureTests(unittest.TestCase):
 _DB_CONFIG = {
     "host": os.environ.get("POLARIS_DB_HOST", "localhost"),
     "dbname": os.environ.get("POLARIS_DB_NAME", "polaris_test"),
-    "user": os.environ.get("POLARIS_DB_USER", "vanta"),
+    "user": os.environ.get("POLARIS_DB_USER") or getpass.getuser(),
     "password": os.environ.get("POLARIS_DB_PASSWORD", ""),
 }
 

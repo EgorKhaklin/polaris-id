@@ -145,8 +145,8 @@ findings about today's product, whatever happens to this bet.
 
 ```bash
 PY=~/.local/share/polaris-venv312/bin/python
-POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_signer POLARIS_DB_USER=vanta \
-  POLARIS_TEST_RELOAD_USER=vanta POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long \
+POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_signer POLARIS_DB_USER="$(whoami)" \
+  POLARIS_TEST_RELOAD_USER="$(whoami)" POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long \
   POLARIS_STATE_DIR=/tmp/polaris-state-signer POLARIS_PQC_PROFILE=placeholder \
   $PY lab/strategy/003/record_signing_calls.py
 $PY lab/strategy/003/socket_hop_latency.py --n 5000
