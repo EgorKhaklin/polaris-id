@@ -1,0 +1,15 @@
+{
+  "name": "polaris-mdoc-witness-owf",
+  "private": true,
+  "type": "module",
+  "description": "Lab only: @owf/mdoc as an mdoc witness, with the upstream test context's crypto",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@owf/mdoc": "0.8.2",
+    "@peculiar/x509": "2.1.0",
+    "jose": "6.2.12",
+    "reflect-metadata": "0.2.2"
+  }
+}
