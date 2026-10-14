@@ -183,9 +183,9 @@ class CheckIn(unittest.TestCase):
     def test_allowed_domain_is_checked_in(self):
         base = self.serve(["Example.ORG"])
         shown, said = self.scan(base, self.expected, ISSUER)
-        self.assertIn('200 {"redirect_uri":"%s/done"}' % base, said)
+        self.assertIn("200 {}", said)
         self.assertEqual(shown.split(" Next person")[0].strip(), "Checked in example.org")
-        self.assertEqual(_get(base + "/done")[0], 200)
+        self.assertEqual(_get_status(base + "/done"), 404)
 
     def test_domain_off_the_list_is_refused(self):
         base = self.serve(["example.edu"])
@@ -254,7 +254,7 @@ class CheckIn(unittest.TestCase):
         # turn "Checked in" into a refusal.
         base = self.serve(["example.org"])
         shown, said = self.scan(base, self.expected, ISSUER)
-        self.assertIn('200 {"redirect_uri":"%s/done"}' % base, said)
+        self.assertIn("200 {}", said)
         self.junk(base, self.last_desk)
         self.assertEqual(self.desk(self.last_desk).split(" Next person")[0].strip(),
                          "Checked in example.org")
@@ -314,7 +314,7 @@ class CheckIn(unittest.TestCase):
                 server.wait(10)
         self.addCleanup(stop)
         deadline = time.time() + 20
-        while _get_status(base + "/done") != 200:
+        while _get_status(base + "/a/none") is None:
             self.assertLess(time.time(), deadline, "app.py did not start: %s" % log.read_text()[-500:])
             time.sleep(0.1)
         shown, said = self.scan(base, self.expected, ISSUER)

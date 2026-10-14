@@ -221,7 +221,7 @@ class Verdict:
 
     __slots__ = ("authentic", "code", "reason", "claims", "revocation", "disclosed",
                  "issuer_subject", "issuer_anchor", "iss_bound", "unbound_iss", "transaction_data",
-                 "wallet_error")
+                 "wallet_error", "response_code")
 
     def __init__(self, authentic, code="", reason="", claims=None, revocation=None,
                  disclosed=None, issuer_subject=None, issuer_anchor=None, iss_bound=None,
@@ -245,6 +245,10 @@ class Verdict:
         self.transaction_data = transaction_data
         # A wallet's error response, as `Verifier` recorded it (see above). None otherwise.
         self.wallet_error = wallet_error
+        # The fresh value `Verifier` put in an accepted response's redirect_uri (OpenID4VP 1.0
+        # section 8.2), redeemable once with `Verifier.redeem`. None on every other verdict, and
+        # never in `as_dict`, so it does not end up in a log.
+        self.response_code = None
 
     def __repr__(self):
         if self.authentic:
