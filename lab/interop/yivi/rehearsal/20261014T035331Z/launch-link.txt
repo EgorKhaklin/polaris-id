@@ -1,0 +1,1 @@
+https://open.yivi.app/-/openid4vp?client_id=x509_hash%3ApXGX9xFUluBf7Sg-5E5eXXJQ-xfv6uHconwdh_iNWlw&request_uri=https%3A%2F%2Fbibliographic-portland-church-consequence.trycloudflare.com%2Frequest.jwt%3Fstate%3Dzucbmi9Lsye65Yi3JBuJCA&request_uri_method=post

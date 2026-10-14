@@ -3494,6 +3494,11 @@ jobs:
       # stops the run with its reason, and the default stays the pinned version. No Docker.
       - name: The OID4VCgo harness's wallet inputs (lab/interop/oid4vcgo), each one the wallet that runs
         run: python -m unittest lab/interop/oid4vcgo/test_wallet_inputs.py
+      # lab/interop/yivi: the Yivi app's walk publishes only the request, the verdicts (the disclosed
+      # value withheld), the x5c shape and the refusals; every directory there with a result.json is
+      # held to the guard, and each leak shape it refuses is shown on a made-up file.
+      - name: The Yivi walk's public files carry no holder data (lab/interop/yivi)
+        run: python -m unittest lab/interop/yivi/test_public_capture.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.

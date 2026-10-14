@@ -1,0 +1,167 @@
+{
+  "client_id": "x509_hash:pXGX9xFUluBf7Sg-5E5eXXJQ-xfv6uHconwdh_iNWlw",
+  "fetches": [
+    {
+      "at": "2026-10-14T03:54:52Z",
+      "method": "GET",
+      "served": true
+    }
+  ],
+  "issuer_trust": [
+    {
+      "basic_constraints": {
+        "ca": true,
+        "path_length": null
+      },
+      "critical_extensions": [
+        "2.5.29.15",
+        "2.5.29.19"
+      ],
+      "extended_key_usage": null,
+      "issuer": "CN=Yivi Requestors Root CA,O=Yivi,C=NL",
+      "key_usage": [
+        "digital_signature",
+        "key_cert_sign",
+        "crl_sign"
+      ],
+      "not_after": "2040-09-13T08:13:22Z",
+      "not_before": "2025-09-19T08:13:23Z",
+      "sha256_der": "0c7e79d26737cda146e77bad55f96153604a1445cb5b3417f8ca3b4b9a8cc1bf",
+      "subject": "CN=Yivi Attestation Providers CA,O=Yivi,C=NL",
+      "subject_alt_name": null
+    },
+    {
+      "basic_constraints": {
+        "ca": true,
+        "path_length": null
+      },
+      "critical_extensions": [
+        "2.5.29.15",
+        "2.5.29.19"
+      ],
+      "extended_key_usage": null,
+      "issuer": "CN=Stand-in Requestors Root CA (rehearsal)",
+      "key_usage": [
+        "digital_signature",
+        "key_cert_sign",
+        "crl_sign"
+      ],
+      "not_after": "2026-11-13T03:53:35Z",
+      "not_before": "2026-10-13T03:53:35Z",
+      "sha256_der": "a15dc1ea42b074a1c9a6045758fac080e0e1f20e87950d4af5bb23d87fbc45e2",
+      "subject": "CN=Stand-in Attestation Providers CA (rehearsal)",
+      "subject_alt_name": null
+    }
+  ],
+  "live_verdict": {
+    "always_visible": [
+      "cnf",
+      "exp",
+      "iat",
+      "iss",
+      "vct"
+    ],
+    "at": "2026-10-14T03:54:53Z",
+    "authentic": true,
+    "code": "",
+    "domain": "<the presenter's email domain, withheld>",
+    "issuer_anchor": "CN=Stand-in Attestation Providers CA (rehearsal)",
+    "issuer_subject": "CN=Stand-in email issuer (rehearsal)",
+    "reason": "",
+    "selectively_disclosed": [
+      "domain"
+    ],
+    "status": 200,
+    "values": {
+      "iss": "https://standin-issuer.invalid/rehearsal",
+      "vct": "pbdf.sidn-pbdf.email"
+    }
+  },
+  "negative_a_replay": {
+    "authentic": false,
+    "code": "invalid_request",
+    "reason": "the response did not decrypt under any outstanding request's key: it was encrypted to somebody else, altered, or it answers a request that has expired",
+    "status": 400
+  },
+  "offline": {
+    "at": "2026-10-14T03:54:53Z",
+    "configured": {
+      "accepted": true,
+      "code": "",
+      "exit": 0,
+      "reason": "",
+      "trust_list": [
+        "CN=Yivi Attestation Providers CA,O=Yivi,C=NL",
+        "CN=Stand-in Attestation Providers CA (rehearsal)"
+      ]
+    },
+    "irmago_pair": {
+      "accepted": false,
+      "code": "issuer_key",
+      "exit": 1,
+      "reason": "the x5c leaf does not chain to any configured trust anchor",
+      "trust_list": [
+        "CN=Yivi Attestation Providers CA,O=Yivi,C=NL",
+        "CN=Yivi Requestors Root CA,O=Yivi,C=NL"
+      ]
+    },
+    "root_only": {
+      "accepted": false,
+      "code": "issuer_key",
+      "exit": 1,
+      "reason": "the x5c leaf does not chain to any configured trust anchor",
+      "trust_list": [
+        "CN=Yivi Requestors Root CA,O=Yivi,C=NL"
+      ]
+    },
+    "unrelated_root": {
+      "accepted": false,
+      "code": "issuer_key",
+      "exit": 1,
+      "reason": "the x5c leaf does not chain to any configured trust anchor",
+      "trust_list": [
+        "CN=walk unrelated root (negative b)"
+      ]
+    },
+    "unrelated_root_sha256_der": "440890ce22953ac2ceddc77214e252f860a008de52aabcb1de5565d126e3ae72"
+  },
+  "rehearsal": true,
+  "request": {
+    "claims": [
+      [
+        "domain"
+      ]
+    ],
+    "lifetime_s": 300,
+    "response_mode": "direct_post.jwt",
+    "started": "2026-10-14T03:54:52Z",
+    "vct_values": [
+      "pbdf.sidn-pbdf.email"
+    ]
+  },
+  "trustanchors_go_sha256": "07d6bc671d4b8bd464f810e1efc47930375b8ca4418965f6d9439fb9f09f00c9",
+  "x5c": [
+    {
+      "basic_constraints": {
+        "ca": false,
+        "path_length": null
+      },
+      "critical_extensions": [
+        "2.5.29.15",
+        "2.5.29.19"
+      ],
+      "extended_key_usage": null,
+      "issuer": "CN=Stand-in Attestation Providers CA (rehearsal)",
+      "key_usage": [
+        "digital_signature"
+      ],
+      "not_after": "2026-11-13T03:53:35Z",
+      "not_before": "2026-10-13T03:53:35Z",
+      "sha256_der": "d070523f7249f95c42ed0f203b2a916384397b7b11dfa3c7b5123aba38681f8a",
+      "subject": "CN=Stand-in email issuer (rehearsal)",
+      "subject_alt_name": [
+        "https://standin-issuer.invalid/rehearsal"
+      ]
+    }
+  ]
+}

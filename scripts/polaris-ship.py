@@ -172,6 +172,14 @@ VERIFICATION = [
      ["python3 -m unittest lab/interop/oid4vcgo/test_wallet_inputs.py",
       "bash -n lab/interop/oid4vcgo/run.sh"],
      "the OID4VCgo harness moved: OID4VCgo's CI runs it, with OID4VCGO_BIN / _SRC / _VERSION"),
+    (r"^lab/interop/yivi/",
+     ["python3 -m unittest lab/interop/yivi/test_public_capture.py",
+      "bash -n lab/interop/yivi/walk.sh",
+      "lab/interop/yivi/walk.sh --rehearse if the runner changed (a quick tunnel, no phone)"],
+     "the Yivi walk moved: its public files must still carry no holder data"),
+    (r"^scripts/(polaris-dev-tunnel\.sh|test_dev_tunnel\.py)$",
+     ["python3 -m unittest scripts/test_dev_tunnel.py"],
+     "the dev tunnel moved: its passthrough and its PKI reuse must hold"),
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
@@ -361,7 +369,7 @@ UNSHARDED_SUITES = {
                 "test_trigger_drill", "test_procedure_drill", "test_compose_parse", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
                 "test_event_partition_migration", "test_database_settings", "test_db_state", "test_db_reference",
-                "test_pgbackrest_conf", "test_db_init"],
+                "test_pgbackrest_conf", "test_db_init", "test_dev_tunnel"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
@@ -379,6 +387,7 @@ UNSHARDED_SUITES = {
     "lab/interop/fixtures/ed25519-holder": ["test_fixture"],
     "lab/interop": ["test_exit_trap"],
     "lab/interop/oid4vcgo": ["test_wallet_inputs"],
+    "lab/interop/yivi": ["test_public_capture"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
@@ -413,6 +422,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/fixtures/ed25519-holder": ("unittest", None),
     "lab/interop":              ("unittest", None),
     "lab/interop/oid4vcgo":     ("unittest", None),
+    "lab/interop/yivi":         ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
 }
