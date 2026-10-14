@@ -78,7 +78,7 @@ this QR code with such a credential, not that it was the person at the desk: any
 code can answer it first.
 
 Nothing is written to disk. An outcome stays in memory for the request's lifetime (300 s) plus a
-minute.
+minute. The example keeps no access log; an operator who adds one keeps attendees' IP addresses.
 
 ## Test
 
@@ -96,7 +96,8 @@ It covers these cases:
   the request expired;
 - a domain that matches the list only after non-ASCII case folding is refused;
 - a wallet's error response (the holder declined) changes nothing;
-- the desk is not served through the tunnel.
+- the desk is not served through the tunnel;
+- `python app.py` keeps no access log: its output through a scan holds no client address.
 
 CI runs it in a separate job step that installs `requirements.txt`. Without `CHECKIN_REQUIRED`,
 the suite is skipped when those requirements are missing.
