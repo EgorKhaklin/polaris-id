@@ -16,6 +16,7 @@ import os
 import pathlib
 import re
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -66,6 +67,13 @@ def _get(url, host=None):
             return r.status, r.geturl(), r.read().decode()
     except urllib.error.HTTPError as exc:
         return exc.code, url, exc.read().decode()
+
+
+def _get_status(url):
+    try:
+        return _get(url)[0]
+    except OSError:
+        return None
 
 
 def _provider(out, ca, ca_key, uri, cn=None):
@@ -283,6 +291,39 @@ class CheckIn(unittest.TestCase):
             urllib.request.urlopen(post, timeout=10)
         self.assertEqual(refused.exception.code, 400)
         self.assertIn("Scan with the Yivi app", self.desk(desk))
+
+    def test_the_server_keeps_no_access_log(self):
+        # app.py as an operator runs it, its output captured through a scan: uvicorn's default access
+        # log prints each request's client address, which for a real desk is an attendee's IP.
+        port = _port()
+        base = "http://127.0.0.1:%d" % port
+        tmp = pathlib.Path(self.tmp.name)
+        anchor = tmp / "standin-ca.pem"
+        anchor.write_bytes(self.standin_ca[0].public_bytes(serialization.Encoding.PEM))
+        env = dict(os.environ, PYTHONPATH=str(HERE.parents[1]), CHECKIN_PUBLIC_URL=base,
+                   CHECKIN_PKI=str(tmp / "pki"), CHECKIN_ALLOWED="example.org",
+                   CHECKIN_ISSUER_CA=str(anchor), CHECKIN_ISSUER=ISSUER, CHECKIN_PORT=str(port))
+        log = tmp / "server-output.log"
+        with open(log, "wb") as out:
+            server = subprocess.Popen([sys.executable, str(HERE / "app.py")], env=env, stdout=out,
+                                      stderr=subprocess.STDOUT)
+
+        def stop():
+            if server.poll() is None:
+                server.terminate()
+                server.wait(10)
+        self.addCleanup(stop)
+        deadline = time.time() + 20
+        while _get_status(base + "/done") != 200:
+            self.assertLess(time.time(), deadline, "app.py did not start: %s" % log.read_text()[-500:])
+            time.sleep(0.1)
+        shown, said = self.scan(base, self.expected, ISSUER)
+        self.assertIn("Checked in example.org", shown)
+        stop()
+        output = log.read_text()
+        self.assertIn("Uvicorn running on", output)  # the output really was captured
+        self.assertNotIn("POST /response", output)
+        self.assertNotRegex(output, r"127\.0\.0\.1:\d+ - \"")
 
     def test_the_desk_is_not_served_through_the_tunnel(self):
         base = self.serve(["example.org"], logo=b"x")
