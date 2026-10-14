@@ -6,7 +6,9 @@ under OpenID4VP 1.0 and HAIP 1.0 (lab record 018).
 
 Every vector is one valid presentation with exactly one thing changed, re-signed wherever the change
 needs it, so the only reason to refuse it is the clause it cites. Two accept controls come first: a
-verifier that refuses everything fails them, and a negative vector means nothing without them.
+verifier that refuses everything fails them, and a negative vector means nothing without them. The
+status-list family (0.3.0) carries its own control, and each of its vectors names the Token Status
+List the credential points at, as the bytes its uri answers with, and the policy its verdict holds under.
 
 The keys and certificates are TEST material derived from public seeds, signed with deterministic
 ECDSA (RFC 6979): anyone can regenerate every byte, and nobody may trust them.
@@ -51,6 +53,13 @@ AUDIENCE = "x509_hash:WJfeA4xR3mvFsWk2fEB3oiu4f3E1yBHkXjsN0P2s6RE"
 CLIENT_ID_PREFIXES = ("redirect_uri", "openid_federation", "decentralized_identifier", "verifier_attestation",
                       "x509_san_dns", "x509_hash", "origin")
 ISSUER = "https://issuer.example"
+# Another issuer under the same trusted root: its leaf signs the signer-is-not-the-issuer family (0.3.0).
+OTHER_ISSUER = "https://other-issuer.example"
+OTHER_HOST = "other-issuer.example"
+# Where the status-list family's credentials point (0.3.0). settings.status_list_keys states which key may
+# publish the first for ISSUER; nothing is stated for the second.
+STATUS_URI = "https://issuer.example/statuslists/1"
+UNVETTED_STATUS_URI = "https://other-issuer.example/statuslists/1"
 VCT = "urn:eudi:pid:1"
 _P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
@@ -101,7 +110,8 @@ def _name(cn):
     return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 
 
-def _cert(cn, key, issuer_cn, issuer_key, serial, *, ca, pathlen=None, leaf_san=False, not_before=None, not_after=None):
+def _cert(cn, key, issuer_cn, issuer_key, serial, *, ca, pathlen=None, leaf_san=False, san=None, not_before=None,
+          not_after=None):
     not_before = T0 if not_before is None else not_before
     not_after = T1 if not_after is None else not_after
     b = (x509.CertificateBuilder().subject_name(_name(cn)).issuer_name(_name(issuer_cn))
@@ -115,16 +125,19 @@ def _cert(cn, key, issuer_cn, issuer_key, serial, *, ca, pathlen=None, leaf_san=
     if leaf_san:
         b = b.add_extension(x509.SubjectAlternativeName([x509.UniformResourceIdentifier(ISSUER),
                                                          x509.DNSName("issuer.example")]), critical=False)
+    if san:
+        b = b.add_extension(x509.SubjectAlternativeName(list(san)), critical=False)
     return b.sign(issuer_key, hashes.SHA256(), ecdsa_deterministic=True)
 
 
 ROOT_K, INT_K, ISS_K, HOLDER_K = _key("root"), _key("intermediate"), _key("issuer"), _key("holder")
 ROGUE_K, BADINT_K = _key("rogue-root"), _key("not-a-ca")
+OTHER_K = _key("other-issuer")  # another issuer's own key, certified under the trusted root (0.3.0)
 
 
 def _make_pki():
     global T0, T1, ROOT, INTERMEDIATE, LEAF, SELF_SIGNED_LEAF, ROGUE_ROOT, ROGUE_LEAF, EXPIRED_LEAF, NOT_A_CA
-    global LEAF_UNDER_NOT_A_CA
+    global LEAF_UNDER_NOT_A_CA, OTHER_LEAF_URI, OTHER_LEAF_DNS, OTHER_LEAF_URI_AND_HOST
     now = datetime.datetime.fromtimestamp(NOW, UTC)
     T0, T1 = now - datetime.timedelta(days=_NOT_BEFORE_DAYS), now + datetime.timedelta(days=_NOT_AFTER_DAYS)
     ROOT = _cert("Negative Vectors Test Root", ROOT_K, "Negative Vectors Test Root", ROOT_K, 1, ca=True, pathlen=1)
@@ -143,6 +156,15 @@ def _make_pki():
     NOT_A_CA = _cert("Negative Vectors Test Intermediate", BADINT_K, "Negative Vectors Test Root", ROOT_K, 8, ca=False)
     LEAF_UNDER_NOT_A_CA = _cert("Negative Vectors Test Issuer", ISS_K, "Negative Vectors Test Intermediate", BADINT_K, 9,
                                 ca=False, leaf_san=True)
+    # 0.3.0: another issuer's leaves, under the same intermediate and root as the control's. Each is a valid
+    # certificate for that issuer; the vectors use one to sign a credential whose iss names ISSUER.
+    OTHER_LEAF_URI = _cert("Negative Vectors Other Issuer", OTHER_K, "Negative Vectors Test Intermediate", INT_K, 10,
+                           ca=False, san=(x509.UniformResourceIdentifier(OTHER_ISSUER),))
+    OTHER_LEAF_DNS = _cert("Negative Vectors Other Issuer", OTHER_K, "Negative Vectors Test Intermediate", INT_K, 11,
+                           ca=False, san=(x509.DNSName(OTHER_HOST),))
+    OTHER_LEAF_URI_AND_HOST = _cert("Negative Vectors Other Issuer", OTHER_K, "Negative Vectors Test Intermediate", INT_K,
+                                    12, ca=False, san=(x509.UniformResourceIdentifier(OTHER_ISSUER),
+                                                       x509.DNSName("issuer.example")))
 
 
 _make_pki()
@@ -173,9 +195,10 @@ def _digest(disclosure):
 
 
 def present(*, mode="x5c", x5c=None, issuer_header=None, payload=None, extra=(), drop_claims=(),
-            issuer_der=False, kb_header=None, kb_payload=None, kb_text=None):
+            issuer_der=False, kb_header=None, kb_payload=None, kb_text=None, signer=None):
     """`extra` adds Disclosures the issuer commits to; `payload` edits the issuer's claims after the
-    digests are in; the `kb_*` knobs edit the Key Binding JWT, re-signed by the holder."""
+    digests are in; the `kb_*` knobs edit the Key Binding JWT, re-signed by the holder. `signer` signs
+    the issuer JWT instead of the issuer's key (the key of the x5c leaf it is given with)."""
     disclosures = [_disclosure(_salt(n), n, v) for n, v in CLAIMS if n not in drop_claims]
     disclosures += [_disclosure(*e) for e in extra]
     body = {"iss": ISSUER, "vct": VCT, "iat": NOW - 86400, "exp": NOW + 365 * 86400,
@@ -188,7 +211,7 @@ def present(*, mode="x5c", x5c=None, issuer_header=None, payload=None, extra=(),
     else:
         header["x5c"] = [_der64(c) for c in (x5c or (LEAF, INTERMEDIATE))]
     header.update(issuer_header or {})
-    issuer_jwt = _jws(header, _json(body), key=ISS_K, der=issuer_der)
+    issuer_jwt = _jws(header, _json(body), key=signer or ISS_K, der=issuer_der)
     presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
     kb_head = {"alg": "ES256", "typ": "kb+jwt"}
     kb_head.update(kb_header or {})
@@ -212,6 +235,65 @@ def _dup_first_digest(body):
 
 
 CRIT = {"crit": ["urn:example:never-understood"], "urn:example:never-understood": True}
+
+
+# --- the status-list family (0.3.0): a Token Status List the credential points at, as its uri answers -----
+# 16 one-bit entries, index 3 INVALID and the rest VALID; the credentials name index 5. INDEX_PAST_END is
+# the first index the list does not cover.
+STATUSES = (0, 0, 0, 1) + (0,) * 12
+STATUS_INDEX, INDEX_PAST_END = 5, 16
+
+
+def _zlib_stored(raw):
+    """A ZLIB stream (RFC 1950) holding `raw` in one stored DEFLATE block (RFC 1951 s3.2.4), written out
+    by hand so that every zlib build makes the same bytes; a compressor's output can differ between builds.
+    Any DEFLATE/ZLIB decompressor reads it (draft-ietf-oauth-status-list-21 s8.3 step 5)."""
+    n = len(raw)
+    adler_a, adler_b = 1, 0
+    for byte in raw:
+        adler_a = (adler_a + byte) % 65521
+        adler_b = (adler_b + adler_a) % 65521
+    return (bytes((0x78, 0x01, 0x01)) + n.to_bytes(2, "little") + (n ^ 0xFFFF).to_bytes(2, "little") + bytes(raw)
+            + ((adler_b << 16) | adler_a).to_bytes(4, "big"))
+
+
+def _lst(statuses, *, truncated=False):
+    """The `lst` value: one-bit statuses, least significant bit first in each byte (draft s4.1), ZLIB,
+    base64url. `truncated` drops the stream's last four bytes (its Adler-32 trailer): the stream never ends."""
+    array = bytearray((len(statuses) + 7) // 8)
+    for i, value in enumerate(statuses):
+        array[i // 8] |= value << (i % 8)
+    stream = _zlib_stored(bytes(array))
+    return b64u(stream[:-4] if truncated else stream)
+
+
+def _status_list_token(*, uri=None, key=None, x5c=None, exp_days=1, truncated=False):
+    """A Status List Token (draft s5.1) for `uri`, signed by `key` with `x5c` in its header: by default the
+    issuer's own key and chain, issued an hour before NOW and expiring `exp_days` after it."""
+    header = {"alg": "ES256", "typ": "statuslist+jwt",
+              "x5c": [_der64(c) for c in (x5c or (LEAF, INTERMEDIATE))]}
+    body = {"sub": uri or STATUS_URI, "iat": NOW - 3600, "exp": NOW + exp_days * 86400, "ttl": 43200,
+            "status_list": {"bits": 1, "lst": _lst(STATUSES, truncated=truncated)}}
+    return _jws(header, _json(body), key=key or ISS_K)
+
+
+def _status(idx=STATUS_INDEX, uri=None):
+    """The credential's status claim (draft s6.2), naming index `idx` of the list at `uri`."""
+    return _set(status={"status_list": {"idx": idx, "uri": uri or STATUS_URI}})
+
+
+# What polaris-oid4vp is documented to do, recorded in each vector of the two 0.3.0 families (`notes`).
+SIGNER_NOTE = ("The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was "
+               "a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it "
+               "(issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks "
+               "mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), "
+               "so this family targets x5c-bound verification.")
+
+
+def _status_note(state):
+    return ("polaris-oid4vp returns authentic with revocation state %s. Its Verifier refuses on its own only a "
+            "checked status that is not VALID (code revoked); every other state stays in the verdict for the "
+            "relying party's policy, and status-required refuses it." % state)
 
 # Citations, quoted from the published texts.
 RFC7515_CRIT = ("RFC 7515 s4.1.11", "If any of the listed extension Header Parameters are not understood and "
@@ -255,6 +337,36 @@ HAIP_NO_ANCHOR = ("HAIP 1.0 s6.1.1", "The X.509 certificate of the trust anchor 
 RFC5280_VALIDITY = ("RFC 5280 s6.1.3 (a)(2)", "The certificate validity period includes the current time.")
 RFC5280_CA = ("RFC 5280 s6.1.4 (k)", "verify that the basicConstraints extension is present and that cA is set to "
               "TRUE.")
+# 0.3.0, the signer is not the named issuer.
+SDJWTVC_X5C_ISSUER = ("SD-JWT VC draft-19 s2.5", "In this case, the Issuer of the Verifiable Digital Credential is the "
+                      "subject of the end-entity certificate.")
+SDJWTVC_KEY_ISSUER = ("SD-JWT VC draft-19 s2.5", "If a recipient cannot validate that the public verification key "
+                      "corresponds to the Issuer of the Issuer-signed JWT using a permitted key discovery and validation "
+                      "mechanism, the SD-JWT VC MUST be rejected.")
+SDJWTVC_ISS_KEYS = ("SD-JWT VC draft-19 s7.3", "it is critical that those rules maintain the integrity of the "
+                    "relationship between the iss value of the SD-JWT, if present, and the public keys of the Issuer.")
+# 0.3.0, status goes dark: draft-ietf-oauth-status-list-21. Only s8.3 step 6 says MUST about the credential; for
+# every other failed check the draft's word is SHOULD (s8.3, last paragraph).
+_SL = "draft-ietf-oauth-status-list-21 "
+SL_SHOULD = (_SL + "s8.3", "If any of these checks fails, no statement about the status of the Referenced Token can be "
+             "made and the Referenced Token SHOULD be rejected.")
+SL_RESOLVE = (_SL + "s8.3 step 2", "Resolve the Status List Token from the provided URI")
+SL_RESPONSE = (_SL + "s8.2", "In the case of \"application/statuslist+jwt\", the response MUST be of type JWT and follow "
+               "the rules of Section 5.1.")
+SL_DECOMPRESS = (_SL + "s8.3 step 5", "Decompress the Status List with a decompressor that is compatible with DEFLATE "
+                 "[RFC1951] and ZLIB [RFC1950]")
+SL_SIGNATURE = (_SL + "s5.1", "Relying Parties MUST reject JWTs with an invalid signature.")
+SL_KEY = (_SL + "s8.3 step 3.a", "Validate the Status List Token by following the rules defined in Section 7.2 of "
+          "[RFC7519] for JWTs and Section 7.2 of [RFC8392] for CWTs. This step might require the resolution of a public "
+          "key as described in Section 11.3.")
+SL_NO_MANDATE = (_SL + "s11.3", "This specification does not mandate specific methods for key resolution and trust "
+                 "management")
+SL_EXP = (_SL + "s8.3 step 4.c", "If the expiration time is defined (exp or 4), it MUST be checked if the Status List "
+          "Token is expired")
+SL_EXP_RELY = (_SL + "s13.7", "the exp claim specifies an absolute timestamp, marking the point in time when the Status "
+               "List expires and MUST NOT be relied upon any longer")
+SL_INDEX = (_SL + "s8.3 step 6", "If the provided index is out of bounds of the Status List, no statement about the "
+            "status of the Referenced Token can be made and the Referenced Token MUST be rejected.")
 
 def _make_vectors():
     # id, what is changed, class, layer, citations, how the presentation is built, the verdict a correct verifier
@@ -313,35 +425,111 @@ def _make_vectors():
          (RFC9901_KB_AUD_REQUIRED, RFC9901_KB_BOUND, OID4VP_AUD), {"kb_payload": lambda b: b.pop("aud")}, "reject"),
         ("kb-nonce-missing", "the Key Binding JWT has no nonce", "spec", "sd-jwt",
          (RFC9901_KB_NONCE_REQUIRED, RFC9901_KB_BOUND, OID4VP_NONCE), {"kb_payload": lambda b: b.pop("nonce")}, "reject"),
+        # 0.3.0: the signer is not the named issuer. Another issuer's valid leaf, under the trusted root, signs
+        # with that issuer's own key a credential whose iss is ISSUER. spec-implied: s2.5 makes the leaf's
+        # subject the issuer and requires the key to be the issuer's; no sentence names the comparison.
+        ("x5c-leaf-names-other-issuer", "another issuer's leaf, under the trusted root and naming %s as its URI, "
+         "signs a credential whose iss is %s" % (OTHER_ISSUER, ISSUER), "spec-implied", "x5c-issuer",
+         (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
+         {"x5c": (OTHER_LEAF_URI, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
+        ("x5c-leaf-names-other-host", "another issuer's leaf, under the trusted root and naming only the DNS host %s, "
+         "signs a credential whose iss is %s: it names neither that URL nor its host" % (OTHER_HOST, ISSUER),
+         "spec-implied", "x5c-issuer", (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
+         {"x5c": (OTHER_LEAF_DNS, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
+        ("x5c-leaf-uri-beats-host", "another issuer's leaf, under the trusted root, names %s as its URI and also the "
+         "host issuer.example, which both share; it signs a credential whose iss is %s" % (OTHER_ISSUER, ISSUER),
+         "spec-implied", "x5c-issuer", (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
+         {"x5c": (OTHER_LEAF_URI_AND_HOST, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
+        # 0.3.0: status goes dark. The control's credential with a status claim; `status_list` is what its uri
+        # answers with (null: no answer). The verdict is the status-required policy's: the draft says SHOULD
+        # for each failed check except an index past the list's end (MUST, s8.3 step 6).
+        ("accept-status-list", "nothing: the control with a status claim, its list served, signed by the stated key, "
+         "VALID at the index", "control", "status-list", (),
+         {"payload": _status(), "policy": "status-required",
+          "status_list": {"uri": STATUS_URI, "response": _status_list_token()},
+          "notes": "polaris-oid4vp returns authentic with revocation state checked, status 0 (VALID)."}, "accept"),
+        ("status-list-unreachable", "the status list's uri gives no answer", "policy", "status-list",
+         (SL_RESOLVE, SL_SHOULD),
+         {"payload": _status(), "policy": "status-required", "status_list": {"uri": STATUS_URI, "response": None},
+          "notes": _status_note("unreachable")}, "reject"),
+        ("status-list-not-a-token", "the status list's uri answers with an HTML error page, not a Status List Token",
+         "policy", "status-list", (SL_RESPONSE, SL_SHOULD),
+         {"payload": _status(), "policy": "status-required",
+          "status_list": {"uri": STATUS_URI, "response": "<!doctype html><title>503 Service Unavailable</title>"},
+          "notes": _status_note("unreachable (no list was obtained)")}, "reject"),
+        ("status-list-lst-truncated", "the status list's compressed lst is cut short: the ZLIB stream never ends",
+         "policy", "status-list", (SL_DECOMPRESS, SL_SHOULD),
+         {"payload": _status(), "policy": "status-required",
+          "status_list": {"uri": STATUS_URI, "response": _status_list_token(truncated=True)},
+          "notes": _status_note("list_refused (code lst)")}, "reject"),
+        ("status-list-wrong-key", "the status list at the stated uri is signed by another issuer's key, whose leaf "
+         "chains to the same trusted root", "policy", "status-list", (SL_SIGNATURE, SL_SHOULD),
+         {"payload": _status(), "policy": "status-required",
+          "status_list": {"uri": STATUS_URI, "response": _status_list_token(key=OTHER_K,
+                                                                            x5c=(OTHER_LEAF_URI, INTERMEDIATE))},
+          "notes": _status_note("list_refused (code signature)")}, "reject"),
+        ("status-list-no-authority", "the credential names a status list at %s, where no key is stated as entitled "
+         "to publish its issuer's status; the list there is signed by another issuer's key" % UNVETTED_STATUS_URI,
+         "policy", "status-list", (SL_KEY, SL_NO_MANDATE, SL_SHOULD),
+         {"payload": _status(uri=UNVETTED_STATUS_URI), "policy": "status-required",
+          "status_list": {"uri": UNVETTED_STATUS_URI,
+                          "response": _status_list_token(uri=UNVETTED_STATUS_URI, key=OTHER_K,
+                                                         x5c=(OTHER_LEAF_URI, INTERMEDIATE))},
+          "notes": _status_note("no_authority, and nothing was fetched")}, "reject"),
+        ("status-list-expired", "the status list expired a day before the verification instant", "policy",
+         "status-list", (SL_EXP, SL_EXP_RELY, SL_SHOULD),
+         {"payload": _status(), "policy": "status-required",
+          "status_list": {"uri": STATUS_URI, "response": _status_list_token(exp_days=-1)},
+          "notes": _status_note("list_refused (code expired)")}, "reject"),
+        ("status-list-index-past-end", "the credential names index %d of a %d-entry status list"
+         % (INDEX_PAST_END, len(STATUSES)), "spec", "status-list", (SL_INDEX,),
+         {"payload": _status(idx=INDEX_PAST_END), "policy": "status-required",
+          "status_list": {"uri": STATUS_URI, "response": _status_list_token()},
+          "notes": _status_note("list_refused (code index)")}, "reject"),
     )
 
 
 VECTORS = _make_vectors()
 
 
+# The fields a vector carries besides the presentation (0.3.0), in the order they are written.
+EXTRA_FIELDS = ("policy", "status_list", "notes")
+
+
 def build():
     vectors = []
     for vid, what, cls, layer, cites, kw, expected in VECTORS:
-        vectors.append({"id": vid, "changed": what, "class": cls, "layer": layer,
-                        "clauses": [{"ref": r, "text": t} for r, t in cites],
-                        "trust": kw.get("mode", "x5c"), "presentation": present(**kw), "expected": expected})
+        kw = dict(kw)
+        extra = {k: kw.pop(k) for k in EXTRA_FIELDS if k in kw}
+        vectors.append(dict({"id": vid, "changed": what, "class": cls, "layer": layer,
+                             "clauses": [{"ref": r, "text": t} for r, t in cites],
+                             "trust": kw.get("mode", "x5c"), "presentation": present(**kw), "expected": expected},
+                            **extra))
     return {
         "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them."
                    + "".join(" The %s key came from %s." % kv for kv in _SUPPLIED),
         "settings": {"now": NOW, "nonce": NONCE, "audience": AUDIENCE, "vct": VCT, "max_skew_seconds": 300,
                      "trust_anchors_pem": [_pem(ROOT)],
-                     "issuer_jwks": [dict(_jwk(ISS_K), kid="issuer-1", alg="ES256", use="sig")]},
+                     "issuer_jwks": [dict(_jwk(ISS_K), kid="issuer-1", alg="ES256", use="sig")],
+                     "status_list_keys": [{"iss": ISSUER, "uri": STATUS_URI, "jwk": dict(_jwk(ISS_K), alg="ES256")}]},
         "layers": {"control": "the controls, which every verifier judges",
                    "jose": "JWS rules (RFC 7515, 7518, 8725) any JOSE verifier applies",
                    "sd-jwt": "RFC 9901, which any SD-JWT verifier applies",
                    "sd-jwt-vc": "the SD-JWT VC profile, which a verifier of SD-JWT VCs applies",
                    "openid4vp": "OpenID4VP 1.0, which a verifier receiving presentations over it applies",
-                   "haip-x509": "the issuer's x5c chain under HAIP 1.0 and RFC 5280, which a verifier resolving keys from x5c applies"},
+                   "haip-x509": "the issuer's x5c chain under HAIP 1.0 and RFC 5280, which a verifier resolving keys from x5c applies",
+                   "x5c-issuer": "the binding of iss to the x5c leaf that signed (SD-JWT VC s2.5), which a verifier resolving keys from x5c applies",
+                   "status-list": "the Token Status List (draft-ietf-oauth-status-list), which a verifier checking status applies under the vector's policy"},
         "classes": {"control": "a valid presentation: a correct verifier accepts it",
                     "spec": "a sentence of the cited text requires the refusal",
-                    "spec-implied": "the cited sentence binds the issuer or the wallet, or a definition implies the refusal"},
+                    "spec-implied": "the cited sentence binds the issuer or the wallet, or a definition implies the refusal",
+                    "policy": "the cited text says the verifier SHOULD refuse, and no sentence requires it: the verdict is the one the vector's policy reaches"},
+        "policies": {"status-required": "the relying party checks status: a credential that names a Token Status List is "
+                                        "accepted only when the list its uri answers with is a Status List Token, signed by "
+                                        "the key settings.status_list_keys states for the credential's iss and that uri, "
+                                        "not expired, covering the index, and VALID (0) there"},
         "vectors": vectors,
     }
 
@@ -420,6 +608,10 @@ def reference_verdicts(doc):
     return {v["id"]: runner.polaris_oid4vp(v, doc["settings"])[0] == "reject" for v in doc["vectors"]}
 
 
+# The classes no sentence requires the refusal for: `hardening` in views/index.json.
+HARDENING = ("spec-implied", "policy")
+
+
 def views(doc, rejected):
     """{path under views/: text}. `rejected` is reference_verdicts(doc)."""
     settings = doc["settings"]
@@ -435,8 +627,9 @@ def views(doc, rejected):
         out["eudi/" + pair[1]] = _view_json({"pid": [v["presentation"]]})
         entries.append({"id": v["id"], "spec_section": v["clauses"][0]["ref"] if v["clauses"] else None,
                         "target": v["layer"], "input": v["presentation"], "expected": v["expected"],
-                        "hardening": v["class"] == "spec-implied", "reference_rejected_at_mint": rejected[v["id"]],
+                        "hardening": v["class"] in HARDENING, "reference_rejected_at_mint": rejected[v["id"]],
                         "clauses": v["clauses"], "trust": v["trust"], "profile": "haip", "files": {"eudi": pair}})
+        entries[-1].update({k: v[k] for k in EXTRA_FIELDS if k in v})
     index = _view_json({"name": doc["name"], "version": doc["version"], "warning": doc["warning"],
                         "source": "vectors.json; these views are derived from it by make_vectors.py",
                         "reference": "reference_rejected_at_mint: polaris-oid4vp's verdict when the views were made",
@@ -475,9 +668,11 @@ def _eudi_readme(doc):
         "- `NN-<id>-vpToken.json`: `{\"pid\": [<presentation>]}`.",
         "- `INDEX.json`: per vector, `expected` (`accept` or `reject`), `clauses` (the spec text), `trust` and "
         "`files` (its pair).",
+        "- A `status-list` vector also needs `status_list.response` served at `status_list.uri` (null: no answer) "
+        "and the verifier held to the `policy` its entry names; without both, run the others.",
         "",
-        "%d vectors, numbered %02d to %s in `vectors.json`'s order. The %d `accept-*` controls come first: a "
-        "refusal counts only where the controls are accepted."
+        "%d vectors, numbered %02d to %s in `vectors.json`'s order. The %d `accept-*` vectors are the controls: "
+        "a refusal counts only where the controls are accepted."
         % (n, EUDI_FIRST, last, sum(v["expected"] == "accept" for v in doc["vectors"])),
         "",
         "## The binding",
