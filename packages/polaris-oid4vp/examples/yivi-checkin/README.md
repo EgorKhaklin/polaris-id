@@ -68,14 +68,14 @@ site's colours, from `site/tokens.css`.
 
 ## What it shows and keeps
 
-The desk shows the domain and nothing else. It receives more than it shows: besides the
-disclosed domain, a presentation carries the credential's always-visible claims, which are its
-issuer (`iss`), type (`vct`) and dates (`iat`, `exp`), and `cnf`, a key from the phone that is the
-same at every presentation of that credential. The email address itself is never sent. The
+The desk shows the domain and nothing else from the credential. It receives more than it shows:
+besides the disclosed domain, a presentation carries the credential's always-visible claims, which
+are its issuer (`iss`), type (`vct`) and dates (`iat`, `exp`), and `cnf`, a key from the phone that
+is the same at every presentation of that credential. The email address itself is never sent. The
 credential shows that the holder controlled an address at that domain when the credential was
-issued. It does not show current enrolment or
-membership. A check-in shows that someone answered this QR code with such a credential, not that
-it was the person at the desk: anyone who sees the code can answer it first.
+issued. It does not show current enrolment or membership. A check-in shows that someone answered
+this QR code with such a credential, not that it was the person at the desk: anyone who sees the
+code can answer it first.
 
 Nothing is written to disk. An outcome stays in memory for the request's lifetime (300 s) plus a
 minute.
