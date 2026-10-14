@@ -168,6 +168,10 @@ VERIFICATION = [
     (r"^edge/|^wrangler\.jsonc$",
      ["node --test edge/film.test.mjs"],
      "the site's film function moved: ranges and If-Range must still hold"),
+    (r"^lab/interop/mdoc/",
+     ["python3 -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py",
+      "lab/interop/mdoc/witness-eudi/run.sh if a witness, a case or verify_mdoc.py changed"],
+     "the mdoc lab moved (record 025, M1b): M1's captures against the two witnesses' recorded verdicts"),
     (r"^lab/interop/oid4vcgo/",
      ["python3 -m unittest lab/interop/oid4vcgo/test_wallet_inputs.py",
       "bash -n lab/interop/oid4vcgo/run.sh"],
@@ -388,6 +392,7 @@ UNSHARDED_SUITES = {
     "lab/interop": ["test_exit_trap"],
     "lab/interop/oid4vcgo": ["test_wallet_inputs"],
     "lab/interop/yivi": ["test_public_capture"],
+    "lab/interop/mdoc/witness-eudi": ["test_witness_eudi"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
@@ -423,6 +428,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop":              ("unittest", None),
     "lab/interop/oid4vcgo":     ("unittest", None),
     "lab/interop/yivi":         ("unittest", None),
+    "lab/interop/mdoc/witness-eudi": ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
 }

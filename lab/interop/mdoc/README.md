@@ -111,6 +111,38 @@ line in `present.txt`). `verify_mdoc.session_transcript()` passes the same vecto
 sides' transcript bytes are identical for each capture. With a null thumbprint, isomdl-uniffi
 built its own transcript and agreed.
 
+## M1b: two outside witnesses over the same captures
+
+Multipaz deferred.
+
+[`witness-eudi/`](witness-eudi/) judges the three captures' own bytes offline, under every M1 control
+plus one negative for each stage. Each witness is counted only for the stages its own code decides
+([`results.md`](witness-eudi/results.md)).
+- The EU reference verifier is eudi-srv-verifier-endpoint v0.12.0, its image pinned by digest. It
+  counts for the SessionTranscript bytes, PKIX trust and validity. Its MSO signature, digests, docType
+  and device signature are walt.id's, the library that built these responses, so they are not counted.
+- @owf/mdoc 0.8.2 counts for the MSO signature, digests, validity, docType and the device signature,
+  checked against its own SessionTranscript. It also counts for the certificate signatures up to the
+  given root, but not for the PKIX path rules: certificate validity, the CA flag, path length and key
+  usage are the EU verifier's alone.
+
+Now witnessed by two implementations, ours and at least one of these, on all three captures, each with a
+negative control that ours and every counted witness refuse:
+- the SessionTranscript bytes (70 of 70 comparisons byte-identical);
+- the chain to the IACA root;
+- the MSO signature;
+- the value digests;
+- validity;
+- docType;
+- the device signature.
+
+Still one-witness:
+- the mDL DS certificate profile (only ours enforces it);
+- the DS certificate's countryName (only @owf/mdoc checks it, and the issuer's DS certificate has none).
+
+With no root, the EU verifier trusts any chain, so its trust verdict there is not witnessed. Ours and
+@owf/mdoc refuse that case. No disagreement is a fault in our code or unexplained.
+
 ## Observations
 
 - walt.id writes an empty x5chain (`{33: []}`) into the DeviceSignature's unprotected header.

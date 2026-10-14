@@ -3499,6 +3499,12 @@ jobs:
       # held to the guard, and each leak shape it refuses is shown on a made-up file.
       - name: The Yivi walk's public files carry no holder data (lab/interop/yivi)
         run: python -m unittest lab/interop/yivi/test_public_capture.py
+      # lab/interop/mdoc/witness-eudi (record 025, M1b): M1's three mdoc captures, judged by
+      # verify_mdoc.py here and compared stage by stage with the two outside witnesses' recorded
+      # verdicts (run.sh produces them in containers; this replays them). cbor2 and cryptography
+      # come from polaris_web/requirements.txt, installed above.
+      - name: The mdoc captures against their two witnesses (lab/interop/mdoc/witness-eudi), every stage classified
+        run: python -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.

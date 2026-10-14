@@ -275,12 +275,13 @@ updates:
           - "patch"
 
   # The npm tools the lab and the accessibility drill install from their lockfiles,
-  # one grouped PR across the four directories.
+  # one grouped PR across the five directories.
   - package-ecosystem: npm
     directories:
       - /scripts/accessibility
       - /lab/interop/cheqd
       - /lab/interop/credo
+      - /lab/interop/mdoc/witness-eudi
       - /lab/interop/status-list/owf
     schedule:
       interval: weekly
