@@ -54,15 +54,17 @@ site's colours, from `site/tokens.css`.
   must be `CHECKIN_ISSUER`. polaris-oid4vp refuses a leaf that names another issuer. When the
   leaf names no issuer, it leaves the `iss` out of `claims`. A common name does not count as
   naming an issuer.
-- The app then compares the domain with `CHECKIN_ALLOWED`. The match ignores case and must be
-  exact: a subdomain does not match.
+- The app then compares the domain with `CHECKIN_ALLOWED`. The match ignores ASCII case and must
+  be exact: a subdomain does not match, and a domain with any non-ASCII character is refused.
+  Write an internationalized domain in its `xn--` form.
 - Off the list, the wallet gets the verifier's usual refusal, and the desk shows the domain and
   that it is not on the list.
 - The desk pages, and the emblem they show, answer only on the laptop, checked by the loopback
   address and the `Host` header. Through the tunnel, only the wallet's paths answer: `/request/<id>`, `/response/<id>`
   and `/done`.
 - Someone who sees the QR code can post to `/response/<id>`. If that post does not decrypt under
-  the request's key, it changes nothing: the request stays open and the desk keeps waiting.
+  the request's key, it changes nothing: the request stays open and the desk keeps waiting. A
+  post after the request has closed, answered or expired, changes nothing either.
 
 ## What it shows and keeps
 
@@ -90,7 +92,9 @@ It covers these cases:
 - another provider under the same CA is refused, whether it signs as itself or claims the
   expected issuer;
 - a leaf that names no issuer, or names it only in its common name, is refused;
-- a post that does not decrypt changes nothing;
+- a post that does not decrypt changes nothing, and neither does one after the check-in or after
+  the request expired;
+- a domain that matches the list only after non-ASCII case folding is refused;
 - a wallet's error response (the holder declined) changes nothing;
 - the desk is not served through the tunnel.
 

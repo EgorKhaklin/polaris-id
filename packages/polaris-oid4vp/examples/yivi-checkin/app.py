@@ -113,9 +113,13 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
 
     def screen(kind, body, refresh):
         return _page('%s<main class="%s">%s%s</main>' % (brand, kind, label, body), refresh)
-    allowed = frozenset(d.strip().lower() for d in allowed if d.strip())
+    allowed = [d.strip() for d in allowed if d.strip()]
     if not allowed or not issuer_anchors or not issuer:
         raise ValueError("an allow-list, an issuer CA and the issuer are all required")
+    # Judged before lower(), which folds "\u212a" (the Kelvin sign) into an ASCII "k".
+    if not all(d.isascii() for d in allowed):
+        raise ValueError("an allowed domain is ASCII: write an internationalized one as xn--")
+    allowed = frozenset(d.lower() for d in allowed)
     attempts, lock = {}, threading.Lock()  # id -> [verifier, session, created, outcome]
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -149,11 +153,11 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
             if ok:
                 # Literally true: besides the one disclosed claim, the presentation carries the
                 # credential's always-visible claims (iss, vct, iat, exp) and cnf, a phone key that
-                # is the same at every presentation.
+                # is the same at every presentation of that credential.
                 body = ('<h1>Checked in</h1><p class="domain">%s</p><a class="next" href="/">Next '
                         'person</a><p class="teach">The desk received the domain %s, the '
-                        "credential's issuer and dates, and a key from your phone. Not your "
-                        'address. Not your name.</p>' % ((html.escape(text),) * 2))
+                        "credential's type, issuer and dates, and a key from your phone. Not "
+                        'your address. Not your name.</p>' % ((html.escape(text),) * 2))
             else:
                 body = ('<h1>Not checked in</h1><p class="reason">%s</p><a class="next" href="/">'
                         'Next person</a>' % html.escape(text))
@@ -188,6 +192,10 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
         if attempt is None or form is None:
             return JSONResponse(dict(Verifier.REFUSAL_BODY), 400)
         verifier, state = attempt[0], attempt[1].state
+        # Whether THIS post finds the request open. Sound because response() is async and nothing
+        # below awaits, so posts are judged one at a time; as a plain def (a thread pool) they
+        # could interleave.
+        was_open = verifier.request_object(state) is not None
         try:
             status, body, verdict = verifier.handle_direct_post(form)
         except Exception:  # noqa: BLE001  never a 5xx to a wallet: see serve.py
@@ -203,14 +211,16 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
                 attempt[3] = (False, "issued by %s, not %s" % (claims.get("iss") or "an issuer "
                                                               "its certificate does not name", issuer))
                 status, body = 400, dict(Verifier.REFUSAL_BODY)
-            elif isinstance(domain, str) and domain.lower() in allowed:
+            # ASCII before lower(): "\u212a" (the Kelvin sign) lowers to "k".
+            elif isinstance(domain, str) and domain.isascii() and domain.lower() in allowed:
                 attempt[3] = (True, domain)
             else:
                 attempt[3] = (False, "%s is not on the list for this check-in." % domain)
                 status, body = 400, dict(Verifier.REFUSAL_BODY)
-        elif status != 200 and verifier.request_object(state) is None:
-            # Only a response that closed the request is shown: one that did not decrypt under
-            # its key could have come from anyone who saw the QR code, and leaves it open.
+        elif status != 200 and was_open and verifier.request_object(state) is None:
+            # Only the post that closed the request is shown. One that did not decrypt under its
+            # key could have come from anyone who saw the QR code and leaves it open; one that
+            # came after the request closed, answered or expired, changes nothing.
             attempt[3] = (False, "refused: %s" % (verdict.code if verdict else "invalid_request"))
         return JSONResponse(body, status)
 

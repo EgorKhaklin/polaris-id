@@ -123,11 +123,11 @@ class CheckIn(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def serve(self, allowed, anchors=None):
+    def serve(self, allowed, anchors=None, logo=None):
         port = _port()
         base = "http://127.0.0.1:%d" % port
         app = checkin.create_app(base, self.cert, self.key, allowed,
-                                 self.standin_ca if anchors is None else anchors, ISSUER)
+                                 self.standin_ca if anchors is None else anchors, ISSUER, logo=logo)
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
         thread = threading.Thread(target=server.run, daemon=True)
         thread.start()
@@ -153,7 +153,16 @@ class CheckIn(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(standin_wallet, "ISS", iss), contextlib.redirect_stdout(out):
             standin_wallet.present(provider, link)
+        self.last_desk = desk
         return self.desk(desk), out.getvalue()
+
+    def junk(self, base, desk):
+        """Post what anyone who saw the QR code could post: refused, 400."""
+        aid = urllib.parse.urlsplit(desk).path.rsplit("/", 1)[1]
+        post = urllib.request.Request(base + "/response/" + aid, data=b"response=x.y.z.w.v")
+        with self.assertRaises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(post, timeout=10)
+        self.assertEqual(refused.exception.code, 400)
 
     def desk(self, url):
         status, _, page = _get(url)
@@ -232,6 +241,39 @@ class CheckIn(unittest.TestCase):
             self.assertEqual(answered.status, 200)
         self.assertIn("Scan with the Yivi app", self.desk(desk))
 
+    def test_a_post_after_the_check_in_changes_nothing(self):
+        # The response path is in the public request object: a post after the wallet's must not
+        # turn "Checked in" into a refusal.
+        base = self.serve(["example.org"])
+        shown, said = self.scan(base, self.expected, ISSUER)
+        self.assertIn('200 {"redirect_uri":"%s/done"}' % base, said)
+        self.junk(base, self.last_desk)
+        self.assertEqual(self.desk(self.last_desk).split(" Next person")[0].strip(),
+                         "Checked in example.org")
+
+    def test_a_post_after_the_request_expired_changes_nothing(self):
+        class OneSecond(checkin.Verifier):
+            def __init__(self, **kwargs):
+                super().__init__(request_ttl_seconds=1, **kwargs)
+        with mock.patch.object(checkin, "Verifier", OneSecond):
+            base = self.serve(["example.org"])
+            _, desk, _ = _get(base + "/")
+            time.sleep(1.3)
+            self.junk(base, desk)
+            shown = self.desk(desk)
+        self.assertIn("Expired", shown)
+        self.assertNotIn("Not checked in", shown)
+
+    def test_a_domain_that_only_lowers_to_the_list_is_refused(self):
+        # "\u212aexample.org".lower() == "kexample.org": the Kelvin sign is not a K.
+        base = self.serve(["kexample.org"])
+        real = standin_wallet._disclosure
+        kelvin = lambda name, value: real(name, "\u212aexample.org" if name == "domain" else value)  # noqa: E731
+        with mock.patch.object(standin_wallet, "_disclosure", kelvin):
+            shown, said = self.scan(base, self.expected, ISSUER)
+        self.assertIn(self.REFUSED, said)
+        self.assertIn("Not checked in \u212aexample.org is not on the list for this check-in.", shown)
+
     def test_a_post_that_does_not_open_leaves_the_request_open(self):
         base = self.serve(["example.org"])
         _, desk, _ = _get(base + "/")
@@ -243,13 +285,16 @@ class CheckIn(unittest.TestCase):
         self.assertIn("Scan with the Yivi app", self.desk(desk))
 
     def test_the_desk_is_not_served_through_the_tunnel(self):
-        base = self.serve(["example.org"])
+        base = self.serve(["example.org"], logo=b"x")
         self.assertEqual(_get(base + "/", host="abc.trycloudflare.com")[0], 404)
+        self.assertEqual(_get(base + "/logo.webp", host="abc.trycloudflare.com")[0], 404)
         self.assertEqual(_get(base + "/")[0], 200)
+        self.assertEqual(_get(base + "/logo.webp")[0], 200)
 
     def test_it_will_not_start_without_a_list_a_ca_or_an_issuer(self):
         for allowed, anchors, issuer in (([], self.standin_ca, ISSUER), ([" "], self.standin_ca, ISSUER),
                                          (["example.org"], [], ISSUER),
+                                         (["\u212aexample.org"], self.standin_ca, ISSUER),
                                          (["example.org"], self.standin_ca, "")):
             with self.assertRaises(ValueError):
                 checkin.create_app("https://x.invalid", self.cert, self.key, allowed, anchors, issuer)
