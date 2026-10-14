@@ -21,8 +21,7 @@ have done with it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 
 **Do not have:** hardware tokens (modeled, not built); an assessed NIST 800-63 conformance
 (the mapping exists; no assessment); multi-region scale; status distribution at production CDN
-scale; a hardware HSM in CI; certified cryptography (liboqs is not FIPS-validated); published
-registry images and image signing; accessibility conformance; any external audit, pen test or
+scale; a hardware HSM in CI; certified cryptography (liboqs is not FIPS-validated); accessibility conformance; any external audit, pen test or
 pilot; an external team's docs-only integration against the wire specification; native wallet
 applications; a plain presentation that shows verifiers no stable value (the zero-knowledge path
 is bounded; blinded or one-time presentations are unbuilt); a relying party, holder or production

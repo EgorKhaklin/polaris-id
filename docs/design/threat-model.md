@@ -44,7 +44,7 @@ signs new `IdentityToken` rows that the rest of the system trusts.
 
 **Residual risk:** ACCEPTED. Key compromise is out of scope for
 software controls: addressed by HSM / key-rotation procedures
-documented in `docs/operator/SECURITY-CONTROLS.md`.
+documented in `docs/operator/KEY-CEREMONY.md`.
 
 ### T-S2: session fixation
 
@@ -615,11 +615,11 @@ same assumption as T-S1.
 
 | Threat | Reason |
 |---|---|
-| Physical compromise of HSM holding signing keys | Out of software scope; docs/operator/SECURITY-CONTROLS.md addresses HSM lifecycle |
+| Physical compromise of HSM holding signing keys | Out of software scope; docs/operator/KEY-CEREMONY.md addresses the HSM's custody and the key's rotation |
 | Quantum cryptanalysis of currently-deployed RSA tokens | Polaris ships with PQ algorithms (ML-DSA primary); RSA tokens are migration-only |
 | Social engineering against issuing agency staff | Out of software scope; agency policy concern |
 | Side-channel attacks (timing, power analysis) on signing | Out of software scope; HSM concern |
-| Supply chain attacks on dependencies | DEFERRED to docs/operator/OPERATIONS.md (backlog) |
+| Supply chain attacks on dependencies | Not modelled in the tables above; the controls are in SECURITY.md ("Verifying a release" and "Dependencies"), and docs/RED-TEAM-SCOPE.md puts them in scope |
 | Invasive attack on a secure element (decapping, fault injection, power analysis) | Out of software scope; the certification level of the chosen part is the control, and which parts qualify is roadmap P4.6 |
 | Coercion of the holder BEFORE presentation (a PIN taken under threat) | The duress path is the control and it is partial by construction: it signals, it does not prevent. See T-P4 |
 

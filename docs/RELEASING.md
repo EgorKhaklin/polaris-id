@@ -420,6 +420,9 @@ here records the earlier version's digests that no tag names any more.
 |---|---|---|---|
 | 38131951637 | 2026-10-11 | v1.0.0 | dispatched on the tag and approved at the `ghcr` environment; the tag guard proceeded for each image (the tag was absent); published polaris-app `sha256:0368d5eb21a1bf391db166abca2af97d3b769de7ca342c02ea4f8631ff419a05`, polaris-caddy `sha256:147cfdc0abd76c09ffca19eefb31850cf5cc6a89a222c1d6d136b580cea474f2`, polaris-pgbouncer `sha256:29ad959d93b21d22dc9838e9cd86dfe8367f53d3c77a8a6f0c1bfff71253b768`, polaris-postgres `sha256:7568d73a3ceb2e9eccb4bb655a1cec59e3a948b5e92ad7808229e34913c1ecc6`, polaris-etcd `sha256:9329f0e6600ae7badd0ae3740a03cbd4ac9d19c96bdc65c223ba26975ebbb285` and the chart 1.0.0 `sha256:4ced715b9c22c25903259229dce74fa9f4cd5d3737bfac9e2f378350be8cce6f`; the run's verify job passed with both controls refused. Verified again from outside the run, anonymously (no registry login, cosign 3.1.3): each digest under the tag is the one above, each index's signature and SLSA provenance and each architecture's SBOM verify against the tag's identity, and so does the chart's signature; with a GitHub login, `gh attestation verify` passes and refuses provenance asked of an architecture's digest or under another tag |
 
+The commit that adds a publish to this record also brings SECURITY.md's images paragraph and
+VERIFY-RELEASE.md's status line to that release.
+
 ---
 
 ## After publishing

@@ -27,7 +27,7 @@ on a private CA, `--cacert FILE`; on `localhost` the edge's local root is read f
 | D | `polaris-verify`, the version this release ships (the PyPI wheel; built from this checkout, and a WARN, when PyPI has none), offline, against the published key: the credential, then five tampered copies | the credential accepted, every copy refused |
 | E | a relying party verifying online, two tampered copies, and the lifetime of a status assertion | accepted, refused, a number |
 | F | with `--notional`: one credential issued through the console, revoked (co-signed), verified again; a login the console refuses fails it, and only an account that needs its security key skips it | the revoked credential refused online |
-| G | the version, and the image each service runs | reported, not judged, until releases publish images |
+| G | the version, and the image each service runs | reported, not judged: the deployment guide builds the images from source |
 
 A refusal counts only when it is an answer: a verifier or an API that gives no verdict fails its row,
 and the tampered copies are not judged when the genuine credential was refused, since refusing everything
@@ -61,7 +61,8 @@ secret the run used is written.
 - A PASS means a probe behaved as a sound install behaves, at that moment, on that host.
 - Notional data says nothing about handling real identity data: that needs an independent review, your
   own data-protection assessment and a pilot ([PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md)).
-- Release provenance is reported, not judged, until the images are published and signed.
+- Release provenance is reported, not judged: the deployment guide builds the images from source, so the
+  images running need not be the published, signed ones.
 
 ## How it is checked
 
