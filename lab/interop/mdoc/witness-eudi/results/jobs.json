@@ -1,0 +1,901 @@
+[
+ {
+  "name": "capture-pid: genuine",
+  "capture": "capture-pid",
+  "case": "genuine",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/captures/capture-pid/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "74cc70e69283538eaec4867bcd5cc8e7a10445ebcb631cf1947b145dcaad5ffb"
+ },
+ {
+  "name": "capture-pid: another nonce",
+  "capture": "capture-pid",
+  "case": "another nonce",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/captures/capture-pid/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "xz9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "74cc70e69283538eaec4867bcd5cc8e7a10445ebcb631cf1947b145dcaad5ffb"
+ },
+ {
+  "name": "capture-pid: null thumbprint",
+  "capture": "capture-pid",
+  "case": "null thumbprint",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/captures/capture-pid/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "74cc70e69283538eaec4867bcd5cc8e7a10445ebcb631cf1947b145dcaad5ffb"
+ },
+ {
+  "name": "capture-pid: no root",
+  "capture": "capture-pid",
+  "case": "no root",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/captures/capture-pid/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "roots": [],
+  "roots_host": [],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "74cc70e69283538eaec4867bcd5cc8e7a10445ebcb631cf1947b145dcaad5ffb"
+ },
+ {
+  "name": "capture-pid: unrelated root",
+  "capture": "capture-pid",
+  "case": "unrelated root",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/captures/capture-pid/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "roots": [
+   "/inputs/unrelated-root.pem"
+  ],
+  "roots_host": [
+   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/unrelated-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "74cc70e69283538eaec4867bcd5cc8e7a10445ebcb631cf1947b145dcaad5ffb"
+ },
+ {
+  "name": "capture-pid: flipped MSO signature byte",
+  "capture": "capture-pid",
+  "case": "flipped MSO signature byte",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/inputs/capture-pid/flipped.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-pid/flipped.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "b1c0d6e9a829e8598f652f305aae6c5b079bb46fa1d4afb7b2d7a278f57fca41"
+ },
+ {
+  "name": "capture-pid: bad DER x5chain certificate",
+  "capture": "capture-pid",
+  "case": "bad DER x5chain certificate",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/inputs/capture-pid/bad-der.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-pid/bad-der.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "18b2ddaff4fbc96bcb498349cc00c6a217ed430b6d9ea07045831e20de22f762"
+ },
+ {
+  "name": "capture-pid: bad protected header",
+  "capture": "capture-pid",
+  "case": "bad protected header",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/inputs/capture-pid/bad-header.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-pid/bad-header.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "18bd0c79878d15fc5d02a1df65757313782d9f57c889519c3fcaa5194cacba66"
+ },
+ {
+  "name": "capture-pid: one element value changed",
+  "capture": "capture-pid",
+  "case": "one element value changed",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/inputs/capture-pid/value.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-pid/value.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "96b9618697e3e38d491e9499e83209e4b6e0bd0a3a8b889c2a6fe4f6f71d5903"
+ },
+ {
+  "name": "capture-pid: judged after validUntil",
+  "capture": "capture-pid",
+  "case": "judged after validUntil",
+  "at": "2026-11-12T04:54:32Z",
+  "response": "/captures/capture-pid/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "74cc70e69283538eaec4867bcd5cc8e7a10445ebcb631cf1947b145dcaad5ffb"
+ },
+ {
+  "name": "capture-pid: judged before validFrom",
+  "capture": "capture-pid",
+  "case": "judged before validFrom",
+  "at": "2026-10-10T04:54:32Z",
+  "response": "/captures/capture-pid/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "74cc70e69283538eaec4867bcd5cc8e7a10445ebcb631cf1947b145dcaad5ffb"
+ },
+ {
+  "name": "capture-pid: docType relabeled",
+  "capture": "capture-pid",
+  "case": "docType relabeled",
+  "at": "2026-10-11T04:54:42Z",
+  "response": "/inputs/capture-pid/doctype.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-pid/doctype.cbor",
+  "roots": [
+   "/captures/capture-pid/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
+   "nonce": "z9kFiGGdhMuAHXlK_8fwLGmOrFIkD0s9DFQqcTaHAp8",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-FIQ7lkVY-9xm2SFtltpHwg",
+    "x": "zOhb3StbgZAPTlD1jqzmV8XK2FQB_rleQLFO2rCQJ2Q",
+    "y": "b_oyFUj4kGDc4kt3zAqhbdbmErqkd_GvDSGG8kXsIWQ",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "2e89eb48062c66b1f498f356d0ae319cfdf323114c7f2746c025222915a47fa1"
+ },
+ {
+  "name": "capture-mdl: genuine",
+  "capture": "capture-mdl",
+  "case": "genuine",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/captures/capture-mdl/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "bc98a081eb830500c07d6c2958a6e673a5315c8ad22d4cbe6a9bf1b10c74a6e4"
+ },
+ {
+  "name": "capture-mdl: another nonce",
+  "capture": "capture-mdl",
+  "case": "another nonce",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/captures/capture-mdl/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "xQYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "bc98a081eb830500c07d6c2958a6e673a5315c8ad22d4cbe6a9bf1b10c74a6e4"
+ },
+ {
+  "name": "capture-mdl: null thumbprint",
+  "capture": "capture-mdl",
+  "case": "null thumbprint",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/captures/capture-mdl/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "bc98a081eb830500c07d6c2958a6e673a5315c8ad22d4cbe6a9bf1b10c74a6e4"
+ },
+ {
+  "name": "capture-mdl: no root",
+  "capture": "capture-mdl",
+  "case": "no root",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/captures/capture-mdl/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "roots": [],
+  "roots_host": [],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "bc98a081eb830500c07d6c2958a6e673a5315c8ad22d4cbe6a9bf1b10c74a6e4"
+ },
+ {
+  "name": "capture-mdl: unrelated root",
+  "capture": "capture-mdl",
+  "case": "unrelated root",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/captures/capture-mdl/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "roots": [
+   "/inputs/unrelated-root.pem"
+  ],
+  "roots_host": [
+   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/unrelated-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "bc98a081eb830500c07d6c2958a6e673a5315c8ad22d4cbe6a9bf1b10c74a6e4"
+ },
+ {
+  "name": "capture-mdl: flipped MSO signature byte",
+  "capture": "capture-mdl",
+  "case": "flipped MSO signature byte",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/inputs/capture-mdl/flipped.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl/flipped.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "48da1280c779a41ae3ec344fcde559ac23cd080cc319a6c0f2f9d7e5159442d5"
+ },
+ {
+  "name": "capture-mdl: bad DER x5chain certificate",
+  "capture": "capture-mdl",
+  "case": "bad DER x5chain certificate",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/inputs/capture-mdl/bad-der.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl/bad-der.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "97efb78906eda769cbf973f547ed68c176c707ac4897a0a9c6582affb7a686a2"
+ },
+ {
+  "name": "capture-mdl: bad protected header",
+  "capture": "capture-mdl",
+  "case": "bad protected header",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/inputs/capture-mdl/bad-header.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl/bad-header.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "7e9bbd5a27b70ff24d51811663e6b02f67fa67e7487733b0753433163d4c8306"
+ },
+ {
+  "name": "capture-mdl: one element value changed",
+  "capture": "capture-mdl",
+  "case": "one element value changed",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/inputs/capture-mdl/value.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl/value.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "569a23188099d6452f67d91ab6787b6d43d2adc5f071d7091bf116f0141ff54e"
+ },
+ {
+  "name": "capture-mdl: judged after validUntil",
+  "capture": "capture-mdl",
+  "case": "judged after validUntil",
+  "at": "2026-11-12T04:52:24Z",
+  "response": "/captures/capture-mdl/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "bc98a081eb830500c07d6c2958a6e673a5315c8ad22d4cbe6a9bf1b10c74a6e4"
+ },
+ {
+  "name": "capture-mdl: judged before validFrom",
+  "capture": "capture-mdl",
+  "case": "judged before validFrom",
+  "at": "2026-10-10T04:52:24Z",
+  "response": "/captures/capture-mdl/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "bc98a081eb830500c07d6c2958a6e673a5315c8ad22d4cbe6a9bf1b10c74a6e4"
+ },
+ {
+  "name": "capture-mdl: docType relabeled",
+  "capture": "capture-mdl",
+  "case": "docType relabeled",
+  "at": "2026-10-11T04:52:32Z",
+  "response": "/inputs/capture-mdl/doctype.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl/doctype.cbor",
+  "roots": [
+   "/captures/capture-mdl/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
+   "nonce": "QYOqaMGnpZCxacAlavgzwcwjAAfqfJjIB-rqKXCCmUg",
+   "jwk": {
+    "kty": "EC",
+    "use": "enc",
+    "crv": "P-256",
+    "kid": "enc-QSPK0ADyfrS2gPHUW_G0Yw",
+    "x": "5G3nFTD33414HFkyagYLr9Hb2iRsNC_wYrl24f_qY2w",
+    "y": "SJc_maXL9a6z0d38t3RfAxPI0nEBqwXSR_GsJonwW68",
+    "alg": "ECDH-ES"
+   },
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "04ba8a1324da56af30efa1182f27cfbce885aa0ffc476295168bb7db06308c9f"
+ },
+ {
+  "name": "capture-mdl-direct-post: genuine",
+  "capture": "capture-mdl-direct-post",
+  "case": "genuine",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/captures/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "9a32583e76f961c8620050d07bc6ab7cb7fb9656225d46f40022619a2a265eb8"
+ },
+ {
+  "name": "capture-mdl-direct-post: another nonce",
+  "capture": "capture-mdl-direct-post",
+  "case": "another nonce",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/captures/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "xGdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "9a32583e76f961c8620050d07bc6ab7cb7fb9656225d46f40022619a2a265eb8"
+ },
+ {
+  "name": "capture-mdl-direct-post: no root",
+  "capture": "capture-mdl-direct-post",
+  "case": "no root",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/captures/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "roots": [],
+  "roots_host": [],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "9a32583e76f961c8620050d07bc6ab7cb7fb9656225d46f40022619a2a265eb8"
+ },
+ {
+  "name": "capture-mdl-direct-post: unrelated root",
+  "capture": "capture-mdl-direct-post",
+  "case": "unrelated root",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/captures/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "roots": [
+   "/inputs/unrelated-root.pem"
+  ],
+  "roots_host": [
+   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/unrelated-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "9a32583e76f961c8620050d07bc6ab7cb7fb9656225d46f40022619a2a265eb8"
+ },
+ {
+  "name": "capture-mdl-direct-post: flipped MSO signature byte",
+  "capture": "capture-mdl-direct-post",
+  "case": "flipped MSO signature byte",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/inputs/capture-mdl-direct-post/flipped.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl-direct-post/flipped.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "0bb434db7d832d20ebd102d33a29a01173ae60224777475beb374c71ea024790"
+ },
+ {
+  "name": "capture-mdl-direct-post: bad DER x5chain certificate",
+  "capture": "capture-mdl-direct-post",
+  "case": "bad DER x5chain certificate",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/inputs/capture-mdl-direct-post/bad-der.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl-direct-post/bad-der.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "5f3e24fff0417bb9863319f8b97f1e47262685491c6f3d76c7f6769f7056ad7f"
+ },
+ {
+  "name": "capture-mdl-direct-post: bad protected header",
+  "capture": "capture-mdl-direct-post",
+  "case": "bad protected header",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/inputs/capture-mdl-direct-post/bad-header.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl-direct-post/bad-header.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "e11818748c24d7d67184914fe8e390941b9d429a5badc103fdf621d66bbe806d"
+ },
+ {
+  "name": "capture-mdl-direct-post: one element value changed",
+  "capture": "capture-mdl-direct-post",
+  "case": "one element value changed",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/inputs/capture-mdl-direct-post/value.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl-direct-post/value.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "25b4fb562bd2efc8f16dc6bceb4403696806a4f2b173f39dad7ac9b7f7ffe471"
+ },
+ {
+  "name": "capture-mdl-direct-post: judged after validUntil",
+  "capture": "capture-mdl-direct-post",
+  "case": "judged after validUntil",
+  "at": "2026-11-12T04:56:49Z",
+  "response": "/captures/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "9a32583e76f961c8620050d07bc6ab7cb7fb9656225d46f40022619a2a265eb8"
+ },
+ {
+  "name": "capture-mdl-direct-post: judged before validFrom",
+  "capture": "capture-mdl-direct-post",
+  "case": "judged before validFrom",
+  "at": "2026-10-10T04:56:49Z",
+  "response": "/captures/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "9a32583e76f961c8620050d07bc6ab7cb7fb9656225d46f40022619a2a265eb8"
+ },
+ {
+  "name": "capture-mdl-direct-post: docType relabeled",
+  "capture": "capture-mdl-direct-post",
+  "case": "docType relabeled",
+  "at": "2026-10-11T04:56:57Z",
+  "response": "/inputs/capture-mdl-direct-post/doctype.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.iegsMfOFGL/inputs/capture-mdl-direct-post/doctype.cbor",
+  "roots": [
+   "/captures/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "roots_host": [
+   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+  ],
+  "handover": {
+   "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
+   "nonce": "GdGMa3yOZYuLilya4BwPUQ-sc63pQ5CH0skcdPhzw4g",
+   "jwk": null,
+   "response_uri": "https://host.docker.internal:9491/response"
+  },
+  "sha256": "8014fa90f22c410e30c73fddc2779f75e7df2deb4c18265a069cb1e3e2734819"
+ }
+]
