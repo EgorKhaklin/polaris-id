@@ -17,7 +17,6 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Changed
 
 - The SBOM checker moves to ntia-conformance-checker 6.0.0, and the release gate now also requires every listed component to be in the graph the checker judged (no floating component, no unknown pointer): 6.0.0 judges only what the document's root reaches.
-- polaris-oid4vp's README: anchor the CA that signs issuers, not a root that also certifies relying parties (`IssuerAnchorScopeTests`); where one root certifies both roles, neither anchoring nor the package can separate them.
 - polaris-oid4vp's README: anchor the CA that signs issuers, not a root that also certifies relying parties (`IssuerAnchorScopeTests`); where one root certifies both roles, neither anchoring nor the package can separate them. To accept only some of an anchor's issuers, pin `claims["iss"]` where `iss_bound` is `True`.
 - The project no longer uses the name VANTA in its current files: the maintainer is named as Egor Khaklin, and a local database user or path is written as `"$(whoami)"`, `<user>` or `<worktree>`. History and the released migrations (with the routine body in 06_triggers.sql that must match one of them) keep it; .mailmap shows the old commit identities under the project's commit identity.
 
