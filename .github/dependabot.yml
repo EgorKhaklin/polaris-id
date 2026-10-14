@@ -237,8 +237,10 @@ updates:
     ignore:
       - dependency-name: "postgres"
         update-types: ["version-update:semver-major"]
+      # The image's Python minor stays the one CI, the gate and the hash locks test (3.12). A minor move is its
+      # own change, with CI, the venv and pip-compile moved together; removing semver-minor here records taking it.
       - dependency-name: "python"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     groups:
       docker-polaris_web-all:
         patterns:
