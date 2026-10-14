@@ -3494,6 +3494,11 @@ jobs:
       # stops the run with its reason, and the default stays the pinned version. No Docker.
       - name: The OID4VCgo harness's wallet inputs (lab/interop/oid4vcgo), each one the wallet that runs
         run: python -m unittest lab/interop/oid4vcgo/test_wallet_inputs.py
+      # lab/interop/yivi: the Yivi app's walk publishes only the request, the verdicts (the disclosed
+      # value withheld), the x5c shape and the refusals; every directory there with a result.json is
+      # held to the guard, and each leak shape it refuses is shown on a made-up file.
+      - name: The Yivi walk's public files carry no holder data (lab/interop/yivi)
+        run: python -m unittest lab/interop/yivi/test_public_capture.py
       # lab/interop/mdoc/witness-eudi (record 025, M1b): M1's three mdoc captures, judged by
       # verify_mdoc.py here and compared stage by stage with the two outside witnesses' recorded
       # verdicts (run.sh produces them in containers; this replays them). cbor2 and cryptography

@@ -23650,9 +23650,9 @@ def test_interop_page_count_check_discriminates(tmp_path):
         "docs/reference/INTEROP.md", "lab/EXTERNAL-NOUNS.md", "README.md", "docs/reference/claims.json"))
     axle_row = next(ln for ln in page.splitlines() if ln.startswith("| Axle "))
     broken = [
-        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more", "Seven wallets and nine more")},
-        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more", "Six wallets and eight more")},
-        {"docs/reference/INTEROP.md": page.replace("Six wallets and nine more outside", "Several outside")},
+        {"docs/reference/INTEROP.md": page.replace("Seven wallets and eight more", "Eight wallets and eight more")},
+        {"docs/reference/INTEROP.md": page.replace("Seven wallets and eight more", "Seven wallets and seven more")},
+        {"docs/reference/INTEROP.md": page.replace("Seven wallets and eight more outside", "Several outside")},
         {"docs/reference/INTEROP.md": page.replace(axle_row + "\n", "")},
         {"docs/reference/INTEROP.md": page.replace(axle_row, axle_row + "\n" + axle_row)},
         {"docs/reference/INTEROP.md": page.replace("| walt.id Wallet API v2 | wallet |", "| walt.id Wallet API v2 | library |")},
@@ -23662,9 +23662,9 @@ def test_interop_page_count_check_discriminates(tmp_path):
         {"docs/reference/INTEROP.md": page.replace("| Implementation | Kind |", "| Name | Kind |")},
         {"docs/reference/INTEROP.md": page.replace("\n## Measured\n", "\n## Runs\n")},
         {"docs/reference/INTEROP.md": ""},
-        {"lab/EXTERNAL-NOUNS.md": board.replace("| 6 unmodified wallets", "| 7 unmodified wallets", 1)},
-        {"lab/EXTERNAL-NOUNS.md": board.replace("and 9 more implementations", "and 10 more implementations", 1)},
-        {"lab/EXTERNAL-NOUNS.md": board.replace("| Wallets | 6 unmodified", "| Wallets | six unmodified", 1)},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("| 7 unmodified wallets", "| 8 unmodified wallets", 1)},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("and 8 more implementations", "and 9 more implementations", 1)},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("| Wallets | 7 unmodified", "| Wallets | seven unmodified", 1)},
         {"README.md": readme.replace("tested_against-15_outside_implementations", "tested_against-16_outside_implementations")},
         {"README.md": readme.replace("tested_against-15_outside_implementations", "tested_against-15_outside_wallets")},
         {"docs/reference/claims.json": manifest.replace('"scoreboard": "Axle"', '"scoreboard": "Axel"')},
