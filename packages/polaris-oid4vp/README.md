@@ -19,7 +19,7 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** This release, 1.0.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
+**Status:** This release, 1.0.1, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
 The newest release runs against the OpenID Foundation's conformance suite every week in CI. It is re-run weekly against the outside implementations in the table
 below. One outside project, IDFoundry/OID4VCgo, runs it in its CI, daily and on each of its
 releases, since 2026-10-11; no relying party uses it, Polaris has never held real identity data,
@@ -57,6 +57,8 @@ the walks against the newest release on PyPI.
 | [ERICA](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against the tree (2026-10-04) |
 | [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
 | [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |
+| [Axle](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/axle/README.md), its `openid4vp`, `trust` and `testkit` modules under a short wallet built for the walk; not in the weekly canary | OpenWallet Foundation Labs | Kotlin | f7b8054171bb (Axle has no releases), against 1.0.0rc16 (2026-10-10) |
+| [The Yivi app](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/yivi/README.md), the App Store build in developer mode with this verifier's root added, presenting a Yivi-issued credential; not in the weekly canary | Privacy by Design Foundation (Yivi) | Dart, Go | 8.3.1 (iOS), against the tree at 8e6f4834 (2026-10-14) |
 | [The OpenID Foundation's conformance suite](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | eleven of eleven HAIP verifier modules clean against 1.0.0rc15, both controls noticed (2026-10-04); 1.0.0rc7 certified (2026-09-24) |
 
 The author drove every walk but one, which OID4VCgo's CI runs itself: interoperability with
@@ -89,6 +91,8 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   the registration certificate a registrar issues: a JSON array as OpenID4VP 1.0 section 5.1 has
   it, or one object, `{"format": "registration_cert", "data": "<JWT>"}`, as the German EUDI
   Wallet guide and its testing tool read it. The German ecosystem requires one for a PID request.
+  The NL Wallet (v0.6.0) base64url-decodes `data` before it parses it, so for it `data` is the
+  base64url encoding of the compact JWT, not the JWT itself.
   This package carries it as given, checking the shape section 5.1 asks for; a registration
   certificate labelled with its own media type is refused. `--verifier-info-profile
   etsi-119472-2` holds it to ETSI TS 119 472-2 (below).

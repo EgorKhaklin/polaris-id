@@ -16,6 +16,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- polaris-oid4vp moves to 1.0.1, a patch release: the ASCII issuer binding (Security, below), the Yivi app and Axle in its README's Tested against table (neither in the weekly canary), and the NL Wallet's base64url form of `verifier_info` `data`.
 - The SBOM checker moves to ntia-conformance-checker 6.0.0, and the release gate now also requires every listed component to be in the graph the checker judged (no floating component, no unknown pointer): 6.0.0 judges only what the document's root reaches.
 - polaris-oid4vp's README: anchor the CA that signs issuers, not a root that also certifies relying parties (`IssuerAnchorScopeTests`); where one root certifies both roles, neither anchoring nor the package can separate them. To accept only some of an anchor's issuers, pin `claims["iss"]` where `iss_bound` is `True`.
 - The project no longer uses the name VANTA in its current files: the maintainer is named as Egor Khaklin, and a local database user or path is written as `"$(whoami)"`, `<user>` or `<worktree>`. History and the released migrations (with the routine body in 06_triggers.sql that must match one of them) keep it; .mailmap shows the old commit identities under the project's commit identity.
