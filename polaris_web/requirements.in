@@ -19,7 +19,7 @@ Jinja2==3.1.6
 itsdangerous==2.2.0
 click==8.5.0
 blinker==1.9.0
-MarkupSafe==3.0.3
+MarkupSafe==3.0.4
 
 # ---- Runtime: WSGI server ----
 gunicorn==26.2.0
