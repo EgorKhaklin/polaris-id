@@ -137,6 +137,9 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
    vanish, so only the light shows. The emblem stays a still image above it; phones get a 960 px cut. */
 .sky-film { position: absolute; inset: -12%; width: 124%; height: 124%; object-fit: cover;
             mix-blend-mode: screen; pointer-events: none;
+            /* iOS Safari can paint the poster without the blend before the film starts, so the
+               poster is transparent where the film is black, and the box behind it is too */
+            background: transparent;
             /* no fade-in: Safari will not autoplay a video that starts invisible; its first frame is the poster */
             /* a soft round edge: the film's box never shows as a square against the sky */
             -webkit-mask: radial-gradient(closest-side, #000 78%, transparent 100%);
