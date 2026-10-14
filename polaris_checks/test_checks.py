@@ -3071,8 +3071,10 @@ def test_sbom_workflow_check_discriminates(tmp_path):
                "          gh release edit \"$TAG\" --draft=false\n")
     install = "          pip install --require-hashes -r .github/sbom/requirements.txt\n"
     fill = "          python3 scripts/polaris-sbom-enrich.py --version \"$V\" sbom/*.spdx.json\n"
-    judge = ("          ntia-checker -r json \"$f\" > v.json\n"
-             "          jq -e '.isConformant == true' v.json\n")
+    verdict = ("          jq -e '.isConformant == true and (.validationMessages | length) == 0"
+               " and .graphValidation.floatingComponents.floatingComponentCount == 0"
+               " and .graphValidation.unknownPointers.hasUnknownPointers == false' v.json\n")
+    judge = "          ntia-checker -r json \"$f\" > v.json\n" + verdict
     attest = "      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8\n"
 
     # Attached and published, but no SBOM is brought to the NTIA minimum elements or checked.
@@ -3105,6 +3107,15 @@ def test_sbom_workflow_check_discriminates(tmp_path):
 
     def found():
         return checks.check_sbom_workflow(tmp_path)[0]
+
+    # The full verdict in a comment above a weak one does not count (each clause dropped from the
+    # real workflows: test_ntia_verdict_refuses_a_weakened_verdict).
+    sbom.write_text(head + "      - run: |\n" + install + fill
+                    + "          ntia-checker -r json \"$f\" > v.json\n"
+                    + "          # " + verdict.lstrip()
+                    + "          jq -e '.isConformant == true' v.json\n" + attest + publish)
+    assert found().level == "FAIL" and found().check == "sbom", \
+        "must FAIL when only a comment states the full verdict"
 
     # The release path runs only at a release: a pull request changing it runs nothing.
     sbom.write_text(head.replace(PR, "") + "      - run: |\n" + install + fill + judge + attest + publish)
@@ -3364,6 +3375,49 @@ def test_release_images_signed_check_discriminates(tmp_path):
            "must FAIL when the runbook accepts a signature made from any ref")
     broken(doc, "--signer-workflow EgorKhaklin/polaris-id/.github/workflows/release-images.yml",
            "--repo-only", "must FAIL when the attestation check is not bound to the workflow")
+
+
+# The verdict both release gates read from ntia-checker's JSON report, written out here rather
+# than taken from checks._NTIA_VERDICT, so a clause dropped from the check itself is caught too.
+_NTIA_VERDICT_CLAUSES = (".isConformant == true", "(.validationMessages | length) == 0",
+                         ".graphValidation.floatingComponents.floatingComponentCount == 0",
+                         ".graphValidation.unknownPointers.hasUnknownPointers == false")
+_NTIA_FULL = "jq -e '" + " and ".join(_NTIA_VERDICT_CLAUSES) + "'"
+_NTIA_WEAKENED = {
+    **{f"drops {c}": "jq -e '" + " and ".join(k for k in _NTIA_VERDICT_CLAUSES if k != c) + "'"
+       for c in _NTIA_VERDICT_CLAUSES},
+    "reads it without -e": _NTIA_FULL.replace("jq -e '", "jq '"),
+    "adds an or": _NTIA_FULL[:-1] + " or true'",
+}
+_NTIA_GATES = {"sbom": (checks.check_sbom_workflow, ".github/workflows/sbom-build.yml"),
+               "release_images": (checks.check_release_images_signed,
+                                  ".github/workflows/release-images.yml")}
+
+
+@pytest.mark.parametrize("weakened", list(_NTIA_WEAKENED))
+@pytest.mark.parametrize("name", list(_NTIA_GATES))
+def test_ntia_verdict_refuses_a_weakened_verdict(tmp_path, name, weakened):
+    # ntia-conformance-checker 6.0.0 judges only what the DESCRIBES root reaches: a package cut out
+    # of the graph is left out of isConformant with a warning on stderr, and a relationship into
+    # another document is reported in the graph section only. A gate that drops a clause passes
+    # such an SBOM, so each check must refuse its workflow with any one clause gone.
+    check, rel = _NTIA_GATES[name]
+    for f in (".github/workflows/release-images.yml", ".github/workflows/sbom.yml",
+              ".github/workflows/sbom-build.yml", "docs/operator/VERIFY-RELEASE.md",
+              "scripts/polaris-pin-chart-images.py", "scripts/polaris-release-tag-guard.py"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text((REPO / f).read_text())
+    ok = check(tmp_path)[0]
+    assert ok.level == "OK" and ok.check == name, f"must PASS on the real workflows: {ok.message}"
+    wf = tmp_path / rel
+    good = wf.read_text()
+    assert good.count(_NTIA_FULL) == 1, f"the fixture drifted: {rel} no longer reads {_NTIA_FULL}"
+    wf.write_text(good.replace(_NTIA_FULL, _NTIA_WEAKENED[weakened]))
+    bad = check(tmp_path)[0]
+    assert bad.level == "FAIL" and bad.check == name, \
+        f"{name} must FAIL when {rel}'s verdict {weakened}: {bad.message}"
+    assert all(c in bad.message for c in _NTIA_VERDICT_CLAUSES), \
+        f"{name} must name the full verdict when it {weakened}: {bad.message}"
 
 
 def test_redis_authenticated_check_discriminates(tmp_path):
