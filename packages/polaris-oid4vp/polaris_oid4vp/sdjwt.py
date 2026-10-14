@@ -866,6 +866,12 @@ def _leaf_names(leaf, iss):
     names its issuer URL and also the host every agency on it shares, and the host must not
     make one agency's key name another agency's URL.
 
+    DNS names are compared as ASCII only. A DNS name is an IA5String, and an internationalized
+    one is written as an A-label; str.lower() folds U+212A (the Kelvin sign) into "k", so before
+    2026-10-14 a leaf naming "\u212aent.edu" bound https://kent.edu and an ASCII leaf bound an
+    iss written with the Kelvin sign. A non-ASCII DNS name now names no issuer, and an https
+    `iss` binds on a DNS host only when it is ASCII.
+
     A leaf that names neither leaves `iss` unbound (None). Until 2026-10-10 it could carry no
     `iss` at all, and the EU reference PID issuer's document-signer certificates have no
     subjectAltName while its PIDs carry `iss` (oauth-sd-jwt-vc issue #433). The issuer is then the
@@ -879,7 +885,7 @@ def _leaf_names(leaf, iss):
     try:
         names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
         uris = names.get_values_for_type(x509.UniformResourceIdentifier)
-        hosts = [h.lower() for h in names.get_values_for_type(x509.DNSName)]
+        hosts = [h.lower() for h in names.get_values_for_type(x509.DNSName) if h.isascii()]
     except x509.ExtensionNotFound:
         uris, hosts = [], []
     except Exception:  # noqa: BLE001  a malformed extension names nobody
@@ -892,8 +898,8 @@ def _leaf_names(leaf, iss):
     if hosts:
         try:
             url = urllib.parse.urlsplit(iss)
-            bound = (url.scheme == "https" and url.username is None and url.password is None
-                     and url.hostname in hosts)
+            bound = (iss.isascii() and url.scheme == "https" and url.username is None
+                     and url.password is None and url.hostname in hosts)
         except ValueError:
             bound = False
         if bound:

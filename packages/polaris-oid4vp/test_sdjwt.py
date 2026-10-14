@@ -2099,6 +2099,77 @@ class RecursiveDisclosureTests(unittest.TestCase):
         self.assertIn("never", v.reason)
 
 
+class IssuerBindingIsAsciiTests(unittest.TestCase):
+    """A DNS name binds an `iss` as ASCII only (2026-10-14). str.lower() folds U+212A, the
+    Kelvin sign, into "k": a leaf naming "\u212aent.example" bound https://kent.example, and an
+    ASCII leaf bound an `iss` written with the Kelvin sign. The cryptography builder refuses a
+    non-ASCII DNSName, as a conforming CA would, so such a leaf is built from raw DER."""
+
+    KELVIN = "\u212aent.example"
+    ISS = "https://kent.example"
+
+    @staticmethod
+    def _chain(host):
+        """A CA and a leaf under it whose one subjectAltName is the dNSName `host`, as raw bytes."""
+        from cryptography.x509.oid import ExtensionOID
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ca_key, leaf_key = (ec.generate_private_key(ec.SECP256R1()) for _ in range(2))
+        ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test anchor")])
+        ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
+              .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
+              .not_valid_before(now - datetime.timedelta(days=1))
+              .not_valid_after(now + datetime.timedelta(days=30))
+              .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+              .sign(ca_key, hashes.SHA256()))
+        raw = host.encode("utf-8")
+        san = b"\x30" + bytes([len(raw) + 2]) + b"\x82" + bytes([len(raw)]) + raw
+        leaf = (x509.CertificateBuilder()
+                .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "issuer")]))
+                .issuer_name(ca_name).public_key(leaf_key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=30))
+                .add_extension(x509.UnrecognizedExtension(ExtensionOID.SUBJECT_ALTERNATIVE_NAME, san),
+                               critical=False)
+                .sign(ca_key, hashes.SHA256()))
+        der = leaf.public_bytes(serialization.Encoding.DER)
+        return ca, x509.load_der_x509_certificate(der), leaf_key
+
+    def _verify(self, host, iss):
+        ca, leaf, leaf_key = self._chain(host)
+        return verify_presentation(_x5c_presentation(leaf, leaf_key, iss), expected_nonce=NONCE,
+                                   expected_audience=AUDIENCE, trust_anchors=[ca])
+
+    def test_the_leaf_reads_back_as_written(self):
+        # The fixture is what the other tests take it for: a dNSName holding the Kelvin sign.
+        _, leaf, _ = self._chain(self.KELVIN)
+        names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        self.assertEqual(names.get_values_for_type(x509.DNSName), [self.KELVIN])
+
+    def test_a_kelvin_dns_name_does_not_bind_an_ascii_iss(self):
+        # The forward case: the credential stays authentic, but its `iss` is unbound, out of
+        # claims, so a relying party pinning claims["iss"] where iss_bound is True refuses it.
+        from polaris_oid4vp import sdjwt as S
+        v = self._verify(self.KELVIN, self.ISS)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        self.assertIs(v.iss_bound, False)
+        self.assertNotIn("iss", v.claims)
+        self.assertEqual(v.unbound_iss, self.ISS)
+        self.assertIsNone(S._leaf_names(self._chain(self.KELVIN)[1], self.ISS))
+
+    def test_an_ascii_dns_name_does_not_bind_a_kelvin_iss(self):
+        v = self._verify("kent.example", "https://\u212aent.example")
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key", v.reason)
+
+    def test_an_ascii_dns_name_binds_its_host_in_any_ascii_case(self):
+        for iss in (self.ISS, "https://KENT.example"):
+            v = self._verify("kent.example", iss)
+            self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+            self.assertIs(v.iss_bound, True)
+            self.assertEqual(v.claims["iss"], iss)
+
+
 class IssuerCertificateTests(unittest.TestCase):
     """What `_chains_to` checked was "did this CA ever sign this", not "is this an issuer".
 
