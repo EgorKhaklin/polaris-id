@@ -140,6 +140,21 @@ interoperability demonstration, which pre-shared its root and intermediate certi
 first round and puts trusted lists in the scope of the second (Digital Agency,
 [scope definition document](https://www.digital.go.jp/assets/contents/node/basic_page/field_ref_resources/a238993a-8e6a-455c-b3d3-bbebf6ef273e/b59aa26d/20260918_policies_trust_report_02.pdf), 2026-09-18).
 
+**Anchor the issuer CA, never a broad root that also certifies other roles.** A trust anchor
+authorises any end-entity certificate beneath it whose key usage and extended key usage permit
+signing to sign credentials this verifier accepts. Configure the CA that signs your issuers'
+certificates, not a root that also certifies relying parties, TLS endpoints or other roles: their
+certificates cannot be told from an issuer's by their contents (a relying party's and an issuer's
+may both carry the extended key usage `clientAuth`), so the anchor is the only thing that separates
+them. For example, Yivi publishes a self-signed Yivi Requestors Root CA with two CAs beneath it: the
+Yivi Attestation Providers CA, which signs credential issuers, and the Yivi Relying Parties CA.
+Anchor the Attestation Providers CA. Anchoring the root would accept a relying party's certificate
+as an issuer whenever its usages permit signing, as `clientAuth` does (`IssuerAnchorScopeTests` in
+`test_sdjwt.py`). Where one root certifies issuers and relying parties alike, with no narrower
+issuer CA beneath it, anchoring cannot separate the roles, and this package cannot either: trust in
+a credential that carries `x5c` comes from its anchor, and there is no setting that limits accepted
+issuers to named `iss` values.
+
 This is a separate package from `polaris-verify` because it listens on a socket and depends on
 `cryptography`; `polaris-verify` does neither.
 
@@ -332,7 +347,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 603 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 610 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a

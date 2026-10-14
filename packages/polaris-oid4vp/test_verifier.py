@@ -249,6 +249,37 @@ class PidWallet(Wallet):
         return presented + kb
 
 
+class NationalityWallet(Wallet):
+    """A wallet whose credential holds an array claim, `nationalities`, each element its own
+    selectively disclosable value (an array-element disclosure is [salt, value], SD-JWT section
+    4.2.2), beside a disclosable `given_name`. `disclose_array` decides whether the presentation
+    reveals the two elements."""
+
+    def __init__(self, disclose_array=True):
+        super().__init__()
+        self.disclose_array = disclose_array
+
+    def _presentation(self, *, nonce, audience, iat=None, sd_hash=None, corrupt_issuer_sig=False,
+                      corrupt_kb_sig=False, extra_disclosure=None, vct=None, status=None,
+                      kb_extra=None):
+        def disclosure(*parts):
+            d = b64u_encode(json.dumps(list(parts), separators=(",", ":")).encode())
+            return d, b64u_encode(hashlib.sha256(d.encode("ascii")).digest())
+        given = disclosure("s0", "given_name", "Jean")
+        de, fr = disclosure("n0", "DE"), disclosure("n1", "FR")
+        payload = {"iss": "https://issuer.example", "vct": "urn:eudi:pid:1",
+                   "iat": int(time.time()), "_sd": [given[1]],
+                   "nationalities": [{"...": de[1]}, {"...": fr[1]}],
+                   "cnf": {"jwk": _public_jwk(self.holder_key)}}
+        issuer_jwt = _jws(self.issuer_key,
+                          {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"}, payload)
+        shown = [given[0]] + ([de[0], fr[0]] if self.disclose_array else [])
+        presented = issuer_jwt + "~" + "".join(d + "~" for d in shown)
+        kb = _jws(self.holder_key, {"alg": "ES256", "typ": "kb+jwt"},
+                  {"iat": int(time.time()), "aud": audience, "nonce": nonce,
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
+        return presented + kb
+
 class NestedClaimTests(unittest.TestCase):
     """A claim is a path. The EUDI PID nests its age statements, so asking for
     `age_equal_or_over` would ask for every one of them; `age_equal_or_over.18` asks for one,
@@ -333,6 +364,21 @@ class OverDisclosureTests(unittest.TestCase):
         self.assertEqual((status, verdict.code), (400, "claims"))
         self.assertIn("did not select", verdict.reason)
         self.assertIn("'given_name'", verdict.reason)
+
+    def test_an_array_element_the_request_did_not_select_is_refused(self):
+        _, status, verdict = self.exchange(NationalityWallet(), ["given_name"])
+        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertIn("did not select", verdict.reason)
+        self.assertIn("nationalities", verdict.reason)
+
+    def test_the_elements_of_a_requested_array_are_selected(self):
+        _, status, verdict = self.exchange(NationalityWallet(), ["given_name", "nationalities"])
+        self.assertEqual(status, 200, verdict.reason if verdict else None)
+        self.assertTrue({("nationalities", 0), ("nationalities", 1)} <= set(verdict.disclosed))
+
+    def test_an_array_left_undisclosed_is_not_extra(self):
+        _, status, _ = self.exchange(NationalityWallet(disclose_array=False), ["given_name"])
+        self.assertEqual(status, 200)
 
     def test_a_statement_beside_the_one_asked_for_is_refused(self):
         _, status, verdict = self.exchange(PidWallet(disclose=("18", "65"), names=()),
