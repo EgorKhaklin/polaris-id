@@ -227,7 +227,10 @@ An accepted presentation is answered with only a `redirect_uri`, and it carries 
 `response_code` (OpenID4VP 1.0 section 8.2), so that only the device the wallet sends there can
 fetch the result. `verifier.redeem(response_code, state=session.state)` returns the verdict once,
 for that request only; a wrong, reused or expired code, or one issued to another request, gets
-`None`. The verdict carries the code as `verdict.response_code`, and `as_dict()` leaves it out.
+`None`. An integrator that holds a session for the request passes that session's `state`, so a
+code issued to another request is refused; `serve` keeps no session, so it redeems by the code
+alone, which is 128 bits and good once. The verdict carries the code as `verdict.response_code`,
+and `as_dict()` leaves it out.
 
 - **Same-device flow:** show a result only to the browser that presents the redirect's code.
   Without that, a request relayed to another person's wallet completes the relayer's session
