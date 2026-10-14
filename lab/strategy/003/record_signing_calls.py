@@ -24,8 +24,8 @@ SURFACE, from the request that reached the call:
   operator    any other request, and the two login-gated /api/v1 routes
   no-request  outside a request (a test calling a helper directly, the migration library)
 
-    POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_signer POLARIS_DB_USER=vanta \\
-    POLARIS_TEST_RELOAD_USER=vanta POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long \\
+    POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_signer POLARIS_DB_USER="$(whoami)" \\
+    POLARIS_TEST_RELOAD_USER="$(whoami)" POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long \\
     POLARIS_STATE_DIR=/tmp/polaris-state-signer POLARIS_PQC_PROFILE=placeholder \\
     ~/.local/share/polaris-venv312/bin/python lab/strategy/003/record_signing_calls.py
 

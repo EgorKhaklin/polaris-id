@@ -17,7 +17,7 @@
 -- Idempotent: run as the schema owner, any number of times, including after test_app's
 -- reload_sample_data (which re-runs 04_data, 06_triggers, 09_grants, 10_auth).
 --
---   psql -h localhost -U vanta -d polaris_rpcomp -v ON_ERROR_STOP=1 -f lab/strategy/002/polaris_rp_grants.sql
+--   psql -h localhost -U "$(whoami)" -d polaris_rpcomp -v ON_ERROR_STOP=1 -f lab/strategy/002/polaris_rp_grants.sql
 
 DO $$
 BEGIN

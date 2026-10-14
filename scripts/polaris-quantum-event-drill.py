@@ -39,7 +39,7 @@ What it establishes, in the order the operator lives through it:
 
 The drill builds and drops its own database, so it is re-runnable and touches nothing else.
 
-Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta python3 scripts/polaris-quantum-event-drill.py
+Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER="$(whoami)" python3 scripts/polaris-quantum-event-drill.py
      POLARIS_QE_POPULATION=5000 ... for a larger measurement.
 Exit 0 iff every case holds, 3 to skip.
 """

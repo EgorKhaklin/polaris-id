@@ -35,6 +35,7 @@ a scratch database; never a deployment.
 import argparse
 import base64
 import datetime
+import getpass
 import http.cookiejar
 import importlib.util
 import json
@@ -82,7 +83,7 @@ PKI = _load("copy_test_pki", ROOT / "scripts" / "polaris-credential-copy-test-pk
 # ---------------------------------------------------------------- the record's side
 
 def psql(db, sql, *, one=False):
-    out = subprocess.run(["psql", "-h", "localhost", "-U", "vanta", "-d", db, "-qAt", "-v", "ON_ERROR_STOP=1",
+    out = subprocess.run(["psql", "-h", "localhost", "-U", getpass.getuser(), "-d", db, "-qAt", "-v", "ON_ERROR_STOP=1",
                           "-c", sql], capture_output=True, text=True)
     if out.returncode != 0:
         raise RuntimeError("psql: %s" % out.stderr.strip())
@@ -174,7 +175,7 @@ def serve(out, db, host, port, bind):
     keys = out / "keys"
     PKI.make(keys, AGENCY, "https://%s:%d/api/v1/oid4vci/%d" % (host, port, AGENCY))
     (out / "wire_app.py").write_text(SHIM % {"web": str(WEB), "log": str(out / "wire.jsonl")})
-    env = dict(os.environ, POLARIS_DB_HOST="localhost", POLARIS_DB_NAME=db, POLARIS_DB_USER="vanta",
+    env = dict(os.environ, POLARIS_DB_HOST="localhost", POLARIS_DB_NAME=db, POLARIS_DB_USER=getpass.getuser(),
                POLARIS_SECRET_KEY=secrets.token_hex(32), POLARIS_PQC_PROFILE="placeholder",
                POLARIS_STATE_DIR=str(out / "state"), POLARIS_CREDENTIAL_COPY_KEYS_DIR=str(keys),
                PYTHONPATH=str(out))
@@ -369,7 +370,7 @@ def main(argv=None):
               "issuer": "https://%s:%d/api/v1/oid4vci/%d" % (host, args.port, AGENCY),
               "started": datetime.datetime.now(datetime.timezone.utc).isoformat()}
 
-    env = dict(os.environ, PGUSER="vanta", POLARIS_DB_HOST="localhost")
+    env = dict(os.environ, PGUSER=getpass.getuser(), POLARIS_DB_HOST="localhost")
     SHIP.make_db(db, env)
     tls_cert(out, host)
     server, keys = serve(out, db, host, args.port, bind)

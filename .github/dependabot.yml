@@ -1,5 +1,6 @@
-# Dependabot: weekly version-update PRs for the Python, Rust, GitHub Actions
-# and Docker surfaces. Security advisories arrive through the repository's
+# Dependabot: version-update PRs for the Python, Rust, GitHub Actions and Docker
+# surfaces, weekly for the product (Monday) and its tooling (Thursday), monthly
+# for the lab. Security advisories arrive through the repository's
 # Dependabot alerts and security updates (repository settings), not this file;
 # pip-audit in the cve-scan CI job gates the build on a known CVE regardless.
 # Merge policy (stated for readers in SECURITY.md): patch and minor bumps are
@@ -18,6 +19,7 @@ updates:
     directory: /polaris_web
     schedule:
       interval: weekly
+      day: monday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
@@ -53,6 +55,7 @@ updates:
     directory: /packages/polaris-oid4vp/fuzz
     schedule:
       interval: weekly
+      day: thursday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 2
@@ -72,7 +75,7 @@ updates:
   - package-ecosystem: pip
     directory: /lab/interop
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     open-pull-requests-limit: 2
@@ -101,6 +104,7 @@ updates:
     directory: /.github/ci
     schedule:
       interval: weekly
+      day: thursday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 2
@@ -119,6 +123,7 @@ updates:
     directory: /polaris_zk
     schedule:
       interval: weekly
+      day: monday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
@@ -142,6 +147,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      day: thursday
     cooldown:
       default-days: 7
     labels:
@@ -160,6 +166,7 @@ updates:
     directory: /.github/publish
     schedule:
       interval: weekly
+      day: thursday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 2
@@ -179,6 +186,7 @@ updates:
     directory: /.github/sbom
     schedule:
       interval: weekly
+      day: thursday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 2
@@ -200,6 +208,7 @@ updates:
     directory: /polaris_web
     schedule:
       interval: weekly
+      day: monday
     cooldown:
       default-days: 7
     labels:
@@ -223,6 +232,7 @@ updates:
     directory: /polaris_web
     schedule:
       interval: weekly
+      day: monday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 3
@@ -242,7 +252,7 @@ updates:
   - package-ecosystem: docker
     directory: /lab/strategy/007
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     open-pull-requests-limit: 1
@@ -261,6 +271,7 @@ updates:
     directory: /sdk/typescript
     schedule:
       interval: weekly
+      day: monday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 2
@@ -284,7 +295,7 @@ updates:
       - /lab/interop/mdoc/witness-eudi
       - /lab/interop/status-list/owf
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     open-pull-requests-limit: 1
@@ -299,7 +310,7 @@ updates:
 
   # The interop harnesses' own manifests: Go (the irmago wallet), Gradle (the Kotlin wallets and
   # Axle's harness) and Swift (the EUDI iOS wallet). Each pins the outside implementation it drives;
-  # one grouped PR a week per ecosystem, run against the published verifier by the wallet canary's
+  # one grouped PR a month per ecosystem, run against the published verifier by the wallet canary's
   # pull_request trigger on lab/interop/**. Dependabot does not rewrite Gradle's dependency
   # verification (axle/harness/gradle/verification-metadata.xml): a PR that bumps that harness
   # needs the metadata regenerated before it can pass.
@@ -307,7 +318,7 @@ updates:
     directories:
       - /lab/interop/irmago/wallet
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     open-pull-requests-limit: 1
@@ -334,7 +345,7 @@ updates:
       - /lab/interop/multipaz/wallet
       - /lab/interop/vck/wallet
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     open-pull-requests-limit: 1
@@ -351,7 +362,7 @@ updates:
     directories:
       - /lab/interop/eudi-ios/wallet
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     open-pull-requests-limit: 1
@@ -363,6 +374,10 @@ updates:
       lab-swift:
         patterns:
           - "*"
+    ignore:
+      # Pinned to what the EUDI iOS wallet kit 0.54.5 pins (the scoreboard's iOS row). Remove
+      # this block when the kit moves.
+      - dependency-name: "github.com/eu-digital-identity-wallet/eudi-lib-sdjwt-swift"
 
   # The published Python packages declare open ranges, so only a release outside a
   # range (polaris-id-cli's psycopg2-binary <3.0, for one) is proposed.
@@ -375,6 +390,7 @@ updates:
     versioning-strategy: increase-if-necessary
     schedule:
       interval: weekly
+      day: monday
     cooldown:
       default-days: 7
     open-pull-requests-limit: 2

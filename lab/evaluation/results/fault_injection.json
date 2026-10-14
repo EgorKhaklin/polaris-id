@@ -45,7 +45,7 @@
     "new_connection_per_request": true
   },
   "fault": "In one psql session on the 'postgres' database: pg_terminate_backend(pid) for every pg_stat_activity row with datname = 'polaris_eval'; ALTER DATABASE polaris_eval ALLOW_CONNECTIONS false; pg_terminate_backend again. After the window, ALLOW_CONNECTIONS true.",
-  "server_env_note": "gunicorn --config polaris_web/gunicorn.conf.py, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=memory, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000",
+  "server_env_note": "gunicorn --config polaris_web/gunicorn.conf.py, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=<user> (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=memory, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000",
   "background_before": {
     "loadavg": [
       4.07,

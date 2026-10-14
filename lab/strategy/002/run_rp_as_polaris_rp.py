@@ -36,14 +36,15 @@ connection is recorded with the test, endpoint, method, path and statement, INCL
 the application swallows (security._audit, the duress thread). That list, not the test verdict,
 is the measurement: a swallowed refusal passes its test and fails in the deployment.
 
-    POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_rpcomp POLARIS_DB_USER=vanta \\
-    POLARIS_TEST_RELOAD_USER=vanta POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long \\
+    POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_rpcomp POLARIS_DB_USER="$(whoami)" \\
+    POLARIS_TEST_RELOAD_USER="$(whoami)" POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long \\
     POLARIS_STATE_DIR=/tmp/polaris-state-rpcomp POLARIS_PQC_PROFILE=placeholder \\
     ~/.local/share/polaris-venv312/bin/python lab/strategy/002/run_rp_as_polaris_rp.py --mode split
 
 Writes lab/strategy/002/out/<mode>.json (per-test verdicts and every refusal).
 """
 import argparse
+import getpass
 import json
 import os
 import subprocess
@@ -77,7 +78,7 @@ RP_ROLE = dict(user='polaris_rp', password=os.environ.get('POLARIS_RP_PASSWORD',
 def snapshot():
     out = subprocess.run(
         ['psql', '-h', os.environ.get('POLARIS_DB_HOST', 'localhost'), '-U',
-         os.environ.get('POLARIS_TEST_RELOAD_USER', 'vanta'), '-d', os.environ['POLARIS_DB_NAME'],
+         os.environ.get('POLARIS_TEST_RELOAD_USER') or getpass.getuser(), '-d', os.environ['POLARIS_DB_NAME'],
          '-Atf', os.path.join(HERE, 'privilege_snapshot.sql')],
         capture_output=True, text=True, check=True)
     return out.stdout.splitlines()

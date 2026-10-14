@@ -45,7 +45,7 @@ being reported as a verdict over the tree.
 
 Exit 0 clean, 1 on any unresolved reference, 3 if the database is not reachable (skip).
 
-    POLARIS_DB_USER=vanta POLARIS_DB_NAME=polaris_test python3 scripts/polaris-schema-drift-drill.py
+    POLARIS_DB_USER="$(whoami)" POLARIS_DB_NAME=polaris_test python3 scripts/polaris-schema-drift-drill.py
 """
 import os
 import pathlib

@@ -27,7 +27,7 @@ It also asserts the two things that keep the claim honest:
   leaving it as a sentence in a document, so nobody reads these policies as achieving
   per-authority isolation in a shared instance.
 
-Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta python3 scripts/polaris-authority-isolation-drill.py
+Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER="$(whoami)" python3 scripts/polaris-authority-isolation-drill.py
 Exit 0 iff every case holds, 3 to skip.
 """
 import os

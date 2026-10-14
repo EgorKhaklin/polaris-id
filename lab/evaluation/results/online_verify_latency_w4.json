@@ -40,7 +40,7 @@
     "generator_processes_max": 4,
     "generator_colocated": true
   },
-  "server_env_note": "gunicorn 26.2.0 --config polaris_web/gunicorn.conf.py --bind 127.0.0.1:5391, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=memory, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000, RelyingParty.rate_limit_per_min=100000000",
+  "server_env_note": "gunicorn 26.2.0 --config polaris_web/gunicorn.conf.py --bind 127.0.0.1:5391, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=<user> (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=memory, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000, RelyingParty.rate_limit_per_min=100000000",
   "background_before": {
     "loadavg": [
       5.44,
