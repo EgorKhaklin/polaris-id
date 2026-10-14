@@ -513,8 +513,17 @@ code, .term code { font-variant-ligatures: none; }
     .meteor { display: none; }
     .sky-film { display: none; }
     .sky::before { content: ""; position: absolute; inset: -12%; mix-blend-mode: screen;
-                   background: url(sky-poster.webp) center / 100% 100% no-repeat; }
+                   background: url(sky-poster.webp) center / 100% 100% no-repeat;
+                   /* the film's soft round edge: without it the still's square shows around the sky */
+                   -webkit-mask: radial-gradient(closest-side, #000 78%, transparent 100%);
+                           mask: radial-gradient(closest-side, #000 78%, transparent 100%); }
     .bar { position: absolute !important; }
+}
+/* Windows contrast themes (forced colours) repaint the page in system colours, but the film and its
+   still keep their own black and stars: a black square on a light theme, a square of stars on a
+   dark one. There the sky is the emblem alone. */
+@media (forced-colors: active) {
+    .sky-film, .sky::before { display: none; }
 }
 
 .more-box .rules { margin: 0; border-top: 1px solid var(--line); }
