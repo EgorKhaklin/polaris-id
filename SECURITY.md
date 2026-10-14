@@ -137,8 +137,9 @@ The container images and the Helm chart publish to `ghcr.io/egorkhaklin` through
 index is signed keyless at its digest and carries SLSA build provenance, each architecture's image
 an SPDX SBOM, all attached at the registry, and the chart is pinned to those digests and signed
 the same way. The verify commands are in
-[docs/operator/VERIFY-RELEASE.md](docs/operator/VERIFY-RELEASE.md). No release has been published
-there yet; until one is, the images are built and scanned in CI only.
+[docs/operator/VERIFY-RELEASE.md](docs/operator/VERIFY-RELEASE.md). v1.0.0's five images and the
+chart were published there on 2026-10-11 ([the record](docs/RELEASING.md)); the deployment guide
+still builds the images from source.
 
 ---
 

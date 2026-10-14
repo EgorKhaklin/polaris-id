@@ -43,7 +43,7 @@ DOES_NOT_ESTABLISH = (
     "A PASS means a probe behaved as a sound install behaves, at this moment, on this host.",
     "Notional data says nothing about handling real identity data: that needs an independent review, "
     "the operator's own data-protection assessment and a pilot.",
-    "Release provenance is reported, not judged, until the images are published and signed.",
+    "Release provenance is reported, not judged: the deployment guide builds the images from source.",
 )
 
 VERDICTS = ("PASS", "FAIL", "WARN", "SKIP", "INFO")

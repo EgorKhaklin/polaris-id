@@ -36,7 +36,7 @@ holders are assumed throughout.
 | Signer to keys | Issuance | Keys in a secret store or a PKCS#11 token, never in the tree; a check fails CI if private key material appears outside listed throwaway fixtures |
 | Verifier to trust anchors | Trust decisions | Anchors are configured by the operator; a genuine signature under an untrusted key is not success |
 | Instance to federation partner | Trust edges, status | Explicit, non-transitive federation, gated on an active trust attestation |
-| Supply chain | Packages and images | Trusted publishing over OIDC with build provenance; npm releases staged until a maintainer approves with a second factor; dependency and image CVE scans in CI |
+| Supply chain | Packages and images | Release images signed keyless with SLSA build provenance and SBOMs; PyPI packages by trusted publishing over OIDC with a publish attestation (PEP 740), not build provenance; npm packages with SLSA build provenance from the publishing workflow, staged until a maintainer approves with a second factor; dependency and image CVE scans in CI |
 
 ## 4. Secure design principles applied
 

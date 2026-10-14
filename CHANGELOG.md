@@ -22,6 +22,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- Outward documents restated to match the tree: SECURITY.md, ROADMAP and the Kubernetes guide now say v1.0.0's images and chart are published (2026-10-11); the review packet no longer says nothing was certified beside polaris-oid4vp 1.0.0rc7's OpenID certification; the red-team scope, assurance case, threat model and evaluation guide drop lines that had gone stale; and the readiness ledger lists the zero-knowledge layer under its known limitations rather than as production-grade (no external cryptographic audit; demo-scale).
 - On iOS Safari a dark disc could show behind the hero emblem before the sky film started; the poster is now transparent where it was black.
 
 ### Security
