@@ -2,7 +2,10 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """test_vectors.py: the vectors and their views are what make_vectors.py makes, byte for byte; polaris-oid4vp
 reaches every expected verdict, under the default binding and under another verifier's; and the vectors whose
-defect is inside a certificate fail for that defect alone, because the same chain with it repaired is accepted."""
+defect is inside a certificate fail for that defect alone, because the same chain with it repaired is accepted.
+The two 0.3.0 families: a leaf that does not name the credential's iss is refused for that alone, and a status
+list that goes dark leaves the credential authentic with the state polaris-oid4vp reports, refused by the
+status-required policy only."""
 import contextlib
 import importlib.util
 import io
@@ -15,7 +18,8 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "packages", "polaris-oid4vp"))
+PACKAGE = os.path.join(HERE, "..", "..", "..", "packages", "polaris-oid4vp")
+sys.path.insert(0, PACKAGE)
 
 
 VIEWS = os.path.join(HERE, "views")
@@ -98,6 +102,21 @@ class Vectors(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertNotIn("done", out)
 
+    def test_a_control_left_to_the_caller_is_not_a_refusal(self):
+        # sd-jwt-python and sd-jwt-js leave the status-list layer to their caller, its control included.
+        rv = _load("run_vectors_na", "run_vectors.py")
+        real = rv.polaris_oid4vp
+
+        def no_status(vector, settings):
+            return ("n/a", "") if vector["layer"] == "status-list" else real(vector, settings)
+        code, out = self._main(self.doc, no_status)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.endswith("done\n"))
+        # A refused control still fails the run.
+        code, out = self._main(self.doc, lambda v, st: ("reject", "x") if v["id"] == "accept-status-list"
+                               else real(v, st))
+        self.assertEqual(code, 1, out)
+
     def test_the_run_fails_on_an_empty_vector_list(self):
         tmp = tempfile.mkdtemp(prefix="empty-")
         self.addCleanup(shutil.rmtree, tmp)
@@ -124,6 +143,174 @@ class Vectors(unittest.TestCase):
         self.assertTrue(authentic((in_date, mv.INTERMEDIATE)), "the expired-leaf vector has a second defect")
         self.assertFalse(authentic((mv.LEAF_UNDER_NOT_A_CA, mv.NOT_A_CA)))
         self.assertFalse(authentic((mv.EXPIRED_LEAF, mv.INTERMEDIATE)))
+
+
+SIGNER_FAMILY = ("x5c-leaf-names-other-issuer", "x5c-leaf-names-other-host", "x5c-leaf-uri-beats-host")
+# Each status vector: the revocation state polaris-oid4vp reports, and for list_refused the status.py code.
+STATUS_FAMILY = {"status-list-unreachable": ("unreachable", None), "status-list-not-a-token": ("unreachable", None),
+                 "status-list-lst-truncated": ("list_refused", "lst"),
+                 "status-list-wrong-key": ("list_refused", "signature"),
+                 "status-list-no-authority": ("no_authority", None),
+                 "status-list-expired": ("list_refused", "expired"),
+                 "status-list-index-past-end": ("list_refused", "index")}
+
+
+class SignerIsNotTheIssuer(unittest.TestCase):
+    """0.3.0: another issuer's valid leaf under the trusted root signs a credential whose iss is the trusted
+    issuer. polaris-oid4vp refuses each because the leaf does not name that iss, and for nothing else."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mv = _load("make_vectors_signer", "make_vectors.py")
+        cls.rv = _load("run_vectors_signer", "run_vectors.py")
+        cls.doc = cls.mv.build()
+        cls.family = [v for v in cls.doc["vectors"] if v["id"] in SIGNER_FAMILY]
+
+    def _verify(self, presentation):
+        from polaris_oid4vp.sdjwt import verify_presentation
+        mv = self.mv
+        return verify_presentation(presentation, expected_nonce=mv.NONCE, expected_audience=mv.AUDIENCE, now=mv.NOW,
+                                   expected_vct=mv.VCT, trust_anchors=[mv.ROOT])
+
+    def test_each_is_refused_because_the_leaf_does_not_name_iss(self):
+        self.assertEqual([v["id"] for v in self.family], list(SIGNER_FAMILY))
+        for vector in self.family:
+            self.assertEqual((vector["trust"], vector["layer"], vector["expected"]), ("x5c", "x5c-issuer", "reject"))
+            got, why = self.rv.polaris_oid4vp(vector, self.doc["settings"])
+            self.assertEqual(got, "reject", vector["id"])
+            # issuer_key is also a broken chain's code: the reason must be the naming, not the chain.
+            self.assertTrue(why.startswith("issuer_key: the credential names issuer 'https://issuer.example' and the "
+                                           "certificate that signed it names"), "%s: %s" % (vector["id"], why))
+
+    def test_the_same_leaf_with_its_own_name_as_iss_is_accepted(self):
+        # The defect is the name and only the name: the leaf, key and chain sign an authentic credential when
+        # iss is the name the leaf gives.
+        mv = self.mv
+        for leaf in (mv.OTHER_LEAF_URI, mv.OTHER_LEAF_DNS, mv.OTHER_LEAF_URI_AND_HOST):
+            verdict = self._verify(mv.present(x5c=(leaf, mv.INTERMEDIATE), signer=mv.OTHER_K,
+                                              payload=mv._set(iss=mv.OTHER_ISSUER)))
+            self.assertTrue(verdict.authentic, verdict.reason)
+            self.assertIs(verdict.iss_bound, True)
+            self.assertEqual(verdict.claims.get("iss"), mv.OTHER_ISSUER)
+
+    def test_a_leaf_that_names_nobody_leaves_iss_unbound(self):
+        # The limit the README states, held: a leaf with no subjectAltName is not refused; polaris-oid4vp
+        # accepts the credential, keeps its iss out of claims and reports it as unbound. No vector covers it.
+        mv = self.mv
+        nameless = mv._cert("Negative Vectors Other Issuer", mv.OTHER_K, "Negative Vectors Test Intermediate", mv.INT_K,
+                            13, ca=False)
+        verdict = self._verify(mv.present(x5c=(nameless, mv.INTERMEDIATE), signer=mv.OTHER_K))
+        self.assertTrue(verdict.authentic, verdict.reason)
+        self.assertIs(verdict.iss_bound, False)
+        self.assertEqual(verdict.unbound_iss, mv.ISSUER)
+        self.assertNotIn("iss", verdict.claims)
+
+    def test_the_notes_quote_the_jwks_mode_as_its_readme_documents_it(self):
+        with open(os.path.join(PACKAGE, "README.md")) as fh:
+            readme = " ".join(fh.read().split())
+        quoted = "list one issuer's keys per verifier"
+        self.assertIn(quoted, readme)
+        for vector in self.family:
+            self.assertIn("--issuer-jwks", vector["notes"])
+            self.assertIn('"%s"' % quoted, vector["notes"])
+            self.assertIn("CD-008", vector["notes"])
+
+
+class StatusGoesDark(unittest.TestCase):
+    """0.3.0: the status list a valid credential names goes dark. polaris-oid4vp keeps the credential authentic
+    and reports the state; the status-required policy refuses every state but a checked VALID."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mv = _load("make_vectors_status", "make_vectors.py")
+        cls.rv = _load("run_vectors_status", "run_vectors.py")
+        cls.doc = cls.mv.build()
+        cls.by_id = {v["id"]: v for v in cls.doc["vectors"]}
+
+    def _verdict(self, vector):
+        from cryptography import x509
+        from polaris_oid4vp.sdjwt import verify_presentation
+        st = self.doc["settings"]
+        return verify_presentation(vector["presentation"], expected_nonce=st["nonce"], expected_audience=st["audience"],
+                                   now=st["now"], expected_vct=st["vct"],
+                                   trust_anchors=[x509.load_pem_x509_certificate(p.encode())
+                                                  for p in st["trust_anchors_pem"]],
+                                   status_resolver=self.rv.status_resolver(vector, st))
+
+    def test_the_family_and_its_policy(self):
+        family = [v["id"] for v in self.doc["vectors"] if v["layer"] == "status-list"]
+        self.assertEqual(family, ["accept-status-list"] + list(STATUS_FAMILY))
+        self.assertIn("status-required", self.doc["policies"])
+        for vid in family:
+            vector = self.by_id[vid]
+            self.assertEqual(vector["policy"], "status-required", vid)
+            # SHOULD, except an index past the list's end, which the draft refuses with MUST.
+            self.assertEqual(vector["class"], {"accept-status-list": "control",
+                                               "status-list-index-past-end": "spec"}.get(vid, "should"), vid)
+            refs = [c["ref"] for c in vector["clauses"]]
+            if vector["class"] == "should":
+                self.assertIn("draft-ietf-oauth-status-list-21 s8.3", refs, vid)
+                self.assertIn("SHOULD be rejected", vector["clauses"][-1]["text"], vid)
+
+    def test_the_control_is_checked_valid(self):
+        verdict = self._verdict(self.by_id["accept-status-list"])
+        self.assertTrue(verdict.authentic, verdict.reason)
+        self.assertEqual((verdict.revocation["state"], verdict.revocation["status"]), ("checked", 0))
+        self.assertEqual(self.rv.polaris_oid4vp(self.by_id["accept-status-list"], self.doc["settings"])[0], "accept")
+
+    def test_each_goes_dark_with_the_state_polaris_oid4vp_reports(self):
+        for vid, (state, code) in STATUS_FAMILY.items():
+            vector = self.by_id[vid]
+            verdict = self._verdict(vector)
+            # The credential stays authentic: the status check is what refuses it, under the vector's policy.
+            self.assertTrue(verdict.authentic, "%s: %s" % (vid, verdict.reason))
+            self.assertEqual(verdict.revocation["state"], state, "%s: %s" % (vid, verdict.revocation))
+            if code:
+                self.assertEqual(verdict.revocation.get("code"), code, vid)
+            self.assertIn(state, vector["notes"], vid)
+            got, why = self.rv.status_required(verdict.revocation)
+            self.assertEqual(got, "reject", vid)
+            self.assertEqual(why.split(":", 1)[0], self.rv.POLARIS_OID4VP_CODES[vid], vid)
+        self.assertIn("nothing was fetched", self._verdict(self.by_id["status-list-no-authority"]).revocation["reason"])
+
+    def test_only_the_list_differs_from_the_control(self):
+        # Every vector that names the control's index and uri carries the control's credential byte for byte, so
+        # what refuses it is what its uri answers with.
+        control = self.by_id["accept-status-list"]
+        same = [v for v in STATUS_FAMILY if v not in ("status-list-no-authority", "status-list-index-past-end")]
+        for vid in same:
+            self.assertEqual(self.by_id[vid]["presentation"], control["presentation"], vid)
+            self.assertNotEqual(self.by_id[vid]["status_list"]["response"], control["status_list"]["response"], vid)
+        self.assertEqual(self.by_id["status-list-index-past-end"]["status_list"], control["status_list"])
+
+    def test_without_the_status_check_every_one_is_accepted(self):
+        # The detection side of the family: a verifier that does not check status accepts every vector in it.
+        for vid in STATUS_FAMILY:
+            vector = {k: v for k, v in self.by_id[vid].items() if k != "status_list"}
+            got, why = self.rv.polaris_oid4vp(vector, self.doc["settings"])
+            self.assertEqual(got, "accept", "%s: %s" % (vid, why))
+
+    def test_a_checked_status_that_is_not_valid_is_refused_as_revoked(self):
+        self.assertEqual(self.rv.status_required({"state": "checked", "status": 1})[0], "reject")
+        self.assertTrue(self.rv.status_required({"state": "checked", "status": 1})[1].startswith("revoked:"))
+        self.assertEqual(self.rv.status_required({"state": "not_evaluated"})[0], "reject")
+        self.assertEqual(self.rv.status_required({})[0], "reject")
+
+    def test_the_lists_are_zlib_streams_any_decompressor_reads(self):
+        import base64
+        import zlib
+        for vector in self.doc["vectors"]:
+            body = (vector.get("status_list") or {}).get("response")
+            if not body or body.count(".") != 2:
+                continue
+            payload = json.loads(base64.urlsafe_b64decode(body.split(".")[1] + "=" * (-len(body.split(".")[1]) % 4)))
+            lst = payload["status_list"]["lst"]
+            raw = base64.urlsafe_b64decode(lst + "=" * (-len(lst) % 4))
+            if vector["id"] == "status-list-lst-truncated":
+                with self.assertRaises(zlib.error):
+                    zlib.decompress(raw)
+            else:
+                self.assertEqual(zlib.decompress(raw), bytes((0x08, 0x00)), vector["id"])
 
 
 def _run_runner(path, check=True):
@@ -232,7 +419,7 @@ class Views(unittest.TestCase):
             self.assertEqual(entry["reference_rejected_at_mint"], entry["expected"] == "reject", entry["id"])
             self.assertEqual(entry["profile"], "haip", entry["id"])
             self.assertEqual(entry["hardening"], next(v["class"] for v in self.doc["vectors"]
-                                                      if v["id"] == entry["id"]) == "spec-implied")
+                                                      if v["id"] == entry["id"]) in ("spec-implied", "should"))
 
     def test_the_expected_failures_example_is_empty(self):
         with open(os.path.join(VIEWS, "expected-failures.example.json")) as fh:

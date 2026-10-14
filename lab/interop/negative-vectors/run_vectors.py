@@ -10,8 +10,12 @@ An adapter is one function: (vector, settings) -> ("accept" | "reject", a short 
 (exit 1) when a control is refused, because then every refusal it reports measured nothing, when a
 negative vector is accepted, when polaris-oid4vp refuses one with another code than POLARIS_OID4VP_CODES
 names, and when the file holds no vectors, no control, or no negative the adapter judged. Exit 2: the adapter could not run. A run that passes ends "done".
+
+A vector with a `status_list` (0.3.0) is judged under its `policy`: the adapter serves `status_list.response`
+at `status_list.uri` from memory, opening no socket, and states the keys in settings.status_list_keys.
 """
 import argparse
+import base64
 import json
 import os
 import sys
@@ -32,6 +36,16 @@ POLARIS_OID4VP_CODES = {
     "issuer-sig-der": "issuer_signature",
     "x5c-self-signed": "issuer_key", "x5c-includes-anchor": "issuer_key", "x5c-unknown-root": "issuer_key",
     "x5c-leaf-expired": "issuer_key", "x5c-intermediate-not-ca": "issuer_key",
+    # 0.3.0. The issuer_key refusal for a leaf that names another issuer, as distinct from a broken chain, is
+    # held by test_vectors.py's SignerIsNotTheIssuer.
+    "x5c-leaf-names-other-issuer": "issuer_key", "x5c-leaf-names-other-host": "issuer_key",
+    "x5c-leaf-uri-beats-host": "issuer_key",
+    # 0.3.0, under the status-required policy: the revocation state polaris-oid4vp reports, and for
+    # list_refused the status.py code after a slash.
+    "status-list-unreachable": "unreachable", "status-list-not-a-token": "unreachable",
+    "status-list-lst-truncated": "list_refused/lst", "status-list-wrong-key": "list_refused/signature",
+    "status-list-no-authority": "no_authority", "status-list-expired": "list_refused/expired",
+    "status-list-index-past-end": "list_refused/index",
 }
 
 
@@ -60,8 +74,69 @@ def polaris_oid4vp(vector, settings):
         kw["issuer_jwks"] = settings["issuer_jwks"]
     else:
         kw["trust_anchors"] = [x509.load_pem_x509_certificate(p.encode()) for p in settings["trust_anchors_pem"]]
+    if "status_list" in vector:
+        kw["status_resolver"] = status_resolver(vector, settings)
     verdict = verify_presentation(vector["presentation"], **kw)
-    return ("accept" if verdict.authentic else "reject"), "%s: %s" % (verdict.code, verdict.reason)
+    if not verdict.authentic or "status_list" not in vector:
+        return ("accept" if verdict.authentic else "reject"), "%s: %s" % (verdict.code, verdict.reason)
+    return status_required(verdict.revocation or {})
+
+
+def status_required(revocation):
+    """The status-required policy over polaris-oid4vp's revocation state: accept only a checked VALID (0).
+    A checked status that is not VALID is refused as `revoked`, the code polaris-oid4vp's Verifier gives it."""
+    state = revocation.get("state")
+    if state == "checked":
+        if revocation.get("status") == 0:
+            return "accept", "checked: VALID"
+        return "reject", "revoked: status %r" % (revocation.get("status"),)
+    code = "%s/%s" % (state, revocation.get("code")) if state == "list_refused" else str(state)
+    return "reject", "%s: %s" % (code, revocation.get("reason"))
+
+
+def _es256_verifier(jwk):
+    """verify(signing_input, signature, header) -> bool under one P-256 JWK; ES256 only, R||S (RFC 7518 s3.4)."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
+    def coordinate(name):
+        raw = jwk[name] + "=" * (-len(jwk[name]) % 4)
+        return int.from_bytes(base64.urlsafe_b64decode(raw), "big")
+    key = ec.EllipticCurvePublicNumbers(coordinate("x"), coordinate("y"), ec.SECP256R1()).public_key()
+
+    def verify(signing_input, signature, header):
+        if not isinstance(header, dict) or header.get("alg") != "ES256" or len(signature) != 64:
+            return False
+        try:
+            key.verify(encode_dss_signature(int.from_bytes(signature[:32], "big"), int.from_bytes(signature[32:], "big")),
+                       bytes(signing_input), ec.ECDSA(hashes.SHA256()))
+        except InvalidSignature:
+            return False
+        return True
+    return verify
+
+
+def status_resolver(vector, settings):
+    """polaris-oid4vp's status_resolver for one vector: the keys settings.status_list_keys states, and a fetch
+    that answers `status_list.uri` with `status_list.response` from memory (None: no answer) and nothing else."""
+    from polaris_oid4vp import status
+    authority = status.StatedAuthority()
+    for stated in settings.get("status_list_keys", []):
+        authority.state(credential_issuer=stated["iss"], status_uri=stated["uri"], verify=_es256_verifier(stated["jwk"]),
+                        why="stated in the vectors' settings.status_list_keys")
+    served = vector["status_list"]
+
+    def fetch(uri):
+        if uri != served["uri"] or served["response"] is None:
+            raise ConnectionError("no answer from %s" % uri)
+        return served["response"].encode("utf-8")
+
+    def resolve(*, uri, idx, issuer):
+        return status.decide_by_fetching(index=idx, expected_uri=uri, authority=authority, fetch=fetch,
+                                         now=settings["now"], credential_issuer=issuer)
+    return resolve
 
 
 def sd_jwt_python(vector, settings):
@@ -138,7 +213,8 @@ def main(argv=None):
                                                        vector["expected"], got, why[:90]))
         if ok is False:
             wrong.append(vector["id"])
-    controls = [r for r in results if r["id"].startswith("accept-")]
+    # A control the adapter leaves to its caller (n/a) is not a refusal, and does not count as judged.
+    controls = [r for r in results if r["id"].startswith("accept-") and r["ok"] is not None]
     negatives = [r for r in results if not r["id"].startswith("accept-") and r["ok"] is not None]
     if not controls or not negatives:
         # No control means a verifier that refuses everything passes; no judged negative means nothing was refused.
@@ -148,7 +224,7 @@ def main(argv=None):
     if args.json:
         with open(args.json, "w") as fh:
             json.dump({"adapter": args.adapter, "vectors_version": doc["version"], "results": results}, fh, indent=1)
-    if any(not r["ok"] for r in controls):
+    if any(r["ok"] is False for r in controls):
         print("a control was refused: the refusals above measured nothing", file=sys.stderr)
         return 1
     judged = [r for r in results if r["ok"] is not None]
