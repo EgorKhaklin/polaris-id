@@ -38,7 +38,8 @@ broken under it fails the build.
 | `polaris_logo_180.png` | The polished emblem at 180 x 180 | `index.html`, `404.html` (the tab and home-screen icons) |
 | `polaris_logo_clean.png` | The emblem as first published, 440 x 440 | the Open Graph preview, `docs/assets/hero.svg` (the source of the polished copies) |
 | `film/sky-1440.<hash>.mp4`, `film/sky-960.<hash>.mp4` | The sky's faint orbit rings and drifting starfield: a rendered 72-second loop on black (30 fps, H.264) that the page screen-blends, so only the light shows; served through edge/film.js so Safari can stream it; phones get the 960 px cut | `index.html` (the hero) |
-| `sky-poster.webp` | A calm still of the sky (its faint orbits and stars, no moving lights): shown before the film plays, wherever it cannot autoplay, and for a reader who asks for reduced motion | `index.html` |
+| `sky-poster.<hash>.webp` | A calm still of the sky (its faint orbits and stars, no moving lights), transparent where the film is black: the film's poster, shown before it plays and wherever it cannot autoplay | `index.html` |
+| `sky-poster.webp` | The same still on black, which the page screen-blends: the sky for a reader who asks for reduced motion | `index.css` |
 | `openid-certified-mark-on-white.png` | The OpenID Certified mark in the Foundation's published form: the first proof tile, linked to the listing | `index.html` |
 
 ## Conventions
