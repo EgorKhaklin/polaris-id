@@ -16,6 +16,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- The eudi-dev walk removes its work dir, which holds the test wallet's key and credential, after a passing run; a failed run keeps it and prints one line naming it. The wallet canary runs the walk as a stranger does and checks that the dir is gone.
 - The SBOM checker moves to ntia-conformance-checker 6.0.0, and the release gate now also requires every listed component to be in the graph the checker judged (no floating component, no unknown pointer): 6.0.0 judges only what the document's root reaches.
 - polaris-oid4vp's README: anchor the CA that signs issuers, not a root that also certifies relying parties (`IssuerAnchorScopeTests`); where one root certifies both roles, neither anchoring nor the package can separate them. To accept only some of an anchor's issuers, pin `claims["iss"]` where `iss_bound` is `True`.
 - The project no longer uses the name VANTA in its current files: the maintainer is named as Egor Khaklin, and a local database user or path is written as `"$(whoami)"`, `<user>` or `<worktree>`. History and the released migrations (with the routine body in 06_triggers.sql that must match one of them) keep it; .mailmap shows the old commit identities under the project's commit identity.
@@ -23,6 +24,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Fixed
 
 - Outward documents restated to match the tree: SECURITY.md, ROADMAP and the Kubernetes guide now say v1.0.0's images and chart are published (2026-10-11); the review packet no longer says nothing was certified beside polaris-oid4vp 1.0.0rc7's OpenID certification; the red-team scope, assurance case, threat model and evaluation guide drop lines that had gone stale; and the readiness ledger lists the zero-knowledge layer under its known limitations rather than as production-grade (no external cryptographic audit; demo-scale).
+- The stranger path's eudi-dev walk (`lab/interop/eudi-dev/run.sh`): on rootful Docker Engine, when the caller's uid was not the wallet image's (1000), as on a GitHub runner (uid 1001), the wallet could not open the 0700 work dir to read its inputs. It now reads read-only copies of only those files (the credential and the verifier's public certificates). Docker Desktop and uid-1000 Linux hosts were not affected.
 - On iOS Safari a dark disc could show behind the hero emblem before the sky film started; the poster is now transparent where it was black.
 
 ### Security
