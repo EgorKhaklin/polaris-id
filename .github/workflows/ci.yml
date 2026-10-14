@@ -3499,6 +3499,14 @@ jobs:
       # held to the guard, and each leak shape it refuses is shown on a made-up file.
       - name: The Yivi walk's public files carry no holder data (lab/interop/yivi)
         run: python -m unittest lab/interop/yivi/test_public_capture.py
+      # packages/polaris-oid4vp/examples/yivi-checkin: a door check-in on the package's public API,
+      # driven end to end by the Yivi walk's stand-in wallet. fastapi, uvicorn and segno go into a
+      # venv of their own, not this job's; CHECKIN_REQUIRED turns a missing one into a failure.
+      - name: The Yivi check-in example end to end (an allowed domain in; off the list and an untrusted issuer refused)
+        run: |
+          python -m venv "$RUNNER_TEMP/checkin"
+          "$RUNNER_TEMP/checkin/bin/pip" install --quiet --require-hashes -r packages/polaris-oid4vp/examples/yivi-checkin/requirements.txt
+          cd packages/polaris-oid4vp/examples/yivi-checkin && CHECKIN_REQUIRED=1 "$RUNNER_TEMP/checkin/bin/python" -m unittest test_checkin
       # lab/interop/mdoc/witness-eudi (record 025, M1b): M1's three mdoc captures, judged by
       # verify_mdoc.py here and compared stage by stage with the two outside witnesses' recorded
       # verdicts (run.sh produces them in containers; this replays them). cbor2 and cryptography

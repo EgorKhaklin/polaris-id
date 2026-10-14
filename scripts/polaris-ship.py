@@ -392,6 +392,8 @@ UNSHARDED_SUITES = {
     "lab/interop": ["test_exit_trap"],
     "lab/interop/oid4vcgo": ["test_wallet_inputs"],
     "lab/interop/yivi": ["test_public_capture"],
+    # Needs requirements.txt there; without it the suite skips here and CI, which installs it, runs it.
+    "packages/polaris-oid4vp/examples/yivi-checkin": ["test_checkin"],
     "lab/interop/mdoc/witness-eudi": ["test_witness_eudi"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
@@ -428,6 +430,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop":              ("unittest", None),
     "lab/interop/oid4vcgo":     ("unittest", None),
     "lab/interop/yivi":         ("unittest", None),
+    "packages/polaris-oid4vp/examples/yivi-checkin": ("unittest", None),
     "lab/interop/mdoc/witness-eudi": ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),

@@ -106,11 +106,15 @@ stays a draft unless each passes. Trivy, which generates them, records a supplie
 packages; the others come from each component's package URL, its distribution or the module a
 binary contains ([scripts/polaris-sbom-enrich.py](scripts/polaris-sbom-enrich.py)), and a license
 name the SPDX License List does not carry becomes a `LicenseRef-` that keeps the name the package
-gave it. To check one yourself:
+gave it. To check one yourself, with every listed component in the graph the checker judged (it
+exits non-zero otherwise):
 
 ```bash
-pip install ntia-conformance-checker
-ntia-checker -r json sbom-image-app.spdx.json | jq '.isConformant'
+pip install 'ntia-conformance-checker>=6'
+ntia-checker -r json sbom-image-app.spdx.json | jq -e '.isConformant == true
+  and (.validationMessages | length) == 0
+  and .graphValidation.floatingComponents.floatingComponentCount == 0
+  and .graphValidation.unknownPointers.hasUnknownPointers == false'
 ```
 
 The provenance bundle is attached beside the SBOMs, so the same check also runs without

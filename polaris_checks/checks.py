@@ -6672,6 +6672,27 @@ _SBOM_PR_PATHS = (".github/workflows/sbom.yml", ".github/workflows/sbom-build.ym
                   "scripts/polaris-sbom-enrich.py", ".github/sbom/**",
                   "scripts/polaris-image-build.sh", "polaris_web/Dockerfile*", "polaris_web/requirements*.txt")
 
+# 2026-10-14: ntia-conformance-checker 6.0.0 judges only the packages the DESCRIBES root reaches.
+# A package cut out of the graph is left out of isConformant with a warning on stderr, and a
+# relationship to an element in another document is reported in the graph section only. On
+# v1.0.0's etcd SBOM, mutated each way, both passed the conformant-and-no-message verdict (the
+# floating package even with its supplier removed, which 5.0.3 refuses). Both release gates
+# (sbom-build.yml, release-images.yml) read exactly these clauses, joined by `and`.
+_NTIA_VERDICT = (".isConformant == true", "(.validationMessages | length) == 0",
+                 ".graphValidation.floatingComponents.floatingComponentCount == 0",
+                 ".graphValidation.unknownPointers.hasUnknownPointers == false")
+_NTIA_VERDICT_TEXT = " and ".join(_NTIA_VERDICT)
+
+
+def _ntia_verdict(text: str) -> re.Match | None:
+    """The first `jq -e '...'` that reads the checker's verdict, when every such expression in
+    `text` (comments aside) is exactly the conjunction of _NTIA_VERDICT; else None."""
+    found = list(re.finditer(r"^[^#\n]*\bjq -e '([^'\n]*\.isConformant\b[^'\n]*)'", text, re.M))
+    if found and all({t.strip() for t in m.group(1).split(" and ")} == set(_NTIA_VERDICT)
+                     for m in found):
+        return found[0]
+    return None
+
 
 def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
     release_wf = _read(root, ".github/workflows/sbom.yml")
@@ -6731,15 +6752,18 @@ def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
     # subject's version and the author short, and four carried license names off the SPDX list.
     # scripts/polaris-sbom-enrich.py fills them; the SPDX project's checker decides, and the gate
     # reads the verdict from its JSON report, so the criteria are stated where they are applied:
-    # conformant, and no validation message.
+    # conformant, no validation message, and (2026-10-14) every listed component in the graph
+    # the checker judged (_NTIA_VERDICT).
     attest = re.search(r"^\s*(?:-\s*)?uses:\s*actions/attest-build-provenance@", wf, re.M)
     enrich = re.search(r"^[^#\n]*scripts/polaris-sbom-enrich\.py --version", wf, re.M)
     checker = re.search(r"^[^#\n]*\bntia-checker\b[^\n]*-r json", wf, re.M)
-    verdict = re.search(r"^[^#\n]*\.isConformant == true", wf, re.M)
+    verdict = _ntia_verdict(wf)
     if not (enrich and checker and verdict):
         return _fail("sbom", "sbom.yml does not fill the NTIA minimum elements "
                      "(scripts/polaris-sbom-enrich.py) and judge each SBOM by the checker's JSON "
-                     "verdict (ntia-checker -r json, .isConformant == true), so the criteria the "
+                     f"verdict (ntia-checker -r json, jq -e '{_NTIA_VERDICT_TEXT}'): conformant, "
+                     "no validation message, and every listed component in the graph the checker "
+                     "judged (no floating component, no unknown pointer), so the criteria the "
                      "release applies are stated in the workflow")
     if "--require-hashes -r .github/sbom/requirements.txt" not in wf:
         return _fail("sbom", "sbom.yml installs the SBOM checker without its hash lock "
@@ -7034,12 +7058,15 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
         return _fail(name, f"{rel}: the publish job must attach an SBOM to each architecture's "
                      "image (amd64 and arm64), each describing the image it is attached to")
     first_sbom = i.find("actions/attest-sbom@")
-    if not all(0 <= i.find(s) < first_sbom for s in (
+    verdict = _ntia_verdict(i)
+    if not (verdict and verdict.start() < first_sbom and all(0 <= i.find(s) < first_sbom for s in (
             "--require-hashes -r .github/sbom/requirements.txt", "scripts/polaris-sbom-enrich.py",
-            "ntia-checker", ".isConformant == true")):
+            "ntia-checker"))):
         return _fail(name, f"{rel}: the registry SBOMs must be brought to the NTIA minimum "
                      "elements and judged by the SPDX project's checker before they are "
-                     "attested, as sbom.yml's are")
+                     f"attested, as sbom.yml's are, by its JSON verdict (jq -e '{_NTIA_VERDICT_TEXT}'): "
+                     "conformant, no validation message, and every listed component in the graph "
+                     "the checker judged (no floating component, no unknown pointer)")
     c = chart[0]
     pin = c.find("scripts/polaris-pin-chart-images.py")
     package = c.find("helm package")

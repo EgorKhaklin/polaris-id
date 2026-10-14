@@ -279,7 +279,7 @@ jobs:
               image --quiet --platform "linux/$arch" --format spdx-json "$IMAGE@$D" > "sbom-$arch.spdx.json"
             "$PY" scripts/polaris-sbom-enrich.py --version "${TAG#v}" "${OURS[@]}" "sbom-$arch.spdx.json"
             "$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "sbom-$arch.spdx.json" > verdict.json || true
-            jq -e '.isConformant == true and (.validationMessages | length) == 0' verdict.json > /dev/null \
+            jq -e '.isConformant == true and (.validationMessages | length) == 0 and .graphValidation.floatingComponents.floatingComponentCount == 0 and .graphValidation.unknownPointers.hasUnknownPointers == false' verdict.json > /dev/null \
               || { echo "::error::the $arch SBOM does not meet the NTIA minimum elements or is not valid SPDX 2.3"; exit 1; }
           done
 

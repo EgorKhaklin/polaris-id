@@ -153,7 +153,9 @@ as an issuer whenever its usages permit signing, as `clientAuth` does (`IssuerAn
 `test_sdjwt.py`). Where one root certifies issuers and relying parties alike, with no narrower
 issuer CA beneath it, anchoring cannot separate the roles, and this package cannot either: trust in
 a credential that carries `x5c` comes from its anchor, and there is no setting that limits accepted
-issuers to named `iss` values.
+issuers to named `iss` values. An anchor that certifies several issuers accepts all of them: to
+accept only some, check after an authentic verdict that `iss_bound` is `True` and `claims["iss"]`
+is one you name, and never pin on `unbound_iss` or `issuer_subject`.
 
 This is a separate package from `polaris-verify` because it listens on a socket and depends on
 `cryptography`; `polaris-verify` does neither.
