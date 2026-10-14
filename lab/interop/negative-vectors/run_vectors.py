@@ -9,7 +9,8 @@ vector, the verdict it should reach and the one it reached.
 An adapter is one function: (vector, settings) -> ("accept" | "reject", a short reason). The run fails
 (exit 1) when a control is refused, because then every refusal it reports measured nothing, when a
 negative vector is accepted, when polaris-oid4vp refuses one with another code than POLARIS_OID4VP_CODES
-names, and when the file holds no vectors, no control, or no negative the adapter judged. Exit 2: the adapter could not run. A run that passes ends "done".
+names, and when the file holds no vectors, no control, or no negative the adapter judged, or judges a negative
+in a layer whose own control (an accept-* vector of that layer) it left to its caller. Exit 2: the adapter could not run. A run that passes ends "done".
 
 A vector with a `status_list` (0.3.0) is judged under its `policy`: the adapter serves `status_list.response`
 at `status_list.uri` from memory, opening no socket, and states the keys in settings.status_list_keys.
@@ -221,6 +222,19 @@ def main(argv=None):
         print("the run judged %d controls and %d negatives: it measured nothing" % (len(controls), len(negatives)),
               file=sys.stderr)
         return 1
+    # A layer with its own control (accept-status-list for status-list) is measured only with that control: a
+    # negative judged there while its control is left to the caller measured nothing.
+    layer = {v["id"]: v["layer"] for v in doc["vectors"]}
+    own = {}
+    for r in results:
+        if r["id"].startswith("accept-") and layer[r["id"]] != "control":
+            own.setdefault(layer[r["id"]], []).append(r)
+    for name, layer_controls in sorted(own.items()):
+        judged_here = [r for r in negatives if layer[r["id"]] == name]
+        if judged_here and not any(r["ok"] is not None for r in layer_controls):
+            print("the %s layer: %d negatives judged and its control %s not: they measured nothing"
+                  % (name, len(judged_here), ", ".join(r["id"] for r in layer_controls)), file=sys.stderr)
+            return 1
     if args.json:
         with open(args.json, "w") as fh:
             json.dump({"adapter": args.adapter, "vectors_version": doc["version"], "results": results}, fh, indent=1)

@@ -66,8 +66,9 @@ class Vectors(unittest.TestCase):
         self.assertFalse(self.rv.judge("polaris-oid4vp", dict(vector, id="not-in-the-table"), "reject", "nonce: x"))
         self.assertTrue(self.rv.judge("sd-jwt-python", vector, "reject", "anything"))
 
-    def _main(self, doc, adapter=None):
-        """run_vectors.main over doc, with polaris-oid4vp replaced by `adapter` when given: (exit, stdout)."""
+    def _main(self, doc, adapter=None, stderr=False):
+        """run_vectors.main over doc, with polaris-oid4vp replaced by `adapter` when given: (exit, stdout), and
+        stderr as a third item when asked."""
         rv = _load("run_vectors_main", "run_vectors.py")
         if adapter:
             rv.ADAPTERS["polaris-oid4vp"] = adapter
@@ -79,7 +80,7 @@ class Vectors(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = rv.main([path, "--adapter", "polaris-oid4vp"])
-        return code, out.getvalue()
+        return (code, out.getvalue(), err.getvalue()) if stderr else (code, out.getvalue())
 
     def test_the_run_passes_and_says_done(self):
         code, out = self._main(self.doc)
@@ -117,6 +118,20 @@ class Vectors(unittest.TestCase):
         code, out = self._main(self.doc, lambda v, st: ("reject", "x") if v["id"] == "accept-status-list"
                                else real(v, st))
         self.assertEqual(code, 1, out)
+
+    def test_a_layer_judged_without_its_own_control_fails(self):
+        # accept-status-list left to the caller while the status-list negatives are judged: those refusals
+        # measured nothing, since a verifier that refuses every credential with a status claim also makes them.
+        rv = _load("run_vectors_layer", "run_vectors.py")
+        real = rv.polaris_oid4vp
+
+        def no_status_control(vector, settings):
+            return ("n/a", "") if vector["id"] == "accept-status-list" else real(vector, settings)
+        code, out, err = self._main(self.doc, no_status_control, stderr=True)
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("done", out)
+        self.assertIn("the status-list layer", err)
+        self.assertIn("accept-status-list", err)
 
     def test_the_run_fails_on_an_empty_vector_list(self):
         tmp = tempfile.mkdtemp(prefix="empty-")

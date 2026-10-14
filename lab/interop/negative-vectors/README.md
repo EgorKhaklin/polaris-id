@@ -28,7 +28,10 @@ changed, re-signed wherever the change needs it, so the only reason to refuse it
 **The signer is not the named issuer** is the class of swiyu change dossier CD-008 (2026-07-31), in which a
 verifier accepted a credential signed by an attacker's key while its `iss` named a trusted issuer. Its shape
 differs: there the key was a DID named by `kid` and checked against `iss`; here it is an `x5c` leaf, where
-SD-JWT VC draft-19 s2.5 makes the leaf's subject the issuer and requires the key to be the issuer's. The family
+SD-JWT VC draft-19 s2.5 makes the leaf's subject the issuer ("the Issuer of the Verifiable Digital Credential is the
+subject of the end-entity certificate") and refuses a credential whose key cannot be validated as the Issuer's, and
+s7.3 requires that "the integrity of the relationship between the iss value of the SD-JWT, if present, and the
+public keys of the Issuer" be kept. The family
 holds `x5c` cases only and targets verification whose issuer key comes from `x5c`. polaris-oid4vp refuses all
 three there; no vector is graded under its `--issuer-jwks` mode, which is documented not to bind `iss` to a key
 (its README: "list one issuer's keys per verifier"), and each vector's `notes` says so.
@@ -64,7 +67,8 @@ For it the refusal code counts too: each negative must be refused with the code 
 (for a status-list vector, the revocation state, with `list_refused`'s code after a slash). It serves each
 status list from the vector, in memory: no vector opens a socket.
 The run fails when a control is refused or a negative accepted, and also when the file holds no vectors, no
-control, or no negative the adapter judged; a run that passes ends `done`.
+control, or no negative the adapter judged, or when it judges a negative in a layer whose own control
+(`accept-status-list` for `status-list`) it left to its caller; a run that passes ends `done`.
 
 An adapter is one function, `(vector, settings) -> ("accept" | "reject", reason)`. `settings` holds the
 instant, nonce, audience, credential type, trust anchors (PEM) and issuer JWKs every vector assumes.
