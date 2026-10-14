@@ -2109,8 +2109,9 @@ class IssuerBindingIsAsciiTests(unittest.TestCase):
     ISS = "https://kent.example"
 
     @staticmethod
-    def _chain(host):
-        """A CA and a leaf under it whose one subjectAltName is the dNSName `host`, as raw bytes."""
+    def _chain(host, uri=None, also=None):
+        """A CA and a leaf under it whose subjectAltName is the dNSName `host` as raw bytes, after
+        the URI `uri` and the dNSName `also` when they are given."""
         from cryptography.x509.oid import ExtensionOID
         now = datetime.datetime.now(datetime.timezone.utc)
         ca_key, leaf_key = (ec.generate_private_key(ec.SECP256R1()) for _ in range(2))
@@ -2122,7 +2123,12 @@ class IssuerBindingIsAsciiTests(unittest.TestCase):
               .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
               .sign(ca_key, hashes.SHA256()))
         raw = host.encode("utf-8")
-        san = b"\x30" + bytes([len(raw) + 2]) + b"\x82" + bytes([len(raw)]) + raw
+        names = b"\x82" + bytes([len(raw)]) + raw
+        if also is not None:
+            names = b"\x82" + bytes([len(also)]) + also.encode("ascii") + names
+        if uri is not None:
+            names = b"\x86" + bytes([len(uri)]) + uri.encode("ascii") + names
+        san = b"\x30" + bytes([len(names)]) + names
         leaf = (x509.CertificateBuilder()
                 .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "issuer")]))
                 .issuer_name(ca_name).public_key(leaf_key.public_key())
@@ -2146,16 +2152,32 @@ class IssuerBindingIsAsciiTests(unittest.TestCase):
         names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
         self.assertEqual(names.get_values_for_type(x509.DNSName), [self.KELVIN])
 
-    def test_a_kelvin_dns_name_does_not_bind_an_ascii_iss(self):
-        # The forward case: the credential stays authentic, but its `iss` is unbound, out of
-        # claims, so a relying party pinning claims["iss"] where iss_bound is True refuses it.
+    def test_a_kelvin_dns_name_is_refused(self):
+        # The forward case. Not bound, and not left unbound either: refused outright, as a
+        # subjectAltName that does not parse is, because no CA may issue such a leaf.
         from polaris_oid4vp import sdjwt as S
         v = self._verify(self.KELVIN, self.ISS)
-        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
-        self.assertIs(v.iss_bound, False)
-        self.assertNotIn("iss", v.claims)
-        self.assertEqual(v.unbound_iss, self.ISS)
-        self.assertIsNone(S._leaf_names(self._chain(self.KELVIN)[1], self.ISS))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key", v.reason)
+        self.assertIn("not ASCII", v.reason)
+        why = S._leaf_names(self._chain(self.KELVIN)[1], self.ISS)
+        self.assertTrue(why, "a Kelvin dNSName must be a refusal, not a binding or an absence")
+
+    def test_a_kelvin_dns_name_is_refused_beside_an_ascii_one_that_matches(self):
+        # Any non-ASCII DNS name refuses the leaf, whatever else it names.
+        ca, leaf, leaf_key = self._chain(self.KELVIN, also="kent.example")
+        v = verify_presentation(_x5c_presentation(leaf, leaf_key, self.ISS), expected_nonce=NONCE,
+                                expected_audience=AUDIENCE, trust_anchors=[ca])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key", v.reason)
+
+    def test_a_kelvin_dns_name_is_refused_beside_a_uri_that_matches(self):
+        # A URI name is matched first, and still does not make the leaf acceptable.
+        ca, leaf, leaf_key = self._chain(self.KELVIN, uri=self.ISS)
+        v = verify_presentation(_x5c_presentation(leaf, leaf_key, self.ISS), expected_nonce=NONCE,
+                                expected_audience=AUDIENCE, trust_anchors=[ca])
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "issuer_key", v.reason)
 
     def test_an_ascii_dns_name_does_not_bind_a_kelvin_iss(self):
         v = self._verify("kent.example", "https://\u212aent.example")

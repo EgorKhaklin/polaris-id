@@ -869,8 +869,9 @@ def _leaf_names(leaf, iss):
     DNS names are compared as ASCII only. A DNS name is an IA5String, and an internationalized
     one is written as an A-label; str.lower() folds U+212A (the Kelvin sign) into "k", so before
     2026-10-14 a leaf naming "\u212aent.edu" bound https://kent.edu and an ASCII leaf bound an
-    iss written with the Kelvin sign. A non-ASCII DNS name now names no issuer, and an https
-    `iss` binds on a DNS host only when it is ASCII.
+    iss written with the Kelvin sign. A leaf with a non-ASCII DNS name is refused, as one whose
+    subjectAltName does not parse is: no CA may issue it, and it is not taken to name nobody. An
+    https `iss` binds on a DNS host only when it is ASCII.
 
     A leaf that names neither leaves `iss` unbound (None). Until 2026-10-10 it could carry no
     `iss` at all, and the EU reference PID issuer's document-signer certificates have no
@@ -885,11 +886,15 @@ def _leaf_names(leaf, iss):
     try:
         names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
         uris = names.get_values_for_type(x509.UniformResourceIdentifier)
-        hosts = [h.lower() for h in names.get_values_for_type(x509.DNSName) if h.isascii()]
+        hosts = names.get_values_for_type(x509.DNSName)
     except x509.ExtensionNotFound:
         uris, hosts = [], []
     except Exception:  # noqa: BLE001  a malformed extension names nobody
         return "the issuer certificate's subjectAltName does not parse, so it names no issuer"
+    if not all(h.isascii() for h in hosts):
+        return ("the issuer certificate names a DNS host that is not ASCII (%s), which no CA may "
+                "issue: a DNS name is an IA5String" % ", ".join(repr(h) for h in hosts if not h.isascii()))
+    hosts = [h.lower() for h in hosts]
     if uris:
         if iss in uris:
             return ""

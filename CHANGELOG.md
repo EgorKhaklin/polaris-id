@@ -24,7 +24,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
-- Issuer binding compares DNS names as ASCII only; a non-ASCII DNS SAN no longer binds an issuer.
+- Issuer binding compares DNS names as ASCII only; an issuer certificate with a non-ASCII DNS SAN is refused.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 
