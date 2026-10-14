@@ -29,6 +29,7 @@ import base64
 import os
 import subprocess
 import datetime
+import getpass
 import importlib.util
 import json
 import pathlib
@@ -144,7 +145,7 @@ def main(argv=None):
     result = {"wallet": args.wallet, "commit": commit, "issuer": "https://%s:%d/api/v1/oid4vci/%d" % (host, args.port, S5.AGENCY),
               "started": datetime.datetime.now(datetime.timezone.utc).isoformat()}
 
-    S5.SHIP.make_db(db, dict(os.environ, PGUSER="vanta", POLARIS_DB_HOST="localhost"))
+    S5.SHIP.make_db(db, dict(os.environ, PGUSER=getpass.getuser(), POLARIS_DB_HOST="localhost"))
     S5.tls_cert(out, host)
     vpki = out / "verifier-pki"
     keygen(vpki, host)

@@ -40,7 +40,7 @@ shared one, but the only way to delete a CardPersonalization row is to turn off 
 trigger, and a drill that disables the audit-of-record to tidy up is teaching the exact habit
 it exists to forbid.
 
-Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta python3 scripts/polaris-personalization-drill.py
+Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER="$(whoami)" python3 scripts/polaris-personalization-drill.py
 Exit 0 iff every case holds, 3 to skip.
 """
 import glob

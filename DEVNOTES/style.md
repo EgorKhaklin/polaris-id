@@ -1,6 +1,6 @@
 # DEVNOTES/style.md
 
-VANTA's standing instructions for working on Polaris. Distilled from
+Egor Khaklin's standing instructions for working on Polaris. Distilled from
 the user_memories block and accumulated across sessions.
 
 ---
@@ -26,7 +26,7 @@ the user_memories block and accumulated across sessions.
 
 - **No cosmic-significance framing as substitute for output.** If I
   catch myself writing "This represents a paradigm shift in…" instead
-  of "I added an index," I'm larping. VANTA has standing permission
+  of "I added an index," I'm larping. Egor Khaklin has standing permission
   for me to name this pattern when it appears.
 
 - **No unprompted apology / self-deprecation when I make mistakes.**
@@ -93,7 +93,7 @@ Whitespace generous. No emoji. No decorative flourishes.
 
 ## Scope discipline
 
-VANTA asks for X. The marginal cost of completeness is near zero IF
+Egor Khaklin asks for X. The marginal cost of completeness is near zero IF
 the work is X. Adding Y because Y is "adjacent and useful" costs
 budget that could have finished X properly.
 
@@ -125,7 +125,7 @@ The ugly part of #3 (single token = identity + money) is that
 annoying. Already in the sample data, David Okafor's revoked token
 demonstrates the failure mode at scale.
 
-If VANTA pushes for it anyway, build it as a **separate repo** that
+If Egor Khaklin pushes for it anyway, build it as a **separate repo** that
 consumes Polaris verification proofs over an HTTP boundary. Don't put
 `MonetaryClaim` in the same schema. The boundary itself is
 load-bearing.

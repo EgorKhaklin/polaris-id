@@ -48,7 +48,7 @@ So this runs the wind-down against a real database and checks what it actually l
 
 Builds and drops its own database.
 
-Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta python3 scripts/polaris-pilot-winddown-drill.py
+Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER="$(whoami)" python3 scripts/polaris-pilot-winddown-drill.py
 Exit 0 iff every case holds, 3 to skip.
 """
 import glob

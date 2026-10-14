@@ -10,7 +10,7 @@ drives POST /api/v1/timestamp/1 past the limit with the application connected as
 records what the audit write does. security._audit swallows its own failure (stderr only), so
 the response is 429 either way; the refusal is the finding.
 
-    POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_rpcomp POLARIS_DB_USER=vanta \\
+    POLARIS_DB_HOST=localhost POLARIS_DB_NAME=polaris_rpcomp POLARIS_DB_USER="$(whoami)" \\
     POLARIS_SECRET_KEY=local-test-secret-key-32-bytes-long POLARIS_STATE_DIR=/tmp/polaris-state-rpcomp \\
     POLARIS_PQC_PROFILE=placeholder ~/.local/share/polaris-venv312/bin/python lab/strategy/002/probe_rate_limit_audit.py
 """

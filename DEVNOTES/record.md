@@ -7,7 +7,8 @@ reopened. **Job:** the historical record that used to live at the end of
 cognitive-apparatus arcs, and the production-deployment phase log. It was
 moved here on 2026-09-02 (v9.195) so the constitution carries only the
 constitution. The text is the record as written at the time, kept
-verbatim apart from two citations of files that no longer exist; ticket
+verbatim apart from two citations of files that no longer exist and the
+maintainer's name, now written as Egor Khaklin; ticket
 labels such as M2-1 or R11-3 are the labels the CHANGELOG and the
 per-ship notes in [ships/](../docs/design/) still use. Where this record and the
 running code disagree, the code and [CHANGELOG.md](../CHANGELOG.md) are
@@ -71,7 +72,7 @@ M2-1. ✅ **Real ZK-SNARK for ZERO_KNOWLEDGE verifications** (achieved
        three `/api/zk/*` routes (epoch close, get, verify); 5 SQL self-
        tests in section P, 15+ Python `ZKSnarkTests`, 3 Rust unit tests
        (honest prover, replay, cross-epoch), 2 concurrency tests. C3+A4+B3
-       picked by VANTA at the M2-1 exploration Sanctum: transparent setup,
+       picked by Egor Khaklin at the M2-1 exploration Sanctum: transparent setup,
        Plonky2, hybrid-Merkle reusing R10-2. **Substrate-D arc closed
        5/5** — every primitive named in PDF Appendices E and F is now
        in-tree or scaffolded.).

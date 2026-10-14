@@ -6,7 +6,7 @@
 -- ============================================================================
 --
 -- Position C of a recorded decision selected by
--- VANTA in-chat 2026-05-14 ("C"). The migration framework Polaris ships is
+-- Egor Khaklin in-chat 2026-05-14 ("C"). The migration framework Polaris ships is
 -- custom polaris-native, matching the existing operator-script style:
 --
 --   - Migrations live in polaris_sql/migrations/ as plain SQL files

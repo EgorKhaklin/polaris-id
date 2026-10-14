@@ -1,2 +1,4 @@
-# Commits made while a test fixture identity sat in the local git config (2026-09-28).
-VANTA <e.khaklin@setonhill.edu> t <t@example.invalid>
+# Older commit identities shown under the project's commit identity in local git tools
+# (shortlog, blame, log --use-mailmap). History itself is unchanged.
+Khaklin Technologies <PolarisID@protonmail.com> t <t@example.invalid>
+Khaklin Technologies <PolarisID@protonmail.com> VANTA <e.khaklin@setonhill.edu>

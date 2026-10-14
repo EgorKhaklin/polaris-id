@@ -2,7 +2,7 @@
 
 **Status:** INCONCLUSIVE, the strong claim is permanently retired (the
 v9.40 terminus passed with no external cold read).
-**Author:** Egor Khaklin (VANTA)
+**Author:** Egor Khaklin
 **Reading time:** 8 minutes.
 
 This page states the thesis behind Polaris, the test that would have

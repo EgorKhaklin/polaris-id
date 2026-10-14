@@ -46,7 +46,7 @@
   },
   "fault_kind": "redis",
   "fault": "gunicorn with POLARIS_RATE_LIMIT_BACKEND=redis against a dedicated Redis (redis:7-alpine, container polaris-eval-redis, 127.0.0.1:6431). The fault is `docker kill` (SIGKILL: the server dies as in a crash); the restore is `docker start`, an empty Redis on the same port. The ready time is when it next answers PING.",
-  "server_env_note": "gunicorn --config polaris_web/gunicorn.conf.py, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=redis, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000",
+  "server_env_note": "gunicorn --config polaris_web/gunicorn.conf.py, POLARIS_WORKERS=4 (sync), POLARIS_USE_REAL_PQC=1 with a file issuer key, POLARIS_DB_HOST=localhost POLARIS_DB_USER=<user> (schema owner, trust auth, no pgbouncer), POLARIS_RATE_LIMIT_BACKEND=redis, POLARIS_RATE_LIMIT_WRITE_MAX=100000000, POLARIS_RATE_LIMIT_LOGIN_MAX=1000",
   "background_before": {
     "loadavg": [
       5.0,

@@ -16,7 +16,7 @@ what the framing DOES, not where the analogies came from.
 
 ## The single rule that keeps this from being decorative
 
-VANTA's standing instructions name "larping" as the primary risk
+Egor Khaklin's standing instructions name "larping" as the primary risk
 pattern: substituting feelings of significance for actual output.
 Structural-vocabulary inflation is a perfect larping vector. It FEELS
 profound while imposing zero new constraint.

@@ -29,7 +29,7 @@ they claimed. This drill runs the model that closes that, against a real databas
 The drill builds and drops its own database, because these are append-only tables and the only
 way to clean up after itself in a shared one would be to turn off the trigger.
 
-Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER=vanta python3 scripts/polaris-enrollment-proofing-drill.py
+Run: POLARIS_DB_HOST=localhost POLARIS_DB_USER="$(whoami)" python3 scripts/polaris-enrollment-proofing-drill.py
 Exit 0 iff every case holds, 3 to skip.
 """
 import glob

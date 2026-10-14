@@ -5,12 +5,12 @@
   "case": "genuine",
   "at": "2026-10-11T04:54:42Z",
   "response": "/captures/capture-pid/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-pid/device-response.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -34,12 +34,12 @@
   "case": "another nonce",
   "at": "2026-10-11T04:54:42Z",
   "response": "/captures/capture-pid/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-pid/device-response.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -63,12 +63,12 @@
   "case": "null thumbprint",
   "at": "2026-10-11T04:54:42Z",
   "response": "/captures/capture-pid/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-pid/device-response.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -84,7 +84,7 @@
   "case": "no root",
   "at": "2026-10-11T04:54:42Z",
   "response": "/captures/capture-pid/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-pid/device-response.cbor",
   "roots": [],
   "roots_host": [],
   "handover": {
@@ -109,7 +109,7 @@
   "case": "unrelated root",
   "at": "2026-10-11T04:54:42Z",
   "response": "/captures/capture-pid/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-pid/device-response.cbor",
   "roots": [
    "/inputs/unrelated-root.pem"
   ],
@@ -143,7 +143,7 @@
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -172,7 +172,7 @@
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -201,7 +201,7 @@
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -230,7 +230,7 @@
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -254,12 +254,12 @@
   "case": "judged after validUntil",
   "at": "2026-11-12T04:54:32Z",
   "response": "/captures/capture-pid/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-pid/device-response.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -283,12 +283,12 @@
   "case": "judged before validFrom",
   "at": "2026-10-10T04:54:32Z",
   "response": "/captures/capture-pid/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-pid/device-response.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -317,7 +317,7 @@
    "/captures/capture-pid/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-pid/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-pid/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -341,12 +341,12 @@
   "case": "genuine",
   "at": "2026-10-11T04:52:32Z",
   "response": "/captures/capture-mdl/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl/device-response.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -370,12 +370,12 @@
   "case": "another nonce",
   "at": "2026-10-11T04:52:32Z",
   "response": "/captures/capture-mdl/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl/device-response.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -399,12 +399,12 @@
   "case": "null thumbprint",
   "at": "2026-10-11T04:52:32Z",
   "response": "/captures/capture-mdl/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl/device-response.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -420,7 +420,7 @@
   "case": "no root",
   "at": "2026-10-11T04:52:32Z",
   "response": "/captures/capture-mdl/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl/device-response.cbor",
   "roots": [],
   "roots_host": [],
   "handover": {
@@ -445,7 +445,7 @@
   "case": "unrelated root",
   "at": "2026-10-11T04:52:32Z",
   "response": "/captures/capture-mdl/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl/device-response.cbor",
   "roots": [
    "/inputs/unrelated-root.pem"
   ],
@@ -479,7 +479,7 @@
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -508,7 +508,7 @@
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -537,7 +537,7 @@
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -566,7 +566,7 @@
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -590,12 +590,12 @@
   "case": "judged after validUntil",
   "at": "2026-11-12T04:52:24Z",
   "response": "/captures/capture-mdl/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl/device-response.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -619,12 +619,12 @@
   "case": "judged before validFrom",
   "at": "2026-10-10T04:52:24Z",
   "response": "/captures/capture-mdl/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl/device-response.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -653,7 +653,7 @@
    "/captures/capture-mdl/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -677,12 +677,12 @@
   "case": "genuine",
   "at": "2026-10-11T04:56:57Z",
   "response": "/captures/capture-mdl-direct-post/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -698,12 +698,12 @@
   "case": "another nonce",
   "at": "2026-10-11T04:56:57Z",
   "response": "/captures/capture-mdl-direct-post/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -719,7 +719,7 @@
   "case": "no root",
   "at": "2026-10-11T04:56:57Z",
   "response": "/captures/capture-mdl-direct-post/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
   "roots": [],
   "roots_host": [],
   "handover": {
@@ -736,7 +736,7 @@
   "case": "unrelated root",
   "at": "2026-10-11T04:56:57Z",
   "response": "/captures/capture-mdl-direct-post/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
   "roots": [
    "/inputs/unrelated-root.pem"
   ],
@@ -762,7 +762,7 @@
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -783,7 +783,7 @@
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -804,7 +804,7 @@
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -825,7 +825,7 @@
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -841,12 +841,12 @@
   "case": "judged after validUntil",
   "at": "2026-11-12T04:56:49Z",
   "response": "/captures/capture-mdl-direct-post/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -862,12 +862,12 @@
   "case": "judged before validFrom",
   "at": "2026-10-10T04:56:49Z",
   "response": "/captures/capture-mdl-direct-post/device-response.cbor",
-  "response_host": "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
+  "response_host": "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/device-response.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -888,7 +888,7 @@
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
   "roots_host": [
-   "/private/tmp/claude-501/-Users-vanta/2cb400aa-0f69-4765-87b5-ba01888f5d6e/scratchpad/wt-m1b/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
+   "<worktree>/lab/interop/mdoc/capture-mdl-direct-post/iaca-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
