@@ -4,7 +4,9 @@
 // /film/* (wrangler.jsonc: run_worker_first), because Safari plays video only from a server that
 // answers byte-range requests, and static assets answer every request with the whole file. It
 // fetches the asset and returns the slice a Range header asks for, with 206 and Content-Range.
-// Everything else on the site never reaches it.
+// Everything else on the site never reaches it. A film is named by its content hash, so the bytes
+// behind a URL never change; If-Range is honoured all the same (RFC 9110 section 13.1.5): a
+// validator that is not the asset's strong ETag gets the whole file, never a slice of another one.
 
 function parseRange(header, size) {
   const m = /^bytes=(\d*)-(\d*)$/.exec((header || "").trim());
@@ -32,7 +34,13 @@ export default {
     const headers = new Headers(asset.headers);
     headers.set("Accept-Ranges", "bytes");
     headers.set("X-Content-Type-Options", "nosniff");
-    const range = request.headers.get("Range");
+    let range = request.headers.get("Range");
+    const ifRange = request.headers.get("If-Range");
+    if (range && ifRange !== null) {
+      const etag = asset.headers.get("ETag");
+      // Only an exact strong ETag match keeps the range; a weak tag, a date or a stale tag gets 200.
+      if (!etag || etag.startsWith("W/") || ifRange.trim() !== etag) range = null;
+    }
     if (!range) {
       return new Response(request.method === "HEAD" ? null : asset.body, { status: 200, headers });
     }
