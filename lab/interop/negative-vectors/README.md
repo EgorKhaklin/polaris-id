@@ -63,7 +63,7 @@ python3 run_vectors.py vectors.json --adapter polaris-oid4vp
 
 The `polaris-oid4vp` adapter uses the installed package when there is one (for a release:
 `pip install polaris-oid4vp==1.0.0`), else this tree's, and prints the version and path it used. 1.0.0,
-installed from PyPI into an empty venv, reached all 36 verdicts of this file's 0.3.0 (2026-10-15).
+installed from PyPI into an empty venv, reached all 36 verdicts of vectors.json 0.3.0 (2026-10-15).
 For it the refusal code counts too: each negative must be refused with the code `POLARIS_OID4VP_CODES` names
 (for a status-list vector, the revocation state, with `list_refused`'s code after a slash). It serves each
 status list from the vector, in memory: no vector opens a socket.
