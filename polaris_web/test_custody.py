@@ -195,10 +195,11 @@ class FileCustodyTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class FileKeyLoaderTests(unittest.TestCase):
     """The file driver reads the issuer key only from a regular file that group and others
-    cannot write: whoever can write the key file can substitute the key. Read bits are
-    accepted, since the shipped Compose secret is 0644 inside the 0700 secrets directory and
-    Helm mounts it 0440. The key here has the right shape and is never used (zeros), so
-    loading it needs no liboqs."""
+    cannot write, in directories they cannot write unless the sticky bit is set: whoever can
+    write the file can rewrite the key, and whoever can write its directory can replace it.
+    Read bits are accepted, since the shipped Compose secret is 0644 inside the 0700 secrets
+    directory and Helm mounts it 0440. The key here has the right shape and is never used
+    (zeros), so loading it needs no liboqs."""
 
     def setUp(self):
         d = tempfile.TemporaryDirectory()
@@ -222,6 +223,57 @@ class FileKeyLoaderTests(unittest.TestCase):
                 os.chmod(self.path, mode)
                 with self.assertRaisesRegex(custody.CustodyError, "writable by group or others"):
                     custody.FileCustody(self.path)
+
+    def test_a_key_in_a_directory_others_can_write_is_refused(self):
+        for dir_mode in (0o777, 0o775, 0o770, 0o703):
+            with self.subTest(dir_mode=oct(dir_mode)):
+                os.chmod(self.dir, dir_mode)
+                try:
+                    with self.assertRaisesRegex(custody.CustodyError, "which group or others can write"):
+                        custody.FileCustody(self.path)
+                finally:
+                    os.chmod(self.dir, 0o700)
+
+    def test_a_key_in_a_sticky_directory_loads(self):
+        """The sticky bit lets only an entry's owner, the directory's owner or root rename or
+        remove it, so others cannot replace the key there. /tmp on Linux is 1777."""
+        for dir_mode in (0o1777, 0o1770):
+            with self.subTest(dir_mode=oct(dir_mode)):
+                os.chmod(self.dir, dir_mode)
+                try:
+                    self.assertEqual(custody.FileCustody(self.path).public_key(),
+                                     bytes(custody.PUBLIC_KEY_LEN))
+                finally:
+                    os.chmod(self.dir, 0o700)
+
+    def test_the_kubernetes_secret_layout(self):
+        """The kubelet's atomic writer (pkg/volume/util/atomic_writer.go) writes each key into a
+        0755 timestamped directory and gives the pod the name as a symlink beside it, name ->
+        ..data/name and ..data -> that directory, on a tmpfs that is world-writable and sticky.
+        That layout loads. Each of the two directories, made writable without the sticky bit,
+        refuses the key: the name's directory holds the symlink, the other holds the file."""
+        mount = os.path.join(self.dir, "secrets")
+        stamped = os.path.join(mount, "..2026_10_15_00_00_00.000000001")
+        os.makedirs(stamped)
+        key = os.path.join(stamped, "polaris_signing_key")
+        os.rename(self.path, key)
+        os.chmod(key, 0o440)
+        os.symlink(os.path.basename(stamped), os.path.join(mount, "..data"))
+        name = os.path.join(mount, "polaris_signing_key")
+        os.symlink(os.path.join("..data", "polaris_signing_key"), name)
+        self.addCleanup(os.chmod, mount, 0o700)
+        self.addCleanup(os.chmod, stamped, 0o700)
+        os.chmod(stamped, 0o755)
+        os.chmod(mount, 0o1777)
+        self.assertEqual(custody.FileCustody(name).public_key(), bytes(custody.PUBLIC_KEY_LEN))
+        for writable, other, other_mode in ((mount, stamped, 0o755), (stamped, mount, 0o1777)):
+            with self.subTest(writable=os.path.basename(writable)):
+                os.chmod(other, other_mode)
+                os.chmod(writable, 0o777)
+                with self.assertRaises(custody.CustodyError) as caught:
+                    custody.FileCustody(name)
+                self.assertIn("/%s, which group or others can write" % os.path.basename(writable),
+                              str(caught.exception))
 
     def test_a_fifo_is_refused_without_blocking(self):
         """Opened for reading, a FIFO blocks until a writer comes. A load still blocked after
@@ -560,6 +612,35 @@ class EnvSelectionTests(unittest.TestCase):
             with self.assertRaises(custody.CustodyError) as cm:
                 custody.get_custody()
             self.assertIn("PIN_FILE", str(cm.exception))
+
+    def test_the_pin_file_is_read_under_the_key_file_checks(self):
+        """The PIN file goes through the key file's reader: one that group or others can write,
+        or one in a directory they can write, is refused before any module loads. A PIN file
+        that passes gets as far as the module, which does not exist here."""
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        pin = os.path.join(d.name, "pkcs11_pin")
+        with open(pin, "w") as fh:
+            fh.write("1234\n")
+        for file_mode, dir_mode, refusal in ((0o620, 0o700, "is writable by group or others"),
+                                             (0o600, 0o777, "which group or others can write"),
+                                             (0o600, 0o700, None)):
+            with self.subTest(file_mode=oct(file_mode), dir_mode=oct(dir_mode)), _EnvSnapshot():
+                os.chmod(pin, file_mode)
+                os.chmod(d.name, dir_mode)
+                os.environ.update({"POLARIS_CUSTODY_DRIVER": "pkcs11",
+                                   "POLARIS_CUSTODY_PKCS11_MODULE": "/nonexistent/libpkcs11.so",
+                                   "POLARIS_CUSTODY_PKCS11_PIN_FILE": pin})
+                try:
+                    with self.assertRaises(custody.CustodyError) as cm:
+                        custody.get_custody()
+                finally:
+                    os.chmod(d.name, 0o700)
+                if refusal:
+                    self.assertTrue(str(cm.exception).startswith("pkcs11 PIN: "), cm.exception)
+                    self.assertIn(refusal, str(cm.exception))
+                else:
+                    self.assertFalse(str(cm.exception).startswith("pkcs11 PIN"), cm.exception)
 
     def test_incomplete_driver_config_fails_loud(self):
         with _EnvSnapshot():

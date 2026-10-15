@@ -210,22 +210,34 @@ class KeyCustody:
 # ---------------------------------------------------------------------------
 # file
 # ---------------------------------------------------------------------------
-def _read_key_file(path: str) -> bytes:
+def _read_key_file(path: str, what: str = "file") -> bytes:
     """The key file's bytes, checked on the descriptor that reads them, so the file checked is
     the file read. Refused: anything but a regular file (the open does not block, so a FIFO
-    cannot hang the load), and a file group or others can write, since whoever can write the
-    key can substitute it. Read bits are not refused: the shipped Compose secret is 0644 inside
-    the 0700 secrets directory and Helm mounts it 0440, so the directory and the secret mount
-    bound who can read it (KEY-CEREMONY.md)."""
+    cannot hang the load); a file group or others can write, as they could rewrite the key; and
+    a file in a directory group or others can write without the sticky bit, as they could
+    replace it. Two directories are checked, the one holding the name and the one holding the
+    file: they differ when the name is a symlink, as in a Kubernetes secret mount, whose own
+    directory is world-writable and sticky, with the files in a 0755 directory below it. The
+    sticky bit lets only an entry's owner, the directory's owner or root rename or remove it, so
+    that mount and /tmp pass. Read bits are not refused: the shipped Compose secret is 0644
+    inside the 0700 host secrets directory and Helm mounts it 0440, so the deploy, not the mode,
+    bounds who can read the key (KEY-CEREMONY.md). `what` names the secret in a refusal."""
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
-            raise CustodyError(f"file: {path} is not a regular file")
+            raise CustodyError(f"{what}: {path} is not a regular file")
         mode = stat.S_IMODE(st.st_mode)
         if mode & 0o022:
-            raise CustodyError(f"file: {path} is writable by group or others (mode {mode:04o}); "
-                               "whoever can write the key can substitute it")
+            raise CustodyError(f"{what}: {path} is writable by group or others (mode {mode:04o}); "
+                               "remove those bits (chmod go-w)")
+        for directory in (os.path.dirname(os.path.abspath(path)),
+                          os.path.dirname(os.path.realpath(path))):
+            dmode = os.stat(directory).st_mode
+            if dmode & 0o022 and not dmode & stat.S_ISVTX:
+                raise CustodyError(f"{what}: {path} is in {directory}, which group or others can "
+                                   f"write (mode {stat.S_IMODE(dmode):04o}), so they could "
+                                   "replace it; remove those bits (chmod go-w)")
     except BaseException:
         os.close(fd)
         raise
@@ -485,9 +497,9 @@ class AwsKmsCustody(KeyCustody):
 # selection from env, cached per configuration
 # ---------------------------------------------------------------------------
 def _read_secret_file(path: str, what: str) -> str:
+    """A secret's file (the PKCS#11 PIN), read under the key file's checks."""
     try:
-        with open(path) as fh:
-            return fh.read().strip()
+        return _read_key_file(path, what).decode("utf-8").strip()
     except OSError as exc:
         raise CustodyError(f"{what}: cannot read {path}: {exc}") from exc
 

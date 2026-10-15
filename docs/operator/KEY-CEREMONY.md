@@ -93,9 +93,12 @@ the private key's confidentiality therefore rests on that directory against othe
 users on the host. Root and members of the `docker` group, which
 [HARDENING.md](HARDENING.md#5-the-docker-daemon) calls root-equivalent, can read it, and the app,
 which must read the key, reads it through the mount. The file driver refuses a key file that is
-not a regular file or that group or others can write, and accepts read bits: what bounds who can
-read the key is the 0700 secrets directory under Compose and the pod's secret mount under Helm,
-not the file's mode. Back it up sealed (an encrypted
+not a regular file or that group or others can write, and a key in a directory that group or
+others can write without the sticky bit, where they could replace it. It checks the directory
+holding the name and the one holding the file, which differ when the name is a symlink, as in a
+Kubernetes secret mount. Read bits are accepted: who can read the key is bounded by the 0700
+secrets directory under Compose and the pod's secret mount under Helm, not by the file's mode.
+Back it up sealed (an encrypted
 copy in two locations, under dual control) before the first token is issued; a lost file means every
 future token needs a new key and the old public key stays in the trust anchors
 forever. Restrict the host per [`HARDENING.md`](HARDENING.md) (auditd watches
@@ -104,7 +107,8 @@ forever. Restrict the host per [`HARDENING.md`](HARDENING.md) (auditd watches
 ### pkcs11
 
 1. Initialise the token per the vendor's runbook (security-officer PIN, user
-   PIN). Put the user PIN in `polaris_web/secrets/pkcs11_pin` (one line, 0600).
+   PIN). Put the user PIN in `polaris_web/secrets/pkcs11_pin` (one line, 0600; the app
+   reads it under the key file's checks above).
 2. Generate the key INSIDE the token with the ceremony helper. It refuses to
    overwrite an existing label:
    ```bash
