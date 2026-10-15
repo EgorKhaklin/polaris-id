@@ -19414,7 +19414,18 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
     reader would have no way to know it had been given something the presentation layer
     withholds. The refusal must be at build time and must stand on its own, not merely as a
     consequence of a closed vocabulary: the day somebody adds the element to the vocabulary,
-    the vocabulary check stops firing and only an independent guard saves them."""
+    the vocabulary check stops firing and only an independent guard saves them.
+
+    SIGNING A DIGEST (CORE-BUG, 2026-10-14). COSE -49 is pure ML-DSA-65, empty context, over
+    the Sig_structure ITSELF (RFC 9964). The route handed that structure's SHA3-256 to the
+    digest signer, which hashed it again, and the verifier checked one hash: the document said
+    -49 and no RFC 9964 verifier, the detached one included, accepted its signature. So every
+    link is pinned to the raw bytes: the builder hands the signer the Sig_structure, the route
+    passes it to the COSE signer unhashed, that signer signs it through custody's sign_message
+    and self-checks over the raw bytes with both witnesses (its one digest is the labelled
+    placeholder), the custody drivers do not hash it, the raw verify does not, and the
+    detached verifier hands its witnesses the Sig_structure under the algorithm the protected
+    header names."""
     name = "mdoc_bridge"
     mod = _read(root, "polaris_web/mdoc.py")
     if not mod:
@@ -19466,13 +19477,59 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
                                           "cannot report the first as the third")):
         if key not in v:
             return _fail(name, f"the verdict must report {key}: {why}")
-    if "_two_witness_verify" not in v:
+    cose = _fn_body(verifier, "_cose_sign1_verdict")
+    if "_cose_sign1_verdict(" not in v or "_two_witness_verify" not in cose:
         return _fail(name, "the MSO signature must be checked with the same two witnesses as every "
-                           "other signed artifact")
+                           "other signed artifact (verify_mdoc through _cose_sign1_verdict)")
     if "Signature1" not in verifier:
         return _fail(name,
                      "the signature must be over the COSE Sig_structure, not the payload alone; "
                      "signing the payload leaves the algorithm unauthenticated and relabellable")
+
+    # SIGNED AND VERIFIED AS RFC 9964 DEFINES -49: the Sig_structure itself, never a digest.
+    raw = ("COSE -49 is pure ML-DSA-65 over the Sig_structure itself (RFC 9964), not over a "
+           "digest of it; a signature over SHA3-256 of the structure is one no RFC 9964 verifier "
+           "accepts")
+    if not re.search(r"_two_witness_verify\(\s*_cbor_sig_structure\(", cose) \
+            or '_COSE_ALGS = {"ML-DSA-65": -49, "ML-DSA-87": -50}' not in verifier:
+        return _fail(name, "the detached verifier must hand its witnesses the Sig_structure itself, "
+                           "under the algorithm the protected header names: " + raw)
+    if not re.search(r"\bsign\(\s*sig_structure\(\s*protected\s*,\s*payload\s*\)\s*\)", mod):
+        return _fail(name, "build_issuer_signed must hand the signer the Sig_structure itself "
+                           "(sign(sig_structure(protected, payload))): " + raw)
+    app = _read_app(root)
+    route = _fn_body(app, "api_v1_mdoc")
+    if ("signature_over_cose_sig_structure(" not in route or "signature_over_message(" in route
+            or re.search(r"signature_over_cose_sig_structure\(\s*(hashlib|sha3|sha256)", route)):
+        return _fail(name, "the mdoc route must sign through pqc_signing.signature_over_cose_sig_structure, "
+                           "handing it the Sig_structure unhashed, never the digest signer: " + raw)
+    pq = _read(root, "polaris_web/pqc_signing.py")
+    signer = _fn_body(pq, "signature_over_cose_sig_structure")
+    if ("require_cose_sig_structure(" not in signer or ".sign_message(" not in signer
+            or "verify_both_raw(" not in signer or "require_witness=True" not in signer
+            or any("sha3_256(" in line and "PLACEHOLDER_LABEL" not in line for line in signer.split("\n"))):
+        return _fail(name, "the COSE signer must refuse anything but a Sig_structure, sign it through "
+                           "custody's sign_message, and self-check over the raw bytes with both "
+                           "witnesses (verify_both_raw, require_witness=True), with no digest but the "
+                           "labelled placeholder: " + raw)
+    if ('COSE_SIGN1_SIG_STRUCTURE_HEAD = b"\\x84\\x6aSignature1"' not in pq
+            or "COSE_SIGN1_SIG_STRUCTURE_HEAD" not in _fn_body(pq, "require_cose_sig_structure")):
+        return _fail(name, "the COSE signer must sign nothing that is not a Sig_structure: a 32-byte "
+                           "digest handed to a raw signer comes back as a signature of whatever "
+                           "statement the digest is of")
+    if ("verify_raw" not in _fn_body(pq, "verify_both_raw")
+            or "_verify_second_witness_raw" not in _fn_body(pq, "verify_both_raw")
+            or "prehash=False" not in _fn_body(pq, "verify_raw")
+            or "prehash=False" not in _fn_body(pq, "_verify_second_witness_raw")
+            or "if prehash else message" not in _fn_body(pq, "_signed_bytes")):
+        return _fail(name, "verify_both_raw must have both witnesses verify the raw bytes "
+                           "(verify_raw and _verify_second_witness_raw, prehash=False): " + raw)
+    cu = _read(root, "polaris_web/custody.py")
+    drivers = [part.split("\n    def ")[0].split("\nclass ")[0]
+               for part in cu.split("    def sign_message(")[1:]]
+    if len(drivers) < 4 or any("sha3_256(" in d or "sha256(" in d for d in drivers):
+        return _fail(name, "every custody driver must implement sign_message over the message itself, "
+                           "with no digest in between: " + raw)
 
     drill = _read(root, "scripts/polaris-mdoc-bridge-drill.py")
     if not drill:
@@ -19482,7 +19539,14 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
                          "not write the bytes, or it is a round trip with itself"),
                         ("refusing to emit the token value",
                          "the correlation refusal must be asserted, not assumed"),
-                        ("never the mDL", "and so must the naming refusal")):
+                        ("never the mDL", "and so must the naming refusal"),
+                        ("signature_over_cose_sig_structure",
+                         "the drill must sign the way the app signs, through the COSE signer"),
+                        ("pure ML-DSA-65 over the Sig_structure itself",
+                         "the drill must check the issuer signature over the raw Sig_structure with "
+                         "an implementation that is not the tree's (RFC 9964)"),
+                        ("a signature over SHA3-256 of the Sig_structure is refused",
+                         "and that the digest form is refused, so a document has one meaning")):
         if needed not in drill:
             return _fail(name, why)
     doc = _read(root, "docs/design/mdoc-bridge.md")
@@ -19493,12 +19557,17 @@ def check_mdoc_bridge(root: pathlib.Path) -> list[Finding]:
                      "the design record must say plainly that this is a format bridge and not a "
                      "trust bridge; a reader who takes a digest check for an issuer check has "
                      "been misled by the document, not by the code")
+    if "RFC 9964" not in doc:
+        return _fail(name, "the design record must say what -49 means and that the signature is it "
+                           "(RFC 9964: pure ML-DSA-65 over the Sig_structure itself)")
     return _ok(name,
                "the ISO 18013-5 bridge is a format bridge and says so: it signs with ML-DSA rather "
                "than reaching for an algorithm a conforming reader knows, never claims the mDL "
                "docType because a Polaris credential is not a driving licence, refuses the token "
                "value at build time with a guard that stands on its own, and reports what a reader "
-               "can establish separately from what only a Polaris-aware verifier can")
+               "can establish separately from what only a Polaris-aware verifier can; its COSE -49 "
+               "signature is pure ML-DSA-65 over the Sig_structure itself, signed and verified that "
+               "way and no other (RFC 9964)")
 
 
 

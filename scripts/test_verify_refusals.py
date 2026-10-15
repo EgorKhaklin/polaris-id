@@ -571,7 +571,7 @@ class MdocDecisions(unittest.TestCase):
     """2026-09-29: the same gap for the ISO 18013-5-structured credential: tag-24 refusals were
     tested, a genuine document never was. Built here the way the issuer builds one: each element
     tag-24 wrapped and digested, the digests in a Mobile Security Object, the MSO signed as a
-    COSE_Sign1 Sig_structure under ML-DSA."""
+    COSE_Sign1 under COSE -49: pure ML-DSA-65 over the Sig_structure itself (RFC 9964)."""
 
     NOW = "2026-06-01T00:00:00Z"
 
@@ -580,7 +580,8 @@ class MdocDecisions(unittest.TestCase):
         cls.sign, cls.pk = _mldsa_signer()
         cls.other_sign, cls.other_pk = _mldsa_signer()
 
-    def document(self, elements=None, mso_changes=None, unprotected=None, after=None):
+    def document(self, elements=None, mso_changes=None, unprotected=None, after=None,
+                 protected=None, prehash=False):
         elements = elements if elements is not None else {"status": "ACTIVE", "checked_at": "2026-05-01T00:00:00Z"}
         items, digests = [], {}
         for i, (name, value) in enumerate(elements.items()):
@@ -592,8 +593,13 @@ class MdocDecisions(unittest.TestCase):
                "valueDigests": {V._MDOC_NAMESPACE: digests},
                "validityInfo": {"validFrom": "2026-01-01T00:00:00Z", "validUntil": "2027-01-01T00:00:00Z"}}
         mso.update(mso_changes or {})
-        protected, payload = _cbor({1: -49}), _cbor(("tag24", _cbor(mso)))
-        signature = self.sign(hashlib.sha3_256(V._cbor_sig_structure(protected, payload)).digest())
+        if not isinstance(protected, bytes):
+            protected = _cbor(protected if protected is not None else {1: -49})
+        payload = _cbor(("tag24", _cbor(mso)))
+        # The Sig_structure itself is what is signed. `prehash` signs its SHA3-256 instead, the
+        # form this verifier checked until 2026-10-14 and no RFC 9964 verifier accepts.
+        to_be_signed = V._cbor_sig_structure(protected, payload)
+        signature = self.sign(hashlib.sha3_256(to_be_signed).digest() if prehash else to_be_signed)
         header = {"polaris_public_key_hex": self.pk.hex(), "polaris_algorithm": "ML-DSA-65"}
         header.update(unprotected or {})
         if after:
@@ -645,6 +651,35 @@ class MdocDecisions(unittest.TestCase):
             self.assertIs(v["issuer_authentic"], False, why)
             self.assertIn(why, v["note"] or "", why)
 
+    def test_a_signature_over_the_digest_of_the_sig_structure_is_refused(self):
+        # 2026-10-14. COSE -49 is pure ML-DSA-65 over the Sig_structure itself (RFC 9964). This
+        # verifier checked a signature over its SHA3-256, which no RFC 9964 verifier accepts. It
+        # now checks the structure itself and only that: the old form gets no second meaning.
+        v = V.verify_mdoc(self.document(prehash=True), anchor_keys=[self.pk.hex()], now=self.NOW)
+        self.assertIs(v["digests_match"], True, "the digests are fine; the refusal is the signature's")
+        self.assertIs(v["issuer_authentic"], False)
+        self.assertIsNot(v["issuer_trusted"], True)
+        self.assertIn("MSO signature is invalid", v["note"] or "")
+
+    def test_the_protected_header_decides_the_algorithm(self):
+        # The signature covers the protected header, so its alg is the one checked, and the
+        # unprotected polaris_algorithm, which nobody signed, must be that set. Each document is
+        # genuinely signed over its own Sig_structure: what is refused is the label.
+        for protected, unprotected, why in (
+                ({1: -50}, None, "names COSE algorithm -50 and ML-DSA-65 is -49"),
+                ({1: -7}, None, "names COSE algorithm -7"),
+                ({4: b"kid"}, None, "names COSE algorithm None"),
+                (b"\xff", None, "protected header does not decode"),
+                ({1: -49}, {"polaris_algorithm": "ML-DSA-87"}, "names COSE algorithm -49 and ML-DSA-87 is -50"),
+                ({1: -49}, {"polaris_algorithm": "Falcon-padded-1024"}, "is no COSE algorithm")):
+            v = V.verify_mdoc(self.document(protected=protected, unprotected=unprotected), now=self.NOW)
+            self.assertIs(v["digests_match"], True, why)
+            self.assertIs(v["issuer_authentic"], False, why)
+            self.assertIn(why, v["note"] or "", why)
+        # More than alg in the protected header (a kid, as RFC 9964's own example carries) is fine.
+        v = V.verify_mdoc(self.document(protected={1: -49, 4: b"kid"}), now=self.NOW)
+        self.assertIs(v["issuer_authentic"], True, v["note"])
+
     def test_an_unreadable_window_is_not_fresh(self):
         v = V.verify_mdoc(self.document(mso_changes={"validityInfo": {}}), now=self.NOW)
         self.assertIs(v["fresh"], False)
@@ -661,6 +696,45 @@ class MdocDecisions(unittest.TestCase):
             self.assertIs(v["digests_match"], True, "the digests are fine; the refusal is the key's length")
             self.assertIs(v["issuer_authentic"], False, pk_len)
             self.assertIn(why, v["note"] or "", pk_len)
+
+
+_RFC9964_COSE = ROOT / "vectors" / "kat" / "rfc9964_mldsa_65_cose.json"
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class CoseRfc9964KnownAnswer(unittest.TestCase):
+    """RFC 9964, Appendix A.2, Figure 7: the IETF's own ML-DSA-65 COSE_Sign1 (provenance in the
+    vector file). COSE -49 is pure ML-DSA-65 over the Sig_structure itself; the verifier's COSE
+    decision, the one verify_mdoc makes, must accept the RFC's signature and refuse it one bit
+    away. Read with the verifier's own CBOR decoder, which is how it reads an mdoc."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.vector = json.loads(_RFC9964_COSE.read_text(encoding="utf-8"))
+        tag = V._cbor_decode(bytes.fromhex(cls.vector["sign1"]))
+        assert tag[0] == "tag" and tag[1] == 18, "Figure 7's sign1 is a tagged COSE_Sign1"
+        cls.protected, cls.unprotected, cls.payload, cls.signature = tag[2]
+        cls.pk = bytes.fromhex(cls.vector["raw_public_key"])
+
+    def test_the_sig_structure_is_the_rfcs_to_be_signed(self):
+        self.assertIn("RFC 9964", self.vector["provenance"]["source"])
+        self.assertEqual(V._cbor_decode(self.protected)[1], -49)
+        self.assertEqual(V._cbor_sig_structure(self.protected, self.payload),
+                         bytes.fromhex(self.vector["raw_to_be_signed"]))
+        self.assertEqual(self.signature, bytes.fromhex(self.vector["raw_signature"]))
+
+    def test_the_rfc_signature_verifies_and_one_bit_away_does_not(self):
+        ok, ran, note = V._cose_sign1_verdict(self.protected, self.payload, self.signature, self.pk, "ML-DSA-65")
+        self.assertIs(ok, True, note)
+        self.assertIn("cryptography=valid", ran)
+        bad = bytearray(self.signature)
+        bad[1000] ^= 1
+        self.assertIs(V._cose_sign1_verdict(self.protected, self.payload, bytes(bad), self.pk, "ML-DSA-65")[0], False)
+        altered = bytearray(self.payload)
+        altered[0] ^= 1
+        self.assertIs(V._cose_sign1_verdict(self.protected, bytes(altered), self.signature, self.pk, "ML-DSA-65")[0], False)
+        # Told it is another set's, it is not checked at all: the protected header says -49.
+        self.assertIs(V._cose_sign1_verdict(self.protected, self.payload, self.signature, self.pk, "ML-DSA-87")[0], False)
 
 
 @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")

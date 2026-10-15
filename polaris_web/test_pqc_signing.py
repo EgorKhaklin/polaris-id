@@ -845,3 +845,269 @@ class ExperimentalSignerGateTests(unittest.TestCase):
                                                       bytes.fromhex(kp["public_key_hex"])))
         self.assertFalse(pqc_signing.verify_both(msg, sig, kp["public_key_hex"], require_witness=True),
                          "F2: with the second witness absent, nothing is certified on one")
+
+
+# --------------------------------------------------------------------------- COSE (RFC 9964)
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_RFC9964_COSE = os.path.join(_ROOT, "vectors", "kat", "rfc9964_mldsa_65_cose.json")
+_MDOC_FULL = {"issuing_authority": "Authority A", "context": "BANKING",
+              "assurance_level": "polaris:possession", "enrollment_status": "ENROLLED",
+              "credential_status": "ACTIVE"}
+
+
+def _rfc9964_vector():
+    import json
+    with open(_RFC9964_COSE, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _detached_verifier():
+    """The polaris-verify package's verifier, loaded from its file as a stranger's install runs it."""
+    import importlib.util
+    path = os.path.join(_ROOT, "packages", "polaris-verify", "polaris_verify_cli", "verifier.py")
+    spec = importlib.util.spec_from_file_location("_cose_test_detached_verifier", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _issuer_auth(document):
+    import cbor2
+    return cbor2.loads(document)["issuerSigned"]["issuerAuth"]
+
+
+class CoseSigStructureRefusalTests(unittest.TestCase):
+    """The COSE signer signs a COSE_Sign1 Sig_structure and nothing else, on every path, before
+    anything is signed. Its output is pure ML-DSA over the bytes it is given, so a 32-byte digest
+    handed to it would come back as the signature the digest signer makes over that digest's
+    preimage. No backend is needed: the refusal comes first."""
+
+    def setUp(self):
+        self._saved = os.environ.get("POLARIS_USE_REAL_PQC")
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop("POLARIS_USE_REAL_PQC", None)
+        else:
+            os.environ["POLARIS_USE_REAL_PQC"] = self._saved
+
+    def test_anything_but_a_sig_structure_is_refused_in_either_profile(self):
+        for flag in ("0", "1"):
+            os.environ["POLARIS_USE_REAL_PQC"] = flag
+            for bad in (hashlib.sha3_256(b"a canonical statement").digest(), b"",
+                        b"\x84\x6aSignature", b"\x84\x6aSignature2", "\x84\x6aSignature1", None):
+                with self.subTest(flag=flag, bad=bad):
+                    with self.assertRaises(pqc_signing.NotACoseSigStructure):
+                        pqc_signing.signature_over_cose_sig_structure(bad)
+
+    def test_the_placeholder_is_the_labelled_sha3_256_of_the_structure_with_no_key(self):
+        os.environ.pop("POLARIS_USE_REAL_PQC", None)
+        to_be_signed = pqc_signing.COSE_SIGN1_SIG_STRUCTURE_HEAD + b"\x44\xa1\x01\x38\x30\x40\x41\x00"
+        self.assertEqual(pqc_signing.signature_over_cose_sig_structure(to_be_signed),
+                         (hashlib.sha3_256(to_be_signed).digest(), pqc_signing.PLACEHOLDER_LABEL, None))
+
+
+class CosePlaceholderNeverVerifiesTests(unittest.TestCase):
+    """Without POLARIS_USE_REAL_PQC the mdoc issuer signature is the development placeholder under
+    a protected header that says -49: SHA3-256 of the Sig_structure, labelled
+    DETERMINISTIC-PLACEHOLDER-SHA3-256, with no key. It is not a signature, and nothing may
+    accept it: the detached verifier in the mode `--pqc-provider` runs (real backends) or the mode
+    `--dev-placeholder` runs (none), the same bytes relabelled ML-DSA-65 under a genuine key, and
+    the app's own raw two-witness check. Built through mdoc.py's real path, with the signer the
+    route uses; the genuine key is RFC 9964's, so no backend is needed."""
+
+    def setUp(self):
+        self._saved = os.environ.pop("POLARIS_USE_REAL_PQC", None)
+
+    def tearDown(self):
+        if self._saved is not None:
+            os.environ["POLARIS_USE_REAL_PQC"] = self._saved
+
+    def test_the_placeholder_under_minus_49_never_verifies(self):
+        import cbor2
+        import mdoc
+        document = mdoc.build_document(_MDOC_FULL, "ML-DSA-65", pqc_signing.signature_over_cose_sig_structure)
+        protected, unprotected, payload, signature = _issuer_auth(document)
+        to_be_signed = mdoc.sig_structure(protected, payload)
+        self.assertEqual(cbor2.loads(protected), {1: -49})
+        self.assertEqual(unprotected, {"polaris_public_key_hex": None,
+                                       "polaris_algorithm": pqc_signing.PLACEHOLDER_LABEL})
+        self.assertEqual(signature, hashlib.sha3_256(to_be_signed).digest())
+
+        genuine_key = _rfc9964_vector()["raw_public_key"]
+        relabelled = cbor2.loads(document)
+        relabelled["issuerSigned"]["issuerAuth"][1] = {"polaris_public_key_hex": genuine_key,
+                                                      "polaris_algorithm": "ML-DSA-65"}
+        relabelled = cbor2.dumps(relabelled, canonical=True)
+        V = _detached_verifier()
+        for dev_placeholder in (False, True):        # --pqc-provider, then --dev-placeholder
+            V.set_dev_placeholder_mode(dev_placeholder)
+            try:
+                for doc, why in ((document, "unaccepted signature algorithm"),
+                                 (relabelled, "the signature is 32 bytes")):
+                    verdict = V.verify_mdoc(doc, anchor_keys=[genuine_key])
+                    with self.subTest(dev_placeholder=dev_placeholder, why=why):
+                        self.assertIs(verdict["digests_match"], True, "the format still bridges")
+                        self.assertIs(verdict["issuer_authentic"], False)
+                        self.assertIsNot(verdict["issuer_trusted"], True)
+                        self.assertIn(why, verdict["note"] or "")
+            finally:
+                V.set_dev_placeholder_mode(False)
+        self.assertFalse(pqc_signing.verify_both_raw(to_be_signed, signature.hex(), genuine_key))
+        self.assertFalse(pqc_signing.verify_both_raw(to_be_signed, signature.hex(), genuine_key,
+                                                     require_witness=True, algorithm="ML-DSA-65"))
+
+
+@unittest.skipUnless(pqc_signing.is_available() and pqc_signing.second_witness_available(),
+                     "needs BOTH liboqs (oqs) and the cryptography ML-DSA witness")
+class CoseRfc9964KnownAnswerTests(unittest.TestCase):
+    """RFC 9964, Appendix A.2, Figure 7: the IETF's own ML-DSA-65 COSE_Sign1, pinned in
+    vectors/kat/rfc9964_mldsa_65_cose.json with its provenance. COSE -49 is pure ML-DSA-65, empty
+    context, over the Sig_structure itself, so the tree's raw two-witness verify must accept the
+    RFC's signature over the RFC's ToBeSigned, under both witnesses, and nothing one bit away."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.vector = _rfc9964_vector()
+        cls.to_be_signed = bytes.fromhex(cls.vector["raw_to_be_signed"])
+        cls.signature = bytes.fromhex(cls.vector["raw_signature"])
+        cls.public_key = bytes.fromhex(cls.vector["raw_public_key"])
+
+    def test_the_vector_is_the_rfc_figure_it_names(self):
+        import cbor2
+        import mdoc
+        provenance = self.vector["provenance"]
+        self.assertIn("RFC 9964", provenance["source"])
+        self.assertIn("Figure 7: ML_DSA_65", provenance["source"])
+        self.assertEqual(len(provenance["sha256_of_retrieved_file"]), 64)
+        # Its parts agree: sign1 carries the signature, and the tree's own Sig_structure builder
+        # rebuilds raw_to_be_signed from sign1's protected header and payload.
+        tagged = cbor2.loads(bytes.fromhex(self.vector["sign1"]))
+        self.assertEqual(tagged.tag, 18)
+        protected, _unprotected, payload, signature = tagged.value
+        self.assertEqual(cbor2.loads(protected)[1], -49)
+        self.assertEqual(signature, self.signature)
+        self.assertEqual(mdoc.sig_structure(protected, payload), self.to_be_signed)
+        # And the key is the one the figure's all-zero seed derives (cryptography, not the tree).
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        if hasattr(mldsa.MLDSA65PrivateKey, "from_seed_bytes"):
+            seed = bytes.fromhex(self.vector["priv"])
+            self.assertEqual(mldsa.MLDSA65PrivateKey.from_seed_bytes(seed).public_key().public_bytes_raw(),
+                             self.public_key)
+
+    def test_both_witnesses_verify_the_rfc_signature_over_the_raw_to_be_signed(self):
+        args = (self.to_be_signed, self.signature.hex(), self.public_key.hex())
+        self.assertTrue(pqc_signing.verify_raw(*args), "liboqs")
+        self.assertIs(pqc_signing._verify_second_witness_raw(*args), True, "cryptography")
+        self.assertTrue(pqc_signing.verify_both_raw(*args, require_witness=True, algorithm="ML-DSA-65"))
+
+    def test_one_bit_away_is_refused(self):
+        for at in (0, len(self.signature) // 2, len(self.signature) - 1):
+            bad = bytearray(self.signature)
+            bad[at] ^= 0x01
+            with self.subTest(signature_byte=at):
+                self.assertFalse(pqc_signing.verify_both_raw(self.to_be_signed, bytes(bad).hex(),
+                                                             self.public_key.hex(), require_witness=True))
+        for at in (0, 20, len(self.to_be_signed) - 1):
+            bad = bytearray(self.to_be_signed)
+            bad[at] ^= 0x01
+            with self.subTest(to_be_signed_byte=at):
+                self.assertFalse(pqc_signing.verify_both_raw(bytes(bad), self.signature.hex(),
+                                                             self.public_key.hex(), require_witness=True))
+
+    def test_the_sha3_256_pre_hash_is_not_what_an_rfc_9964_signature_is_over(self):
+        # The digest path, which the mdoc route used until 2026-10-14, does not accept it.
+        self.assertFalse(pqc_signing.verify_both(self.to_be_signed, self.signature.hex(),
+                                                 self.public_key.hex()))
+
+
+@unittest.skipUnless(pqc_signing.is_available() and pqc_signing.second_witness_available(),
+                     "needs BOTH liboqs (oqs) and the cryptography ML-DSA witness")
+class CoseSignerTests(unittest.TestCase):
+    """The COSE signer through mdoc.py's real path, under real ML-DSA with a persistent key file,
+    exactly as the /api/v1/mdoc route calls it. What it makes is checked by pyca/cryptography
+    directly, over a Sig_structure rebuilt here with cbor2: no verify code of the tree's."""
+
+    def setUp(self):
+        import json
+        import tempfile
+        self._saved = {k: os.environ.get(k) for k in ("POLARIS_USE_REAL_PQC", "POLARIS_PQC_SIGNING_KEY_FILE",
+                                                      "POLARIS_CUSTODY_DRIVER")}
+        self.keys = {}
+        self._files = []
+        for algorithm in ("ML-DSA-65", "ML-DSA-87"):
+            self.keys[algorithm] = pqc_signing.generate_keypair(algorithm)
+            fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+            json.dump(self.keys[algorithm], fh)
+            fh.close()
+            self._files.append(fh.name)
+        self._key_files = dict(zip(("ML-DSA-65", "ML-DSA-87"), self._files))
+        os.environ.pop("POLARIS_CUSTODY_DRIVER", None)
+        os.environ["POLARIS_USE_REAL_PQC"] = "1"
+        self._use("ML-DSA-65")
+
+    def tearDown(self):
+        for name in self._files:
+            os.unlink(name)
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        pqc_signing.custody.reset()
+
+    def _use(self, algorithm):
+        os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = self._key_files[algorithm]
+
+    def _independent(self, algorithm, public_key_hex, signature, message):
+        """pyca/cryptography's ML-DSA, not the tree's: True iff it accepts `signature` over
+        `message` itself, with the empty context."""
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        from cryptography.exceptions import InvalidSignature
+        cls = {"ML-DSA-65": mldsa.MLDSA65PublicKey, "ML-DSA-87": mldsa.MLDSA87PublicKey}[algorithm]
+        key = cls.from_public_bytes(bytes.fromhex(public_key_hex))
+        try:
+            key.verify(signature, message)
+            return True
+        except InvalidSignature:
+            return False
+
+    def test_a_tree_made_cose_sign1_is_pure_ml_dsa_65_over_the_raw_sig_structure(self):
+        import cbor2
+        import mdoc
+        document = mdoc.build_document(_MDOC_FULL, "ML-DSA-65", pqc_signing.signature_over_cose_sig_structure)
+        protected, unprotected, payload, signature = _issuer_auth(document)
+        self.assertEqual(cbor2.loads(protected), {1: -49})
+        self.assertEqual(unprotected, {"polaris_public_key_hex": self.keys["ML-DSA-65"]["public_key_hex"],
+                                       "polaris_algorithm": "ML-DSA-65"})
+        to_be_signed = cbor2.dumps(["Signature1", protected, b"", payload], canonical=True)
+        key = self.keys["ML-DSA-65"]["public_key_hex"]
+        self.assertTrue(self._independent("ML-DSA-65", key, signature, to_be_signed),
+                        "pyca/cryptography refused the signature over the raw Sig_structure")
+        self.assertFalse(self._independent("ML-DSA-65", key, signature, hashlib.sha3_256(to_be_signed).digest()),
+                         "the signature is over the digest of the Sig_structure")
+        # The detached verifier a relying party installs accepts it, under the issuer's key.
+        verdict = _detached_verifier().verify_mdoc(document, anchor_keys=[key])
+        self.assertIs(verdict["issuer_authentic"], True, verdict["note"])
+        self.assertIs(verdict["issuer_trusted"], True)
+
+    def test_ml_dsa_87_is_cose_minus_50_the_same_way(self):
+        import cbor2
+        import mdoc
+        self._use("ML-DSA-87")
+        document = mdoc.build_document(_MDOC_FULL, "ML-DSA-87", pqc_signing.signature_over_cose_sig_structure)
+        protected, unprotected, payload, signature = _issuer_auth(document)
+        self.assertEqual(cbor2.loads(protected), {1: -50})
+        to_be_signed = cbor2.dumps(["Signature1", protected, b"", payload], canonical=True)
+        self.assertTrue(self._independent("ML-DSA-87", unprotected["polaris_public_key_hex"], signature, to_be_signed))
+        # A document that names -49 is refused rather than carrying an ML-DSA-87 signature.
+        with self.assertRaises(ValueError):
+            mdoc.build_document(_MDOC_FULL, "ML-DSA-65", pqc_signing.signature_over_cose_sig_structure)
+
+    def test_a_signature_that_fails_its_raw_self_check_is_refused(self):
+        with unittest.mock.patch.object(pqc_signing, "verify_raw", return_value=False):
+            with self.assertRaises(pqc_signing.SigningError) as raised:
+                pqc_signing.signature_over_cose_sig_structure(
+                    pqc_signing.COSE_SIGN1_SIG_STRUCTURE_HEAD + b"\x44\xa1\x01\x38\x30\x40\x41\x00")
+        self.assertIn("over the raw Sig_structure", str(raised.exception))
