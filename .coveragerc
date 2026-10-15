@@ -20,12 +20,14 @@ omit =
     # once the temp dir is cleaned (a "No source for code" report error).
     */sitecustomize.py
     # Scripts a test writes into a temp dir and runs: the conformance runner's fake verifier,
-    # the tree gate's stub stages (its scratch repositories and the gate's own exports of them)
-    # and the duress test's worker. CI combines the coverage shards on another runner, where
-    # those temp dirs never existed: recorded, each is a "No source for code" report error.
+    # the tree gate's stub stages (its scratch repositories and the gate's own exports of them),
+    # the duress test's worker, and the stand-in `oqs` module the verifier and SDK tests put
+    # first on PYTHONPATH. CI combines the coverage shards on another runner, where those temp
+    # dirs never existed: recorded, each is a "No source for code" report error.
     */polaris-runner-test-*/*
     */polaris-tree-*/*
     */tmp*/worker.py
+    */polaris-oqs-stub-*/*
     # Test infrastructure, not product code (P1.2/P1.3).
     */kms_standin.py
     # Third-party code. The standalone suites under scripts/ measure without --source (see
