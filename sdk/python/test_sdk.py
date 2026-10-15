@@ -623,7 +623,8 @@ class _Issuer:
                 self.rfile.read(length)
                 if redirect_to:
                     self.send_response(code)
-                    self.send_header("Location", redirect_to + self.path)
+                    # A fixed path: what matters is whether anything reaches `redirect_to`.
+                    self.send_header("Location", redirect_to + "/redirected")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
