@@ -394,7 +394,8 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a
   test to fail: 172 are caught, and the 4 survivors are declared with their reasons. It also makes
-  8 named changes to the redirect's `response_code` and its redemption, each of which a test must
-  catch (all 8 are; measured 2026-10-14; CI runs it on every push).
+  19 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  the x5c leaf and name constraints, the JWE bounds, when a request closes), each of which a test
+  must catch (all 19 are; measured 2026-10-15; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.
