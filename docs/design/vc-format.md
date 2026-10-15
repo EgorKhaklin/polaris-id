@@ -47,9 +47,14 @@ minus its proof: the same sorted-keys compact JSON every other Polaris artifact 
 `-jcs-` is a shape the Data Integrity specification itself defines; what is not standard is the
 algorithm inside it.
 
+The proof is ML-DSA over one SHA3-256 of those bytes, as every signed statement is
+([the wire spec](../reference/WIRE-SPEC.md), 2.1). The same bytes hashed twice are refused, so a
+proof has one meaning.
+
 The app's `canonical_bytes` and the verifier's `_vc_canonical` are the same construction, and a
 check pins that, because a mismatch would mean the app signs bytes the verifier never
-reconstructs.
+reconstructs. The route hands those bytes to the signer unhashed, since the signer takes the
+SHA3-256 itself, and the check pins that too.
 
 ## Read-only, and derived
 
@@ -60,8 +65,11 @@ credential.
 
 ## Proven by
 
-`scripts/polaris-vc-format-drill.py` on every push: the round trip, a plain JSON reader finding
-the structure, a tampered subject and an extended window each breaking the proof, a relabelled
-cryptosuite refused, and all three subject refusals. `check_vc_format` pins the naming, the
-closed vocabulary and its ordering, the optional subject identifier, and that both sides
-canonicalise the same way.
+`scripts/polaris-vc-format-drill.py` on every push, signing through the app's own signer with
+a real ML-DSA-65 key: the round trip, a plain JSON reader finding the structure, a tampered
+subject and an extended window each breaking the proof, the bytes hashed twice refused, a
+relabelled cryptosuite refused, and all three subject refusals. A test posts to the route, and
+under real signing the detached verifier and an independent ML-DSA implementation both check
+the proof. `check_vc_format` pins the naming, the closed vocabulary and its ordering, the optional
+subject identifier, that both sides canonicalise the same way, and that the route and the drill
+hand the canonical bytes to the signer unhashed.

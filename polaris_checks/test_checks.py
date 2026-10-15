@@ -17074,19 +17074,31 @@ def test_vc_format_check_discriminates(tmp_path):
            "    if forbidden:\n        raise ValueError('identity attributes')\n"
            "    unknown = set(subject) - set(SUBJECT_FIELDS)\n"
            "    if unknown:\n        raise ValueError('unknown subject fields')\n"
+           "    document = {}\n"
+           "    sign(canonical_bytes(document))\n"
            "    return {'subject_id': subject_id}\n")
+    ROUTE = ("def api_v1_verifiable_credential():\n"
+             "    row = {'issuing_agency_id': 1}\n"
+             "\n"
+             "    def _sign(data):\n"
+             "        return pqc_signing.signature_over_message(data, agency_id=row['issuing_agency_id'])\n"
+             "\n"
+             "    return vc.build_credential('polaris:agency:1', {}, _sign, subject_id=None)\n")
     VERIFY = ('_VC_CRYPTOSUITE = "polaris-mldsa-jcs-2026"\n'
               "\ndef _vc_canonical(d):\n    return json.dumps(d, sort_keys=True)\n"
               "\ndef verify_verifiable_credential(doc):\n"
               '    v = {"structure_valid": False, "proof_authentic": False,\n'
               '         "verifier_interop": None}\n'
               "    if p.get('cryptosuite') != _VC_CRYPTOSUITE:\n        return v\n    return v\n")
-    DRILL = ("a credential relabelled to a registered suite is refused\n"
+    DRILL = ("def sign(data):\n"
+             "    return pqc_signing.signature_over_message(data, agency_id=1)\n"
+             "a credential relabelled to a registered suite is refused\n"
              "refusing an identity attribute in the subject\n"
              "with no verifier scope the subject carries NO id\n")
     DOC = "This attests a verification result, not an identity.\n"
     good = {
         'polaris_web/vc.py': MOD,
+        'polaris_web/rp_api.py': ROUTE,
         'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY,
         'scripts/polaris-vc-format-drill.py': DRILL,
         'docs/design/vc-format.md': DOC,
@@ -17144,6 +17156,34 @@ def test_vc_format_check_discriminates(tmp_path):
         "    return json.dumps(d, sort_keys=True)\n", "    return json.dumps(d)\n")})
     assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
         "must FAIL when the verifier canonicalises differently from the signer"
+
+    # THE DOUBLE HASH (CORE-BUG, 2026-10-14): the route hashed the canonical bytes before
+    # signature_over_message hashed them again, and the verifier, which reconstructs one
+    # SHA3-256, refused every credential signed with a real key.
+    write({'polaris_web/rp_api.py': ROUTE.replace(
+        "signature_over_message(data,", "signature_over_message(hashlib.sha3_256(data).digest(),")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the route hashes the canonical bytes before signature_over_message"
+    write({'polaris_web/rp_api.py': ROUTE.replace(
+        "        return pqc_signing",
+        "        data = hashlib.sha3_256(data).digest()\n        return pqc_signing")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the route hashes the bytes a line before the call"
+    write({'polaris_web/rp_api.py': ROUTE.replace(
+        "{}, _sign,", "{}, lambda d: pqc_signing.signature_over_message(hashlib.sha3_256(d).digest()),")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the route hands the builder a signer other than the pinned _sign"
+    write({'polaris_web/vc.py': MOD.replace(
+        "sign(canonical_bytes(document))", "sign(hashlib.sha3_256(canonical_bytes(document)).digest())")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the builder hands the signer a digest of the canonical bytes"
+    # The drill signing with its own key over its own digest agreed with the verifier while
+    # the route did not: it must sign the way the app signs.
+    write({'scripts/polaris-vc-format-drill.py': DRILL.replace(
+        "    return pqc_signing.signature_over_message(data, agency_id=1)\n",
+        "    return signer.sign(hashlib.sha3_256(data).digest()), 'ML-DSA-65', pk\n")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not sign through the app's signature_over_message"
 
     # The verifier stops COMPARING against the pinned suite, so a relabelled document is
     # accepted. Removing the constant alone is not the regression; removing the comparison is.

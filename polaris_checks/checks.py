@@ -24565,6 +24565,25 @@ def check_per_authority_isolation(root: pathlib.Path) -> list[Finding]:
                "demonstrates the limit rather than stating it")
 
 
+def _hands_its_argument_unhashed(src: str, fn: str) -> bool:
+    """True iff `def fn(p):` in `src`, nested or not, hands `p` itself as the first argument of
+    its one signature_over_message call and hashes nothing on the way. signature_over_message
+    takes the SHA3-256 itself, so a digest here is a second one (the VC route, 2026-10-14)."""
+    m = re.search(r"(?m)^([ \t]*)def %s\(\s*(\w+)\s*\):[^\n]*\n" % re.escape(fn), src)
+    if m is None:
+        return False
+    lines = []
+    for line in src[m.end():].split("\n"):
+        if line.strip() and len(line) - len(line.lstrip()) <= len(m.group(1)):
+            break
+        lines.append(line)
+    body = "\n".join(lines)
+    calls = [_paren_body(body, c.end() - 1)
+             for c in re.finditer(r"\bsignature_over_message\(", body)]
+    return (len(calls) == 1 and _split_top(calls[0])[:1] == [m.group(2)]
+            and not re.search(r"hashlib|sha3|sha256|sha512|digest", body, re.I))
+
+
 def check_vc_format(root: pathlib.Path) -> list[Finding]:
     """The W3C VC representation is a FORMAT, and attests a result rather than an identity (P3.8).
 
@@ -24585,7 +24604,15 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
     The canonicalisation is JCS over the document minus its proof, not RDF Dataset
     Canonicalization, because `-rdfc-` needs a JSON-LD processor and the detached verifier
     stays import-standalone. That is a stated trade, not an oversight, and the two
-    canonicalisations must agree byte for byte or the app signs what the verifier cannot check."""
+    canonicalisations must agree byte for byte or the app signs what the verifier cannot check.
+
+    SIGNING A DIGEST (CORE-BUG, 2026-10-14). The proof is ML-DSA over ONE SHA3-256 of the
+    canonical bytes, as every signed statement is (WIRE-SPEC 2.1): signature_over_message takes
+    that digest itself. The route hashed the bytes before handing them over, so it signed SHA3-256
+    twice, and the verifier refused every credential signed with a real key while the drill,
+    which signed with its own digest, stayed green. So the builder hands the signer the
+    canonical bytes, the route's signer hands them to signature_over_message unhashed, and the
+    drill signs through that same function the same way."""
     name = "vc_format"
     mod = _read(root, "polaris_web/vc.py")
     if not mod:
@@ -24621,6 +24648,22 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
                      "stable one would hand back the correlation handle the presentation layer "
                      "bounds")
 
+    # SIGNED OVER ONE SHA3-256 OF THE CANONICAL BYTES, which signature_over_message takes itself.
+    once = ("the proof is ML-DSA over ONE SHA3-256 of the canonical bytes, the digest "
+            "signature_over_message takes itself and the detached verifier reconstructs; hashing "
+            "the bytes first signs SHA3-256 twice, a proof the verifier refuses")
+    if not re.search(r"\bsign\(\s*canonical_bytes\(\s*document\s*\)\s*\)", body):
+        return _fail(name, "build_credential must hand the signer the canonical bytes themselves "
+                           "(sign(canonical_bytes(document))): " + once)
+    route = _fn_body(_read_app(root), "api_v1_verifiable_credential")
+    built = [_split_top(_paren_body(route, b.end() - 1))
+             for b in re.finditer(r"\bbuild_credential\(", route)]
+    if not built or any("_sign" not in args for args in built) \
+            or not _hands_its_argument_unhashed(route, "_sign"):
+        return _fail(name, "the VC route must hand vc.build_credential its _sign, and _sign must pass "
+                           "the canonical bytes it is given to signature_over_message unhashed: "
+                           + once)
+
     verifier = _read(root, _VERIFIER_REL)
     if "def verify_verifiable_credential" not in verifier:
         return _fail(name, "the detached verifier must decide a VC offline")
@@ -24652,6 +24695,10 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
                          "without a verifier scope there must be no subject identifier at all")):
         if needed not in drill:
             return _fail(name, why)
+    if not _hands_its_argument_unhashed(drill, "sign"):
+        return _fail(name, "the drill must sign the way the app signs: its sign() hands the canonical "
+                           "bytes to pqc_signing.signature_over_message unhashed, or it can agree "
+                           "with the verifier while the route does not: " + once)
     doc = _read(root, "docs/design/vc-format.md")
     if not doc:
         return _fail(name, "the design record must be published (docs/design/vc-format.md)")
@@ -24664,8 +24711,9 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
                "Polaris rather than falsely claiming a registered classical one, a relabelled "
                "document is refused, the subject vocabulary is closed and refuses identity fields "
                "and the token value by name with a guard that stands on its own, the subject "
-               "identifier is per-verifier or absent, and the app and the detached verifier "
-               "canonicalise the same way")
+               "identifier is per-verifier or absent, the app and the detached verifier "
+               "canonicalise the same way, and the route and the drill hand those bytes to "
+               "signature_over_message unhashed, so the proof is over their one SHA3-256")
 
 
 # The OpenID4VP verifier's boundary. `packages/polaris-oid4vp` exists because the FIRST named

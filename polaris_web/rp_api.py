@@ -1007,9 +1007,12 @@ def api_v1_verifiable_credential():
         subject_id = 'polaris:handle:%s' % hashlib.sha3_256(
             ('%s|%s|%s' % (_PAIRWISE_TAG, token_value, scope)).encode('utf-8')).hexdigest()
 
+    # The canonical bytes themselves: signature_over_message takes their one SHA3-256, as for
+    # every signed statement (WIRE-SPEC 2.1), and that digest is what the detached verifier
+    # reconstructs. Hashing them here too signed SHA3-256 twice, and the verifier refused every
+    # such proof (2026-10-14).
     def _sign(data):
-        return pqc_signing.signature_over_message(hashlib.sha3_256(data).digest(),
-                                                  agency_id=row['issuing_agency_id'])
+        return pqc_signing.signature_over_message(data, agency_id=row['issuing_agency_id'])
 
     try:
         document = vc.build_credential(
