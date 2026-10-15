@@ -4,7 +4,8 @@
 
 Three paths and nothing else: the `request_uri` a wallet fetches the signed request object
 from, the `response_uri` it POSTs the encrypted response (or its error response) to, and the
-constant page an accepted wallet is redirected to afterwards (`DONE_PATH`). Built on the standard
+page an accepted wallet is redirected to afterwards (`DONE_PATH`), which answers only the
+redirect's own response_code. Built on the standard
 library, so a relying party running this installs `polaris-oid4vp` and no web framework.
 
 This is a REFERENCE listener. `http.server` is single-threaded per connection and has no
@@ -30,8 +31,9 @@ RESPONSE_PATH = "/response"
 #: HAIP intends: a presentation that succeeded ended on an error page (lab/interop/oid4vcgo/).
 DONE_PATH = "/done"
 
-#: The page at DONE_PATH, and the same page whoever asks. It varies with nothing, so a prober
-#: learns nothing from it that the 200 on the response_uri had not already said.
+#: The page at DONE_PATH, for the response_code an accepted response's redirect carried, once
+#: (OpenID4VP 1.0 section 8.2: only the receiver of the redirect fetches the result). A missing,
+#: unknown, reused or expired code gets 404. The page itself varies with nothing.
 DONE_PAGE = (b'<!doctype html><meta charset="utf-8"><title>Presentation complete</title>'
              b"<p>The presentation is complete. You can close this page.</p>\n")
 
@@ -95,6 +97,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path, _, query = self.path.partition("?")
         if path == DONE_PATH:
+            code = (urllib.parse.parse_qs(query).get("response_code") or [""])[0]
+            if self.verifier.redeem(code) is None:
+                return self._send(404, {"error": "not_found",
+                                        "error_description": "no such result"})
             return self._send_page(DONE_PAGE)
         if path != REQUEST_PATH:
             return self._send(404, {"error": "not_found"})

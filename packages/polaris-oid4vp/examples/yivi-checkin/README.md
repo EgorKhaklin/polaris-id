@@ -60,8 +60,8 @@ site's colours, from `site/tokens.css`.
 - Off the list, the wallet gets the verifier's usual refusal, and the desk shows the domain and
   that it is not on the list.
 - The desk pages, and the emblem they show, answer only on the laptop, checked by the loopback
-  address and the `Host` header. Through the tunnel, only the wallet's paths answer: `/request/<id>`, `/response/<id>`
-  and `/done`.
+  address and the `Host` header. Through the tunnel, only the wallet's paths answer: `/request/<id>` and `/response/<id>`.
+  An accepted wallet gets no redirect: the desk shows the result.
 - Someone who sees the QR code can post to `/response/<id>`. If that post does not decrypt under
   the request's key, it changes nothing: the request stays open and the desk keeps waiting. A
   post after the request has closed, answered or expired, changes nothing either.

@@ -13,8 +13,9 @@ The layout is the one in `src/test/resources/` of eu-digital-identity-wallet/eud
 - `NN-<id>-dcql.json`: the transaction-init body: `dcql_query` (one `dc+sd-jwt` query, id `pid`, vct `urn:eudi:pid:1`), `nonce`, `request_uri_method`.
 - `NN-<id>-vpToken.json`: `{"pid": [<presentation>]}`.
 - `INDEX.json`: per vector, `expected` (`accept` or `reject`), `clauses` (the spec text), `trust` and `files` (its pair).
+- A `status-list` vector also needs `status_list.response` served at `status_list.uri` (null: no answer) and the verifier held to the `policy` its entry names; without both, run the others.
 
-25 vectors, numbered 50 to 74 in `vectors.json`'s order. The 2 `accept-*` controls come first: a refusal counts only where the controls are accepted.
+36 vectors, numbered 50 to 85 in `vectors.json`'s order. The 3 `accept-*` vectors are the controls: a refusal counts only where the controls are accepted.
 
 ## The binding
 

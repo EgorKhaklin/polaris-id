@@ -221,6 +221,26 @@ The response JWE (`jwe.py`) accepts only ECDH-ES over P-256 with A128GCM or A256
 fresh encryption key per request. The listener (`verifier.py`, `serve.py`) is standard library
 only.
 
+## Who sees the result
+
+An accepted presentation is answered with only a `redirect_uri`, and it carries a fresh 128-bit
+`response_code` (OpenID4VP 1.0 section 8.2), so that only the device the wallet sends there can
+fetch the result. `verifier.redeem(response_code, state=session.state)` returns the verdict once,
+for that request only; a wrong, reused or expired code, or one issued to another request, gets
+`None`. An integrator that holds a session for the request passes that session's `state`, so a
+code issued to another request is refused; `serve` keeps no session, so it redeems by the code
+alone, which is 128 bits and good once. The verdict carries the code as `verdict.response_code`,
+and `as_dict()` leaves it out.
+
+- **Same-device flow:** show a result only to the browser that presents the redirect's code.
+  Without that, a request relayed to another person's wallet completes the relayer's session
+  (section 14.2). `serve`'s `/done` page answers only a code it has not redeemed yet.
+- **Cross-device flow:** the wallet's redirect lands on the phone, not on the screen that showed
+  the request, so there is nothing to redeem there. Build the verifier with `redirect=False`; an
+  accepted response is then answered `{}`, as section 8.2 allows, and the screen learns the result
+  from the returned verdict. Section 14.2 calls this flow susceptible to a relayed request, and
+  nothing on the verifier's side can tell.
+
 ## Transaction data
 
 A request may carry OpenID4VP 1.0 `transaction_data` (section 8.4), opt-in per request:
@@ -349,11 +369,12 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 616 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 627 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a
-  test to fail: 172 are caught, and the 4 survivors are declared with their reasons (measured
-  2026-10-11; CI runs it on every push).
+  test to fail: 172 are caught, and the 4 survivors are declared with their reasons. It also makes
+  8 named changes to the redirect's `response_code` and its redemption, each of which a test must
+  catch (all 8 are; measured 2026-10-14; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.
