@@ -1070,24 +1070,9 @@ export function verifyCrossAuthority(
           && sameId(att.context_id, contextId)) {
         // In-context means a context was presented (WIRE-SPEC section 4); before 2026-09-27
         // a missing one matched an edge from ANY context.
-        // P9.5: is the edge signed by the agency that made it, or is it the operator's
-        // word carried by the manifest's signature?
-        const unsigned = !att.signature_hex && !att.public_key_hex;
-        const av = verifyAttestation(att, mm.authority?.agency_id ?? null, tokenKey);
-        // A signed edge is the attesting agency's only if one of ITS roots signed it: the key must
-        // be among the carrying manifest's active anchors (2026-09-30; until then any key's valid
-        // signature counted, so a stranger met requireSignedAttestation).
-        const roots = new Set<string>((Array.isArray(mm.anchors) ? mm.anchors : [])
-          .filter((x: any) => x && (x.status ?? "active") === "active")
-          .map((x: any) => hexText(x.public_key_hex)));
-        if (!unsigned && (!av.authentic || !hexIn(att.public_key_hex, roots))) continue;
-        // An edge whose own window has closed is not an edge, however fresh the manifest
-        // carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
-        // `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy edge
-        // that states no window stays open.
-        if (!attestationOpen(att, now)) continue;
-        if (requireSignedAttestation && unsigned) continue;
-        signedEdge = !unsigned;
+        const [admitted, signed] = edgeAdmits(att, mm, tokenKey, now);
+        if (!admitted || (requireSignedAttestation && !signed)) continue;
+        signedEdge = signed;
         via = mm.authority;
         break;
       }
@@ -1123,6 +1108,9 @@ export type VerifierOptions = {
   clientSecret?: string;
   anchors?: string[] | null;
   timeoutMs?: number;
+  /** Admit an http `issuerUrl`, for a local test issuer only. The calls carry the client secret
+   * and a bearer token, so `issuerUrl` must otherwise be https. */
+  allowInsecureHttp?: boolean;
 };
 
 // The issuer URL's trailing slashes, removed in one pass. /\/+$/ did the same in time
@@ -1140,6 +1128,7 @@ export class PolarisVerifier {
   private clientSecret?: string;
   private anchors: string[] | null;
   private timeoutMs: number;
+  private allowInsecureHttp: boolean;
   private bearer: string | null = null;
   private bearerExp = 0;
 
@@ -1149,13 +1138,35 @@ export class PolarisVerifier {
     this.clientSecret = opts.clientSecret;
     this.anchors = opts.anchors ?? null;
     this.timeoutMs = opts.timeoutMs ?? 30000;
+    this.allowInsecureHttp = opts.allowInsecureHttp === true;
+  }
+
+  // The issuer endpoint `path`, refused unless the issuer URL is https (http only when the caller
+  // asked for it): both calls carry a secret, the client's Basic credentials and then the bearer.
+  // The Python SDK applies the same rule.
+  private endpoint(path: string): string {
+    const url = `${this.issuerUrl}${path}`;
+    let protocol = "";
+    let host = "";
+    try {
+      ({ protocol, host } = new URL(url));
+    } catch {
+      // not a URL: refused below
+    }
+    if (!host || !(protocol === "https:" || (this.allowInsecureHttp && protocol === "http:"))) {
+      throw new Error(`issuerUrl must be an https URL (http only with allowInsecureHttp), got ${JSON.stringify(this.issuerUrl)}`);
+    }
+    return url;
   }
 
   private async accessToken(): Promise<string> {
     if (this.bearer && Date.now() < this.bearerExp - 5000) return this.bearer;
     const creds = btoa(`${this.clientId}:${this.clientSecret}`);
-    const r = await fetch(`${this.issuerUrl}/api/v1/oauth/token`, {
+    // `redirect: "error"`: no redirect is followed. fetch drops Authorization only on a
+    // cross-origin redirect, so a same-host downgrade to http would still have carried it.
+    const r = await fetch(this.endpoint("/api/v1/oauth/token"), {
       method: "POST",
+      redirect: "error",
       headers: { Authorization: `Basic ${creds}`, "Content-Type": "application/x-www-form-urlencoded" },
       body: "grant_type=client_credentials",
       signal: AbortSignal.timeout(this.timeoutMs),
@@ -1168,8 +1179,9 @@ export class PolarisVerifier {
   }
 
   private async onlineStatus(cred: Pack): Promise<any> {
-    const r = await fetch(`${this.issuerUrl}/api/v1/verify`, {
+    const r = await fetch(this.endpoint("/api/v1/verify"), {
       method: "POST",
+      redirect: "error",
       headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
       body: JSON.stringify({ token_value: cred.token_value, signature_hex: cred.signature_hex }),
       signal: AbortSignal.timeout(this.timeoutMs),
@@ -1514,11 +1526,14 @@ export function agentProofProves(proof: any, grant: any, action?: unknown, nonce
 // committed. These answer the same questions, and nothing past authenticity for an object
 // its signer did not sign. See the Python SDK for the same three functions.
 
+// `attestationSigned`: was the trust edge that authorized the requester signed by the agency
+// that made it (WIRE-SPEC 3.14); absent or null when no edge authorized it.
 export type ExchangeRequestVerdict = { authentic: boolean; requesterMatches: boolean | null;
-  requesterAuthorized: boolean | null; bodyBound: boolean | null; note?: string };
+  requesterAuthorized: boolean | null; bodyBound: boolean | null; note?: string;
+  attestationSigned?: boolean | null };
 export type ExchangeReceiptVerdict = { authentic: boolean; responderMatches: boolean | null;
   requesterAuthorized: boolean | null; via: any; requestBound: boolean | null;
-  responseBound: boolean | null; responder: any; note?: string };
+  responseBound: boolean | null; responder: any; note?: string; attestationSigned?: boolean | null };
 export type ExchangeMintVerdict = { authentic: boolean; responderMatches: boolean | null; note?: string };
 
 function attestationOpen(att: any, now?: string | null): boolean {
@@ -1529,22 +1544,52 @@ function attestationOpen(att: any, now?: string | null): boolean {
   return u !== null && n !== null && u >= n;
 }
 
-/** The authority of every manifest the caller trusts that is genuine and fresh at `now` and
- * attests `keyHex` in EXACTLY `contextId`, inside the attestation's own window, in order. */
-function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unknown, now?: string | null): any[] {
+/** `[admitted, signed]` for one trust edge of the genuine, fresh manifest `mm` that names `key`
+ * in the presented context (WIRE-SPEC 3.14 and section 4), for the cross-authority decision and
+ * both exchange paths. Until 2026-10-15 the exchange paths took any edge naming the key, so a
+ * badly signed edge, or one a stranger signed, authorized a requester there. */
+function edgeAdmits(att: any, mm: any, key: string, now?: string | null): [boolean, boolean] {
+  // P9.5: is the edge signed by the agency that made it, or is it the operator's word carried
+  // by the manifest's signature?
+  const unsigned = !att.signature_hex && !att.public_key_hex;
+  if (!unsigned) {
+    const av = verifyAttestation(att, mm.authority?.agency_id ?? null, key);
+    // A signed edge is the attesting agency's only if one of ITS roots signed it: the key must
+    // be among the carrying manifest's active anchors (2026-09-30; until then any key's valid
+    // signature counted, so a stranger met requireSignedAttestation).
+    const roots = new Set<string>((Array.isArray(mm.anchors) ? mm.anchors : [])
+      .filter((x: any) => x && (x.status ?? "active") === "active")
+      .map((x: any) => hexText(x.public_key_hex)));
+    // A present-but-bad signature is worse than none: it refuses the edge.
+    if (!av.authentic || !hexIn(att.public_key_hex, roots)) return [false, true];
+  }
+  // An edge whose own window has closed is not an edge, however fresh the manifest carrying it
+  // (WIRE-SPEC section 4). Until 2026-09-27 the cross-authority decision never read
+  // `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy edge that
+  // states no window stays open.
+  if (!attestationOpen(att, now)) return [false, !unsigned];
+  return [true, !unsigned];
+}
+
+/** `[authority, signed]` for every manifest the caller trusts that is genuine and fresh at `now`
+ * and attests `keyHex` in EXACTLY `contextId` with an edge the edge rule admits, in order. */
+function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unknown,
+                             now?: string | null): [any, boolean][] {
   const want = hexText(keyHex);
-  const found: any[] = [];
+  const found: [any, boolean][] = [];
   if (!want) return found;
   for (const raw of Array.isArray(manifests) ? manifests : []) {
     const m = raw && typeof raw === "object" ? raw : {};
     const mv = verifySignedArtifact(m, now ?? null, null);
     if (!(mv.authentic && mv.fresh === true)) continue;
-    const atts = Array.isArray(m.attestations) ? m.attestations : [];
-    if (atts.some((att: any) => att && typeof att === "object"
-        && hexText(att.attested_public_key_hex) === want
-        && sameId(att.context_id, contextId)
-        && attestationOpen(att, now))) {
-      found.push(m.authority ?? null);
+    for (const att of Array.isArray(m.attestations) ? m.attestations : []) {
+      if (!(att && typeof att === "object" && hexText(att.attested_public_key_hex) === want
+            && sameId(att.context_id, contextId))) continue;
+      const [admitted, signed] = edgeAdmits(att, m, want, now);
+      if (admitted) {
+        found.push([m.authority ?? null, signed]);
+        break;
+      }
     }
   }
   return found;
@@ -1570,7 +1615,7 @@ function sha3Hex(body: unknown): string {
 /** Verify a requester-signed exchange envelope OFFLINE (wire spec 3.11): the signature under
  * the key the envelope's signed `requester` names; with `requesterKey`, the requester
  * expected; with `trustedManifests`, attested in the envelope's context by one of them,
- * genuine and fresh at `now`; with `body`, that `request_hash` is the SHA3-256 of its
+ * genuine and fresh at `now`, with an edge WIRE-SPEC 3.14 admits; with `body`, that `request_hash` is the SHA3-256 of its
  * canonical JSON. */
 export function verifyExchangeRequest(envelope: any, requesterKey?: string | null,
                                       trustedManifests?: any[] | null, body?: unknown,
@@ -1591,7 +1636,9 @@ export function verifyExchangeRequest(envelope: any, requesterKey?: string | nul
   const v: ExchangeRequestVerdict = { authentic: true, ...none };
   if (requesterKey !== undefined && requesterKey !== null) v.requesterMatches = sameKey(e.public_key_hex, requesterKey);
   if (trustedManifests !== undefined && trustedManifests !== null) {
-    v.requesterAuthorized = exchangeAuthorities(e.public_key_hex, e.context_id, trustedManifests, now).length > 0;
+    const found = exchangeAuthorities(e.public_key_hex, e.context_id, trustedManifests, now);
+    v.requesterAuthorized = found.length > 0;
+    v.attestationSigned = found.length ? found[0][1] : null;
   }
   if (body !== undefined && body !== null) {
     v.bodyBound = sha3Hex(canonicalJson(body)) === hexText(e.request_hash);
@@ -1602,7 +1649,7 @@ export function verifyExchangeRequest(envelope: any, requesterKey?: string | nul
 /** Verify a responder-signed exchange receipt OFFLINE (wire spec 3.8): the signature; with
  * `responderKey`, the responder expected; with `trustedManifests`, the REQUESTER attested in
  * exactly the receipt's context (a receipt stating no context is not authorized by an
- * attestation from another) and by whom (`via`); with a body, that its commitment binds. A
+ * attestation from another) with an edge WIRE-SPEC 3.14 admits, and by whom (`via`); with a body, that its commitment binds. A
  * receipt commits to the body bytes as exchanged, so a body is hashed as given. */
 export function verifyExchangeReceipt(receipt: any, now?: string | null, trustedManifests?: any[] | null,
                                       responderKey?: string | null, requestBody?: unknown,
@@ -1630,8 +1677,10 @@ export function verifyExchangeReceipt(receipt: any, now?: string | null, trusted
   if (trustedManifests !== undefined && trustedManifests !== null) {
     const req = r.requester && typeof r.requester === "object" ? r.requester : {};
     // `via` names the authority, so a manifest that names none answers nothing.
-    const by = exchangeAuthorities(req.public_key_hex, r.context_id, trustedManifests, now).filter(named);
-    v.via = by.length ? by[0] : null;
+    const by = exchangeAuthorities(req.public_key_hex, r.context_id, trustedManifests, now)
+      .filter(([a]) => named(a));
+    v.via = by.length ? by[0][0] : null;
+    v.attestationSigned = by.length ? by[0][1] : null;
     v.requesterAuthorized = by.length > 0;
   }
   return v;

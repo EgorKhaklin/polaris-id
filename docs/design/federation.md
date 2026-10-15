@@ -86,6 +86,30 @@ queryable. What blocks it is not the schema: it is agency-level signing key
 management, which is its own design problem and one of the operator decisions
 in the readiness ledger.
 
+## Requiring the attesting agency's signature
+
+Every verifier accepts a trust edge that carries no signature of the attesting agency (WIRE-SPEC
+3.14 allows it for one major), because version 1 manifests carry such edges and the frozen
+version 1 case `cross-authority-accept` is one, held under the verifiers' defaults by
+`scripts/polaris-compat-suite.py`. An unsigned edge rests on the publishing operator's word,
+carried by the manifest's signature. In a cross-authority decision, a relying party that needs
+the agency's own signature sets `require_signed_attestation` (`requireSignedAttestation` in
+TypeScript): `verify_cross_authority` in every verifier, polaris-verify's
+`verify_cross_authority_zk` and `verify_cross_authority_via_bundle`, or
+`--require-signed-attestation` beside `--zk-proof`. The exchange verifiers
+(`verify_exchange_request`, `verify_exchange_receipt`) take no such option: they refuse a
+badly signed edge and report `attestation_signed`, which a relying party reads.
+
+Decision (2026-10-15, recorded, not built): the default becomes "require a signed edge" at the
+next major of the manifest format, never within version 1.
+
+- Who needs it: a relying party that does not know the option exists. None has been named.
+- What solves it today: the option in a cross-authority decision, and `attestation_signed` on
+  an exchange verdict, for a relying party that reads it.
+- What would prove it wrong: an authority still publishing unsigned edges to relying parties
+  when the next major is cut, whose genuine federation the new default would refuse; or a
+  relying party that shows it depends on accepting unsigned edges.
+
 ## Self-attestation is refused
 
 `attestation_no_self_attestation` rejects a row whose attesting and attested

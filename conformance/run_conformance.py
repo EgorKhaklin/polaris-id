@@ -228,10 +228,14 @@ def main(argv=None):
             print("  [ERROR] %-24s verifier output not JSON: %r (%s)" % (name, proc.stdout[:120], e), file=sys.stderr)
             return 2
         # A verdict conforms iff it matches the case on EVERY key the case constrains; the
-        # verifier may report additional keys. `authentic` is compared as a bool.
+        # verifier may report additional keys. `authentic` must be a JSON boolean: the string
+        # "false" and the number 1 are truthy, and a relying party testing the field the way
+        # its language reads truth would act on them.
         def _match(k, v):
             g = got.get(k)
-            return (bool(g) == v) if k == "authentic" else (g == v)
+            if k == "authentic":
+                return isinstance(g, bool) and g == v
+            return g == v
         ok = all(_match(k, v) for k, v in expect.items())
         results.append({"name": name, "expect": expect, "got": got, "pass": ok})
         if not ok:

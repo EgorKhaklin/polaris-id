@@ -4,7 +4,8 @@
 
 The desk shows a QR code. The Yivi app scans it and presents its email credential with the
 `domain` claim disclosed and the address withheld. The desk then shows "Checked in" and the domain
-when that domain is on the list, or the reason it was refused.
+when that domain is on the list, or why an authentic presentation was refused. A presentation
+that is not authentic leaves the desk waiting.
 
 Configuration, from the environment:
 
@@ -220,9 +221,10 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
                 attempt[3] = (False, "%s is not on the list for this check-in." % domain)
                 status, body = 400, dict(Verifier.REFUSAL_BODY)
         elif status != 200 and was_open and verifier.request_object(state) is None:
-            # Only the post that closed the request is shown. One that did not decrypt under its
-            # key could have come from anyone who saw the QR code and leaves it open; one that
-            # came after the request closed, answered or expired, changes nothing.
+            # polaris-oid4vp closes a request only on an authentic presentation, so a refusal
+            # that closed it is the holder's (a claim withheld, a revoked credential): shown.
+            # A post that is not authentic could come from anyone who saw the QR code and leaves
+            # the request open; one after it closed, answered or expired, changes nothing.
             attempt[3] = (False, "refused: %s" % (verdict.code if verdict else "invalid_request"))
         return JSONResponse(body, status)
 

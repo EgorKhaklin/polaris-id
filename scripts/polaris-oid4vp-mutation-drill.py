@@ -163,6 +163,40 @@ NAMED_MUTANTS = (
     ("serve:done-page-without-the-code", "polaris_oid4vp/serve.py",
      "            if self.verifier.redeem(code) is None:",
      "            if False:"),
+    # A posted wallet_nonce is bounded before a request object is signed for it.
+    ("verifier:wallet-nonce-unbounded", "polaris_oid4vp/verifier.py",
+     "    return (isinstance(value, str) and 0 < len(value) <= WALLET_NONCE_MAX\n"
+     "            and _WALLET_NONCE.fullmatch(value) is not None)\n",
+     "    return isinstance(value, str)\n"),
+    # RFC 5280 4.2 on the x5c leaf, and 4.2.1.10 along the chain.
+    ("sdjwt:leaf-critical-extension-ignored", "polaris_oid4vp/sdjwt.py",
+     "    if unread_critical:\n", "    if False:\n"),
+    ("sdjwt:name-constraints-ignored", "polaris_oid4vp/sdjwt.py",
+     "    why = _name_constraints_refusal(leaf, intermediates, anchor)\n", '    why = ""\n'),
+    ("sdjwt:excluded-subtrees-ignored", "polaris_oid4vp/sdjwt.py",
+     "                    if any(within(value, base) for base in denied):\n",
+     "                    if False:\n"),
+    ("sdjwt:other-name-forms-ignored", "polaris_oid4vp/sdjwt.py",
+     "        if other:\n            return (\"%s states name constraints on %s",
+     "        if False:\n            return (\"%s states name constraints on %s"),
+    ("sdjwt:uri-without-a-host-passes", "polaris_oid4vp/sdjwt.py",
+     "                    if value is None:\n", "                    if False:\n"),
+    ("sdjwt:host-spelling-unchecked", "polaris_oid4vp/sdjwt.py",
+     "                    if not _plain_host(value, form is x509.DNSName):\n",
+     "                    if False:\n"),
+    # Both JWE documents are bounded in size and refuse NaN and Infinity.
+    ("jwe:documents-unbounded", "polaris_oid4vp/jwe.py",
+     "    if limit is not None and len(raw) > limit:\n", "    if False:\n"),
+    ("jwe:non-finite-numbers-read", "polaris_oid4vp/jwe.py",
+     "    if not finite:\n        return json.loads(text)\n", "    return json.loads(text)\n"),
+    # A request closes only on an authentic presentation: anything else anyone who saw the
+    # request can send.
+    ("verifier:garbage-closes-the-request", "polaris_oid4vp/verifier.py",
+     "        if presentation is None:\n",
+     "        if presentation is None:\n            self._sessions.pop(session.state, None)\n"),
+    ("verifier:a-refused-presentation-closes-the-request", "polaris_oid4vp/verifier.py",
+     "            # gets the same constant refusal every other cause gets. The request stays open.\n",
+     "            self._sessions.pop(session.state, None)\n"),
 )
 
 

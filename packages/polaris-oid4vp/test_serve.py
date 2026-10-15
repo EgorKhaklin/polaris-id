@@ -122,6 +122,21 @@ class RequestUriTests(ServeTestCase):
         _, claims = Wallet.read_request(body.decode())
         self.assertEqual(claims["wallet_nonce"], "w-from-the-wire")
 
+    def test_a_posted_wallet_nonce_out_of_bounds_is_400_and_nothing_is_signed(self):
+        """A 2 KiB nonce, or one with a control character, gets 400; 64 bytes still get the
+        object carrying them."""
+        session, _ = self.verifier.new_request()
+        url = "%s/request.jwt?state=%s" % (self.base, session.state)
+        for nonce in ("n" * 2048, "w\x01"):
+            with self.subTest(length=len(nonce)):
+                status, ctype, body = _post(url, {"wallet_nonce": nonce})
+                self.assertEqual((status, ctype), (400, "application/json"))
+                self.assertEqual(json.loads(body)["error"], "invalid_request")
+                self.assertNotIn(b"nnnn", body)
+        status, _, body = _post(url, {"wallet_nonce": "n" * 64})
+        self.assertEqual(status, 200)
+        self.assertEqual(Wallet.read_request(body.decode())[1]["wallet_nonce"], "n" * 64)
+
     def test_posted_wallet_metadata_that_asks_gets_the_object_encrypted(self):
         """The EUDI iOS wallet kit posts its key in wallet_metadata and refuses a request
         object that is not encrypted to it (lab/interop/eudi-ios, 2026-10-04)."""

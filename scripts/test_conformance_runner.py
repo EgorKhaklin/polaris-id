@@ -55,6 +55,10 @@ elif mode == "reject_all":
     verdict["authentic"] = False
 elif mode == "drop_other":
     verdict = {k: v for k, v in verdict.items() if k == "authentic"}
+elif mode == "authentic_as_string":
+    verdict["authentic"] = "true" if verdict["authentic"] else "false"
+elif mode == "authentic_as_number":
+    verdict["authentic"] = 1 if verdict["authentic"] else 0
 elif mode == "wrong_other_once" and entry["other"]:
     k = entry["other"]
     verdict[k] = not verdict[k]
@@ -125,6 +129,15 @@ class TheRunnerScoresWrongVerifiersAsWrong(unittest.TestCase):
     def test_every_constrained_key_must_match_not_any(self):
         self.assertEqual(self.run_with("wrong_other_once"), 1,
                          "authentic right and fresh wrong is a mismatch")
+
+    def test_authentic_must_be_a_json_boolean_not_a_truthy_value(self):
+        """"false" is a non-empty string and reads as true wherever truth is tested by
+        truthiness; 1 and 0 are numbers. Neither is the boolean the contract specifies. No
+        positive control passes either way, so the run is VOID (2) rather than merely failing."""
+        self.assertEqual(self.run_with("authentic_as_number"), 2,
+                         "authentic 1/0 as numbers must not conform")
+        self.assertEqual(self.run_with("authentic_as_string"), 2,
+                         "authentic \"true\"/\"false\" as strings must not conform")
 
     def test_a_verifier_that_refuses_everything_is_void_not_conformant_or_merely_failing(self):
         self.assertEqual(self.run_with("reject_all"), 2,

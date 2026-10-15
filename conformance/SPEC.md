@@ -360,8 +360,8 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 
 A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
 rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
-records which of the reference SDK's public functions actually execute: **the 151 cases enter
-19 of the SDK's 22 public functions.** Three are never entered by any case, which means an
+records which of the reference SDK's public functions actually execute: **the 284 cases enter
+20 of the SDK's 23 public functions.** Three are never entered by any case, which means an
 implementation can get them wrong, or omit them, and still pass every case here.
 
 | never entered | why the contract does not ask |
@@ -379,7 +379,7 @@ runs it with collection disabled and requires that refusal.
 
 **The same gap, between the implementations.** Three verifiers here check these artifacts:
 the detached verifier a relying party installs, and the two reference SDKs. All three pass all
-151 cases, and a case constrains only the keys it names, so on every other key they could
+284 cases, and a case constrains only the keys it names, so on every other key they could
 differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py` compares them
 to EACH OTHER, key for key, on every case, and CI runs it.
 
@@ -391,13 +391,13 @@ siblings fell through, so one implementation answered the same question two ways
 pinned by a test whose failure message names both values. **The two SDKs now return identical
 verdicts, key for key, on every published case.**
 
-The boundary: **36 unconstrained divergences remain, every one of them between the detached
+The boundary: **98 unconstrained divergences remain, every one of them between the detached
 verifier and an SDK**, on two keys and for two reasons.
 
 | key | detached | SDKs | why |
 |---|---|---|---|
-| `fresh`, on an artifact that failed authentication (16 cases) | `null` | the window's answer | the detached verifier RETURNS at the failure, so freshness is never asked. The SDKs fall through to a tail that answers it regardless, which is separately true of a forgery |
-| `issuer_trusted`, on the two cross-authority cases | `true` | `false` | on the detached side this key is not reported by the verifier at all: the conformance adapter derives it from `key_status`, which asks "is this key revoked or unknown" rather than "is it in the anchor set the caller supplied" |
+| `fresh`, on an artifact that failed authentication (34 cases) | `null` | the window's answer | the detached verifier RETURNS at the failure, so freshness is never asked. The SDKs fall through to a tail that answers it regardless, which is separately true of a forgery |
+| `issuer_trusted`, on 15 cross-authority cases | `true` | `false` | on the detached side this key is not reported by the verifier at all: the conformance adapter derives it from `key_status`, which asks "is this key revoked or unknown" rather than "is it in the anchor set the caller supplied" |
 
 Neither convention is wrong and this contract does not choose between them. A relying party
 gating on `fresh is not false` cannot tell the difference; one gating on `fresh is true` can,
@@ -408,8 +408,8 @@ them**. The known ones stay visible rather than being buried in a count.
 
 **The same question on hostile input.** A presenter does not send published cases.
 `scripts/polaris-hostile-agreement-drill.py` takes every case, replaces each node of what a
-presenter supplies with a value of the wrong JSON type or deletes it (184,331 inputs from the
-281 cases, measured 2026-10-01), and has
+presenter supplies with a value of the wrong JSON type or deletes it (184,784 inputs from the
+284 cases, measured 2026-10-15), and has
 all three verifiers decide each one. It fails on a verifier that raises, on any disagreement
 about the primary decision, and on any other disagreement that is not between two refusals or
 one of the conventions it names with its reason; `--prove-control` requires an inverted verdict

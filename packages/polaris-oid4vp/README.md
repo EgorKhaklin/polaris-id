@@ -85,6 +85,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   `enc` this package produces, A128GCM or A256GCM, and a P-256 key in `jwks`) gets the signed
   object encrypted to that key, as the EUDI iOS wallet kit requires. A wallet that asks for
   nothing, or for something this cannot produce, gets the signed object.
+- A `wallet_nonce` posted with it comes back in the request object when it is 1 to 1024
+  printable ASCII characters (%x20-7E); any other gets 400 (`Verifier.request_object` returns
+  None), and nothing is signed for it.
 - `--verifier-info FILE` puts attestations about the verifier into the request object, such as
   the registration certificate a registrar issues: a JSON array as OpenID4VP 1.0 section 5.1 has
   it, or one object, `{"format": "registration_cert", "data": "<JWT>"}`, as the German EUDI
@@ -97,8 +100,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   chain to an anchor, directly or through the CA certificates the `x5c` sends after it (at most
   three, in order, each certifying the one before it; each a CA allowed to sign certificates,
   inside its validity period and its path length, with no critical extension this does not
-  read, and none of them the anchor itself). The leaf must be inside its validity period and,
-  when it states a key usage, include digitalSignature; one that states extended key usages must name one an
+  read, and none of them the anchor itself). The leaf must be inside its validity period, carry
+  no critical extension beyond basic constraints, key usage, extended key usage and
+  subjectAltName (RFC 5280 section 4.2), and, when it states a key usage, include digitalSignature; one that states extended key usages must name one an
   issuer may hold (ISO 18013-5's document signer, as EUDI issuers use; the EUDI PID Rulebook's
   document signer, 1.3.130.2.0.0.1.2, as the EU reference PID issuer uses; or client auth, code
   signing or email protection). A leaf that states no key usage is not restricted by one. The
@@ -106,6 +110,12 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   must name the credential's `iss`: a URI subjectAltName exactly, or, for a leaf naming only DNS
   hosts, an https URL on one. A leaf with neither (the EU reference PID issuer's has no
   subjectAltName) leaves `iss` unbound: the verdict reports it apart, not in `claims`.
+  Name constraints stated by the anchor or a CA in the chain (RFC 5280 section 4.2.1.10) are
+  applied to the DNS and URI subjectAltNames of every certificate beneath them; a CA that
+  constrains any other name form (directoryName, rfc822Name, iPAddress, otherName) is refused,
+  since those are not applied. Under a constraint, a name whose host is not plain letters,
+  digits and hyphens in dot-separated labels (a trailing dot, an empty label, a `%` escape) is
+  refused, because another spelling of an excluded host would not match it as a string.
 - `--issuer-jwks` trusts every key it lists for every `iss`, except one whose `use`, `key_ops` or `alg`
   says it is not for ES256 signatures; list one issuer's keys per verifier.
 - `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
@@ -219,7 +229,9 @@ one constant body, so the verifier is not a per-check oracle:
 
 The response JWE (`jwe.py`) accepts only ECDH-ES over P-256 with A128GCM or A256GCM, with a
 fresh encryption key per request. The listener (`verifier.py`, `serve.py`) is standard library
-only.
+only. A request closes only on an authentic presentation; any other response, which anyone who
+fetched the request object can encrypt to its key, is refused and leaves the request open until
+it expires. A second authentic presentation for the same request is refused as a replay.
 
 ## Who sees the result
 
@@ -338,6 +350,14 @@ The approach follows EUDIPLO's `registration_cert` configuration and ERICA's req
   nothing is fetched and the state is `not_evaluated`.
 - `status.py` decides a Token Status List (`draft-ietf-oauth-status-list`) without opening a
   socket; `decide_by_fetching` takes your `fetch` callable.
+- **Your `fetch` decides where a request may go.** When the list is to be signed by the
+  credential's own key, the URI is the one the issuer wrote into the credential, so a coerced
+  or compromised issuer chooses where your server sends a GET. The callable MUST accept `https`
+  only; refuse loopback, private, link-local (`169.254.0.0/16`, `fe80::/10`), unique-local and
+  unspecified addresses, judged on the address it connects to rather than on a name resolved
+  earlier; follow no redirect; stop reading past `status.MAX_TOKEN_BYTES` (2 MiB, the size
+  `decide` refuses above); and set connect and read timeouts. Whatever it raises becomes
+  `unreachable`.
 - **Who may publish status for whom is stated, not inferred:** `StatedAuthority` records that a
   named key may publish for a named issuer at a named URI. Anything else is `no_authority`, and
   no request is sent to a URI an unvetted credential names.
@@ -369,12 +389,13 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 628 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 649 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a
   test to fail: 172 are caught, and the 4 survivors are declared with their reasons. It also makes
-  8 named changes to the redirect's `response_code` and its redemption, each of which a test must
-  catch (all 8 are; measured 2026-10-14; CI runs it on every push).
+  19 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  the x5c leaf and name constraints, the JWE bounds, when a request closes), each of which a test
+  must catch (all 19 are; measured 2026-10-15; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.
