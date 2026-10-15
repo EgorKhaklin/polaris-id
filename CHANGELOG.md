@@ -17,6 +17,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- polaris-oid4vp's README states what the `fetch` callable given to `status.decide_by_fetching` must enforce, since a status URI can come from the issuer: `https` only, no loopback, private or link-local address (judged on the address connected to), no redirect, a 2 MiB body cap and timeouts.
 - The eudi-dev walk removes its work dir, which holds the test wallet's key and credential, after a passing run; a failed run keeps it and prints one line naming it. The wallet canary runs the walk as a stranger does and checks that the dir is gone.
 - The SBOM checker moves to ntia-conformance-checker 6.0.0, and the release gate now also requires every listed component to be in the graph the checker judged (no floating component, no unknown pointer): 6.0.0 judges only what the document's root reaches.
 - polaris-oid4vp's README: anchor the CA that signs issuers, not a root that also certifies relying parties (`IssuerAnchorScopeTests`); where one root certifies both roles, neither anchoring nor the package can separate them. To accept only some of an anchor's issuers, pin `claims["iss"]` where `iss_bound` is `True`.

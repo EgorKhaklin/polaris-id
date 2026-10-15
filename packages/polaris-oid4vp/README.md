@@ -350,6 +350,14 @@ The approach follows EUDIPLO's `registration_cert` configuration and ERICA's req
   nothing is fetched and the state is `not_evaluated`.
 - `status.py` decides a Token Status List (`draft-ietf-oauth-status-list`) without opening a
   socket; `decide_by_fetching` takes your `fetch` callable.
+- **Your `fetch` decides where a request may go.** When the list is to be signed by the
+  credential's own key, the URI is the one the issuer wrote into the credential, so a coerced
+  or compromised issuer chooses where your server sends a GET. The callable MUST accept `https`
+  only; refuse loopback, private, link-local (`169.254.0.0/16`, `fe80::/10`), unique-local and
+  unspecified addresses, judged on the address it connects to rather than on a name resolved
+  earlier; follow no redirect; stop reading past `status.MAX_TOKEN_BYTES` (2 MiB, the size
+  `decide` refuses above); and set connect and read timeouts. Whatever it raises becomes
+  `unreachable`.
 - **Who may publish status for whom is stated, not inferred:** `StatedAuthority` records that a
   named key may publish for a named issuer at a named URI. Anything else is `no_authority`, and
   no request is sent to a URI an unvetted credential names.
