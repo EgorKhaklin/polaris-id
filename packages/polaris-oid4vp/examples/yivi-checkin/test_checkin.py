@@ -197,7 +197,7 @@ class CheckIn(unittest.TestCase):
         base = self.serve(["example.org"], anchors=self.yivi_ca)
         shown, said = self.scan(base, self.expected, ISSUER)
         self.assertIn(self.REFUSED, said)
-        self.assertIn("Not checked in refused: issuer_key", shown)
+        self.assertIn("Scan with the Yivi app", shown)  # not authentic: the desk keeps waiting
         self.assertNotIn("example.org", shown)
 
     def test_another_provider_as_itself_is_refused(self):
@@ -209,11 +209,19 @@ class CheckIn(unittest.TestCase):
         self.assertNotIn("example.org", shown)
 
     def test_another_provider_claiming_the_issuer_is_refused(self):
-        # Its leaf names OTHER: polaris-oid4vp refuses an iss the leaf does not name.
+        # Its leaf names OTHER: polaris-oid4vp refuses an iss the leaf does not name. Not
+        # authentic, so the request stays open and the desk keeps waiting: anyone who saw the QR
+        # code could have sent it. The holder's own presentation then still checks in.
         base = self.serve(["example.org"])
         shown, said = self.scan(base, self.other, ISSUER)
         self.assertIn(self.REFUSED, said)
-        self.assertIn("Not checked in refused: issuer_key", shown)
+        self.assertIn("Scan with the Yivi app", shown)
+        page = _get(self.last_desk)[2]
+        link = re.search(r'id="link" href="([^"]+)"', page).group(1).replace("&amp;", "&")
+        with mock.patch.object(standin_wallet, "ISS", ISSUER), contextlib.redirect_stdout(io.StringIO()):
+            standin_wallet.present(self.expected, link)
+        self.assertEqual(self.desk(self.last_desk).split(" Next person")[0].strip(),
+                         "Checked in example.org")
 
     def test_a_leaf_naming_no_issuer_cannot_claim_it(self):
         # Its leaf names nobody, so nothing binds the iss: the verdict leaves it out of claims.
