@@ -4920,7 +4920,7 @@ def _wire_text_equal(signed, expected):
 
 def verify_agent_grant(grant, binding=None, credential=None, now=None, requested_action=None,
                        revocation=None, agent_proof=None, expected_nonce=None,
-                       anchor_keys=None, verifier_scope=None):
+                       anchor_keys=None, verifier_scope=None, expected_context=None):
     """Decide a delegated agent grant OFFLINE (P9.8). Total on hostile input.
 
     Every link is reported separately, because a service that only sees one boolean cannot
@@ -4929,11 +4929,16 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     CHECKED: the credential's issuer signature (and, with `anchor_keys`, an issuer among
     them), the issuer's binding of the holder key, the holder's grant covering the requested
     action, no holder revocation, and the agent's proof naming this action and this
-    service's nonce.
+    service's nonce, made while the grant was in force.
+
+    The grant's `context_id` is signed by the holder; with `expected_context` (this service's
+    context) it must name that context, reported as `context_matches`, or the grant is not
+    usable here.
     """
     v = {"grant_authentic": False, "fresh": None, "principal_bound": None,
          "credential_authentic": None, "issuer_trusted": None,
          "action_in_scope": None, "limits": None, "revoked": None, "agent_proved": None,
+         "context_matches": None,
          "pairwise_handle": None, "correlation": None, "usable": False,
          "witnesses": [], "note": None}
     if not isinstance(grant, dict) or grant.get("format") != _AGENT_GRANT_FORMAT:
@@ -4957,6 +4962,14 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     v["grant_authentic"] = True
 
     _verify_window(grant, v, now, None)
+
+    # The context is inside the statement the holder signed, and until 2026-10-15 nothing read
+    # it: a grant the holder scoped to one context was usable at a service in another.
+    if expected_context is not None:
+        v["context_matches"] = bool(_same_id(grant.get("context_id"), expected_context))
+        if not v["context_matches"]:
+            v["note"] = ("the grant names context %r, not this service's %r"
+                         % (grant.get("context_id"), expected_context))
 
     # Links 1 and 2: the holder key must be one an ISSUER bound to a real credential, or the
     # grant is signed by a key that speaks for nobody.
@@ -5074,7 +5087,25 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
             elif not aok:
                 v["note"] = anote or "the agent proof signature is invalid"
             else:
-                v["agent_proved"] = True
+                # The proof's issued_at is signed and was never read (2026-10-15): a proof made
+                # before the grant existed, after it lapsed, or dated ahead of this clock
+                # proved the agent all the same. It must fall inside the grant's window and
+                # not more than the usual 60 seconds ahead of `now`.
+                from datetime import timedelta
+                try:
+                    made = _parse_iso(agent_proof.get("issued_at"))
+                    start, end = _parse_iso(grant.get("issued_at")), _parse_iso(grant.get("expires_at"))
+                    ref = _instant(now)
+                except Exception:
+                    made = None
+                if made is None:
+                    v["note"] = "the agent proof's issued_at, or the grant's window, is not a timestamp"
+                elif not start <= made < end:
+                    v["note"] = "the agent proof was made outside the grant's window"
+                elif made > ref + timedelta(seconds=60):
+                    v["note"] = "the agent proof is dated ahead of this verifier's clock"
+                else:
+                    v["agent_proved"] = True
 
     # 2026-09-30: every link WIRE-SPEC 3.17 names must have been CHECKED, not merely not have
     # failed. `is not False` read a link nobody supplied as a pass, so a bare grant signed by
@@ -5093,6 +5124,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
                        and not v["revoked"]
                        and v["agent_proved"] is True
                        and expected_nonce is not None
+                       and v["context_matches"] is not False
                        and limits_ok)
     if not limits_ok and v["note"] is None:
         v["note"] = limits_note
@@ -5565,7 +5597,7 @@ _MODE_FLAGS = {
     "--verify-dir": {"verify_dir"},
     "--agent-grant": {"agent_grant", "holder_binding", "credential", "grant_revocation", "agent_proof",
                       "action", "service_nonce", "verifier_scope", "issuer_anchor", "trusted_anchor",
-                      "signature_only", "json"},
+                      "context", "signature_only", "json"},
     "--qr-frames": {"qr_frames", "issuer_anchor", "trusted_anchor", "max_window", "context", "nonce",
                     "verifier_scope", "signature_only", "json"},
     "--presentation": {"presentation", "issuer_anchor", "trusted_anchor", "max_window", "context",
@@ -5666,7 +5698,8 @@ def main(argv=None):
     ap.add_argument("--trusted-manifest", action="append",
                     help="a federation manifest the relying party trusts (repeatable)")
     ap.add_argument("--trusted-anchor", help="an anchor public key hex the relying party trusts")
-    ap.add_argument("--context", type=int, help="the presented context id (for --zk-proof)")
+    ap.add_argument("--context", type=int, help="the presented context id (for --zk-proof); with "
+                                                "--agent-grant, this service's context")
     ap.add_argument("--nonce", default=None,
                     help="the challenge nonce the proof must carry: a holder proof's verifier nonce "
                          "with --presentation, an integer with --zk-proof")
@@ -5729,7 +5762,8 @@ def main(argv=None):
         verdict = verify_agent_grant(grant, binding=binding, credential=credential,
                                      requested_action=args.action, revocation=revocation,
                                      agent_proof=agent_proof, expected_nonce=args.service_nonce,
-                                     anchor_keys=anchor, verifier_scope=args.verifier_scope)
+                                     anchor_keys=anchor, verifier_scope=args.verifier_scope,
+                                     expected_context=args.context)
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
@@ -5740,8 +5774,8 @@ def main(argv=None):
                                ("fresh", "fresh"), ("credential valid", "credential_authentic"),
                                ("issuer trusted", "issuer_trusted"), ("principal bound", "principal_bound"),
                                ("action in scope", "action_in_scope"), ("revoked", "revoked"),
-                               ("agent proved", "agent_proved")):
-                print("%-18s%s" % (label + ":", _tri(verdict[key])))
+                               ("agent proved", "agent_proved"), ("context matches", "context_matches")):
+                print("%-18s%s" % (label + ":", _tri(verdict.get(key))))
             if verdict["pairwise_handle"]:
                 print("handle:           %s (correlation: %s)"
                       % (verdict["pairwise_handle"], verdict["correlation"]))

@@ -1694,6 +1694,95 @@ class StapledDecisionNeedsEveryFact(unittest.TestCase):
         self.assertEqual(self.decide(key=(["ab" * 32], "ab" * 32)), "reject", "a list is not a key")
 
 
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class AgentGrantContextAndProofTime(unittest.TestCase):
+    """Two signed fields nothing read until 2026-10-15: the grant's `context_id`, which the holder
+    signs to scope the grant, and the agent proof's `issued_at`. Real signatures throughout, so
+    each verdict is the verifier's whole decision; the binding and the credential are stubbed as
+    in AgentGrantPrincipalBinding, so `usable` turns on the link under test."""
+
+    NOW = "2026-05-01T00:00:30Z"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.holder, cls.agent = _mldsa_signer(), _mldsa_signer()
+
+    @staticmethod
+    def seal(obj, canonical, key):
+        return SignedDocumentLongTermValidation.seal(obj, canonical, key)
+
+    def grant(self, **over):
+        body = {"format": "polaris-agent-grant/1", "grant_id": "g-ctx-1",
+                "agent_public_key_hex": self.agent[1].hex(), "agent_algorithm": "ML-DSA-65",
+                "actions": ["read:status"], "limits": {}, "context_id": 7,
+                "issued_at": "2026-05-01T00:00:00Z", "expires_at": "2026-05-01T06:00:00Z"}
+        body.update(over)
+        return self.seal(body, V._agent_grant_canonical, self.holder)
+
+    def proof(self, issued_at="2026-05-01T00:00:10Z"):
+        return self.seal({"format": "polaris-agent-proof/1", "grant_id": "g-ctx-1",
+                          "action": "read:status", "service_nonce": "svc-1", "issued_at": issued_at},
+                         V._agent_proof_canonical, self.agent)
+
+    def decide(self, grant=None, proof=None, **kw):
+        from unittest import mock
+        good = {"binding_authentic": True, "fresh": True, "bound_to_credential": True,
+                "holder_public_key_hex": self.holder[1].hex(), "note": None}
+        with mock.patch.object(V, "verify_holder_binding", return_value=good), \
+                mock.patch.object(V, "verify_pack", return_value={"signature_valid": True,
+                                                                  "issuer_trusted": None, "note": None}):
+            return V.verify_agent_grant(grant or self.grant(), binding={"status": "active"},
+                                        credential={}, now=kw.pop("now", self.NOW),
+                                        requested_action="read:status",
+                                        agent_proof=proof or self.proof(), expected_nonce="svc-1", **kw)
+
+    def test_the_whole_chain_is_usable_in_its_own_context(self):
+        """The control, and the default: a service that names no context is not asked about one."""
+        for kw in ({}, {"expected_context": 7}):
+            with self.subTest(**kw):
+                v = self.decide(**kw)
+                self.assertIs(v["usable"], True, v["note"])
+                self.assertIs(v["agent_proved"], True)
+        self.assertIs(self.decide(expected_context=7)["context_matches"], True)
+        self.assertIsNone(self.decide()["context_matches"])
+
+    def test_a_grant_for_another_context_is_not_usable_here(self):
+        for other in (8, "7", True):
+            with self.subTest(expected_context=other):
+                v = self.decide(expected_context=other)
+                self.assertIs(v["context_matches"], False)
+                self.assertIs(v["usable"], False)
+
+    def test_a_proof_made_outside_the_grant_or_ahead_of_the_clock_proves_nothing(self):
+        for label, issued_at, why in (
+                ("before the grant was issued", "2026-04-30T23:59:59Z", "outside the grant's window"),
+                ("after the grant lapsed", "2026-05-01T06:00:00Z", "outside the grant's window"),
+                ("ahead of this clock", "2026-05-01T00:02:00Z", "ahead of this verifier's clock"),
+                ("not a timestamp", "yesterday", "not a timestamp")):
+            with self.subTest(label):
+                v = self.decide(proof=self.proof(issued_at))
+                self.assertIs(v["agent_proved"], False)
+                self.assertIs(v["usable"], False)
+                self.assertIn(why, v["note"])
+        # Within the clock's 60 seconds of skew it still proves.
+        self.assertIs(self.decide(proof=self.proof("2026-05-01T00:01:20Z"))["agent_proved"], True)
+
+    def test_the_command_line_takes_this_services_context(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            g, pr = pathlib.Path(d, "grant.json"), pathlib.Path(d, "proof.json")
+            g.write_text(json.dumps(self.grant()))
+            pr.write_text(json.dumps(self.proof()))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                V.main(["--pqc-provider", "cryptography", "--agent-grant", str(g),
+                        "--agent-proof", str(pr), "--action", "read:status",
+                        "--service-nonce", "svc-1", "--context", "8", "--json"])
+            self.assertIs(json.loads(out.getvalue())["context_matches"], False)
+
+
 @unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
                      "no real ML-DSA backend; these run on real signatures")
 class AgentGrantPrincipalBinding(unittest.TestCase):

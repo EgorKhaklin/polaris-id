@@ -936,7 +936,8 @@ class AnAgentProofsTextFieldsTests(unittest.TestCase):
 
     GRANT = {"format": "polaris-agent-grant/1", "grant_id": "g-1", "public_key_hex": "cd" * 32,
              "algorithm": "ML-DSA-65", "agent_public_key_hex": "ab" * 32, "agent_algorithm": "ML-DSA-65",
-             "actions": ["read"], "limits": {}}
+             "actions": ["read"], "limits": {}, "issued_at": "2026-05-01T00:00:00Z",
+             "expires_at": "2026-05-01T06:00:00Z"}
 
     def setUp(self):
         self._real = V._signed_by
@@ -947,9 +948,10 @@ class AnAgentProofsTextFieldsTests(unittest.TestCase):
 
     def _proved(self, grant=None, **proof):
         p = dict({"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
-                  "action": "read", "service_nonce": 0, "algorithm": "ML-DSA-65", "signature_hex": "00" * 8}, **proof)
+                  "action": "read", "service_nonce": 0, "algorithm": "ML-DSA-65",
+                  "issued_at": "2026-05-01T00:00:10Z", "signature_hex": "00" * 8}, **proof)
         return V.verify_agent_grant(grant or self.GRANT, agent_proof=p, requested_action="read",
-                                    expected_nonce=0)["agent_proved"]
+                                    expected_nonce=0, now="2026-05-01T00:00:30Z")["agent_proved"]
 
     def test_nonce_zero_is_a_nonce(self):
         self.assertIs(self._proved(), True)
@@ -1014,7 +1016,7 @@ class AGrantWhoseLimitsAreNotUnderstoodIsNotUsableTests(unittest.TestCase):
              "expires_at": "2026-05-01T06:00:00Z"}
     PROOF = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
              "action": "read", "service_nonce": "n-1", "algorithm": "ML-DSA-65",
-             "signature_hex": "00" * 8}
+             "issued_at": "2026-05-01T00:00:10Z", "signature_hex": "00" * 8}
 
     def setUp(self):
         self._saved = (V._signed_by, V.verify_pack, V.verify_holder_binding)
@@ -1069,7 +1071,8 @@ class TheGrantPinsTheAgentsAlgorithmTests(unittest.TestCase):
     GRANT = {"format": "polaris-agent-grant/1", "grant_id": "g-1",
              "public_key_hex": "cd" * 32, "algorithm": "ML-DSA-65",
              "agent_public_key_hex": "ab" * 32, "agent_algorithm": "ML-DSA-65",
-             "actions": ["read"], "limits": {}}
+             "actions": ["read"], "limits": {}, "issued_at": "2026-05-01T00:00:00Z",
+             "expires_at": "2026-05-01T06:00:00Z"}
 
     def setUp(self):
         self._real = V._signed_by
@@ -1081,7 +1084,7 @@ class TheGrantPinsTheAgentsAlgorithmTests(unittest.TestCase):
     def _proof(self, **over):
         p = {"format": "polaris-agent-proof/1", "grant_id": "g-1",
              "public_key_hex": "ab" * 32, "action": "read", "algorithm": "ML-DSA-65",
-             "signature_hex": "00" * 8}
+             "issued_at": "2026-05-01T00:00:10Z", "signature_hex": "00" * 8}
         p.update(over)
         return p
 

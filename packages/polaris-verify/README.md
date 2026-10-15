@@ -93,7 +93,8 @@ party, both of which are allowed `urllib` on purpose.
 
 The command decides authenticity packs (`--pack`, or stdin), with `--status-assertion` offline
 and within a freshness window; presentations (`--presentation`) and QR frames (`--qr-frames`);
-agent grants with their revocations and proofs (`--agent-grant`); and zero-knowledge inclusion
+agent grants with their revocations and proofs (`--agent-grant`, with `--context` for the service's
+own context, which the grant must name); and zero-knowledge inclusion
 proofs across authorities (`--zk-proof`). `--verify-dir` re-verifies a directory of published
 vectors. `--selftest` signs its own material, so it needs liboqs and exits 3 without it; with the
 `cryptography` extra alone, verify the published vectors instead. A mode refuses a flag it would
