@@ -31,6 +31,14 @@ independent OpenSSL implementation must agree) byte-for-byte unchanged: a
 verifier cannot tell which driver produced a signature, and every signature
 any driver produces is checked by both witnesses before it is stored.
 
+`sign_message(message)` is the same pure ML-DSA (FIPS 204 Algorithm 2, empty
+context) over `message` itself rather than a digest of it. It exists for COSE:
+algorithm -49 is ML-DSA-65 over the Sig_structure (RFC 9964), which is what the
+mdoc issuer signature is, and pqc_signing hands it nothing but a Sig_structure.
+AWS KMS takes a RAW message of at most 4,096 bytes, so past that the driver
+sends FIPS 204's message representative mu instead (MessageType EXTERNAL_MU,
+`external_mu` below); the signature is the same pure ML-DSA over the message.
+
 Secrets never travel through env: the PKCS#11 PIN is read from a file
 (POLARIS_CUSTODY_PKCS11_PIN_FILE) and the module refuses to start if
 POLARIS_CUSTODY_PKCS11_PIN is set; KMS credentials are the SDK's usual
@@ -153,11 +161,20 @@ class KeyCustody:
     def sign(self, digest: bytes) -> bytes:
         raise NotImplementedError
 
+    def sign_message(self, message: bytes) -> bytes:
+        """Pure ML-DSA, empty context, over `message` itself (the COSE path; module docstring)."""
+        raise NotImplementedError
+
     # ---- shared plumbing -------------------------------------------------
     def _check_digest(self, digest: bytes) -> None:
         if not isinstance(digest, (bytes, bytearray)) or len(digest) != DIGEST_LEN:
             raise CustodyError(f"{self.driver}: sign() takes the {DIGEST_LEN}-byte SHA3-256 digest, "
                                f"got {len(digest) if isinstance(digest, (bytes, bytearray)) else type(digest)}")
+
+    def _check_message(self, message: bytes) -> None:
+        if not isinstance(message, (bytes, bytearray)) or not message:
+            raise CustodyError(f"{self.driver}: sign_message() takes the non-empty bytes to sign, got "
+                               f"{'0 bytes' if isinstance(message, (bytes, bytearray)) else type(message)}")
 
     def _sizes(self):
         sizes = signing_sizes(self.algorithm)
@@ -220,12 +237,20 @@ class FileCustody(KeyCustody):
 
     def sign(self, digest: bytes) -> bytes:
         self._check_digest(digest)
+        return self._liboqs_sign(digest)
+
+    def sign_message(self, message: bytes) -> bytes:
+        self._check_message(message)
+        return self._liboqs_sign(message)
+
+    def _liboqs_sign(self, data: bytes) -> bytes:
+        """liboqs's sign is FIPS 204 ML-DSA.Sign with an empty context, over `data` as given."""
         try:
             import oqs  # type: ignore
         except ImportError as exc:
             raise CustodyError(f"file: liboqs-python is required to sign with a file key: {exc}") from exc
         with oqs.Signature(self.algorithm, secret_key=self._sk) as signer:
-            return self._check_signature(signer.sign(bytes(digest)))
+            return self._check_signature(signer.sign(bytes(data)))
 
     def keypair(self) -> tuple:
         """(secret_key, public_key): the file driver is the only one that HAS the
@@ -284,12 +309,20 @@ class Pkcs11Custody(KeyCustody):
 
     def sign(self, digest: bytes) -> bytes:
         self._check_digest(digest)
+        return self._token_sign(digest)
+
+    def sign_message(self, message: bytes) -> bytes:
+        self._check_message(message)
+        return self._token_sign(message)
+
+    def _token_sign(self, data: bytes) -> bytes:
+        """CKM_ML_DSA with no parameter: pure ML-DSA, empty context, over `data` in one C_Sign."""
         p = self._pkcs11
         with self._lock:
             try:
                 with self._token.open(user_pin=self._pin) as s:
                     priv = s.get_key(object_class=p.ObjectClass.PRIVATE_KEY, label=self._key_label)
-                    sig = priv.sign(bytes(digest), mechanism=p.Mechanism.ML_DSA)
+                    sig = priv.sign(bytes(data), mechanism=p.Mechanism.ML_DSA)
             except Exception as exc:
                 raise CustodyError(f"pkcs11: CKM_ML_DSA sign with {self._key_label!r} failed: {exc}") from exc
         return self._check_signature(bytes(sig))
@@ -329,6 +362,21 @@ def pkcs11_generate_key(module: str, token_label: str, pin: str, key_label: str 
 # ---------------------------------------------------------------------------
 _KMS_KEY_SPEC = "ML_DSA_65"
 _KMS_SIGNING_ALGORITHM = "ML_DSA_SHAKE_256"   # pure ML-DSA over the raw message
+#: The longest message KMS's Sign takes with MessageType RAW (its Message is 1 to 4,096 bytes).
+KMS_RAW_MESSAGE_MAX = 4096
+
+
+def external_mu(public_key: bytes, message: bytes) -> bytes:
+    """FIPS 204's 64-byte message representative mu for pure ML-DSA with an empty context.
+
+    ML-DSA.Sign (Algorithm 2) signs M' = 0x00 || 0x00 || M (no pre-hash, a context of length
+    zero), and ML-DSA.Sign_internal (Algorithm 7) begins mu = H(tr || M', 64) with
+    tr = H(pk, 64), H being SHAKE256. Everything after that depends on M only through mu, so a
+    signature over mu IS the pure ML-DSA signature over M, and it verifies as one. AWS KMS takes
+    mu as MessageType EXTERNAL_MU; test_custody holds this against cryptography's own
+    MLDSAMuHasher and verifies a signature made over it under both witnesses over M."""
+    tr = hashlib.shake_256(bytes(public_key)).digest(64)
+    return hashlib.shake_256(tr + b"\x00\x00" + bytes(message)).digest(64)
 
 
 def _spki_to_raw(der: bytes) -> bytes:
@@ -347,7 +395,9 @@ class AwsKmsCustody(KeyCustody):
     """An AWS KMS asymmetric key (KeySpec ML_DSA_65, KeyUsage SIGN_VERIFY). The
     private key lives in KMS's HSMs; Polaris calls Sign with MessageType RAW and
     SigningAlgorithm ML_DSA_SHAKE_256 over the SHA3-256 digest, which is the same
-    pure-ML-DSA operation the file and PKCS#11 drivers perform."""
+    pure-ML-DSA operation the file and PKCS#11 drivers perform. `sign_message` sends a
+    message of up to KMS_RAW_MESSAGE_MAX bytes the same way, RAW, and a longer one as
+    its mu (MessageType EXTERNAL_MU): the same pure ML-DSA signature over the message."""
 
     driver = "awskms"
 
@@ -392,9 +442,17 @@ class AwsKmsCustody(KeyCustody):
 
     def sign(self, digest: bytes) -> bytes:
         self._check_digest(digest)
+        return self._kms_sign(Message=bytes(digest), MessageType="RAW")
+
+    def sign_message(self, message: bytes) -> bytes:
+        self._check_message(message)
+        if len(message) <= KMS_RAW_MESSAGE_MAX:
+            return self._kms_sign(Message=bytes(message), MessageType="RAW")
+        return self._kms_sign(Message=external_mu(self._pk, message), MessageType="EXTERNAL_MU")
+
+    def _kms_sign(self, **message) -> bytes:
         try:
-            out = self._kms.sign(KeyId=self._key_id, Message=bytes(digest), MessageType="RAW",
-                                 SigningAlgorithm=_KMS_SIGNING_ALGORITHM)
+            out = self._kms.sign(KeyId=self._key_id, SigningAlgorithm=_KMS_SIGNING_ALGORITHM, **message)
         except Exception as exc:
             raise CustodyError(f"awskms: Sign with {self._key_id!r} failed: {exc}") from exc
         return self._check_signature(bytes(out["Signature"]))

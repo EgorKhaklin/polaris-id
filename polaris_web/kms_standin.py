@@ -97,9 +97,18 @@ class KmsStandIn:
                     "PublicKey": base64.b64encode(self.spki).decode(), "SigningAlgorithms": ["ML_DSA_SHAKE_256"]}
         if op == "Sign":
             self._resolve(body["KeyId"])
-            if body.get("SigningAlgorithm") != "ML_DSA_SHAKE_256" or body.get("MessageType") != "RAW":
+            message = base64.b64decode(body["Message"])
+            if body.get("SigningAlgorithm") != "ML_DSA_SHAKE_256":
                 raise PermissionError("algorithm/message type")
-            sig = self.priv.sign(base64.b64decode(body["Message"]))
+            # KMS's own bounds: a RAW Message is 1 to 4,096 bytes; EXTERNAL_MU is FIPS 204's
+            # 64-byte mu, which the key signs as it is (cryptography's sign_mu).
+            if body.get("MessageType") == "RAW" and 1 <= len(message) <= 4096:
+                sig = self.priv.sign(message)
+            elif body.get("MessageType") == "EXTERNAL_MU" and len(message) == 64 \
+                    and hasattr(self.priv, "sign_mu"):
+                sig = self.priv.sign_mu(message)
+            else:
+                raise PermissionError("algorithm/message type")
             return {"KeyId": self.arn, "Signature": base64.b64encode(sig).decode(), "SigningAlgorithm": "ML_DSA_SHAKE_256"}
         if op == "GenerateDataKey":
             kid = self._resolve(body["KeyId"])
