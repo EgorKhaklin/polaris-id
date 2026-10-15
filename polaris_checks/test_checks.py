@@ -17256,7 +17256,7 @@ def test_vc_format_check_discriminates(tmp_path):
 
     # THE DOUBLE HASH (CORE-BUG, 2026-10-14): the route hashed the canonical bytes before
     # signature_over_message hashed them again, and the verifier, which reconstructs one
-    # SHA3-256, refused every credential signed with a real key.
+    # SHA3-256, refused every credential the route signed with a real key.
     write({'polaris_web/rp_api.py': ROUTE.replace(
         "signature_over_message(data,", "signature_over_message(hashlib.sha3_256(data).digest(),")})
     assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
