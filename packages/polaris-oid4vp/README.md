@@ -100,8 +100,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   chain to an anchor, directly or through the CA certificates the `x5c` sends after it (at most
   three, in order, each certifying the one before it; each a CA allowed to sign certificates,
   inside its validity period and its path length, with no critical extension this does not
-  read, and none of them the anchor itself). The leaf must be inside its validity period and,
-  when it states a key usage, include digitalSignature; one that states extended key usages must name one an
+  read, and none of them the anchor itself). The leaf must be inside its validity period, carry
+  no critical extension beyond basic constraints, key usage, extended key usage and
+  subjectAltName (RFC 5280 section 4.2), and, when it states a key usage, include digitalSignature; one that states extended key usages must name one an
   issuer may hold (ISO 18013-5's document signer, as EUDI issuers use; the EUDI PID Rulebook's
   document signer, 1.3.130.2.0.0.1.2, as the EU reference PID issuer uses; or client auth, code
   signing or email protection). A leaf that states no key usage is not restricted by one. The
@@ -109,6 +110,12 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   must name the credential's `iss`: a URI subjectAltName exactly, or, for a leaf naming only DNS
   hosts, an https URL on one. A leaf with neither (the EU reference PID issuer's has no
   subjectAltName) leaves `iss` unbound: the verdict reports it apart, not in `claims`.
+  Name constraints stated by the anchor or a CA in the chain (RFC 5280 section 4.2.1.10) are
+  applied to the DNS and URI subjectAltNames of every certificate beneath them; a CA that
+  constrains any other name form (directoryName, rfc822Name, iPAddress, otherName) is refused,
+  since those are not applied. Under a constraint, a name whose host is not plain letters,
+  digits and hyphens in dot-separated labels (a trailing dot, an empty label, a `%` escape) is
+  refused, because another spelling of an excluded host would not match it as a string.
 - `--issuer-jwks` trusts every key it lists for every `iss`, except one whose `use`, `key_ops` or `alg`
   says it is not for ES256 signatures; list one issuer's keys per verifier.
 - `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
@@ -372,7 +379,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 629 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 639 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a

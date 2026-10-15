@@ -33,8 +33,10 @@ import base64
 import binascii
 import datetime
 import hashlib
+import ipaddress
 import json
 import math
+import re
 import threading
 import time
 import urllib.parse
@@ -150,6 +152,13 @@ else:  # pragma: no cover
 #: nothing is searched for. Until 2026-10-03 only the leaf was read: eudi-dev v2.5.0's PID
 #: Provider signs under an intermediate CA that it sends as `x5c[1]`, and was refused.
 MAX_X5C_CERTS = 4
+
+#: The extensions an x5c leaf may mark critical: the ones this module reads from it
+#: (`_not_an_issuer_leaf`, `_chains_to`, `_leaf_eku_refusal`, `_leaf_names`). Any other critical
+#: extension refuses the leaf (RFC 5280 section 4.2).
+if _HAVE_CRYPTO:
+    _LEAF_EXTENSIONS_READ = (x509.BasicConstraints, x509.KeyUsage, x509.ExtendedKeyUsage,
+                             x509.SubjectAlternativeName)
 
 
 def _utcnow():
@@ -655,6 +664,15 @@ def _not_an_issuer_leaf(leaf):
         pass
     except Exception:  # noqa: BLE001  a malformed extension is not a usable statement
         return "the x5c leaf's basic constraints do not parse"
+    # RFC 5280 section 4.2: a certificate-using system MUST reject a certificate that carries a
+    # critical extension it does not recognize. `_may_certify` held the CA certificates to it
+    # and the leaf was never asked, so a leaf whose issuer marked an extension "do not accept
+    # me unless you process this" verified (2026-10-15).
+    unread_critical = sorted(ext.oid.dotted_string for ext in leaf.extensions
+                             if ext.critical and not isinstance(ext.value, _LEAF_EXTENSIONS_READ))
+    if unread_critical:
+        return ("the x5c leaf carries a critical extension this verifier does not process (%s), "
+                "and RFC 5280 section 4.2 refuses such a certificate" % ", ".join(unread_critical))
     if not _self_signed(leaf):
         return ""
     return ("the x5c leaf is self-signed, so it is a trust anchor and not an issuer's "
@@ -728,8 +746,9 @@ def _may_certify(ca, below):
 
     RFC 5280: a CA certificate asserts basicConstraints cA (4.2.1.9) and, when it states a key
     usage, keyCertSign (4.2.1.3); its pathLenConstraint bounds the CAs beneath it; and a critical
-    extension that this code does not read refuses the certificate (4.2). An extended key usage
-    that names purposes must admit an issuer's, as the leaf's must.
+    extension that this code does not read refuses the certificate (4.2). Its name constraints
+    (4.2.1.10) are `_name_constraints_refusal`'s. An extended key usage that names purposes must
+    admit an issuer's, as the leaf's must.
     """
     try:
         constraints = ca.extensions.get_extension_for_class(x509.BasicConstraints).value
@@ -749,7 +768,7 @@ def _may_certify(ca, below):
                 return False
         except x509.ExtensionNotFound:
             pass
-        read = (x509.BasicConstraints, x509.KeyUsage, x509.ExtendedKeyUsage)
+        read = (x509.BasicConstraints, x509.KeyUsage, x509.ExtendedKeyUsage, x509.NameConstraints)
         if any(ext.critical and not isinstance(ext.value, read) for ext in ca.extensions):
             return False
     except Exception:  # noqa: BLE001  absent or malformed basic constraints: not a CA
@@ -764,7 +783,8 @@ def _chains_to(leaf, anchor, now=None, intermediates=()):
     "" when it is. None when the path does not lead to `anchor`: a link that does not verify, a
     CA certificate that may not certify what is beneath it, or more CAs than a path length
     allows. Otherwise, for a path `anchor` does certify, why it is refused: a certificate in it
-    outside its validity period, or a leaf whose key usage does not permit signing. Each of those
+    outside its validity period, a leaf whose key usage does not permit signing, or a name outside
+    a name constraint stated above it. Each of those
     read "does not chain to any configured trust anchor" until 2026-10-10, which sent an
     integrator to the trust configuration when a certificate's dates or usage were the answer.
 
@@ -823,14 +843,155 @@ def _chains_to(leaf, anchor, now=None, intermediates=()):
     try:
         usage = leaf.extensions.get_extension_for_class(x509.KeyUsage).value
     except x509.ExtensionNotFound:
-        return ""
+        usage = None
     except Exception:  # noqa: BLE001  a malformed extension is not a usable permission
         return "the x5c leaf's key usage does not parse, so it permits no credential signing"
-    if not usage.digital_signature:
+    if usage is not None and not usage.digital_signature:
         return ("the x5c leaf's key usage does not include digitalSignature, so it permits no "
                 "credential signing")
+    # The names in the path, held to every name constraint stated above them (RFC 5280 4.2.1.10).
+    why = _name_constraints_refusal(leaf, intermediates, anchor)
+    if why:
+        return why
     # The leaf's extended key usage is `_leaf_eku_refusal`'s, read once a chain is found, so that
     # its refusal says what it is.
+    return ""
+
+
+def _dns_within(name, base):
+    """RFC 5280 4.2.1.10 for a DNS name: `base` is satisfied by any name made by adding zero or
+    more labels to its left. A `base` with a leading period takes subdomains only, as Go's
+    crypto/x509 reads one. ASCII only, compared without case; anything else matches nothing."""
+    if not (name.isascii() and base.isascii()):
+        return False
+    name, base = name.lower(), base.lower()
+    if not base:
+        return True
+    if base.startswith("."):
+        return name.endswith(base)
+    return name == base or name.endswith("." + base)
+
+
+def _uri_within(host, base):
+    """RFC 5280 4.2.1.10 for a URI, applied to its host: "host.example.com" names that host
+    alone, ".example.com" any host under it and not example.com itself."""
+    if not base.isascii():
+        return False
+    base = base.lower()
+    if base.startswith("."):
+        return host.endswith(base)
+    return host == base
+
+
+def _uri_host(uri):
+    """The host of `uri` as a domain name, lowercased, or None when it has none: no authority, an
+    IP address, a host that is not ASCII, or a URI that does not parse."""
+    try:
+        host = urllib.parse.urlsplit(uri).hostname
+    except ValueError:
+        return None
+    if not host or not host.isascii():
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    return None
+
+
+#: The name forms whose constraints `_name_constraints_refusal` applies, with how each is
+#: matched. A constraint on any other form refuses the path.
+_CONSTRAINED_NAME_FORMS = ("DNSName", "UniformResourceIdentifier")
+
+#: A host name in its one plain spelling: letters, digits and hyphens in non-empty labels
+#: separated by single dots, with no trailing dot. Under a name constraint nothing else is
+#: compared, because a subtree is matched as a string and "evil.example.", "evil%2Eexample"
+#: and "evil.example" name one host.
+_PLAIN_HOST = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*")
+
+
+def _plain_host(value, wildcard):
+    """True when `value` is a host name in the only spelling a name constraint is matched
+    against (`_PLAIN_HOST`). A DNS name (`wildcard`) may start with one "*." label. Go's
+    crypto/x509 refuses the same forms: a trailing dot or an empty label in a constrained DNS
+    name, a percent-encoded URI host."""
+    if not isinstance(value, str) or not value.isascii():
+        return False
+    value = value.lower()
+    if wildcard and value.startswith("*."):
+        value = value[2:]
+    return _PLAIN_HOST.fullmatch(value) is not None
+
+
+def _name_constraints_refusal(leaf, intermediates, anchor):
+    """"" when the names in the path keep to every name constraint stated above them, else why not.
+
+    RFC 5280 4.2.1.10: a CA's name constraints bind every certificate beneath it in the path, and
+    the trust anchor's bind the whole path. Until 2026-10-15 none was read, so an anchor permitted
+    only issuer.example vouched for a leaf naming https://other.example.
+
+    Applied to the dNSName and uniformResourceIdentifier subjectAltNames, which are the names an
+    `iss` binds to (`_leaf_names`): each such name must fall within a permitted subtree of its
+    form, when the CA states any, and within no excluded one. A URI constraint needs a host, and
+    a URI with none (a URN, an IP address) is refused under one, as 4.2.1.10 requires. So is a
+    name whose host is not plain letters, digits and hyphens in dot-separated labels
+    (`_plain_host`): "evil.example." and "evil%2Eexample" are the host an exclusion of
+    "evil.example" names, and string matching would let them through it. A CA that
+    constrains any other name form (directoryName, rfc822Name, iPAddress, otherName) refuses the
+    path: this verifier does not apply those, and a constraint it does not apply is not one it can
+    stand behind. A certificate that names nothing of a constrained form is not limited by it.
+    """
+    chain = [leaf, *intermediates, anchor]
+    for position in range(1, len(chain)):
+        ca = chain[position]
+        what = "the trust anchor" if position == len(chain) - 1 else "x5c certificate %d" % position
+        try:
+            constraints = ca.extensions.get_extension_for_class(x509.NameConstraints).value
+        except x509.ExtensionNotFound:
+            continue
+        except Exception:  # noqa: BLE001  a malformed constraint is not a usable permission
+            return "%s's name constraints do not parse" % what
+        permitted = list(constraints.permitted_subtrees or ())
+        excluded = list(constraints.excluded_subtrees or ())
+        other = sorted({type(s).__name__ for s in permitted + excluded}
+                       - set(_CONSTRAINED_NAME_FORMS))
+        if other:
+            return ("%s states name constraints on %s, which this verifier does not apply, so it "
+                    "refuses the path (RFC 5280 4.2.1.10)" % (what, ", ".join(other)))
+        for below in range(position):
+            cert = chain[below]
+            label = "the x5c leaf" if below == 0 else "x5c certificate %d" % below
+            try:
+                names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+                hosts = names.get_values_for_type(x509.DNSName)
+                uris = names.get_values_for_type(x509.UniformResourceIdentifier)
+            except x509.ExtensionNotFound:
+                continue
+            except Exception:  # noqa: BLE001  a malformed name list is not a usable statement
+                return "%s's subjectAltName does not parse" % label
+            for form, given, within in ((x509.DNSName, [(h, h) for h in hosts], _dns_within),
+                                        (x509.UniformResourceIdentifier,
+                                         [(u, _uri_host(u)) for u in uris], _uri_within)):
+                allowed = [s.value for s in permitted if isinstance(s, form)]
+                denied = [s.value for s in excluded if isinstance(s, form)]
+                if not (allowed or denied):
+                    continue
+                for name, value in given:
+                    if value is None:
+                        return ("%s names %r, which has no host name a URI constraint can be "
+                                "applied to, under %s's name constraints (RFC 5280 4.2.1.10)"
+                                % (label, name, what))
+                    if not _plain_host(value, form is x509.DNSName):
+                        return ("%s names %r, whose host is not in the plain spelling a name "
+                                "constraint is matched against (a trailing dot, an empty label, "
+                                "an escape), under %s's name constraints (RFC 5280 4.2.1.10)"
+                                % (label, name, what))
+                    if allowed and not any(within(value, base) for base in allowed):
+                        return ("%s names %r, outside the subtrees %s's name constraints permit "
+                                "(RFC 5280 4.2.1.10)" % (label, name, what))
+                    if any(within(value, base) for base in denied):
+                        return ("%s names %r, inside a subtree %s's name constraints exclude "
+                                "(RFC 5280 4.2.1.10)" % (label, name, what))
     return ""
 
 

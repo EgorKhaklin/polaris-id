@@ -168,6 +168,22 @@ NAMED_MUTANTS = (
      "    return (isinstance(value, str) and 0 < len(value) <= WALLET_NONCE_MAX\n"
      "            and _WALLET_NONCE.fullmatch(value) is not None)\n",
      "    return isinstance(value, str)\n"),
+    # RFC 5280 4.2 on the x5c leaf, and 4.2.1.10 along the chain.
+    ("sdjwt:leaf-critical-extension-ignored", "polaris_oid4vp/sdjwt.py",
+     "    if unread_critical:\n", "    if False:\n"),
+    ("sdjwt:name-constraints-ignored", "polaris_oid4vp/sdjwt.py",
+     "    why = _name_constraints_refusal(leaf, intermediates, anchor)\n", '    why = ""\n'),
+    ("sdjwt:excluded-subtrees-ignored", "polaris_oid4vp/sdjwt.py",
+     "                    if any(within(value, base) for base in denied):\n",
+     "                    if False:\n"),
+    ("sdjwt:other-name-forms-ignored", "polaris_oid4vp/sdjwt.py",
+     "        if other:\n            return (\"%s states name constraints on %s",
+     "        if False:\n            return (\"%s states name constraints on %s"),
+    ("sdjwt:uri-without-a-host-passes", "polaris_oid4vp/sdjwt.py",
+     "                    if value is None:\n", "                    if False:\n"),
+    ("sdjwt:host-spelling-unchecked", "polaris_oid4vp/sdjwt.py",
+     "                    if not _plain_host(value, form is x509.DNSName):\n",
+     "                    if False:\n"),
 )
 
 
