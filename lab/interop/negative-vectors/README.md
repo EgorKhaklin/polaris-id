@@ -3,7 +3,7 @@
 **Reader:** anyone building or testing a verifier of SD-JWT VC presentations under OpenID4VP 1.0 and
 HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 36 presentations a
 verifier must judge, each with the verdict a correct verifier reaches. Each of the 33 refusals carries the
-clause it rests on and a `class` saying how directly that clause requires the refusal.
+clauses it rests on and a `class` saying how directly they require the refusal.
 [Lab record 018](../../strategy/018-negative-vectors.md) explains why it exists and what would end it.
 
 The public suites test acceptance well and refusal thinly, and a protocol-level suite cannot always see a
