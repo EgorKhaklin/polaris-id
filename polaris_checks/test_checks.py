@@ -5475,11 +5475,15 @@ def test_verify_enforced_check_discriminates(tmp_path):
         "def verify(m, s, k):\n    return True\n"
         "def trust_anchor_public_key_hex():\n    return None\n"
         "def verify_token_signature(t, s, a):\n    return True\n"
+        "def verify_stored_signature(t, s, k, algorithm=None):\n    return True\n"
     )
     GOOD_CI = "jobs:\n  pqc-real:\n    steps:\n      run: assert verify_token_signature(x)\n"
+    CALLER = "ok = pqc_signing.verify_stored_signature(tv, sig, pk, algorithm=alg)\n"
 
-    def write(pqc, ci=GOOD_CI):
+    def write(pqc, ci=GOOD_CI, rp=CALLER, operator=CALLER):
         (web / "pqc_signing.py").write_text(pqc)
+        (web / "rp_api.py").write_text(rp)
+        (web / "operator_routes.py").write_text(operator)
         (gh / "ci.yml").write_text(ci)
 
     # 1. Missing verify_token_signature / trust anchor -> FAIL.
@@ -5491,8 +5495,10 @@ def test_verify_enforced_check_discriminates(tmp_path):
     write("def signature_with_key_for_token(t):\n    return sign(t).sig, lbl, pk\n\n"
           "def verify(m,s,k):\n    return True\n"
           "def trust_anchor_public_key_hex():\n    return None\n"
-          "def verify_token_signature(t,s,a):\n    return True\n")
-    assert checks.check_verify_enforced(tmp_path)[0].level == "FAIL", \
+          "def verify_token_signature(t,s,a):\n    return True\n"
+          "def verify_stored_signature(t,s,k):\n    return True\n")
+    f = checks.check_verify_enforced(tmp_path)[0]
+    assert f.level == "FAIL" and "self-verify" in f.message, \
         "must FAIL when signature_with_key_for_token does not self-verify"
 
     # 3. Self-verifies + functions present + CI exercises it -> OK.
@@ -5504,6 +5510,14 @@ def test_verify_enforced_check_discriminates(tmp_path):
     write(GOOD_PQC, ci="jobs:\n  pqc-real:\n    steps:\n      run: echo nothing\n")
     assert checks.check_verify_enforced(tmp_path)[0].level == "FAIL", \
         "must FAIL when CI does not exercise verify-at-use"
+
+    # 5. The relying-party door or the operator's verify route relies on a stored signature
+    #    without checking it -> FAIL.
+    for door in ("rp", "operator"):
+        write(GOOD_PQC, **{door: "ok = True\n"})
+        f = checks.check_verify_enforced(tmp_path)[0]
+        assert f.level == "FAIL" and "verify_stored_signature" in f.message, \
+            f"must FAIL when {door} does not check the stored signature"
 
 
 def test_pqc_second_witness_check_discriminates(tmp_path):
@@ -7338,14 +7352,12 @@ def test_key_custody_abstraction_check_discriminates(tmp_path):
           "def from_env():\n  os.environ.get(\"POLARIS_CUSTODY_PKCS11_PIN\"); POLARIS_CUSTODY_PKCS11_PIN_FILE\n"
           "def get_custody(): pass\n")
     PQ = ("def verify_both(): pass\ndef signature_with_key_for_token():\n    verify_both()\n"
-          "def sign():\n    cust = custody.get_custody()\n"
-          "def trust_anchor_public_keys():\n    os.environ.get(\"POLARIS_PQC_TRUST_ANCHORS_FILE\")\n")
+          "def sign():\n    cust = custody.get_custody()\n")
     good = {
         "polaris_web/custody.py": CU,
         "polaris_web/pqc_signing.py": PQ,
         "polaris_web/test_custody.py": "class FileCustodyTests: pass\nclass AwsKmsCustodyTests: pass\n"
-                                       "class Pkcs11CustodyTests: pass\nclass _KmsStandIn: pass\n"
-                                       "POLARIS_PQC_TRUST_ANCHORS_FILE\n",
+                                       "class Pkcs11CustodyTests: pass\nclass _KmsStandIn: pass\n",
         "polaris_web/requirements-custody.txt": "python-pkcs11==0.9.5\nboto3==1.43.85\n",
         ".github/workflows/ci.yml": "run: dnf install kryoptic; pip install -r polaris_web/requirements-custody.txt; "
                                     "POLARIS_CUSTODY_PKCS11_REQUIRE=1 python -m unittest test_custody\n",
@@ -10379,9 +10391,10 @@ def test_key_rotation_drilled_check_discriminates(tmp_path):
         "    def test_in_token_rotation_old_token_still_verifies_new_key_signs(self):\n"
         "        new_pk = custody.pkcs11_generate_key(self.module, self.token, self.pin, self.label + '-v2')\n"
         "        self.assertNotEqual(new_pk, self.pk)\n"
-        "        sig_old, alg, _ = pqc_signing.signature_with_key_for_token('token-ROT-1')\n"
-        "        self.assertTrue(pqc_signing.verify_token_signature('token-ROT-1', sig_old, alg))\n"
-        "        self.assertTrue(pqc_signing.verify_token_signature('token-ROT-2', sig_old, alg))\n"
+        "        sig_old, alg, pk_old = pqc_signing.signature_with_key_for_token('token-ROT-1')\n"
+        "        sig_new, alg2, _ = pqc_signing.signature_with_key_for_token('token-ROT-2')\n"
+        "        self.assertTrue(pqc_signing.verify_token_signature('token-ROT-2', sig_new, alg2))\n"
+        "        self.assertTrue(pqc_signing.verify_stored_signature('token-ROT-1', sig_old, pk_old, algorithm=alg))\n"
         "        self.assertFalse(pqc_signing.verify_token_signature('token-ROT-1', sig_old, alg))\n"
         "    def _z(self):\n        pass\n"
     )
@@ -10419,10 +10432,18 @@ def test_key_rotation_drilled_check_discriminates(tmp_path):
     # 1. the in-token rotation test is gone
     write({"polaris_web/test_custody.py": "class Pkcs11CustodyTests(unittest.TestCase):\n    def _z(self):\n        pass\n"})
     assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL without the in-token rotation test"
-    # 2. it no longer proves retirement (old token fails once the anchor is dropped)
-    write({"polaris_web/test_custody.py": TC.replace(
-        "        self.assertFalse(pqc_signing.verify_token_signature('token-ROT-1', sig_old, alg))\n", "")})
-    assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL without the retirement assertion"
+    # 2. it no longer proves the custody key stops verifying the old token, that the old token
+    #    still verifies under its stored key, or that the new key signs
+    for line, why in (("        self.assertFalse(pqc_signing.verify_token_signature('token-ROT-1', sig_old, alg))\n",
+                       "the custody key no longer verifies"),
+                      ("        self.assertTrue(pqc_signing.verify_stored_signature('token-ROT-1', sig_old, pk_old, algorithm=alg))\n",
+                       "verify_stored_signature"),
+                      ("        self.assertTrue(pqc_signing.verify_token_signature('token-ROT-2', sig_new, alg2))\n",
+                       "the new key signs")):
+        assert line in TC
+        write({"polaris_web/test_custody.py": TC.replace(line, "")})
+        f = checks.check_key_rotation_drilled(tmp_path)[0]
+        assert f.level == "FAIL" and why in f.message, f"must FAIL without that assertion ({why})"
     # 3. the drill no longer runs the in-token suite
     write({"scripts/polaris-custody-pkcs11-drill.sh": "#!/usr/bin/env bash\necho skip\n"})
     assert checks.check_key_rotation_drilled(tmp_path)[0].level == "FAIL", "must FAIL when the drill does not run Pkcs11CustodyTests"

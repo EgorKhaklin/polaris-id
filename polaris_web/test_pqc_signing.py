@@ -660,47 +660,6 @@ class HeldOutVerificationTests(unittest.TestCase):
         with mock.patch.object(pqc_signing, '_OQS_AVAILABLE', False):
             self.assertFalse(pqc_signing.verify_stored_signature(token, placeholder, 'ab' * 1952))
 
-    def _anchors_file(self, doc):
-        import json
-        import tempfile
-        fd, path = tempfile.mkstemp(suffix='.json')
-        with os.fdopen(fd, 'w') as fh:
-            json.dump(doc, fh)
-        return path
-
-    def _anchors(self, doc):
-        from unittest import mock
-        path = self._anchors_file(doc)
-        with mock.patch.dict(os.environ, {'POLARIS_PQC_TRUST_ANCHORS_FILE': path}), \
-                mock.patch.object(pqc_signing, 'trust_anchor_public_key_hex', return_value=None):
-            return pqc_signing.trust_anchor_public_keys()
-
-    def test_a_previous_anchor_is_read_from_the_file(self):
-        """The control for the two refusals below: a well-formed file adds its anchors."""
-        self.assertEqual(self._anchors({'anchors': [{'public_key_hex': 'ab' * 1952}]}), ['ab' * 1952])
-
-    def test_an_anchor_that_is_not_hex_fails_loud(self):
-        """Trust must not shrink silently, and it must not grow by a key nothing can parse."""
-        with self.assertRaises(RuntimeError):
-            self._anchors({'anchors': [{'public_key_hex': 'not-hex'}]})
-
-    def test_an_anchor_entry_with_no_key_fails_loud(self):
-        with self.assertRaises(RuntimeError):
-            self._anchors({'anchors': [{'label': 'retired 2026', 'retired': True}]})
-
-    def test_an_anchor_of_no_accepted_length_fails_loud(self):
-        """KEY-CEREMONY: a malformed anchors file fails loud rather than silently shrinking
-        trust. An empty key, a short one or a genuine key cut short loaded and verified nothing."""
-        for pk in ('', 'abababab', 'ab' * 1951):
-            with self.assertRaises(RuntimeError, msg='%d hex characters' % len(pk)):
-                self._anchors({'anchors': [{'public_key_hex': pk}]})
-
-    def test_an_anchor_written_with_whitespace_fails_loud(self):
-        """Every verify reads a key as hex digits only, so an anchor with a space in it would
-        load and then verify nothing: trust shrinking silently, which this loader refuses."""
-        with self.assertRaises(RuntimeError):
-            self._anchors({'anchors': [{'public_key_hex': 'abab abab'}]})
-
 
 @unittest.skipUnless(pqc_signing.is_available(),
                      "liboqs-python not importable; the allowlist is only reachable with it")

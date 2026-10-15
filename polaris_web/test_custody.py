@@ -20,8 +20,7 @@ signs. Each driver is exercised for real, not mocked:
                         POLARIS_CUSTODY_PKCS11_MODULE is set; the CI job also
                         sets POLARIS_CUSTODY_PKCS11_REQUIRE=1 so a skip is a
                         failure there.
-  EnvSelectionTests     driver selection, the PIN-never-from-env refusal, the
-                        rotation anchors file.
+  EnvSelectionTests     driver selection and the PIN-never-from-env refusal.
 
 Run: python3 -m unittest test_custody
 """
@@ -77,7 +76,7 @@ class _EnvSnapshot:
     KEYS = ("POLARIS_CUSTODY_DRIVER", "POLARIS_PQC_SIGNING_KEY_FILE", "POLARIS_CUSTODY_PKCS11_MODULE",
             "POLARIS_CUSTODY_PKCS11_TOKEN_LABEL", "POLARIS_CUSTODY_PKCS11_PIN_FILE", "POLARIS_CUSTODY_PKCS11_PIN",
             "POLARIS_CUSTODY_PKCS11_KEY_LABEL", "POLARIS_CUSTODY_AWSKMS_KEY_ID", "POLARIS_CUSTODY_AWSKMS_REGION",
-            "POLARIS_CUSTODY_AWSKMS_ENDPOINT_URL", "POLARIS_PQC_TRUST_ANCHORS_FILE", "POLARIS_USE_REAL_PQC",
+            "POLARIS_CUSTODY_AWSKMS_ENDPOINT_URL", "POLARIS_USE_REAL_PQC",
             "POLARIS_AGENCY_KEYS_DIR", "POLARIS_MIGRATION_SIGNING_KEY_FILE", "POLARIS_ENV",
             "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")
 
@@ -165,33 +164,30 @@ class FileCustodyTests(unittest.TestCase):
             with self.assertRaises(custody.CustodyError, msg=repr(bad)):
                 c.sign_message(bad)
 
-    def test_rotation_anchor_file_keeps_old_key_verifying(self):
+    def test_after_a_rotation_an_old_token_verifies_under_its_stored_key(self):
+        """A rotation switches the custody key. A token signed before it still verifies under
+        the public key stored with its signature, as the relying-party door checks it; the
+        custody key, now the new one, does not verify it, and the new key signs."""
         os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = self.kf.name
         os.environ["POLARIS_USE_REAL_PQC"] = "1"
         custody.reset()
-        sig, alg, _pk = pqc_signing.signature_with_key_for_token("token-ABC")
-        self.assertEqual(alg, "ML-DSA-65")
+        sig, alg, pk_old = pqc_signing.signature_with_key_for_token("token-ABC")
+        self.assertEqual((alg, pk_old), ("ML-DSA-65", self.kp["public_key_hex"]))
         self.assertTrue(pqc_signing.verify_token_signature("token-ABC", sig, alg))
-        # Rotate: a NEW current key; the old signature must fail without an anchor
-        # for the old key, and verify again once the old key is listed.
         newkp = pqc_signing.generate_keypair()
         nf = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         json.dump(newkp, nf); nf.close()
-        af = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-        json.dump({"anchors": [{"public_key_hex": self.kp["public_key_hex"], "label": "issuer-2026",
-                                "retired": "2026-09-01"}]}, af); af.close()
         try:
             os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = nf.name
             custody.reset()
+            self.assertEqual(pqc_signing.trust_anchor_public_key_hex(), newkp["public_key_hex"])
+            self.assertTrue(pqc_signing.verify_stored_signature("token-ABC", sig, pk_old, algorithm=alg))
             self.assertFalse(pqc_signing.verify_token_signature("token-ABC", sig, alg))
-            os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"] = af.name
-            self.assertTrue(pqc_signing.verify_token_signature("token-ABC", sig, alg))
-            self.assertEqual(pqc_signing.trust_anchor_public_keys()[0], newkp["public_key_hex"])
-            os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"] = "/nonexistent/anchors.json"
-            with self.assertRaises(RuntimeError):
-                pqc_signing.trust_anchor_public_keys()
+            sig_new, alg_new, pk_new = pqc_signing.signature_with_key_for_token("token-DEF")
+            self.assertEqual(pk_new, newkp["public_key_hex"])
+            self.assertTrue(pqc_signing.verify_token_signature("token-DEF", sig_new, alg_new))
         finally:
-            os.unlink(nf.name); os.unlink(af.name)
+            os.unlink(nf.name)
 
 
 # ---------------------------------------------------------------------------
@@ -653,10 +649,11 @@ class Pkcs11CustodyTests(unittest.TestCase):
         os.unlink(pf.name)
 
     def test_in_token_rotation_old_token_still_verifies_new_key_signs(self):
-        """PE.4: rotate the in-token issuer key. A token signed under the OLD key
-        must STILL verify (its public key stays a trusted anchor), while new
-        issuance signs under the NEW key — the sole-HSM profile's rotation, end to
-        end and in-token. Dropping the old anchor completes retirement."""
+        """PE.4: rotate the in-token issuer key. New issuance signs under the NEW key, and a
+        token signed under the OLD key still verifies under the public key stored with its
+        signature, as the relying-party door checks it, while the custody key, now the new
+        one, no longer verifies it: the sole-HSM profile's rotation, end to end and in-token.
+        The key register says whether the old key was authorized when it signed."""
         if not pqc_signing.is_available():
             self.skipTest("liboqs not installed")
         pin_file = tempfile.NamedTemporaryFile("w", delete=False)
@@ -664,9 +661,6 @@ class Pkcs11CustodyTests(unittest.TestCase):
         new_label = self.label + "-v2"
         new_pk = custody.pkcs11_generate_key(self.module, self.token, self.pin, new_label)
         self.assertNotEqual(new_pk, self.pk)  # two distinct in-token roots
-        anchors = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-        json.dump({"anchors": [{"public_key_hex": self.pk.hex(), "label": self.label,
-                                "retired": "2026-09-08"}]}, anchors); anchors.close()
         try:
             with _EnvSnapshot():
                 base = {"POLARIS_CUSTODY_DRIVER": "pkcs11",
@@ -681,22 +675,20 @@ class Pkcs11CustodyTests(unittest.TestCase):
                 sig_old, alg, pk_old = pqc_signing.signature_with_key_for_token("token-ROT-1")
                 self.assertEqual(pk_old, self.pk.hex())
                 self.assertTrue(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
-                # ROTATE: current key = v2, with v1 listed as a previous trusted anchor.
+                # ROTATE: the custody key is now v2.
                 os.environ["POLARIS_CUSTODY_PKCS11_KEY_LABEL"] = new_label
-                os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"] = anchors.name
                 custody.reset()
                 sig_new, alg2, pk_new = pqc_signing.signature_with_key_for_token("token-ROT-2")
                 self.assertEqual(pk_new, new_pk.hex())
-                self.assertEqual(pqc_signing.trust_anchor_public_keys()[0], new_pk.hex())  # current is v2
-                # New token verifies (v2); the OLD token STILL verifies (v1 is a listed anchor).
+                self.assertEqual(pqc_signing.trust_anchor_public_key_hex(), new_pk.hex())
                 self.assertTrue(pqc_signing.verify_token_signature("token-ROT-2", sig_new, alg2))
-                self.assertTrue(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
-                # Retirement complete: drop v1's anchor and the old token no longer verifies.
-                del os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"]
-                custody.reset()
+                # The OLD token still verifies under the key stored with its signature (v1), and
+                # the custody key (v2) does not verify it.
+                self.assertTrue(pqc_signing.verify_stored_signature("token-ROT-1", sig_old, pk_old,
+                                                                    algorithm=alg))
                 self.assertFalse(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
         finally:
-            os.unlink(pin_file.name); os.unlink(anchors.name)
+            os.unlink(pin_file.name)
 
 
 # ---------------------------------------------------------------------------

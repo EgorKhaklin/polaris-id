@@ -1107,66 +1107,34 @@ def trust_anchor_public_key_hex() -> Optional[str]:
     return cust.public_key().hex()
 
 
-_TRUST_ANCHORS_ENV = "POLARIS_PQC_TRUST_ANCHORS_FILE"
-
-
-def trust_anchor_public_keys() -> list:
-    """All acceptable anchors, hex: the CURRENT custodied key first, then the
-    previous keys listed in POLARIS_PQC_TRUST_ANCHORS_FILE (a JSON document
-    {"anchors": [{"public_key_hex": ..., "label": ..., "retired": ...}]}). This is
-    what makes key rotation possible: tokens signed under a previous key keep
-    verifying until the operator removes that anchor (KEY-CEREMONY.md).
-    A malformed anchors file fails loud rather than silently shrinking trust."""
-    anchors = []
-    current = trust_anchor_public_key_hex()
-    if current:
-        anchors.append(current)
-    path = os.environ.get(_TRUST_ANCHORS_ENV)
-    if path:
-        try:
-            with open(path) as fh:
-                doc = json.load(fh)
-            for entry in doc.get("anchors", []):
-                pk = entry["public_key_hex"]
-                # A key of no accepted parameter set's length verifies nothing, so loading it
-                # would shrink trust silently: refused like any other malformed anchor.
-                if custody.algorithm_for_public_key(unhex(pk)) is None:
-                    raise ValueError("an anchor is not a public key of an accepted parameter set "
-                                     "(%s)" % ", ".join(ACCEPTED_ALGORITHMS))
-                if pk not in anchors:
-                    anchors.append(pk)
-        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-            raise RuntimeError(f"{_TRUST_ANCHORS_ENV}={path} is unreadable/malformed: {exc}") from exc
-    return anchors
-
-
 def verify_token_signature(
     token_value: str,
     signature_bytes: bytes,
     algorithm_label: str,
 ) -> bool:
-    """Verify a stored `TokenSignature` against its token — the use-path check.
+    """Verify a signature over `token_value` under the CURRENT custody key.
 
-    Dispatch on the algorithm recorded WITH the signature (not the current
-    process mode), so a token signed under one mode verifies correctly later:
+    No route calls this. The relying-party door and the operator's verify route
+    check a stored signature under the public key stored with it
+    (`verify_stored_signature`), which is what keeps a credential signed under a
+    retired key verifying; the key register says whether that key was authorized
+    when it signed (KEY-CEREMONY.md). This answers only whether the configured key
+    made the signature: CI (the pqc-real job, and a check inside the prod image)
+    and the tests use it. Dispatch on the algorithm recorded with the signature:
 
-    - ``"ML-DSA-65"`` — a real signature. Verified against the trust-anchor
-      public key (`trust_anchor_public_key_hex`). Returns False when no trust
-      anchor is configured (cannot prove authenticity without it) or the
-      signature does not check out. This is a genuine authenticity proof: only
-      the holder of the anchor's private key could have produced it.
-    - ``PLACEHOLDER_LABEL`` — the deterministic SHA3-256 binding. Verification is
-      an integrity recompute + constant-time compare. This is NOT an authenticity
-      proof (there is no key); it only confirms the bytes match `token_value`.
-    - anything else — False (unknown signature scheme).
+    - an accepted ML-DSA parameter set: verified by both witnesses against
+      `trust_anchor_public_key_hex`. False when no custody is configured or the
+      signature does not check out, which includes one an earlier key made.
+    - ``PLACEHOLDER_LABEL``: the deterministic SHA3-256 binding, recomputed and
+      compared in constant time. An integrity check, not authenticity (there is
+      no key): it only confirms the bytes match `token_value`.
+    - anything else: False (unknown signature scheme).
     """
     if _verifies_under(algorithm_label):
-        anchors = trust_anchor_public_keys()
-        if not anchors:
+        current = trust_anchor_public_key_hex()
+        if not current:
             return False
-        # The current key first, then any previous keys still trusted (rotation).
-        return any(verify_both(token_value.encode("utf-8"), signature_bytes.hex(), a, algorithm=algorithm_label)
-                   for a in anchors)
+        return verify_both(token_value.encode("utf-8"), signature_bytes.hex(), current, algorithm=algorithm_label)
     if algorithm_label == PLACEHOLDER_LABEL:
         import hmac
         expected = hashlib.sha3_256(token_value.encode("utf-8")).digest()

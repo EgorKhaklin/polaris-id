@@ -101,7 +101,6 @@ SETTINGS: tuple[Setting, ...] = (
     _s("POLARIS_PQC_ALGORITHM", group="signing", doc="Issuer signing algorithm (default ML-DSA-65)."),
     _s("POLARIS_PQC_SIGNING_KEY_FILE", "file", None, "signing",
        "File custody: the issuer key. Production requires it unless POLARIS_CUSTODY_DRIVER is pkcs11 or awskms."),
-    _s("POLARIS_PQC_TRUST_ANCHORS_FILE", "file", None, "signing", "Earlier public keys pqc_signing.verify_token_signature accepts; a rotation uses the key register instead (KEY-CEREMONY.md)."),
     _s("POLARIS_MIGRATION_SIGNING_KEY_FILE", "file", None, "signing", "Key for a signature migration's target algorithm."),
     _s("POLARIS_AGENCY_KEYS_DIR", "dir", None, "signing", "Per-agency federation keys."),
     _s("POLARIS_CREDENTIAL_COPY_KEYS_DIR", "dir", None, "signing", "ES256 wallet-copy keys."),

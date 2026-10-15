@@ -103,9 +103,9 @@ are not checked, so keep the key under a path only the deploy's owner and root c
 bits are accepted: who can read the key is bounded by the 0700 secrets directory under Compose and
 the pod's secret mount under Helm, not by the file's mode.
 Back it up sealed (an encrypted
-copy in two locations, under dual control) before the first token is issued; a lost file means every
-future token needs a new key and the old public key stays in the trust anchors
-forever. Restrict the host per [`HARDENING.md`](HARDENING.md) (auditd watches
+copy in two locations, under dual control) before the first token is issued; a lost file means a
+rotation to a new key, and the old public key stays published until every credential it signed
+has expired ([Rotation](#rotation)). Restrict the host per [`HARDENING.md`](HARDENING.md) (auditd watches
 `polaris_web/secrets`).
 
 ### pkcs11
@@ -191,9 +191,9 @@ cryptographically its own (roadmap PE.3b), give each agency its own key:
 3. Once registered, `/uc1/issue` REFUSES to issue a token for that agency whose real
    signature was produced by any other key, and `GET /api/tokens/<id>/verify`
    reports `issuer_authentic` — whether the token was signed by its issuing agency's
-   registered key. Rotate an agency's key the same way as the global key (below),
-   updating its registered `signing_public_key_hex` and keeping the old key as a
-   trust anchor until its tokens expire.
+   registered key. Rotate an agency's key the same way as the global key (below):
+   register the new key and retire the old one, which stays published until its
+   tokens expire.
 
 ## Wallet-copy keys (ES256)
 
@@ -263,10 +263,6 @@ published, the other credential is refused; the signed trust list says retired a
 after the old key is declared compromised from before the first credential, that credential is
 no longer authorized at signing while the second is untouched.
 
-`POLARIS_PQC_TRUST_ANCHORS_FILE` lists earlier public keys that
-`pqc_signing.verify_token_signature` accepts, which the custody tests below use. No route of
-the running application reads it, so it plays no part in a rotation; the register does.
-
 ## How this is tested
 
 `polaris_web/test_custody.py`: the file driver signs and both witnesses verify;
@@ -275,12 +271,12 @@ implements KMS's `DescribeKey` / `GetPublicKey` / `Sign` and signs with OpenSSL'
 ML-DSA-65 (wrong key spec and a disabled key are refused at load); the PKCS#11
 driver runs against a real PKCS#11 v3.2 token in CI (Kryoptic, Fedora 43, job
 `custody-pkcs11`): key generated in-token, `CKM_ML_DSA` signatures verified by
-liboqs and OpenSSL, duplicate labels refused. Rotation is tested end to end:
-a token signed under the old key stops verifying after the switch and verifies
-again once the old key is an anchor. In-token rotation is drilled too (PE.4): a
-second key is generated INSIDE the token under a new label, a token signed under
-the old in-token key still verifies after the switch while the new key signs, and
-dropping the old anchor completes retirement
+liboqs and OpenSSL, duplicate labels refused. Rotation is tested for the file
+driver and drilled in-token (PE.4): a second key is generated INSIDE the token
+under a new label; after the switch the new key signs, and a token signed under
+the old key still verifies under the public key stored with its signature, as
+the relying-party door and `GET /api/tokens/<id>/verify` check it, while the
+custody key alone no longer verifies it
 (`test_in_token_rotation_old_token_still_verifies_new_key_signs`, run against the
 real Kryoptic token by the `custody-pkcs11` job; pinned by
 `check_key_rotation_drilled`). An opt-in live test runs against a real
