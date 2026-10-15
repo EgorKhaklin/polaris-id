@@ -32,6 +32,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -189,6 +190,67 @@ class FileCustodyTests(unittest.TestCase):
                 pqc_signing.trust_anchor_public_keys()
         finally:
             os.unlink(nf.name); os.unlink(af.name)
+
+
+# ---------------------------------------------------------------------------
+class FileKeyLoaderTests(unittest.TestCase):
+    """The file driver reads the issuer key only from a regular file that group and others
+    cannot write: whoever can write the key file can substitute the key. Read bits are
+    accepted, since the shipped Compose secret is 0644 inside the 0700 secrets directory and
+    Helm mounts it 0440. The key here has the right shape and is never used (zeros), so
+    loading it needs no liboqs."""
+
+    def setUp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.dir = d.name
+        self.path = os.path.join(self.dir, "polaris_signing_key")
+        with open(self.path, "w") as fh:
+            json.dump({"algorithm": "ML-DSA-65", "secret_key_hex": "00" * 4032,
+                       "public_key_hex": "00" * custody.PUBLIC_KEY_LEN}, fh)
+
+    def test_the_shipped_modes_load(self):
+        for mode in (0o600, 0o644, 0o440, 0o400):
+            with self.subTest(mode=oct(mode)):
+                os.chmod(self.path, mode)
+                self.assertEqual(custody.FileCustody(self.path).public_key(),
+                                 bytes(custody.PUBLIC_KEY_LEN))
+
+    def test_a_key_file_group_or_others_can_write_is_refused(self):
+        for mode in (0o666, 0o620, 0o602):
+            with self.subTest(mode=oct(mode)):
+                os.chmod(self.path, mode)
+                with self.assertRaisesRegex(custody.CustodyError, "writable by group or others"):
+                    custody.FileCustody(self.path)
+
+    def test_a_fifo_is_refused_without_blocking(self):
+        """Opened for reading, a FIFO blocks until a writer comes. A load still blocked after
+        five seconds reads red, and the test then releases it, so a failure never leaves the
+        suite stuck."""
+        fifo = os.path.join(self.dir, "fifo")
+        os.mkfifo(fifo, 0o600)
+        outcome = []
+
+        def load():
+            try:
+                custody.FileCustody(fifo)
+                outcome.append("loaded")
+            except Exception as exc:  # noqa: BLE001  the assertion below names what it was
+                outcome.append(f"{type(exc).__name__}: {exc}")
+
+        t = threading.Thread(target=load, daemon=True)
+        t.start()
+        t.join(5)
+        if t.is_alive():
+            try:  # a writer that opens and closes gives the blocked reader end-of-file
+                os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+            t.join(5)
+            self.fail("FileCustody blocked opening a FIFO instead of refusing it")
+        self.assertEqual(len(outcome), 1, outcome)
+        self.assertTrue(outcome[0].startswith("CustodyError: "), outcome)
+        self.assertIn("is not a regular file", outcome[0])
 
 
 # ---------------------------------------------------------------------------

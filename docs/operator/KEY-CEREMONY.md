@@ -92,7 +92,10 @@ file that another host user owns (measured on a Linux Docker Engine, 2026-10-14)
 the private key's confidentiality therefore rests on that directory against other unprivileged
 users on the host. Root and members of the `docker` group, which
 [HARDENING.md](HARDENING.md#5-the-docker-daemon) calls root-equivalent, can read it, and the app,
-which must read the key, reads it through the mount. Back it up sealed (an encrypted
+which must read the key, reads it through the mount. The file driver refuses a key file that is
+not a regular file or that group or others can write, and accepts read bits: what bounds who can
+read the key is the 0700 secrets directory under Compose and the pod's secret mount under Helm,
+not the file's mode. Back it up sealed (an encrypted
 copy in two locations, under dual control) before the first token is issued; a lost file means every
 future token needs a new key and the old public key stays in the trust anchors
 forever. Restrict the host per [`HARDENING.md`](HARDENING.md) (auditd watches

@@ -55,6 +55,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 from typing import Optional
 
@@ -209,6 +210,29 @@ class KeyCustody:
 # ---------------------------------------------------------------------------
 # file
 # ---------------------------------------------------------------------------
+def _read_key_file(path: str) -> bytes:
+    """The key file's bytes, checked on the descriptor that reads them, so the file checked is
+    the file read. Refused: anything but a regular file (the open does not block, so a FIFO
+    cannot hang the load), and a file group or others can write, since whoever can write the
+    key can substitute it. Read bits are not refused: the shipped Compose secret is 0644 inside
+    the 0700 secrets directory and Helm mounts it 0440, so the directory and the secret mount
+    bound who can read it (KEY-CEREMONY.md)."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise CustodyError(f"file: {path} is not a regular file")
+        mode = stat.S_IMODE(st.st_mode)
+        if mode & 0o022:
+            raise CustodyError(f"file: {path} is writable by group or others (mode {mode:04o}); "
+                               "whoever can write the key can substitute it")
+    except BaseException:
+        os.close(fd)
+        raise
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read()
+
+
 class FileCustody(KeyCustody):
     """The JSON key file (development and small deployments). The secret key is
     in process memory; that is the trade-off this driver makes explicit."""
@@ -218,8 +242,7 @@ class FileCustody(KeyCustody):
     def __init__(self, path: str):
         self._path = path
         try:
-            with open(path) as fh:
-                data = json.load(fh)
+            data = json.loads(_read_key_file(path))
             if signing_sizes(data.get("algorithm")) is None:
                 raise CustodyError(f"file: {path}: {_refusal(data.get('algorithm'))}")
             self.algorithm = data["algorithm"]
