@@ -2627,7 +2627,11 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     from the signer anchors: valid_long_term requires the timestamp trusted AND independent of
     the signing key, so neither a stranger's timestamp nor a signer's own (backdatable) one counts.
     valid_long_term is the conjunction: it holds even after the key is rotated or retired,
-    because it is decided at the instant the evidence fixes, not now. No network."""
+    because it is decided at the instant the evidence fixes, not now. With trusted_anchors it
+    also requires the SIGNER trusted: its key among the anchors, or active at the instant on a
+    trust list whose publisher is among them. The manifest in the container is the signer's
+    own, so without that a stranger's key with its own manifest and a trusted authority's
+    timestamp was valid long-term. No network."""
     if not isinstance(doc, dict):
         doc = {}
     d = doc.get("document") if isinstance(doc.get("document"), dict) else {}
@@ -2747,10 +2751,18 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     # P8.7b: with a trust list the verifier trusts, the signer key's status AT THE INSTANT is
     # decided independently of the signer's own manifest (which a compromised key could forge).
     L["signer_key_status_per_trust_list"] = None
+    listed_by_trusted_publisher = False
     if trust_list is not None:
         tlv = verify_trust_list(trust_list, now=now, trusted_anchors=trusted_anchors)
         L["signer_key_status_per_trust_list"] = (key_status_at(trust_list, signer_key, instant)
                                                  if (tlv["trust_list_authentic"] and tlv["fresh"] and instant is not None) else None)
+        listed_by_trusted_publisher = (tlv.get("issuer_trusted") is True
+                                       and L["signer_key_status_per_trust_list"] == "active")
+    # A trust anchor set names who may sign. The signer's own manifest says only that the key
+    # was active in ITS OWN view, so with anchors the signer must be one of them, or be listed
+    # active at the instant by a trust list one of them publishes.
+    signer_trust_ok = (trusted_anchors is None or v["signer_trusted"] is True
+                       or listed_by_trusted_publisher)
     # P8.5b (v9.341): every timestamp the container carries (ltv.timestamp, then ltv.timestamps)
     # is judged the same way; those that are authentic, bound, trusted and independent of the
     # signer count toward a QUORUM of distinct authorities. An anchored timestamp (inclusion
@@ -2802,7 +2814,8 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
                                 and L["independent_timestamps"] >= quorum and anchored_ok
                                 and L["signer_key_active_at_instant"]
                                 and L["credential_unrevoked_at_instant"] is not False
-                                and (trust_list is None or L["signer_key_status_per_trust_list"] == "active"))
+                                and (trust_list is None or L["signer_key_status_per_trust_list"] == "active")
+                                and signer_trust_ok)
     if not v["valid_long_term"]:
         v["note"] = "long-term validation failed: " + ", ".join(
             k for k in ("timestamp_authentic", "timestamp_binds", "timestamp_independent", "signer_key_active_at_instant") if not L[k]
@@ -2815,7 +2828,9 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         ) + (", no anchored timestamp under an anchored policy" if (require_anchored and not L["timestamp_anchored"])
              else (", the anchor's head is not witnessed by a trusted witness"
                    if (require_anchored and trusted_witnesses is not None and not L["timestamp_witnessed"]) else "")
-        ) + (", " + revocation_why if L["credential_unrevoked_at_instant"] is False else "")
+        ) + (", " + revocation_why if L["credential_unrevoked_at_instant"] is False else ""
+        ) + (", signer not trusted: its key is not among the trusted anchors nor active on a "
+             "trust list they publish" if not signer_trust_ok else "")
     return v
 
 

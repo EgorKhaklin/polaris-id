@@ -37,7 +37,9 @@ signature provably existed then), and the signer's **manifest**, **epoch checkpo
 **revocation feed** as of then. `verify_signed_document` decides `valid_long_term` at that
 instant: the timestamp is authentic and binds the signature material; the manifest was
 authentic and fresh at the instant and lists the signing key as active; and, for a
-holder-authorized signature, the feed at the instant does not list the credential hash. A
+holder-authorized signature, the feed at the instant does not list the credential hash. Given
+signer anchors, it also requires the signer trusted, its key among them or active at the instant
+on a trust list one of them publishes, since the manifest in the container is the signer's own. A
 container timestamped while the key was active therefore stays valid after the key is retired,
 and one whose evidence shows the key already retired at its instant does not; a re-signed
 container is not covered by the old evidence, because the timestamp binds the signature.

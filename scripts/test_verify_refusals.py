@@ -932,6 +932,29 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
         self.assertEqual(retired["ltv"]["signer_key_status_per_trust_list"], "retired")
         self.assertIs(retired["valid_long_term"], False)
 
+    def test_with_anchors_an_untrusted_signer_is_not_valid_long_term(self):
+        """The container's manifest is the signer's own, so it says only that the key was active
+        in the signer's view. Before 2026-10-15 a stranger's key, its own manifest and a trusted
+        authority's timestamp were valid_long_term with signer_trusted False beside it."""
+        stranger = self.decide(self.container(), trusted_anchors=[self.second[1].hex()])
+        self.assertIs(stranger["signer_trusted"], False)
+        self.assertIs(stranger["ltv"]["signer_key_active_at_instant"], True,
+                      "the signer's own manifest still lists its key: only trust is missing")
+        self.assertIs(stranger["valid_long_term"], False)
+        self.assertIn("signer not trusted", stranger["note"])
+        # A trust list whose publisher is not an anchor does not vouch for the signer either.
+        unvouched = self.decide(self.container(), trust_list=self.trust_list(),
+                                trusted_anchors=[self.second[1].hex()])
+        self.assertEqual(unvouched["ltv"]["signer_key_status_per_trust_list"], "active")
+        self.assertIs(unvouched["valid_long_term"], False)
+        self.assertIn("signer not trusted", unvouched["note"])
+        # The controls: the signer among the anchors, or listed by an anchor's trust list.
+        anchored = self.decide(self.container(), trusted_anchors=[self.signer[1].hex()])
+        self.assertIs(anchored["valid_long_term"], True, anchored["note"])
+        listed = self.decide(self.container(), trust_list=self.trust_list(),
+                             trusted_anchors=[self.publisher[1].hex()])
+        self.assertIs(listed["valid_long_term"], True, listed["note"])
+
     def test_each_refusal_of_the_signature_itself(self):
         good = self.document()
         for doc, why in ((dict(good, format="polaris-signed-document/2"), "not a polaris-signed-document/1"),
