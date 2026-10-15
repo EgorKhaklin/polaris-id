@@ -30,10 +30,12 @@ import base64
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import custody
@@ -193,13 +195,56 @@ class FileCustodyTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+class _Owned:
+    """A stat result with another owner: the owners a test cannot create without root."""
+
+    def __init__(self, st, uid):
+        self._st, self.st_uid = st, uid
+
+    def __getattr__(self, attr):
+        return getattr(self._st, attr)
+
+
+def _lstat_owned_by(path, uid):
+    """os.lstat, reporting `uid` as the owner of the entry `path` names."""
+    real, name = os.lstat, os.path.abspath(path)
+
+    def lstat(p, *a, **kw):
+        st = real(p, *a, **kw)
+        return _Owned(st, uid) if os.fspath(p) == name else st
+    return mock.patch.object(custody.os, "lstat", lstat)
+
+
+def _fstat_owned_by(path, uid):
+    """os.fstat, reporting `uid` as the owner of the file `path` names, once opened."""
+    real, target = os.fstat, os.stat(path)
+
+    def fstat(fd):
+        st = real(fd)
+        same = (st.st_dev, st.st_ino) == (target.st_dev, target.st_ino)
+        return _Owned(st, uid) if same else st
+    return mock.patch.object(custody.os, "fstat", fstat)
+
+
+#: Loads the key file argv[2] with the custody module in argv[1], as whichever user runs it.
+_LOAD = ("import sys\n"
+         "sys.path.insert(0, sys.argv[1])\n"
+         "import custody\n"
+         "try:\n"
+         "    custody.FileCustody(sys.argv[2])\n"
+         "    print('loaded')\n"
+         "except custody.CustodyError as exc:\n"
+         "    print('refused:', exc)\n")
+
+
 class FileKeyLoaderTests(unittest.TestCase):
     """The file driver reads the issuer key only from a regular file that group and others
-    cannot write, in directories they cannot write unless the sticky bit is set: whoever can
-    write the file can rewrite the key, and whoever can write its directory can replace it.
-    Read bits are accepted, since the shipped Compose secret is 0644 inside the 0700 secrets
-    directory and Helm mounts it 0440. The key here has the right shape and is never used
-    (zeros), so loading it needs no liboqs."""
+    cannot write, in directories they cannot write, or in a sticky one where root or this
+    process owns the entry: whoever can write the file can rewrite the key, whoever can write
+    its directory can replace it, and in a sticky directory whoever creates the name first owns
+    it. Read bits are accepted, since the shipped Compose secret is 0644 inside the 0700
+    secrets directory and Helm mounts it 0440. The key here has the right shape and is never
+    used (zeros), so loading it needs no liboqs."""
 
     def setUp(self):
         d = tempfile.TemporaryDirectory()
@@ -236,7 +281,8 @@ class FileKeyLoaderTests(unittest.TestCase):
 
     def test_a_key_in_a_sticky_directory_loads(self):
         """The sticky bit lets only an entry's owner, the directory's owner or root rename or
-        remove it, so others cannot replace the key there. /tmp on Linux is 1777."""
+        remove it, so others cannot replace a key this process owns there. /tmp on Linux is
+        1777."""
         for dir_mode in (0o1777, 0o1770):
             with self.subTest(dir_mode=oct(dir_mode)):
                 os.chmod(self.dir, dir_mode)
@@ -245,6 +291,64 @@ class FileKeyLoaderTests(unittest.TestCase):
                                      bytes(custody.PUBLIC_KEY_LEN))
                 finally:
                     os.chmod(self.dir, 0o700)
+
+    def test_in_a_sticky_directory_the_key_must_be_root_s_or_this_process_s(self):
+        """Anyone who can write a sticky directory can create the key's name before the key
+        exists and keep what they planted, so there the name and the file must belong to root
+        or to this process. The other owners are simulated, so this runs as any user: the
+        name's owner comes from lstat, the opened file's from fstat. A directory others cannot
+        write keeps any owner: under Compose the key carries the host operator's uid."""
+        other = os.geteuid() + 1
+        self.addCleanup(os.chmod, self.dir, 0o700)
+        for dir_mode in (0o1777, 0o1770):
+            os.chmod(self.dir, dir_mode)
+            for owned in (_lstat_owned_by, _fstat_owned_by):
+                with self.subTest(dir_mode=oct(dir_mode), owner_from=owned.__name__), \
+                        owned(self.path, other):
+                    with self.assertRaisesRegex(custody.CustodyError,
+                                                f"sticky directory others can write .*uid {other} owns it"):
+                        custody.FileCustody(self.path)
+            with self.subTest(dir_mode=oct(dir_mode), owner="root"), \
+                    _lstat_owned_by(self.path, 0), _fstat_owned_by(self.path, 0):
+                self.assertEqual(custody.FileCustody(self.path).public_key(),
+                                 bytes(custody.PUBLIC_KEY_LEN))
+        for dir_mode in (0o755, 0o700):
+            os.chmod(self.dir, dir_mode)
+            with self.subTest(dir_mode=oct(dir_mode), owner="another user"), \
+                    _lstat_owned_by(self.path, other), _fstat_owned_by(self.path, other):
+                self.assertEqual(custody.FileCustody(self.path).public_key(),
+                                 bytes(custody.PUBLIC_KEY_LEN))
+
+    @unittest.skipUnless(os.geteuid() == 0, "creates files as other users, which needs root")
+    def test_a_key_name_another_user_planted_in_a_sticky_directory_is_refused(self):
+        """The case above, for real. In a sticky directory anyone can write, uid 65534 creates
+        the key's name before the key exists, 0644 so no write bit gives it away, and uid 1000
+        (the image's user) and root load it: refused. A key root created in the same directory,
+        as the kubelet creates a secret mount's entries, loads for both."""
+        os.chmod(self.dir, 0o1777)
+        self.addCleanup(os.chmod, self.dir, 0o700)
+        os.chmod(self.path, 0o644)
+        planted = os.path.join(self.dir, "planted_signing_key")
+        with open(self.path, "rb") as fh:
+            key = fh.read()
+        subprocess.run([sys.executable, "-c",
+                        "import os, sys\n"
+                        "fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)\n"
+                        "os.fchmod(fd, 0o644)\n"
+                        "os.write(fd, sys.stdin.buffer.read())\n", planted],
+                       input=key, check=True, user=65534, group=65534, extra_groups=[])
+        self.assertEqual((os.stat(planted).st_uid, os.stat(self.path).st_uid), (65534, 0))
+        here = os.path.dirname(os.path.abspath(__file__))
+
+        def load_as_uid_1000(path):
+            return subprocess.run([sys.executable, "-c", _LOAD, here, path], check=True,
+                                  capture_output=True, text=True, user=1000, group=1000,
+                                  extra_groups=[]).stdout.strip()
+        self.assertRegex(load_as_uid_1000(planted), "^refused: .*uid 65534 owns it there")
+        with self.assertRaisesRegex(custody.CustodyError, "uid 65534 owns it there"):
+            custody.FileCustody(planted)
+        self.assertEqual(load_as_uid_1000(self.path), "loaded")
+        self.assertEqual(custody.FileCustody(self.path).public_key(), bytes(custody.PUBLIC_KEY_LEN))
 
     def test_the_kubernetes_secret_layout(self):
         """The kubelet's atomic writer (pkg/volume/util/atomic_writer.go) writes each key into a
@@ -266,6 +370,12 @@ class FileKeyLoaderTests(unittest.TestCase):
         os.chmod(stamped, 0o755)
         os.chmod(mount, 0o1777)
         self.assertEqual(custody.FileCustody(name).public_key(), bytes(custody.PUBLIC_KEY_LEN))
+        # The kubelet creates the name as root; a name another user planted first is refused.
+        with _lstat_owned_by(name, 0):
+            self.assertEqual(custody.FileCustody(name).public_key(), bytes(custody.PUBLIC_KEY_LEN))
+        with _lstat_owned_by(name, os.geteuid() + 1), self.assertRaises(custody.CustodyError) as caught:
+            custody.FileCustody(name)
+        self.assertIn("/secrets, a sticky directory others can write", str(caught.exception))
         for writable, other, other_mode in ((mount, stamped, 0o755), (stamped, mount, 0o1777)):
             with self.subTest(writable=os.path.basename(writable)):
                 os.chmod(other, other_mode)

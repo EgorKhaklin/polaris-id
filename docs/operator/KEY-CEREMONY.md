@@ -94,10 +94,14 @@ users on the host. Root and members of the `docker` group, which
 [HARDENING.md](HARDENING.md#5-the-docker-daemon) calls root-equivalent, can read it, and the app,
 which must read the key, reads it through the mount. The file driver refuses a key file that is
 not a regular file or that group or others can write, and a key in a directory that group or
-others can write without the sticky bit, where they could replace it. It checks the directory
-holding the name and the one holding the file, which differ when the name is a symlink, as in a
-Kubernetes secret mount. Read bits are accepted: who can read the key is bounded by the 0700
-secrets directory under Compose and the pod's secret mount under Helm, not by the file's mode.
+others can write without the sticky bit, where they could replace it. In a sticky directory such
+as `/tmp` the entry must belong to root or to the app's user: anyone who can write there can
+create the name before the key exists and keep what they planted. It checks the directory holding
+the name and the one holding the file, which differ when the name is a symlink, as in a
+Kubernetes secret mount, whose names the kubelet creates as root. The directories above these two
+are not checked, so keep the key under a path only the deploy's owner and root can write. Read
+bits are accepted: who can read the key is bounded by the 0700 secrets directory under Compose and
+the pod's secret mount under Helm, not by the file's mode.
 Back it up sealed (an encrypted
 copy in two locations, under dual control) before the first token is issued; a lost file means every
 future token needs a new key and the old public key stays in the trust anchors
