@@ -49,10 +49,13 @@ polaris_cli =
     */polaris-cli-pkg-*/site/polaris_cli/
 # scripts/test_restore_schema_check.py runs the backup and restore scripts from temporary copies of
 # the tree (/tmp/polaris-rds-*/tree-extra/scripts/ and the like) and removes them afterwards: the
-# same fold, or `coverage json` fails on polaris_db_settings.py's copy.
+# same fold, or `coverage json` fails on polaris_db_settings.py's copy. scripts/test_ci_changes.py
+# runs the classifier over a scratch repository holding a copy of polaris-sdk-mutation-drill.py
+# (/tmp/polaris-ci-changes-*/scripts/): the same fold.
 scripts =
     scripts/
     */polaris-r*-*/*/scripts/
+    */polaris-ci-changes-*/scripts/
 
 [report]
 # The CLI entrypoints are exercised end to end (the app shells into the ZK
