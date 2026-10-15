@@ -5509,7 +5509,7 @@ def test_verify_enforced_check_discriminates(tmp_path):
     # 4. CI does not exercise verify_token_signature -> FAIL.
     write(GOOD_PQC, ci="jobs:\n  pqc-real:\n    steps:\n      run: echo nothing\n")
     assert checks.check_verify_enforced(tmp_path)[0].level == "FAIL", \
-        "must FAIL when CI does not exercise verify-at-use"
+        "must FAIL when CI does not verify under the configured key (verify_token_signature)"
 
     # 5. The relying-party door or the operator's verify route relies on a stored signature
     #    without checking it -> FAIL.

@@ -18281,7 +18281,7 @@ class RelyingPartyApiTests(PolarisTestCase):
     # -- into TokenSignature until the same day's revoke; registration (AuthorityKeyEvent) is
     # -- closed to it.
 
-    def _plant_as_app(self, token_value, signature, key_hex):
+    def _plant_signature_row(self, token_value, signature, key_hex):
         """Plant a TokenSignature row under ML-DSA-87, an algorithm the credential (issued under
         ML-DSA-65) lacks, so the per-algorithm UNIQUE admits it. The application role is refused
         the write since 2026-10-04 (test_the_application_role_cannot_write_a_signature_row), so
@@ -18348,7 +18348,7 @@ class RelyingPartyApiTests(PolarisTestCase):
         auth = self._bearer(cid, 'plant-b-secret-1')
         tv = self._issue_and_pack('RP-PLANT-B-1')['token_value']
         digest = hashlib.sha3_256(tv.encode('utf-8')).digest()
-        self._plant_as_app(tv, digest, None)
+        self._plant_signature_row(tv, digest, None)
         with patch.object(pqc_signing, 'is_enabled', return_value=False):
             self.assertEqual(self._possession_answers(auth, tv, digest.hex()), ('accept', 200),
                              'control: the placeholder profile reads a keyless row')
@@ -18367,7 +18367,7 @@ class RelyingPartyApiTests(PolarisTestCase):
         auth = self._bearer(cid, 'plant-a-secret-1')
         tv = self._issue_and_pack('RP-PLANT-A-1')['token_value']
         attacker_key, forged = 'a7' * 1312, b'\x5a' * 4627
-        self._plant_as_app(tv, forged, attacker_key)
+        self._plant_signature_row(tv, forged, attacker_key)
         with patch.object(pqc_signing, 'is_enabled', return_value=True), \
                 patch.object(pqc_signing, 'verify_stored_signature', return_value=True):
             self.assertEqual(self._possession_answers(auth, tv, forged.hex()), ('reject', 400),
