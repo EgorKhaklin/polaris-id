@@ -2905,10 +2905,12 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
     if not ok:
         v["note"] = "token signature is invalid"
         return v
+    # Compared as the TypeScript SDK's `===` compares them (_same_id): `==` let a signed
+    # "aud": true match audience 1, and a nonce of 1.0 match 1 (2026-10-15).
     if audience is not None:
-        v["audience_matches"] = (tok.get("aud") == audience)
+        v["audience_matches"] = bool(_same_id(tok.get("aud"), audience))
     if nonce is not None:
-        v["nonce_matches"] = (tok.get("nonce") == nonce)
+        v["nonce_matches"] = bool(_same_id(tok.get("nonce"), nonce))
     try:
         now = _instant(now)
         v["fresh"] = _parse_iso(tok["iat"]) <= now < _parse_iso(tok["exp"])

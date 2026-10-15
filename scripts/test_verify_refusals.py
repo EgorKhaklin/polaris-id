@@ -461,6 +461,47 @@ def _mldsa_signer():
 
 
 @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class IdTokenAudienceAndNonceAreCompared(unittest.TestCase):
+    """A signed `aud` or `nonce` matches only a value of its own kind, as the TypeScript SDK's
+    `===` decides it. Until 2026-10-15 `==` let a token signed with "aud": true match audience
+    1, and nonce 1.0 match 1, in Python only."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.signer = _mldsa_signer()
+
+    def token(self, **over):
+        body = {"format": V._ID_TOKEN_FORMAT, "iss": "https://issuer.example", "sub": "ab" * 32,
+                "aud": "rp-1", "nonce": "n-1", "context_id": 1, "disclosure_level": 1,
+                "acr": "urn:polaris:acr:1", "enrollment": None, "auth_time": "2026-05-01T00:00:00Z",
+                "iat": "2026-05-01T00:00:00Z", "exp": "2026-05-01T01:00:00Z"}
+        body.update(over)
+        return SignedDocumentLongTermValidation.seal(body, V._id_token_canonical, self.signer)
+
+    def decide(self, tok, audience, nonce):
+        return V.verify_id_token(tok, audience=audience, nonce=nonce, now="2026-05-01T00:00:30Z")
+
+    def test_the_same_text_matches(self):
+        v = self.decide(self.token(), "rp-1", "n-1")
+        self.assertIs(v["token_authentic"], True, v["note"])
+        self.assertEqual((v["audience_matches"], v["nonce_matches"]), (True, True))
+        v = self.decide(self.token(aud=7, nonce=9), 7, 9)
+        self.assertEqual((v["audience_matches"], v["nonce_matches"]), (True, True))
+
+    def test_another_kind_of_value_matches_nothing(self):
+        for label, signed, expected in (("true against 1", True, 1), ("1.0 against 1", 1.0, 1),
+                                        ("\"1\" against 1", "1", 1), ("null against null", None, None)):
+            with self.subTest(label):
+                v = self.decide(self.token(aud=signed, nonce=signed), expected, expected)
+                self.assertIs(v["token_authentic"], True, v["note"])
+                if expected is not None:
+                    self.assertIs(v["audience_matches"], False)
+                    self.assertIs(v["nonce_matches"], False)
+                else:
+                    self.assertEqual((v["audience_matches"], v["nonce_matches"]), (None, None))
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
 class StapledStatusIsTheIssuers(unittest.TestCase):
     """WIRE-SPEC 3.5: a stapled status assertion is bound to the credential by the same token AND
     the credential's own key. Until 2026-09-30 verify_stapled bound by the token alone, so with

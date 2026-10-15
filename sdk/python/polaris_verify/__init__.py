@@ -608,8 +608,10 @@ def verify_id_token(tok: dict, audience=None, nonce=None, now=None,
     ia, ea = _iso_to_epoch(tok.get("iat")), _iso_to_epoch(tok.get("exp"))
     n = _iso_to_epoch(now) if now is not None else time.time()
     fresh = (ia <= n < ea) if (ia is not None and ea is not None and n is not None) else None
-    return IdTokenVerdict(True, (tok.get("aud") == audience) if audience is not None else None,
-                          (tok.get("nonce") == nonce) if nonce is not None else None, fresh,
+    # Compared as the TypeScript SDK's `===` compares them (_same_id): `==` let a signed
+    # "aud": true match audience 1, and a nonce of 1.0 match 1 (2026-10-15).
+    return IdTokenVerdict(True, bool(_same_id(tok.get("aud"), audience)) if audience is not None else None,
+                          bool(_same_id(tok.get("nonce"), nonce)) if nonce is not None else None, fresh,
                           tok.get("sub"), tok.get("acr"), None, base.issuer_trusted)
 
 

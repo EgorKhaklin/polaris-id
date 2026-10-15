@@ -27,6 +27,44 @@ def _mldsa_available():
         return False
 
 
+class IdTokenAudienceAndNonceTests(unittest.TestCase):
+    """aud and nonce are compared as the TypeScript SDK's `===` compares them. Until 2026-10-15
+    `==` let a token signed with "aud": true match audience 1, and nonce 1.0 match 1."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not _mldsa_available():
+            raise unittest.SkipTest("cryptography lacks ML-DSA-65")
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        cls.sk = mldsa.MLDSA65PrivateKey.generate()
+
+    def token(self, **over):
+        import hashlib
+        body = {"format": "polaris-id-token/1", "iss": "https://issuer.example", "sub": "ab" * 32,
+                "aud": "rp-1", "nonce": "n-1", "context_id": 1, "disclosure_level": 1,
+                "acr": "urn:polaris:acr:1", "enrollment": None, "auth_time": "2026-05-01T00:00:00Z",
+                "iat": "2026-05-01T00:00:00Z", "exp": "2026-05-01T01:00:00Z", "algorithm": "ML-DSA-65"}
+        body.update(over)
+        digest = hashlib.sha3_256(pv._canonical(body, pv._ARTIFACT_KEYS["polaris-id-token/1"])).digest()
+        body["signature_hex"] = self.sk.sign(digest).hex()
+        body["public_key_hex"] = self.sk.public_key().public_bytes_raw().hex()
+        return body
+
+    def test_the_same_text_matches(self):
+        v = pv.verify_id_token(self.token(), audience="rp-1", nonce="n-1", now="2026-05-01T00:00:30Z")
+        self.assertTrue(v.authentic, v.note)
+        self.assertEqual((v.audience_matches, v.nonce_matches), (True, True))
+
+    def test_another_kind_of_value_matches_nothing(self):
+        for label, signed, expected in (("true against 1", True, 1), ("1.0 against 1", 1.0, 1),
+                                        ("\"1\" against 1", "1", 1)):
+            with self.subTest(label):
+                v = pv.verify_id_token(self.token(aud=signed, nonce=signed), audience=expected,
+                                       nonce=expected, now="2026-05-01T00:00:30Z")
+                self.assertTrue(v.authentic, v.note)
+                self.assertEqual((v.audience_matches, v.nonce_matches), (False, False))
+
+
 def _vector(name):
     with open(os.path.join(_ROOT, "vectors", name)) as f:
         return json.load(f)
