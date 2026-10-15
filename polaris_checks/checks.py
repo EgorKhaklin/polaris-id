@@ -24708,7 +24708,7 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
     SIGNING A DIGEST (CORE-BUG, 2026-10-14). The proof is ML-DSA over ONE SHA3-256 of the
     canonical bytes (the digest step of WIRE-SPEC 2.1's signed statements):
     signature_over_message takes that digest itself. The route hashed the bytes before handing them over, so it signed SHA3-256
-    twice, and the verifier refused every credential signed with a real key while the drill,
+    twice, and the verifier refused every credential the route signed with a real key while the drill,
     which signed with its own digest, stayed green. So the builder hands the signer the
     canonical bytes, the route's signer hands them to signature_over_message unhashed, and the
     drill signs through that same function the same way."""

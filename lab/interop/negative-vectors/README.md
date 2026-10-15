@@ -2,7 +2,8 @@
 
 **Reader:** anyone building or testing a verifier of SD-JWT VC presentations under OpenID4VP 1.0 and
 HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 36 presentations a
-verifier must judge, each with the verdict a correct verifier reaches and the sentence that requires it.
+verifier must judge, each with the verdict a correct verifier reaches. Each of the 33 refusals carries the
+clauses it rests on and a `class` saying how directly they require the refusal.
 [Lab record 018](../../strategy/018-negative-vectors.md) explains why it exists and what would end it.
 
 The public suites test acceptance well and refusal thinly, and a protocol-level suite cannot always see a
@@ -62,7 +63,8 @@ python3 run_vectors.py vectors.json --adapter polaris-oid4vp
 ```
 
 The `polaris-oid4vp` adapter uses the installed package when there is one (for a release:
-`pip install polaris-oid4vp==1.0.0rc16`), else this tree's, and prints the version and path it used.
+`pip install polaris-oid4vp==1.0.0`), else this tree's, and prints the version and path it used. 1.0.0,
+installed from PyPI into an empty venv, reached all 36 verdicts of vectors.json 0.3.0 (2026-10-15).
 For it the refusal code counts too: each negative must be refused with the code `POLARIS_OID4VP_CODES` names
 (for a status-list vector, the revocation state, with `list_refused`'s code after a slash). It serves each
 status list from the vector, in memory: no vector opens a socket.
