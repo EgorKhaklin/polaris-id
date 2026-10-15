@@ -4,8 +4,13 @@
 
 An audit trail held by one operator asks everyone to trust that operator not
 to rewrite it. Anchoring answers that without moving the system onto a ledger:
-the schema stays the audit of record, and a periodic Merkle commitment lets an
-outside verifier prove the history at that point has not been revised since.
+the schema stays the audit of record, and a periodic Merkle commitment fixes
+each batch of anchors under a root. Outside verification goes through the
+[transparency log](transparency-log.md): every batch root is an entry of that
+RFC 6962 log, which binds each root and lets a monitor prove the sequence of
+roots only grew. The proofs under a root are checked inside the application,
+behind login; [What a batch proof binds](#what-a-batch-proof-binds) says what
+they do and do not prove.
 
 The commitment is what leaves; the data does not.
 
@@ -16,9 +21,11 @@ The commitment is what leaves; the data does not.
 2. `close_anchor_batch(algorithm_id, root, proofs)` groups the pending anchors
    by signature algorithm, records a new `AnchorBatch` row with the Merkle
    root, and writes each leaf's inclusion proof back to its anchor row.
-3. The operator publishes the root, with per-leaf proofs, to whatever external
-   ledger they have chosen. When and where is their decision; the schema
-   records that it happened.
+3. The root is published; the proofs are not. Every batch root is an entry of
+   the public transparency log, and the per-leaf proofs are served only behind
+   login (`/api/anchor/<token_id>`). Committing the logs' heads to a public
+   chain is the operator's decision, and the schema records that it happened
+   (`ChainAnchor`, below).
 
 ## The Merkle maths runs in Python, not in the database
 
@@ -28,10 +35,13 @@ takes them as parameters. That keeps the schema portable: requiring
 language installed, which many managed providers do not offer.
 
 The cost is that a compromised helper could hand the procedure a root that
-does not match its leaves. The answer is that nothing trusts the helper: every
-verifier, the route and any external auditor's script alike, recomputes the
-root from the stored commitment hashes and compares. A lie told at batch-close
-is detectable on the next verification.
+does not match its leaves. The verify route (`/api/anchor/verify/<token_id>`)
+recomputes one anchor's leaf from its row and walks that anchor's stored proof
+to the stored root, so a root or a proof that does not fit an anchor shows at
+that anchor's next verification. Nothing rebuilds a batch root from the
+batch's rows, so a root over extra or repeated leaves, with proofs that still
+fit, does not show there; whoever holds the batch's rows can rebuild the root
+with `compute_batch` and compare.
 
 ## Leaves are ordered, and the order is part of the defence
 
@@ -42,9 +52,9 @@ auditor, and call both canonical. One order means one root.
 
 ## The hash is operator policy
 
-`SUPPORTED_HASHES` offers SHA3-256, which is the default and FIPS 202,
-SHA3-512 for a higher target, and a BLAKE3 entry that falls back to SHA3-256
-when the library is absent.
+`SUPPORTED_HASHES` offers SHA3-256, which is the default and FIPS 202, and
+SHA3-512 for a higher target. Any other name is refused, never mapped to one
+of these.
 
 The `CryptographicAlgorithm` table records signature algorithms, not hash
 functions, so the hash used for a batch is a property of the helper at batch
@@ -98,9 +108,11 @@ deployment needs it, since proof size grows logarithmically.
 
 ## Where an adversary ends up
 
-- **The claim.** A closed batch fixes a Merkle root, and an inclusion proof
-  for any leaf is unforgeable under SHA3-256. Anyone holding the root, the
-  leaf and the proof can confirm the leaf was in the batch at close time.
+- **The claim.** A closed batch fixes a Merkle root. When the verifier
+  recomputes the leaf from an anchor's row, as the verify route does, a proof
+  that places that anchor under the root cannot be forged without breaking
+  SHA3-256. A proof does not show the anchor's position or the batch size
+  ([What a batch proof binds](#what-a-batch-proof-binds)).
 - **The direct attack.** Find a pre-image that hashes into an existing root.
   SHA3-256 offers 256-bit pre-image resistance against a classical attacker
   and half of that against Grover, which is still out of reach. The
@@ -117,6 +129,44 @@ deployment needs it, since proof size grows logarithmically.
   accepted, because algorithm scoping is what keeps a signature algorithm
   substitutable rather than load-bearing for the whole history.
 
+## What a batch proof binds
+
+The tree inside a batch binds less than the log above it.
+
+- **The leaf has to come from the row.** Leaves and interior nodes are hashed
+  alike, `SHA3-256(left || right)` with no `0x00`/`0x01` prefix. A proof binds
+  an anchor only when the verifier recomputes the leaf from the anchor's row;
+  a verifier that took a leaf hash from the prover would accept an interior
+  node as a leaf, with a shorter path.
+- **The root does not fix the batch size.** An odd level pairs its last node
+  with itself, so `[a, b, c]` and `[a, b, c, c]` have one root, and `c` has a
+  valid proof both as the third of three leaves and as the fourth of four. A
+  proof carries no index and no tree size, and the log entry is the bare root;
+  the size is only in the `AnchorBatch` row.
+- **No outside verifier checks a batch proof.** The proofs are served only
+  behind login (`/api/anchor/<token_id>` and `/api/anchor/verify/<token_id>`),
+  and neither the detached verifier nor the SDKs implement them.
+- **Outside verification goes through the transparency log.** Its entries are
+  the batch roots, hashed as RFC 6962 prescribes, with `0x00` and `0x01`, so
+  the log binds each root at its position, and a monitor proves the sequence
+  only grew ([transparency-log.md](transparency-log.md)).
+
+`AnchorBatchTreeDeclaredLimitTests` pins these properties as they stand. A
+version 2 tree makes it fail, and this section changes with it.
+
+### Version 2 (recorded, not built)
+
+New batches would use the `anchoring.log_*` functions: a leaf hashed as
+`SHA3-256(0x00 || entry)`, a node as `SHA3-256(0x01 || left || right)`, the
+RFC 6962 split with no repeated node, and a proof that carries the leaf's
+index and the tree size. Batches closed before it keep verifying under the
+current rules, keyed by a tree version. Optionally, the log entry binds the
+size as well: `v2|<size>|<root>`.
+
+Batches move to version 2 when an outside verifier or a named consumer needs
+to check a batch proof, or before any change serves a batch proof without
+login or publishes one.
+
 ## Reading the code
 
 - `polaris_web/anchoring.py`: `compute_batch`, `leaf_hash`, `merkle_root`,
@@ -125,7 +175,7 @@ deployment needs it, since proof size grows logarithmically.
   batch reference and proof column.
 - `polaris_sql/05_procedures.sql`: `close_anchor_batch`.
 - `polaris_sql/06_triggers.sql`: `trg_anchor_batch_append_only`.
-- `polaris_web/test_app.py`: `AnchorBatchTests`, and the concurrency tests
-  named above.
+- `polaris_web/test_app.py`: `AnchorBatchTests`, the concurrency tests named
+  above, and `AnchorBatchTreeDeclaredLimitTests`.
 - [audit-of-record.md](audit-of-record.md): `AnchorBatch` is one of the
   thirteen instances of the principle.
