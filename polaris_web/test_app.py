@@ -18155,6 +18155,41 @@ class RelyingPartyApiTests(PolarisTestCase):
         if pqc_signing.is_enabled():
             self.assertEqual(after['reason'], 'not a verifiable presentation', after)
 
+    def test_a_signature_is_checked_under_the_algorithm_its_row_records(self):
+        """docs/design/multi-sig-migration.md: "The schema records which algorithm produced a
+        signature". The door read the algorithm from the key's length instead, so a row that
+        records ML-DSA-87 over an ML-DSA-65 signature and key verified as ML-DSA-65. Each of
+        agency 1's two ACTIVE sample credentials gets one planted row that the presented
+        signature matches: recorded under ML-DSA-65, the control, and under ML-DSA-87, a false
+        record. Their own rows are keyless backfills nothing presented matches. Under the
+        placeholder profile a row has no key, so its algorithm decides nothing; the real-signer
+        suite runs the refusal."""
+        import psycopg2
+        import pqc_signing
+        cid = self._register_rp('label-secret-1', suffix='0209')
+        auth = self._bearer(cid, 'label-secret-1')
+
+        def planted(token_value, algorithm):
+            with self._new_conn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT token_id FROM IdentityToken WHERE token_value = %s", (token_value,))
+                token_id = cur.fetchone()['token_id']
+                cur.execute("SELECT algorithm_id FROM CryptographicAlgorithm WHERE name = %s", (algorithm,))
+                algorithm_id = cur.fetchone()['algorithm_id']
+            signature, key_hex = _deployment_signature(token_value)
+            _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                         "signing_public_key_hex) VALUES (%s, %s, %s, %s)",
+                         (token_id, algorithm_id, psycopg2.Binary(signature), key_hex))
+            return {'token_value': token_value, 'signature_hex': signature.hex()}
+
+        recorded_truly = planted('TKN-NY-2026-000003', 'ML-DSA-65')
+        recorded_falsely = planted('TKN-TX-2026-000004', 'ML-DSA-87')
+        control = self.client.post('/api/v1/verify', json=recorded_truly, headers=auth).get_json()
+        self.assertEqual(control['decision'], 'accept', control)
+        false_record = self.client.post('/api/v1/verify', json=recorded_falsely, headers=auth).get_json()
+        if pqc_signing.is_enabled():
+            self.assertIs(false_record['authentic'], False, false_record)
+            self.assertEqual(false_record['reason'], 'not a verifiable presentation', false_record)
+
     def test_the_door_dates_a_migration_signature_by_its_own_signing(self):
         """CORE-BUG, 2026-10-02. A key registered for a migration after the credential was
         issued, and before it signed, is authorized for the signature it made; dated by the

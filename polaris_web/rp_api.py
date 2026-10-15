@@ -259,9 +259,9 @@ def _possession_authenticated(token_value, presented_sig_hex):
     """The holder proves POSSESSION of an issued credential by presenting its token_value
     and a genuine issued signature still in force: the row for that credential and that
     signature if the presented signature equals one the credential holds (constant time) and
-    verifies against the key stored with it, else None -- and every failure looks the same, so
-    this is never an existence oracle. Shared by /api/v1/verify, the status assertion (P3.6)
-    and holder-authorized document signing (P8.5).
+    verifies against the key stored with it, under the algorithm its row records, else None --
+    and every failure looks the same, so this is never an existence oracle. Shared by
+    /api/v1/verify, the status assertion (P3.6) and holder-authorized document signing (P8.5).
 
     Every signature in force, not the newest (CORE-BUG, 2026-10-02). During a migration a
     credential holds one under each algorithm (docs/operator/QUANTUM-EVENT.md, section 2: "an
@@ -286,13 +286,18 @@ def _possession_authenticated(token_value, presented_sig_hex):
     # deprecated signature is "no longer accepted after this timestamp", and the window's grace
     # (QUANTUM-EVENT.md, section 6) is that interval; reading IS NULL alone cut every superseded
     # pack off the moment a window was closed, whatever grace the operator gave.
+    # The algorithm's date is not read here: it ends issuance and migration onto it, and a
+    # signature stays accepted until its own date, which --deprecate-old writes (OPERATIONS.md,
+    # "Retire a cryptographic algorithm"). Its name is: the signature is checked under the
+    # algorithm its row records, not one read from the key's length (2026-10-15).
     rows = query("""
         SELECT it.token_id, it.individual_id, it.token_value, it.status, it.issuing_agency_id,
                it.expiration_date, ts.signature_bytes, ts.signing_public_key_hex, ts.signed_at,
-               now() AS as_of
+               ca.name AS algorithm_name, now() AS as_of
         FROM   IdentityToken it
         JOIN   TokenSignature ts ON ts.token_id = it.token_id
                                 AND (ts.deprecation_date IS NULL OR ts.deprecation_date > now())
+        JOIN   CryptographicAlgorithm ca ON ca.algorithm_id = ts.algorithm_id
         WHERE  it.token_value = %s
         ORDER BY ts.signed_at DESC, ts.signature_id DESC
     """, (token_value,), primary=True)
@@ -311,7 +316,7 @@ def _possession_authenticated(token_value, presented_sig_hex):
         return None
     if not pqc_signing.verify_stored_signature(
             token_value, bytes(match['signature_bytes']), match['signing_public_key_hex'],
-            witnesses='single'):
+            witnesses='single', algorithm=match['algorithm_name']):
         return None
     if pqc_signing.is_enabled():
         authorized_at_signing, _ = _issuer_key_facts(

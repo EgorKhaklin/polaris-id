@@ -875,6 +875,7 @@ def verify_stored_signature(
     signature_bytes: bytes,
     signing_public_key_hex: Optional[str],
     witnesses: str = "both",
+    algorithm: Optional[str] = None,
 ) -> bool:
     """Verify a stored TokenSignature against its token using the public key
     stored WITH the signature — self-contained, no live trust-anchor lookup.
@@ -896,6 +897,11 @@ def verify_stored_signature(
       witness at use re-confirms authenticity at the throughput a national
       deployment needs. See docs/design/verification-scaling.md.
     The placeholder path is unaffected (it does no crypto).
+
+    ``algorithm`` is the parameter set the signature's row records
+    (TokenSignature.algorithm_id). Given, the signature is checked under it, so a
+    key or signature of another set's length is refused; None reads the set from
+    the key's length, for a caller with no row.
     """
     if signing_public_key_hex:
         if not _OQS_AVAILABLE:
@@ -903,8 +909,8 @@ def verify_stored_signature(
         message = token_value.encode("utf-8")
         signature_hex = signature_bytes.hex()
         if witnesses == "single":
-            return verify(message, signature_hex, signing_public_key_hex)
-        return verify_both(message, signature_hex, signing_public_key_hex)
+            return verify(message, signature_hex, signing_public_key_hex, algorithm=algorithm)
+        return verify_both(message, signature_hex, signing_public_key_hex, algorithm=algorithm)
     import hmac
     expected = hashlib.sha3_256(token_value.encode("utf-8")).digest()
     return hmac.compare_digest(signature_bytes, expected)

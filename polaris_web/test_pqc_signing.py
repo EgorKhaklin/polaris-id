@@ -1111,3 +1111,44 @@ class CoseSignerTests(unittest.TestCase):
                 pqc_signing.signature_over_cose_sig_structure(
                     pqc_signing.COSE_SIGN1_SIG_STRUCTURE_HEAD + b"\x44\xa1\x01\x38\x30\x40\x41\x00")
         self.assertIn("over the raw Sig_structure", str(raised.exception))
+
+
+@unittest.skipUnless(pqc_signing.is_available() and pqc_signing.second_witness_available(),
+                     "needs BOTH liboqs (oqs) and the cryptography ML-DSA witness")
+class StoredSignatureAlgorithmTests(unittest.TestCase):
+    """A stored signature is checked under the algorithm its row records when the caller passes
+    it, as the relying-party door does (rp_api._possession_authenticated): a key or signature of
+    another parameter set's length is refused, and so is a set nothing here verifies. With no
+    algorithm the set is read from the key's length, as callers with no row do."""
+
+    TOKEN = "TKN-ALGORITHM-LABEL-1"
+
+    @classmethod
+    def setUpClass(cls):
+        import oqs  # type: ignore
+        cls.signed = {}
+        for algorithm in ("ML-DSA-65", "ML-DSA-87"):
+            with oqs.Signature(algorithm) as signer:
+                public_key = signer.generate_keypair()
+                signature = signer.sign(hashlib.sha3_256(cls.TOKEN.encode("utf-8")).digest())
+            cls.signed[algorithm] = (signature, public_key.hex())
+
+    def _verifies(self, made_under, recorded, witnesses):
+        signature, public_key_hex = self.signed[made_under]
+        return pqc_signing.verify_stored_signature(self.TOKEN, signature, public_key_hex,
+                                                   witnesses=witnesses, algorithm=recorded)
+
+    def test_a_signature_verifies_under_the_algorithm_that_made_it(self):
+        for algorithm in ("ML-DSA-65", "ML-DSA-87"):
+            for witnesses in ("single", "both"):
+                with self.subTest(algorithm=algorithm, witnesses=witnesses):
+                    self.assertTrue(self._verifies(algorithm, algorithm, witnesses))
+                    self.assertTrue(self._verifies(algorithm, None, witnesses),
+                                    "with no row, the key's length names the set")
+
+    def test_a_row_that_records_another_algorithm_is_refused(self):
+        for made_under, recorded in (("ML-DSA-65", "ML-DSA-87"), ("ML-DSA-87", "ML-DSA-65"),
+                                     ("ML-DSA-65", "SLH-DSA-256s"), ("ML-DSA-65", "ECDSA-P256")):
+            for witnesses in ("single", "both"):
+                with self.subTest(made_under=made_under, recorded=recorded, witnesses=witnesses):
+                    self.assertFalse(self._verifies(made_under, recorded, witnesses))
