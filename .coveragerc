@@ -19,6 +19,13 @@ omit =
     # is not product code, and recording it leaves a dangling source reference
     # once the temp dir is cleaned (a "No source for code" report error).
     */sitecustomize.py
+    # Scripts a test writes into a temp dir and runs: the conformance runner's fake verifier,
+    # the tree gate's stub stages (its scratch repositories and the gate's own exports of them)
+    # and the duress test's worker. CI combines the coverage shards on another runner, where
+    # those temp dirs never existed: recorded, each is a "No source for code" report error.
+    */polaris-runner-test-*/*
+    */polaris-tree-*/*
+    */tmp*/worker.py
     # Test infrastructure, not product code (P1.2/P1.3).
     */kms_standin.py
     # Third-party code. The standalone suites under scripts/ measure without --source (see
@@ -49,10 +56,13 @@ polaris_cli =
     */polaris-cli-pkg-*/site/polaris_cli/
 # scripts/test_restore_schema_check.py runs the backup and restore scripts from temporary copies of
 # the tree (/tmp/polaris-rds-*/tree-extra/scripts/ and the like) and removes them afterwards: the
-# same fold, or `coverage json` fails on polaris_db_settings.py's copy.
+# same fold, or `coverage json` fails on polaris_db_settings.py's copy. scripts/test_ci_changes.py
+# runs the classifier over a scratch repository holding a copy of polaris-sdk-mutation-drill.py
+# (/tmp/polaris-ci-changes-*/scripts/): the same fold.
 scripts =
     scripts/
     */polaris-r*-*/*/scripts/
+    */polaris-ci-changes-*/scripts/
 
 [report]
 # The CLI entrypoints are exercised end to end (the app shells into the ZK

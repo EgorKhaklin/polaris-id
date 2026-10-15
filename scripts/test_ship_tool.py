@@ -11,6 +11,7 @@ These are unit tests over the pure classifier, so a new signature is verified ag
 line it was written for rather than by pushing and waiting twenty minutes to find out.
 """
 import importlib.util
+import io
 import os
 import unittest
 
@@ -896,6 +897,47 @@ class ShardingTests(unittest.TestCase):
         shards = ship.distribute([("test_app", "Only", 1)], 8, serial=set())
         flat = [u for shard in shards for u in shard]
         self.assertEqual(flat, [("test_app", "Only", 1)])
+
+
+class MachinePartTests(unittest.TestCase):
+    """2026-10-15: CI's coverage runs the sharded suites on three machines, each taking
+    `--part I/3` of the classes. A class no part takes is a test that never ran under coverage,
+    and one two parts take is counted twice; neither announces itself."""
+
+    UNITS = ShardingTests.UNITS + [("test_app", "ClassF", 7), ("test_check_constraints", "ClassG", 12)]
+
+    def test_the_parts_cover_every_unit_exactly_once(self):
+        for n in (1, 2, 3, 4, 7, 9):
+            parts = [ship.machine_part(self.UNITS, (i, n), set()) for i in range(1, n + 1)]
+            flat = [u for part in parts for u in part]
+            self.assertEqual(sorted(flat), sorted(self.UNITS), "parts of %d drop or repeat a unit" % n)
+
+    def test_serial_classes_all_land_on_machine_one(self):
+        serial = {("test_app", "ClassA"), ("test_cli", "ClassE")}
+        first = ship.machine_part(self.UNITS, (1, 3), serial)
+        for unit in self.UNITS:
+            if (unit[0], unit[1]) in serial:
+                self.assertIn(unit, first)
+
+    def test_the_deal_does_not_depend_on_who_asks(self):
+        # Three machines compute the deal separately; they must agree.
+        a = [ship.machine_part(self.UNITS, (i, 3), set()) for i in (1, 2, 3)]
+        b = [ship.machine_part(list(self.UNITS), (i, 3), set()) for i in (1, 2, 3)]
+        self.assertEqual(a, b)
+
+    def test_parse_part(self):
+        self.assertEqual(ship.parse_part("2/3"), (2, 3))
+        self.assertEqual(ship.parse_part("1/1"), (1, 1))
+        for bad in ("", "3", "0/3", "4/3", "1/0", "a/b", "1/3/2"):
+            self.assertIsNone(ship.parse_part(bad), bad)
+
+    def test_run_refuses_a_part_without_no_unsharded(self):
+        out = io.StringIO()
+        self.assertEqual(ship.run(["--part", "1/3"], out=out), 2)
+        self.assertIn("--part needs --no-unsharded", out.getvalue())
+        out = io.StringIO()
+        self.assertEqual(ship.run(["--no-unsharded", "--part", "4/3"], out=out), 2)
+        self.assertIn("--part takes I/N", out.getvalue())
 
 
 class FailureBlockTests(unittest.TestCase):
