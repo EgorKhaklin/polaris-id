@@ -31,7 +31,16 @@ becomes `pass`, which for a guard that only raises is a real inversion.
 
 Exit 0 when every survivor is declared, 1 on an undeclared one, 3 if the SDK is absent.
 
-    python3 scripts/polaris-sdk-mutation-drill.py [--quick]
+    python3 scripts/polaris-sdk-mutation-drill.py [--changed] [--shard I/N]
+
+SHARDS (2026-10-15). A change to an SDK, its suites or this drill inverts every refusal across
+all three verifiers, and that took 65 minutes in one CI step (run 38667231409). `--shard I/N`
+inverts only every N-th refusal, starting at the I-th, of the full list in its stable order
+(the verifiers in SDKS order, each file top to bottom), so N runs together invert each one
+exactly once (scripts/test_sdk_drill.py proves the partition). What is not an inversion runs in
+every shard: each verifier's unmutated baseline and its negative control. A declared survivor
+is answered for by the shard that inverts it, and one that names no refusal at all by every
+shard.
 """
 import argparse
 import hashlib
@@ -62,8 +71,9 @@ SDKS = {
     # instrument CI runs on it (its unit suites, --selftest, --verify-dir, the crypto attack
     # suite, the fuzzer and 24 drills): 32 of 45 refusals survived, among them the RFC 6962
     # consistency and inclusion checks and the cryptography witness's refusal of a forged
-    # signature. scripts/test_verify_refusals.py drives each one; seven remain, declared below.
-    # Its conformance runs inside test_verify_conformance, so there is no separate runner.
+    # signature. scripts/test_verify_refusals.py drives each one; seven remained that day, and
+    # those still surviving are declared below. Its conformance runs inside
+    # test_verify_conformance, so there is no separate runner.
     "verify": {
         "lang": "python",
         "source": "packages/polaris-verify/polaris_verify_cli/verifier.py",
@@ -103,8 +113,10 @@ DECLARED_SURVIVORS: dict[str, str] = {
         "downstream of the _finite guard, which already refuses every value int() could raise on",
     "verify:grant_within_limits:012e80":
         "downstream of the _finite guard, which already refuses every value float() could raise on",
-    "verify:_provider_available:e706fa":
-        "the liboqs import failing: dead on a machine that has it, which the drill requires",
+    # verify:_provider_available:e706fa, the liboqs import failing, was declared here until
+    # 2026-10-15 as dead on a machine that has liboqs. A module named `oqs` that is not
+    # liboqs-python (PyPI's `oqs` is another project) now makes `_import_oqs` raise there, and
+    # test_verify_refusals.AnotherProjectsOqsModule asserts `auto` then picks cryptography.
     "verify:_provider_available:e706fa#2":
         "the cryptography import failing: dead on any machine that can run the verifier's tests",
 
@@ -398,11 +410,49 @@ def _sdks_moved():
     return bool(out.strip())
 
 
-def main() -> int:
+def parse_shard(text: str) -> tuple:
+    """`I/N` as (I, N), 1-based. Anything else is a usage error, never a silent full run
+    (the procedure drill's form, scripts/polaris-procedure-mutation-drill.py)."""
+    m = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", text or "")
+    if not m:
+        raise argparse.ArgumentTypeError("--shard takes I/N, as in 2/4, not %r" % text)
+    i, n = int(m.group(1)), int(m.group(2))
+    if n < 1 or not 1 <= i <= n:
+        raise argparse.ArgumentTypeError("--shard %s: need 1 <= I <= N" % text)
+    return i, n
+
+
+def refusal_sites(root: pathlib.Path = ROOT) -> list:
+    """Every inversion the drill makes, in its stable order: (sdk name, line index, mutated
+    line, survivor label) for each refusal, the verifiers in SDKS order."""
+    out = []
+    for name, sdk in SDKS.items():
+        lang = sdk.get("lang", name)
+        lines = (root / sdk["source"]).read_text().splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            mutated = _invert(line, lang)
+            if mutated:
+                label = _label(lines, i, lang)
+                out.append((name, i, mutated, label if name == lang else name + label[len(lang):]))
+    return out
+
+
+def shard_of(sites: list, shard: tuple) -> list:
+    """The inversions shard (I, N) makes: positions I-1, I-1+N, ... of `sites` in their stable
+    order. Round-robin, so each verifier's refusals (and their very different suite costs) are
+    dealt across the shards rather than one shard taking the detached verifier's 45."""
+    i, n = shard
+    return [s for k, s in enumerate(sites) if k % n == i - 1]
+
+
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0] or None)
     ap.add_argument("--changed", action="store_true",
                     help="run only when this ship touched an SDK, its suite, or this drill")
-    args = ap.parse_args()
+    ap.add_argument("--shard", type=parse_shard, default=(1, 1), metavar="I/N",
+                    help="invert only shard I of N (1-based) of the refusals; N runs cover all")
+    args = ap.parse_args(argv)
+    shard_i, shard_n = args.shard
 
     if args.changed:
         moved = _sdks_moved()
@@ -429,6 +479,24 @@ def main() -> int:
             print("sdk-mutation drill: %s is missing" % sdk["source"], file=sys.stderr)
             return 3
 
+    all_sites = refusal_sites(ROOT)
+    for name, sdk in SDKS.items():
+        if not any(s[0] == name for s in all_sites):
+            print("sdk-mutation drill: no refusals found in %s; the parser and the file "
+                  "have drifted and a clean result would mean nothing" % sdk["source"],
+                  file=sys.stderr)
+            return 1
+    mine = shard_of(all_sites, args.shard)
+    if shard_n > 1:
+        print("  shard %d/%d: %d of the %d refusals" % (shard_i, shard_n, len(mine), len(all_sites)))
+        # The full list is never empty here, so an empty share is legitimate only when this
+        # shard's number is past the end of it; any other empty shard is the partition losing work.
+        if not mine and len(all_sites) >= shard_i:
+            print("sdk-mutation drill: shard %d/%d received no refusal although the full list has "
+                  "%d, so the partition has dropped work no shard will invert"
+                  % (shard_i, shard_n, len(all_sites)), file=sys.stderr)
+            return 1
+
     work = pathlib.Path(tempfile.mkdtemp()) / "tree"
     shutil.copytree(ROOT, work, ignore=_IGNORE)
     survivors: list[str] = []
@@ -438,16 +506,12 @@ def main() -> int:
             lang = sdk.get("lang", name)
             src = (ROOT / sdk["source"]).read_text()
             lines = src.splitlines(keepends=True)
-            sites = [(i, m) for i, m in
-                     ((i, _invert(l, lang)) for i, l in enumerate(lines)) if m]
-            if not sites:
-                print("sdk-mutation drill: no refusals found in %s; the parser and the file "
-                      "have drifted and a clean result would mean nothing" % sdk["source"],
-                      file=sys.stderr)
-                return 1
-            total += len(sites)
+            sites = [(s[1], s[2]) for s in all_sites if s[0] == name]
+            my_sites = [(s[1], s[2]) for s in mine if s[0] == name]
+            total += len(my_sites)
             target = work / sdk["source"]
-            print("== %s: %d refusals in %s ==" % (name, len(sites), sdk["source"]))
+            print("== %s: %d refusals in %s%s ==" % (name, len(sites), sdk["source"],
+                                                    ", %d in this shard" % len(my_sites) if shard_n > 1 else ""))
 
             if not _suites_pass(work, sdk):
                 print("sdk-mutation drill: the UNMUTATED %s tree does not pass both suites, so "
@@ -470,7 +534,7 @@ def main() -> int:
                       "%s, so a clean result there would mean nothing ==" % lang, file=sys.stderr)
                 return 1
 
-            for i, mutated in sites:
+            for i, mutated in my_sites:
                 m = lines[:]
                 m[i] = mutated
                 target.write_text("".join(m))
@@ -482,12 +546,20 @@ def main() -> int:
         shutil.rmtree(work.parent, ignore_errors=True)
 
     undeclared = [s for s in survivors if s not in DECLARED_SURVIVORS]
-    stale = [s for s in DECLARED_SURVIVORS if s not in survivors]
+    # A declared survivor is answered for by the shard that inverts it. One that names no
+    # refusal at all belongs to no shard, so every shard reports it: dropping it from all of
+    # them would let the list go stale with every shard green. Unsharded this is every entry.
+    every_label = {s[3] for s in all_sites}
+    my_labels = {s[3] for s in mine}
+    stale = [s for s in DECLARED_SURVIVORS
+             if (s in my_labels and s not in survivors) or s not in every_label]
+    answered = [s for s in DECLARED_SURVIVORS if s in my_labels]
 
     print()
-    print("  refusals inverted across all verifiers   %4d" % total)
+    print("  refusals inverted across all verifiers   %4d%s" % (
+        total, " of %d (shard %d/%d)" % (len(all_sites), shard_i, shard_n) if shard_n > 1 else ""))
     print("  ...of those, accepted by every suite     %4d  (%d declared)"
-          % (len(survivors), len(DECLARED_SURVIVORS)))
+          % (len(survivors), len(answered)))
 
     # The declared list is calibrated against an environment with liboqs, because liboqs
     # decides which refusals are reachable at all. Comparing against it from an environment
@@ -522,7 +594,10 @@ def main() -> int:
 
     print("\n== SDK MUTATION DRILL PASSED: every one of the %d refusals across the reference "
           "SDKs and the detached verifier is caught when inverted, except %d declared with reasons, and the negative "
-          "control proves the harness can produce a survivor ==" % (total, len(DECLARED_SURVIVORS)))
+          "control proves the harness can produce a survivor%s ==" % (
+              total, len(answered),
+              " (shard %d/%d of %d; the other shards invert the rest)" % (shard_i, shard_n, len(all_sites))
+              if shard_n > 1 else ""))
     return 0
 
 

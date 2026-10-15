@@ -50,10 +50,23 @@ wrote the change or have the right to submit it under the project's license.
 ## What merges
 
 Every change reaches `main` through a pull request, the maintainer's included: `main` refuses
-direct pushes, force-pushes and deletion. A pull request merges, as a merge commit, once the
-six required checks pass: the TypeScript SDK suite, the dependency and SAST scan, the product
-boundary, the DCO sign-off, the malicious-package and vulnerability scan, and the invariant checks
-with their detection tests. The full suites run on every pull request too.
+direct pushes, force-pushes and deletion. A pull request merges, as a merge commit, once it is up
+to date with `main` and the seven required checks pass:
+
+- `TypeScript SDK`: typecheck, tests, conformance
+- `Dependency CVE scan + SAST`
+- `Product boundary`: a stranger installs polaris-verify and uses it
+- `DCO sign-off on every commit`
+- `Malicious packages and known vulnerabilities (OSV)`
+- `Invariant checks and their detection tests`
+- `Polaris product test suite`: the gate over every part of the product suite
+
+The full suites run on every pull request too, except where a change is
+wholly documentation, the site, `lab/` or another path on the allowlist in
+[`scripts/polaris-ci-changes.py`](scripts/polaris-ci-changes.py): the jobs measured not to read
+those paths are skipped, and the product suite's gate passes a skipped part only on that
+classification. A push to `main` runs everything, whatever the change touched. GitHub offers merge
+queues only to organization-owned repositories, so this one has none.
 
 Before opening one:
 
@@ -117,6 +130,28 @@ pip install pre-commit && pre-commit install
 | `polaris-link-check` | Every Markdown link and code path must resolve |
 | `no-secret-in-prod-compose` | Refuses a literal secret in the production compose file |
 | `em-dash-block-new` | Refuses a new em dash on a human-facing surface |
+
+### Tree receipts
+
+The four heavy hooks (`polaris-checks`, `polaris-detection-tests`, `polaris-link-check`,
+`polaris-script-tool-tests`) run through `scripts/polaris-tree-gate.py`. Measure the staged tree
+once, on a `git archive` export, before committing it:
+
+```bash
+python3 scripts/polaris-tree-gate.py         # the stages this commit's hooks would run; --all for every one
+```
+
+When every stage it ran passes, it writes a receipt to
+`$(git rev-parse --git-common-dir)/polaris-tree-receipts/<tree>.json`, shared by every worktree.
+At commit time each heavy hook skips, printing the tree and the summary it trusted, only when that
+receipt records a pass of the same stage, measured on an export, for the tree being committed
+(`git write-tree` on the index the commit records), with the same stage command (by hash),
+interpreter path and version, pytest, ruff and set of installed distributions (a sha256 of every
+`name==version`). Anything else runs the stage as before: no receipt, an unreadable one, another
+tree, a recorded failure, a changed command, another `python3` or package set. Run the gate with
+the `python3` the hooks run under. Only the gate makes a stage skippable: a hook run sees untracked
+files, so its pass records nothing, and its failure drops that stage from the receipt. `ruff`,
+`no-secret-in-prod-compose` and `em-dash-block-new` always run, and CI runs everything regardless.
 
 ## Style
 

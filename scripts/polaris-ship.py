@@ -8,6 +8,8 @@
     python3 scripts/polaris-ship.py run [--shards N] [--module M ...] [--keep]
                                                          # the product suite sharded across processes, one database,
                                                          # one Redis and one state directory per shard
+    python3 scripts/polaris-ship.py run --no-unsharded --part I/N [--module M ...]
+                                                         # only machine I's share of N (CI's coverage shards)
     python3 scripts/polaris-ship.py triage [RUN_ID]      # a red CI run: known flake (the rerun command) or the first
                                                          # failing lines per job
 
@@ -370,10 +372,11 @@ UNSHARDED_SUITES = {
                 "test_sbom_enrich", "test_issuance_scope", "test_pin_chart_images", "test_release_tag_guard",
                 "test_chain_anchor_tool",
                 "test_migrate_runner", "test_coverage_script",
-                "test_trigger_drill", "test_procedure_drill", "test_compose_parse", "test_operator_env", "test_key_event",
+                "test_trigger_drill", "test_procedure_drill", "test_oid4vp_drill", "test_sdk_drill",
+                "test_ci_changes", "test_ci_gate", "test_compose_parse", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
                 "test_event_partition_migration", "test_database_settings", "test_db_state", "test_db_reference",
-                "test_pgbackrest_conf", "test_db_init", "test_dev_tunnel"],
+                "test_pgbackrest_conf", "test_db_init", "test_dev_tunnel", "test_tree_gate"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
@@ -728,6 +731,24 @@ def distribute(units, n_shards, serial):
     return shards
 
 
+def parse_part(text):
+    """`I/N` as (I, N), 1-based, or None when it is not that."""
+    m = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", text or "")
+    if not m:
+        return None
+    i, n = int(m.group(1)), int(m.group(2))
+    return (i, n) if n >= 1 and 1 <= i <= n else None
+
+
+def machine_part(units, part, serial):
+    """The test classes machine I of N runs (2026-10-15, CI's coverage shards): distribute()'s
+    deal over N machines instead of N processes, so the N parts are disjoint, cover every unit,
+    are balanced by test count, and put every serial class on machine 1. Each machine lists the
+    same units from the same tree, so the N machines agree on the deal without talking."""
+    i, n = part
+    return distribute(units, n, serial)[i - 1]
+
+
 def _psql(db, args, env):
     return subprocess.run(["psql", "-v", "ON_ERROR_STOP=1", "-q", "-h", env.get("POLARIS_DB_HOST", "localhost"), "-d", db] + args,
                           cwd=SQL, env=env, capture_output=True, text=True)
@@ -833,6 +854,18 @@ def run(argv, out=None):
     n_shards = max(1, min(int(_opt(argv, "--shards", os.cpu_count() or 4)), 16))
     modules = _opts(argv, "--module") or DEFAULT_MODULES
     keep = "--keep" in argv
+    part = None
+    if "--part" in argv:
+        part = parse_part(_opt(argv, "--part", ""))
+        if part is None:
+            print("run: --part takes I/N with 1 <= I <= N, as in 2/3", file=out)
+            return 2
+        # A part runs a share of the sharded classes. The unsharded suites are not divided, so
+        # with them each of the N machines would run all of them again.
+        if "--no-unsharded" not in argv:
+            print("run: --part needs --no-unsharded; the unsharded suites are not divided between "
+                  "machines", file=out)
+            return 2
     py = _python()
     owner = os.environ.get("POLARIS_DB_USER") or subprocess.run(["whoami"], capture_output=True, text=True).stdout.strip()
     base_env = dict(os.environ)
@@ -865,7 +898,18 @@ def run(argv, out=None):
             if pr.returncode != 0:
                 raise SystemExit("run: %s: %s" % (db, text[-1500:]))
         units = list_units(py, modules, probe_env)
-        shards = distribute(units, n_shards, serial_classes(modules))
+        serial = serial_classes(modules)
+        if part:
+            every = units
+            units = machine_part(every, part, serial)
+            print("run: part %d/%d: %d of %d classes, %d of %d tests"
+                  % (part[0], part[1], len(units), len(every), sum(n for _, _, n in units),
+                     sum(n for _, _, n in every)), file=out)
+            if not units and len(every) >= part[0]:
+                print("run: FAILED: part %d/%d received no class although there are %d, so the deal "
+                      "has dropped work no machine will run" % (part[0], part[1], len(every)), file=out)
+                return 1
+        shards = distribute(units, n_shards, serial)
         total = sum(n for _, _, n in units)
         print("run: %d tests in %d classes across %d shards (serial shard: %d tests); databases loaded in %.0fs"
               % (total, len(units), n_shards, sum(n for _, _, n in shards[0]), time.time() - t0), file=out)

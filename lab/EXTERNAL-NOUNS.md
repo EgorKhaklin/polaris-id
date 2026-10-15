@@ -175,14 +175,16 @@ become installable only when a maintainer approves them with a second factor.
 
 | Package | First | Release candidate | Current |
 |---|---|---|---|
-| `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc7, 2026-10-01 |
-| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc16, 2026-10-04 (1.0.0rc7 is the certified one) |
-| `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc7, 2026-10-01 |
+| `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc8, 2026-10-11, with `--pre` |
+| `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0, 2026-10-11 (1.0.0rc7 is the certified one) |
+| `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc8, 2026-10-11, with `--pre` |
 | `polaris-id-cli` (PyPI) | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 |
 | `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.9, 2026-10-03, under `next` |
 
-Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). Being installable is not
-external use: a download count is not a person.
+Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). The Current column was
+measured on 2026-10-15 by installing each package into a fresh container; without `--pre`, pip
+installs 0.1.0 of `polaris-verify` and `polaris-sdk-python`. Being installable is not external
+use: a download count is not a person.
 
 Listed by outside parties: eudi-dev's maintainer merged `polaris-oid4vp` into its README's
 comparison of EUDI developer tools (dominikschlosser/eudi-dev#22, 2026-10-04), and the IETF OAuth

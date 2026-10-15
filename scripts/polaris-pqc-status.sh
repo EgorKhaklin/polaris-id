@@ -88,7 +88,7 @@ elif not r['oqs_available']:
     print("         To enable real signing:")
     print("           1. Install liboqs (apt-get install liboqs-dev OR build")
     print("              from https://github.com/open-quantum-safe/liboqs)")
-    print("           2. pip install oqs")
+    print("           2. pip install liboqs-python")
     print("           3. Set POLARIS_USE_REAL_PQC=1 in env")
     print("           4. Re-run this script to verify")
 
