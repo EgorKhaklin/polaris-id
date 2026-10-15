@@ -15,6 +15,7 @@ five files appeared.
 import base64
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -189,6 +190,62 @@ class ServeCommandTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(body, verifier.REFUSAL_BODY, "the cause is on the wire")
         self.assertEqual(verdict.code, "issuer_key", "the operator was not told either")
+
+    def test_what_serve_prints_reaches_a_pipe_while_it_serves(self):
+        """The launch links and each verdict line are read while the verifier runs, through a
+        pipe, a file or a container log (`docker run` without -t). None is a terminal, so Python
+        block-buffers stdout, and the lines waited there until the process exited: a walk on
+        2026-10-15 saw nothing after 8 s, and the same run under `python -u` saw the links. The
+        in-process tests above read stdout through a StringIO and could not see this."""
+        import queue
+        import socket
+        import threading
+        import time
+        import urllib.error
+        import urllib.request
+        from polaris_oid4vp.serve import RESPONSE_PATH
+        pki = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-pipe-"))
+        self.addCleanup(shutil.rmtree, pki, ignore_errors=True)
+        keygen(pki, "verifier.test")
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+        proc = subprocess.Popen([sys.executable, "-m", "polaris_oid4vp.cli", "serve", "--pki", str(pki),
+                                 "--host", "verifier.test", "--bind", "127.0.0.1", "--port", str(port),
+                                 "--no-local-tls", "--once"],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env,
+                                cwd=os.path.dirname(os.path.abspath(__file__)))
+        lines = queue.Queue()
+        threading.Thread(target=lambda: [lines.put(line) for line in proc.stdout], daemon=True).start()
+
+        def wait_for(pred, what, seconds=30):
+            seen, deadline = [], time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                try:
+                    line = lines.get(timeout=0.5)
+                except queue.Empty:
+                    self.assertIsNone(proc.poll(), "serve exited early: %r" % seen)
+                    continue
+                seen.append(line)
+                if pred(seen):
+                    return seen
+            self.fail("%s did not reach the pipe within %d s while serve ran; read: %r"
+                      % (what, seconds, seen))
+
+        try:
+            wait_for(lambda seen: sum("://?" in line for line in seen) == 3, "the three launch links")
+            req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, RESPONSE_PATH),
+                                         data=b"response=not-a-jwt", method="POST")
+            try:
+                urllib.request.urlopen(req, timeout=10)
+            except urllib.error.HTTPError as e:
+                self.assertEqual(e.code, 400)
+            wait_for(lambda seen: seen[-1].startswith("  <- 400 refused"), "the verdict line")
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+            proc.stdout.close()
 
 
 
