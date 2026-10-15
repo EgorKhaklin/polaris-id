@@ -1087,28 +1087,10 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
                     and _same_id(att.get("context_id"), context_id)):
                 # In-context means a context was presented (WIRE-SPEC section 4); before
                 # 2026-09-27 a missing one matched an edge from ANY context.
-                # P9.5: is the edge signed by the agency that made it, or is it the
-                # operator's word carried by the manifest's signature?
-                auth = m.get("authority") if isinstance(m.get("authority"), dict) else {}
-                av = verify_attestation(att, attesting_agency_id=auth.get("agency_id"), expected_key=token_key)
-                unsigned = not att.get("signature_hex") and not att.get("public_key_hex")
-                # A signed edge is the attesting agency's only if one of ITS roots signed it: the
-                # key must be among the carrying manifest's active anchors (2026-09-30; until then
-                # any key's valid signature counted, so a stranger met require_signed_attestation).
-                roots = {_hex_text(x.get("public_key_hex")) for x in (m.get("anchors") or [])
-                         if isinstance(x, dict) and _status_of(x) == "active"}
-                if not unsigned and (not av.authentic
-                                     or not _hex_in(att.get("public_key_hex"), roots)):
-                    continue    # a present-but-bad signature is worse than none: refuse the edge
-                # An edge whose own window has closed is not an edge, however fresh the manifest
-                # carrying it (WIRE-SPEC section 4). Until 2026-09-27 this decision never read
-                # `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy
-                # edge that states no window stays open.
-                if not _attestation_open(att, now):
+                admitted, signed = _edge_admits(att, m, token_key, now)
+                if not admitted or (require_signed_attestation and not signed):
                     continue
-                if require_signed_attestation and unsigned:
-                    continue
-                signed_edge = not unsigned
+                signed_edge = signed
                 via = m.get("authority")
                 break
         if via is not None:
@@ -1564,6 +1546,9 @@ class ExchangeRequestVerdict:
     requester_authorized: Optional[bool] = None
     body_bound: Optional[bool] = None
     note: Optional[str] = None
+    #: Whether the trust edge that authorized the requester was signed by the agency that made it
+    #: (WIRE-SPEC 3.14); None when no edge authorized it.
+    attestation_signed: Optional[bool] = None
 
 
 @dataclasses.dataclass
@@ -1577,6 +1562,8 @@ class ExchangeReceiptVerdict:
     #: The responder the receipt names, a SIGNED field, reported only for an authentic receipt.
     responder: Any = None
     note: Optional[str] = None
+    #: As for ExchangeRequestVerdict: was the edge that authorized the requester signed?
+    attestation_signed: Optional[bool] = None
 
 
 @dataclasses.dataclass
@@ -1596,10 +1583,37 @@ def _attestation_open(att, now=None) -> bool:
     return u is not None and n is not None and u >= n
 
 
+def _edge_admits(att, m, key, now=None):
+    """`(admitted, signed)` for one trust edge of the genuine, fresh manifest `m` that names
+    `key` in the presented context (WIRE-SPEC 3.14 and section 4), for the cross-authority
+    decision and both exchange paths. Until 2026-10-15 the exchange paths took any edge naming
+    the key, so a badly signed edge, or one a stranger signed, authorized a requester there."""
+    # P9.5: is the edge signed by the agency that made it, or is it the operator's word carried
+    # by the manifest's signature?
+    unsigned = not att.get("signature_hex") and not att.get("public_key_hex")
+    if not unsigned:
+        auth = m.get("authority") if isinstance(m.get("authority"), dict) else {}
+        av = verify_attestation(att, attesting_agency_id=auth.get("agency_id"), expected_key=key)
+        # A signed edge is the attesting agency's only if one of ITS roots signed it: the key
+        # must be among the carrying manifest's active anchors (2026-09-30; until then any key's
+        # valid signature counted, so a stranger met require_signed_attestation).
+        roots = {_hex_text(x.get("public_key_hex")) for x in (m.get("anchors") or [])
+                 if isinstance(x, dict) and _status_of(x) == "active"}
+        if not av.authentic or not _hex_in(att.get("public_key_hex"), roots):
+            return False, True    # a present-but-bad signature is worse than none: refuse the edge
+    # An edge whose own window has closed is not an edge, however fresh the manifest carrying it
+    # (WIRE-SPEC section 4). Until 2026-09-27 the cross-authority decision never read
+    # `valid_until`, and until 2026-09-28 it read it only for a SIGNED edge. A legacy edge that
+    # states no window stays open.
+    if not _attestation_open(att, now):
+        return False, not unsigned
+    return True, not unsigned
+
+
 def _exchange_authorities(key_hex, context_id, manifests, now=None):
-    """The authority of every manifest the caller trusts that is genuine and fresh at `now` and
-    attests `key_hex` in EXACTLY `context_id`, inside the attestation's own window, in order.
-    The section 4 rule, applied to an institution rather than a credential."""
+    """`(authority, signed)` for every manifest the caller trusts that is genuine and fresh at
+    `now` and attests `key_hex` in EXACTLY `context_id` with an edge the edge rule admits, in
+    order. The section 4 rule, applied to an institution rather than a credential."""
     want = _hex_text(key_hex)
     found = []
     if not want:
@@ -1609,12 +1623,13 @@ def _exchange_authorities(key_hex, context_id, manifests, now=None):
         mv = verify_signed_artifact(m, now=now)
         if not (mv.authentic and mv.fresh is True):
             continue
-        if any(isinstance(att, dict)
-               and _hex_text(att.get("attested_public_key_hex")) == want
-               and _same_id(att.get("context_id"), context_id)
-               and _attestation_open(att, now)
-               for att in (m.get("attestations") if isinstance(m.get("attestations"), list) else [])):
-            found.append(m.get("authority"))
+        for att in (m.get("attestations") if isinstance(m.get("attestations"), list) else []):
+            if (isinstance(att, dict) and _hex_text(att.get("attested_public_key_hex")) == want
+                    and _same_id(att.get("context_id"), context_id)):
+                admitted, signed = _edge_admits(att, m, want, now)
+                if admitted:
+                    found.append((m.get("authority"), signed))
+                    break
     return found
 
 
@@ -1632,8 +1647,9 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     """Verify a requester-signed exchange envelope OFFLINE (wire spec 3.11): the signature,
     under the key the envelope's signed `requester` names; with `requester_key`, that it is
     the requester expected; with `trusted_manifests`, that one of them, genuine and fresh at
-    `now`, attests the requester in the envelope's context; with `body`, that `request_hash`
-    is the SHA3-256 of the body's canonical JSON."""
+    `now`, attests the requester in the envelope's context with an edge WIRE-SPEC 3.14 admits
+    (`attestation_signed`: was it signed); with `body`, that `request_hash` is the SHA3-256 of
+    the body's canonical JSON."""
     e = envelope if isinstance(envelope, dict) else {}
     if e.get("format") != "polaris-exchange-request/1":
         return ExchangeRequestVerdict(False, note="not a polaris-exchange-request/1")
@@ -1649,8 +1665,9 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     if requester_key is not None:
         v.requester_matches = _same_key(e.get("public_key_hex"), requester_key)
     if trusted_manifests is not None:
-        v.requester_authorized = bool(_exchange_authorities(e.get("public_key_hex"), e.get("context_id"),
-                                                            trusted_manifests, now))
+        found = _exchange_authorities(e.get("public_key_hex"), e.get("context_id"), trusted_manifests, now)
+        v.requester_authorized = bool(found)
+        v.attestation_signed = found[0][1] if found else None
     if body is not None:
         canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
         v.body_bound = _sha3_hex(canon) == _hex_text(e.get("request_hash"))
@@ -1663,8 +1680,8 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     `responder_key`, that the expected responder signed it (and only then `responder`, the
     responder the receipt names); with `trusted_manifests`, that one
     of them, genuine and fresh at `now`, attests the REQUESTER in exactly the receipt's
-    context (a receipt stating no context is not authorized by an attestation from another),
-    and which authority (`via`); with a body, that its commitment binds. A receipt commits to
+    context (a receipt stating no context is not authorized by an attestation from another)
+    with an edge WIRE-SPEC 3.14 admits, and which authority (`via`); with a body, that its commitment binds. A receipt commits to
     the SHA3-256 of the body bytes as exchanged, so a body is hashed as given (bytes, or the
     string's UTF-8), not re-serialized."""
     r = receipt if isinstance(receipt, dict) else {}
@@ -1689,9 +1706,10 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
         req = r.get("requester") if isinstance(r.get("requester"), dict) else {}
         # `via` names the authority, so an attestation in a manifest that names none is no
         # answer to "authorized by whom" (the detached verifier's rule too).
-        named = [a for a in _exchange_authorities(req.get("public_key_hex"), r.get("context_id"),
-                                                  trusted_manifests, now) if a]
-        v.via = named[0] if named else None
+        found = _exchange_authorities(req.get("public_key_hex"), r.get("context_id"), trusted_manifests, now)
+        named = [(a, signed) for a, signed in found if a]
+        v.via = named[0][0] if named else None
+        v.attestation_signed = named[0][1] if named else None
         v.requester_authorized = bool(named)
     return v
 

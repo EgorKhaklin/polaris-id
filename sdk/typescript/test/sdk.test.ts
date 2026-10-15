@@ -1046,6 +1046,35 @@ test("requiring signed edges refuses only the unsigned one", () => {
   assert.equal(edgeDecide("open", true), "accept", "a signed edge meets the requirement");
 });
 
+// 2026-10-15: the exchange paths counted any edge naming the requester's key, so a badly signed
+// edge, or one signed by a key the manifest does not anchor, authorized the requester (WIRE-SPEC
+// 3.14 refuses both). One exchange and four genuine, fresh manifests that differ only in the edge.
+const XEDGE = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "exchange-edge-signature.json"), "utf8"));
+const xedgeVerdicts = (name: string) => {
+  const m = [XEDGE.manifests[name]], now = XEDGE._fixture.now;
+  const q = verifyExchangeRequest(XEDGE.request, null, m, undefined, now);
+  const r = verifyExchangeReceipt(XEDGE.receipt, now, m);
+  assert.ok(q.authentic && r.authentic, `${q.note} ${r.note}`);
+  return [q, r];
+};
+
+test("a badly signed or unanchored edge authorizes no exchange", () => {
+  for (const name of ["badly-signed", "stranger"]) {
+    for (const v of xedgeVerdicts(name)) {
+      assert.equal(v.requesterAuthorized, false, name);
+      assert.equal(v.attestationSigned ?? null, null, name);
+    }
+  }
+});
+
+test("an exchange verdict says whether the edge was signed", () => {
+  for (const [name, signed] of [["signed", true], ["unsigned", false]] as const) {
+    for (const v of xedgeVerdicts(name)) {
+      assert.deepEqual([v.requesterAuthorized, v.attestationSigned], [true, signed], name);
+    }
+  }
+});
+
 // 2026-09-23: a held-out round on verifyTimestampAnchor. The published witnessed anchor covers
 // the rules a test can reach by editing unsigned fields; sdk/testdata/anchor-variants.json holds
 // genuinely signed variants for the three it cannot (a head for another log, cosignatures over

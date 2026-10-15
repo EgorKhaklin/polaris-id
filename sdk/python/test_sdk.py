@@ -1060,6 +1060,37 @@ class CrossAuthorityEdgeWindowTests(unittest.TestCase):
 
 
 @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class ExchangeEdgeSignatureTests(unittest.TestCase):
+    """2026-10-15: the exchange paths counted any edge naming the requester's key, so a badly
+    signed edge, or one signed by a key the manifest does not anchor, authorized the requester
+    (WIRE-SPEC 3.14 refuses both). One exchange and four genuine, fresh manifests that differ
+    only in the requester's edge."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "exchange-edge-signature.json")))
+
+    def verdicts(self, name):
+        f, now = self.f, self.f["_fixture"]["now"]
+        m = [f["manifests"][name]]
+        q = pv.verify_exchange_request(f["request"], trusted_manifests=m, now=now)
+        r = pv.verify_exchange_receipt(f["receipt"], now=now, trusted_manifests=m)
+        self.assertTrue(q.authentic and r.authentic, (q.note, r.note))
+        return q, r
+
+    def test_a_badly_signed_or_unanchored_edge_authorizes_nothing(self):
+        for name in ("badly-signed", "stranger"):
+            for v in self.verdicts(name):
+                self.assertIs(v.requester_authorized, False, name)
+                self.assertIsNone(v.attestation_signed, name)
+
+    def test_the_verdict_says_whether_the_edge_was_signed(self):
+        for name, signed in (("signed", True), ("unsigned", False)):
+            for v in self.verdicts(name):
+                self.assertEqual((v.requester_authorized, v.attestation_signed), (True, signed), name)
+
+
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
 class TimestampAnchorHeldOutTests(unittest.TestCase):
     """2026-09-23: ten of verify_timestamp_anchor's rules removed in turn; nine survived this
     suite and the conformance runner. Several sit BEFORE a signature check, so a test that

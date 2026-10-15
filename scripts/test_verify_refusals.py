@@ -1646,6 +1646,21 @@ class CommandLineExitCodes(unittest.TestCase):
                 self.assertEqual(self.main(*zk, *flags), 0)
                 self.assertIs(vz.call_args.kwargs["require_signed_attestation"], want)
 
+    def test_an_accept_on_an_unsigned_edge_says_so(self):
+        """WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did. The
+        --json verdict carries attestation_signed; the plain output said nothing (2026-10-15)."""
+        import contextlib
+        import io
+        from unittest import mock
+        zk = ("--pqc-provider", "auto", "--zk-proof", str(self.blob), "--signature-only", "--nonce", "7")
+        for signed, said in ((False, True), (True, False), (None, False)):
+            out = io.StringIO()
+            verdict = {"decision": "accept", "reasons": [], "attestation_signed": signed}
+            with self.subTest(signed=signed), contextlib.redirect_stdout(out), \
+                    mock.patch.object(V, "verify_cross_authority_zk", return_value=verdict):
+                self.assertEqual(V.main(list(zk)), 0)
+                self.assertEqual("the trust edge is unsigned" in out.getvalue(), said)
+
     def test_a_json_decision_says_what_the_exit_code_says(self):
         """2026-10-01. A zero-knowledge accept held for a trust root or a nonce, and a stapled accept
         held for trust, printed `"decision": "accept"` and exited 2; a script reading the verdict
@@ -2309,6 +2324,73 @@ class CrossAuthorityZkEdgeSignature(unittest.TestCase):
 
     def test_an_edge_signed_by_a_key_the_manifest_does_not_anchor_is_refused(self):
         self.assertEqual(self.decide(manifest=dict(self.manifest, anchors=[])), "reject")
+
+
+@unittest.skipUnless(V._provider_available("oqs") or _cryptography_mldsa(), "no ML-DSA verifier here")
+class CrossAuthorityViaBundleRequiresSignedEdges(unittest.TestCase):
+    """require_signed_attestation reaches the decision a status bundle carries. The bundle's own
+    verdict is replaced, and its member's feed is not genuine, so every run rejects; what the
+    option changes is whether the unsigned edge was admitted before the feed was read."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.loads((ROOT / "sdk" / "testdata" / "federation-edge-window.json").read_text())
+
+    def decide(self, window, **kw):
+        from unittest import mock
+        f = self.f
+        member = {"revocation_feed": {"public_key_hex": f["pack"]["public_key_hex"]}}
+        bv = {"bundle_authentic": True, "fresh": True, "publisher_matches": None, "members": [member]}
+        with mock.patch.object(V, "verify_status_bundle", return_value=bv):
+            return V.verify_cross_authority_via_bundle(
+                f["pack"], f["_fixture"]["context_id"], [f["manifests"][window]], {},
+                now=f["_fixture"]["now"], trusted_anchors=[f["trusted_anchor"]], **kw)
+
+    def test_the_requirement_refuses_the_unsigned_edge_and_keeps_the_signed_one(self):
+        self.assertIs(self.decide("unsigned-open")["attestation_signed"], False)
+        refused = self.decide("unsigned-open", require_signed_attestation=True)
+        self.assertIsNone(refused["attestation_signed"])
+        self.assertIn("with a signature by the attesting agency", " ".join(refused["reasons"]))
+        self.assertIs(self.decide("open", require_signed_attestation=True)["attestation_signed"], True)
+
+
+@unittest.skipUnless(V._provider_available("oqs") or _cryptography_mldsa(), "no ML-DSA verifier here")
+class ExchangeEdgeSignature(unittest.TestCase):
+    """2026-10-15: verify_exchange_request and verify_exchange_receipt counted any edge naming
+    the requester's key, so a badly signed edge, or one signed by a key the manifest does not
+    anchor, authorized the requester; WIRE-SPEC 3.14 refuses both. sdk/testdata/
+    exchange-edge-signature.json holds one exchange and four genuine, fresh manifests that differ
+    only in the requester's edge."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.loads((ROOT / "sdk" / "testdata" / "exchange-edge-signature.json").read_text())
+
+    def verdicts(self, name):
+        f, now = self.f, self.f["_fixture"]["now"]
+        m = [f["manifests"][name]]
+        q = V.verify_exchange_request(f["request"], trusted_manifests=m, now=now)
+        r = V.verify_exchange_receipt(f["receipt"], now=now, trusted_manifests=m)
+        self.assertTrue(q["request_authentic"] and r["receipt_authentic"], (q["note"], r["note"]))
+        return q, r
+
+    def test_a_badly_signed_edge_authorizes_nothing(self):
+        for v in self.verdicts("badly-signed"):
+            self.assertIs(v["requester_authorized"], False)
+            self.assertIsNone(v["attestation_signed"])
+
+    def test_an_edge_signed_by_a_key_the_manifest_does_not_anchor_authorizes_nothing(self):
+        for v in self.verdicts("stranger"):
+            self.assertIs(v["requester_authorized"], False)
+            self.assertIsNone(v["attestation_signed"])
+
+    def test_the_verdict_says_whether_the_edge_was_signed(self):
+        """WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did."""
+        for name, signed in (("signed", True), ("unsigned", False)):
+            q, r = self.verdicts(name)
+            self.assertEqual((q["requester_authorized"], q["attestation_signed"]), (True, signed), name)
+            self.assertEqual((r["requester_authorized"], r["attestation_signed"]), (True, signed), name)
+            self.assertEqual(r["via"], {"agency_id": "B", "name": "Authority B"})
 
 
 ABSENT_SIZE = "the checkpoint has no committed_count"

@@ -1065,8 +1065,9 @@ def _edge_signature_admits(att, manifest, mv, expected_key, now, require_signed)
     than none and refuses the edge. An edge whose own window has closed is not an edge, however
     fresh the manifest carrying it: before 2026-09-17 nothing read `valid_until` and a one-year
     edge granted acceptance six years past its end. With `require_signed`, an unsigned (legacy)
-    edge is refused. Until 2026-10-15 the zero-knowledge path applied none of this: it took any
-    edge naming the key, so a badly signed edge counted there and the opt-in did not exist."""
+    edge is refused. Until 2026-10-15 the zero-knowledge path and both exchange paths did not
+    check the edge's signature: a badly signed edge counted there, and the zero-knowledge
+    path had no opt-in."""
     agency = (mv["authority"] or {}).get("agency_id") if isinstance(mv["authority"], dict) else None
     av = verify_attestation(att, attesting_agency_id=agency, expected_key=expected_key, now=now)
     roots = {_hex_text(a.get("public_key_hex")) for a in (manifest.get("anchors") or [])
@@ -2443,15 +2444,17 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     the expected requester); with trusted_manifests, that the requester is attested in the
     envelope's context by an authority the verifier trusts (the section 4 rule), decided at
     `now` (manifest freshness and each attestation's window; None is the wall clock, as for
-    verify_exchange_receipt); with body, that request_hash binds it. A third party holding the
-    envelope and the matching receipt (exchange_evidence) proves both sides of an exchange with
-    no access to either body."""
+    verify_exchange_receipt), under the edge's signature rule (WIRE-SPEC 3.14), with
+    `attestation_signed` saying whether the edge was signed; with body, that request_hash binds
+    it. A third party holding the envelope and the matching receipt (exchange_evidence) proves
+    both sides of an exchange with no access to either body."""
     if not isinstance(envelope, dict):
         envelope = {}
     req = envelope.get("requester") if isinstance(envelope.get("requester"), dict) else {}
     claimed = _hex_text(req.get("public_key_hex"))
     pk_hex = _hex_text(envelope.get("public_key_hex"))
     v = {"request_authentic": False, "requester_matches": None, "requester_authorized": None,
+         "attestation_signed": None,
          "body_bound": None, "requester": envelope.get("requester"), "target": envelope.get("target"),
          "context_id": envelope.get("context_id"), "request_hash": envelope.get("request_hash"),
          "nonce": envelope.get("nonce"), "issued_at": envelope.get("issued_at"), "witnesses": [], "note": None}
@@ -2512,7 +2515,14 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
                 if isinstance(att, dict) and pk_hex is not None and _hex_text(att.get("attested_public_key_hex")) == pk_hex \
                         and _same_id(att.get("context_id"), ctx) \
                         and _attestation_window_open(att, now):
-                    authorized = True
+                    # WIRE-SPEC 3.14, as for a credential. Until 2026-10-15 a badly signed edge,
+                    # or one signed by a key the manifest does not anchor, authorized here.
+                    admitted, signed = _edge_signature_admits(att, m, mv, pk_hex, now, False)
+                    if admitted:
+                        authorized, v["attestation_signed"] = True, signed
+                        break
+            if authorized:
+                break
         v["requester_authorized"] = authorized
     if body is not None:
         v["body_bound"] = (canonical_body_hash(body) == _hex_text(envelope.get("request_hash")))
@@ -3101,8 +3111,9 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     exchange occurred and was authorized: the responder's ML-DSA-65 signature over
     SHA3-256(canonical) with two witnesses; (with responder_key) that the expected responder
     signed it; and (with trusted_manifests) that some authority the relying party trusts
-    attests the REQUESTER's key in the receipt's context -- the same non-transitive trust as a
-    foreign credential. A party that also holds the request and/or response body may pass it to
+    attests the REQUESTER's key in the receipt's context -- the same non-transitive trust, and
+    the same edge signature rule, as a foreign credential (`attestation_signed` says whether the
+    edge was signed). A party that also holds the request and/or response body may pass it to
     confirm the commitment binds (request_hash == SHA3-256(body)); a party that does not still
     obtains the responder's signed attestation of occurrence and authorization; a receipt is signed
     by the responder alone, so the REQUESTER'S participation is proven by the envelope it signed
@@ -3111,6 +3122,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     if not isinstance(receipt, dict):
         receipt = {}
     v = {"receipt_authentic": False, "responder_matches": None, "requester_authorized": None,
+         "attestation_signed": None,
          "request_bound": None, "response_bound": None, "via": None,
          "requester": receipt.get("requester"), "responder": None,
          "context_id": receipt.get("context_id"), "occurred_at": receipt.get("occurred_at"),
@@ -3154,7 +3166,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     if trusted_manifests is not None:
         req_key = _hex_text((receipt.get("requester") or {}).get("public_key_hex")) if isinstance(receipt.get("requester"), dict) else None
         ctx = receipt.get("context_id")
-        via = None
+        via = signed_edge = None
         for manifest in (trusted_manifests if isinstance(trusted_manifests, (list, tuple)) else []):
             mv = verify_manifest(manifest, now=now, max_window_seconds=max_window_seconds)
             if not (mv["manifest_authentic"] and mv["fresh"]):
@@ -3168,12 +3180,16 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
                 if req_key is not None and _hex_text(att.get("attested_public_key_hex")) == req_key and \
                    _same_id(att.get("context_id"), ctx) and \
                    _attestation_window_open(att, now):
-                    via = mv["authority"]
-                    break
+                    # WIRE-SPEC 3.14, as for a credential (until 2026-10-15 any signature counted).
+                    admitted, signed = _edge_signature_admits(att, manifest, mv, req_key, now, False)
+                    if admitted:
+                        via, signed_edge = mv["authority"], signed
+                        break
             if via:
                 break
         v["requester_authorized"] = bool(via)
         v["via"] = via
+        v["attestation_signed"] = signed_edge if via else None
     return v
 
 
@@ -5903,6 +5919,10 @@ def main(argv=None):
             print("decision: %s" % verdict["decision"])
             for r in verdict.get("reasons", []):
                 print("  - %s" % r)
+            # WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did.
+            if verdict.get("attestation_signed") is False:
+                print("  - the trust edge is unsigned (version 1): the manifest's signature carries "
+                      "it, not the attesting agency's; --require-signed-attestation refuses it")
         if held:
             print(held, file=sys.stderr)
             return 2

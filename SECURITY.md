@@ -57,9 +57,12 @@ If you installed or pinned an older version, upgrade. The Current column is chec
 [docs/RELEASING.md](docs/RELEASING.md) on every run. The packages are for evaluation and
 interoperability work, not for protecting anything.
 
-Every verifier accepts a version 1 trust edge the attesting agency did not sign, unless the
-relying party sets `require_signed_attestation` (`requireSignedAttestation` in TypeScript,
-`--require-signed-attestation` beside `--zk-proof`).
+Every verifier accepts a version 1 trust edge the attesting agency did not sign. In a
+cross-authority decision the relying party can refuse one: `require_signed_attestation`
+(`requireSignedAttestation` in TypeScript) in `verify_cross_authority`, and in polaris-verify's
+zero-knowledge and status-bundle paths, or `--require-signed-attestation` beside `--zk-proof`.
+The exchange verifiers take no such option; their verdicts report `attestation_signed`
+(`attestationSigned` in TypeScript).
 
 ---
 
