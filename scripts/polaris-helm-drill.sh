@@ -97,7 +97,8 @@ echo "  privileged pod rejected: $(grep -o 'violates PodSecurity "restricted[^"]
 
 echo "== 3. secrets + helm install =="
 ( cd "$ROOT" && bash scripts/polaris-generate-secrets.sh >/dev/null 2>&1 ) || true
-[ -s "$ROOT/polaris_web/secrets/polaris_signing_key" ] || echo "  (no signing key generated; the app refuses to start in production without one)"
+[ -s "$ROOT/polaris_web/secrets/polaris_signing_key" ] \
+    || fail "no signing key generated (polaris-generate-secrets.sh needs liboqs or the built polaris-app:prod image); the app refuses to start in production without one"
 kubectl -n "$NS" create secret generic polaris-secrets --from-file="$ROOT/polaris_web/secrets/" >/dev/null
 helm lint "$ROOT/deploy/helm/polaris" >/dev/null && echo "  helm lint OK"
 # G5: ACME state that replicas do not share is refused, and one replica keeps it on a volume.

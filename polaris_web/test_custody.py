@@ -540,8 +540,8 @@ class Pkcs11CustodyTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class EnvSelectionTests(unittest.TestCase):
     def test_nothing_configured_means_no_custody(self):
-        """Outside production only: there, signing without custody refuses
-        (ProductionSigningKeyTests)."""
+        """The lookup reports None in every environment. What refuses in production is
+        signing without custody (ProductionSigningKeyTests)."""
         with _EnvSnapshot():
             self.assertIsNone(custody.get_custody())
             self.assertIsNone(pqc_signing.trust_anchor_public_key_hex())
