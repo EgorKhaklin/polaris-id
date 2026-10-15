@@ -150,12 +150,14 @@ not answer for this one.
 Note that `algorithm` is not a signed field of this artifact; a verifier MUST still
 reject a placeholder-signed assertion.
 
-The assertion names no relying party and carries no challenge, so a copy can be presented,
-with the credential, to any verifier until `expires_at`. Its window bounds that replay: the
-issuer declares the bound in `max_window_seconds` (3600 seconds by default in the
-reference issuer), and a verifier can lower it (2.2). It attests the credential's status,
-not who presents it; a verifier that needs the presenter to hold the credential's key
-requires a holder proof (3.15), whose `verifier_nonce` that verifier issued.
+The assertion names no relying party and carries no challenge: until `expires_at`, a copy
+presented with the credential passes the checks above at any verifier that trusts its
+issuer. The signed window bounds that replay. `max_window_seconds` is not a signed field, so
+a verifier takes no bound from it; it MAY refuse a window longer than its own maximum (2.2).
+The reference issuer's window is at most 3600 seconds by default
+(`POLARIS_STATUS_ASSERTION_TTL`). The assertion attests the credential's status, not who
+presents it; a verifier that needs the presenter to hold the holder key bound to the
+credential requires a holder proof (3.15) over a `verifier_nonce` it issued.
 
 ### 3.6 `polaris-transparency-sth/1`
 
