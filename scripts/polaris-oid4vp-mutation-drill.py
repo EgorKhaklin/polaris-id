@@ -189,6 +189,14 @@ NAMED_MUTANTS = (
      "    if limit is not None and len(raw) > limit:\n", "    if False:\n"),
     ("jwe:non-finite-numbers-read", "polaris_oid4vp/jwe.py",
      "    if not finite:\n        return json.loads(text)\n", "    return json.loads(text)\n"),
+    # A request closes only on an authentic presentation: anything else anyone who saw the
+    # request can send.
+    ("verifier:garbage-closes-the-request", "polaris_oid4vp/verifier.py",
+     "        if presentation is None:\n",
+     "        if presentation is None:\n            self._sessions.pop(session.state, None)\n"),
+    ("verifier:a-refused-presentation-closes-the-request", "polaris_oid4vp/verifier.py",
+     "            # gets the same constant refusal every other cause gets. The request stays open.\n",
+     "            self._sessions.pop(session.state, None)\n"),
 )
 
 

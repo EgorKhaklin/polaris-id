@@ -229,7 +229,9 @@ one constant body, so the verifier is not a per-check oracle:
 
 The response JWE (`jwe.py`) accepts only ECDH-ES over P-256 with A128GCM or A256GCM, with a
 fresh encryption key per request. The listener (`verifier.py`, `serve.py`) is standard library
-only.
+only. A request closes only on an authentic presentation; any other response, which anyone who
+fetched the request object can encrypt to its key, is refused and leaves the request open until
+it expires. A second authentic presentation for the same request is refused as a replay.
 
 ## Who sees the result
 
@@ -379,7 +381,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 642 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 648 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a
