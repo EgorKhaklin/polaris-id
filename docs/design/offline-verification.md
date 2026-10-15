@@ -70,8 +70,10 @@ python3 scripts/polaris-verify.py --pqc-provider auto --issuer-anchor trusted-ke
 - **Replay.** An assertion is bound to one credential (rule 3) and to a time window
   (rules 4-5); it cannot be replayed for another credential or after expiry.
   Presenting an old `ACTIVE` assertion for a since-revoked token fails once the window
-  passes. A verifier's clock skew tolerance is a deployment choice; v1 uses the
-  verifier's clock directly.
+  passes. Within the window it names no verifier and carries no nonce, so whoever holds
+  the credential and the assertion can present them to any verifier; one that needs the
+  holder's key requires a holder proof (WIRE-SPEC 3.15). A verifier's clock skew
+  tolerance is a deployment choice; v1 uses the verifier's clock directly.
 
 ## What v1 does NOT do (P3.6b)
 
