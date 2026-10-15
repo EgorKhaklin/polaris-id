@@ -62,6 +62,46 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
+  # 2026-10-15: which parts of CI this change needs. A pull request that touched only
+  # documentation ran every job here, about forty minutes, though most of them never open a
+  # document. scripts/polaris-ci-changes.py classifies the changed paths against an ALLOWLIST of
+  # paths the skippable jobs were measured not to read (its --audit repeats that measurement in
+  # the invariant checks on every run); anything else, an unknown path included, runs everything,
+  # and so do an empty diff, a base the checkout cannot reach, and every event but a pull request:
+  # a push, a manual run, and the merge queue, whose commit is exactly what lands on main, so the
+  # queue is the last gate before main and runs in full.
+  # The residual, stated: the audit is static. A glob with no literal directory, or a path built
+  # from variables, is not seen. So a job skipped on a pull request and then red in the queue or
+  # on main is that class (an allowlist miss), not a flake: remove the path from the allowlist.
+  # The outputs are read twice: by each skippable job's `if:`, and by the required gate, which
+  # passes a skipped job only when the output governing it says "false".
+  changes:
+    name: Which parts of CI this change needs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      full: ${{ steps.classify.outputs.full }}
+      oid4vp: ${{ steps.classify.outputs.oid4vp }}
+      sdk: ${{ steps.classify.outputs.sdk }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # The base of a pull request or a merge group can be any number of commits back.
+          fetch-depth: 0
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Classify the changed paths (scripts/polaris-ci-changes.py)
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          HEAD: ${{ github.sha }}
+        run: python scripts/polaris-ci-changes.py --event "$EVENT" --base "$BASE" --head "$HEAD"
+
   test-core:
     name: "Product suite: checks and drills"
     runs-on: ubuntu-latest
@@ -492,25 +532,10 @@ jobs:
       - name: Constraint mutation drill (drop each named constraint, the suite must notice)
         run: python scripts/polaris-constraint-mutation-drill.py
 
-      # 2026-09-26: removing a whole trigger is one question, removing ONE refusal inside its
-      # function another; the first measurement found sixteen refusals nothing noticed. About
-      # three minutes, so it runs per push as well as in the weekly sweep. It runs BEFORE the
-      # whole-trigger drill: while that drill has a recorder trigger dropped, the suites commit
-      # rows the recorder never saw (operator accounts with no creation event), and those rows
-      # outlive the mutation and turn this step's baseline red.
-      - name: Trigger refusal drill (delete each refusal inside each trigger function)
-        run: python scripts/polaris-trigger-mutation-drill.py --refusals
-
-      # v9.413 - the same question of the TRIGGERS, which is where C1 lives. The
-      # first run of this measurement found 14 of 37 covered by nothing; v9.412
-      # covered them. This is what keeps that true, because a coverage number
-      # nobody re-measures is one that decays. Fast mode runs the two cheap
-      # suites per trigger (about 35s for all 37); the eleven whose coverage
-      # lives in the application suite are declared rather than re-checked here,
-      # and the weekly trigger-sweep workflow re-establishes that list with
-      # --exhaustive.
-      - name: Trigger mutation drill (drop each trigger, something must notice)
-        run: python scripts/polaris-trigger-mutation-drill.py
+      # The trigger drills (each trigger dropped, and each refusal inside a trigger function
+      # deleted) were steps here until 2026-10-15, nine minutes each and run one after the other;
+      # each now has a job of its own and its own database (test-trigger-drill and
+      # test-trigger-refusals below), under the same required gate.
 
       # v9.275 (roadmap PE.5) — attacks that MUST fail, run every release. The db
       # suite issues a real signed token, revokes it through the real uc8
@@ -668,11 +693,19 @@ jobs:
   # uploaded as an artifact either way, so a run can be looked at.
   # --------------------------------------------------------------------------
 
-  test-coverage:
-    name: "Product suite: Python suites under coverage + floor gate"
-    # Split out of the product suite so it runs beside the other parts (same database setup).
+  test-coverage-shard:
+    name: "Product suite: Python suites under coverage, shard ${{ matrix.shard }} of 3"
+    # 2026-10-15: the coverage step was CI's critical path, one step of 22 to 38 minutes. Each of
+    # three shards runs a third of it (the sharded database suites dealt over the three machines by
+    # polaris-ship.py --part, and every third of the other suites) and keeps its coverage data;
+    # test-coverage below combines the three and applies the floors. Never skipped: the suites
+    # here include polaris_checks/test_checks.py, which opens every file in the tree.
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
 
     services:
       postgres:
@@ -798,14 +831,73 @@ jobs:
           cargo build --release --bin polaris-zk
 
 
-      - name: Python suites under coverage + floor gate (DB, with ZK binary)
+      - name: Python suites under coverage, one shard (DB, with ZK binary)
+        env:
+          POLARIS_COVERAGE_SHARD: "${{ matrix.shard }}/3"
+        run: bash scripts/polaris-coverage.sh --shard "$POLARIS_COVERAGE_SHARD"
+
+      # The data files are dotfiles (.coverage.*), which upload-artifact leaves out unless told.
+      # A shard whose suites failed stops at the step above and uploads nothing, and the
+      # combining job then fails on the missing shard as well as on this one's result.
+      - name: Keep this shard's coverage data for the combining job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-data-shard-${{ matrix.shard }}
+          path: |
+            .coverage.*
+            coverage-shard.txt
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+
+  test-coverage:
+    # The coverage part of the product suite, under the name it always had: it runs no suite. It
+    # passes only if all three shards passed, every shard's data arrived (scripts/polaris-coverage.sh
+    # --combine fails on a missing, empty or mismatched shard), and the combined numbers clear the
+    # same floors the single run applied.
+    name: "Product suite: Python suites under coverage + floor gate"
+    needs: [test-coverage-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Every coverage shard passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: python scripts/polaris-ci-gate.py --always test-coverage-shard
+
+      # coverage.py from the same hashed set the shards installed (requirements-dev.txt pulls in
+      # requirements-test.txt), so the data files are read by the version that wrote them.
+      - name: Install coverage.py
+        run: pip install --require-hashes -r polaris_web/requirements-test.txt
+
+      - name: Download every shard's coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-data-shard-*
+          path: ${{ runner.temp }}/coverage-shards
+
+      - name: Combine the three shards + floor gate
         env:
           COVERAGE_FLOOR: "86"
           BRANCH_FLOOR: "84"
-        run: bash scripts/polaris-coverage.sh
+        run: bash scripts/polaris-coverage.sh --combine "$RUNNER_TEMP/coverage-shards" --of 3
 
   test-procedures-shard:
     name: "Product suite: procedure mutation drill, shard ${{ matrix.shard }} of 6"
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     # Split out of the product suite: on a pull request that changes procedures this drill alone runs 2+ hours.
     # Sharded 2026-10-10: 103 refusals, 1h45m in one job; each of six shards mutates every sixth refusal
     # (scripts/test_procedure_drill.py proves the six cover all of them once) and repeats only the
@@ -974,19 +1066,26 @@ jobs:
     # The procedure drill's part of the product suite, under the name it always had. It runs no
     # drill itself: it passes only if the matrix above passed, which GitHub reports as success
     # only when every one of its six shards did.
+    # 2026-10-15: the shards are skipped when the changes job says this change cannot affect
+    # them, and scripts/polaris-ci-gate.py passes that skip only on its "false".
     name: "Product suite: procedure mutation drill"
-    needs: [test-procedures-shard]
+    needs: [changes, test-procedures-shard]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Every shard of the procedure mutation drill passed
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          echo "$RESULTS" | python3 -c 'import json, sys; r = {k: v["result"] for k, v in json.load(sys.stdin).items()}; print(r); sys.exit(0 if len(r) == 1 and all(v == "success" for v in r.values()) else 1)'
+        run: python3 scripts/polaris-ci-gate.py --changes changes --when full=test-procedures-shard
 
   test-app-role:
     name: "Product suite: the web suite as the application role"
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     # Split out of the core part (2026-10-08): the whole web suite again, 23 minutes on its own.
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -1127,6 +1226,8 @@ jobs:
 
   test-zk:
     name: "Product suite: the ZK library, its coverage floor and its mutation drill"
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     # Split out of the core part (2026-10-08): the Rust crate's suite, coverage and drill.
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -1304,22 +1405,307 @@ jobs:
       - name: ZK mutation drill (disable a witness, a suite must notice)
         run: python3 scripts/polaris-zk-mutation-drill.py
 
+  test-trigger-drill:
+    name: "Product suite: trigger mutation drill"
+    # Split out of the core part (2026-10-15): nine minutes there, run after the refusal drill.
+    # Its own database here, so neither drill's leftovers can reach the other's baseline (the core
+    # part had to order them for exactly that reason).
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: polaris_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # v9.190 (roadmap P1.8): a real Redis so the Redis-backed rate-limiter
+      # tests RUN here (they skipped for want of a server since v9.40) and the
+      # abuse drill exercises the Lua sliding window under redis-py 8.x.
+      redis:
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POLARIS_DB_HOST: localhost
+      POLARIS_DB_PORT: '5432'
+      POLARIS_DB_NAME: polaris_test
+      POLARIS_DB_USER: postgres
+      POLARIS_DB_PASSWORD: ci_password
+      # The application role's password, as 09_grants.sql creates it. Without it the tests that
+      # connect AS polaris_app (the C1 privilege boundary) could not log in and skipped.
+      POLARIS_APP_TEST_PASSWORD: polaris_dev_password
+      POLARIS_SECRET_KEY: ci-only-test-secret-key-32-bytes-long
+      # v9.280 (PE.1): this suite runs the SHA3-256 placeholder signer (no liboqs
+      # here). Name the dev profile explicitly so the boot is quiet and honest,
+      # rather than relying on the silent default.
+      POLARIS_PQC_PROFILE: placeholder
+      POLARIS_STATE_DIR: /tmp/polaris-state
+      PGPASSWORD: ci_password
+      # v9.190: test_app's RedisRateLimiterTests + the multiprocess test run
+      # against the redis service instead of skipping.
+      POLARIS_TEST_REDIS_URL: redis://localhost:6379/0
+      # Built before the app suite (see "Build ZK binary"); makes test_app's
+      # ZKSnarkTests run instead of skipping for want of the binary.
+      POLARIS_ZK_BINARY: ${{ github.workspace }}/polaris_zk/target/release/polaris-zk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # v9.436: the procedure drill's --changed mode refuses rather than passing when it
+          # cannot reach its baseline. Since 2026-09-28 the baseline is the commit the push
+          # started from (POLARIS_CHANGED_BASE), which can be any number of commits back, so
+          # the job takes the whole history.
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client age   # age: test_secretstore's age backend (P1.3)
+
+      - name: Install Python deps
+        run: |
+          # CI runs the test suites, so it needs the dev tooling (pytest,
+          # hypothesis, playwright). requirements-dev.txt pulls in the full
+          # runtime surface via its `-r requirements.txt` line. The Docker
+          # images, by contrast, install requirements.txt only (no test deps).
+          pip install --require-hashes -r polaris_web/requirements-dev.txt
+          # v9.178 (P1.2): the optional custody drivers (boto3, python-pkcs11) so
+          # test_custody's KMS stand-in and env-selection tests run here.
+          pip install --require-hashes -r polaris_web/requirements-custody.txt
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U postgres; then break; fi
+            sleep 1
+          done
+
+      - name: Load Polaris schema
+        run: |
+          mkdir -p $POLARIS_STATE_DIR
+          cd polaris_sql
+          psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f 00_load_all.sql
+
+      - name: Apply migrations
+        run: |
+          cd polaris_sql
+          for f in $(ls migrations/*.up.sql | sort); do
+            echo "applying $f"
+            psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      # v9.413 - the same question of the TRIGGERS, which is where C1 lives. The
+      # first run of this measurement found 14 of 37 covered by nothing; v9.412
+      # covered them. This is what keeps that true, because a coverage number
+      # nobody re-measures is one that decays. Fast mode runs the two cheap
+      # suites per trigger; the eleven whose coverage lives in the application
+      # suite are declared rather than re-checked here, and the weekly
+      # trigger-sweep workflow re-establishes that list with --exhaustive.
+      - name: Trigger mutation drill (drop each trigger, something must notice)
+        run: python scripts/polaris-trigger-mutation-drill.py
+
+  test-trigger-refusals:
+    name: "Product suite: trigger refusal drill"
+    # Split out of the core part (2026-10-15), beside the trigger mutation drill rather than
+    # before it: nine minutes, on its own database.
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: polaris_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # v9.190 (roadmap P1.8): a real Redis so the Redis-backed rate-limiter
+      # tests RUN here (they skipped for want of a server since v9.40) and the
+      # abuse drill exercises the Lua sliding window under redis-py 8.x.
+      redis:
+        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POLARIS_DB_HOST: localhost
+      POLARIS_DB_PORT: '5432'
+      POLARIS_DB_NAME: polaris_test
+      POLARIS_DB_USER: postgres
+      POLARIS_DB_PASSWORD: ci_password
+      # The application role's password, as 09_grants.sql creates it. Without it the tests that
+      # connect AS polaris_app (the C1 privilege boundary) could not log in and skipped.
+      POLARIS_APP_TEST_PASSWORD: polaris_dev_password
+      POLARIS_SECRET_KEY: ci-only-test-secret-key-32-bytes-long
+      # v9.280 (PE.1): this suite runs the SHA3-256 placeholder signer (no liboqs
+      # here). Name the dev profile explicitly so the boot is quiet and honest,
+      # rather than relying on the silent default.
+      POLARIS_PQC_PROFILE: placeholder
+      POLARIS_STATE_DIR: /tmp/polaris-state
+      PGPASSWORD: ci_password
+      # v9.190: test_app's RedisRateLimiterTests + the multiprocess test run
+      # against the redis service instead of skipping.
+      POLARIS_TEST_REDIS_URL: redis://localhost:6379/0
+      # Built before the app suite (see "Build ZK binary"); makes test_app's
+      # ZKSnarkTests run instead of skipping for want of the binary.
+      POLARIS_ZK_BINARY: ${{ github.workspace }}/polaris_zk/target/release/polaris-zk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # v9.436: the procedure drill's --changed mode refuses rather than passing when it
+          # cannot reach its baseline. Since 2026-09-28 the baseline is the commit the push
+          # started from (POLARIS_CHANGED_BASE), which can be any number of commits back, so
+          # the job takes the whole history.
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client age   # age: test_secretstore's age backend (P1.3)
+
+      - name: Install Python deps
+        run: |
+          # CI runs the test suites, so it needs the dev tooling (pytest,
+          # hypothesis, playwright). requirements-dev.txt pulls in the full
+          # runtime surface via its `-r requirements.txt` line. The Docker
+          # images, by contrast, install requirements.txt only (no test deps).
+          pip install --require-hashes -r polaris_web/requirements-dev.txt
+          # v9.178 (P1.2): the optional custody drivers (boto3, python-pkcs11) so
+          # test_custody's KMS stand-in and env-selection tests run here.
+          pip install --require-hashes -r polaris_web/requirements-custody.txt
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U postgres; then break; fi
+            sleep 1
+          done
+
+      - name: Load Polaris schema
+        run: |
+          mkdir -p $POLARIS_STATE_DIR
+          cd polaris_sql
+          psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f 00_load_all.sql
+
+      - name: Apply migrations
+        run: |
+          cd polaris_sql
+          for f in $(ls migrations/*.up.sql | sort); do
+            echo "applying $f"
+            psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      # 2026-09-26: removing a whole trigger is one question, removing ONE refusal inside its
+      # function another; the first measurement found sixteen refusals nothing noticed.
+      - name: Trigger refusal drill (delete each refusal inside each trigger function)
+        run: python scripts/polaris-trigger-mutation-drill.py --refusals
+
   test:
     # The required check. Its parts (the test-* jobs it needs) were one serial job of 2 to 4.5
     # hours; they now run in parallel and this passes only if every one of them did.
+    # 2026-10-15: and it needs every job the changes job can skip, so a red one blocks the merge
+    # wherever it runs, the drills moved out of other jobs included (the SDK mutation drill was
+    # in Real PQC, which the ruleset does not require). A part counts as passed when it
+    # succeeded, or when it was skipped AND the changes output that governs it says "false";
+    # any other skip, a failure, a cancellation or a missing result fails this
+    # (scripts/polaris-ci-gate.py, tested by scripts/test_ci_gate.py).
     name: Polaris product test suite
-    needs: [test-core, test-coverage, test-procedures, test-app-role, test-zk]
+    needs:
+      - changes
+      - test-core
+      - test-coverage
+      - test-procedures
+      - test-app-role
+      - test-zk
+      - test-trigger-drill
+      - test-trigger-refusals
+      - ui-drill
+      - docker-image
+      - caddy-edge
+      - page-drill
+      - trace-drill
+      - dr-drill
+      - linux-install
+      - custody-pkcs11
+      - rolling-deploy
+      - region-evacuation
+      - ha-failover
+      - helm-kind
+      - pqc-real
+      - pqc-real-web
+      - federation-two-instances
+      - image-cve-scan
+      - prod-stack-boot
+      - managed-postgres
+      - test-oid4vp-drill
+      - test-sdk-drill
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Every part of the product suite passed
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Every part of the product suite passed, or was not needed
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          echo "$RESULTS" | python3 -c 'import json, sys; r = {k: v["result"] for k, v in json.load(sys.stdin).items()}; print(r); sys.exit(0 if len(r) == 5 and all(v == "success" for v in r.values()) else 1)'
+        run: >-
+          python3 scripts/polaris-ci-gate.py --changes changes
+          --always test-core,test-coverage,test-procedures
+          --when full=test-app-role,test-zk,test-trigger-drill,test-trigger-refusals,ui-drill,docker-image,caddy-edge,page-drill,trace-drill,dr-drill,linux-install,custody-pkcs11,rolling-deploy,region-evacuation,ha-failover,helm-kind,pqc-real,pqc-real-web,federation-two-instances,image-cve-scan,prod-stack-boot,managed-postgres
+          --when oid4vp=test-oid4vp-drill
+          --when sdk=test-sdk-drill
 
   ui-drill:
     name: Atlas live-simulation UI drill (Playwright, headless chromium)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -1435,6 +1821,8 @@ jobs:
   # --------------------------------------------------------------------------
   docker-image:
     name: Docker image build + boot smoke test
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -1891,6 +2279,8 @@ jobs:
   # --------------------------------------------------------------------------
   caddy-edge:
     name: Caddy edge build + Caddyfile validation + PQ KEX proof
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -2022,6 +2412,8 @@ jobs:
   # --------------------------------------------------------------------------
   page-drill:
     name: Duress page path (Prometheus rules -> Alertmanager -> pager webhook)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -2046,6 +2438,8 @@ jobs:
   # --------------------------------------------------------------------------
   trace-drill:
     name: Tracing wire drill + dashboards-as-code validation
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -2075,6 +2469,8 @@ jobs:
   # --------------------------------------------------------------------------
   dr-drill:
     name: DR drill (kill the primary, restore from the WAL archive, measure RPO + RTO)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -2131,6 +2527,8 @@ jobs:
   # --------------------------------------------------------------------------
   linux-install:
     name: Linux server install (systemd on this host; Debian 12 + Rocky 9 package stages)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -2448,6 +2846,8 @@ jobs:
   # --------------------------------------------------------------------------
   custody-pkcs11:
     name: Key custody via PKCS#11 (Kryoptic token, ML-DSA-65 in-token, two-witness verified)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -2476,6 +2876,8 @@ jobs:
   # --------------------------------------------------------------------------
   rolling-deploy:
     name: Rolling deploy under traffic drops zero requests (blue-green profile + control)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     env:
       POLARIS_DOMAIN: localhost
@@ -2552,6 +2954,8 @@ jobs:
   # --------------------------------------------------------------------------
   region-evacuation:
     name: Second region survives the first going dark (async standby, measured RTO/RPO)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     env:
       POLARIS_DOMAIN: localhost
@@ -2608,6 +3012,8 @@ jobs:
   # --------------------------------------------------------------------------
   ha-failover:
     name: HA profile survives a leader crash, a lease partition, a switchover and an etcd crash
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     env:
       POLARIS_DOMAIN: localhost
@@ -2672,6 +3078,8 @@ jobs:
   # --------------------------------------------------------------------------
   helm-kind:
     name: Kubernetes reference profile boots to healthy on kind (Calico-enforced policies, restricted PSS) and fails the database over
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -2695,6 +3103,8 @@ jobs:
 
   pqc-real:
     name: Real PQC (ML-DSA-65) sign + verify
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
 
     # v9.365 (P7.6): the quantum-event drill measures a population migration under REAL
@@ -3135,31 +3545,16 @@ jobs:
       - name: Conformance mutation drill — does the contract constrain a verifier?
         run: python scripts/polaris-conformance-mutation-drill.py
 
-      # v9.455 — the reference SDK is what an integrator builds against, and six mutation
-      # drills existed without one asking whether a refusal INSIDE it still refuses. Every
-      # `return False` in polaris_verify is turned into `return True` and both the SDK's
-      # tests and the conformance suite must notice. The first run answered 18 of 18
-      # unprotected, including a grant's exhausted use limit and a Merkle index outside the
-      # tree. Carries a negative control: an SDK whose signature backends accept anything
-      # must be caught, or a clean result means nothing.
-      # v9.457: the drill covers BOTH reference SDKs, so this job needs the TypeScript
-      # one to build. Without node_modules the unmutated TS tree fails its own suite and
-      # the drill refuses to report -- correctly, but the job dies on setup rather than
-      # on a finding. node itself is preinstalled on the runner; the dependencies are not.
-      - name: Set up Node (the drill inverts the TypeScript SDK too)
+      # The SDK mutation drill ran here until 2026-10-15, with no time bound: on a change to the
+      # detached verifier it took 65 minutes (run 38667231409). It is test-sdk-drill now, four
+      # shards under the required gate. The steps below that compare the two reference SDKs
+      # need the TypeScript one built, so Node and its dependencies stay.
+      - name: Set up Node (the agreement drills run the TypeScript SDK)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
       - name: Install the TypeScript SDK's pinned dependencies
         run: cd sdk/typescript && npm ci
-      - name: SDK mutation — every refusal in BOTH reference verifiers is caught when inverted
-        env:
-          # The commit this push started from, or a pull request's base. A push carries
-          # several commits and HEAD~1 sees only the last: on 2026-09-28 this drill ran
-          # as a no-op on a push whose procedure change was in its second-to-last
-          # commit (scripts/polaris_changed_base.py). A merge group names its base the same way.
-          POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
-        run: python scripts/polaris-sdk-mutation-drill.py --changed
 
       # v9.330 (P8.8b) — cross-version compatibility, both directions: the frozen version-1
       # set (cases + vectors pinned by SHA256SUMS, a vendored v9.317 verifier) under the CURRENT
@@ -3239,6 +3634,8 @@ jobs:
 
   pqc-real-web:
     name: "Real PQC: the web suite under real ML-DSA-65"
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     # Split out of Real PQC (2026-10-08): its last step was 21 of its 39 minutes.
     runs-on: ubuntu-latest
 
@@ -3337,6 +3734,8 @@ jobs:
   # --------------------------------------------------------------------------
   federation-two-instances:
     name: Federation proven across two instances (P3.10)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -3531,16 +3930,134 @@ jobs:
       # every other test in the package stays green.
       - name: The listening surface — status codes, content types, routing
         run: cd packages/polaris-oid4vp && python -m unittest test_serve
-      # 99% line coverage says every line RAN. It does not say a test would fail if a line
-      # stopped refusing, and those are different questions. Seven of the conformance plan's
-      # eleven modules pass only on a 4xx, so every one of them is a refusal in this package,
-      # and the conformance drill that would notice needs Docker and a running suite.
-      - name: OID4VP mutation — every refusal is caught when inverted
-        run: python scripts/polaris-oid4vp-mutation-drill.py
+      # The OID4VP mutation drill ran here until 2026-10-15, 34 of this job's 35 minutes on every
+      # pull request. It is test-oid4vp-drill now: three shards, run when a change touches what
+      # the drill reads, and on every push to main.
       # keygen encodes two certificate rules the conformance suite enforces and that cost a
       # failed run each to discover. The tests assert the SHAPE, not that files appeared.
       - name: The verifier's entry point, and the certificates it must produce
         run: cd packages/polaris-oid4vp && python -m unittest test_cli
+
+  # 2026-10-15: the OID4VP mutation drill, out of the product boundary job. Every refusal in
+  # packages/polaris-oid4vp is made to accept and the package's suites must notice; the drill
+  # copies the package and runs its suites in the copy, so it reads only the package, itself, the
+  # interpreter's requirements and this workflow, and the changes job runs it when one of those
+  # moved (and on every push to main). Three shards, each a third of the mutations
+  # (--shard, the procedure drill's form), each with the baseline and the negative control.
+  test-oid4vp-drill:
+    name: "OID4VP mutation drill, shard ${{ matrix.shard }} of 3"
+    needs: [changes]
+    if: needs.changes.outputs.oid4vp == 'true'
+    runs-on: ubuntu-latest
+    # A shard is about 12 minutes (the unsharded drill took 34); twice that and more, and bounded.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install cryptography (polaris-oid4vp checks ES256, which is HAIP's floor)
+        run: python -m pip install --quiet --require-hashes -r polaris_web/requirements.txt
+      # 99% line coverage says every line RAN. It does not say a test would fail if a line
+      # stopped refusing, and those are different questions. Seven of the conformance plan's
+      # eleven modules pass only on a 4xx, so every one of them is a refusal in this package,
+      # and the conformance drill that would notice needs Docker and a running suite.
+      - name: OID4VP mutation, one shard (every refusal is caught when inverted)
+        env:
+          POLARIS_DRILL_SHARD: "${{ matrix.shard }}/3"
+        run: python scripts/polaris-oid4vp-mutation-drill.py --shard "$POLARIS_DRILL_SHARD"
+
+  # 2026-10-15: the SDK mutation drill, out of Real PQC, where it had no time bound and took 65
+  # minutes on a change to the detached verifier (run 38667231409). Every refusal in both reference
+  # SDKs and the detached verifier is inverted and their suites and the conformance suite must
+  # notice. --changed keeps its scope (it inverts only when this change touched an SDK, a suite or
+  # the drill; the changes job reads the drill's own path list to skip these jobs when it did not),
+  # and four shards (--shard) divide the inversions. Its environment is Real PQC's: liboqs and the
+  # cryptography witness, which decide which refusals are reachable, and the TypeScript SDK built.
+  test-sdk-drill:
+    name: "SDK mutation drill, shard ${{ matrix.shard }} of 4"
+    needs: [changes]
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    # A shard is about 16 minutes of inversions, plus the build of liboqs and each verifier's
+    # baseline and negative control; an hour bounds a runner twice as slow, and a hung suite.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      # The whole history, so --changed can reach the commit the push started from
+      # (POLARIS_CHANGED_BASE). Without it the drill refuses rather than reporting a clean run.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      # Real PQC's install, as it was when the drill ran there: the declared survivors are
+      # calibrated against liboqs and the cryptography witness, which decide what is reachable.
+      - name: Install liboqs-python (builds liboqs) + the cryptography witness
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list   # the runner's Chrome apt source is not ours and flakes (index hash mismatch, v9.343)
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build postgresql-client
+          pip install --require-hashes -r polaris_web/requirements-pqc.txt
+          # The independent second witness (v9.133): cryptography provides an
+          # OpenSSL-backed ML-DSA-65, a DIFFERENT FIPS 204 implementation than liboqs.
+          # cbor2 serves the ISO 18013-5 bridge drill (v9.362) and psycopg2 the
+          # quantum-event drill (v9.365). All three come from the runtime lock, hashed,
+          # never from a pin repeated here: a repeated literal once still said 48.0.0
+          # after the runtime moved to 50.0.1 for PYSEC-2026-3552/3553/3554 +
+          # GHSA-537c-gmf6-5ccf, and the job reinstalled what cve-scan had rejected.
+          pip install --require-hashes -r polaris_web/requirements.txt
+          # v9.178 (P1.2): the custody drivers, so test_custody runs here with BOTH
+          # witnesses (liboqs + OpenSSL): the file driver for real, the AWS KMS
+          # driver against its wire-faithful stand-in, rotation end to end.
+          pip install --require-hashes -r polaris_web/requirements-custody.txt
+
+      # The first import of oqs builds liboqs, which takes minutes; the drill bounds each suite
+      # run, so the build happens here. Without liboqs the drill reports INCONCLUSIVE and exits 0,
+      # which here would be a pass that measured nothing: this step fails instead.
+      - name: liboqs is built and offers ML-DSA-65
+        run: python -c "import oqs; m = oqs.get_enabled_sig_mechanisms(); assert 'ML-DSA-65' in m, m; print('liboqs ready,', len(m), 'signature mechanisms')"
+
+      - name: Set up Node (the drill inverts the TypeScript SDK too)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install the TypeScript SDK's pinned dependencies
+        run: cd sdk/typescript && npm ci
+
+      # v9.455: the reference SDK is what an integrator builds against, and six mutation
+      # drills existed without one asking whether a refusal INSIDE it still refuses. Every
+      # `return False` in polaris_verify is turned into `return True` and both the SDK's
+      # tests and the conformance suite must notice. The first run answered 18 of 18
+      # unprotected, including a grant's exhausted use limit and a Merkle index outside the
+      # tree. Carries a negative control: an SDK whose signature backends accept anything
+      # must be caught, or a clean result means nothing.
+      - name: SDK mutation, one shard (every refusal in both reference verifiers is caught when inverted)
+        env:
+          # The commit this push started from, or a pull request's base. A push carries
+          # several commits and HEAD~1 sees only the last: on 2026-09-28 this drill ran
+          # as a no-op on a push whose procedure change was in its second-to-last
+          # commit (scripts/polaris_changed_base.py). A merge group names its base the same way.
+          POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          POLARIS_DRILL_SHARD: "${{ matrix.shard }}/4"
+        run: python scripts/polaris-sdk-mutation-drill.py --changed --shard "$POLARIS_DRILL_SHARD"
 
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance
@@ -3745,6 +4262,8 @@ jobs:
   # --------------------------------------------------------------------------
   image-cve-scan:
     name: Container image CVE scan (Trivy)
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -3798,6 +4317,8 @@ jobs:
   # --------------------------------------------------------------------------
   prod-stack-boot:
     name: Full prod compose boots + serves end to end
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -3965,6 +4486,8 @@ jobs:
     # not a superuser, as on a managed service. The provider's superuser creates the owner and the
     # database and, once, grants SET on the three polaris.* settings; everything else runs as the owner.
     name: A PostgreSQL Polaris does not ship, owned by a role that is not a superuser, initialised by one script
+    needs: [changes]
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:

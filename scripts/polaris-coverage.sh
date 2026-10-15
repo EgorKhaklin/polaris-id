@@ -18,6 +18,18 @@
 #   scripts/polaris-coverage.sh                 # run, report, gate on the floor
 #   scripts/polaris-coverage.sh --no-gate       # run + report only (no floors)
 #   COVERAGE_FLOOR=80 scripts/polaris-coverage.sh   # override the floor
+#   scripts/polaris-coverage.sh --shard 2/3     # CI: run one third of the work, keep the data
+#   scripts/polaris-coverage.sh --combine DIR --of 3   # CI: combine the shards' data, gate
+#
+# Shards (2026-10-15). This was CI's critical path, one step of 22 to 38 minutes. With
+# --shard I/N the script runs machine I's share and stops before combining: its share of the
+# sharded database suites (polaris-ship.py --part I/N deals the test classes over N machines)
+# and every N-th of the other suites below, in their order. It fails on a red suite exactly as
+# the whole run does, and leaves its .coverage.* data and a marker naming I/N. --combine DIR
+# --of N then requires DIR/coverage-data-shard-I for every I from 1 to N, each holding that
+# marker and at least one non-empty data file, combines them and applies the same floors. A
+# shard missing, empty or from a different N fails the gate: a combined number that silently
+# lacks a third of the suites would read as a drop at best, and at worst as a pass.
 # ============================================================================
 
 set -uo pipefail
@@ -41,7 +53,37 @@ cd "$ROOT"
 COVERAGE_FLOOR="${COVERAGE_FLOOR:-80}"
 BRANCH_FLOOR="${BRANCH_FLOOR:-80}"
 GATE=1
-[ "${1:-}" = "--no-gate" ] && GATE=0
+SHARD_I=1
+SHARD_N=1
+COMBINE_DIR=""
+COMBINE_N=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-gate) GATE=0 ;;
+        --shard)
+            [[ "${2:-}" =~ ^([0-9]+)/([0-9]+)$ ]] || { echo "error: --shard takes I/N, as in 2/3" >&2; exit 2; }
+            SHARD_I=${BASH_REMATCH[1]}; SHARD_N=${BASH_REMATCH[2]}
+            [ "$SHARD_N" -ge 1 ] && [ "$SHARD_I" -ge 1 ] && [ "$SHARD_I" -le "$SHARD_N" ] \
+                || { echo "error: --shard $2: need 1 <= I <= N" >&2; exit 2; }
+            shift ;;
+        --combine)
+            [ -n "${2:-}" ] || { echo "error: --combine takes the directory holding the shards' data" >&2; exit 2; }
+            COMBINE_DIR="$2"; shift ;;
+        --of)
+            [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] || { echo "error: --of takes the number of shards" >&2; exit 2; }
+            COMBINE_N="$2"; shift ;;
+        *) echo "error: unknown argument $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+if [ -n "$COMBINE_DIR" ] && [ -z "$COMBINE_N" ]; then
+    echo "error: --combine needs --of N, the number of shards it must find" >&2; exit 2
+fi
+if [ -n "$COMBINE_DIR" ] && [ "$SHARD_N" -gt 1 ]; then
+    echo "error: --combine and --shard are different runs" >&2; exit 2
+fi
+SHARDED=0
+[ "$SHARD_N" -gt 1 ] && SHARDED=1
 
 PY="${POLARIS_TEST_PYTHON:-python3}"
 "$PY" -c "import coverage" 2>/dev/null || {
@@ -70,14 +112,47 @@ export PYTHONPATH="$SITE_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export COVERAGE_PROCESS_START="$ROOT/.coveragerc"
 
 "$PY" -m coverage erase
+rm -f "$ROOT/coverage-shard.txt"
 
+SUITE_FAIL=0
+
+# --combine: the shards ran the suites; this only collects their data. Each shard's artifact is
+# a directory of its own, and every one of the N must be there, carry its marker and hold data.
+if [ -n "$COMBINE_DIR" ]; then
+    echo "== collecting $COMBINE_N shard(s) from $COMBINE_DIR =="
+    for i in $(seq 1 "$COMBINE_N"); do
+        d="$COMBINE_DIR/coverage-data-shard-$i"
+        [ -d "$d" ] || { echo "::error::coverage shard $i of $COMBINE_N is missing ($d); the floors cannot be checked" >&2; exit 1; }
+        marker=$(cat "$d/coverage-shard.txt" 2>/dev/null || true)
+        [ "$marker" = "$i/$COMBINE_N" ] \
+            || { echo "::error::coverage shard $i of $COMBINE_N carries the marker '$marker', not '$i/$COMBINE_N'" >&2; exit 1; }
+        found=0
+        for f in "$d"/.coverage.*; do
+            [ -f "$f" ] || continue
+            [ -s "$f" ] || { echo "::error::coverage shard $i's data file $(basename "$f") is empty" >&2; exit 1; }
+            cp "$f" "$ROOT/" || { echo "::error::could not copy $f" >&2; exit 1; }
+            found=$((found + 1))
+        done
+        [ "$found" -gt 0 ] || { echo "::error::coverage shard $i of $COMBINE_N holds no data file" >&2; exit 1; }
+        echo "  shard $i/$COMBINE_N: $found data file(s)"
+    done
+fi
+
+# --shard I/N: which of the suites below are this machine's. Every N-th, in the order they
+# appear, starting at the I-th; unsharded, all of them.
+ITEM=0
+mine() {
+    ITEM=$((ITEM + 1))
+    [ $(( (ITEM - 1) % SHARD_N + 1 )) -eq "$SHARD_I" ]
+}
+
+if [ -z "$COMBINE_DIR" ]; then
 # Each suite runs under `coverage run -p` (parallel: a distinct data file per
 # process), so nothing is double-counted and cwd differences do not collide.
 # A suite FAILURE must fail this script: coverage of a green suite is
 # meaningless if the suite is red, so SUITE_FAIL is tracked and gates the exit
 # alongside the floor. (An early version swallowed suite failures with `|| echo`
 # and would have passed CI on a broken test as long as coverage held.)
-SUITE_FAIL=0
 run() {  # run <cwd> <module...>  -- measures the product packages
     local dir="$1"; shift
     if ! ( cd "$dir" && COVERAGE_RCFILE="$ROOT/.coveragerc" \
@@ -102,8 +177,8 @@ run_standalone() {  # run_standalone <cwd> <module...>
     fi
 }
 
-echo "== running suites under coverage =="
-run "$ROOT"            pytest polaris_checks/test_checks.py -q
+echo "== running suites under coverage$([ "$SHARDED" = 1 ] && echo ", shard $SHARD_I of $SHARD_N") =="
+mine && run "$ROOT"            pytest polaris_checks/test_checks.py -q
 
 # The four database-heavy modules, SHARDED. They were 24 of this step's 26 minutes and this
 # step is CI's critical path; polaris-ship.py already runs them across processes with a fresh
@@ -119,7 +194,10 @@ run "$ROOT"            pytest polaris_checks/test_checks.py -q
 # application-role suite, and this step had been running them all: the unsharded suites are the ones
 # this script runs itself below, and the other two are steps of their own in the product suite's
 # core part. That was 37 of this step's 64 minutes, measuring nothing new.
-if ! POLARIS_SHIP_COVERAGE=1 "$PY" "$ROOT/scripts/polaris-ship.py" run --no-unsharded \
+# Sharded across machines as well: each shard takes its part of the classes (--part I/N).
+PART=()
+[ "$SHARDED" = 1 ] && PART=(--part "$SHARD_I/$SHARD_N")
+if ! POLARIS_SHIP_COVERAGE=1 "$PY" "$ROOT/scripts/polaris-ship.py" run --no-unsharded ${PART[@]+"${PART[@]}"} \
         --module test_app --module test_check_constraints \
         --module test_invariants_property --module test_redaction_property \
         --module test_canonical_equivalence; then
@@ -127,42 +205,64 @@ if ! POLARIS_SHIP_COVERAGE=1 "$PY" "$ROOT/scripts/polaris-ship.py" run --no-unsh
     SUITE_FAIL=1
 fi
 
-run "$ROOT/polaris_web" unittest test_pqc_signing test_custody test_secretstore test_transparency test_capacity test_referee test_enrollment_code test_credential_copy_keys test_wallet_copy test_issuance_tunnel
-run "$ROOT/polaris_cli" unittest test_cli
-run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relying_party \
+mine && run "$ROOT/polaris_web" unittest test_pqc_signing test_custody test_secretstore test_transparency test_capacity test_referee test_enrollment_code test_credential_copy_keys test_wallet_copy test_issuance_tunnel
+mine && run "$ROOT/polaris_cli" unittest test_cli
+mine && run_standalone "$ROOT/scripts" unittest test_verify_load test_wallet test_relying_party \
                                        test_verify_conformance test_verify_p9 test_verify_refusals test_ship_tool \
                                        test_pgbouncer_entrypoint test_issuance_scope test_sbom_enrich \
                                        test_conformance_runner test_pin_chart_images test_release_tag_guard test_chain_anchor_tool test_migrate_runner \
-                                       test_coverage_script test_trigger_drill test_procedure_drill test_compose_parse test_operator_env test_key_event test_doctor test_evaluate \
+                                       test_coverage_script test_trigger_drill test_procedure_drill test_oid4vp_drill test_sdk_drill test_ci_changes test_ci_gate test_compose_parse test_operator_env test_key_event test_doctor test_evaluate \
                                        test_sync_objects_parity test_event_partition_migration test_database_settings \
                                        test_db_state test_db_reference test_pgbackrest_conf test_db_init \
                                        test_dev_tunnel
 # Verbose, so the log names each restore case that passed (docs/operator/SECURITY-STATE-DRILLS.md cites it).
-run_standalone "$ROOT/scripts" unittest -v test_restore_schema_check
+mine && run_standalone "$ROOT/scripts" unittest -v test_restore_schema_check
 # polaris_sim's tests import the package (from polaris_sim import ...), so they
 # run from the repo root with the dotted module path, not from inside the dir.
-run "$ROOT" unittest polaris_sim.test_sim
+mine && run "$ROOT" unittest polaris_sim.test_sim
 
 # The card profile, its emulator and the verifier device, and the ZK second witness's own suites,
 # run in this job's other steps but were not measured (2026-09-30): polaris_card was missing from
 # the denominator altogether, and the witness was measured only through test_app. Measuring them
 # counts what they test and puts polaris_card where it belongs, even though it lowers the total.
-run_standalone "$ROOT" unittest discover -s polaris_card -t . -p 'test_*.py'
-run_standalone "$ROOT" pytest -q polaris_zk/witness2/test_witness2.py polaris_web/test_zk_second_witness.py
+mine && run_standalone "$ROOT" unittest discover -s polaris_card -t . -p 'test_*.py'
+mine && run_standalone "$ROOT" pytest -q polaris_zk/witness2/test_witness2.py polaris_web/test_zk_second_witness.py
 
 # The standalone packages, as they ship (2026-09-29). Their suites run in CI beside these; leaving
 # them out measured the tree and not what PyPI and npm carry.
-run_standalone "$ROOT/sdk/python" unittest test_sdk
-run_standalone "$ROOT/packages/polaris-oid4vp" unittest test_sdjwt test_jwe test_verifier test_serve \
+mine && run_standalone "$ROOT/sdk/python" unittest test_sdk
+mine && run_standalone "$ROOT/packages/polaris-oid4vp" unittest test_sdjwt test_jwe test_verifier test_serve \
                                                        test_cli test_conformance_capture test_status
 # The conformance suite drives the Python SDK's command line in a child process per case, which
 # subprocess coverage records; and the detached verifier's own check of every published vector,
 # as CI runs it. (Its --selftest needs liboqs, which this job does not install.)
-( cd "$ROOT" && PYTHONPATH="$ROOT/sdk/python${PYTHONPATH:+:$PYTHONPATH}" \
-      "$PY" conformance/run_conformance.py --self >/dev/null ) \
-    || { echo "::error::suite failed: conformance/run_conformance.py --self" >&2; SUITE_FAIL=1; }
-( cd "$ROOT" && "$PY" -m coverage run -p scripts/polaris-verify.py --pqc-provider auto --verify-dir vectors >/dev/null ) \
-    || { echo "::error::suite failed: polaris-verify.py --verify-dir vectors" >&2; SUITE_FAIL=1; }
+if mine; then
+    ( cd "$ROOT" && PYTHONPATH="$ROOT/sdk/python${PYTHONPATH:+:$PYTHONPATH}" \
+          "$PY" conformance/run_conformance.py --self >/dev/null ) \
+        || { echo "::error::suite failed: conformance/run_conformance.py --self" >&2; SUITE_FAIL=1; }
+fi
+if mine; then
+    ( cd "$ROOT" && "$PY" -m coverage run -p scripts/polaris-verify.py --pqc-provider auto --verify-dir vectors >/dev/null ) \
+        || { echo "::error::suite failed: polaris-verify.py --verify-dir vectors" >&2; SUITE_FAIL=1; }
+fi
+fi  # the suites (not --combine)
+
+# --shard: this machine's share has run. A red suite fails the shard; otherwise the data files
+# stay for the combining job, with a marker naming the share, and nothing is combined here.
+if [ "$SHARDED" = 1 ]; then
+    if [ "$SUITE_FAIL" -ne 0 ]; then
+        echo "::error::one or more suites failed in coverage shard $SHARD_I of $SHARD_N; see above" >&2
+        exit 1
+    fi
+    n=0
+    for f in "$ROOT"/.coverage.*; do
+        [ -s "$f" ] && n=$((n + 1))
+    done
+    [ "$n" -gt 0 ] || { echo "::error::coverage shard $SHARD_I of $SHARD_N wrote no data" >&2; exit 1; }
+    echo "$SHARD_I/$SHARD_N" > "$ROOT/coverage-shard.txt"
+    echo "== shard $SHARD_I of $SHARD_N: $n data file(s), ran $ITEM of the other suites' slots =="
+    exit 0
+fi
 
 echo "== combining =="
 # A gate that cannot read its numbers fails. From 2026-09-30 to 2026-10-08 `coverage json` failed

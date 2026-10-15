@@ -26,6 +26,15 @@ is inverted AT ONCE and the suite must go red.
 
   python3 scripts/polaris-oid4vp-mutation-drill.py
   python3 scripts/polaris-oid4vp-mutation-drill.py --verbose
+  python3 scripts/polaris-oid4vp-mutation-drill.py --shard 2/3    # one third of the mutations
+
+SHARDS (2026-10-15). `--shard I/N` makes only every N-th mutation, starting at the I-th, of the
+full list in its stable order (the refusals file by file, then the named mutations), so N runs
+together make each one exactly once (scripts/test_oid4vp_drill.py proves the partition). What
+is not a mutation runs in every shard: the unmutated baseline, the negative control and the
+check that every named mutation still matches its code. A declared survivor is answered for by
+the shard that mutates it, and one that names no refusal at all by every shard. Unsharded the
+drill was 34 of the product boundary job's 35 minutes; CI runs three shards in a job of its own.
 """
 import argparse
 import hashlib
@@ -157,6 +166,42 @@ NAMED_MUTANTS = (
 )
 
 
+def parse_shard(text: str) -> tuple:
+    """`I/N` as (I, N), 1-based. Anything else is a usage error, never a silent full run
+    (the procedure drill's form, scripts/polaris-procedure-mutation-drill.py)."""
+    m = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", text or "")
+    if not m:
+        raise argparse.ArgumentTypeError("--shard takes I/N, as in 2/3, not %r" % text)
+    i, n = int(m.group(1)), int(m.group(2))
+    if n < 1 or not 1 <= i <= n:
+        raise argparse.ArgumentTypeError("--shard %s: need 1 <= I <= N" % text)
+    return i, n
+
+
+def shard_of(units: list, shard: tuple) -> list:
+    """The mutations shard (I, N) makes: positions I-1, I-1+N, I-1+2N, ... of `units` in the
+    order given, which is the order mutation_units() builds: deterministic, so N runs on N
+    machines agree on who makes what, and round-robin, so each file's refusals are dealt
+    across the shards rather than one shard taking the slow file."""
+    i, n = shard
+    return [u for k, u in enumerate(units) if k % n == i - 1]
+
+
+def mutation_units(originals: dict) -> list:
+    """Every mutation the drill makes, in its stable order: ("site", label, source, line index,
+    mutated line) for each refusal, then ("named", label, source, old, new) for each named one."""
+    units = []
+    for source in SOURCES:
+        lines = originals[source].splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            mutated = _invert(line, source)
+            if mutated is not None:
+                units.append(("site", _label(lines, i, source), source, i, mutated))
+    for label, source, old, new in NAMED_MUTANTS:
+        units.append(("named", label, source, old, new))
+    return units
+
+
 def _invert(line: str, source: str = ""):
     """The mutated form of a refusal line, or None if this line does not refuse."""
     if source.endswith("status.py"):
@@ -217,10 +262,13 @@ def _confirm_survivor(work: pathlib.Path):
     return proc.returncode == 0, proc
 
 
-def main() -> int:
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--verbose", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument("--shard", type=parse_shard, default=(1, 1), metavar="I/N",
+                    help="make only shard I of N (1-based) of the mutations; N runs cover all")
+    args = ap.parse_args(argv)
+    shard_i, shard_n = args.shard
 
     work = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-mutation-"))
     try:
@@ -234,21 +282,31 @@ def main() -> int:
                   "so no mutation result would mean anything", file=sys.stderr)
             return 1
 
-        sites = []
         originals = {}
         for source in SOURCES:
-            text = (pkg / source).read_text(encoding="utf-8")
-            originals[source] = text
-            lines = text.splitlines(keepends=True)
-            for i, line in enumerate(lines):
-                mutated = _invert(line, source)
-                if mutated is not None:
-                    sites.append((source, i, mutated, _label(lines, i, source)))
+            originals[source] = (pkg / source).read_text(encoding="utf-8")
+        units = mutation_units(originals)
+        sites = [(u[2], u[3], u[4], u[1]) for u in units if u[0] == "site"]
         if not sites:
             print("oid4vp-mutation drill: no refusals matched; the patterns and the package "
                   "have drifted and a clean result would mean nothing", file=sys.stderr)
             return 1
         print("== %d refusals across %s ==" % (len(sites), ", ".join(SOURCES)))
+        mine = shard_of(units, args.shard)
+        if shard_n > 1:
+            print("  shard %d/%d: %d of the %d mutations (%d refusals, %d named)"
+                  % (shard_i, shard_n, len(mine), len(units),
+                     sum(1 for u in mine if u[0] == "site"), sum(1 for u in mine if u[0] == "named")))
+            # The full list is never empty here (the guard above), so an empty share is the
+            # arithmetic of N against the work, and legitimate only when this shard's number is
+            # past the end of the list. Any other empty shard is the partition losing work.
+            if not mine and len(units) >= shard_i:
+                print("oid4vp-mutation drill: shard %d/%d received no mutation although the full "
+                      "list has %d, so the partition has dropped work no shard will make"
+                      % (shard_i, shard_n, len(units)), file=sys.stderr)
+                return 1
+        my_sites = [(u[2], u[3], u[4], u[1]) for u in mine if u[0] == "site"]
+        my_named = {u[1] for u in mine if u[0] == "named"}
 
         # NEGATIVE CONTROL first. Everything inverted at once must be caught.
         for source in SOURCES:
@@ -267,7 +325,7 @@ def main() -> int:
         print("  negative control: a package with every refusal inverted is caught")
 
         survivors, flaky = [], []
-        for source, i, mutated, label in sites:
+        for source, i, mutated, label in my_sites:
             lines = originals[source].splitlines(keepends=True)
             lines[i] = mutated
             (pkg / source).write_text("".join(lines), encoding="utf-8")
@@ -299,6 +357,8 @@ def main() -> int:
                       "not once: the code it guards has moved, and a clean result would mean "
                       "nothing" % (label, text.count(old)), file=sys.stderr)
                 return 1
+            if label not in my_named:
+                continue    # matched exactly once above, in every shard; mutated by its own
             (pkg / source).write_text(text.replace(old, new), encoding="utf-8")
             try:
                 if _suite_passes(pkg):
@@ -319,17 +379,25 @@ def main() -> int:
 
     names = {label for label, _ in survivors}
     undeclared = [(label, text) for label, text in survivors if label not in DECLARED_SURVIVORS]
-    stale = [label for label in DECLARED_SURVIVORS if label not in names]
+    # A declared survivor is answered for by the shard that mutated it. One that names no
+    # refusal at all (the refusal was edited or removed) belongs to no shard, so every shard
+    # reports it: dropping it from all of them would let the list go stale with every shard green.
+    all_labels = {label for _s, _i, _m, label in sites}
+    my_labels = {label for _s, _i, _m, label in my_sites}
+    stale = [label for label in DECLARED_SURVIVORS
+             if (label in my_labels and label not in names) or label not in all_labels]
 
     print()
     if flaky:
         print("  %d mutation(s) passed once and failed on the re-run, so they are CAUGHT: %s"
               % (len(flaky), ", ".join(flaky)))
-    print("  refusals inverted           %4d" % len(sites))
-    print("  named mutations             %4d  (%d survived)" % (len(NAMED_MUTANTS),
+    print("  refusals inverted           %4d%s" % (len(my_sites), (" of %d (shard %d/%d)"
+                                                              % (len(sites), shard_i, shard_n))
+                                                             if shard_n > 1 else ""))
+    print("  named mutations             %4d  (%d survived)" % (len(my_named),
                                                               len(named_survivors)))
     print("  ...accepted by the suite    %4d  (%d declared)"
-          % (len(survivors), len(DECLARED_SURVIVORS)))
+          % (len(survivors), len([d for d in DECLARED_SURVIVORS if d in my_labels])))
     for label, text in survivors:
         mark = " " if label in DECLARED_SURVIVORS else "!"
         print("    %s %-50s %s" % (mark, label, text[:56]))
@@ -351,7 +419,10 @@ def main() -> int:
         return 1
     print("\n== OID4VP MUTATION DRILL PASSED: every one of the %d refusals is caught when "
           "inverted, except %d declared with reasons, and the negative control proves the "
-          "harness can produce a survivor ==" % (len(sites), len(DECLARED_SURVIVORS)))
+          "harness can produce a survivor%s ==" % (
+              len(my_sites), len([d for d in DECLARED_SURVIVORS if d in my_labels]),
+              (" (shard %d/%d of %d refusals and %d named mutations; the other shards make the rest)"
+               % (shard_i, shard_n, len(sites), len(NAMED_MUTANTS))) if shard_n > 1 else ""))
     return 0
 
 

@@ -87,7 +87,7 @@ polaris/
 ├── site/               ← the published project page (Cloudflare, wrangler.jsonc) and its logo
 ├── edge/               ← film.js: answers byte-range requests for the site's /film/*, so Safari can play it
 │
-├── .github/workflows/  ← ci.yml (31 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
+├── .github/workflows/  ← ci.yml (37 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ├── osv-scanner.toml   ← declared exceptions for the malicious-package and vulnerability scan (none today)
 ├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
@@ -99,9 +99,13 @@ polaris/
 
 **CI jobs** ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)):
 
-- `test`: the required product-suite check; it passes only when its five parallel parts did.
-- `test-core`: the product suite against Postgres 16 and Redis; the checks layer, the constraint and trigger drills, the encrypted backup and restore round trip, the abuse drill, the performance smoke.
-- `test-coverage`: the DB suites under coverage, with the floor gate.
+- `changes`: which parts of CI a change needs (`scripts/polaris-ci-changes.py`). A pull request whose every changed path is on the measured allowlist (documentation, the site, `lab/` and the like) skips the jobs that cannot read them; anything else, every merge-queue group and every push runs everything.
+- `test`: the required product-suite check; it needs every job the `changes` outputs can skip, and passes only when each part succeeded or was skipped with its output saying the change does not need it (`scripts/polaris-ci-gate.py`).
+- `test-core`: the product suite against Postgres 16 and Redis; the checks layer, the constraint drill, the encrypted backup and restore round trip, the abuse drill, the performance smoke.
+- `test-coverage-shard`: the DB suites under coverage as a matrix of three shards, each keeping its coverage data.
+- `test-coverage`: combines the three shards' data and applies the floor gate; it fails on a missing, empty or mismatched shard.
+- `test-trigger-drill`: the trigger mutation drill (each trigger dropped), on its own database.
+- `test-trigger-refusals`: the trigger refusal drill (each refusal inside a trigger function deleted), on its own database.
 - `test-procedures`: the procedure mutation drill's part of the product suite; it passes only when all six shards did.
 - `test-procedures-shard`: the procedure mutation drill (the procedures a change touches) as a matrix of six shards, each mutating every sixth refusal.
 - `test-app-role`: the web suite and the CLI suite again, with the application connected as `polaris_app`.
@@ -118,12 +122,14 @@ polaris/
 - `region-evacuation`: the SECOND region (a Patroni standby cluster with its own lease store, streaming asynchronously) after region A goes dark entirely, promoted with the recovery time and the recovery point MEASURED rather than asserted, and divergence asserted absent.
 - `helm-kind`: the Kubernetes reference profile boots to healthy on kind with Calico-enforced policies and restricted PSS.
 - `pqc-real`: real ML-DSA-65 sign and verify (liboqs), cross-checked by the cryptography second witness.
+- `test-sdk-drill`: the SDK mutation drill (every refusal in both reference SDKs and the detached verifier, inverted) as four shards, when a change touches an SDK, its suites or the drill, in Real PQC's environment.
 - `pqc-real-web`: the web suite (`test_app`, the whole module) under real ML-DSA-65.
 - `federation-two-instances`: boots two independent instances, each its own database and real ML-DSA-65 root, and drives cross-authority federation over HTTP; a relying party accepts a foreign credential from a manifest, epoch checkpoint and revocation feed pulled over the wire, and the decision flips as attestations and revocations change (P3.10). The first job with both a database and real liboqs.
 - `product-boundary`: the required install test, as a stranger runs it. Builds a wheel from
   `packages/polaris-verify/`, installs it into a throwaway venv, and verifies real signed
   material from a directory that is not the repository, with none of Polaris importable.
   Carries a negative control: a verifier that drags `psycopg2` in with it must be caught.
+- `test-oid4vp-drill`: the OpenID4VP mutation drill (every refusal in `packages/polaris-oid4vp`, inverted) as three shards, when a change touches the package, the drill, its requirements or the workflow, and on every push to `main`.
 - `sdk-typescript`: the TypeScript verify SDK (`sdk/typescript/`) type-checked, unit-tested, and driven through the language-agnostic conformance runner (`@noble/post-quantum` ML-DSA-65 agreeing with liboqs and OpenSSL).
 - `invariants`: the invariant layer and every check's detection test, with no database, in minutes; the required check that keeps a failing invariant from merging.
 - `dco`: on a pull request, every commit a person made carries a Developer Certificate of Origin sign-off.

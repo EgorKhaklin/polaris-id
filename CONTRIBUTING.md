@@ -53,7 +53,11 @@ Every change reaches `main` through a pull request, the maintainer's included: `
 direct pushes, force-pushes and deletion. A pull request merges, as a merge commit, once the
 six required checks pass: the TypeScript SDK suite, the dependency and SAST scan, the product
 boundary, the DCO sign-off, the malicious-package and vulnerability scan, and the invariant checks
-with their detection tests. The full suites run on every pull request too.
+with their detection tests. The full suites run on every pull request too, except where a change is
+wholly documentation, the site, `lab/` or another path on the allowlist in
+[`scripts/polaris-ci-changes.py`](scripts/polaris-ci-changes.py): the jobs measured not to read
+those paths are skipped, and the product suite's gate passes a skipped part only on that
+classification. The merge queue runs everything, whatever the change touched.
 
 Before opening one:
 
