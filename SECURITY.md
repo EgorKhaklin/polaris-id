@@ -179,7 +179,7 @@ These are settings rather than files, so they are listed here; each can be read 
 the API (`gh api repos/EgorKhaklin/polaris-id/rulesets`, `.../environments`,
 `.../immutable-releases`):
 
-- `main` takes changes only through pull requests: merge commits only, the six required checks
+- `main` takes changes only through pull requests: merge commits only, the seven required checks
   [CONTRIBUTING.md](CONTRIBUTING.md) names, review conversations resolved, no force push, no
   deletion, and no bypass for anyone, the owner included.
 - Version tags (`v*`) cannot be moved or deleted, and a published release's tag and assets

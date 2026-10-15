@@ -50,10 +50,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CI_YML = ".github/workflows/ci.yml"
 
 #: The events whose paths are classified. Everything else runs everything.
-#: Not the merge queue: its commit is exactly what lands on main, so it is the last gate before
-#: main and runs everything. The audit is static (a glob with no literal directory, or a path
-#: built from variables, is not seen), so a missed read of an allowlisted path, skipped on the
-#: pull request, is then caught in the queue rather than on main.
+#: Not a merge group either, though this repository has none (GitHub offers merge queues only
+#: to organization-owned repositories). A push to main runs everything, and the audit is static
+#: (a glob with no literal directory, or a path built from variables, is not seen), so a missed
+#: read of an allowlisted path, skipped on the pull request, shows on main, after the merge.
 CLASSIFIED_EVENTS = ("pull_request",)
 
 #: What a change may touch and still skip every job outside the always-run set. A directory

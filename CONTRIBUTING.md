@@ -50,14 +50,23 @@ wrote the change or have the right to submit it under the project's license.
 ## What merges
 
 Every change reaches `main` through a pull request, the maintainer's included: `main` refuses
-direct pushes, force-pushes and deletion. A pull request merges, as a merge commit, once the
-six required checks pass: the TypeScript SDK suite, the dependency and SAST scan, the product
-boundary, the DCO sign-off, the malicious-package and vulnerability scan, and the invariant checks
-with their detection tests. The full suites run on every pull request too, except where a change is
+direct pushes, force-pushes and deletion. A pull request merges, as a merge commit, once it is up
+to date with `main` and the seven required checks pass:
+
+- `TypeScript SDK`: typecheck, tests, conformance
+- `Dependency CVE scan + SAST`
+- `Product boundary`: a stranger installs polaris-verify and uses it
+- `DCO sign-off on every commit`
+- `Malicious packages and known vulnerabilities (OSV)`
+- `Invariant checks and their detection tests`
+- `Polaris product test suite`: the gate over every part of the product suite
+
+The full suites run on every pull request too, except where a change is
 wholly documentation, the site, `lab/` or another path on the allowlist in
 [`scripts/polaris-ci-changes.py`](scripts/polaris-ci-changes.py): the jobs measured not to read
 those paths are skipped, and the product suite's gate passes a skipped part only on that
-classification. The merge queue runs everything, whatever the change touched.
+classification. A push to `main` runs everything, whatever the change touched. GitHub offers merge
+queues only to organization-owned repositories, so this one has none.
 
 Before opening one:
 
