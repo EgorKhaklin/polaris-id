@@ -30,9 +30,10 @@ verify the proof, for two reasons, and neither is fixable without giving somethi
   THE CANONICALISATION. Data Integrity's `-rdfc-` suites canonicalise with RDF Dataset
   Canonicalization, which needs a full JSON-LD processor. The detached verifier must stay
   import-standalone, and a verifier that could not check its own format would be worse than
-  one that used a simpler canonicalisation and said so. This uses JCS (RFC 8785) over the
-  document minus its proof, which is the same sorted-keys compact JSON every other Polaris
-  artifact is signed over. `-jcs-` is a shape the Data Integrity specification itself defines;
+  one that used a simpler canonicalisation and said so. This uses a JCS-style subset of RFC
+  8785 over the document minus its proof: sorted keys and compact separators, as the other
+  Polaris artifacts are signed over, with UTF-8 written as it is (ensure_ascii off, as RFC 8785
+  does). `-jcs-` is a shape the Data Integrity specification itself defines;
   what is not standard is the algorithm inside it.
 
 WHAT IT REFUSES TO CARRY

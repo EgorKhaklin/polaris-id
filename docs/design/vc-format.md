@@ -42,8 +42,8 @@ that reason rather than merely failing to check it.
 **The canonicalisation.** Data Integrity's `-rdfc-` suites canonicalise with RDF Dataset
 Canonicalization, which requires a full JSON-LD processor. The detached verifier must stay
 import-standalone, and a verifier that could not check its own format would be worse than one
-that used a simpler canonicalisation and said so. This uses JCS (RFC 8785) over the document
-minus its proof: sorted keys and compact separators, as the other Polaris artifacts are signed
+that used a simpler canonicalisation and said so. This uses a JCS-style subset of RFC 8785 over
+the document minus its proof: sorted keys and compact separators, as the other Polaris artifacts are signed
 over, with UTF-8 written as it is (`ensure_ascii` off, as RFC 8785 does).
 `-jcs-` is a shape the Data Integrity specification itself defines; what is not standard is the
 algorithm inside it.
