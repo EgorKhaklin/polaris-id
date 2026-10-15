@@ -697,6 +697,105 @@ def signature_over_message(message: bytes, agency_id=None) -> tuple:
     return hashlib.sha3_256(message).digest(), PLACEHOLDER_LABEL, None
 
 
+# ---------------------------------------------------------------------------
+# COSE: the mdoc issuer signature, a COSE_Sign1 (RFC 9052) under RFC 9964's ML-DSA.
+#
+# Every function above signs SHA3-256 of what it is given: Polaris's own formats are defined
+# that way (WIRE-SPEC 2.1 and 3.7) and keep it. COSE is not Polaris's format. Algorithm -49 is
+# ML-DSA-65 and -50 is ML-DSA-87 (RFC 9964), each pure ML-DSA (FIPS 204 Algorithm 2) with an
+# empty context over the Sig_structure ITSELF, the ToBeSigned of RFC 9052 section 4.4. Until
+# 2026-10-14 the mdoc route handed that structure's SHA3-256 to signature_over_message, which
+# hashed it again: no RFC 9964 verifier accepted the signature, and the two witnesses here
+# agreed only because each was handed the same digest. This path signs and verifies the
+# structure's own bytes, and signs nothing that is not one.
+# ---------------------------------------------------------------------------
+
+#: The parameter sets a COSE signature is made under here: those RFC 9964 registers a COSE
+#: algorithm for (section 8.1.1; mdoc.py writes it, -49 for ML-DSA-65 and -50 for ML-DSA-87).
+#: Any other set has none, and is refused rather than relabelled.
+COSE_SIGNING_ALGORITHMS = ("ML-DSA-65", "ML-DSA-87")
+#: Every COSE_Sign1 Sig_structure begins with these twelve bytes: a CBOR array of four (0x84)
+#: whose first element is the ten-byte text string "Signature1" (0x6a; RFC 9052 section 4.4).
+COSE_SIGN1_SIG_STRUCTURE_HEAD = b"\x84\x6aSignature1"
+
+
+class NotACoseSigStructure(SigningError):
+    """Raised when the COSE signer is handed bytes that are not a COSE_Sign1 Sig_structure.
+
+    It signs exactly the bytes it is given, so it is given nothing else. Handed a 32-byte
+    SHA3-256 digest, it would return the signature signature_over_message makes over that
+    digest's preimage, which is an authority-signed artifact of whatever format the preimage is
+    (WIRE-SPEC 2.1, 3.7). A Sig_structure begins with COSE_SIGN1_SIG_STRUCTURE_HEAD; a digest
+    does so with probability 2^-96."""
+
+
+def require_cose_sig_structure(to_be_signed):
+    """Refuse, before anything is signed, bytes that are not a COSE_Sign1 Sig_structure."""
+    if not isinstance(to_be_signed, (bytes, bytearray)):
+        raise NotACoseSigStructure("refusing to sign: a COSE Sig_structure is bytes, not %s"
+                                   % type(to_be_signed).__name__)
+    if not bytes(to_be_signed).startswith(COSE_SIGN1_SIG_STRUCTURE_HEAD):
+        raise NotACoseSigStructure(
+            "refusing to sign: these %d bytes are not a COSE_Sign1 Sig_structure "
+            "(the CBOR array [\"Signature1\", protected, external_aad, payload], RFC 9052 "
+            "section 4.4); the COSE signer signs that structure itself and nothing else"
+            % len(to_be_signed))
+
+
+def signature_over_cose_sig_structure(to_be_signed: bytes, agency_id=None) -> tuple:
+    """Sign a COSE_Sign1 Sig_structure as RFC 9964 defines COSE -49 (ML-DSA-65) and -50
+    (ML-DSA-87): pure ML-DSA, empty context, over `to_be_signed` itself, never a digest of it.
+
+    Returns `(signature_bytes, algorithm_label, public_key_hex_or_none)`, the shape
+    mdoc.build_issuer_signed's `sign` takes. With POLARIS_USE_REAL_PQC=1 and liboqs, the
+    custodied key (the issuing agency's, as for sign()) signs the raw bytes through
+    KeyCustody.sign_message, and the signature is refused unless BOTH witnesses verify it over
+    the same raw bytes (verify_both_raw, require_witness=True). With the flag off it returns
+    the deterministic placeholder, SHA3-256 of the structure labelled PLACEHOLDER_LABEL with no
+    key, which is not a signature: no verifier accepts its label or its 32 bytes.
+
+    Refuses, before signing: anything but a Sig_structure (NotACoseSigStructure), on every
+    path; and a key whose parameter set has no COSE algorithm (SigningError)."""
+    require_cose_sig_structure(to_be_signed)
+    message = bytes(to_be_signed)
+    flag_set = os.environ.get("POLARIS_USE_REAL_PQC", "0") == "1"
+    if flag_set and not _OQS_AVAILABLE:
+        raise PQCUnavailableError(
+            "POLARIS_USE_REAL_PQC=1 but liboqs-python is not importable: "
+            f"{_OQS_IMPORT_ERROR}. Install per this module's docstring or unset the flag.")
+    if not flag_set:
+        # Flag off: deterministic, dependency-free placeholder (not a signature).
+        return hashlib.sha3_256(message).digest(), PLACEHOLDER_LABEL, None
+    if not second_witness_available():
+        raise SigningError(
+            "real ML-DSA COSE signing requires the independent second witness "
+            "(cryptography/OpenSSL ML-DSA); it is unavailable "
+            f"({_WITNESS_IMPORT_ERROR or 'no ML-DSA support'}). Install cryptography>=48 on "
+            "OpenSSL 3.5+, or use the placeholder path (unset POLARIS_USE_REAL_PQC).")
+    cust = custody.get_custody_for_agency(agency_id) if agency_id is not None else custody.get_custody()
+    alg = cust.algorithm if cust is not None else custody.configured_algorithm()
+    if alg not in COSE_SIGNING_ALGORITHMS:
+        raise SigningError(
+            "no COSE algorithm is registered for %s: a COSE signature here is ML-DSA-65 (-49) or "
+            "ML-DSA-87 (-50), RFC 9964; refusing to sign" % alg)
+    if cust is not None:
+        public_key, signature = cust.public_key(), cust.sign_message(message)
+    else:
+        # No persistent key configured: an ephemeral keypair, development and test only (sign()).
+        import oqs as _oqs  # type: ignore
+        with _oqs.Signature(alg) as signer:
+            public_key = signer.generate_keypair()
+            signature = signer.sign(message)
+    public_key_hex, signature_hex = bytes(public_key).hex(), bytes(signature).hex()
+    _refuse_a_wrong_size(alg, public_key_hex, signature_hex,
+                         "the produced %s COSE signature" % alg, "refusing to sign")
+    if not verify_both_raw(message, signature_hex, public_key_hex, require_witness=True, algorithm=alg):
+        raise SigningError(
+            "produced %s COSE signature failed two-witness self-verification over the raw "
+            "Sig_structure; refusing to sign" % alg)
+    return bytes(signature), alg, public_key_hex
+
+
 def signature_for_migration(token_value: str, algorithm: str, agency_id=None) -> tuple:
     """Sign `token_value` under an EXPLICIT target parameter set (P7.6, the quantum event).
 
@@ -817,6 +916,24 @@ def verify(
 
     Raises PQCUnavailableError if oqs is not importable.
     """
+    return _primary_witness(message, signature_hex, public_key_hex, algorithm, prehash=True)
+
+
+def verify_raw(message: bytes, signature_hex: str, public_key_hex: str, algorithm=None) -> bool:
+    """`verify` over `message` ITSELF, not its SHA3-256: pure ML-DSA, empty context, over the
+    bytes given, which is what a COSE signature is (RFC 9964). Raises PQCUnavailableError if oqs
+    is not importable."""
+    return _primary_witness(message, signature_hex, public_key_hex, algorithm, prehash=False)
+
+
+def _signed_bytes(message: bytes, prehash: bool) -> bytes:
+    """The bytes an ML-DSA signature here is over: SHA3-256(message) for Polaris's own formats
+    (WIRE-SPEC 2.1 and 3.7), the message itself for COSE (RFC 9964)."""
+    return hashlib.sha3_256(message).digest() if prehash else message
+
+
+def _primary_witness(message, signature_hex, public_key_hex, algorithm, *, prehash):
+    """liboqs's verdict for `verify` (prehash) and `verify_raw` (not)."""
     if not _OQS_AVAILABLE:
         raise PQCUnavailableError(
             f"liboqs-python is not importable: {_OQS_IMPORT_ERROR}"
@@ -824,7 +941,7 @@ def verify(
 
     import oqs as _oqs  # type: ignore
 
-    digest = hashlib.sha3_256(message).digest()
+    signed = _signed_bytes(message, prehash)
     try:
         public_key = unhex(public_key_hex)
         signature = unhex(signature_hex)
@@ -838,7 +955,7 @@ def verify(
         return False
     try:
         with _oqs.Signature(alg) as verifier:
-            return verifier.verify(digest, signature, public_key)
+            return verifier.verify(signed, signature, public_key)
     except Exception:
         return False
 
@@ -856,6 +973,17 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
     falls back to the lone primary. A key or signature of the wrong length is False,
     never None. Verifies the SAME SHA3-256 digest the signer signs.
     """
+    return _second_witness(message, signature_hex, public_key_hex, algorithm, prehash=True)
+
+
+def _verify_second_witness_raw(message: bytes, signature_hex: str, public_key_hex: str, algorithm=None):
+    """`_verify_second_witness` over `message` ITSELF, not its SHA3-256 (COSE, RFC 9964): the
+    same independent implementation, the same True/False/None, over the bytes given."""
+    return _second_witness(message, signature_hex, public_key_hex, algorithm, prehash=False)
+
+
+def _second_witness(message, signature_hex, public_key_hex, algorithm, *, prehash):
+    """cryptography's (or, for the FN-DSA family, @noble's) verdict for both of the above."""
     try:
         pk_bytes = unhex(public_key_hex)
         sig_bytes = unhex(signature_hex)
@@ -867,7 +995,7 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
     if isinstance(alg, str) and alg in custody.EXPERIMENTAL_ALGORITHM_SIZES:
         # Its witness is @noble/post-quantum, not cryptography, so cryptography's absence
         # says nothing about whether this one can run.
-        return _falcon_witness(hashlib.sha3_256(message).digest(), sig_bytes, pk_bytes)
+        return _falcon_witness(_signed_bytes(message, prehash), sig_bytes, pk_bytes)
     if not _WITNESS_AVAILABLE:
         return None
     try:
@@ -877,9 +1005,9 @@ def _verify_second_witness(message: bytes, signature_hex: str, public_key_hex: s
         pk = cls.from_public_bytes(pk_bytes)
     except Exception:
         return None  # the length was checked above: a backend without this parameter set
-    digest = hashlib.sha3_256(message).digest()
+    signed = _signed_bytes(message, prehash)
     try:
-        pk.verify(sig_bytes, digest)
+        pk.verify(sig_bytes, signed)
         return True
     except _InvalidSignature:
         return False
@@ -908,14 +1036,32 @@ def verify_both(message: bytes, signature_hex: str, public_key_hex: str,
     before either witness runs (_size_problem), so the lone-primary fallback above
     can never decide bytes of the wrong length.
     """
+    return _both_witnesses(verify, _verify_second_witness, message, signature_hex, public_key_hex,
+                           require_witness=require_witness, algorithm=algorithm)
+
+
+def verify_both_raw(message: bytes, signature_hex: str, public_key_hex: str,
+                    *, require_witness: bool = False, algorithm=None) -> bool:
+    """`verify_both` over `message` ITSELF: liboqs and cryptography each verify pure ML-DSA,
+    empty context, over the raw bytes (COSE -49 and -50, RFC 9964), and must agree. The same
+    refusals: a wrong length before either witness runs, a disagreement, and, with
+    require_witness, a missing witness. It never also tries the SHA3-256 form, so a COSE
+    signature has one meaning."""
+    return _both_witnesses(verify_raw, _verify_second_witness_raw, message, signature_hex,
+                           public_key_hex, require_witness=require_witness, algorithm=algorithm)
+
+
+def _both_witnesses(primary_witness, second_witness, message, signature_hex, public_key_hex,
+                    *, require_witness, algorithm):
+    """The two-witness rule verify_both and verify_both_raw share (verify_both's docstring)."""
     try:
         pk_bytes, sig_bytes = unhex(public_key_hex), unhex(signature_hex)
     except (ValueError, TypeError):
         return False
     if _size_problem(algorithm or custody.algorithm_for_public_key(pk_bytes), pk_bytes, sig_bytes) is not None:
         return False
-    primary = verify(message, signature_hex, public_key_hex, algorithm=algorithm)
-    witness = _verify_second_witness(message, signature_hex, public_key_hex, algorithm=algorithm)
+    primary = primary_witness(message, signature_hex, public_key_hex, algorithm=algorithm)
+    witness = second_witness(message, signature_hex, public_key_hex, algorithm=algorithm)
     if witness is None:
         if require_witness:
             sys.stderr.write(

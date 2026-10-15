@@ -18,6 +18,11 @@ signature is a classical credential, and the appearance of interoperability is n
 property this whole system exists to have. Case 9 asserts the verdict says so rather than
 reporting a digest check as an issuer check.
 
+-49 is what RFC 9964 registers: pure ML-DSA-65 over the COSE Sig_structure itself. The documents
+here are signed the way the app signs them (pqc_signing.signature_over_cose_sig_structure, real
+ML-DSA-65, a persistent key), case 12 checks the signature with an independent implementation
+over the raw Sig_structure, and case 13 shows a signature over its SHA3-256 refused.
+
 Two refusals matter as much as the round trip. The document must not claim the mDL docType,
 because a Polaris credential is not a driving licence and a document that claimed the namespace
 while carrying none of its elements would be a lie in a machine-readable format. And it must
@@ -25,12 +30,14 @@ not carry the token value, because that is the correlation handle the presentati
 a ship bounding, and an mdoc is not a way around it.
 
 Run: python3 scripts/polaris-mdoc-bridge-drill.py
-Exit 0 iff every case holds, 3 to skip (needs liboqs and cbor2).
+Exit 0 iff every case holds, 3 to skip (needs liboqs, cbor2 and the cryptography ML-DSA witness).
 """
 import hashlib
 import importlib.util
+import json
 import os
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -56,21 +63,38 @@ def main():
         import cbor2
         import oqs  # type: ignore
         import mdoc
+        import pqc_signing
+        from cryptography.hazmat.primitives.asymmetric import mldsa
     except Exception as e:  # noqa: BLE001
-        print("mdoc-bridge drill needs cbor2 and liboqs-python: %s" % e, file=sys.stderr)
+        print("mdoc-bridge drill needs cbor2, liboqs-python and cryptography: %s" % e, file=sys.stderr)
+        return 3
+    if not pqc_signing.second_witness_available():
+        print("mdoc-bridge drill needs the cryptography ML-DSA witness: the issuer's signer refuses "
+              "to sign without it", file=sys.stderr)
         return 3
     spec = importlib.util.spec_from_file_location("polaris_verify", os.path.join(HERE, "polaris-verify.py"))
     V = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(V)
 
-    with oqs.Signature("ML-DSA-65") as s:
-        pk = bytes(s.generate_keypair()); sk = bytes(s.export_secret_key())
+    # The issuer signs the way the app does: real ML-DSA-65 under one persistent key, through
+    # the COSE signer, which signs the Sig_structure itself and two-witnesses the result.
+    key = pqc_signing.generate_keypair("ML-DSA-65")
+    pk = bytes.fromhex(key["public_key_hex"])
+    fd, key_file = tempfile.mkstemp(prefix="polaris-mdoc-drill-", suffix=".key.json")
+    with os.fdopen(fd, "w") as f:
+        json.dump(key, f)
+    os.environ.update(POLARIS_USE_REAL_PQC="1", POLARIS_CUSTODY_DRIVER="file",
+                      POLARIS_PQC_SIGNING_KEY_FILE=key_file)
+    try:
+        return _cases(cbor2, oqs, mdoc, pqc_signing, mldsa, V, pk, key)
+    finally:
+        os.unlink(key_file)
+
+
+def _cases(cbor2, oqs, mdoc, pqc_signing, mldsa, V, pk, key):
     with oqs.Signature("ML-DSA-65") as s:
         other_pk = bytes(s.generate_keypair())
-
-    def sign(data):
-        with oqs.Signature("ML-DSA-65", secret_key=sk) as signer:
-            return bytes(signer.sign(hashlib.sha3_256(data).digest())), "ML-DSA-65", pk.hex()
+    sign = pqc_signing.signature_over_cose_sig_structure
 
     FULL = {"issuing_authority": "Authority A", "context": "BANKING",
             "assurance_level": "polaris:possession", "enrollment_status": "ENROLLED",
@@ -167,6 +191,31 @@ def main():
                all(isinstance(V.verify_mdoc(x), dict)
                    for x in (None, b"", b"\\xff\\xff", "zz", [], {}, b"\\x9f\\x00")), True)
 
+    # 12. RFC 9964: -49 is pure ML-DSA-65 over the Sig_structure itself. An implementation
+    #     that is not the app's (cryptography's MLDSA65, handed the key from the document)
+    #     checks the signature over the raw structure, rebuilt here with cbor2.
+    auth = cbor2.loads(doc)["issuerSigned"]["issuerAuth"]
+    raw_tbs = cbor2.dumps(["Signature1", auth[0], b"", auth[2]])
+    witness = mldsa.MLDSA65PublicKey.from_public_bytes(bytes.fromhex(auth[1]["polaris_public_key_hex"]))
+
+    def independent(message):
+        try:
+            witness.verify(auth[3], message)
+            return True
+        except Exception:  # noqa: BLE001  InvalidSignature, or anything it cannot read
+            return False
+    ok &= _row("the signature is pure ML-DSA-65 over the Sig_structure itself",
+               (cbor2.loads(auth[0]), independent(raw_tbs)), ({1: -49}, True))
+    ok &= _row("...and not over its SHA3-256", independent(hashlib.sha3_256(raw_tbs).digest()), False)
+
+    # 13. NO SECOND MEANING: a signature over SHA3-256 of the Sig_structure, the form the
+    #     detached verifier checked until 2026-10-14, is refused under -49, not also accepted.
+    def prehash(data):
+        with oqs.Signature("ML-DSA-65", secret_key=bytes.fromhex(key["secret_key_hex"])) as signer:
+            return bytes(signer.sign(hashlib.sha3_256(data).digest())), "ML-DSA-65", pk.hex()
+    ok &= _row("a signature over SHA3-256 of the Sig_structure is refused",
+               V.verify_mdoc(mdoc.build_document(FULL, "ML-DSA-65", prehash))["issuer_authentic"], False)
+
     print()
     if ok:
         if not _cases_recorded:
@@ -179,7 +228,9 @@ def main():
               "digest against the signed Mobile Security Object, which is the standard's whole "
               "selective-disclosure mechanism. What does not bridge is the issuer signature, "
               "because it is ML-DSA and the standard does not list it, and the verdict says so "
-              "rather than letting a digest check be reported as an issuer check. The document "
+              "rather than letting a digest check be reported as an issuer check. That signature "
+              "is pure ML-DSA-65 over the COSE Sig_structure itself, as RFC 9964 defines -49, and "
+              "a signature over its digest is refused. The document "
               "never claims the mDL docType, because a Polaris credential is not a driving "
               "licence, and it refuses to carry the token value, because an mdoc is not a way "
               "around the correlation the presentation layer bounds.")

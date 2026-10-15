@@ -656,7 +656,10 @@ verifies every disclosed element's digest against the signed Mobile Security Obj
 the standard's whole selective-disclosure mechanism. It **cannot** verify the issuer signature:
 that is ML-DSA (COSE -49), and the standard mandates ES256, ES384, ES512 or EdDSA. The response
 says so in `reader_interop`. Signing with an algorithm a conforming reader knows would trade
-the post-quantum property for the appearance of interoperability, so it is not done.
+the post-quantum property for the appearance of interoperability, so it is not done. The
+signature is what RFC 9964 defines -49 as, pure ML-DSA-65 over the COSE `Sig_structure` itself
+(-50 for an ML-DSA-87 key), so a verifier that implements RFC 9964 can check it with the
+issuer's key.
 
 **This is not an mDL.** The `docType` is `id.polaris.credential.1` and the namespace is
 `id.polaris.1`, never `org.iso.18013.5.1`: a Polaris credential holds no name, date of birth,
@@ -670,7 +673,11 @@ disclosure. The element vocabulary is closed (`issuing_authority`, `context`,
 presentation layer bounds and an mdoc is not a way around it.
 
 Returns `document_hex` (the CBOR document), the element list, and `reader_interop`. Rate
-limited per credential. `no-store`, because the document names one credential's facts. See
+limited per credential. `no-store`, because the document names one credential's facts. An
+authority whose signing key is of a parameter set with no COSE algorithm (an experimental
+signer, outside production) answers `503 unavailable`, since that is a fact about the
+authority's key and not the request: RFC 9964 registers -49 for ML-DSA-65 and -50 for
+ML-DSA-87, and nothing else is labelled as them. See
 [../design/mdoc-bridge.md](../design/mdoc-bridge.md).
 
 ### `POST /api/v1/status-assertion`
