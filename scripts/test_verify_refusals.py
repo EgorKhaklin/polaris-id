@@ -24,7 +24,10 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -237,6 +240,81 @@ class Witnesses(unittest.TestCase):
         # Decided before the library is imported, so it holds with or without liboqs.
         self.assertIs(V._verify_liboqs(self.digest, self.sig, self.pk, "ML-DSA-44"), False)
         self.assertIs(V._verify_liboqs(self.digest, self.sig, self.pk, "RSA-2048"), False)
+
+
+class AnotherProjectsOqsModule(unittest.TestCase):
+    """A module named `oqs` that is not liboqs-python must not count as a backend.
+
+    PyPI's `oqs` is an unrelated project whose wheel installs a top-level `oqs` package, and
+    every polaris-verify release through 1.0.0rc8 named it as the `oqs` extra. Imported, it
+    made `--pqc-provider oqs` start and `auto` choose it ahead of cryptography, and under any
+    provider its liboqs witness voted every genuine credential invalid, so the two witnesses
+    disagreed and nothing was accepted. A stub with no `Signature` stands in for it here: the
+    real one is never installed. A fresh interpreter, so no other test's import of liboqs can
+    mask the stub."""
+
+    PROBE = (
+        "import importlib.util, json, sys\n"
+        "spec = importlib.util.spec_from_file_location('v', sys.argv[1])\n"
+        "V = importlib.util.module_from_spec(spec); spec.loader.exec_module(V)\n"
+        "pack = json.load(open(sys.argv[2]))\n"
+        "import oqs\n"
+        "print(json.dumps({'stub': getattr(oqs, 'POLARIS_TEST_STUB', False),\n"
+        "    'oqs': V._provider_available('oqs'),\n"
+        "    'cryptography': V._provider_available('cryptography'),\n"
+        "    'auto': V.resolve_crypto_mode('auto', False),\n"
+        "    'witness': V._verify_liboqs(V._digest(pack['token_value']),\n"
+        "        bytes.fromhex(pack['signature_hex']), bytes.fromhex(pack['public_key_hex']))}))\n")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.stub = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oqs-stub-"))
+        (cls.stub / "oqs").mkdir()
+        (cls.stub / "oqs" / "__init__.py").write_text(
+            "POLARIS_TEST_STUB = True\n\ndef evaluate(expression):\n    return None\n")
+        cls.env = dict(os.environ, PYTHONPATH=str(cls.stub))
+        cls.vector = ROOT / "vectors" / "ml-dsa-65-valid.json"
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.stub, ignore_errors=True)
+
+    def run_python(self, *argv):
+        return subprocess.run([sys.executable, *argv], env=self.env, cwd=str(self.stub),
+                              capture_output=True, text=True, timeout=120)
+
+    def test_the_stub_is_imported_and_is_not_a_backend(self):
+        r = self.run_python("-c", self.PROBE, str(HERE / "polaris-verify.py"), str(self.vector))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertIs(got["stub"], True, "positive control: the stub must be the `oqs` imported")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["witness"], "the stub is no liboqs: absent, not a vote")
+        if got["cryptography"]:
+            self.assertEqual(got["auto"], ["cryptography", None])
+        else:
+            self.assertIsNone(got["auto"][0])
+            self.assertIn("found no real ML-DSA backend", got["auto"][1])
+
+    @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+    def test_cryptography_alone_decides_beside_it(self):
+        for provider in ("auto", "cryptography"):
+            with self.subTest(provider=provider):
+                verdicts = {}
+                for name in ("ml-dsa-65-valid", "ml-dsa-65-tampered-signature"):
+                    r = self.run_python(str(HERE / "polaris-verify.py"), "--pqc-provider", provider,
+                                        "--signature-only",
+                                        "--pack", str(ROOT / "vectors" / ("%s.json" % name)))
+                    self.assertNotIn("liboqs=", r.stdout + r.stderr, "the stub must not vote")
+                    verdicts[name] = (r.returncode, "cryptography=valid" in r.stdout + r.stderr)
+                self.assertEqual(verdicts["ml-dsa-65-valid"], (0, True))
+                self.assertEqual(verdicts["ml-dsa-65-tampered-signature"], (2, False))
+
+    def test_naming_it_refuses_to_start(self):
+        r = self.run_python(str(HERE / "polaris-verify.py"), "--pqc-provider", "oqs",
+                            "--pack", str(self.vector))
+        self.assertEqual(r.returncode, 4, r.stderr)
+        self.assertIn("refusing to start: --pqc-provider oqs", r.stderr)
 
 
 class ExactSizeIsCheckedBeforeEitherWitness(unittest.TestCase):

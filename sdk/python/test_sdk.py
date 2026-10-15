@@ -8,8 +8,10 @@ injected online status (no server); and the conformance runner is driven against
 the bundled SDK. Skips where cryptography lacks ML-DSA-65."""
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1726,3 +1728,51 @@ class RefusalsNoTestTookTests(unittest.TestCase):
                        currently_authoritative=None, status=None, reasons=["x"])
         self.assertEqual(v.as_dict(), {"decision": "reject", "authentic": False, "issuer_trusted": None,
                                        "currently_authoritative": None, "status": None, "reasons": ["x"]})
+
+
+class AnotherProjectsOqsModule(unittest.TestCase):
+    """A module named `oqs` that is not liboqs-python is absent, not a witness that refuses.
+
+    PyPI's `oqs` is an unrelated project whose wheel installs a top-level `oqs` package.
+    Imported, its liboqs witness voted every genuine credential invalid, the witnesses
+    disagreed, and `verify_authenticity` accepted nothing. A stub with no `Signature` stands
+    in for it; the real one is never installed. A fresh interpreter, with this SDK and the
+    stub on PYTHONPATH, so no earlier import of liboqs can mask the stub."""
+
+    PROBE = (
+        "import json, sys\n"
+        "import oqs, polaris_verify as pv\n"
+        "out = {'stub': getattr(oqs, 'POLARIS_TEST_STUB', False), 'sdk': pv.__file__}\n"
+        "try:\n"
+        "    pv._import_oqs(); out['import'] = 'returned'\n"
+        "except ImportError:\n"
+        "    out['import'] = 'ImportError'\n"
+        "for path in sys.argv[1:]:\n"
+        "    v = pv.verify_authenticity(json.load(open(path)))\n"
+        "    out[path] = [v.authentic, v.witnesses]\n"
+        "print(json.dumps(out))\n")
+
+    def setUp(self):
+        stub = tempfile.mkdtemp(prefix="polaris-oqs-stub-")
+        self.addCleanup(shutil.rmtree, stub, ignore_errors=True)
+        os.mkdir(os.path.join(stub, "oqs"))
+        with open(os.path.join(stub, "oqs", "__init__.py"), "w") as f:
+            f.write("POLARIS_TEST_STUB = True\n")
+        self.stub = stub
+
+    @unittest.skipUnless(_mldsa_available(), "cryptography without ML-DSA")
+    def test_cryptography_alone_decides_beside_it(self):
+        valid = os.path.join(_ROOT, "vectors", "ml-dsa-65-valid.json")
+        tampered = os.path.join(_ROOT, "vectors", "ml-dsa-65-tampered-signature.json")
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([self.stub, _HERE]))
+        r = subprocess.run([sys.executable, "-c", self.PROBE, valid, tampered], env=env,
+                           cwd=self.stub, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertIs(got["stub"], True, "positive control: the stub must be the `oqs` imported")
+        self.assertTrue(got["sdk"].startswith(_HERE), got["sdk"])
+        self.assertEqual(got["import"], "ImportError")
+        self.assertIs(got[valid][0], True, got[valid])
+        self.assertIs(got[tampered][0], False, got[tampered])
+        for path in (valid, tampered):
+            self.assertFalse([w for w in got[path][1] or [] if "liboqs" in w], got[path])

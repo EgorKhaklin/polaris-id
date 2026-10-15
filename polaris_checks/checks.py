@@ -26562,6 +26562,200 @@ def check_publishable_packages_keep_their_dependency_budget(root: pathlib.Path) 
                         len(_PACKAGE_DEPENDENCY_FLOORS)))
 
 
+#: Every name a published manifest asks an installer to fetch, and the project that name
+#: must be on its registry. A registry resolves a NAME, never a project: polaris-verify
+#: 0.1.0 and 1.0.0rc8 shipped `oqs = ["oqs>=0.10"]`, and PyPI's `oqs` is an unrelated
+#: expression interpreter whose wheel installs a top-level `oqs` package, the import name
+#: liboqs-python uses (2026-10-15). The value is the source repository the registry's own
+#: metadata named when the entry was written, read anonymously; adding a name means doing
+#: that again. Python names are normalized as PEP 503 does.
+_PUBLISHED_DEPENDENCY_PROJECTS = {
+    "pypi:cryptography": "github.com/pyca/cryptography",
+    "pypi:liboqs-python": "github.com/open-quantum-safe/liboqs-python",
+    "pypi:psycopg2-binary": "github.com/psycopg/psycopg2",
+    "pypi:setuptools": "github.com/pypa/setuptools",
+    "pypi:werkzeug": "github.com/pallets/werkzeug",
+    "npm:@noble/post-quantum": "github.com/paulmillr/noble-post-quantum",
+}
+
+#: An install instruction that fetches the wrong project for liboqs: PyPI's `oqs` is the
+#: unrelated package above, and a bare `liboqs` is unclaimed there, so anyone may claim it.
+#: Case-blind, as PyPI's names are.
+_WRONG_LIBOQS_INSTALL = re.compile(
+    r"\bpip3?\s+install\b[^\n|;&]*?(?<![\w.\[,-])['\"]?(?:lib)?oqs(?![\w.-])", re.I)
+_WRONG_LIBOQS_REQUIREMENT = re.compile(r"^\s*(?:lib)?oqs(?![\w.-])", re.M | re.I)
+
+
+def _toml_without_comments(text: str) -> str:
+    """`text` with each `#` comment removed; a `#` inside a quoted string is kept."""
+    out = []
+    for line in text.splitlines():
+        quote, cut = None, len(line)
+        for i, ch in enumerate(line):
+            if quote:
+                if ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "#":
+                cut = i
+                break
+        out.append(line[:cut])
+    return "\n".join(out)
+
+
+def _toml_arrays(body: str) -> list:
+    """(key, [strings]) for each `key = [ ... ]` in one TOML table body, brackets balanced."""
+    arrays = []
+    for m in re.finditer(r"^\s*([\w.\"'-]+)\s*=\s*\[", body, re.M):
+        depth, i = 0, m.end() - 1
+        while i < len(body):
+            if body[i] == "[":
+                depth += 1
+            elif body[i] == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        arrays.append((m.group(1).strip("\"'"),
+                       re.findall(r'"([^"]*)"|\'([^\']*)\'', body[m.end():i])))
+    return [(k, [a or b for a, b in v]) for k, v in arrays]
+
+
+def _pyproject_requirement_names(text: str):
+    """(names, problem): every requirement name in [build-system].requires,
+    [project].dependencies and [project.optional-dependencies], PEP 503-normalized."""
+    text = _toml_without_comments(text)
+    if re.search(r"^\s*optional-dependencies\s*=", text, re.M):
+        return set(), "declares optional-dependencies inline, a form this check does not read"
+    if re.search(r"^\s*dynamic\s*=\s*\[[^\]]*[\"'](?:optional-)?dependencies[\"']", text, re.M):
+        return set(), "declares its dependencies dynamic, so the manifest does not list them"
+    tables, current = {}, None
+    for line in text.splitlines():
+        h = re.match(r"^\s*\[([^\[\]]+)\]\s*$", line)
+        if h:
+            current = h.group(1).strip()
+            tables.setdefault(current, [])
+        elif current is not None:
+            tables[current].append(line)
+    reqs = []
+    for table, key in (("build-system", "requires"), ("project", "dependencies"),
+                       ("project.optional-dependencies", None)):
+        for k, values in _toml_arrays("\n".join(tables.get(table, []))):
+            if key is None or k == key:
+                reqs.extend(values)
+    names = set()
+    for req in reqs:
+        m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", req)
+        if not m:
+            return set(), "has a requirement this check cannot name: %r" % req
+        names.add(re.sub(r"[-_.]+", "-", m.group(1)).lower())
+    return names, None
+
+
+def _published_manifests(root: pathlib.Path):
+    """(manifests, problem): the manifest of every package publish.yml builds or packs."""
+    text = _read_raw(root, ".github/workflows/publish.yml")
+    if not text:
+        return [], ".github/workflows/publish.yml is missing"
+    manifests = []
+    for line in text.splitlines():
+        if re.search(r"\bpython3? -m build\b", line):
+            manifests.append("%s/pyproject.toml" % line.split()[-1].rstrip("/"))
+        elif re.search(r"\bnpm pack\b", line):
+            m = re.search(r"\bcd (\S+) && npm pack\b", line)
+            if not m:
+                return [], ("publish.yml packs npm without `cd <dir> && npm pack`, so this check "
+                            "cannot tell which package.json is published: %s" % line.strip())
+            manifests.append("%s/package.json" % m.group(1).rstrip("/"))
+    if not manifests:
+        return [], ("publish.yml builds no package this check can read (no `python -m build` "
+                    "and no `npm pack` line), so it would pass having checked nothing")
+    return manifests, None
+
+
+def check_published_dependency_names_are_the_intended_projects(root: pathlib.Path) -> list[Finding]:
+    """Every dependency a published package declares is the project we mean, by name.
+
+    The dependency budget above counts what a package installs; it read polaris-verify's
+    runtime list as empty and was right, while its `oqs` extra named an unrelated project.
+    This check reads every name an installer fetches for a published package (build
+    requirements, runtime dependencies, every extra; npm dependencies, peer and optional
+    ones), from the manifests publish.yml actually builds, and holds each to
+    `_PUBLISHED_DEPENDENCY_PROJECTS`. An unknown name, a missing manifest, a manifest with
+    no names, an empty build list and a stale entry all fail. So does a `pip install` line
+    (in a text file or a Dockerfile) or a requirement file anywhere in the tree that names
+    `oqs` or a bare `liboqs`, in any case.
+    """
+    name = "published_dependency_names"
+    manifests, problem = _published_manifests(root)
+    if problem:
+        return _fail(name, problem)
+    findings, declared = [], set()
+    for rel in manifests:
+        text = _read_raw(root, rel)
+        if not text:
+            findings.extend(_fail(name, "%s is built by publish.yml but missing" % rel))
+            continue
+        if rel.endswith("package.json"):
+            try:
+                doc = json.loads(text)
+            except ValueError:
+                findings.extend(_fail(name, "%s is not valid JSON" % rel))
+                continue
+            names = {"npm:" + n.lower() for key in ("dependencies", "peerDependencies",
+                                                     "optionalDependencies")
+                     for n in (doc.get(key) or {})}
+        else:
+            raw, why = _pyproject_requirement_names(text)
+            if why:
+                findings.extend(_fail(name, "%s %s" % (rel, why)))
+                continue
+            names = {"pypi:" + n for n in raw}
+        if not names:
+            findings.extend(_fail(name, "%s declares no dependency at all, not even a build "
+                                        "requirement: the parse found nothing" % rel))
+            continue
+        unknown = sorted(names - set(_PUBLISHED_DEPENDENCY_PROJECTS))
+        if unknown:
+            findings.extend(_fail(name, "%s declares %s, which _PUBLISHED_DEPENDENCY_PROJECTS does "
+                                        "not list. A registry installs whatever project holds a "
+                                        "name: read the registry's metadata, confirm the source "
+                                        "repository, and add the name with it"
+                                        % (rel, ", ".join(unknown))))
+        declared |= names
+    if findings:
+        return findings
+    stale = sorted(set(_PUBLISHED_DEPENDENCY_PROJECTS) - declared)
+    if stale:
+        return _fail(name, "_PUBLISHED_DEPENDENCY_PROJECTS lists %s, which no published manifest "
+                           "declares now: remove the entry" % ", ".join(stale))
+    wrong = []
+    for rel in _tracked_files(root):
+        parts = rel.split("/")
+        if any(d in _NAMED_REF_SKIP_DIRS for d in parts) or rel in _NAMED_REF_EXEMPT:
+            continue
+        base = parts[-1]
+        is_req = base.startswith("requirements") and base.endswith((".txt", ".in"))
+        is_image = base.startswith(("Dockerfile", "Containerfile"))
+        if (not is_req and not is_image
+                and pathlib.PurePosixPath(rel).suffix.lower() not in _NAMED_REF_EXTS):
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _WRONG_LIBOQS_INSTALL.search(text) or (is_req and _WRONG_LIBOQS_REQUIREMENT.search(text)):
+            wrong.append(rel)
+    if wrong:
+        return _fail(name, "%s fetch PyPI's `oqs` or a bare `liboqs`: neither is liboqs. `oqs` is "
+                           "an unrelated project and `liboqs` is unclaimed; the bindings are "
+                           "`liboqs-python`" % ", ".join(wrong))
+    return _ok(name, "%d published manifests declare %d dependency names, each the project "
+                     "_PUBLISHED_DEPENDENCY_PROJECTS records, and no `pip install` line or "
+                     "requirement file in the tree names `oqs` or a bare `liboqs`"
+                     % (len(manifests), len(declared)))
+
 def _seeded_algorithms(root: pathlib.Path) -> dict:
     """name -> (level, public_key_size, signature_size, nist_standard) from the seed."""
     sql = _read(root, "polaris_sql/04_data.sql")
@@ -29411,6 +29605,7 @@ def check_interop_page_matches_the_count(root: pathlib.Path) -> list[Finding]:
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pooler_keeps_the_operator_scope,
     check_publishable_packages_keep_their_dependency_budget,
+    check_published_dependency_names_are_the_intended_projects,
     check_published_algorithm_table_matches_the_seed,
     check_security_page_matches_the_release_ledger,
     check_stranger_path_was_walked_against_what_is_published,

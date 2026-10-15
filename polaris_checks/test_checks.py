@@ -21409,6 +21409,97 @@ def test_dependency_budget_check_discriminates(tmp_path):
         "must FAIL when a manifest is absent rather than report a clean budget"
 
 
+def test_published_dependency_names_check_discriminates(tmp_path):
+    """Every name a published package asks an installer to fetch is the project we mean.
+
+    The defect (2026-10-15): polaris-verify's `oqs` extra named PyPI's `oqs`, an unrelated
+    project whose wheel installs a top-level `oqs` package, while the dependency budget,
+    which reads runtime dependencies only, stayed green.
+    """
+    PUBLISH = ("jobs:\n  build:\n    steps:\n      - run: |\n"
+               "          python -m build --no-isolation --outdir dist/polaris-verify packages/polaris-verify\n"
+               "          python -m build --no-isolation --outdir dist/polaris-id-cli polaris_cli\n"
+               "      - run: cd sdk/typescript && npm pack --pack-destination \"$GITHUB_WORKSPACE/dist\"\n")
+    VERIFY = ('[build-system]\nrequires = ["setuptools>=68"]\n\n[project]\nname = "x"\n'
+              '# "oqs>=0.10" in a comment is not a dependency\ndependencies = []\n\n'
+              '[project.optional-dependencies]\ncryptography = ["cryptography>=48"]\n'
+              'oqs = ["Liboqs_Python>=0.16"]\n')
+    CLI = ('[build-system]\nrequires = ["setuptools>=68"]\n\n[project]\nname = "y"\n'
+           'dependencies = [\n    "psycopg2-binary>=2.9,<3.0",\n]\n\n'
+           '[project.optional-dependencies]\nuser-mgmt = [\n    "Werkzeug>=3.0,<4.0",\n]\n')
+    TS = '{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1"}}\n'
+    DOC = "pip install liboqs-python\npip install --pre 'polaris-verify[oqs]'\n"
+
+    def write(publish=PUBLISH, verify=VERIFY, cli=CLI, ts=TS, doc=DOC):
+        for rel, body in ((".github/workflows/publish.yml", publish),
+                          ("packages/polaris-verify/pyproject.toml", verify),
+                          ("polaris_cli/pyproject.toml", cli),
+                          ("sdk/typescript/package.json", ts),
+                          ("docs/INSTALL.md", doc)):
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    fn = checks.check_published_dependency_names_are_the_intended_projects
+
+    def fails(why, *words):
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL" and all(w in out[0].message for w in words), (why, out)
+
+    write()
+    out = fn(tmp_path)
+    assert out[0].level == "OK" and "3 published manifests declare 6" in out[0].message, \
+        ("must PASS when every name is listed, normalized as PEP 503 does", out)
+
+    # THE defect: the extra names PyPI's unrelated `oqs`.
+    write(verify=VERIFY.replace('"Liboqs_Python>=0.16"', '"oqs>=0.10"'))
+    fails("must FAIL on the extra that named the unrelated project", "pypi:oqs")
+    # A bare `liboqs` is unclaimed on PyPI: anyone could publish it.
+    write(verify=VERIFY.replace('"Liboqs_Python>=0.16"', '"liboqs"'))
+    fails("must FAIL on a bare liboqs", "pypi:liboqs")
+    # Build requirements are fetched too.
+    write(verify=VERIFY.replace('"setuptools>=68"', '"setuptools>=68", "hatchling"'))
+    fails("must FAIL on an unknown build requirement", "pypi:hatchling")
+    # npm peer and optional dependencies are fetched too.
+    write(ts='{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1"}, '
+             '"peerDependencies": {"left-pad": "^1"}}\n')
+    fails("must FAIL on an unknown npm peer dependency", "npm:left-pad")
+    # Nothing built is a failure, not a pass by checking nothing.
+    write(publish="jobs: {}\n")
+    fails("must FAIL when publish.yml builds nothing it can read", "builds no package")
+    write(publish=PUBLISH.replace("cd sdk/typescript && npm pack", "npm pack"))
+    fails("must FAIL when it cannot tell which package.json is packed", "cannot tell")
+    write()
+    (tmp_path / "polaris_cli/pyproject.toml").unlink()
+    fails("must FAIL when a built manifest is missing", "polaris_cli/pyproject.toml", "missing")
+    write(cli='[project]\nname = "y"\n')
+    fails("must FAIL when a manifest yields no names", "declares no dependency")
+    write(cli=CLI.replace('[project.optional-dependencies]', '[tool.x]'))
+    fails("must FAIL on a stale allowlist entry", "pypi:werkzeug", "remove the entry")
+    write(cli=CLI.replace('[project.optional-dependencies]\nuser-mgmt = [\n    "Werkzeug>=3.0,<4.0",\n]\n',
+                          'optional-dependencies = { user-mgmt = ["requests"] }\n'))
+    fails("must FAIL on an inline optional-dependencies table it does not read", "inline")
+    # Install instructions and requirement files anywhere in the tree.
+    write(doc=DOC + "Then `pip install oqs`.\n")
+    fails("must FAIL on an instruction that installs PyPI's oqs", "docs/INSTALL.md")
+    write(doc=DOC + "pip3 install --user liboqs\n")
+    fails("must FAIL on an instruction that installs a bare liboqs", "docs/INSTALL.md")
+    write(doc=DOC + "pip install OQS\n")
+    fails("must FAIL whatever the case, as PyPI's names are case-blind", "docs/INSTALL.md")
+    write()
+    dockerfile = tmp_path / "polaris_web/Dockerfile"
+    dockerfile.parent.mkdir(parents=True, exist_ok=True)
+    dockerfile.write_text("FROM python:3.12\nRUN pip install oqs\n")
+    fails("must FAIL on a Dockerfile, which has no suffix", "polaris_web/Dockerfile")
+    dockerfile.unlink()
+    write()
+    req = tmp_path / "polaris_web/requirements-pqc.txt"
+    req.parent.mkdir(parents=True, exist_ok=True)
+    req.write_text("oqs==0.10.2 \\\n    --hash=sha256:00\n")
+    fails("must FAIL on a requirement file that pins PyPI's oqs", "requirements-pqc.txt")
+    req.write_text("liboqs-python==0.16.0.1 \\\n    --hash=sha256:00\n")
+    assert fn(tmp_path)[0].level == "OK", "liboqs-python in a requirement file must PASS"
+
 def test_published_algorithms_check_discriminates(tmp_path):
     """A published cryptographic parameter must not drift from the row it restates.
 

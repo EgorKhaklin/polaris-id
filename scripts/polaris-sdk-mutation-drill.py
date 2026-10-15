@@ -71,8 +71,9 @@ SDKS = {
     # instrument CI runs on it (its unit suites, --selftest, --verify-dir, the crypto attack
     # suite, the fuzzer and 24 drills): 32 of 45 refusals survived, among them the RFC 6962
     # consistency and inclusion checks and the cryptography witness's refusal of a forged
-    # signature. scripts/test_verify_refusals.py drives each one; seven remain, declared below.
-    # Its conformance runs inside test_verify_conformance, so there is no separate runner.
+    # signature. scripts/test_verify_refusals.py drives each one; seven remained that day, and
+    # those still surviving are declared below. Its conformance runs inside
+    # test_verify_conformance, so there is no separate runner.
     "verify": {
         "lang": "python",
         "source": "packages/polaris-verify/polaris_verify_cli/verifier.py",
@@ -112,8 +113,10 @@ DECLARED_SURVIVORS: dict[str, str] = {
         "downstream of the _finite guard, which already refuses every value int() could raise on",
     "verify:grant_within_limits:012e80":
         "downstream of the _finite guard, which already refuses every value float() could raise on",
-    "verify:_provider_available:e706fa":
-        "the liboqs import failing: dead on a machine that has it, which the drill requires",
+    # verify:_provider_available:e706fa, the liboqs import failing, was declared here until
+    # 2026-10-15 as dead on a machine that has liboqs. A module named `oqs` that is not
+    # liboqs-python (PyPI's `oqs` is another project) now makes `_import_oqs` raise there, and
+    # test_verify_refusals.AnotherProjectsOqsModule asserts `auto` then picks cryptography.
     "verify:_provider_available:e706fa#2":
         "the cryptography import failing: dead on any machine that can run the verifier's tests",
 

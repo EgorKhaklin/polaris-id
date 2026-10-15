@@ -369,7 +369,7 @@ def _cmd_serve(args) -> int:
                   # The operator sees the reason; the wallet never does. body carries the
                   # same constant refusal whatever went wrong.
                   on_verdict=lambda status, body, verdict: print(
-                      "  <- %d %s" % (status, _operator_line(verdict))))
+                      "  <- %d %s" % (status, _operator_line(verdict)), flush=True))
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     if args.no_local_tls:
@@ -404,6 +404,10 @@ def _cmd_serve(args) -> int:
         query = urllib.parse.urlencode(params)
         for scheme in LAUNCH_SCHEMES:
             print("  %s://?%s" % (scheme, query))
+    # Read while it serves, and stdout is often not a terminal (a pipe, a file, a container log
+    # without -t), where Python holds what was printed until the buffer fills or the process
+    # exits. So the lines above go out now, and each verdict line as it is printed (2026-10-15).
+    sys.stdout.flush()
     try:
         while True:
             time.sleep(3600)
