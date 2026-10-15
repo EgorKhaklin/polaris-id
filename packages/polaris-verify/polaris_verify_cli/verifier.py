@@ -3306,6 +3306,14 @@ def verify_sth(sth, issuer_key=None):
     if sth.get("format") != _STH_FORMAT:
         v["note"] = "not a %s" % _STH_FORMAT
         return v
+    # A log can sign any value here. verify_receipt_inclusion and verify_timestamp_anchor
+    # compare a proof's size with this one by `!=`, under which a signed `true` is 1 and
+    # `7.0` is 7, so until 2026-10-15 a proof was included under either head. The rule is
+    # verify_log_consistency's, and it now holds for every caller.
+    size = sth.get("tree_size")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        v["note"] = "tree_size is not a non-negative integer"
+        return v
     alg, pk_hex, sig_hex = sth.get("algorithm"), sth.get("public_key_hex"), sth.get("signature_hex")
     if alg == _PLACEHOLDER or not pk_hex:
         v["note"] = "placeholder STH -- not authenticatable offline"
@@ -3338,7 +3346,8 @@ def verify_log_consistency(old_sth, new_sth, proof, issuer_key=None):
     ov = verify_sth(old_sth, issuer_key=issuer_key)
     nv = verify_sth(new_sth, issuer_key=issuer_key)
     if not (ov["sth_authentic"] and nv["sth_authentic"]):
-        return {"consistent": False, "fork": False, "note": "an STH is not authentic"}
+        return {"consistent": False, "fork": False,
+                "note": "an STH is not authentic (%s)" % (nv if ov["sth_authentic"] else ov)["note"]}
     if issuer_key is not None and not (ov["issuer_matches"] and nv["issuer_matches"]):
         return {"consistent": False, "fork": False, "note": "an STH is not signed by the expected log key"}
     if (old_sth.get("log_id") != new_sth.get("log_id")):

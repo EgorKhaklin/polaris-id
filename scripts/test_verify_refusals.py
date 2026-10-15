@@ -2212,6 +2212,15 @@ class SignedTreeHeadDecisions(unittest.TestCase):
                 self.assertFalse(V.verify_sth(dict(head, **over))["sth_authentic"])
         self.assertFalse(V.verify_sth("not a head")["sth_authentic"])
 
+    def test_a_size_that_is_not_a_whole_number_is_not_authentic(self):
+        # Each head is signed, so only its size can refuse it.
+        self.assertTrue(V.verify_sth(self.sth(1))["sth_authentic"], "control: the size 1")
+        for bad in (True, False, None, -1, "1", 1.0, 1.5, float("inf")):
+            with self.subTest(tree_size=repr(bad)):
+                v = V.verify_sth(self.sth(1, tree_size=bad))
+                self.assertFalse(v["sth_authentic"])
+                self.assertEqual(v["note"], "tree_size is not a non-negative integer")
+
 
 
 @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
@@ -2280,6 +2289,24 @@ class ReceiptInclusionDecisions(unittest.TestCase):
                 v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, **over), self.head())
                 self.assertFalse(v["included"])
                 self.assertEqual(v["note"], "malformed proof")
+
+    def test_a_head_signed_with_a_size_of_true_or_a_float_includes_nothing(self):
+        # Read by `!=`, a signed `true` was the size 1, and `7.0` was 7. Each proof is first
+        # included under the same head with its genuine size, so only the size refuses it.
+        one = V.merkle_tree_head(self.hashes[:1]).hex()
+        for idx, size, root, bad in ((0, 1, one, True), (0, 1, one, 1.0), (3, 7, self.root, 7.0)):
+            proof = self.proof(idx, tree_size=size, root_hash_hex=root,
+                               proof_hex=[x.hex() for x in V.inclusion_proof(idx, self.hashes[:size])])
+            with self.subTest(tree_size=repr(bad)):
+                genuine = V.verify_receipt_inclusion(self.RECEIPTS[idx], proof,
+                                                     self.head(tree_size=size, root_hash_hex=root),
+                                                     log_key=self.pk.hex())
+                self.assertTrue(genuine["included"], genuine["note"])
+                v = V.verify_receipt_inclusion(self.RECEIPTS[idx], proof,
+                                               self.head(tree_size=bad, root_hash_hex=root),
+                                               log_key=self.pk.hex())
+                self.assertFalse(v["included"])
+                self.assertEqual(v["note"], "tree_size is not a non-negative integer")
 
     def test_a_proof_and_head_of_different_trees_are_refused(self):
         v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, tree_size=6), self.head())
