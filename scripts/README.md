@@ -104,6 +104,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | Script | What it does | Called by |
 |---|---|---|
 | `polaris-preflight.sh` | The pre-ship gate: the invariant layer plus the link check | A contributor, before every commit |
+| `polaris-tree-gate.py` | Runs the heavy pre-commit stages on a `git archive` export of the staged tree and, when all pass, writes a receipt for that tree id in the common git dir; the hooks skip a stage only on a recorded export pass for the identical tree, command, interpreter, pytest, ruff and installed distributions; a hook run records nothing (CONTRIBUTING.md, Tree receipts) | A contributor, before a commit; the four heavy pre-commit hooks |
 | `polaris-test.sh` | One-shot runner for the database-backed suites, with the env set | A contributor; `polaris-coverage.sh` |
 | `polaris-release-notes.sh` | Renders a release body from the CHANGELOG entry | A contributor, at release time |
 | `polaris-authz-audit.sh` | The who-can-do-what report across all four authorization surfaces | A contributor or an assessor; `RED-TEAM-SCOPE.md` points here |

@@ -27058,6 +27058,180 @@ def check_pre_commit_folded_entries_stay_one_line(root: pathlib.Path) -> list[Fi
                      "the one command it reads as" % (len(entries), len(folded)))
 
 
+#: The pre-commit stages a tree receipt may stand in for are the ones this script runs; these
+#: hooks are cheap and always run, so no receipt may ever stand in for them.
+_TREE_GATE_REL = "scripts/polaris-tree-gate.py"
+_PRECOMMIT_ALWAYS_RUN = ("ruff", "em-dash-block-new", "no-secret-in-prod-compose")
+
+
+def _tree_gate_hook_returns(fn: ast.FunctionDef) -> tuple[int, list[int], bool]:
+    """In `hook()`: how many passing returns before the stage runs sit under `if skip:`, the
+    lines of those that do not, and whether `skip` comes from `verdict(...)`."""
+    runs = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name) and n.func.id == "run_stage"]
+    if not runs:
+        return 0, [], False
+    first_run = min(runs)
+    from_verdict = any(
+        isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)
+        and isinstance(n.value.func, ast.Name) and n.value.func.id == "verdict"
+        and any(isinstance(t, ast.Tuple) and t.elts and isinstance(t.elts[0], ast.Name)
+                and t.elts[0].id == "skip" for t in n.targets)
+        for n in ast.walk(fn))
+    guarded, unguarded = [0], []
+
+    def walk(stmts, under_skip):
+        for st in stmts:
+            if isinstance(st, ast.Return) and st.lineno < first_run:
+                v = st.value
+                if isinstance(v, ast.Constant) and type(v.value) is int and v.value != 0:
+                    continue
+                if under_skip:
+                    guarded[0] += 1
+                else:
+                    unguarded.append(st.lineno)
+            elif isinstance(st, ast.If):
+                is_skip = isinstance(st.test, ast.Name) and st.test.id == "skip"
+                walk(st.body, under_skip or is_skip)
+                walk(st.orelse, under_skip)
+            else:
+                for field in ("body", "orelse", "finalbody", "handlers"):
+                    inner = getattr(st, field, None)
+                    if isinstance(inner, list):
+                        walk([s for s in inner if isinstance(s, ast.stmt)]
+                             + [s for h in inner if isinstance(h, ast.ExceptHandler)
+                                for s in h.body], under_skip)
+    walk(fn.body, False)
+    return guarded[0], unguarded, from_verdict
+
+
+def check_precommit_tree_receipts_skip_only_a_measured_pass(root: pathlib.Path) -> list[Finding]:
+    """A tree receipt may stand in for a hook stage only where a pass was measured.
+
+    The four heavy pre-commit stages run through scripts/polaris-tree-gate.py, which skips a
+    stage when a receipt in the common git dir records a pass of it measured on an EXPORT of
+    the identical tree, by the same command, under the same interpreter, pytest, ruff and set
+    of installed distributions (2026-10-14: the hook was
+    re-measuring trees already measured on an export minutes before, 36 minutes of a 65-minute
+    stretch). A cache in front of a gate is a way for the gate to stop gating, so this holds
+    the three ways it could, none of which a passing commit would show:
+
+      - the wiring: every hook routed through the script names ITS OWN stage, the script's
+        stages are exactly the routed hooks, and ruff and the greps are never routed, so a
+        receipt for one stage can never answer for another and the cheap hooks always run;
+      - the decision: the script's own `verdict` is asked about a receipt for another tree,
+        a recorded failure, a missing entry, an entry measured on the work tree rather than
+        an export (which sees untracked files), a changed command, another interpreter, tool
+        or distribution set, a malformed table and no receipt at all, and must run the stage
+        for every one; and must SKIP the matching export pass, or this probe would be
+        measuring a cache that never hits;
+      - the path to it: in `hook()`, every passing return before the stage runs sits under
+        `if skip:` with `skip` taken from `verdict(...)`, so no early exit bypasses the
+        decision; and a receipt path built from a tree id that is not one is refused.
+
+    The behaviour end to end (a scratch repository, the linked-worktree case, the hook's
+    GIT_INDEX_FILE) is scripts/test_tree_gate.py's; this is what keeps it from drifting
+    between the script and the config without that suite being asked.
+    """
+    name = "precommit_tree_receipts"
+    cfg = _read_raw(root, ".pre-commit-config.yaml")
+    src = _read_raw(root, _TREE_GATE_REL)
+    if not cfg or not src:
+        return _fail(name, ".pre-commit-config.yaml or %s is missing" % _TREE_GATE_REL)
+    parts = re.split(r"^\s*-\s*id:\s*(\S+)\s*$", cfg, flags=re.M)
+    blocks = {parts[i]: parts[i + 1] for i in range(1, len(parts) - 1, 2)}
+    if len(blocks) < 3:
+        return _fail(name, "only %d hook(s) parsed out of .pre-commit-config.yaml; the parse "
+                           "has broken and this check would pass by finding nothing" % len(blocks))
+    routed = {}
+    for hid, body in blocks.items():
+        for m in re.finditer(r"polaris-tree-gate\.py\s+hook\s+([\w.-]+)", body):
+            routed.setdefault(hid, []).append(m.group(1))
+    problems = []
+    for hid, stages in sorted(routed.items()):
+        if stages != [hid]:
+            problems.append("hook %s runs tree-gate stage(s) %s, not its own" % (hid, ", ".join(stages)))
+    cached_cheap = sorted(h for h in _PRECOMMIT_ALWAYS_RUN if h in routed)
+    if cached_cheap:
+        problems.append("%s must always run, and a receipt now stands in for it"
+                        % ", ".join(cached_cheap))
+    try:
+        import contextlib as _ctx
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("polaris_tree_gate_check", str(root / _TREE_GATE_REL))
+        mod = _ilu.module_from_spec(spec)
+        with _ctx.redirect_stdout(io.StringIO()):
+            spec.loader.exec_module(mod)
+        stages = dict(mod.STAGES)
+        tree_fn = next(n for n in ast.parse(src).body
+                       if isinstance(n, ast.FunctionDef) and n.name == "hook")
+    except Exception as e:  # noqa: BLE001 -- a wrapper that cannot load is a failed check
+        return _fail(name, "%s does not load: %s: %s" % (_TREE_GATE_REL, type(e).__name__, e))
+    if not stages:
+        return _fail(name, "%s defines no stage; a probe of nothing proves nothing" % _TREE_GATE_REL)
+    if set(stages) != set(routed):
+        problems.append("the script's stages (%s) are not the hooks routed through it (%s)"
+                        % (", ".join(sorted(stages)), ", ".join(sorted(routed)) or "none"))
+    t, other = "a" * 40, "b" * 40
+    env = {"python": "/probe/python3", "python_version": "3.12.0", "pytest": "9.0",
+           "ruff": "ruff 0.1", "distributions": "d" * 64}
+    for stage in sorted(stages):
+        try:
+            h = mod.command_hash(stage)
+            entry = {"exit": 0, "summary": "1 ok", "command_sha256": h, "env": dict(env),
+                     "at": "probe", "where": "export"}
+            good = {"format": mod.FORMAT, "tree": t, "stages": {stage: entry}}
+
+            def ask(receipt, tree=t, hh=h, ee=env, st=stage):
+                return bool(mod.verdict(receipt, tree, st, hh, ee)[0])
+            if not ask(good):
+                problems.append("%s: the matching pass is not skipped, so this probe measures "
+                                "a cache that never hits" % stage)
+                continue
+            cases = {
+                "no receipt": ask(None),
+                "a receipt for another tree": ask(good, tree=other),
+                "a receipt naming another tree": ask(dict(good, tree=other)),
+                "a recorded failure": ask(dict(good, stages={stage: dict(entry, exit=1)})),
+                "an exit of True": ask(dict(good, stages={stage: dict(entry, exit=True)})),
+                "no entry for the stage": ask(dict(good, stages={})),
+                "an entry measured on the work tree": ask(dict(good, stages={stage: dict(entry, where="worktree")})),
+                "an entry that names no measurement": ask(dict(good, stages={stage: {k: v for k, v in entry.items() if k != "where"}})),
+                "a changed command": ask(good, hh="0" * 64),
+                "another interpreter": ask(good, ee=dict(env, python="/other/python3")),
+                "another pytest": ask(good, ee=dict(env, pytest="1.0")),
+                "another distribution set": ask(good, ee=dict(env, distributions="e" * 64)),
+                "a malformed stage table": ask(dict(good, stages=[entry])),
+                "another receipt format": ask(dict(good, format="other")),
+            }
+            bad_path = mod.receipt_path(str(root), "../" + t)
+            good_path = mod.receipt_path(str(root), t) or ""
+        except Exception as e:  # noqa: BLE001
+            problems.append("%s: the decision does not run: %s: %s" % (stage, type(e).__name__, e))
+            continue
+        skipped = sorted(k for k, v in cases.items() if v)
+        if skipped:
+            problems.append("%s is skipped on %s" % (stage, ", ".join(skipped)))
+        if bad_path is not None or not good_path.endswith("/polaris-tree-receipts/%s.json" % t):
+            problems.append("receipt_path must refuse a tree id that is not one and place a "
+                            "real one under polaris-tree-receipts/ (got %r, %r)" % (bad_path, good_path))
+    guarded, unguarded, from_verdict = _tree_gate_hook_returns(tree_fn)
+    if unguarded or not guarded or not from_verdict:
+        problems.append("hook() must leave before running its stage only under `if skip:` with "
+                        "skip from verdict(...) (passing returns outside it at line(s) %s; %d "
+                        "under it; skip from verdict: %s)"
+                        % (", ".join(map(str, unguarded)) or "none", guarded, from_verdict))
+    if problems:
+        return _fail(name, "a tree receipt could skip a stage nobody measured: " + "; ".join(problems))
+    return _ok(name, "%d hook stage(s) run through the tree gate, each under its own name (%s); "
+                     "%s always run; the gate runs every stage for no receipt, another tree, a "
+                     "failure, a work-tree entry, a changed command, another interpreter, pytest "
+                     "or distribution set and a malformed receipt, skips only the matching export "
+                     "pass, and hook() reaches no passing exit before its stage except through "
+                     "that decision"
+               % (len(routed), ", ".join(sorted(routed)), ", ".join(_PRECOMMIT_ALWAYS_RUN)))
+
+
 def check_every_check_has_a_detection_test(root: pathlib.Path) -> list[Finding]:
     """README.md's claim about this layer, held to the layer.
 
@@ -28755,6 +28929,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_install_instructions_reach_the_current_candidate,
     check_precommit_config_wires_what_the_docs_claim,
     check_pre_commit_folded_entries_stay_one_line,
+    check_precommit_tree_receipts_skip_only_a_measured_pass,
     check_git_spawning_tests_drop_the_hook_environment,
     check_verification_plan_covers_the_check_layer,
     check_verification_plan_covers_published_artifacts,

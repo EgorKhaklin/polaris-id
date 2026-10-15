@@ -21826,6 +21826,61 @@ def test_precommit_folded_entry_check_discriminates(tmp_path):
         "must FAIL when the config is absent"
 
 
+def test_precommit_tree_receipts_check_discriminates(tmp_path):
+    fn = checks.check_precommit_tree_receipts_skip_only_a_measured_pass
+    cfg = (REPO / ".pre-commit-config.yaml").read_text()
+    src = (REPO / "scripts" / "polaris-tree-gate.py").read_text()
+    (tmp_path / "scripts").mkdir()
+
+    def run(cfg_text=cfg, src_text=src):
+        (tmp_path / ".pre-commit-config.yaml").write_text(cfg_text)
+        (tmp_path / "scripts" / "polaris-tree-gate.py").write_text(src_text)
+        return fn(tmp_path)[0]
+
+    assert run().level == "OK", "must PASS on the real hook config and tree gate"
+
+    def mutate(text, old, new):
+        assert old in text, "fixture is stale: %r is gone" % old
+        return text.replace(old, new, 1)
+
+    # The decision ignores the tree id: another tree's pass would skip this one.
+    out = run(src_text=mutate(src, 'if receipt.get("tree") != tree:', "if False:"))
+    assert out.level == "FAIL" and "another tree" in out.message
+    # The decision always skips.
+    out = run(src_text=mutate(src, '    if not isinstance(receipt, dict):\n        return False, "no receipt',
+                              '    return True, "always"\n    if not isinstance(receipt, dict):\n'
+                              '        return False, "no receipt'))
+    assert out.level == "FAIL" and "no receipt" in out.message
+    # The decision trusts a pass measured on the work tree, untracked files and all.
+    out = run(src_text=mutate(src, 'if entry.get("where") != "export":', "if False:"))
+    assert out.level == "FAIL" and "work tree" in out.message
+    # The decision ignores the installed distributions.
+    out = run(src_text=mutate(src, 'if not isinstance(recorded, dict) or recorded != env:',
+                              'if not isinstance(recorded, dict) or {k: v for k, v in recorded.items() '
+                              'if k != "distributions"} != {k: v for k, v in env.items() if k != "distributions"}:'))
+    assert out.level == "FAIL" and "distribution set" in out.message
+    # A passing exit before the stage runs, outside the decision.
+    out = run(src_text=mutate(src, "    root = os.getcwd()\n    tree = index_tree(root)\n",
+                              "    return 0\n    root = os.getcwd()\n    tree = index_tree(root)\n"))
+    assert out.level == "FAIL" and "if skip:" in out.message
+    # ruff routed through the cache.
+    out = run(cfg_text=mutate(cfg, "entry: ruff check", "entry: python3 scripts/polaris-tree-gate.py hook ruff"))
+    assert out.level == "FAIL" and "ruff" in out.message
+    # One hook answering with another stage's receipt.
+    out = run(cfg_text=mutate(cfg, "hook polaris-link-check", "hook polaris-checks"))
+    assert out.level == "FAIL" and "polaris-link-check" in out.message
+    # A heavy hook unrouted while the script still carries its stage.
+    out = run(cfg_text=mutate(cfg, "python3 scripts/polaris-tree-gate.py hook polaris-link-check",
+                              "bash scripts/polaris-link-check.sh --ci"))
+    assert out.level == "FAIL" and "not the hooks routed" in out.message
+    # Anti-vacuity: no script, and a config too small to have been parsed.
+    (tmp_path / "scripts" / "polaris-tree-gate.py").unlink()
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "missing" in out.message
+    out = run(cfg_text="repos:\n  - repo: local\n    hooks:\n      - id: only-one\n        entry: ruff\n")
+    assert out.level == "FAIL" and "finding nothing" in out.message
+
+
 def test_git_spawning_tests_drop_the_hook_environment_check_discriminates(tmp_path):
     fn = checks.check_git_spawning_tests_drop_the_hook_environment
     (tmp_path / "scripts").mkdir()
