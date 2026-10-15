@@ -36,6 +36,10 @@ console.log(verdict.decision);                              // "accept" | "rejec
 
 `verifyAuthenticity(pack, anchors?)` exposes the offline check directly.
 
+`issuerUrl` must be `https`: the status check sends the client secret and a bearer token.
+`allowInsecureHttp: true` admits `http` for a local test issuer. No redirect is followed, so
+neither secret reaches another host; configure the issuer's final URL.
+
 A first run needs no issuer and no credential of your own: the repository publishes test
 vectors. In an empty directory:
 

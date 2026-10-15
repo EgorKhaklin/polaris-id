@@ -1130,22 +1130,47 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     return CrossAuthorityVerdict("accept", True, True, via_str, None, signed_edge)
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow no redirect. Both calls carry a secret (the client's Basic credentials, then the
+    bearer), and CPython's handler re-sends a request's headers, Authorization among them, to
+    whatever host a 301, 302, 303 or 307 names. Returning None leaves the 3xx to the default
+    error handler, so it raises HTTPError and the status check fails closed. requests drops the
+    Authorization header when a redirect changes host; both endpoints are POSTs to the issuer
+    the caller configured, so this follows none at all."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirects)
+
+
+def _open(req, timeout):
+    """The one place a request leaves this SDK: `_OPENER`, which follows no redirect."""
+    return _OPENER.open(req, timeout=timeout)  # nosec B310 -- PolarisVerifier._urlopen admits https (http only when asked)
+
+
 class PolarisVerifier:
     def __init__(self, issuer_url=None, client_id=None, client_secret=None,
-                 anchors=None, timeout=30):
+                 anchors=None, timeout=30, allow_insecure_http=False):
+        """`issuer_url` must be https: the calls carry the client secret and a bearer token.
+        `allow_insecure_http=True` admits http as well, for a local test issuer only."""
         self.issuer_url = issuer_url.rstrip("/") if issuer_url else None
         self.client_id = client_id
         self.client_secret = client_secret
         self.anchors = list(anchors) if anchors is not None else None
         self.timeout = timeout
+        self.allow_insecure_http = allow_insecure_http is True
         self._bearer = None
         self._bearer_exp = 0.0
 
     def _urlopen(self, req):
         parsed = urllib.parse.urlsplit(req.full_url)
-        if parsed.scheme not in ("https", "http") or not parsed.netloc:
-            raise ValueError("issuer_url must be an http(s) URL, got %r" % (self.issuer_url,))
-        return urllib.request.urlopen(req, timeout=self.timeout)  # nosec B310 -- scheme verified to be https or http above
+        schemes = ("https", "http") if self.allow_insecure_http else ("https",)
+        if parsed.scheme not in schemes or not parsed.netloc:
+            raise ValueError("issuer_url must be an https URL (http only with allow_insecure_http=True), "
+                             "got %r" % (self.issuer_url,))
+        return _open(req, self.timeout)
 
     # --- OAuth2 client-credentials (cached, refreshed on expiry) --------------
     def _access_token(self):

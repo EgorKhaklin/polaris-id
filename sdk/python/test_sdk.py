@@ -550,10 +550,11 @@ class RefusalsAreTestedTests(unittest.TestCase):
             {"access_token": "new", "expires_in": 300, "currently_authoritative": True, "status": "ACTIVE"}
         ).encode()
         authentic = pv.AuthenticityVerdict(True, True, pv.ALGORITHM)
-        for url in ("file:///etc/passwd", "ftp://issuer.example", "http://", "https://"):
+        for url in ("file:///etc/passwd", "ftp://issuer.example", "http://", "https://",
+                    "http://issuer.example"):
             with self.subTest(issuer_url=url):
                 v = pv.PolarisVerifier(issuer_url=url, client_id="c", client_secret="s")
-                with mock.patch("urllib.request.urlopen", return_value=answer) as call, \
+                with mock.patch.object(pv, "_open", return_value=answer) as call, \
                      mock.patch.object(pv, "verify_authenticity", return_value=authentic):
                     with self.assertRaises(ValueError):
                         v._access_token()
@@ -563,6 +564,94 @@ class RefusalsAreTestedTests(unittest.TestCase):
                     out = v.verify_presentation({"credential": {}})
                     self.assertEqual(out.decision, "reject")
                     self.assertEqual(call.call_count, 0)
+
+
+class _Issuer:
+    """A local HTTP issuer for the online path: answers the token and verify endpoints, or
+    redirects both to `redirect_to`, and records every request it receives with its
+    Authorization header."""
+
+    def __init__(self, redirect_to=None, code=302):
+        import http.server
+        import threading
+        seen = self.seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def _answer(self):
+                seen.append((self.command, self.path, self.headers.get("Authorization")))
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                if redirect_to:
+                    self.send_response(code)
+                    self.send_header("Location", redirect_to + self.path)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = json.dumps({"access_token": "t", "expires_in": 300,
+                                   "currently_authoritative": True, "status": "ACTIVE"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            do_GET = do_POST = _answer
+
+            def log_message(self, *args):
+                pass
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class OnlineTransportTests(unittest.TestCase):
+    """The status check sends the client secret (Basic) and then a bearer token. Until
+    2026-10-15 an http issuer_url sent both in the clear, and CPython's redirect handler re-sent
+    a POST's Authorization header to whatever host a 302 named. Now https is required unless the
+    caller asks for http, and no redirect is followed."""
+
+    def setUp(self):
+        self.issuers = []
+
+    def tearDown(self):
+        for issuer in self.issuers:
+            issuer.close()
+
+    def _issuer(self, **kw):
+        issuer = _Issuer(**kw)
+        self.issuers.append(issuer)
+        return issuer
+
+    def test_http_is_refused_unless_the_caller_asks_for_it(self):
+        issuer = self._issuer()
+        refused = pv.PolarisVerifier(issuer_url=issuer.url, client_id="c", client_secret="s")
+        with self.assertRaises(ValueError):
+            refused._access_token()
+        self.assertEqual(issuer.seen, [], "the secret went out over http")
+        asked = pv.PolarisVerifier(issuer_url=issuer.url, client_id="c", client_secret="s",
+                                   allow_insecure_http=True)
+        self.assertEqual(asked._access_token(), "t")
+        self.assertEqual([(m, p) for m, p, _ in issuer.seen], [("POST", "/api/v1/oauth/token")])
+
+    def test_a_redirect_is_not_followed_and_no_secret_reaches_the_other_host(self):
+        import urllib.error
+        elsewhere = self._issuer()
+        for code in (301, 302, 303, 307, 308):
+            with self.subTest(code=code):
+                issuer = self._issuer(redirect_to=elsewhere.url, code=code)
+                v = pv.PolarisVerifier(issuer_url=issuer.url, client_id="c", client_secret="s",
+                                       allow_insecure_http=True)
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    v._access_token()
+                self.assertEqual(caught.exception.code, code)
+                v._bearer, v._bearer_exp = "bearer-secret", float("inf")
+                with self.assertRaises(urllib.error.HTTPError):
+                    v._online_status({"token_value": "x", "signature_hex": "00"})
+                self.assertEqual(len(issuer.seen), 2)
+                self.assertEqual(elsewhere.seen, [], "a redirect carried a request to another host")
 
 
 if __name__ == "__main__":
@@ -776,9 +865,9 @@ class OnlineDecisionHeldOutTests(unittest.TestCase):
     def test_a_bearer_token_is_reused_until_five_seconds_before_expiry_and_no_later(self):
         import time
         from unittest import mock
-        v = pv.PolarisVerifier(issuer_url="http://x", client_id="c", client_secret="s")
+        v = pv.PolarisVerifier(issuer_url="https://x", client_id="c", client_secret="s")
         v._bearer = "old"
-        with mock.patch("urllib.request.urlopen", return_value=self._token_answer("new")) as call:
+        with mock.patch.object(pv, "_open", return_value=self._token_answer("new")) as call:
             v._bearer_exp = time.time() + 60
             self.assertEqual(v._access_token(), "old")
             self.assertEqual(call.call_count, 0)

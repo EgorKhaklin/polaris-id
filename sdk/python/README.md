@@ -37,6 +37,10 @@ print(verdict.decision)                              # "accept" | "reject" | "pr
 Offline only (no `issuer_url`) yields a `provisional` verdict from authenticity
 alone. `verify_authenticity(pack, anchors)` exposes the offline check directly.
 
+`issuer_url` must be `https`: the status check sends the client secret and a bearer token.
+`allow_insecure_http=True` admits `http` for a local test issuer. No redirect is followed, so
+neither secret reaches another host; configure the issuer's final URL.
+
 A first run needs no issuer and no credential of your own: the repository publishes test
 vectors. `--pre` matters: this is a release candidate, and without it pip installs 0.1.0, which
 predates every fix in [SECURITY.md](https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md).

@@ -1123,6 +1123,9 @@ export type VerifierOptions = {
   clientSecret?: string;
   anchors?: string[] | null;
   timeoutMs?: number;
+  /** Admit an http `issuerUrl`, for a local test issuer only. The calls carry the client secret
+   * and a bearer token, so `issuerUrl` must otherwise be https. */
+  allowInsecureHttp?: boolean;
 };
 
 // The issuer URL's trailing slashes, removed in one pass. /\/+$/ did the same in time
@@ -1140,6 +1143,7 @@ export class PolarisVerifier {
   private clientSecret?: string;
   private anchors: string[] | null;
   private timeoutMs: number;
+  private allowInsecureHttp: boolean;
   private bearer: string | null = null;
   private bearerExp = 0;
 
@@ -1149,13 +1153,35 @@ export class PolarisVerifier {
     this.clientSecret = opts.clientSecret;
     this.anchors = opts.anchors ?? null;
     this.timeoutMs = opts.timeoutMs ?? 30000;
+    this.allowInsecureHttp = opts.allowInsecureHttp === true;
+  }
+
+  // The issuer endpoint `path`, refused unless the issuer URL is https (http only when the caller
+  // asked for it): both calls carry a secret, the client's Basic credentials and then the bearer.
+  // The Python SDK applies the same rule.
+  private endpoint(path: string): string {
+    const url = `${this.issuerUrl}${path}`;
+    let protocol = "";
+    let host = "";
+    try {
+      ({ protocol, host } = new URL(url));
+    } catch {
+      // not a URL: refused below
+    }
+    if (!host || !(protocol === "https:" || (this.allowInsecureHttp && protocol === "http:"))) {
+      throw new Error(`issuerUrl must be an https URL (http only with allowInsecureHttp), got ${JSON.stringify(this.issuerUrl)}`);
+    }
+    return url;
   }
 
   private async accessToken(): Promise<string> {
     if (this.bearer && Date.now() < this.bearerExp - 5000) return this.bearer;
     const creds = btoa(`${this.clientId}:${this.clientSecret}`);
-    const r = await fetch(`${this.issuerUrl}/api/v1/oauth/token`, {
+    // `redirect: "error"`: no redirect is followed. fetch drops Authorization only on a
+    // cross-origin redirect, so a same-host downgrade to http would still have carried it.
+    const r = await fetch(this.endpoint("/api/v1/oauth/token"), {
       method: "POST",
+      redirect: "error",
       headers: { Authorization: `Basic ${creds}`, "Content-Type": "application/x-www-form-urlencoded" },
       body: "grant_type=client_credentials",
       signal: AbortSignal.timeout(this.timeoutMs),
@@ -1168,8 +1194,9 @@ export class PolarisVerifier {
   }
 
   private async onlineStatus(cred: Pack): Promise<any> {
-    const r = await fetch(`${this.issuerUrl}/api/v1/verify`, {
+    const r = await fetch(this.endpoint("/api/v1/verify"), {
       method: "POST",
+      redirect: "error",
       headers: { Authorization: `Bearer ${await this.accessToken()}`, "Content-Type": "application/json" },
       body: JSON.stringify({ token_value: cred.token_value, signature_hex: cred.signature_hex }),
       signal: AbortSignal.timeout(this.timeoutMs),
