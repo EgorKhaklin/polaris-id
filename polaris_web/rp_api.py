@@ -855,7 +855,9 @@ def api_v1_mdoc():
     signature, because that signature is ML-DSA (COSE -49) and the standard mandates ES256,
     ES384, ES512 or EdDSA. Signing classically to satisfy such a reader would trade the
     property this system exists to have for the appearance of interoperability, so the
-    structure bridges and the cryptography does not, and the response says which.
+    structure bridges and the cryptography does not, and the response says which. The
+    signature is pure ML-DSA over the COSE Sig_structure itself, as RFC 9964 defines -49 (and
+    -50 for ML-DSA-87), so a verifier that implements RFC 9964 can check it with the issuer's key.
 
     Read-only and derived: no new trust semantics, no new mutation path, no record of who
     asked. Possession-authenticated exactly like the status assertion, so a holder renders
@@ -910,17 +912,31 @@ def api_v1_mdoc():
                            error_description='unknown elements: %s' % ', '.join(unknown)), 400
         available = {k: v for k, v in available.items() if k in set(requested)}
 
+    algorithm = _signing_algorithm(row['issuing_agency_id'])
+    if algorithm not in pqc_signing.COSE_SIGNING_ALGORITHMS:
+        # A fact about this authority's key, not about the request, so it is the instance's
+        # 503 rather than the caller's 400: RFC 9964 registers COSE -49 for ML-DSA-65 and -50
+        # for ML-DSA-87, and a signature under any other set (an experimental signer, outside
+        # production) is not labelled as one of them.
+        return jsonify(error='unavailable',
+                       error_description='this authority signs under %s, which has no COSE '
+                                         'algorithm (RFC 9964 registers ML-DSA-65 as -49 and '
+                                         'ML-DSA-87 as -50), so it cannot sign an mdoc' % algorithm), 503
+
     from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc).replace(microsecond=0)
 
-    def _sign(data):
-        sig, alg, pub = pqc_signing.signature_over_message(
-            hashlib.sha3_256(data).digest(), agency_id=row['issuing_agency_id'])
-        return sig, alg, pub
+    def _sign(sig_structure):
+        # The Sig_structure itself, never a digest of it: COSE -49 is pure ML-DSA-65 over these
+        # bytes (RFC 9964). Until 2026-10-14 this passed SHA3-256 of them to
+        # signature_over_message, which hashed again, so even the detached verifier, which
+        # checked one SHA3-256 of the structure, refused every document this route made.
+        return pqc_signing.signature_over_cose_sig_structure(
+            sig_structure, agency_id=row['issuing_agency_id'])
 
     try:
         document = mdoc.build_document(
-            available, _signing_algorithm(row['issuing_agency_id']), _sign,
+            available, algorithm, _sign,
             now=now, valid_until=now + timedelta(seconds=_MDOC_TTL))
     except ValueError as e:
         return jsonify(error='invalid_request', error_description=str(e)), 400

@@ -21343,6 +21343,99 @@ class MdocStructureHeldOutTests(unittest.TestCase):
         signed, _ = self._build()
         self.assertEqual(self._mso(signed)['deviceKeyInfo'], {})
 
+    def test_the_signer_is_handed_the_sig_structure_itself(self):
+        # COSE -49 signs these bytes, not a digest of them (RFC 9964), and the signer the route
+        # passes refuses anything that is not a Sig_structure, so the builder hands over exactly it.
+        import mdoc
+        signed, seen = self._build()
+        self.assertEqual(seen['data'], mdoc.sig_structure(signed['issuerAuth'][0], signed['issuerAuth'][2]))
+        self.assertTrue(seen['data'].startswith(pqc_signing.COSE_SIGN1_SIG_STRUCTURE_HEAD))
+
+    def test_a_set_with_no_cose_algorithm_is_refused_not_labelled_minus_49(self):
+        # It was labelled -49: a Falcon signature in a document that said ML-DSA-65.
+        with self.assertRaises(ValueError) as raised:
+            self._build('Falcon-padded-1024')
+        self.assertIn('no COSE algorithm', str(raised.exception))
+
+    def test_a_signature_under_another_set_than_the_header_names_is_refused(self):
+        import mdoc
+        with self.assertRaises(ValueError) as raised:
+            mdoc.build_issuer_signed(self.FULL, 'ML-DSA-65', lambda data: (b'\x01' * 8, 'ML-DSA-87', 'ab' * 4),
+                                     now=self.NOW)
+        self.assertIn('names ML-DSA-65', str(raised.exception))
+        # The development placeholder has no key and is labelled as itself: built, never verified.
+        signed = mdoc.build_issuer_signed(self.FULL, 'ML-DSA-65',
+                                          lambda data: (b'\x01' * 32, pqc_signing.PLACEHOLDER_LABEL, None),
+                                          now=self.NOW)
+        self.assertEqual(signed['issuerAuth'][1]['polaris_algorithm'], pqc_signing.PLACEHOLDER_LABEL)
+
+
+class MdocIssuerSignatureTests(PolarisTestCase):
+    """CORE-BUG 2026-10-14: the /api/v1/mdoc issuer signature, COSE -49, end to end through the
+    route. Not in ZKSnarkTests, beside the other mdoc route tests, because that class skips
+    without the polaris-zk binary, and the real-signer job has none: these must run under both
+    signers."""
+
+    _possession_credential = ZKSnarkTests._possession_credential
+
+    def test_mdoc_issuer_signature_is_pure_ml_dsa_over_the_raw_sig_structure(self):
+        """CORE-BUG 2026-10-14. The tree promises the issuer signature is ML-DSA-65, COSE -49,
+        which RFC 9964 defines as pure ML-DSA-65 over the COSE Sig_structure itself. The route
+        handed SHA3-256 of the structure to signature_over_message, which hashed it again: no
+        RFC 9964 verifier accepted the signature, and neither did the detached verifier, which
+        checked one hash. The effect, in either profile: under real signing an implementation
+        that is not the tree's accepts the signature over the raw structure, and not over its
+        digest, and the detached verifier accepts the document under the authority's key; under
+        the placeholder the document carries the labelled SHA3-256 of the structure, with no
+        key, and nothing accepts it."""
+        import cbor2
+        import importlib.util
+        tv, sig = self._possession_credential()
+        r = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        document = bytes.fromhex(r.get_json()['document_hex'])
+        protected, unprotected, payload, signature = cbor2.loads(document)['issuerSigned']['issuerAuth']
+        self.assertEqual(cbor2.loads(protected), {1: -49})
+        to_be_signed = cbor2.dumps(['Signature1', protected, b'', payload], canonical=True)
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'packages', 'polaris-verify', 'polaris_verify_cli', 'verifier.py')
+        spec = importlib.util.spec_from_file_location('_mdoc_route_verifier', path)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+        if pqc_signing.is_enabled():
+            from cryptography.hazmat.primitives.asymmetric import mldsa
+            from cryptography.exceptions import InvalidSignature
+            key_hex = unprotected['polaris_public_key_hex']
+            self.assertEqual(key_hex, custody.public_key_hex(1), 'signed with the authority\'s custodied key')
+            # The published detached verifier first: our own verifier refusing our own real-signed
+            # document is the failure the real-signer suite missed.
+            verdict = verifier.verify_mdoc(document, anchor_keys=[key_hex])
+            self.assertIs(verdict['issuer_authentic'], True, verdict['note'])
+            self.assertIs(verdict['issuer_trusted'], True)
+            key = mldsa.MLDSA65PublicKey.from_public_bytes(bytes.fromhex(key_hex))
+            key.verify(signature, to_be_signed)        # raises unless pure ML-DSA-65 over the raw bytes
+            with self.assertRaises(InvalidSignature):
+                key.verify(signature, hashlib.sha3_256(to_be_signed).digest())
+        else:
+            self.assertEqual(unprotected, {'polaris_public_key_hex': None,
+                                           'polaris_algorithm': pqc_signing.PLACEHOLDER_LABEL})
+            self.assertEqual(signature, hashlib.sha3_256(to_be_signed).digest())
+            verdict = verifier.verify_mdoc(document)
+            self.assertIs(verdict['digests_match'], True)
+            self.assertIs(verdict['issuer_authentic'], False)
+
+    def test_mdoc_from_a_key_with_no_cose_algorithm_is_503_not_signed(self):
+        """A key of a set RFC 9964 gives no COSE algorithm (an experimental signer) cannot sign
+        a document whose header says -49. That is a fact about the authority, not the request:
+        503, with no document."""
+        tv, sig = self._possession_credential()
+        with patch.object(rp_api, '_signing_algorithm', lambda agency_id=None: 'Falcon-padded-1024'):
+            r = self.client.post('/api/v1/mdoc', json={'token_value': tv, 'signature_hex': sig})
+        body = r.get_json() or {}
+        self.assertEqual((r.status_code, body.get('error')), (503, 'unavailable'), r.get_data(as_text=True)[:300])
+        self.assertIn('no COSE algorithm', body.get('error_description', ''))
+        self.assertNotIn('document_hex', body)
+
 
 class AnchoringMerkleHeldOutTests(unittest.TestCase):
     """Properties of anchoring.py a held-out mutation round found nothing pinned (2026-09-24).

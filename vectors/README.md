@@ -92,3 +92,11 @@ python3 scripts/polaris-fetch-kat.py           # regenerate the committed subset
 
 CI runs the KAT in the `pqc-real` job every release; `check_kat_conformance` keeps
 it wired and both-directional.
+
+`kat/rfc9964_mldsa_65_cose.json` is RFC 9964's own ML-DSA-65 COSE example (Appendix A.2,
+Figure 7), copied from https://www.rfc-editor.org/rfc/rfc9964.txt on 2026-10-14 (SHA-256 of
+that file `8c42035b948301b197d431de8b3f40019bdaa3bb40150dc523306923948f34cf`; the provenance is
+in the file). COSE -49 is pure ML-DSA-65 over the `Sig_structure` itself, and the mdoc issuer
+signature is checked against it: `polaris_web/test_pqc_signing.py` verifies the RFC's signature
+under both witnesses and refuses it one bit away, and `scripts/test_verify_refusals.py` does the
+same through the detached verifier's COSE decision.

@@ -14081,6 +14081,8 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
     # reader knows and the post-quantum property is gone; claim the mDL docType and the
     # document asserts something false in a machine-readable format; carry the token value and
     # the correlation the presentation layer bounds is handed back in a different encoding.
+    # 2026-10-14, a fourth: label the signature COSE -49 and sign a digest of the Sig_structure,
+    # which is not what -49 is (RFC 9964), so no RFC 9964 verifier accepts it.
     MOD = ('DOC_TYPE = "id.polaris.credential.1"\n'
            'NAMESPACE = "id.polaris.1"\n'
            'COSE_ALG_ML_DSA_65 = -49\n'
@@ -14090,17 +14092,54 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
            "    forbidden = set(elements) & FORBIDDEN_ELEMENTS\n"
            "    if forbidden:\n        raise ValueError('correlation handles')\n"
            "    unknown = set(elements) - set(ELEMENTS)\n"
-           "    if unknown:\n        raise ValueError('unknown')\n    return {}\n")
-    VERIFY = ('def verify_mdoc(doc):\n'
+           "    if unknown:\n        raise ValueError('unknown')\n"
+           "    sig_bytes, alg, pub = sign(sig_structure(protected, payload))\n    return {}\n")
+    VERIFY = ('_COSE_ALGS = {"ML-DSA-65": -49, "ML-DSA-87": -50}\n'
+              '\ndef verify_mdoc(doc):\n'
               '    v = {"digests_match": None, "issuer_authentic": False, "reader_interop": None}\n'
-              '    _two_witness_verify(d, s, p, a)\n    return v\n'
+              '    ok, ran, note = _cose_sign1_verdict(p, y, s, k, a)\n    return v\n'
+              '\ndef _cose_sign1_verdict(p, y, s, k, a):\n'
+              '    return _two_witness_verify(_cbor_sig_structure(p, y), s, k, a)\n'
               '\ndef _cbor_sig_structure(p, y):\n    return b"Signature1"\n')
+    RP = ("def api_v1_mdoc():\n"
+          "    def _sign(s):\n        return pqc_signing.signature_over_cose_sig_structure(s, agency_id=1)\n"
+          "    return mdoc.build_document(available, algorithm, _sign)\n")
+    PQ = ('COSE_SIGN1_SIG_STRUCTURE_HEAD = b"\\x84\\x6aSignature1"\n'
+          "\ndef require_cose_sig_structure(tbs):\n"
+          "    if not tbs.startswith(COSE_SIGN1_SIG_STRUCTURE_HEAD):\n"
+          "        raise NotACoseSigStructure('not a Sig_structure')\n"
+          "\ndef signature_over_cose_sig_structure(tbs, agency_id=None):\n"
+          "    require_cose_sig_structure(tbs)\n"
+          "    if not real:\n        return hashlib.sha3_256(tbs).digest(), PLACEHOLDER_LABEL, None\n"
+          "    sig = cust.sign_message(tbs)\n"
+          "    if not verify_both_raw(tbs, sig, pk, require_witness=True):\n"
+          "        raise SigningError('self-check')\n"
+          "    return sig, alg, pk\n"
+          "\ndef _signed_bytes(message, prehash):\n"
+          "    return hashlib.sha3_256(message).digest() if prehash else message\n"
+          "\ndef verify_raw(m, s, k):\n    return _primary(m, s, k, prehash=False)\n"
+          "\ndef _verify_second_witness_raw(m, s, k):\n    return _second(m, s, k, prehash=False)\n"
+          "\ndef verify_both_raw(m, s, k, require_witness=False):\n"
+          "    return _both(verify_raw, _verify_second_witness_raw, m, s, k)\n")
+    CU = ("class KeyCustody:\n    def sign_message(self, message):\n        raise NotImplementedError\n"
+          "\nclass FileCustody(KeyCustody):\n    def sign_message(self, message):\n"
+          "        return self._liboqs_sign(message)\n"
+          "\nclass Pkcs11Custody(KeyCustody):\n    def sign_message(self, message):\n"
+          "        return self._token_sign(message)\n"
+          "\nclass AwsKmsCustody(KeyCustody):\n    def sign_message(self, message):\n"
+          "        return self._kms_sign(Message=message)\n")
     DRILL = ("an INDEPENDENT reader checks every digest\n"
              "refusing to emit the token value in an mdoc\n"
-             "the docType is Polaris, never the mDL\n")
-    DOC = "This is a format bridge, not a trust bridge.\n"
+             "the docType is Polaris, never the mDL\n"
+             "sign = pqc_signing.signature_over_cose_sig_structure\n"
+             "the signature is pure ML-DSA-65 over the Sig_structure itself\n"
+             "a signature over SHA3-256 of the Sig_structure is refused\n")
+    DOC = "This is a format bridge, not a trust bridge. -49 is pure ML-DSA-65 (RFC 9964).\n"
     good = {
         'polaris_web/mdoc.py': MOD,
+        'polaris_web/rp_api.py': RP,
+        'polaris_web/pqc_signing.py': PQ,
+        'polaris_web/custody.py': CU,
         'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY,
         'scripts/polaris-mdoc-bridge-drill.py': DRILL,
         'docs/design/mdoc-bridge.md': DOC,
@@ -14165,9 +14204,67 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the COSE signature is over the payload rather than the Sig_structure"
 
     # The MSO signature stops being two-witnessed like every other signed artifact.
-    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace("    _two_witness_verify(d, s, p, a)\n", "")})
+    write({'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY.replace(
+        "    return _two_witness_verify(_cbor_sig_structure(p, y), s, k, a)\n", "    return True, [], None\n")})
     assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the MSO signature is not two-witnessed"
+
+    # SIGNING OR VERIFYING A DIGEST UNDER -49, one link at a time (RFC 9964: the Sig_structure itself).
+    for rel, src, before, after, why, expect in (
+            ('packages/polaris-verify/polaris_verify_cli/verifier.py', VERIFY,
+             "_two_witness_verify(_cbor_sig_structure(p, y), s, k, a)",
+             "_two_witness_verify(hashlib.sha3_256(_cbor_sig_structure(p, y)).digest(), s, k, a)",
+             "the verifier checks a signature over the digest of the Sig_structure", "the detached verifier must hand its witnesses"),
+            ('packages/polaris-verify/polaris_verify_cli/verifier.py', VERIFY,
+             '_COSE_ALGS = {"ML-DSA-65": -49, "ML-DSA-87": -50}\n', "",
+             "the verifier no longer takes the algorithm from the protected header", "the detached verifier must hand its witnesses"),
+            ('polaris_web/mdoc.py', MOD, "sign(sig_structure(protected, payload))",
+             "sign(hashlib.sha3_256(sig_structure(protected, payload)).digest())",
+             "the builder hands the signer a digest of the Sig_structure", "build_issuer_signed must hand the signer"),
+            ('polaris_web/rp_api.py', RP, "pqc_signing.signature_over_cose_sig_structure(s, agency_id=1)",
+             "pqc_signing.signature_over_message(hashlib.sha3_256(s).digest(), agency_id=1)",
+             "the route signs through the digest signer, as it did until 2026-10-14", "the mdoc route must sign through"),
+            ('polaris_web/rp_api.py', RP, "signature_over_cose_sig_structure(s,",
+             "signature_over_cose_sig_structure(hashlib.sha3_256(s).digest(),",
+             "the route hands the COSE signer a digest", "the mdoc route must sign through"),
+            ('polaris_web/pqc_signing.py', PQ, "cust.sign_message(tbs)",
+             "cust.sign_message(hashlib.sha3_256(tbs).digest())",
+             "the COSE signer signs a digest on the real path", "the COSE signer must refuse anything but"),
+            ('polaris_web/pqc_signing.py', PQ, "cust.sign_message(tbs)",
+             "cust.sign(hashlib.sha3_256(tbs).digest())",
+             "the COSE signer signs through the digest contract", "the COSE signer must refuse anything but"),
+            ('polaris_web/pqc_signing.py', PQ, "verify_both_raw(tbs, sig, pk, require_witness=True)",
+             "verify_both(tbs, sig, pk, require_witness=True)",
+             "the COSE signer self-checks over a digest", "the COSE signer must refuse anything but"),
+            ('polaris_web/pqc_signing.py', PQ, "    require_cose_sig_structure(tbs)\n", "",
+             "the COSE signer signs bytes that are not a Sig_structure", "the COSE signer must refuse anything but"),
+            ('polaris_web/pqc_signing.py', PQ,
+             "    if not tbs.startswith(COSE_SIGN1_SIG_STRUCTURE_HEAD):\n"
+             "        raise NotACoseSigStructure('not a Sig_structure')\n", "    pass\n",
+             "the Sig_structure guard accepts anything", "must sign nothing that is not a Sig_structure"),
+            ('polaris_web/pqc_signing.py', PQ, "return _primary(m, s, k, prehash=False)",
+             "return _primary(m, s, k, prehash=True)",
+             "the raw verify hashes what it is given", "verify_both_raw must have both witnesses verify the raw bytes"),
+            ('polaris_web/custody.py', CU, "return self._liboqs_sign(message)",
+             "return self._liboqs_sign(hashlib.sha3_256(message).digest())",
+             "a custody driver signs a digest of the message", "every custody driver must implement sign_message"),
+            ('polaris_web/custody.py', CU,
+             "\nclass Pkcs11Custody(KeyCustody):\n    def sign_message(self, message):\n"
+             "        return self._token_sign(message)\n", "\nclass Pkcs11Custody(KeyCustody):\n    pass\n",
+             "a custody driver has no raw-message signing", "every custody driver must implement sign_message"),
+            ('scripts/polaris-mdoc-bridge-drill.py', DRILL,
+             "the signature is pure ML-DSA-65 over the Sig_structure itself\n", "",
+             "the drill no longer checks the signature over the raw Sig_structure", "over the raw Sig_structure with an implementation"),
+            ('scripts/polaris-mdoc-bridge-drill.py', DRILL,
+             "a signature over SHA3-256 of the Sig_structure is refused\n", "",
+             "the drill no longer shows the digest form refused", "the digest form is refused"),
+            ('docs/design/mdoc-bridge.md', DOC, " -49 is pure ML-DSA-65 (RFC 9964).", "",
+             "the design record no longer says what -49 is", "the design record must say what -49 means")):
+        assert before in src, why
+        write({rel: src.replace(before, after)})
+        finding = checks.check_mdoc_bridge(tmp_path)[0]
+        assert finding.level == "FAIL", "must FAIL when " + why
+        assert expect in finding.message, "must FAIL for its own reason when %s, not: %s" % (why, finding.message)
 
     # The drill stops testing interop against an independent implementation, so it is a round
     # trip with itself.
@@ -14177,7 +14274,7 @@ def test_mdoc_bridge_check_discriminates(tmp_path):
         "must FAIL when the drill does not test interop with an independent CBOR implementation"
 
     # The design record stops saying what kind of bridge it is.
-    write({'docs/design/mdoc-bridge.md': "We support ISO 18013-5.\n"})
+    write({'docs/design/mdoc-bridge.md': "We support ISO 18013-5. -49 is RFC 9964's.\n"})
     assert checks.check_mdoc_bridge(tmp_path)[0].level == "FAIL", \
         "must FAIL when the record does not say this is a format bridge and not a trust bridge"
 

@@ -4568,6 +4568,12 @@ def verify_verifiable_credential(document, anchor_keys=None, now=None):
 # signature, because that signature is ML-DSA-65 (COSE algorithm -49) and the standard
 # mandates ES256, ES384, ES512 or EdDSA.
 #
+# -49 means what RFC 9964 registers: pure ML-DSA-65, empty context, over the COSE
+# Sig_structure itself (-50 the same for ML-DSA-87). So the witnesses are handed those bytes,
+# under the algorithm the PROTECTED header names, and never also a digest of them: until
+# 2026-10-14 this checked a signature over SHA3-256 of the structure, which no RFC 9964
+# verifier accepts, and accepting both forms would give one document two meanings.
+#
 # That is not a gap to be closed by signing classically. Signing classically to satisfy an
 # mDL reader would trade the property this system exists to have for the appearance of
 # interoperability. So `structure_valid` and `digests_match` are what an off-the-shelf reader
@@ -4581,6 +4587,8 @@ def verify_verifiable_credential(document, anchor_keys=None, now=None):
 
 _MDOC_DOC_TYPE = "id.polaris.credential.1"
 _MDOC_NAMESPACE = "id.polaris.1"
+#: The COSE algorithm of each parameter set a COSE signature may be under (RFC 9964).
+_COSE_ALGS = {"ML-DSA-65": -49, "ML-DSA-87": -50}
 _MDOC_FORBIDDEN = frozenset({"token_value", "token_id", "individual_id", "legal_name",
                              "date_of_birth", "signature_hex", "public_key_hex"})
 
@@ -4676,9 +4684,12 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
       structure_valid   the document parses as an mdoc and names the Polaris docType
       digests_match     every disclosed element's digest matches the signed MSO. This is what
                         an off-the-shelf 18013-5 reader can establish for itself.
-      issuer_authentic  the MSO's COSE_Sign1 verifies under ML-DSA. Only a Polaris-aware
-                        verifier can do this; an unmodified mDL reader will not know the
-                        algorithm and MUST NOT be told the document is therefore invalid.
+      issuer_authentic  the MSO's COSE_Sign1 verifies under ML-DSA: pure ML-DSA over its
+                        Sig_structure, under the COSE algorithm its protected header names
+                        (-49 or -50, RFC 9964), with the key Polaris carries in the
+                        unprotected header. Only a Polaris-aware verifier can do this; an
+                        unmodified mDL reader will not know the algorithm and MUST NOT be
+                        told the document is therefore invalid.
 
     `reader_interop` states the bound in words, so a caller cannot report the second as the
     third by accident.
@@ -4797,8 +4808,7 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
-    sig_struct = _cbor_sig_structure(bytes(protected), bytes(payload))
-    ok2, ran, note = _two_witness_verify(hashlib.sha3_256(sig_struct).digest(), sig, pk, alg)
+    ok2, ran, note = _cose_sign1_verdict(bytes(protected), bytes(payload), sig, pk, alg)
     v["witnesses"] = ran
     if ok2 is None:
         v["note"] = note
@@ -4810,6 +4820,27 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
     if anchor_keys is not None:
         v["issuer_trusted"] = _hex_in(key_hex, {_hex_text(a) for a in anchor_keys})
     return v
+
+
+def _cose_sign1_verdict(protected, payload, signature, pk, alg):
+    """A COSE_Sign1 signature decided as RFC 9964 defines it: (ok, witnesses, note), as
+    `_two_witness_verify` returns them.
+
+    The algorithm is the one the PROTECTED header names, because that is the one the signature
+    covers: -49 is ML-DSA-65 and -50 is ML-DSA-87. `alg`, what the caller was told (an mdoc's
+    unprotected polaris_algorithm, which nobody signed), must be that set or the answer is False.
+    The witnesses then verify pure ML-DSA, empty context, over the Sig_structure ITSELF, never a
+    digest of it, and nothing else is tried, so one signature has one meaning."""
+    try:
+        header = _cbor_decode(bytes(protected))
+    except (ValueError, UnicodeDecodeError, IndexError, TypeError) as e:
+        return False, [], "the COSE protected header does not decode (%s)" % e
+    cose_alg = header.get(1) if isinstance(header, dict) else None
+    if cose_alg is None or cose_alg != _COSE_ALGS.get(alg):
+        return False, [], ("the protected header names COSE algorithm %r and %s is %s (RFC 9964): "
+                           "a signature is checked under the algorithm it covers or not at all"
+                           % (cose_alg, alg, _COSE_ALGS.get(alg, "no COSE algorithm")))
+    return _two_witness_verify(_cbor_sig_structure(bytes(protected), bytes(payload)), signature, pk, alg)
 
 
 def _cbor_bstr_header(n):
