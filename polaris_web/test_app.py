@@ -18277,8 +18277,9 @@ class RelyingPartyApiTests(PolarisTestCase):
                 'token_value': pack['token_value'], 'signature_hex': presented}).get_json()
             self.assertEqual((r['decision'], r['issuer_authorized_at_signing']), ('accept', True), r)
 
-    # -- THREAT-MODEL (2026-10-04): a compromised application role plants a signature row. The
-    # -- role may INSERT into TokenSignature; registration (AuthorityKeyEvent) is closed to it.
+    # -- THREAT-MODEL (2026-10-04): a planted signature row. The application role could INSERT
+    # -- into TokenSignature until the same day's revoke; registration (AuthorityKeyEvent) is
+    # -- closed to it.
 
     def _plant_as_app(self, token_value, signature, key_hex):
         """Plant a TokenSignature row under ML-DSA-87, an algorithm the credential (issued under

@@ -74,8 +74,9 @@ register only a key the ceremony minted, and never one retired or declared compr
 Under real signing this is not optional. Every possession route (`/api/v1/verify`, the status
 assertion, holder signing, the verifiable credential, the mdoc, sign-in) accepts a signature only
 under a key its authority had registered at the instant the signature was made, and refuses one
-whose key has no recorded history. The application role can write a signature row but cannot
-register a key, so this is what keeps a planted row from being vouched for. A credential issued
+whose key has no recorded history. Since 2026-10-04 the application role can neither write a
+signature row nor register a key; this refusal stays so that a row that reaches the table another
+way is still not vouched for. A credential issued
 before its key was registered is refused until the registration's `--effective-at` covers its
 signing instant.
 

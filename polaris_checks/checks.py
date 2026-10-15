@@ -1730,16 +1730,17 @@ def check_signature_self_contained_verify(root: pathlib.Path) -> list[Finding]:
 
 
 def check_possession_requires_registered_key(root: pathlib.Path) -> list[Finding]:
-    """THREAT-MODEL (2026-10-04): the application role may INSERT a TokenSignature row, so a
-    possession proof that trusts the row vouches for a forgery: a keyless row (SHA3-256 of the
-    token value, which anyone computes) or a row under an attacker's own key. Under real signing
+    """THREAT-MODEL (2026-10-04): a possession proof that trusts a TokenSignature row vouches for
+    a planted one: a keyless row (SHA3-256 of the token value, which anyone computes) or a row
+    under an attacker's own key. The application role could INSERT such a row until migration
+    2026-10-04-002 revoked the write; this refusal stays as defense in depth. Under real signing
     `_possession_authenticated`, the one function every possession route calls, must refuse a
     match unless `_issuer_key_facts(...)` says the issuing authority had registered that key at
     the signature's instant, and must treat None (unknown) as a refusal: the shape is an
     `if pqc_signing.is_enabled():` holding the `_issuer_key_facts` call and an
     `if <fact> is not True: return None`, ahead of the function's final `return`. Read from the
     syntax tree, so a comment naming the gate does not satisfy it. The effect is tested in
-    RelyingPartyApiTests (both plants, made as polaris_app)."""
+    RelyingPartyApiTests (both plants, written as the schema owner since the revoke)."""
     name = "possession_requires_registered_key"
     src = _read_raw(root, "polaris_web/rp_api.py")
     try:
