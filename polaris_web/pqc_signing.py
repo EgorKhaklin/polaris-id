@@ -388,7 +388,8 @@ def availability_report() -> dict:
 # material. When set, every signature uses the SAME key, so its public key is a
 # stable, publishable trust anchor that verifiers check against. When unset
 # (dev/test), sign() falls back to an ephemeral per-call keypair, which is NOT
-# verifiable against any known anchor and must never be the production path.
+# verifiable against any known anchor and is never the production path: under
+# POLARIS_ENV=production it refuses (_ephemeral_signature), and app.py refuses to boot.
 _PERSISTENT_KEY_ENV = "POLARIS_PQC_SIGNING_KEY_FILE"
 _PERSISTENT_KEYPAIR: Optional[tuple] = None
 _PERSISTENT_LOADED = False
@@ -436,21 +437,38 @@ def generate_keypair(algorithm=None) -> dict:
     }
 
 
+def _ephemeral_signature(algorithm, data: bytes) -> tuple:
+    """(public key, signature) over `data` under a keypair made for this one call: what
+    development and test sign with when no custody is configured. No key register, trust list
+    or anchor file names that key, so its signatures prove nothing about who made them. Under
+    POLARIS_ENV=production it refuses (custody.CustodyError) instead; app.py refuses to boot
+    there without a key as well."""
+    if os.environ.get("POLARIS_ENV", "").strip().lower() == "production":
+        raise custody.CustodyError(
+            "POLARIS_ENV=production and no signing key is configured: refusing to sign under a "
+            "per-call key no trust anchor names. Set POLARIS_PQC_SIGNING_KEY_FILE, or "
+            "POLARIS_CUSTODY_DRIVER for a PKCS#11 token or AWS KMS (docs/operator/KEY-CEREMONY.md)")
+    import oqs as _oqs  # type: ignore
+    with _oqs.Signature(algorithm) as signer:
+        return signer.generate_keypair(), signer.sign(data)
+
+
 def sign(message: bytes, agency_id=None) -> SigningResult:
     """Sign `message` with ML-DSA-65.
 
     Uses the custodied long-lived key when one is configured (the file driver via
     POLARIS_PQC_SIGNING_KEY_FILE, or a PKCS#11 / AWS KMS driver via
     POLARIS_CUSTODY_DRIVER; see custody.py), so the public key is a stable trust
-    anchor; otherwise generates an ephemeral per-call keypair (the dev/test
-    fallback — not verifiable against a known anchor).
+    anchor; otherwise, in development and test only, an ephemeral per-call keypair
+    that no anchor names (_ephemeral_signature, which refuses under production).
 
     PE.3b: when `agency_id` is given, the ISSUING AGENCY's own key is used if one is
     configured (POLARIS_AGENCY_KEYS_DIR/<agency_id>.json), else the global key — so a
     token is signed by the agency it is issued for, and single-key deployments are
     unchanged.
 
-    Raises PQCUnavailableError if oqs is not importable.
+    Raises PQCUnavailableError if oqs is not importable, and custody.CustodyError under
+    POLARIS_ENV=production when no custody is configured.
     Returns SigningResult with public_key, signature, message hash.
     """
     if not _OQS_AVAILABLE:
@@ -458,9 +476,6 @@ def sign(message: bytes, agency_id=None) -> SigningResult:
             f"liboqs-python is not importable: {_OQS_IMPORT_ERROR}. "
             "Install per polaris_web/pqc_signing.py module docstring."
         )
-
-    # Deferred import (mypy/IDE don't see it pre-import)
-    import oqs as _oqs  # type: ignore
 
     # SHA3-256 the message for binding to a fixed-size digest
     digest = hashlib.sha3_256(message).digest()
@@ -475,11 +490,9 @@ def sign(message: bytes, agency_id=None) -> SigningResult:
         public_key = cust.public_key()
         signature = cust.sign(digest)
     else:
-        # No persistent key configured — ephemeral keypair (dev/test only).
+        # No persistent key configured: an ephemeral keypair (development and test only).
         alg = custody.configured_algorithm()
-        with _oqs.Signature(alg) as signer:
-            public_key = signer.generate_keypair()
-            signature = signer.sign(digest)
+        public_key, signature = _ephemeral_signature(alg, digest)
 
     return SigningResult(
         algorithm_name=alg,
@@ -782,10 +795,7 @@ def signature_over_cose_sig_structure(to_be_signed: bytes, agency_id=None) -> tu
         public_key, signature = cust.public_key(), cust.sign_message(message)
     else:
         # No persistent key configured: an ephemeral keypair, development and test only (sign()).
-        import oqs as _oqs  # type: ignore
-        with _oqs.Signature(alg) as signer:
-            public_key = signer.generate_keypair()
-            signature = signer.sign(message)
+        public_key, signature = _ephemeral_signature(alg, message)
     public_key_hex, signature_hex = bytes(public_key).hex(), bytes(signature).hex()
     _refuse_a_wrong_size(alg, public_key_hex, signature_hex,
                          "the produced %s COSE signature" % alg, "refusing to sign")
@@ -839,15 +849,13 @@ def signature_for_migration(token_value: str, algorithm: str, agency_id=None) ->
         raise SigningError(
             "a migration signature requires the independent second witness; refusing to "
             f"re-sign a population on one implementation ({_WITNESS_IMPORT_ERROR or 'none'})")
-    import oqs as _oqs  # type: ignore
     digest = hashlib.sha3_256(token_value.encode("utf-8")).digest()
     cust = custody.get_custody_for_algorithm(algorithm)
     if cust is not None:
         public_key, signature = cust.public_key(), cust.sign(digest)
     else:
-        with _oqs.Signature(algorithm) as signer:
-            public_key = signer.generate_keypair()
-            signature = signer.sign(digest)
+        # No custody at all: an ephemeral keypair, development and test only (sign()).
+        public_key, signature = _ephemeral_signature(algorithm, digest)
     public_key_hex, signature_hex = public_key.hex(), signature.hex()
     # Self-verify under BOTH witnesses before the row is written. A migration writes once
     # across a whole population; a signature nobody checked at the moment it was made is a

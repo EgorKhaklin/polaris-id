@@ -682,6 +682,27 @@ if _PRODUCTION and _pqc_real and not pqc_signing.second_witness_available():
         "         when it runs a single witness. Install cryptography>=48 on OpenSSL 3.5+.\n\n"
     )
     sys.exit(2)
+# 2026-10-15: the same refusal one key over. With real signing and no custody configured, the
+# signer made a fresh keypair for every signature, which no key register, trust list or anchor
+# file names: the deployment booted, served, and issued credentials that nothing could verify
+# against a published key. The configuration contract above names a missing key setting; this
+# second line loads the key itself, so a key file that does not parse, or a driver that cannot
+# reach its token or KMS key, stops the boot rather than the first issue.
+if _PRODUCTION and _pqc_real:
+    try:
+        _signing_key_problem = (None if pqc_signing.custody.get_custody() is not None
+                                else "no signing key is configured")
+    except Exception as exc:  # CustodyError, or a key file that is not even a JSON object
+        _signing_key_problem = str(exc) or type(exc).__name__
+    if _signing_key_problem:
+        sys.stderr.write(
+            "\n  FATAL: POLARIS_ENV=production with real ML-DSA signing, but the issuer's signing key\n"
+            "         is not available: " + _signing_key_problem + ".\n"
+            "         Refusing to start so a production deployment cannot sign under a per-call key\n"
+            "         no trust anchor names. Set POLARIS_PQC_SIGNING_KEY_FILE, or POLARIS_CUSTODY_DRIVER\n"
+            "         for a PKCS#11 token or AWS KMS. See docs/operator/KEY-CEREMONY.md.\n\n"
+        )
+        sys.exit(2)
 if not _pqc_real and _pqc_profile != 'placeholder':
     # Not production (the guard above would have exited); the placeholder is in use
     # without being named. Boot, but loudly — this is a dev/CI convenience only.

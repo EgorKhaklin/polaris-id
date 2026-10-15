@@ -75,7 +75,7 @@ class _EnvSnapshot:
             "POLARIS_CUSTODY_PKCS11_TOKEN_LABEL", "POLARIS_CUSTODY_PKCS11_PIN_FILE", "POLARIS_CUSTODY_PKCS11_PIN",
             "POLARIS_CUSTODY_PKCS11_KEY_LABEL", "POLARIS_CUSTODY_AWSKMS_KEY_ID", "POLARIS_CUSTODY_AWSKMS_REGION",
             "POLARIS_CUSTODY_AWSKMS_ENDPOINT_URL", "POLARIS_PQC_TRUST_ANCHORS_FILE", "POLARIS_USE_REAL_PQC",
-            "POLARIS_AGENCY_KEYS_DIR", "POLARIS_MIGRATION_SIGNING_KEY_FILE",
+            "POLARIS_AGENCY_KEYS_DIR", "POLARIS_MIGRATION_SIGNING_KEY_FILE", "POLARIS_ENV",
             "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")
 
     def __enter__(self):
@@ -478,6 +478,8 @@ class Pkcs11CustodyTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class EnvSelectionTests(unittest.TestCase):
     def test_nothing_configured_means_no_custody(self):
+        """Outside production only: there, signing without custody refuses
+        (ProductionSigningKeyTests)."""
         with _EnvSnapshot():
             self.assertIsNone(custody.get_custody())
             self.assertIsNone(pqc_signing.trust_anchor_public_key_hex())
@@ -511,6 +513,45 @@ class EnvSelectionTests(unittest.TestCase):
             os.environ["POLARIS_CUSTODY_DRIVER"] = "nope"
             self.assertIn("error", pqc_signing.availability_report()["custody"])
 
+
+
+@unittest.skipUnless(pqc_signing.is_available() and pqc_signing.second_witness_available(),
+                     "needs liboqs and the second witness")
+class ProductionSigningKeyTests(unittest.TestCase):
+    """With no custody configured, real signing makes a keypair for each call, which no key
+    register, trust list or anchor file names. Development and test sign that way; under
+    POLARIS_ENV=production every entry point that would refuses instead (app.py also refuses
+    to boot there without a key)."""
+
+    def setUp(self):
+        self._env = _EnvSnapshot().__enter__()
+        os.environ["POLARIS_USE_REAL_PQC"] = "1"
+
+    def tearDown(self):
+        self._env.__exit__()
+
+    ENTRY_POINTS = (
+        ("sign", lambda: pqc_signing.sign(b"token-ABC")),
+        ("issuance", lambda: pqc_signing.signature_with_key_for_token("token-ABC")),
+        ("a signed statement", lambda: pqc_signing.signature_over_message(b'{"format":"x"}')),
+        ("COSE", lambda: pqc_signing.signature_over_cose_sig_structure(_SIG_STRUCTURE)),
+        ("migration", lambda: pqc_signing.signature_for_migration("token-ABC", "ML-DSA-65")),
+    )
+
+    def test_development_signs_under_a_key_made_for_each_call(self):
+        self.assertIsNone(custody.get_custody())
+        first, second = pqc_signing.sign(b"token-ABC"), pqc_signing.sign(b"token-ABC")
+        self.assertNotEqual(first.public_key_hex, second.public_key_hex)
+        for name, call in self.ENTRY_POINTS:
+            self.assertTrue(call(), name)
+
+    def test_production_refuses_to_sign_without_custody(self):
+        os.environ["POLARIS_ENV"] = "production"
+        self.assertIsNone(custody.get_custody(), "the lookup reports the absence; signing refuses")
+        for name, call in self.ENTRY_POINTS:
+            with self.assertRaises(custody.CustodyError, msg=name) as cm:
+                call()
+            self.assertIn("no signing key is configured", str(cm.exception), name)
 
 
 @unittest.skipUnless(pqc_signing.is_available(), "liboqs not installed")

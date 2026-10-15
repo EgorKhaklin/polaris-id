@@ -99,7 +99,8 @@ SETTINGS: tuple[Setting, ...] = (
        prod_choices=("1", "true", "yes", "on")),
     _s("POLARIS_PQC_PROFILE", group="signing", doc="`placeholder` names the development signer and silences its warning."),
     _s("POLARIS_PQC_ALGORITHM", group="signing", doc="Issuer signing algorithm (default ML-DSA-65)."),
-    _s("POLARIS_PQC_SIGNING_KEY_FILE", "file", None, "signing", "File custody: the issuer key."),
+    _s("POLARIS_PQC_SIGNING_KEY_FILE", "file", None, "signing",
+       "File custody: the issuer key. Production requires it unless POLARIS_CUSTODY_DRIVER is pkcs11 or awskms."),
     _s("POLARIS_PQC_TRUST_ANCHORS_FILE", "file", None, "signing", "Earlier public keys pqc_signing.verify_token_signature accepts; a rotation uses the key register instead (KEY-CEREMONY.md)."),
     _s("POLARIS_MIGRATION_SIGNING_KEY_FILE", "file", None, "signing", "Key for a signature migration's target algorithm."),
     _s("POLARIS_AGENCY_KEYS_DIR", "dir", None, "signing", "Per-agency federation keys."),
@@ -289,6 +290,12 @@ def problems(env, production: bool) -> list[str]:
                    f"and {rootcert or '(unset)'!r} is not one")
     if (env.get("POLARIS_CUSTODY_PKCS11_PIN") or "").strip():
         out.append("POLARIS_CUSTODY_PKCS11_PIN: the PIN must come from POLARIS_CUSTODY_PKCS11_PIN_FILE")
+    # 2026-10-15: production signs under the issuer's own key. With none configured the signer
+    # made a fresh key for every signature, which no trust anchor names.
+    driver = (env.get("POLARIS_CUSTODY_DRIVER") or "").strip().lower()
+    if driver in ("", "file") and not (env.get("POLARIS_PQC_SIGNING_KEY_FILE") or "").strip():
+        out.append("POLARIS_PQC_SIGNING_KEY_FILE: production signs under the issuer's own key; set it, "
+                   "or POLARIS_CUSTODY_DRIVER to pkcs11 or awskms")
     # Lab record 017, phase 4a: the rate limiter's Redis authenticates, with a password that
     # lives in a file. One in the URL would sit in the environment, where `docker inspect`
     # and /proc/<pid>/environ show it.

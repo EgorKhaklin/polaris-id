@@ -8970,8 +8970,29 @@ class F04_SecurityHeadersTests(PolarisTestCase):
         self.assertIn('no-store', cc)
 
 
+def _signing_key_file_of_the_right_shape(directory):
+    """A file-driver key file the production boot can load: an accepted parameter set and a
+    public key of its length, mode 0600. No boot test signs with it, so its bytes are zeros."""
+    path = os.path.join(directory, 'polaris_signing_key')
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as fh:
+        json.dump({'algorithm': 'ML-DSA-65', 'secret_key_hex': '00' * 4032,
+                   'public_key_hex': '00' * custody.ALGORITHM_SIZES['ML-DSA-65'][0]}, fh)
+    return path
+
+
 class F05_ProductionSecretGuardTests(unittest.TestCase):
     """F-05: Refuse to start in prod with default secret. CWE-798 / OWASP A05."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls._keys = tempfile.TemporaryDirectory()
+        cls.signing_key_file = _signing_key_file_of_the_right_shape(cls._keys.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._keys.cleanup()
 
     def test_dev_default_secret_rejected_in_production(self):
         """Setting POLARIS_ENV=production with the dev secret must exit."""
@@ -9074,6 +9095,7 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
         proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
                                   'POLARIS_DB_PASSWORD': 'a-real-password',
                                   'POLARIS_USE_REAL_PQC': '1',
+                                  'POLARIS_PQC_SIGNING_KEY_FILE': self.signing_key_file,
                                   'POLARIS_DOMAIN': 'polaris.example.org'})
         self.assertNotIn('setting(s) are wrong', proc.stderr)
 
@@ -9205,7 +9227,8 @@ class ConfigSchemaTests(unittest.TestCase):
         self.pw = os.path.join(self.tmp, 'p'); open(self.pw, 'w').write('real-password')
         self.good = {'POLARIS_ENV': 'production', 'POLARIS_SECRET_KEY_FILE': self.key,
                      'POLARIS_DB_PASSWORD_FILE': self.pw, 'POLARIS_DB_SSLMODE': 'require',
-                     'POLARIS_USE_REAL_PQC': '1', 'POLARIS_DOMAIN': 'polaris.example.org'}
+                     'POLARIS_USE_REAL_PQC': '1', 'POLARIS_DOMAIN': 'polaris.example.org',
+                     'POLARIS_PQC_SIGNING_KEY_FILE': self.key}
 
     def _p(self, **changes):
         env = dict(self.good)
@@ -9232,9 +9255,21 @@ class ConfigSchemaTests(unittest.TestCase):
                              (dict(POLARIS_CUSTODY_PKCS11_PIN='1234'), 'POLARIS_CUSTODY_PKCS11_PIN'),
                              (dict(POLARIS_WORKERS='four'), 'POLARIS_WORKERS'),
                              (dict(POLARIS_TRUST_PROXY='maybe'), 'POLARIS_TRUST_PROXY'),
-                             (dict(POLARIS_CUSTODY_DRIVER='hsm'), 'POLARIS_CUSTODY_DRIVER')):
+                             (dict(POLARIS_CUSTODY_DRIVER='hsm'), 'POLARIS_CUSTODY_DRIVER'),
+                             (dict(POLARIS_PQC_SIGNING_KEY_FILE=None), 'POLARIS_PQC_SIGNING_KEY_FILE'),
+                             (dict(POLARIS_PQC_SIGNING_KEY_FILE=None, POLARIS_CUSTODY_DRIVER='file'),
+                              'POLARIS_PQC_SIGNING_KEY_FILE')):
             found = self._p(**change)
             self.assertTrue(any(p.startswith(name + ':') for p in found), (change, found))
+
+    def test_a_token_or_kms_driver_stands_for_the_key_file(self):
+        """Production signs under the issuer's own key: the key file, or a PKCS#11 or AWS KMS
+        driver (whose own settings it loads at boot). Outside production nothing is required."""
+        for driver in ('pkcs11', 'awskms'):
+            found = self._p(POLARIS_PQC_SIGNING_KEY_FILE=None, POLARIS_CUSTODY_DRIVER=driver)
+            self.assertFalse(any(p.startswith('POLARIS_PQC_SIGNING_KEY_FILE:') for p in found),
+                             (driver, found))
+        self.assertEqual(self.cs.problems({'POLARIS_USE_REAL_PQC': '1'}, production=False), [])
 
     def test_a_secret_file_is_judged_by_what_it_holds(self):
         open(self.pw, 'w').write('polaris_dev_password')
@@ -14394,22 +14429,43 @@ class RealPqcDefaultBootTests(unittest.TestCase):
     A subprocess imports app so the guard is observable; POLARIS_DB_SSLMODE=require
     lets execution past the earlier SSL guard to reach this one."""
 
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls._keys = tempfile.TemporaryDirectory()
+        cls.signing_key_file = _signing_key_file_of_the_right_shape(cls._keys.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._keys.cleanup()
+
+    #: Reach the guards after the PQC ones without needing liboqs: a real primary and a witness.
+    REAL = ("import pqc_signing;"
+            "pqc_signing.is_enabled=lambda: True;"
+            "pqc_signing.second_witness_available=lambda: True;")
+    KEY_REFUSAL = "FATAL: POLARIS_ENV=production with real ML-DSA signing, but the issuer's signing key"
+
     def _boot(self, extra_env, preamble=None):
         import subprocess as _sp
         import sys as _sys
         import os as _os
         env = _os.environ.copy()
-        for k in ("POLARIS_ENV", "POLARIS_USE_REAL_PQC", "POLARIS_PQC_PROFILE"):
+        for k in ("POLARIS_ENV", "POLARIS_USE_REAL_PQC", "POLARIS_PQC_PROFILE", "POLARIS_CUSTODY_DRIVER"):
             env.pop(k, None)
         env["POLARIS_SECRET_KEY"] = "x" * 64
         env["POLARIS_DB_SSLMODE"] = "require"  # pass the production SSL guard to reach the PQC guard
         # Lab record 017: a production boot first meets the configuration contract. A real
         # database password and a domain (the security contact derives from it) let execution
-        # past it, so each test reaches the guard it is about.
+        # past it, so each test reaches the guard it is about. So does a signing key that loads.
         env["POLARIS_DB_PASSWORD"] = "a-real-password"
         env.pop("POLARIS_DB_PASSWORD_FILE", None)
         env["POLARIS_DOMAIN"] = "polaris.example.org"
-        env.update(extra_env)
+        env["POLARIS_PQC_SIGNING_KEY_FILE"] = self.signing_key_file
+        for k, v in extra_env.items():
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = v
         cwd = _os.path.dirname(_os.path.abspath(flask_app.__file__))
         return _sp.run([_sys.executable, "-c", (preamble or "") + "import app"], cwd=cwd,
                        capture_output=True, text=True, env=env)
@@ -14457,6 +14513,41 @@ class RealPqcDefaultBootTests(unittest.TestCase):
         self.assertNotIn("SECOND WITNESS", r.stderr)
         self.assertNotIn("real ML-DSA-65 signing is not available", r.stderr)
         self.assertNotIn("setting(s) are wrong", r.stderr)
+        self.assertNotIn(self.KEY_REFUSAL, r.stderr)
+
+    def test_production_refuses_boot_without_a_signing_key(self):
+        """No key file and no custody driver. Until 2026-10-15 this deployment booted, served,
+        and signed with a fresh keypair for every signature, which no key register, trust list
+        or anchor file names. The configuration contract now refuses it and names the key."""
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1",
+                        "POLARIS_PQC_SIGNING_KEY_FILE": None}, preamble=self.REAL)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("- POLARIS_PQC_SIGNING_KEY_FILE: production signs under the issuer's own key",
+                      r.stderr)
+
+    def test_production_refuses_boot_without_a_key_past_the_contract(self):
+        """The second line holds alone: with the contract out of the way, the boot guard finds
+        no key and refuses."""
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1",
+                        "POLARIS_PQC_SIGNING_KEY_FILE": None}, preamble=self.REAL + (
+            "import config_schema;"
+            "config_schema.production_problems=lambda env=None: [];"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(self.KEY_REFUSAL, r.stderr)
+        self.assertIn("is not available: no signing key is configured", r.stderr)
+
+    def test_production_refuses_boot_when_the_signing_key_does_not_load(self):
+        """A key file the contract accepts (it exists) that is not a key stops the boot, not the
+        first issue."""
+        not_a_key = os.path.join(self._keys.name, 'not-a-key')
+        fd = os.open(not_a_key, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as fh:
+            fh.write('{}')
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1",
+                        "POLARIS_PQC_SIGNING_KEY_FILE": not_a_key}, preamble=self.REAL)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(self.KEY_REFUSAL, r.stderr)
+        self.assertIn("is not available: file: " + not_a_key, r.stderr)
 
     def test_unnamed_placeholder_warns(self):
         # Non-production, placeholder in use, dev profile not named: boot, but loudly.
