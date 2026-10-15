@@ -20,6 +20,11 @@ on:
       - docs/operator/CHAOS-DRILLS.md
   pull_request:
     branches: [main, master]
+  # 2026-10-15: the merge queue. GitHub builds a merge-group commit (the queued pull request on
+  # top of main and of whatever is queued ahead of it) and merges only once the required checks
+  # pass on it; a workflow that does not run on merge_group never reports them, and every queued
+  # pull request waits until it times out. No paths filter applies to this event.
+  merge_group:
   workflow_dispatch:
 
 # 2026-09-16: a pull request's older run is superseded by its newer push, and this workflow
@@ -39,7 +44,9 @@ on:
 # PENDING one. Keying main on the ref therefore did exactly what the paragraph above says it
 # must not, and two main commits lost their results within the hour (0a15c2b, e8c649f) before
 # this was corrected. Keying a push on its own SHA puts every commit in a group of one, where
-# there is nothing to queue behind and nothing to cancel.
+# there is nothing to queue behind and nothing to cancel. A merge group is keyed on its SHA
+# the same way: each group commit is its own record, and GitHub withdraws a group it no
+# longer needs.
 # Least privilege, stated rather than inherited: every job reads the repository and nothing
 # more (OpenSSF Baseline OSPS-AC-04.02).
 permissions:
@@ -951,8 +958,8 @@ jobs:
           # The commit this push started from, or a pull request's base. A push carries
           # several commits and HEAD~1 sees only the last: on 2026-09-28 this drill ran
           # as a no-op on a push whose procedure change was in its second-to-last
-          # commit (scripts/polaris_changed_base.py).
-          POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          # commit (scripts/polaris_changed_base.py). A merge group names its base the same way.
+          POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
           POLARIS_DRILL_SHARD: "${{ matrix.shard }}/6"
         run: python scripts/polaris-procedure-mutation-drill.py --changed --shard "$POLARIS_DRILL_SHARD"
 
@@ -3150,8 +3157,8 @@ jobs:
           # The commit this push started from, or a pull request's base. A push carries
           # several commits and HEAD~1 sees only the last: on 2026-09-28 this drill ran
           # as a no-op on a push whose procedure change was in its second-to-last
-          # commit (scripts/polaris_changed_base.py).
-          POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          # commit (scripts/polaris_changed_base.py). A merge group names its base the same way.
+          POLARIS_CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
         run: python scripts/polaris-sdk-mutation-drill.py --changed
 
       # v9.330 (P8.8b) — cross-version compatibility, both directions: the frozen version-1
@@ -3597,8 +3604,11 @@ jobs:
     # OpenSSF Baseline OSPS-LE-01.01: every commit a person contributes asserts, with a
     # Developer Certificate of Origin sign-off, that they may contribute it. Bots (dependency
     # updates, the drill ledgers) are not contributors and are skipped by author name.
+    # In the merge queue it checks every commit the group adds to main (the queued pull
+    # requests' own commits, from the group's base to its head). The group's merge commits are
+    # GitHub's and --no-merges leaves them out, as it leaves out a branch's merges of main.
     name: DCO sign-off on every commit
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -3608,11 +3618,16 @@ jobs:
           fetch-depth: 0
       - name: Every commit in the pull request carries Signed-off-by
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
         run: |
+          # Fail closed: an empty base or head, or a range that lists nothing, would otherwise
+          # loop over nothing and pass a check that checked nothing.
+          [ -n "$BASE" ] && [ -n "$HEAD" ] || { echo "::error::no base or head commit for this event"; exit 1; }
+          commits=$(git rev-list --no-merges "$BASE..$HEAD")
+          [ -n "$commits" ] || { echo "::error::no commits between $BASE and $HEAD to check"; exit 1; }
           missing=0
-          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+          for c in $commits; do
             author=$(git log -1 --format='%an <%ae>' "$c")
             case "$author" in *"[bot]"*) continue ;; esac
             if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$c" | grep -q .; then
