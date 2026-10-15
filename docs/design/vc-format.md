@@ -43,13 +43,14 @@ that reason rather than merely failing to check it.
 Canonicalization, which requires a full JSON-LD processor. The detached verifier must stay
 import-standalone, and a verifier that could not check its own format would be worse than one
 that used a simpler canonicalisation and said so. This uses JCS (RFC 8785) over the document
-minus its proof: the same sorted-keys compact JSON every other Polaris artifact is signed over.
+minus its proof: sorted keys and compact separators, as the other Polaris artifacts are signed
+over, with UTF-8 written as it is (`ensure_ascii` off, as RFC 8785 does).
 `-jcs-` is a shape the Data Integrity specification itself defines; what is not standard is the
 algorithm inside it.
 
-The proof is ML-DSA over one SHA3-256 of those bytes, as every signed statement is
-([the wire spec](../reference/WIRE-SPEC.md), 2.1). The same bytes hashed twice are refused, so a
-proof has one meaning.
+The proof is ML-DSA over one SHA3-256 of those bytes: the same digest step as the signed
+statements of [the wire spec](../reference/WIRE-SPEC.md) (2.1), over this document's own
+canonical bytes. The same bytes hashed twice are refused, so a proof has one meaning.
 
 The app's `canonical_bytes` and the verifier's `_vc_canonical` are the same construction, and a
 check pins that, because a mismatch would mean the app signs bytes the verifier never

@@ -548,8 +548,8 @@ class VerifiableCredentialDecisions(unittest.TestCase):
     def test_a_proof_over_the_canonical_bytes_hashed_twice_is_refused(self):
         # 2026-10-14. The route hashed the canonical bytes before signature_over_message hashed
         # them again, so it signed SHA3-256 twice. The proof is ML-DSA over ONE SHA3-256 of the
-        # canonical bytes, as every signed statement is (WIRE-SPEC 2.1), and the old form gets
-        # no second meaning: refused, under the very key that made it.
+        # canonical bytes (the digest step of WIRE-SPEC 2.1's signed statements), and the old
+        # form gets no second meaning: refused, under the very key that made it.
         anchor = [self.pk.hex()]
         self.assertIs(V.verify_verifiable_credential(self.credential(), anchor_keys=anchor,
                                                      now=self.NOW)["proof_authentic"], True, "control")

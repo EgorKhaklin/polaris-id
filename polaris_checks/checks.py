@@ -24607,8 +24607,8 @@ def check_vc_format(root: pathlib.Path) -> list[Finding]:
     canonicalisations must agree byte for byte or the app signs what the verifier cannot check.
 
     SIGNING A DIGEST (CORE-BUG, 2026-10-14). The proof is ML-DSA over ONE SHA3-256 of the
-    canonical bytes, as every signed statement is (WIRE-SPEC 2.1): signature_over_message takes
-    that digest itself. The route hashed the bytes before handing them over, so it signed SHA3-256
+    canonical bytes (the digest step of WIRE-SPEC 2.1's signed statements):
+    signature_over_message takes that digest itself. The route hashed the bytes before handing them over, so it signed SHA3-256
     twice, and the verifier refused every credential signed with a real key while the drill,
     which signed with its own digest, stayed green. So the builder hands the signer the
     canonical bytes, the route's signer hands them to signature_over_message unhashed, and the

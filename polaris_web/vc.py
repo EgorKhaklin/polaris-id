@@ -67,9 +67,10 @@ FORBIDDEN_SUBJECT_FIELDS = frozenset({"token_value", "tokenValue", "token_id", "
 def canonical_bytes(document: dict) -> bytes:
     """JCS-style canonical bytes of the document MINUS its proof (RFC 8785 subset).
 
-    The proof is excluded because it cannot cover itself. Sorted keys and compact separators
-    are the same canonicalisation every other Polaris artifact is signed over, which is what
-    lets the detached verifier check this without a JSON-LD processor.
+    The proof is excluded because it cannot cover itself. Sorted keys and compact separators,
+    as the other Polaris artifacts are signed over, with UTF-8 written as it is (ensure_ascii
+    off, as RFC 8785 does), which is what lets the detached verifier check this without a
+    JSON-LD processor.
     """
     body = {k: v for k, v in document.items() if k != "proof"}
     return json.dumps(body, sort_keys=True, separators=(",", ":"),

@@ -21281,8 +21281,8 @@ class VerifiableCredentialProofTests(PolarisTestCase):
 
     def test_the_proof_is_ml_dsa_over_one_sha3_256_of_the_canonical_bytes(self):
         """CORE-BUG 2026-10-14. docs/design/vc-format.md: the proof covers the JCS bytes the
-        detached verifier reconstructs, signed as every signed statement is (WIRE-SPEC 2.1),
-        ML-DSA over their SHA3-256. The route handed SHA3-256 of those bytes to
+        detached verifier reconstructs, ML-DSA over their one SHA3-256 (the digest step of
+        WIRE-SPEC 2.1's signed statements). The route handed SHA3-256 of those bytes to
         signature_over_message, which hashed them again, so the verifier polaris-verify ships
         refused every credential the route signed with a real key. The effect, in either
         profile: under real signing that verifier accepts the credential under the authority's
