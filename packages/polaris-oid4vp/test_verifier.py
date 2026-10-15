@@ -194,6 +194,18 @@ class Wallet:
         return presented + kb
 
 
+def assert_redirect_with_code(test, body, base):
+    """An accepted response's body: ONLY a redirect_uri (HAIP 5.1), which is `base` with a fresh
+    `response_code` of 128 bits added (OpenID4VP 1.0 section 8.2). Returns the code."""
+    test.assertEqual(list(body), ["redirect_uri"])
+    prefix = base + ("&" if "?" in base else "?") + "response_code="
+    test.assertTrue(body["redirect_uri"].startswith(prefix), body["redirect_uri"])
+    code = body["redirect_uri"][len(prefix):]
+    test.assertRegex(code, r"^[A-Za-z0-9_-]+$")
+    test.assertGreaterEqual(len(b64u_decode(code)), 16, "fewer than 128 bits")
+    return code
+
+
 class VerifierTestCase(unittest.TestCase):
 
     def setUp(self):
@@ -1723,7 +1735,89 @@ class HeldOutRequestTests(VerifierTestCase):
     def test_an_authentic_answer_carries_the_redirect_and_nothing_else(self):
         _, status, body = self.exchange()
         self.assertEqual(status, 200)
-        self.assertEqual(body, {"redirect_uri": "https://verifier.test/done"})
+        assert_redirect_with_code(self, body, "https://verifier.test/done")
+
+
+class TheRedirectCarriesAResponseCodeTests(VerifierTestCase):
+    """OpenID4VP 1.0 section 8.2: a redirect URI "MUST include a fresh, cryptographically random
+    value", so that "only the receiver of the redirect can fetch and process the Authorization
+    Response". Until 2026-10-14 every accepted response got the same fixed URI."""
+
+    def accept(self):
+        session, jar = self.verifier.new_request()
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual(status, 200, verdict.reason)
+        return session, assert_redirect_with_code(self, body, self.verifier.redirect_uri), verdict
+
+    def test_two_accepted_responses_get_different_redirects(self):
+        _, first, _ = self.accept()
+        _, second, _ = self.accept()
+        self.assertNotEqual(first, second)
+
+    def test_the_code_fetches_its_own_result_once(self):
+        session, code, verdict = self.accept()
+        self.assertEqual(verdict.response_code, code)
+        fetched = self.verifier.redeem(code, state=session.state)
+        self.assertIs(fetched, verdict)
+        self.assertTrue(fetched.authentic)
+        self.assertEqual(fetched.claims["given_name"], "Jean")
+        self.assertIsNone(self.verifier.redeem(code, state=session.state), "a reused code fetched again")
+
+    def test_a_wrong_code_fetches_nothing_and_spends_nothing(self):
+        session, code, verdict = self.accept()
+        wrong = code[:-1] + ("A" if code[-1] != "A" else "B")
+        self.assertIsNone(self.verifier.redeem(wrong, state=session.state))
+        self.assertIsNone(self.verifier.redeem("", state=session.state))
+        self.assertIs(self.verifier.redeem(code, state=session.state), verdict)
+
+    def test_a_code_fetches_nothing_for_another_request(self):
+        first, _, _ = self.accept()
+        second, second_code, second_verdict = self.accept()
+        self.assertIsNone(self.verifier.redeem(second_code, state=first.state))
+        self.assertIs(self.verifier.redeem(second_code, state=second.state), second_verdict)
+
+    def test_an_expired_code_fetches_nothing(self):
+        session, code, _ = self.accept()
+        for key, (when, state, verdict) in list(self.verifier._results.items()):
+            self.verifier._results[key] = (when - self.verifier.request_ttl_seconds - 1, state,
+                                           verdict)
+        self.assertIsNone(self.verifier.redeem(code, state=session.state))
+
+    def test_only_strings_are_redeemed(self):
+        session, code, _ = self.accept()
+        for given, state in ((None, session.state), (code.encode(), session.state), (code, 7)):
+            self.assertIsNone(self.verifier.redeem(given, state=state))
+
+    def test_a_refusal_and_a_wallet_error_issue_no_code(self):
+        _, status, body = self.exchange(corrupt_issuer_sig=True)
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        _, jar = self.verifier.new_request()
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond_error(jar))
+        self.assertEqual((status, body), (200, {}))
+        self.assertIsNone(verdict.response_code)
+        self.assertEqual(self.verifier._results, {})
+
+    def test_without_a_state_the_code_alone_fetches_it_once(self):
+        _, code, verdict = self.accept()
+        self.assertIs(self.verifier.redeem(code), verdict)
+        self.assertIsNone(self.verifier.redeem(code))
+
+    def test_redirect_false_answers_an_empty_object_and_issues_no_code(self):
+        cert_pem, key_pem = _client_chain()
+        quiet = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                         request_uri="https://verifier.test/request.jwt",
+                         response_uri="https://verifier.test/response",
+                         issuer_jwks=[self.wallet.issuer_jwk], redirect=False)
+        _, jar = quiet.new_request()
+        status, body, verdict = quiet.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual((status, body), (200, {}), verdict.reason)
+        self.assertTrue(verdict.authentic)
+        self.assertIsNone(verdict.response_code)
+        self.assertEqual(quiet._results, {})
+
+    def test_the_code_stays_out_of_as_dict(self):
+        _, code, verdict = self.accept()
+        self.assertNotIn(code, json.dumps(verdict.as_dict()))
 
 
 class TheResponsePathReturnsRatherThanRaisesTests(VerifierTestCase):
@@ -1821,7 +1915,8 @@ class AWalletsErrorResponseTests(VerifierTestCase):
         self.assertFalse(session.answered)
         self.assertEqual(self.verifier.request_object(session.state), jar)
         status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
-        self.assertEqual((status, body), (200, {"redirect_uri": self.verifier.redirect_uri}))
+        self.assertEqual(status, 200)
+        assert_redirect_with_code(self, body, self.verifier.redirect_uri)
         self.assertTrue(verdict.authentic)
         self.assertEqual(verdict.claims["given_name"], "Jean")
         status, body, verdict = self.verifier.handle_direct_post(forged)
@@ -1840,7 +1935,8 @@ class AWalletsErrorResponseTests(VerifierTestCase):
         self.assertFalse(session.answered)
         self.assertEqual(self.verifier.request_object(session.state), jar)
         status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
-        self.assertEqual((status, body), (200, {"redirect_uri": self.verifier.redirect_uri}))
+        self.assertEqual(status, 200)
+        assert_redirect_with_code(self, body, self.verifier.redirect_uri)
         self.assertTrue(verdict.authentic)
         self.assertEqual(verdict.claims["given_name"], "Jean")
         # Answered now, the request is gone, and the error has nothing to name.
@@ -2192,7 +2288,7 @@ class TransactionDataOnTheWireTests(_PayVerifier):
     def test_a_presentation_that_binds_the_payment_is_answered_200(self):
         status, body, verdict = self.exchange()
         self.assertEqual(status, 200, verdict.reason)
-        self.assertEqual(body, {"redirect_uri": self.v.redirect_uri})
+        assert_redirect_with_code(self, body, self.v.redirect_uri)
         report = verdict.transaction_data
         self.assertEqual((report["credential"], report["expected"], report["alg"], report["ts12"]),
                          ("pay", [0], "sha-256", True))
@@ -2259,7 +2355,8 @@ class WithoutTransactionDataTheRequestIsAsBeforeTests(VerifierTestCase):
                 _, jar = self.verifier.new_request()
                 status, body, verdict = self.verifier.handle_direct_post(
                     self.wallet.respond(jar, kb=kb))
-                self.assertEqual((status, body), (200, {"redirect_uri": self.verifier.redirect_uri}))
+                self.assertEqual(status, 200)
+                assert_redirect_with_code(self, body, self.verifier.redirect_uri)
                 self.assertIsNone(verdict.transaction_data)
                 self.assertNotIn("transaction_data", verdict.as_dict())
                 self.assertEqual(set(verdict.as_dict()), set(sdjwt.Verdict(True).as_dict()))

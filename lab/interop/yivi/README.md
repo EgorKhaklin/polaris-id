@@ -95,7 +95,8 @@ verifier on a public `trycloudflare.com` URL for the length of the run. Everythi
   otherwise;
 - `POST /request.jwt`: the same, for `request_uri_method=post`, with a wallet nonce;
 - `POST /response`: the response endpoint;
-- `GET /done`: a constant page;
+- `GET /done`: the page an accepted wallet is redirected to, for the redirect's own `response_code`
+  and only once, and `404` otherwise;
 - every other path: `404` to GET and POST. Other methods get the standard library's `501`.
 
 In the live run, cloudflared started at 03:36:35Z and stopped at 03:39:31Z on 2026-10-14 (from its

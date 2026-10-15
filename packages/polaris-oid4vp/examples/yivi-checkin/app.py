@@ -32,7 +32,7 @@ import segno
 from cryptography.x509 import load_pem_x509_certificates
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from polaris_oid4vp.serve import DONE_PAGE, MAX_BODY_BYTES
+from polaris_oid4vp.serve import MAX_BODY_BYTES
 from polaris_oid4vp.verifier import DEFAULT_REQUEST_TTL_SECONDS, Verifier
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -130,7 +130,9 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
         aid = secrets.token_urlsafe(16)
         verifier = Verifier(client_cert_pem=client_cert_pem, client_key_pem=client_key_pem,
                             request_uri="%s/request/%s" % (base, aid),
-                            response_uri="%s/response/%s" % (base, aid), redirect_uri=base + "/done",
+                            # The desk learns the result by polling; nobody would follow a
+                            # redirect, so none is sent (OpenID4VP 1.0 section 8.2: OPTIONAL).
+                            response_uri="%s/response/%s" % (base, aid), redirect=False,
                             issuer_trust_anchors=issuer_anchors, vct_values=(VCT,), claims=(CLAIM,))
         session, _ = verifier.new_request()
         with lock:
@@ -229,10 +231,6 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
         if not _loopback(request) or logo is None:
             return JSONResponse({"error": "not_found"}, 404)
         return Response(logo, media_type="image/webp", headers={"Cache-Control": "max-age=3600"})
-
-    @app.get("/done")
-    def done():
-        return HTMLResponse(DONE_PAGE, headers={"Cache-Control": "no-store"})
 
     return app
 

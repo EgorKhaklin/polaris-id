@@ -1,6 +1,6 @@
 {
  "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
- "version": "0.2.0",
+ "version": "0.3.0",
  "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them.",
  "settings": {
   "now": 1790812800,
@@ -21,6 +21,19 @@
     "alg": "ES256",
     "use": "sig"
    }
+  ],
+  "status_list_keys": [
+   {
+    "iss": "https://issuer.example",
+    "uri": "https://issuer.example/statuslists/1",
+    "jwk": {
+     "kty": "EC",
+     "crv": "P-256",
+     "x": "GVhG77csd2i5l4Hc28vrKhjVIGUqj-t2OJzwMwk2qMo",
+     "y": "-0LHg1aOnaNiz2ugZLUjc7jmkB1fqIWVcWIlO-f9HVg",
+     "alg": "ES256"
+    }
+   }
   ]
  },
  "layers": {
@@ -29,12 +42,18 @@
   "sd-jwt": "RFC 9901, which any SD-JWT verifier applies",
   "sd-jwt-vc": "the SD-JWT VC profile, which a verifier of SD-JWT VCs applies",
   "openid4vp": "OpenID4VP 1.0, which a verifier receiving presentations over it applies",
-  "haip-x509": "the issuer's x5c chain under HAIP 1.0 and RFC 5280, which a verifier resolving keys from x5c applies"
+  "haip-x509": "the issuer's x5c chain under HAIP 1.0 and RFC 5280, which a verifier resolving keys from x5c applies",
+  "x5c-issuer": "the binding of iss to the x5c leaf that signed (SD-JWT VC s2.5), which a verifier resolving keys from x5c applies",
+  "status-list": "the Token Status List (draft-ietf-oauth-status-list), which a verifier checking status applies under the vector's policy"
  },
  "classes": {
   "control": "a valid presentation: a correct verifier accepts it",
   "spec": "a sentence of the cited text requires the refusal",
-  "spec-implied": "the cited sentence binds the issuer or the wallet, or a definition implies the refusal"
+  "spec-implied": "the cited sentence binds the issuer or the wallet, or a definition implies the refusal",
+  "policy": "the cited text says the verifier SHOULD refuse, and no sentence requires it: the verdict is the one the vector's policy reaches"
+ },
+ "policies": {
+  "status-required": "the relying party checks status: a credential that names a Token Status List is accepted only when the list its uri answers with is a Status List Token, signed by the key settings.status_list_keys states for the credential's iss and that uri, not expired, covering the index, and VALID (0) there"
  },
  "vectors": [
   {
@@ -425,6 +444,273 @@
    "trust": "x5c",
    "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.cdHgUaKfZadXKMm9R2RIZCEBIKxvUXF_T7p792ClFPFWLFu-K2yUUFvVh0nCmWHoCPkYtrXDyYODfo41zCmanw~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwic2RfaGFzaCI6IkNYTFRHU1hOUC1XVUh2OTRNVEVFZ3d1M04zdFR0VGJMNFNqQUltR1d2U28ifQ.c6Zjz5OEAYywjlEaIukXeqhj9M_neHmERTpLW2fNnC5a7sBd4RFb73pw7qrrixnuCrZgB6yMBLD4XJ1s05--CA",
    "expected": "reject"
+  },
+  {
+   "id": "x5c-leaf-names-other-issuer",
+   "changed": "another issuer's leaf, under the trusted root and naming https://other-issuer.example as its URI, signs a credential whose iss is https://issuer.example",
+   "class": "spec-implied",
+   "layer": "x5c-issuer",
+   "clauses": [
+    {
+     "ref": "SD-JWT VC draft-19 s2.5",
+     "text": "In this case, the Issuer of the Verifiable Digital Credential is the subject of the end-entity certificate."
+    },
+    {
+     "ref": "SD-JWT VC draft-19 s2.5",
+     "text": "If a recipient cannot validate that the public verification key corresponds to the Issuer of the Issuer-signed JWT using a permitted key discovery and validation mechanism, the SD-JWT VC MUST be rejected."
+    },
+    {
+     "ref": "SD-JWT VC draft-19 s7.3",
+     "text": "it is critical that those rules maintain the integrity of the relationship between the iss value of the SD-JWT, if present, and the public keys of the Issuer."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCalRDQ0FUT2dBd0lCQWdJQkNqQUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dLREVtTUNRR0ExVUVBd3dkVG1WbllYUnBkbVVnVm1WamRHOXljeUJQZEdobGNpQkpjM04xWlhJd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTbUpwQUdyTjA5TVdjK2N0R3k4TWVIcG5QeDg4bFFJcEpOVjZjS0dJMmhFS2ErSXptRGpBUER1Y2VtL2xsSmJ4VTF6dFBqSFFkNnI1N1M5LzZZYlo2SW8wa3dSekFNQmdOVkhSTUJBZjhFQWpBQU1BNEdBMVVkRHdFQi93UUVBd0lIZ0RBbkJnTlZIUkVFSURBZWhoeG9kSFJ3Y3pvdkwyOTBhR1Z5TFdsemMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBnQU1FVUNJUUNLWGdUNURwdDFBWGg3SUYyR3BGdU1QSGZHVSs1REQ1Q2lkWEFoV3hwRlV3SWdWV1ZEK0V2RGNDS3E4dG5BdERZRmp5MmtOS0pLWFQ5VnZDREZOT0ZwbGE0PSIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.SmQT2PUxsDZSPqBm8qFyHRhamTzitH3vwvxER8BMFuKG5LaNigVRK12QNq552LHf3nDmSnhegcUY1rHCY-d0ag~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6ImNKVENFRXd2TzV5SU0yTTJBM3luZ0R3UjYxUVJ0UXROb3N4U3JxcUlLbm8ifQ.eElbZ5ZziEBD2iM0R-sbxZY8WNrZnSm-YkDbOI58YgBt6TFSJExv-SHyq-NtCJhuv3NT8Sqwoc7GdUhEMZSv6A",
+   "expected": "reject",
+   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+  },
+  {
+   "id": "x5c-leaf-names-other-host",
+   "changed": "another issuer's leaf, under the trusted root and naming only the DNS host other-issuer.example, signs a credential whose iss is https://issuer.example: it names neither that URL nor its host",
+   "class": "spec-implied",
+   "layer": "x5c-issuer",
+   "clauses": [
+    {
+     "ref": "SD-JWT VC draft-19 s2.5",
+     "text": "In this case, the Issuer of the Verifiable Digital Credential is the subject of the end-entity certificate."
+    },
+    {
+     "ref": "SD-JWT VC draft-19 s2.5",
+     "text": "If a recipient cannot validate that the public verification key corresponds to the Issuer of the Issuer-signed JWT using a permitted key discovery and validation mechanism, the SD-JWT VC MUST be rejected."
+    },
+    {
+     "ref": "SD-JWT VC draft-19 s7.3",
+     "text": "it is critical that those rules maintain the integrity of the relationship between the iss value of the SD-JWT, if present, and the public keys of the Issuer."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCaFRDQ0FTdWdBd0lCQWdJQkN6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dLREVtTUNRR0ExVUVBd3dkVG1WbllYUnBkbVVnVm1WamRHOXljeUJQZEdobGNpQkpjM04xWlhJd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTbUpwQUdyTjA5TVdjK2N0R3k4TWVIcG5QeDg4bFFJcEpOVjZjS0dJMmhFS2ErSXptRGpBUER1Y2VtL2xsSmJ4VTF6dFBqSFFkNnI1N1M5LzZZYlo2SW8wRXdQekFNQmdOVkhSTUJBZjhFQWpBQU1BNEdBMVVkRHdFQi93UUVBd0lIZ0RBZkJnTlZIUkVFR0RBV2doUnZkR2hsY2kxcGMzTjFaWEl1WlhoaGJYQnNaVEFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBK3BKMkdDdGhzdWl1SVUvSVdpUTRkZjNpdXlSampQVXZUeSt5aTBuYnlQMENJR2ZhY3FaZllZb0pTVVQwcnZGK01KZGNRUGhUbHlrdVRtVnB4ZDdDWVdORyIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.pRiIBq96Rl1dvZFeEM0G8I4XhGrxhaq2YNxs3i9fIr_nzFVSkkiAXnp1R-UsiUZtH3iEPbCHdXnWaj7v0DnHyQ~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6ImFtQm9xTlVZeWpWaGhhM2JVMDNSc1R1YTk0d1BBbUFSb2x6OWdERVFBanMifQ.RQ1HL8rM64CnWDzVCWvlLyDVidFGByk4sj9G8DZ9fZSVcBfcsiTWFcxM-9_rN6NaJC3wbXTjkS8BraX2RPg1og",
+   "expected": "reject",
+   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+  },
+  {
+   "id": "x5c-leaf-uri-beats-host",
+   "changed": "another issuer's leaf, under the trusted root, names https://other-issuer.example as its URI and also the host issuer.example, which both share; it signs a credential whose iss is https://issuer.example",
+   "class": "spec-implied",
+   "layer": "x5c-issuer",
+   "clauses": [
+    {
+     "ref": "SD-JWT VC draft-19 s2.5",
+     "text": "In this case, the Issuer of the Verifiable Digital Credential is the subject of the end-entity certificate."
+    },
+    {
+     "ref": "SD-JWT VC draft-19 s2.5",
+     "text": "If a recipient cannot validate that the public verification key corresponds to the Issuer of the Issuer-signed JWT using a permitted key discovery and validation mechanism, the SD-JWT VC MUST be rejected."
+    },
+    {
+     "ref": "SD-JWT VC draft-19 s7.3",
+     "text": "it is critical that those rules maintain the integrity of the relationship between the iss value of the SD-JWT, if present, and the public keys of the Issuer."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCblRDQ0FVT2dBd0lCQWdJQkREQUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dLREVtTUNRR0ExVUVBd3dkVG1WbllYUnBkbVVnVm1WamRHOXljeUJQZEdobGNpQkpjM04xWlhJd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTbUpwQUdyTjA5TVdjK2N0R3k4TWVIcG5QeDg4bFFJcEpOVjZjS0dJMmhFS2ErSXptRGpBUER1Y2VtL2xsSmJ4VTF6dFBqSFFkNnI1N1M5LzZZYlo2SW8xa3dWekFNQmdOVkhSTUJBZjhFQWpBQU1BNEdBMVVkRHdFQi93UUVBd0lIZ0RBM0JnTlZIUkVFTURBdWhoeG9kSFJ3Y3pvdkwyOTBhR1Z5TFdsemMzVmxjaTVsZUdGdGNHeGxnZzVwYzNOMVpYSXVaWGhoYlhCc1pUQUtCZ2dxaGtqT1BRUURBZ05JQURCRkFpRUE4YW9vUTV6SFhsV3NmekZJOUozdnN0Z282MlhGZU5xczlXUlE1YXZ2eWd3Q0lGemx3bm03bU9zN3hHR0xub3VOTm1pZFpPOUtZSGJjTGhpNDA3aVhpSFpsIiwiTUlJQlp6Q0NBUTJnQXdJQkFnSUJBakFLQmdncWhrak9QUVFEQWpBbE1TTXdJUVlEVlFRRERCcE9aV2RoZEdsMlpTQldaV04wYjNKeklGUmxjM1FnVW05dmREQWVGdzB5TmpBeE1ERXdNREF3TURCYUZ3MHpNREF4TURFd01EQXdNREJhTUMweEt6QXBCZ05WQkFNTUlrNWxaMkYwYVhabElGWmxZM1J2Y25NZ1ZHVnpkQ0JKYm5SbGNtMWxaR2xoZEdVd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTZE5nNWQzdVhQcTV0eU4rdWtvaC9NSUJLZFNhZnF3aU94UjNMRXdxNVc2ZDhwQ2Zra2ZPVEUzRWIwa0h3SS9oVTdHcEJwNDI2RExFdDU0eWpBU1A1RW95WXdKREFTQmdOVkhSTUJBZjhFQ0RBR0FRSC9BZ0VBTUE0R0ExVWREd0VCL3dRRUF3SUJCakFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBeW16dC9uMVVMbkltNVlVdFNpSG1lU0FTZkNLYmNBaGtUY1paR05hNEdvQUNJRWFlNWc2SVFNdlZsRTZiNWozaTB2b2tuWXNZbmVyMjNyTlEwQUJNS2hYMyJdfQ.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX19.EXHpSd7jib17DWyvIst3qVFpACV7_KITZvaJMREe_QtKzfk21f2-sq0dKwrCY9kLVoNn9Tyd5QN7H3fvz6P7_Q~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6ImMtY1FoY1BtNHV1SkFmem9ZTk0yWjFteENseWpmd2plVjA4SFNoUkZtOWsifQ.E7VEWOAMhe7T3_pTIZ7sZAOvCyKNOEhYCfEVjoJwNmAq8nBvulNk-lqNYRcP5MIkKpbhkzwcA3R-Dr1Nuxpq4g",
+   "expected": "reject",
+   "notes": "The class of swiyu change dossier CD-008 (2026-07-31), whose shape differs: there the signing key was a DID named by kid, checked against iss; here it is an x5c leaf. polaris-oid4vp refuses it (issuer_key) when the issuer key comes from x5c, where it binds iss to the leaf. Its --issuer-jwks mode is documented not to bind iss to a key (its README: \"list one issuer's keys per verifier\"), so this family targets x5c-bound verification."
+  },
+  {
+   "id": "accept-status-list",
+   "changed": "nothing: the control with a status claim, its list served, signed by the stated key, VALID at the index",
+   "class": "control",
+   "layer": "status-list",
+   "clauses": [],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjUsInVyaSI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUvc3RhdHVzbGlzdHMvMSJ9fX0.q6hek2k2wJpLbgsVpUoMHUO4nBGACXuK5XMmIMhyCQAkdfK6JTo7gtoWzChaOjyi6mCtRnxcRA5gXQTaC9msnw~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IjVtWE9IdXk3ajYtbTJucW1NN2tMU0tjQWpPOEMxaW9mcWdDSHhDYk5CX1kifQ.bzf1zLGNa39JGDNRK-LEl4ht0Zqm8Ic99m65mUOHZy5t3ZSkqqan7hKOkI9jaZhaOL5IJk1B9vWlvWVeiG2KBw",
+   "expected": "accept",
+   "policy": "status-required",
+   "status_list": {
+    "uri": "https://issuer.example/statuslists/1",
+    "response": "eyJhbGciOiJFUzI1NiIsInR5cCI6InN0YXR1c2xpc3Qrand0IiwieDVjIjpbIk1JSUJsekNDQVR5Z0F3SUJBZ0lCQXpBS0JnZ3Foa2pPUFFRREFqQXRNU3N3S1FZRFZRUUREQ0pPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1NXNTBaWEp0WldScFlYUmxNQjRYRFRJMk1ERXdNVEF3TURBd01Gb1hEVE13TURFd01UQXdNREF3TUZvd0p6RWxNQ01HQTFVRUF3d2NUbVZuWVhScGRtVWdWbVZqZEc5eWN5QlVaWE4wSUVsemMzVmxjakJaTUJNR0J5cUdTTTQ5QWdFR0NDcUdTTTQ5QXdFSEEwSUFCQmxZUnUrM0xIZG91WmVCM052TDZ5b1kxU0JsS28vcmRqaWM4RE1KTnFqSyswTEhnMWFPbmFOaXoydWdaTFVqYzdqbWtCMWZxSVdWY1dJbE8rZjlIVmlqVXpCUk1Bd0dBMVVkRXdFQi93UUNNQUF3RGdZRFZSMFBBUUgvQkFRREFnZUFNREVHQTFVZEVRUXFNQ2lHRm1oMGRIQnpPaTh2YVhOemRXVnlMbVY0WVcxd2JHV0NEbWx6YzNWbGNpNWxlR0Z0Y0d4bE1Bb0dDQ3FHU000OUJBTUNBMGtBTUVZQ0lRQ1ozK0JiN3dwQ080TS9mM1lVMDBjRmhCZFBXdUF2aFZHSWdJTVFXM1Y1S3dJaEFMMzl6YnZGbWtzKzZJTlRKanNHbHhsaUw5MG5Wa2NGRzlHcENISTBFemZaIiwiTUlJQlp6Q0NBUTJnQXdJQkFnSUJBakFLQmdncWhrak9QUVFEQWpBbE1TTXdJUVlEVlFRRERCcE9aV2RoZEdsMlpTQldaV04wYjNKeklGUmxjM1FnVW05dmREQWVGdzB5TmpBeE1ERXdNREF3TURCYUZ3MHpNREF4TURFd01EQXdNREJhTUMweEt6QXBCZ05WQkFNTUlrNWxaMkYwYVhabElGWmxZM1J2Y25NZ1ZHVnpkQ0JKYm5SbGNtMWxaR2xoZEdVd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTZE5nNWQzdVhQcTV0eU4rdWtvaC9NSUJLZFNhZnF3aU94UjNMRXdxNVc2ZDhwQ2Zra2ZPVEUzRWIwa0h3SS9oVTdHcEJwNDI2RExFdDU0eWpBU1A1RW95WXdKREFTQmdOVkhSTUJBZjhFQ0RBR0FRSC9BZ0VBTUE0R0ExVWREd0VCL3dRRUF3SUJCakFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBeW16dC9uMVVMbkltNVlVdFNpSG1lU0FTZkNLYmNBaGtUY1paR05hNEdvQUNJRWFlNWc2SVFNdlZsRTZiNWozaTB2b2tuWXNZbmVyMjNyTlEwQUJNS2hYMyJdfQ.eyJzdWIiOiJodHRwczovL2lzc3Vlci5leGFtcGxlL3N0YXR1c2xpc3RzLzEiLCJpYXQiOjE3OTA4MDkyMDAsImV4cCI6MTc5MDg5OTIwMCwidHRsIjo0MzIwMCwic3RhdHVzX2xpc3QiOnsiYml0cyI6MSwibHN0IjoiZUFFQkFnRDlfd2dBQUJJQUNRIn19.UergnxMbFAcWaqzumpN3sOAy7I59TyE0Zters-euSTgttN30fmjPJR0ksHypDoeq7XVx_wxcpz-0nXCuxjU-WQ"
+   },
+   "notes": "polaris-oid4vp returns authentic with revocation state checked, status 0 (VALID)."
+  },
+  {
+   "id": "status-list-unreachable",
+   "changed": "the status list's uri gives no answer",
+   "class": "policy",
+   "layer": "status-list",
+   "clauses": [
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3 step 2",
+     "text": "Resolve the Status List Token from the provided URI"
+    },
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3",
+     "text": "If any of these checks fails, no statement about the status of the Referenced Token can be made and the Referenced Token SHOULD be rejected."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjUsInVyaSI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUvc3RhdHVzbGlzdHMvMSJ9fX0.q6hek2k2wJpLbgsVpUoMHUO4nBGACXuK5XMmIMhyCQAkdfK6JTo7gtoWzChaOjyi6mCtRnxcRA5gXQTaC9msnw~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IjVtWE9IdXk3ajYtbTJucW1NN2tMU0tjQWpPOEMxaW9mcWdDSHhDYk5CX1kifQ.bzf1zLGNa39JGDNRK-LEl4ht0Zqm8Ic99m65mUOHZy5t3ZSkqqan7hKOkI9jaZhaOL5IJk1B9vWlvWVeiG2KBw",
+   "expected": "reject",
+   "policy": "status-required",
+   "status_list": {
+    "uri": "https://issuer.example/statuslists/1",
+    "response": null
+   },
+   "notes": "polaris-oid4vp returns authentic with revocation state unreachable. Its Verifier refuses on its own only a checked status that is not VALID (code revoked); every other state stays in the verdict for the relying party's policy, and status-required refuses it."
+  },
+  {
+   "id": "status-list-not-a-token",
+   "changed": "the status list's uri answers with an HTML error page, not a Status List Token",
+   "class": "policy",
+   "layer": "status-list",
+   "clauses": [
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.2",
+     "text": "In the case of \"application/statuslist+jwt\", the response MUST be of type JWT and follow the rules of Section 5.1."
+    },
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3",
+     "text": "If any of these checks fails, no statement about the status of the Referenced Token can be made and the Referenced Token SHOULD be rejected."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjUsInVyaSI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUvc3RhdHVzbGlzdHMvMSJ9fX0.q6hek2k2wJpLbgsVpUoMHUO4nBGACXuK5XMmIMhyCQAkdfK6JTo7gtoWzChaOjyi6mCtRnxcRA5gXQTaC9msnw~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IjVtWE9IdXk3ajYtbTJucW1NN2tMU0tjQWpPOEMxaW9mcWdDSHhDYk5CX1kifQ.bzf1zLGNa39JGDNRK-LEl4ht0Zqm8Ic99m65mUOHZy5t3ZSkqqan7hKOkI9jaZhaOL5IJk1B9vWlvWVeiG2KBw",
+   "expected": "reject",
+   "policy": "status-required",
+   "status_list": {
+    "uri": "https://issuer.example/statuslists/1",
+    "response": "<!doctype html><title>503 Service Unavailable</title>"
+   },
+   "notes": "polaris-oid4vp returns authentic with revocation state unreachable (no list was obtained). Its Verifier refuses on its own only a checked status that is not VALID (code revoked); every other state stays in the verdict for the relying party's policy, and status-required refuses it."
+  },
+  {
+   "id": "status-list-lst-truncated",
+   "changed": "the status list's compressed lst is cut short: the ZLIB stream never ends",
+   "class": "policy",
+   "layer": "status-list",
+   "clauses": [
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3 step 5",
+     "text": "Decompress the Status List with a decompressor that is compatible with DEFLATE [RFC1951] and ZLIB [RFC1950]"
+    },
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3",
+     "text": "If any of these checks fails, no statement about the status of the Referenced Token can be made and the Referenced Token SHOULD be rejected."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjUsInVyaSI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUvc3RhdHVzbGlzdHMvMSJ9fX0.q6hek2k2wJpLbgsVpUoMHUO4nBGACXuK5XMmIMhyCQAkdfK6JTo7gtoWzChaOjyi6mCtRnxcRA5gXQTaC9msnw~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IjVtWE9IdXk3ajYtbTJucW1NN2tMU0tjQWpPOEMxaW9mcWdDSHhDYk5CX1kifQ.bzf1zLGNa39JGDNRK-LEl4ht0Zqm8Ic99m65mUOHZy5t3ZSkqqan7hKOkI9jaZhaOL5IJk1B9vWlvWVeiG2KBw",
+   "expected": "reject",
+   "policy": "status-required",
+   "status_list": {
+    "uri": "https://issuer.example/statuslists/1",
+    "response": "eyJhbGciOiJFUzI1NiIsInR5cCI6InN0YXR1c2xpc3Qrand0IiwieDVjIjpbIk1JSUJsekNDQVR5Z0F3SUJBZ0lCQXpBS0JnZ3Foa2pPUFFRREFqQXRNU3N3S1FZRFZRUUREQ0pPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1NXNTBaWEp0WldScFlYUmxNQjRYRFRJMk1ERXdNVEF3TURBd01Gb1hEVE13TURFd01UQXdNREF3TUZvd0p6RWxNQ01HQTFVRUF3d2NUbVZuWVhScGRtVWdWbVZqZEc5eWN5QlVaWE4wSUVsemMzVmxjakJaTUJNR0J5cUdTTTQ5QWdFR0NDcUdTTTQ5QXdFSEEwSUFCQmxZUnUrM0xIZG91WmVCM052TDZ5b1kxU0JsS28vcmRqaWM4RE1KTnFqSyswTEhnMWFPbmFOaXoydWdaTFVqYzdqbWtCMWZxSVdWY1dJbE8rZjlIVmlqVXpCUk1Bd0dBMVVkRXdFQi93UUNNQUF3RGdZRFZSMFBBUUgvQkFRREFnZUFNREVHQTFVZEVRUXFNQ2lHRm1oMGRIQnpPaTh2YVhOemRXVnlMbVY0WVcxd2JHV0NEbWx6YzNWbGNpNWxlR0Z0Y0d4bE1Bb0dDQ3FHU000OUJBTUNBMGtBTUVZQ0lRQ1ozK0JiN3dwQ080TS9mM1lVMDBjRmhCZFBXdUF2aFZHSWdJTVFXM1Y1S3dJaEFMMzl6YnZGbWtzKzZJTlRKanNHbHhsaUw5MG5Wa2NGRzlHcENISTBFemZaIiwiTUlJQlp6Q0NBUTJnQXdJQkFnSUJBakFLQmdncWhrak9QUVFEQWpBbE1TTXdJUVlEVlFRRERCcE9aV2RoZEdsMlpTQldaV04wYjNKeklGUmxjM1FnVW05dmREQWVGdzB5TmpBeE1ERXdNREF3TURCYUZ3MHpNREF4TURFd01EQXdNREJhTUMweEt6QXBCZ05WQkFNTUlrNWxaMkYwYVhabElGWmxZM1J2Y25NZ1ZHVnpkQ0JKYm5SbGNtMWxaR2xoZEdVd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTZE5nNWQzdVhQcTV0eU4rdWtvaC9NSUJLZFNhZnF3aU94UjNMRXdxNVc2ZDhwQ2Zra2ZPVEUzRWIwa0h3SS9oVTdHcEJwNDI2RExFdDU0eWpBU1A1RW95WXdKREFTQmdOVkhSTUJBZjhFQ0RBR0FRSC9BZ0VBTUE0R0ExVWREd0VCL3dRRUF3SUJCakFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBeW16dC9uMVVMbkltNVlVdFNpSG1lU0FTZkNLYmNBaGtUY1paR05hNEdvQUNJRWFlNWc2SVFNdlZsRTZiNWozaTB2b2tuWXNZbmVyMjNyTlEwQUJNS2hYMyJdfQ.eyJzdWIiOiJodHRwczovL2lzc3Vlci5leGFtcGxlL3N0YXR1c2xpc3RzLzEiLCJpYXQiOjE3OTA4MDkyMDAsImV4cCI6MTc5MDg5OTIwMCwidHRsIjo0MzIwMCwic3RhdHVzX2xpc3QiOnsiYml0cyI6MSwibHN0IjoiZUFFQkFnRDlfd2dBIn19.vmsTmWMKLmz8KYPLQ1NnG-GyO91HwsUMHAL_ewSJeiC8LwdN9bOcYViar1nrNuWfUYSvz1oWL1rehS9VXZvwCw"
+   },
+   "notes": "polaris-oid4vp returns authentic with revocation state list_refused (code lst). Its Verifier refuses on its own only a checked status that is not VALID (code revoked); every other state stays in the verdict for the relying party's policy, and status-required refuses it."
+  },
+  {
+   "id": "status-list-wrong-key",
+   "changed": "the status list at the stated uri is signed by another issuer's key, whose leaf chains to the same trusted root",
+   "class": "policy",
+   "layer": "status-list",
+   "clauses": [
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s5.1",
+     "text": "Relying Parties MUST reject JWTs with an invalid signature."
+    },
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3",
+     "text": "If any of these checks fails, no statement about the status of the Referenced Token can be made and the Referenced Token SHOULD be rejected."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjUsInVyaSI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUvc3RhdHVzbGlzdHMvMSJ9fX0.q6hek2k2wJpLbgsVpUoMHUO4nBGACXuK5XMmIMhyCQAkdfK6JTo7gtoWzChaOjyi6mCtRnxcRA5gXQTaC9msnw~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IjVtWE9IdXk3ajYtbTJucW1NN2tMU0tjQWpPOEMxaW9mcWdDSHhDYk5CX1kifQ.bzf1zLGNa39JGDNRK-LEl4ht0Zqm8Ic99m65mUOHZy5t3ZSkqqan7hKOkI9jaZhaOL5IJk1B9vWlvWVeiG2KBw",
+   "expected": "reject",
+   "policy": "status-required",
+   "status_list": {
+    "uri": "https://issuer.example/statuslists/1",
+    "response": "eyJhbGciOiJFUzI1NiIsInR5cCI6InN0YXR1c2xpc3Qrand0IiwieDVjIjpbIk1JSUJqVENDQVRPZ0F3SUJBZ0lCQ2pBS0JnZ3Foa2pPUFFRREFqQXRNU3N3S1FZRFZRUUREQ0pPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1NXNTBaWEp0WldScFlYUmxNQjRYRFRJMk1ERXdNVEF3TURBd01Gb1hEVE13TURFd01UQXdNREF3TUZvd0tERW1NQ1FHQTFVRUF3d2RUbVZuWVhScGRtVWdWbVZqZEc5eWN5QlBkR2hsY2lCSmMzTjFaWEl3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPUFFNQkJ3TkNBQVNtSnBBR3JOMDlNV2MrY3RHeThNZUhwblB4ODhsUUlwSk5WNmNLR0kyaEVLYStJem1EakFQRHVjZW0vbGxKYnhVMXp0UGpIUWQ2cjU3UzkvNlliWjZJbzBrd1J6QU1CZ05WSFJNQkFmOEVBakFBTUE0R0ExVWREd0VCL3dRRUF3SUhnREFuQmdOVkhSRUVJREFlaGh4b2RIUndjem92TDI5MGFHVnlMV2x6YzNWbGNpNWxlR0Z0Y0d4bE1Bb0dDQ3FHU000OUJBTUNBMGdBTUVVQ0lRQ0tYZ1Q1RHB0MUFYaDdJRjJHcEZ1TVBIZkdVKzVERDVDaWRYQWhXeHBGVXdJZ1ZXVkQrRXZEY0NLcTh0bkF0RFlGankya05LSktYVDlWdkNERk5PRnBsYTQ9IiwiTUlJQlp6Q0NBUTJnQXdJQkFnSUJBakFLQmdncWhrak9QUVFEQWpBbE1TTXdJUVlEVlFRRERCcE9aV2RoZEdsMlpTQldaV04wYjNKeklGUmxjM1FnVW05dmREQWVGdzB5TmpBeE1ERXdNREF3TURCYUZ3MHpNREF4TURFd01EQXdNREJhTUMweEt6QXBCZ05WQkFNTUlrNWxaMkYwYVhabElGWmxZM1J2Y25NZ1ZHVnpkQ0JKYm5SbGNtMWxaR2xoZEdVd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTZE5nNWQzdVhQcTV0eU4rdWtvaC9NSUJLZFNhZnF3aU94UjNMRXdxNVc2ZDhwQ2Zra2ZPVEUzRWIwa0h3SS9oVTdHcEJwNDI2RExFdDU0eWpBU1A1RW95WXdKREFTQmdOVkhSTUJBZjhFQ0RBR0FRSC9BZ0VBTUE0R0ExVWREd0VCL3dRRUF3SUJCakFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBeW16dC9uMVVMbkltNVlVdFNpSG1lU0FTZkNLYmNBaGtUY1paR05hNEdvQUNJRWFlNWc2SVFNdlZsRTZiNWozaTB2b2tuWXNZbmVyMjNyTlEwQUJNS2hYMyJdfQ.eyJzdWIiOiJodHRwczovL2lzc3Vlci5leGFtcGxlL3N0YXR1c2xpc3RzLzEiLCJpYXQiOjE3OTA4MDkyMDAsImV4cCI6MTc5MDg5OTIwMCwidHRsIjo0MzIwMCwic3RhdHVzX2xpc3QiOnsiYml0cyI6MSwibHN0IjoiZUFFQkFnRDlfd2dBQUJJQUNRIn19.eVWNsiDeb_oQeapzhXCAYdApm6RLKgHSyrmRymUl-1D_pD1GBWzEryh13QVVXcGSco1f8FZsoV_z1SuzAiy_HA"
+   },
+   "notes": "polaris-oid4vp returns authentic with revocation state list_refused (code signature). Its Verifier refuses on its own only a checked status that is not VALID (code revoked); every other state stays in the verdict for the relying party's policy, and status-required refuses it."
+  },
+  {
+   "id": "status-list-no-authority",
+   "changed": "the credential names a status list at https://other-issuer.example/statuslists/1, where no key is stated as entitled to publish its issuer's status; the list there is signed by another issuer's key",
+   "class": "policy",
+   "layer": "status-list",
+   "clauses": [
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3 step 3.a",
+     "text": "Validate the Status List Token by following the rules defined in Section 7.2 of [RFC7519] for JWTs and Section 7.2 of [RFC8392] for CWTs. This step might require the resolution of a public key as described in Section 11.3."
+    },
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s11.3",
+     "text": "This specification does not mandate specific methods for key resolution and trust management"
+    },
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3",
+     "text": "If any of these checks fails, no statement about the status of the Referenced Token can be made and the Referenced Token SHOULD be rejected."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjUsInVyaSI6Imh0dHBzOi8vb3RoZXItaXNzdWVyLmV4YW1wbGUvc3RhdHVzbGlzdHMvMSJ9fX0.maTyc2DD5t53DPmw9ZCq6ZwzFpAS62UUYoVMfpih_2VPt0NPvqKAVH4-NdpZEJ3c9CJZHkWR42J8GZYsCoUe9A~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IlF2T05GX0NOVnlydG13OC01cFRISFZfcTZEcDJ3cW05M2R6ZU13Z1lpTmMifQ.ztwWutiXLriLaGH02u7FbOvutczeeXgeUkyR8ijeBrZ42fyNtkaEN6KfUzRxvKFWDn0QwHH5lRou55LzeR-opQ",
+   "expected": "reject",
+   "policy": "status-required",
+   "status_list": {
+    "uri": "https://other-issuer.example/statuslists/1",
+    "response": "eyJhbGciOiJFUzI1NiIsInR5cCI6InN0YXR1c2xpc3Qrand0IiwieDVjIjpbIk1JSUJqVENDQVRPZ0F3SUJBZ0lCQ2pBS0JnZ3Foa2pPUFFRREFqQXRNU3N3S1FZRFZRUUREQ0pPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1NXNTBaWEp0WldScFlYUmxNQjRYRFRJMk1ERXdNVEF3TURBd01Gb1hEVE13TURFd01UQXdNREF3TUZvd0tERW1NQ1FHQTFVRUF3d2RUbVZuWVhScGRtVWdWbVZqZEc5eWN5QlBkR2hsY2lCSmMzTjFaWEl3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPUFFNQkJ3TkNBQVNtSnBBR3JOMDlNV2MrY3RHeThNZUhwblB4ODhsUUlwSk5WNmNLR0kyaEVLYStJem1EakFQRHVjZW0vbGxKYnhVMXp0UGpIUWQ2cjU3UzkvNlliWjZJbzBrd1J6QU1CZ05WSFJNQkFmOEVBakFBTUE0R0ExVWREd0VCL3dRRUF3SUhnREFuQmdOVkhSRUVJREFlaGh4b2RIUndjem92TDI5MGFHVnlMV2x6YzNWbGNpNWxlR0Z0Y0d4bE1Bb0dDQ3FHU000OUJBTUNBMGdBTUVVQ0lRQ0tYZ1Q1RHB0MUFYaDdJRjJHcEZ1TVBIZkdVKzVERDVDaWRYQWhXeHBGVXdJZ1ZXVkQrRXZEY0NLcTh0bkF0RFlGankya05LSktYVDlWdkNERk5PRnBsYTQ9IiwiTUlJQlp6Q0NBUTJnQXdJQkFnSUJBakFLQmdncWhrak9QUVFEQWpBbE1TTXdJUVlEVlFRRERCcE9aV2RoZEdsMlpTQldaV04wYjNKeklGUmxjM1FnVW05dmREQWVGdzB5TmpBeE1ERXdNREF3TURCYUZ3MHpNREF4TURFd01EQXdNREJhTUMweEt6QXBCZ05WQkFNTUlrNWxaMkYwYVhabElGWmxZM1J2Y25NZ1ZHVnpkQ0JKYm5SbGNtMWxaR2xoZEdVd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTZE5nNWQzdVhQcTV0eU4rdWtvaC9NSUJLZFNhZnF3aU94UjNMRXdxNVc2ZDhwQ2Zra2ZPVEUzRWIwa0h3SS9oVTdHcEJwNDI2RExFdDU0eWpBU1A1RW95WXdKREFTQmdOVkhSTUJBZjhFQ0RBR0FRSC9BZ0VBTUE0R0ExVWREd0VCL3dRRUF3SUJCakFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBeW16dC9uMVVMbkltNVlVdFNpSG1lU0FTZkNLYmNBaGtUY1paR05hNEdvQUNJRWFlNWc2SVFNdlZsRTZiNWozaTB2b2tuWXNZbmVyMjNyTlEwQUJNS2hYMyJdfQ.eyJzdWIiOiJodHRwczovL290aGVyLWlzc3Vlci5leGFtcGxlL3N0YXR1c2xpc3RzLzEiLCJpYXQiOjE3OTA4MDkyMDAsImV4cCI6MTc5MDg5OTIwMCwidHRsIjo0MzIwMCwic3RhdHVzX2xpc3QiOnsiYml0cyI6MSwibHN0IjoiZUFFQkFnRDlfd2dBQUJJQUNRIn19.466yAY6u785-a7vIAyqH7Bvt7eYbt3xvZQNXCSRvjJMxvm9zulmKd6g-xCImw33CvxpiSE1TGKo-PTy0OTKecQ"
+   },
+   "notes": "polaris-oid4vp returns authentic with revocation state no_authority, and nothing was fetched. Its Verifier refuses on its own only a checked status that is not VALID (code revoked); every other state stays in the verdict for the relying party's policy, and status-required refuses it."
+  },
+  {
+   "id": "status-list-expired",
+   "changed": "the status list expired a day before the verification instant",
+   "class": "policy",
+   "layer": "status-list",
+   "clauses": [
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3 step 4.c",
+     "text": "If the expiration time is defined (exp or 4), it MUST be checked if the Status List Token is expired"
+    },
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s13.7",
+     "text": "the exp claim specifies an absolute timestamp, marking the point in time when the Status List expires and MUST NOT be relied upon any longer"
+    },
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3",
+     "text": "If any of these checks fails, no statement about the status of the Referenced Token can be made and the Referenced Token SHOULD be rejected."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjUsInVyaSI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUvc3RhdHVzbGlzdHMvMSJ9fX0.q6hek2k2wJpLbgsVpUoMHUO4nBGACXuK5XMmIMhyCQAkdfK6JTo7gtoWzChaOjyi6mCtRnxcRA5gXQTaC9msnw~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IjVtWE9IdXk3ajYtbTJucW1NN2tMU0tjQWpPOEMxaW9mcWdDSHhDYk5CX1kifQ.bzf1zLGNa39JGDNRK-LEl4ht0Zqm8Ic99m65mUOHZy5t3ZSkqqan7hKOkI9jaZhaOL5IJk1B9vWlvWVeiG2KBw",
+   "expected": "reject",
+   "policy": "status-required",
+   "status_list": {
+    "uri": "https://issuer.example/statuslists/1",
+    "response": "eyJhbGciOiJFUzI1NiIsInR5cCI6InN0YXR1c2xpc3Qrand0IiwieDVjIjpbIk1JSUJsekNDQVR5Z0F3SUJBZ0lCQXpBS0JnZ3Foa2pPUFFRREFqQXRNU3N3S1FZRFZRUUREQ0pPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1NXNTBaWEp0WldScFlYUmxNQjRYRFRJMk1ERXdNVEF3TURBd01Gb1hEVE13TURFd01UQXdNREF3TUZvd0p6RWxNQ01HQTFVRUF3d2NUbVZuWVhScGRtVWdWbVZqZEc5eWN5QlVaWE4wSUVsemMzVmxjakJaTUJNR0J5cUdTTTQ5QWdFR0NDcUdTTTQ5QXdFSEEwSUFCQmxZUnUrM0xIZG91WmVCM052TDZ5b1kxU0JsS28vcmRqaWM4RE1KTnFqSyswTEhnMWFPbmFOaXoydWdaTFVqYzdqbWtCMWZxSVdWY1dJbE8rZjlIVmlqVXpCUk1Bd0dBMVVkRXdFQi93UUNNQUF3RGdZRFZSMFBBUUgvQkFRREFnZUFNREVHQTFVZEVRUXFNQ2lHRm1oMGRIQnpPaTh2YVhOemRXVnlMbVY0WVcxd2JHV0NEbWx6YzNWbGNpNWxlR0Z0Y0d4bE1Bb0dDQ3FHU000OUJBTUNBMGtBTUVZQ0lRQ1ozK0JiN3dwQ080TS9mM1lVMDBjRmhCZFBXdUF2aFZHSWdJTVFXM1Y1S3dJaEFMMzl6YnZGbWtzKzZJTlRKanNHbHhsaUw5MG5Wa2NGRzlHcENISTBFemZaIiwiTUlJQlp6Q0NBUTJnQXdJQkFnSUJBakFLQmdncWhrak9QUVFEQWpBbE1TTXdJUVlEVlFRRERCcE9aV2RoZEdsMlpTQldaV04wYjNKeklGUmxjM1FnVW05dmREQWVGdzB5TmpBeE1ERXdNREF3TURCYUZ3MHpNREF4TURFd01EQXdNREJhTUMweEt6QXBCZ05WQkFNTUlrNWxaMkYwYVhabElGWmxZM1J2Y25NZ1ZHVnpkQ0JKYm5SbGNtMWxaR2xoZEdVd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTZE5nNWQzdVhQcTV0eU4rdWtvaC9NSUJLZFNhZnF3aU94UjNMRXdxNVc2ZDhwQ2Zra2ZPVEUzRWIwa0h3SS9oVTdHcEJwNDI2RExFdDU0eWpBU1A1RW95WXdKREFTQmdOVkhSTUJBZjhFQ0RBR0FRSC9BZ0VBTUE0R0ExVWREd0VCL3dRRUF3SUJCakFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBeW16dC9uMVVMbkltNVlVdFNpSG1lU0FTZkNLYmNBaGtUY1paR05hNEdvQUNJRWFlNWc2SVFNdlZsRTZiNWozaTB2b2tuWXNZbmVyMjNyTlEwQUJNS2hYMyJdfQ.eyJzdWIiOiJodHRwczovL2lzc3Vlci5leGFtcGxlL3N0YXR1c2xpc3RzLzEiLCJpYXQiOjE3OTA4MDkyMDAsImV4cCI6MTc5MDcyNjQwMCwidHRsIjo0MzIwMCwic3RhdHVzX2xpc3QiOnsiYml0cyI6MSwibHN0IjoiZUFFQkFnRDlfd2dBQUJJQUNRIn19.YnbYjZEz_tV3lJ4nfvtPqLUE6EKqhIrycnFCOugs14LSnOtEky1JaYqjm2lywL-uLgmksSc2hAZ1znfXRHsOSg"
+   },
+   "notes": "polaris-oid4vp returns authentic with revocation state list_refused (code expired). Its Verifier refuses on its own only a checked status that is not VALID (code revoked); every other state stays in the verdict for the relying party's policy, and status-required refuses it."
+  },
+  {
+   "id": "status-list-index-past-end",
+   "changed": "the credential names index 16 of a 16-entry status list",
+   "class": "spec",
+   "layer": "status-list",
+   "clauses": [
+    {
+     "ref": "draft-ietf-oauth-status-list-21 s8.3 step 6",
+     "text": "If the provided index is out of bounds of the Status List, no statement about the status of the Referenced Token can be made and the Referenced Token MUST be rejected."
+    }
+   ],
+   "trust": "x5c",
+   "presentation": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsIng1YyI6WyJNSUlCbHpDQ0FUeWdBd0lCQWdJQkF6QUtCZ2dxaGtqT1BRUURBakF0TVNzd0tRWURWUVFERENKT1pXZGhkR2wyWlNCV1pXTjBiM0p6SUZSbGMzUWdTVzUwWlhKdFpXUnBZWFJsTUI0WERUSTJNREV3TVRBd01EQXdNRm9YRFRNd01ERXdNVEF3TURBd01Gb3dKekVsTUNNR0ExVUVBd3djVG1WbllYUnBkbVVnVm1WamRHOXljeUJVWlhOMElFbHpjM1ZsY2pCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQkJsWVJ1KzNMSGRvdVplQjNOdkw2eW9ZMVNCbEtvL3JkamljOERNSk5xaksrMExIZzFhT25hTml6MnVnWkxVamM3am1rQjFmcUlXVmNXSWxPK2Y5SFZpalV6QlJNQXdHQTFVZEV3RUIvd1FDTUFBd0RnWURWUjBQQVFIL0JBUURBZ2VBTURFR0ExVWRFUVFxTUNpR0ZtaDBkSEJ6T2k4dmFYTnpkV1Z5TG1WNFlXMXdiR1dDRG1semMzVmxjaTVsZUdGdGNHeGxNQW9HQ0NxR1NNNDlCQU1DQTBrQU1FWUNJUUNaMytCYjd3cENPNE0vZjNZVTAwY0ZoQmRQV3VBdmhWR0lnSU1RVzNWNUt3SWhBTDM5emJ2Rm1rcys2SU5USmpzR2x4bGlMOTBuVmtjRkc5R3BDSEkwRXpmWiIsIk1JSUJaekNDQVEyZ0F3SUJBZ0lCQWpBS0JnZ3Foa2pPUFFRREFqQWxNU013SVFZRFZRUUREQnBPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1VtOXZkREFlRncweU5qQXhNREV3TURBd01EQmFGdzB6TURBeE1ERXdNREF3TURCYU1DMHhLekFwQmdOVkJBTU1JazVsWjJGMGFYWmxJRlpsWTNSdmNuTWdWR1Z6ZENCSmJuUmxjbTFsWkdsaGRHVXdXVEFUQmdjcWhrak9QUUlCQmdncWhrak9QUU1CQndOQ0FBU2ROZzVkM3VYUHE1dHlOK3Vrb2gvTUlCS2RTYWZxd2lPeFIzTEV3cTVXNmQ4cENma2tmT1RFM0ViMGtId0kvaFU3R3BCcDQyNkRMRXQ1NHlqQVNQNUVveVl3SkRBU0JnTlZIUk1CQWY4RUNEQUdBUUgvQWdFQU1BNEdBMVVkRHdFQi93UUVBd0lCQmpBS0JnZ3Foa2pPUFFRREFnTklBREJGQWlFQXltenQvbjFVTG5JbTVZVXRTaUhtZVNBU2ZDS2JjQWhrVGNaWkdOYTRHb0FDSUVhZTVnNklRTXZWbEU2YjVqM2kwdm9rbllzWW5lcjIzck5RMEFCTUtoWDMiXX0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoidXJuOmV1ZGk6cGlkOjEiLCJpYXQiOjE3OTA3MjY0MDAsImV4cCI6MTgyMjM0ODgwMCwiX3NkIjpbIlQ1enpHVFZxNGt5LXFRaEZVRXpjQnNIMnNlMjRwcV9wclZwR0VtWnIxeGciLCJoWjN3cUNQUHRHSXpEcUZabXRrT2hpWmVlV3ZWTjl0MjZFU1ZHNFhCOHQ0Iiwic3lJcmF0dDZNZVdZcU02QmFvbF9LRUI1WlZ5d3hkdGNrdGo2aTBYb000MCJdLCJfc2RfYWxnIjoic2hhLTI1NiIsImNuZiI6eyJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiI4QU1pX3BCSUU0TkdwLWJJTDViU2RUdGh3bUhNRU9yQ3J5dXVmaGVGaDhVIiwieSI6IlNVSXhiWkFsWW1QR2p3Mk1JOFF6ZEFwT0liZUZaM0x6M1N2T2JDcnpOeDQifX0sInN0YXR1cyI6eyJzdGF0dXNfbGlzdCI6eyJpZHgiOjE2LCJ1cmkiOiJodHRwczovL2lzc3Vlci5leGFtcGxlL3N0YXR1c2xpc3RzLzEifX19.aVHRRV5plB79WrMz08wTV2p6r0qNV5ijHdRlCS5IEaq0MH6fiIQsSagiWL4CyCHmMWm1Kaw3gR6qAIArRwvh5g~WyJQOXVyaEZ4RzhQcnZmS3RTaUtDemZRIiwiZ2l2ZW5fbmFtZSIsIkVyaWthIl0~WyJ4Yk9mTjBZTHk3ZGtvbUREX1p2cG1RIiwiZmFtaWx5X25hbWUiLCJNdXN0ZXJtYW5uIl0~WyJFOU5US1hsTDdmb2xfdTJoeFdzLWZRIiwiYmlydGhkYXRlIiwiMTk2NC0wOC0xMiJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTA4MTI4MDAsImF1ZCI6Ing1MDlfaGFzaDpXSmZlQTR4UjNtdkZzV2syZkVCM29pdTRmM0UxeUJIa1hqc04wUDJzNlJFIiwibm9uY2UiOiJuVjdjWDJxLTBiUTVtVDlzS2U0d0x6Iiwic2RfaGFzaCI6IkVScFVJNGdRdDk1cVV0ZUx2TGdWd3pOV3Z2ZXVHVmpSTkkyMTFabWN0aDAifQ.jvOH9SnyQVW8lEHoZOcJmYPM2rx8Vf73aoGvtShCbaE-UFqhIMgKXMXi72s9VglDE2qHyK_oIwXXLepAGEMreA",
+   "expected": "reject",
+   "policy": "status-required",
+   "status_list": {
+    "uri": "https://issuer.example/statuslists/1",
+    "response": "eyJhbGciOiJFUzI1NiIsInR5cCI6InN0YXR1c2xpc3Qrand0IiwieDVjIjpbIk1JSUJsekNDQVR5Z0F3SUJBZ0lCQXpBS0JnZ3Foa2pPUFFRREFqQXRNU3N3S1FZRFZRUUREQ0pPWldkaGRHbDJaU0JXWldOMGIzSnpJRlJsYzNRZ1NXNTBaWEp0WldScFlYUmxNQjRYRFRJMk1ERXdNVEF3TURBd01Gb1hEVE13TURFd01UQXdNREF3TUZvd0p6RWxNQ01HQTFVRUF3d2NUbVZuWVhScGRtVWdWbVZqZEc5eWN5QlVaWE4wSUVsemMzVmxjakJaTUJNR0J5cUdTTTQ5QWdFR0NDcUdTTTQ5QXdFSEEwSUFCQmxZUnUrM0xIZG91WmVCM052TDZ5b1kxU0JsS28vcmRqaWM4RE1KTnFqSyswTEhnMWFPbmFOaXoydWdaTFVqYzdqbWtCMWZxSVdWY1dJbE8rZjlIVmlqVXpCUk1Bd0dBMVVkRXdFQi93UUNNQUF3RGdZRFZSMFBBUUgvQkFRREFnZUFNREVHQTFVZEVRUXFNQ2lHRm1oMGRIQnpPaTh2YVhOemRXVnlMbVY0WVcxd2JHV0NEbWx6YzNWbGNpNWxlR0Z0Y0d4bE1Bb0dDQ3FHU000OUJBTUNBMGtBTUVZQ0lRQ1ozK0JiN3dwQ080TS9mM1lVMDBjRmhCZFBXdUF2aFZHSWdJTVFXM1Y1S3dJaEFMMzl6YnZGbWtzKzZJTlRKanNHbHhsaUw5MG5Wa2NGRzlHcENISTBFemZaIiwiTUlJQlp6Q0NBUTJnQXdJQkFnSUJBakFLQmdncWhrak9QUVFEQWpBbE1TTXdJUVlEVlFRRERCcE9aV2RoZEdsMlpTQldaV04wYjNKeklGUmxjM1FnVW05dmREQWVGdzB5TmpBeE1ERXdNREF3TURCYUZ3MHpNREF4TURFd01EQXdNREJhTUMweEt6QXBCZ05WQkFNTUlrNWxaMkYwYVhabElGWmxZM1J2Y25NZ1ZHVnpkQ0JKYm5SbGNtMWxaR2xoZEdVd1dUQVRCZ2NxaGtqT1BRSUJCZ2dxaGtqT1BRTUJCd05DQUFTZE5nNWQzdVhQcTV0eU4rdWtvaC9NSUJLZFNhZnF3aU94UjNMRXdxNVc2ZDhwQ2Zra2ZPVEUzRWIwa0h3SS9oVTdHcEJwNDI2RExFdDU0eWpBU1A1RW95WXdKREFTQmdOVkhSTUJBZjhFQ0RBR0FRSC9BZ0VBTUE0R0ExVWREd0VCL3dRRUF3SUJCakFLQmdncWhrak9QUVFEQWdOSUFEQkZBaUVBeW16dC9uMVVMbkltNVlVdFNpSG1lU0FTZkNLYmNBaGtUY1paR05hNEdvQUNJRWFlNWc2SVFNdlZsRTZiNWozaTB2b2tuWXNZbmVyMjNyTlEwQUJNS2hYMyJdfQ.eyJzdWIiOiJodHRwczovL2lzc3Vlci5leGFtcGxlL3N0YXR1c2xpc3RzLzEiLCJpYXQiOjE3OTA4MDkyMDAsImV4cCI6MTc5MDg5OTIwMCwidHRsIjo0MzIwMCwic3RhdHVzX2xpc3QiOnsiYml0cyI6MSwibHN0IjoiZUFFQkFnRDlfd2dBQUJJQUNRIn19.UergnxMbFAcWaqzumpN3sOAy7I59TyE0Zters-euSTgttN30fmjPJR0ksHypDoeq7XVx_wxcpz-0nXCuxjU-WQ"
+   },
+   "notes": "polaris-oid4vp returns authentic with revocation state list_refused (code index). Its Verifier refuses on its own only a checked status that is not VALID (code revoked); every other state stays in the verdict for the relying party's policy, and status-required refuses it."
   }
  ]
 }

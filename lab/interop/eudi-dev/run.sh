@@ -343,8 +343,13 @@ start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), 
   if [ "$TUNNEL" = 1 ]; then
     # Present only once the verifier answers THROUGH the public name; a new quick-tunnel name can
     # take some seconds to resolve.
+    # The verifier's own answer at /done: its page, or, since the redirect carries a
+    # response_code (OpenID4VP 1.0 section 8.2), its 404 "no such result" for a request without
+    # one. A tunnel's own error page is neither.
     for _ in $(seq 1 60); do
-      [ "$(curl -s -o /dev/null -w '%{http_code}' "$TUNNEL_URL/done" || true)" = 200 ] && { echo "tunnel     $TUNNEL_URL"; return 0; }
+      case "$(curl -s "$TUNNEL_URL/done" || true)" in
+        *"presentation is complete"*|*"no such result"*) echo "tunnel     $TUNNEL_URL"; return 0 ;;
+      esac
       sleep 2
     done
     echo "the verifier did not answer through $TUNNEL_URL; see $WORK/cloudflared-$TUNNELS.log" >&2
