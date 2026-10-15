@@ -12608,6 +12608,12 @@ def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Find
     The version stamp went with it. "at v9.331" dated the count to a release eleven versions
     back, and once the number is machine-held against the file the stamp is not doing work a
     reader can rely on. What holds the count is this check, and SPEC.md now says so.
+
+    The same drift reached the case count (2026-10-15): the section saying what the contract
+    does NOT constrain read "the 151 cases" and "all 151 cases" while cases.json held 284,
+    and the hostile-input drill's measurement named 281. So every "the N cases" or "all N
+    cases" in SPEC.md is held to the manifest too; a dated measurement restates its number
+    when it is re-measured.
     """
     name = "conformance_spec_counts"
     spec = _read_raw(root, "conformance/SPEC.md")
@@ -12633,9 +12639,17 @@ def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Find
                            "and cases.json holds %d; the published contract's description of "
                            "its own scope is %d out" % (stated, len(kinds),
                                                         abs(stated - len(kinds))))
+    case_counts = [int(c.group(1).replace(",", "")) for c in re.finditer(
+        r"\b(?:the|all)\s+(\d[\d,]*)\s+(?:published\s+)?cases\b", spec)]
+    wrong = sorted({n for n in case_counts if n != len(cases)})
+    if wrong:
+        return _fail(name, "conformance/SPEC.md speaks of %s cases and cases.json holds %d; "
+                           "a sentence about the whole suite is describing a suite that no "
+                           "longer exists" % (", ".join(str(n) for n in wrong), len(cases)))
     return _ok(name, "conformance/SPEC.md states %d artifact types and cases.json holds "
-                     "exactly that many across %d published cases, so the contract's opening "
-                     "description of its scope is the scope" % (stated, len(cases)))
+                     "exactly that many across %d published cases, and its %d whole-suite "
+                     "case count(s) agree, so the contract's description of its scope is the "
+                     "scope" % (stated, len(cases), len(case_counts)))
 
 
 def check_conformance_contract_distinguishes(root: pathlib.Path) -> list[Finding]:

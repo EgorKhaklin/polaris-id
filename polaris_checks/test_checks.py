@@ -19010,6 +19010,19 @@ def test_conformance_spec_count_check_discriminates(tmp_path):
     assert out[0].level == "FAIL" and "not checkable" in out[0].message, \
         "must FAIL when the count is written in a form nothing can hold"
 
+    # The case count is held too (2026-10-15: "the 151 cases" beside a 284-case manifest).
+    # 12 kinds of two cases each is 24 cases, and a line break inside the phrase still counts.
+    write("the suite certifies 12 artifact types.\nAll three pass all\n24 cases.\n", 12)
+    assert fn(tmp_path)[0].level == "OK", "must PASS when the stated case count is the real one"
+    write("the suite certifies 12 artifact types.\nAll three pass all\n22 cases.\n", 12)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "22" in out[0].message and "24" in out[0].message, \
+        "must FAIL when a sentence about the whole suite names a stale case count"
+    write("the suite certifies 12 artifact types; the 1,151 published cases enter it.\n", 12)
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "1151" in out[0].message, \
+        "must FAIL on a stale count written with a thousands separator"
+
     # Anti-vacuity: a manifest too small to be the real one is a broken parse.
     write("the suite certifies 3 artifact types, listed in `cases.json`\n", 3)
     out = fn(tmp_path)
