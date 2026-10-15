@@ -35,6 +35,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - polaris-oid4vp: an accepted presentation's `redirect_uri` now carries a fresh 128-bit `response_code` (OpenID4VP 1.0 section 8.2), and `Verifier.redeem` gives that request's verdict once, for that code. Before, every accepted response got the same fixed URI, so in a same-device `direct_post` flow nothing told the browser the wallet returned to from any other browser waiting on a result. Injecting a response into another request was already refused. `serve`'s `/done` page now answers only the redirect's own code, and a cross-device flow can answer `{}` with no redirect (`redirect=False`), as the check-in example now does.
 - Issuer binding compares DNS names as ASCII only; an issuer certificate with a non-ASCII DNS SAN is refused.
+- polaris-oid4vp: a posted `wallet_nonce` is held to 1 to 1024 printable ASCII characters before a request object is signed for it; any other gets 400 from `serve` and None from `Verifier.request_object`.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 

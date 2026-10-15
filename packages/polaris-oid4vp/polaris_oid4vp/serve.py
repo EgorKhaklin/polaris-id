@@ -20,7 +20,7 @@ import sys
 import threading
 import urllib.parse
 
-from .verifier import Verifier  # noqa: F401  re-exported for callers of serve()
+from .verifier import Verifier, wallet_nonce_acceptable  # noqa: F401  Verifier re-exported for callers of serve()
 
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
@@ -138,9 +138,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # be served from cache. A posted `wallet_metadata` is read for one thing only: a
             # key to encrypt the request object to, when the wallet asks for that.
             posted = urllib.parse.parse_qs(raw)
+            wallet_nonce = (posted.get("wallet_nonce") or [None])[0]
+            if wallet_nonce is not None and not wallet_nonce_acceptable(wallet_nonce):
+                return self._send(400, {"error": "invalid_request",
+                                        "error_description": "wallet_nonce is not 1 to 1024 "
+                                                             "printable ASCII characters"})
             return self._serve_request_object(urllib.parse.parse_qs(query),
-                                              wallet_nonce=(posted.get("wallet_nonce")
-                                                            or [None])[0],
+                                              wallet_nonce=wallet_nonce,
                                               wallet_metadata=(posted.get("wallet_metadata")
                                                                or [None])[0])
         if path != RESPONSE_PATH:

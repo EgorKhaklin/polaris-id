@@ -85,6 +85,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   `enc` this package produces, A128GCM or A256GCM, and a P-256 key in `jwks`) gets the signed
   object encrypted to that key, as the EUDI iOS wallet kit requires. A wallet that asks for
   nothing, or for something this cannot produce, gets the signed object.
+- A `wallet_nonce` posted with it comes back in the request object when it is 1 to 1024
+  printable ASCII characters (%x20-7E); any other gets 400 (`Verifier.request_object` returns
+  None), and nothing is signed for it.
 - `--verifier-info FILE` puts attestations about the verifier into the request object, such as
   the registration certificate a registrar issues: a JSON array as OpenID4VP 1.0 section 5.1 has
   it, or one object, `{"format": "registration_cert", "data": "<JWT>"}`, as the German EUDI
@@ -369,7 +372,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 627 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 629 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a

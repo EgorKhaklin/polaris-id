@@ -1129,6 +1129,21 @@ class TheRequestTests(VerifierTestCase):
         self.assertIsNone(self.verifier.request_object("no-such-state",
                                                        wallet_nonce="w-1"))
 
+    def test_a_wallet_nonce_is_bounded_before_anything_is_signed_for_it(self):
+        """Every POST with a `wallet_nonce` gets a freshly signed object that carries it, so an
+        unbounded one had any body the server would read signed and sent back. 1 to 1024
+        characters of %x20-7E come back; longer, empty or other characters get nothing, and the
+        request stays answerable."""
+        session, _ = self.verifier.new_request()
+        for nonce in ("n" * 64, "n" * 1024, " !~" + "n" * 61):
+            with self.subTest(length=len(nonce)):
+                jar = self.verifier.request_object(session.state, wallet_nonce=nonce)
+                self.assertEqual(Wallet.read_request(jar)[1]["wallet_nonce"], nonce)
+        for nonce in ("n" * 1025, "n" * 2048, "", "w\n1", "w\x001", "w\u00e91", 7):
+            with self.subTest(nonce=repr(nonce)[:20]):
+                self.assertIsNone(self.verifier.request_object(session.state, wallet_nonce=nonce))
+        self.assertIsNotNone(self.verifier.request_object(session.state, wallet_nonce="w-1"))
+
 
 
 class RequestObjectEncryptionTests(VerifierTestCase):

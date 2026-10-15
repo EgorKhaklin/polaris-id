@@ -93,6 +93,21 @@ _ERROR_CODE = re.compile(r"[A-Za-z0-9_]{1,64}")
 #: The most of a wallet's `error_description` an operator is shown (`_printable`).
 ERROR_DESCRIPTION_MAX = 200
 
+#: The longest `wallet_nonce` a request object carries back. OpenID4VP 1.0 section 5.10 makes it
+#: a string and sets no length; every POST that carries one is answered with a freshly signed
+#: request object holding it, so an unbounded one let an unauthenticated client have a body of
+#: up to the server's limit signed and sent back, again and again. 1024 characters of RFC 6749's
+#: VSCHAR (%x20-7E, the syntax of `state`, Appendix A.5) is far beyond any nonce a wallet sends.
+WALLET_NONCE_MAX = 1024
+_WALLET_NONCE = re.compile(r"[\x20-\x7e]+")
+
+
+def wallet_nonce_acceptable(value):
+    """True when `value` is a `wallet_nonce` a request object may carry: a string of 1 to
+    WALLET_NONCE_MAX printable ASCII characters (%x20-7E)."""
+    return (isinstance(value, str) and 0 < len(value) <= WALLET_NONCE_MAX
+            and _WALLET_NONCE.fullmatch(value) is not None)
+
 #: TS12's payment transaction type (section 4.3.1).
 TS12_PAYMENT = "urn:eudi:sca:payment:1"
 
@@ -912,7 +927,8 @@ class Verifier:
         5.10: when a wallet POSTs one, the verifier MUST return a request object carrying it
         as a top-level claim. It is the wallet's replay protection against a request object
         minted before the wallet existed, and the mirror of the `nonce` we send it, so a
-        verifier that serves a cached object to a POST has taken that protection away.
+        verifier that serves a cached object to a POST has taken that protection away. A
+        `wallet_nonce` that `wallet_nonce_acceptable` refuses gets None: nothing is signed for it.
 
         `wallet_metadata`, posted beside it, may ask for the object encrypted to the wallet's
         key (`request_object_encryption`). Then the same signed object comes back encrypted:
@@ -927,7 +943,7 @@ class Verifier:
             cached = self._by_request.get(state)
         if wallet_nonce is None:
             jar = cached
-        elif session is None:
+        elif session is None or not wallet_nonce_acceptable(wallet_nonce):
             return None
         else:
             jar = self._request_object(session, wallet_nonce=wallet_nonce)

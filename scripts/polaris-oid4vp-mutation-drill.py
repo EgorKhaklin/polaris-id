@@ -163,6 +163,11 @@ NAMED_MUTANTS = (
     ("serve:done-page-without-the-code", "polaris_oid4vp/serve.py",
      "            if self.verifier.redeem(code) is None:",
      "            if False:"),
+    # A posted wallet_nonce is bounded before a request object is signed for it.
+    ("verifier:wallet-nonce-unbounded", "polaris_oid4vp/verifier.py",
+     "    return (isinstance(value, str) and 0 < len(value) <= WALLET_NONCE_MAX\n"
+     "            and _WALLET_NONCE.fullmatch(value) is not None)\n",
+     "    return isinstance(value, str)\n"),
 )
 
 
