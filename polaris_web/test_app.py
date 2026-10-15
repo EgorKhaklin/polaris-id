@@ -15359,6 +15359,55 @@ class TokenVerifyTests(PolarisTestCase):
         self.assertEqual(r.status_code, 302)
         self.assertIn('/login', r.headers.get('Location', ''))
 
+    def _false_record(self, token_value):
+        """A credential issued here, whose ML-DSA-65 row is the control, plus one planted row
+        that records ML-DSA-87 over the same ML-DSA-65 signature and key. Returns its id."""
+        tok = self._issue_token(token_value)
+        signature, key_hex = _deployment_signature(token_value)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT algorithm_id FROM CryptographicAlgorithm WHERE name = 'ML-DSA-87'")
+            algorithm_id = cur.fetchone()['algorithm_id']
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                     "signing_public_key_hex) VALUES (%s, %s, %s, %s)",
+                     (tok, algorithm_id, psycopg2.Binary(signature), key_hex))
+        return tok
+
+    def _assert_the_false_record_does_not_verify(self, body):
+        import pqc_signing
+        by_algorithm = {s['algorithm']: s for s in body['signatures']}
+        self.assertEqual(set(by_algorithm), {'ML-DSA-65', 'ML-DSA-87'}, body)
+        self.assertTrue(by_algorithm['ML-DSA-65']['valid'], body)
+        if pqc_signing.is_enabled():
+            self.assertEqual((by_algorithm['ML-DSA-87']['real_signature'],
+                              by_algorithm['ML-DSA-87']['valid']), (True, False), body)
+            self.assertFalse(body['signature_valid'], body)
+
+    def test_each_signature_is_checked_under_the_algorithm_its_row_records(self):
+        """docs/design/multi-sig-migration.md: "The schema records which algorithm produced a
+        signature". This route read the parameter set from the key's length, so a row that
+        records ML-DSA-87 over an ML-DSA-65 key and signature verified. Under the placeholder
+        profile a row has no key, so its algorithm decides nothing; the real-signer suite runs
+        the refusal."""
+        tok = self._false_record('ALG-RECORD-0001')
+        with patch.object(flask_app, '_VERIFY_SAMPLE_RATE', 0.0):
+            body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
+        self.assertFalse(body['sampled'])
+        self._assert_the_false_record_does_not_verify(body)
+
+    def test_the_sampled_second_witness_checks_under_the_recorded_algorithm_too(self):
+        """The sampled two-witness pass re-verifies every row. Under the recorded algorithm both
+        passes refuse the false record and agree; a pass that read the key's length instead
+        would accept it and page a witness disagreement."""
+        tok = self._false_record('ALG-RECORD-0002')
+        paged = []
+        with patch.object(flask_app, '_VERIFY_SAMPLE_RATE', 1.0), \
+             patch.object(flask_app.observability, 'record_witness_disagreement',
+                          side_effect=lambda **kw: paged.append(kw)):
+            body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
+        self.assertTrue(body['sampled'])
+        self._assert_the_false_record_does_not_verify(body)
+        self.assertEqual(paged, [], "both witnesses refuse the false record, so they agree")
+
 
 class UiLinkIntegrityTests(PolarisTestCase):
     DEFAULT_ROLE = None          # each test logs in as its own role
@@ -17844,7 +17893,7 @@ class VerifyWitnessSamplingTests(PolarisTestCase):
     def test_witness_disagreement_pages(self):
         tok = self._issue('TKN-SAMPLE-DISAGREE-1')
 
-        def fake_verify(token_value, sig, pk, witnesses='both'):
+        def fake_verify(token_value, sig, pk, witnesses='both', algorithm=None):
             return witnesses == 'single'   # single says valid, both says invalid -> disagreement
 
         paged = []
