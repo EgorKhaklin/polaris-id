@@ -22045,6 +22045,14 @@ def test_precommit_tree_receipts_check_discriminates(tmp_path):
     out = run(cfg_text=mutate(cfg, "python3 scripts/polaris-tree-gate.py hook polaris-link-check",
                               "bash scripts/polaris-link-check.sh --ci"))
     assert out.level == "FAIL" and "not the hooks routed" in out.message
+    # Comments are not wiring: every routed entry commented out, as the check-mutation drill
+    # does it, while the comments still name the gate and each stage.
+    commented = re.sub(r"^(\s*)(entry: python3 scripts/polaris-tree-gate\.py hook )", r"\1# \2",
+                       cfg, flags=re.M)
+    assert commented.count("# entry: python3 scripts/polaris-tree-gate.py hook ") == 4, \
+        "fixture is stale: expected four routed entries to comment out"
+    out = run(cfg_text=commented)
+    assert out.level == "FAIL" and "not the hooks routed" in out.message
     # Anti-vacuity: no script, and a config too small to have been parsed.
     (tmp_path / "scripts" / "polaris-tree-gate.py").unlink()
     out = fn(tmp_path)[0]

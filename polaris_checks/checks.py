@@ -27292,7 +27292,11 @@ def check_precommit_tree_receipts_skip_only_a_measured_pass(root: pathlib.Path) 
                            "has broken and this check would pass by finding nothing" % len(blocks))
     routed = {}
     for hid, body in blocks.items():
-        for m in re.finditer(r"polaris-tree-gate\.py\s+hook\s+([\w.-]+)", body):
+        # The live `entry:` line only. A comment naming the gate is not wiring: grepping the
+        # whole block, this passed with every routed entry commented out (the check-mutation
+        # drill, 2026-10-15).
+        for m in re.finditer(r"^\s*entry:\s*python3\s+scripts/polaris-tree-gate\.py\s+hook\s+([\w.-]+)\s*$",
+                             body, re.M):
             routed.setdefault(hid, []).append(m.group(1))
     problems = []
     for hid, stages in sorted(routed.items()):
