@@ -84,7 +84,12 @@ interoperate with itself.
 
 **The signature is over the COSE `Sig_structure`**, `["Signature1", protected, h'', payload]`,
 not over the payload alone. Signing the payload leaves the protected header unauthenticated, so
-an attacker can relabel a signature's algorithm.
+an attacker can relabel a signature's algorithm. It is over those bytes themselves, not a digest
+of them: RFC 9964 registers -49 as pure ML-DSA-65 with an empty context over the `Sig_structure`
+(-50 the same for ML-DSA-87), so a verifier that implements RFC 9964 can check it with the
+issuer's key. The detached verifier checks it under the algorithm the protected header names and
+refuses a signature over the structure's SHA3-256, or a header whose algorithm is not the
+signature's.
 
 The detached verifier parses the document with its own hand-written CBOR decoder rather than a
 library, because it must stay import-standalone. That is not duplication for its own sake: the
@@ -95,6 +100,10 @@ two-witness discipline the signatures already get, applied to the format.
 
 `scripts/polaris-mdoc-bridge-drill.py` on every push: the round trip across two independent
 CBOR implementations, an off-the-shelf reader verifying the digests with no Polaris code
-involved, selective disclosure, a tampered element failing its digest, and both refusals.
-`check_mdoc_bridge` pins the naming, the algorithm, the correlation guard and its ordering, and
-that the verdict keeps the digest check and the issuer check apart.
+involved, selective disclosure, a tampered element failing its digest, both refusals, the
+issuer signature checked over the raw `Sig_structure` by an implementation that is not the
+tree's, and a signature over its digest refused. `check_mdoc_bridge` pins the naming, the
+algorithm, the correlation guard and its ordering, that the verdict keeps the digest check and
+the issuer check apart, and that each link signs or verifies the `Sig_structure` itself.
+RFC 9964's own ML-DSA-65 COSE example (`vectors/kat/rfc9964_mldsa_65_cose.json`) verifies under
+both witnesses.

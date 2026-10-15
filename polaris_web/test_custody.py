@@ -57,6 +57,19 @@ def _verify(sig: bytes, pk: bytes, message: bytes = b"token-ABC") -> bool:
     return v
 
 
+def _verify_raw(sig: bytes, pk: bytes, message: bytes) -> bool:
+    """`_verify` over `message` ITSELF, not its SHA3-256: the sign_message contract (COSE)."""
+    if pqc_signing.is_available():
+        return pqc_signing.verify_both_raw(message, sig.hex(), pk.hex(), require_witness=True)
+    v = pqc_signing._verify_second_witness_raw(message, sig.hex(), pk.hex())
+    assert v is not None, "no ML-DSA verifier available at all"
+    return v
+
+
+#: A COSE_Sign1 Sig_structure, the only kind of message sign_message is handed in the product.
+_SIG_STRUCTURE = b"\x84\x6aSignature1\x44\xa1\x01\x38\x30\x40\x58\x40" + bytes(range(64))
+
+
 class _EnvSnapshot:
     KEYS = ("POLARIS_CUSTODY_DRIVER", "POLARIS_PQC_SIGNING_KEY_FILE", "POLARIS_CUSTODY_PKCS11_MODULE",
             "POLARIS_CUSTODY_PKCS11_TOKEN_LABEL", "POLARIS_CUSTODY_PKCS11_PIN_FILE", "POLARIS_CUSTODY_PKCS11_PIN",
@@ -136,6 +149,18 @@ class FileCustodyTests(unittest.TestCase):
         c = custody.FileCustody(self.kf.name)
         with self.assertRaises(custody.CustodyError):
             c.sign(b"not-a-digest")
+        with self.assertRaises(custody.CustodyError):
+            c.sign(_SIG_STRUCTURE)      # sign() stays the digest contract; sign_message is apart
+
+    def test_sign_message_is_pure_ml_dsa_over_the_message_itself(self):
+        c = custody.FileCustody(self.kf.name)
+        sig = c.sign_message(_SIG_STRUCTURE)
+        self.assertEqual(len(sig), custody.SIGNATURE_LEN)
+        self.assertTrue(_verify_raw(sig, c.public_key(), _SIG_STRUCTURE))
+        self.assertFalse(_verify_raw(sig, c.public_key(), hashlib.sha3_256(_SIG_STRUCTURE).digest()))
+        for bad in (b"", "text", None):
+            with self.assertRaises(custody.CustodyError, msg=repr(bad)):
+                c.sign_message(bad)
 
     def test_rotation_anchor_file_keeps_old_key_verifying(self):
         os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = self.kf.name
@@ -206,6 +231,32 @@ class PerAgencyCustodyTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+@unittest.skipUnless(_MLDSA_OK and hasattr(_mldsa, "MLDSAMuHasher")
+                     and hasattr(_mldsa.MLDSA65PrivateKey, "sign_mu"),
+                     "needs cryptography with ML-DSA's external mu (MLDSAMuHasher, sign_mu)")
+class ExternalMuTests(unittest.TestCase):
+    """custody.external_mu, with no KMS and no boto3: FIPS 204's mu for pure ML-DSA with an
+    empty context, held against cryptography's own MLDSAMuHasher (another implementation's mu,
+    context None, which is empty), and a signature over it checked over the raw message. The
+    awskms driver sends exactly this as EXTERNAL_MU past 4,096 bytes."""
+
+    def test_external_mu_is_fips_204_mu_and_a_signature_over_it_is_over_the_message(self):
+        sk = _mldsa.MLDSA65PrivateKey.generate()
+        pk = sk.public_key()
+        for n in (1, len(_SIG_STRUCTURE), custody.KMS_RAW_MESSAGE_MAX, custody.KMS_RAW_MESSAGE_MAX + 1, 20000):
+            message = (_SIG_STRUCTURE * (n // len(_SIG_STRUCTURE) + 1))[:n]
+            hasher = _mldsa.MLDSAMuHasher(pk)
+            hasher.update(message)
+            mu = hasher.finalize()
+            self.assertEqual(len(mu), 64, n)
+            self.assertEqual(custody.external_mu(pk.public_bytes_raw(), message), mu, n)
+            sig = sk.sign_mu(mu)
+            pk.verify(sig, message)                    # pure ML-DSA-65 over the message itself
+            self.assertTrue(_verify_raw(sig, pk.public_bytes_raw(), message), n)
+            self.assertFalse(_verify_raw(sig, pk.public_bytes_raw(), message + b"\x00"), n)
+
+
+# ---------------------------------------------------------------------------
 from kms_standin import KmsStandIn as _KmsStandIn  # shared with test_secretstore
 
 
@@ -244,6 +295,40 @@ class AwsKmsCustodyTests(unittest.TestCase):
         self.assertEqual(sign_call["MessageType"], "RAW")
         self.assertEqual(base64.b64decode(sign_call["Message"]), _DIGEST)
         self.assertTrue(c.key_id.startswith("awskms:arn:aws:kms:"))
+
+    def test_sign_message_sends_kms_raw_up_to_4096_bytes(self):
+        c = custody.AwsKmsCustody(self.kms.key_id, region="us-east-1", endpoint_url=self.kms.url)
+        for n in (len(_SIG_STRUCTURE), custody.KMS_RAW_MESSAGE_MAX):
+            message = (_SIG_STRUCTURE * (n // len(_SIG_STRUCTURE) + 1))[:n]
+            sig = c.sign_message(message)
+            call = [b for t, b in self.kms.calls if t.endswith("Sign")][-1]
+            self.assertEqual((call["MessageType"], call["SigningAlgorithm"]), ("RAW", "ML_DSA_SHAKE_256"), n)
+            self.assertEqual(base64.b64decode(call["Message"]), message, n)
+            self.assertTrue(_verify_raw(sig, c.public_key(), message), n)
+
+    @unittest.skipUnless(_MLDSA_OK and hasattr(_mldsa, "MLDSAMuHasher")
+                         and hasattr(_mldsa.MLDSA65PrivateKey, "sign_mu"),
+                         "needs cryptography with ML-DSA's external mu (MLDSAMuHasher, sign_mu)")
+    def test_past_4096_bytes_sign_message_sends_mu_and_the_signature_is_over_the_message(self):
+        """KMS takes at most 4,096 bytes RAW. Past that the driver computes FIPS 204's mu itself
+        and sends it as EXTERNAL_MU; the signature that comes back must be pure ML-DSA over the
+        MESSAGE, which both witnesses check over the raw bytes. The mu is held against
+        cryptography's own MLDSAMuHasher, an implementation that is not this module's."""
+        c = custody.AwsKmsCustody(self.kms.key_id, region="us-east-1", endpoint_url=self.kms.url)
+        for n in (custody.KMS_RAW_MESSAGE_MAX + 1, 20000):
+            message = bytes((i * 7 + n) % 256 for i in range(n))
+            hasher = _mldsa.MLDSAMuHasher(self.kms.priv.public_key())
+            hasher.update(message)
+            mu = hasher.finalize()
+            self.assertEqual(len(mu), 64)
+            self.assertEqual(custody.external_mu(c.public_key(), message), mu, n)
+            sig = c.sign_message(message)
+            call = [b for t, b in self.kms.calls if t.endswith("Sign")][-1]
+            self.assertEqual(call["MessageType"], "EXTERNAL_MU", n)
+            self.assertEqual(base64.b64decode(call["Message"]), mu, n)
+            self.assertTrue(_verify_raw(sig, c.public_key(), message), n)
+            self.kms.priv.public_key().verify(sig, message)      # pure ML-DSA-65 over the message
+            self.assertFalse(_verify_raw(sig, c.public_key(), message[:-1]), n)
 
     def test_wrong_key_spec_is_refused_at_load(self):
         self.kms.key_spec = "RSA_2048"
@@ -318,6 +403,13 @@ class Pkcs11CustodyTests(unittest.TestCase):
     def test_duplicate_label_is_refused(self):
         with self.assertRaises(custody.CustodyError):
             custody.pkcs11_generate_key(self.module, self.token, self.pin, self.label)
+
+    def test_sign_message_is_ckm_ml_dsa_over_the_message_itself(self):
+        c = custody.Pkcs11Custody(self.module, self.token, self.pin, self.label)
+        sig = c.sign_message(_SIG_STRUCTURE)
+        self.assertEqual(len(sig), custody.SIGNATURE_LEN)
+        self.assertTrue(_verify_raw(sig, self.pk, _SIG_STRUCTURE))
+        self.assertFalse(_verify_raw(sig, self.pk, hashlib.sha3_256(_SIG_STRUCTURE).digest()))
 
     def test_env_selects_pkcs11_and_pqc_signing_routes_through_it(self):
         pf = tempfile.NamedTemporaryFile("w", delete=False); pf.write(self.pin); pf.close()

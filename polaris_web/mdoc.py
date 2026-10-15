@@ -8,7 +8,10 @@ This is a FORMAT bridge, not a trust bridge. A reader that speaks 18013-5 can pa
 produces, walk its namespaces, and verify each disclosed element's digest against the signed
 Mobile Security Object, which is the whole selective-disclosure mechanism of the standard. It
 CANNOT verify the issuer signature, because that signature is ML-DSA-65 (COSE algorithm -49)
-and 18013-5 mandates ES256, ES384, ES512 or EdDSA.
+and 18013-5 mandates ES256, ES384, ES512 or EdDSA. The signature is what RFC 9964 registers
+-49 as: pure ML-DSA-65 with an empty context over the COSE Sig_structure itself, not over a
+digest of it (-50 is the same for ML-DSA-87), so a verifier that implements RFC 9964 can
+check it with the issuer's key.
 
 That is not an oversight to be fixed by signing classically. Signing classically to satisfy an
 mDL reader would trade the property this entire system exists to have for the appearance of
@@ -60,7 +63,8 @@ DOC_TYPE = "id.polaris.credential.1"
 NAMESPACE = "id.polaris.1"
 DIGEST_ALGORITHM = "SHA-256"
 MSO_VERSION = "1.0"
-# COSE algorithm identifier for ML-DSA-65, the same one WebAuthn registration offers.
+# COSE algorithm identifiers (RFC 9964): ML-DSA-65, the same one WebAuthn registration offers,
+# and ML-DSA-87. Each is pure ML-DSA, empty context, over the Sig_structure itself.
 COSE_ALG_ML_DSA_65 = -49
 COSE_ALG_ML_DSA_87 = -50
 SALT_BYTES = 32
@@ -91,9 +95,15 @@ def _tagged(obj) -> cbor2.CBORTag:
 
 
 def _cose_alg(algorithm: str) -> int:
+    """The COSE algorithm of a parameter set. A set RFC 9964 does not register has none, and
+    is refused rather than labelled -49: a Falcon signature under a protected header that says
+    ML-DSA-65 is a false statement in the part of the document the signature authenticates."""
     if algorithm == "ML-DSA-87":
         return COSE_ALG_ML_DSA_87
-    return COSE_ALG_ML_DSA_65
+    if algorithm == "ML-DSA-65":
+        return COSE_ALG_ML_DSA_65
+    raise ValueError("no COSE algorithm is registered for %r: an mdoc issuer signature is "
+                     "ML-DSA-65 (COSE -49) or ML-DSA-87 (COSE -50), RFC 9964" % (algorithm,))
 
 
 def sig_structure(protected: bytes, payload: bytes) -> bytes:
@@ -102,6 +112,8 @@ def sig_structure(protected: bytes, payload: bytes) -> bytes:
     ["Signature1", protected, external_aad, payload], canonically encoded. Signing the payload
     directly instead is a real and repeated implementation error: it makes the algorithm and
     the protected header unauthenticated, so an attacker can relabel a signature's algorithm.
+    These bytes are signed as they are: under -49 and -50 a digest of them is not what COSE
+    signs (RFC 9964), and a verifier handed a signature over one rejects it.
     """
     return cbor2.dumps(["Signature1", protected, b"", payload], canonical=True)
 
@@ -110,9 +122,12 @@ def build_issuer_signed(elements: dict, algorithm: str, sign, *, valid_from=None
                         valid_until=None, now=None, device_key_cose=None) -> dict:
     """Build the IssuerSigned structure for the given elements.
 
-    `sign` takes the bytes to sign and returns (signature_bytes, algorithm, public_key_hex),
-    which is the shape `pqc_signing.signature_over_message` already has, so the issuing key
-    never comes near this module.
+    `sign` takes the Sig_structure, the bytes to sign, and returns (signature_bytes,
+    algorithm, public_key_hex): `pqc_signing.signature_over_cose_sig_structure`, which signs
+    those bytes themselves with pure ML-DSA, so the issuing key never comes near this module.
+    A signature made under a key (a public key comes back with it) must be of `algorithm`,
+    the set the protected header names; the development placeholder has no key and is
+    labelled as what it is.
     """
     # FORBIDDEN first, and deliberately not merely as a consequence of the vocabulary. If the
     # order were reversed, `token_value` would be refused only for being unknown, and the day
@@ -162,6 +177,13 @@ def build_issuer_signed(elements: dict, algorithm: str, sign, *, valid_from=None
     payload = cbor2.dumps(_tagged(mso), canonical=True)
     protected = cbor2.dumps({1: _cose_alg(algorithm)}, canonical=True)
     sig_bytes, alg, pub = sign(sig_structure(protected, payload))
+    # The protected header named the algorithm before signing, because the signature covers it.
+    # A signer that made its signature under another set made a document that says one thing
+    # and is another, so it is refused here rather than handed to a reader.
+    if pub is not None and alg != algorithm:
+        raise ValueError("the signer made a %s signature for a document whose protected header "
+                         "names %s (COSE %d); refusing to label a signature with an algorithm "
+                         "it was not made with" % (alg, algorithm, _cose_alg(algorithm)))
     # The unprotected header carries the key so a consumer can find it without a directory.
     # It is UNPROTECTED, so a verifier must check it against a trust anchor and never simply
     # use it: a signature verifies against the key it was made with, which proves nothing on
