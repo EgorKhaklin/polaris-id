@@ -1024,10 +1024,18 @@ class CrossAuthorityEdgeWindowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-edge-window.json")))
 
-    def decide(self, window):
+    def decide(self, window, require_signed=False):
         f = self.f
         return pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], [f["manifests"][window]],
-                                         [f["trusted_anchor"]], None, now=f["_fixture"]["now"]).decision
+                                         [f["trusted_anchor"]], None, now=f["_fixture"]["now"],
+                                         require_signed_attestation=require_signed).decision
+
+    def test_requiring_signed_edges_refuses_only_the_unsigned_one(self):
+        """2026-10-15: version 1 manifests carry unsigned edges, so the default accepts one; a
+        relying party that wants the attesting agency's own signature sets the requirement."""
+        self.assertEqual(self.decide("unsigned-open"), "accept")
+        self.assertEqual(self.decide("unsigned-open", require_signed=True), "reject")
+        self.assertEqual(self.decide("open", require_signed=True), "accept")
 
     def test_an_edge_inside_its_window_is_accepted(self):
         self.assertEqual(self.decide("open"), "accept")

@@ -1557,6 +1557,17 @@ class CommandLineExitCodes(unittest.TestCase):
                     self.assertEqual(vz.call_args.kwargs["trusted_anchors"], [key])
                     self.assertEqual(vz.call_args.kwargs["expected_nonce"], 7)
 
+    def test_require_signed_attestation_reaches_the_zero_knowledge_decision(self):
+        """2026-10-15: the command line had no way to ask for a signed trust edge."""
+        from unittest import mock
+        zk = ("--pqc-provider", "auto", "--zk-proof", str(self.blob), "--signature-only", "--nonce", "7")
+        for flags, want in (((), False), (("--require-signed-attestation",), True)):
+            with self.subTest(flags=flags), \
+                    mock.patch.object(V, "verify_cross_authority_zk",
+                                      return_value={"decision": "accept", "reasons": []}) as vz:
+                self.assertEqual(self.main(*zk, *flags), 0)
+                self.assertIs(vz.call_args.kwargs["require_signed_attestation"], want)
+
     def test_a_json_decision_says_what_the_exit_code_says(self):
         """2026-10-01. A zero-knowledge accept held for a trust root or a nonce, and a stapled accept
         held for trust, printed `"decision": "accept"` and exited 2; a script reading the verdict
@@ -1607,6 +1618,7 @@ class CommandLineExitCodes(unittest.TestCase):
                            (("--pack", absent, "--min-anonymity-set", str(V.DEFAULT_MIN_ANONYMITY_SET)),
                             "--min-anonymity-set"),
                            (("--zk-proof", absent, "--verifier-scope", "bank.example"), "--verifier-scope"),
+                           (("--pack", absent, "--require-signed-attestation"), "--require-signed-attestation"),
                            (("--agent-grant", absent, "--nonce", "n-1"), "--nonce"),
                            (("--zk-proof", absent, "--pack", absent), "--pack"),
                            (("--selftest", "--json"), "--json"),
@@ -2161,6 +2173,64 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
         self.assertEqual(self.decide(size=5), "reject")
         self.assertEqual(self.decide(size=5, min_anonymity_set=5), "accept")
         self.assertEqual(self.decide(size=4, min_anonymity_set=5), "reject")
+
+
+@unittest.skipUnless(V._provider_available("oqs") or _cryptography_mldsa(), "no ML-DSA verifier here")
+class CrossAuthorityZkEdgeSignature(unittest.TestCase):
+    """2026-10-15: verify_cross_authority_zk took any edge naming the checkpoint's key, signed
+    well, badly or not at all, while the credential path refused a badly signed edge and let a
+    relying party require a signed one. The edge here is the genuinely signed one in
+    sdk/testdata/federation-edge-window.json; the checkpoint, the manifest's own verdict and the
+    proof are replaced, so only the edge decides."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.loads((ROOT / "sdk" / "testdata" / "federation-edge-window.json").read_text())
+        cls.manifest = cls.f["manifests"]["open"]
+        cls.edge = cls.manifest["attestations"][0]
+
+    def decide(self, edge=None, manifest=None, field="decision", **kw):
+        from unittest import mock
+        edge = self.edge if edge is None else edge
+        manifest = self.manifest if manifest is None else manifest
+        mvr = {"manifest_authentic": True, "fresh": True, "issuer_trusted": True,
+               "authority": manifest["authority"], "attestations": [edge]}
+        zkr = {"bound": True, "proof_verified": True, "nullifier": "ab", "fresh_nullifier": True}
+        checkpoint = {"public_key_hex": self.edge["attested_public_key_hex"],
+                      "epoch": {"root_hex": "00", "number": 1, "committed_count": 20}}
+        with mock.patch.object(V, "verify_epoch_checkpoint",
+                               return_value={"checkpoint_authentic": True, "fresh": True}), \
+                mock.patch.object(V, "verify_manifest", return_value=mvr), \
+                mock.patch.object(V, "verify_zk_against_root", return_value=zkr):
+            return V.verify_cross_authority_zk({}, checkpoint, self.f["_fixture"]["context_id"], [manifest],
+                                               trusted_anchors=[self.f["trusted_anchor"]],
+                                               now=self.f["_fixture"]["now"], **kw)[field]
+
+    def unsigned(self):
+        return {k: v for k, v in self.edge.items() if k not in ("signature_hex", "public_key_hex")}
+
+    def test_a_signed_edge_is_accepted_with_or_without_the_requirement(self):
+        self.assertEqual(self.decide(), "accept")
+        self.assertEqual(self.decide(require_signed_attestation=True), "accept")
+
+    def test_an_unsigned_edge_is_accepted_by_default_and_refused_when_signatures_are_required(self):
+        """Version 1 manifests carry unsigned edges, so the default accepts one; a relying party
+        that wants the attesting agency's own signature asks for it."""
+        self.assertEqual(self.decide(edge=self.unsigned()), "accept")
+        self.assertEqual(self.decide(edge=self.unsigned(), require_signed_attestation=True), "reject")
+
+    def test_the_verdict_says_whether_the_edge_was_signed(self):
+        """WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did."""
+        self.assertIs(self.decide(field="attestation_signed"), True)
+        self.assertIs(self.decide(edge=self.unsigned(), field="attestation_signed"), False)
+
+    def test_a_badly_signed_edge_is_refused(self):
+        sig = self.edge["signature_hex"]
+        bad = dict(self.edge, signature_hex=("00" if sig[:2] != "00" else "01") + sig[2:])
+        self.assertEqual(self.decide(edge=bad), "reject")
+
+    def test_an_edge_signed_by_a_key_the_manifest_does_not_anchor_is_refused(self):
+        self.assertEqual(self.decide(manifest=dict(self.manifest, anchors=[])), "reject")
 
 
 ABSENT_SIZE = "the checkpoint has no committed_count"

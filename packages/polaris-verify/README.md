@@ -112,6 +112,12 @@ exchange requests, receipts and mints, holder bindings and proofs, and cross-aut
 signature is genuine but leaves `issuer_trusted` unanswered, which is the honest verdict:
 a genuine signature by a key you do not trust is authentic and worthless.
 
+A trust edge between two authorities may carry no signature of the attesting agency: version 1
+manifests carry such edges, and the verifier accepts one by default and reports
+`attestation_signed: false`. A relying party should require that agency's signature:
+`--require-signed-attestation` beside `--zk-proof`, or `require_signed_attestation=True` in
+`verify_cross_authority` and `verify_cross_authority_zk`.
+
 ### Configuring a trust root
 
 The anchor file is a JSON list of hex keys, or an object carrying one under

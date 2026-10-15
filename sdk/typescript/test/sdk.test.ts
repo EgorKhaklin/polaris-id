@@ -1018,8 +1018,9 @@ test("a manifest set that is not an array is refused, never thrown", () => {
 // authority time-boxed kept granting acceptance after the box closed while the manifest carrying
 // it was fresh (WIRE-SPEC 3.14). One signed edge in three windows, each under a fresh manifest.
 const EDGE = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "federation-edge-window.json"), "utf8"));
-const edgeDecide = (w: string) => verifyCrossAuthority(EDGE.pack, EDGE._fixture.context_id,
-  [EDGE.manifests[w]], [EDGE.trusted_anchor], null, EDGE._fixture.now).decision;
+const edgeDecide = (w: string, requireSigned = false) => verifyCrossAuthority(EDGE.pack,
+  EDGE._fixture.context_id, [EDGE.manifests[w]], [EDGE.trusted_anchor], null, EDGE._fixture.now,
+  requireSigned).decision;
 
 test("a signed edge counts only inside its own window", () => {
   assert.equal(edgeDecide("open"), "accept");
@@ -1035,6 +1036,14 @@ test("an unsigned edge is held to the window it states", () => {
   assert.equal(edgeDecide("unsigned-closed"), "reject", "an unsigned edge past its valid_until");
   assert.equal(edgeDecide("unsigned-unreadable"), "reject", "an unsigned edge whose valid_until cannot be read");
   assert.equal(edgeDecide("unsigned-no-window"), "accept", "a legacy edge that states no window");
+});
+
+// 2026-10-15: version 1 manifests carry unsigned edges, so the default accepts one; a relying
+// party that wants the attesting agency's own signature sets requireSignedAttestation.
+test("requiring signed edges refuses only the unsigned one", () => {
+  assert.equal(edgeDecide("unsigned-open"), "accept");
+  assert.equal(edgeDecide("unsigned-open", true), "reject");
+  assert.equal(edgeDecide("open", true), "accept", "a signed edge meets the requirement");
 });
 
 // 2026-09-23: a held-out round on verifyTimestampAnchor. The published witnessed anchor covers

@@ -79,7 +79,7 @@ language.
   timestamp, registry, exchange request, exchange receipt, mint statement, signed document,
   ID token and trust list (authenticity, freshness where windowed, and the artifact's
   commitment or self-consistency).
-- `verify_cross_authority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted.
+- `verify_cross_authority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted. By default it accepts a trust edge the attesting agency did not sign, as version 1 manifests carry; a relying party should pass `require_signed_attestation=True` to require that agency's signature.
 - `verify_exchange_request(...)`, `verify_exchange_receipt(...)`, `verify_exchange_mint(...)`: an
   exchange artifact in use: whether it is by the party expected, whether the requester was
   attested in its context at a stated instant (and by whom, for a receipt), and whether the

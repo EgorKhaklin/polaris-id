@@ -1048,6 +1048,36 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None, now=Non
     return v
 
 
+def _edge_signature_admits(att, manifest, mv, expected_key, now, require_signed):
+    """`(admitted, signed)` for one attestation edge of a trusted manifest: the signature half
+    of the edge rule, shared by the credential path and the zero-knowledge path.
+
+    P9.5: an edge is either signed by the agency that made it or the operator's word carried by
+    the manifest's signature. A signed edge is the attesting agency's only if one of ITS roots
+    signed it: the key must be among the active anchors of the manifest carrying it. Until
+    2026-09-30 any key's valid signature with the right agency id counted as the agency's, so
+    `require_signed_attestation` was met by a stranger. A present-but-bad signature is worse
+    than none and refuses the edge. An edge whose own window has closed is not an edge, however
+    fresh the manifest carrying it: before 2026-09-17 nothing read `valid_until` and a one-year
+    edge granted acceptance six years past its end. With `require_signed`, an unsigned (legacy)
+    edge is refused. Until 2026-10-15 the zero-knowledge path applied none of this: it took any
+    edge naming the key, so a badly signed edge counted there and the opt-in did not exist."""
+    agency = (mv["authority"] or {}).get("agency_id") if isinstance(mv["authority"], dict) else None
+    av = verify_attestation(att, attesting_agency_id=agency, expected_key=expected_key, now=now)
+    roots = {_hex_text(a.get("public_key_hex")) for a in (manifest.get("anchors") or [])
+             if isinstance(a, dict) and _status_of(a) == "active"}
+    if av["signed"] and not (av["attestation_authentic"]
+                             and av["attester_matches"] is not False
+                             and av["key_matches"] is not False
+                             and _hex_in(att.get("public_key_hex"), roots)):
+        return False, True
+    if av["expired"]:
+        return False, bool(av["signed"])
+    if require_signed and not av["signed"]:
+        return False, False
+    return True, bool(av["signed"])
+
+
 def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                            max_window_seconds=None, trusted_anchors=None,
                            revocation_feed=None, trust_list=None,
@@ -1092,36 +1122,17 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
             # that left out `context_id` was accepted under another context's trust.
             same_ctx = _same_id(att.get("context_id"), context_id)
             if same_key and same_ctx:
-                # P9.5: is this edge signed by the agency that made it, or is it the
-                # operator's word carried by the manifest's signature?
-                agency = (mv["authority"] or {}).get("agency_id") if isinstance(mv["authority"], dict) else None
-                av = verify_attestation(att, attesting_agency_id=agency, expected_key=token_key,
-                                        now=now)
-                # A signed edge is the attesting agency's only if one of ITS roots signed it: the
-                # key must be among the active anchors of the (trusted) manifest carrying it.
-                # Until 2026-09-30 any key's valid signature with the right agency id counted
-                # as the agency's, so `require_signed_attestation` was met by a stranger.
-                roots = {_hex_text(a.get("public_key_hex")) for a in (manifest.get("anchors") or [])
-                         if isinstance(a, dict) and _status_of(a) == "active"}
-                if av["signed"] and not (av["attestation_authentic"]
-                                         and av["attester_matches"] is not False
-                                         and av["key_matches"] is not False
-                                         and _hex_in(att.get("public_key_hex"), roots)):
-                    continue   # a present-but-bad signature is worse than none: refuse the edge
-                # An edge whose own window has closed is not an edge, however fresh the
-                # manifest carrying it. Before 2026-09-17 nothing read `valid_until` and a
-                # one-year edge granted acceptance six years past its end.
-                if av["expired"]:
+                admitted, signed = _edge_signature_admits(att, manifest, mv, token_key, now,
+                                                          require_signed_attestation)
+                if not admitted:
                     continue
                 # Signed or not. `verify_attestation` returns before reading the window of an
                 # unsigned (legacy) edge, so until 2026-09-28 an edge whose own manifest said it
                 # had ended still counted here, while the exchange and zero-knowledge paths
                 # already refused it. A legacy edge that states no window stays open.
-                if not av["signed"] and not _attestation_window_open(att, now):
+                if not signed and not _attestation_window_open(att, now):
                     continue
-                if require_signed_attestation and not av["signed"]:
-                    continue
-                attestation_signed = bool(av["signed"])
+                attestation_signed = signed
                 via = mv["authority"]
                 break
         if via:
@@ -1632,7 +1643,8 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
 
 def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundle,
                                       now=None, max_window_seconds=None,
-                                      trusted_anchors=None, publisher_key=None):
+                                      trusted_anchors=None, publisher_key=None,
+                                      require_signed_attestation=False):
     """Decide a FOREIGN credential OFFLINE using an aggregate status bundle (P3.2c) as the
     status transport, instead of the issuer's individually-fetched revocation feed. The
     answer equals what the issuer's own feed would give; the aggregator cannot change it.
@@ -1680,7 +1692,8 @@ def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundl
     decision = verify_cross_authority(pack, context_id, trusted_manifests, now=now,
                                       max_window_seconds=max_window_seconds,
                                       trusted_anchors=trusted_anchors,
-                                      revocation_feed=member.get("revocation_feed"))
+                                      revocation_feed=member.get("revocation_feed"),
+                                      require_signed_attestation=require_signed_attestation)
     decision["in_bundle"] = True
     decision["bundle_ok"] = True
     cp = member.get("epoch_checkpoint")
@@ -1834,7 +1847,8 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
 def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, trusted_manifests,
                               now=None, max_window_seconds=None, trusted_anchors=None,
                               expected_nonce=None, zk_binary=None, expected_scope=None,
-                              seen_nullifiers=None, min_anonymity_set=DEFAULT_MIN_ANONYMITY_SET):
+                              seen_nullifiers=None, min_anonymity_set=DEFAULT_MIN_ANONYMITY_SET,
+                              require_signed_attestation=False):
     """Decide a HOLDER's zero-knowledge inclusion proof against a FOREIGN authority's epoch,
     OFFLINE (P3.2d). Accept iff: (1) the foreign epoch checkpoint is authentic and fresh, and
     signed by an authority a trusted manifest attests IN the presented context -- so the epoch
@@ -1861,13 +1875,13 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
     base = {"decision": "reject",
             "checkpoint_authentic": bool(cv["checkpoint_authentic"] and cv["fresh"]),
             "issuer_trusted": None, "bound": None, "proof_verified": None, "nullifier": None,
-            "fresh_nullifier": None, "via": None, "reasons": []}
+            "fresh_nullifier": None, "via": None, "attestation_signed": None, "reasons": []}
     if not (cv["checkpoint_authentic"] and cv["fresh"]):
         return {**base, "reasons": ["the foreign epoch checkpoint is not authentic or not fresh"]}
     cp_key = _hex_text((epoch_checkpoint or {}).get("public_key_hex")) if isinstance(epoch_checkpoint, dict) else None
     if not isinstance(trusted_manifests, (list, tuple)):
         trusted_manifests = []
-    via = None
+    via = attestation_signed = None
     for manifest in trusted_manifests:
         mv = verify_manifest(manifest, now=now, max_window_seconds=max_window_seconds,
                              trusted_anchors=trusted_anchors)
@@ -1881,11 +1895,15 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
             if (cp_key is not None and _hex_text(att.get("attested_public_key_hex")) == cp_key
                     and _same_id(att.get("context_id"), context_id)
                     and _attestation_window_open(att, now)):
-                via = mv["authority"]
-                break
+                admitted, signed = _edge_signature_admits(att, manifest, mv, cp_key, now,
+                                                          require_signed_attestation)
+                if admitted:
+                    via, attestation_signed = mv["authority"], signed
+                    break
         if via:
             break
     base["issuer_trusted"] = bool(via)
+    base["attestation_signed"] = attestation_signed
     if not via:
         return {**base, "reasons": ["no trusted authority attests to the checkpoint's issuer in this context"]}
     epoch = (epoch_checkpoint.get("epoch") if isinstance(epoch_checkpoint, dict) else None) or {}
@@ -5605,7 +5623,8 @@ _MODE_FLAGS = {
     "--presentation": {"presentation", "issuer_anchor", "trusted_anchor", "max_window", "context",
                        "nonce", "verifier_scope", "signature_only", "json"},
     "--zk-proof": {"zk_proof", "epoch_checkpoint", "trusted_manifest", "trusted_anchor", "issuer_anchor",
-                   "context", "nonce", "max_window", "min_anonymity_set", "signature_only", "json"},
+                   "context", "nonce", "max_window", "min_anonymity_set", "require_signed_attestation",
+                   "signature_only", "json"},
     "--pack with --status-assertion": {"pack", "status_assertion", "max_window", "issuer_anchor",
                                        "trusted_anchor", "signature_only", "json"},
     "--pack without --status-assertion": {"pack", "issuer_anchor", "trusted_anchor", "signature_only",
@@ -5699,6 +5718,9 @@ def main(argv=None):
                          "(default %(default)s, the issuing authority's own default)")
     ap.add_argument("--trusted-manifest", action="append",
                     help="a federation manifest the relying party trusts (repeatable)")
+    ap.add_argument("--require-signed-attestation", action="store_true",
+                    help="with --zk-proof, count only an attestation edge signed by the attesting "
+                         "agency; without it a version 1 unsigned edge is accepted")
     ap.add_argument("--trusted-anchor", help="an anchor public key hex the relying party trusts")
     ap.add_argument("--context", type=int, help="the presented context id (for --zk-proof); with "
                                                 "--agent-grant, this service's context")
@@ -5853,7 +5875,8 @@ def main(argv=None):
             return 3
         verdict = verify_cross_authority_zk(
             proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
-            trusted_anchors=anchor, expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set)
+            trusted_anchors=anchor, expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set,
+            require_signed_attestation=args.require_signed_attestation)
         # The rules of every other path. --trusted-anchor alone reached this path, and with no
         # trust root every manifest named was trusted: a manifest is its authority's word about
         # itself (WIRE-SPEC 3.1). And a proof checked against no challenge is replayable, as a
