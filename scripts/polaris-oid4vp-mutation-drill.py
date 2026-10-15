@@ -184,6 +184,11 @@ NAMED_MUTANTS = (
     ("sdjwt:host-spelling-unchecked", "polaris_oid4vp/sdjwt.py",
      "                    if not _plain_host(value, form is x509.DNSName):\n",
      "                    if False:\n"),
+    # Both JWE documents are bounded in size and refuse NaN and Infinity.
+    ("jwe:documents-unbounded", "polaris_oid4vp/jwe.py",
+     "    if limit is not None and len(raw) > limit:\n", "    if False:\n"),
+    ("jwe:non-finite-numbers-read", "polaris_oid4vp/jwe.py",
+     "    if not finite:\n        return json.loads(text)\n", "    return json.loads(text)\n"),
 )
 
 

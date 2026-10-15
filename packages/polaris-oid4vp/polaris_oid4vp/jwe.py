@@ -39,7 +39,7 @@ import base64
 import json
 import struct
 
-from .sdjwt import MAX_JSON_DEPTH, _nesting_depth
+from .sdjwt import MAX_JSON_BYTES, MAX_JSON_DEPTH, _nesting_depth
 
 try:
     from cryptography.exceptions import InvalidTag
@@ -59,8 +59,15 @@ ACCEPTED_ALG = "ECDH-ES"
 #: only open one is advertising something untrue.
 ACCEPTED_ENC = {"A128GCM": 16, "A256GCM": 32}
 
+#: The largest protected header and decrypted response this module parses, in bytes. The header
+#: is held to what `sdjwt.py` allows any one JSON document; the response carries the vp_token, a
+#: presentation of up to 256 KiB (`sdjwt.MAX_PRESENTATION_BYTES`), and is held to `serve`'s body
+#: limit. Until 2026-10-15 both were parsed at any size, and NaN and Infinity parsed as numbers.
+MAX_PROTECTED_HEADER_BYTES = MAX_JSON_BYTES
+MAX_RESPONSE_BYTES = 1024 * 1024
 
-def _loads_depth_bounded(raw, what):
+
+def _loads_depth_bounded(raw, what, limit=None, finite=False):
     """`json.loads`, refusing before parsing a document nested deeper than `sdjwt.py` allows.
 
     `sdjwt.py` and `status.py` have bounded nesting depth since 2026-09-17 and -19; this
@@ -70,12 +77,24 @@ def _loads_depth_bounded(raw, what):
     Both documents are the sender's to write: the protected header in the clear, and the body
     under a key the request object publishes. Bytes are decoded the way `json.loads` decodes
     them, so no document that parsed before is read differently.
+
+    `limit` refuses a document of more than that many bytes (characters, for a str) before it is
+    decoded, and `finite` refuses the bare literals NaN, Infinity and -Infinity, which are not
+    JSON and which `json.loads` reads as floats, as `sdjwt._json_bounded` does. The two JWE
+    documents are read with both.
     """
+    if limit is not None and len(raw) > limit:
+        raise ValueError("the %s is %d bytes, over the %d byte limit" % (what, len(raw), limit))
     text = (raw.decode(json.detect_encoding(raw), "surrogatepass")
             if isinstance(raw, (bytes, bytearray)) else raw)
     if _nesting_depth(text) > MAX_JSON_DEPTH:
         raise ValueError("the %s nests deeper than %d levels" % (what, MAX_JSON_DEPTH))
-    return json.loads(text)
+    if not finite:
+        return json.loads(text)
+
+    def _no_constants(name):
+        raise ValueError("the %s contains the non-JSON literal %s" % (what, name))
+    return json.loads(text, parse_constant=_no_constants)
 
 
 class JweError(Exception):
@@ -162,7 +181,8 @@ def decrypt_compact(token, private_key):
     protected_b64, encrypted_key, iv_b64, ciphertext_b64, tag_b64 = parts
 
     try:
-        header = _loads_depth_bounded(b64u_decode(protected_b64), "protected header")
+        header = _loads_depth_bounded(b64u_decode(protected_b64), "protected header",
+                                      limit=MAX_PROTECTED_HEADER_BYTES, finite=True)
     except (ValueError, json.JSONDecodeError) as exc:
         raise JweError("the protected header does not decode: %s" % exc) from exc
     if not isinstance(header, dict):
@@ -237,7 +257,8 @@ def decrypt_response(token, private_key):
     """The same, decoded as the JSON authorization response OpenID4VP section 8 defines."""
     plaintext = decrypt_compact(token, private_key)
     try:
-        body = _loads_depth_bounded(plaintext, "decrypted response")
+        body = _loads_depth_bounded(plaintext, "decrypted response", limit=MAX_RESPONSE_BYTES,
+                                    finite=True)
     except (ValueError, json.JSONDecodeError) as exc:
         raise JweError("the decrypted response is not JSON: %s" % exc) from exc
     if not isinstance(body, dict):
