@@ -2187,7 +2187,8 @@ def check_local_gate_covers_ci(root: pathlib.Path) -> list[Finding]:
 
     ci: set[str] = set()
     for line in cov.splitlines():
-        if not re.match(r"\s*(run|run_standalone)\s", line):
+        # `mine && run ...` since 2026-10-15: the coverage shards each run every third suite.
+        if not re.match(r"\s*(?:mine\s*&&\s*)?(run|run_standalone)\s", line):
             continue
         for tok in re.findall(r"\b((?:[\w.]+\.)?test_\w+)\b", line):
             ci.add(tok.split("/")[-1].removesuffix(".py"))
@@ -8689,6 +8690,28 @@ def check_coverage_gated(root: pathlib.Path) -> list[Finding]:
     for floor in ("COVERAGE_FLOOR", "BRANCH_FLOOR"):
         if floor not in ci:
             return _fail("coverage_gate", f"CI runs coverage without setting {floor}")
+    # 2026-10-15: CI runs the suites in shards. A shard measures a third of the suites, so the floors
+    # mean something only where every shard's data is combined: the step that runs --combine must
+    # carry them, name the same number of shards the matrix runs, and the script must refuse a
+    # missing shard rather than combine what arrived.
+    steps = re.split(r"(?m)^(?=      - )", ci)
+    shard_steps = [b for b in steps if re.search(r"polaris-coverage\.sh[^\n]*--shard", b)]
+    if shard_steps:
+        n = re.search(r"\$\{\{\s*matrix\.shard\s*\}\}/(\d+)", "".join(shard_steps))
+        combine = [b for b in steps if re.search(r"polaris-coverage\.sh[^\n]*--combine", b)]
+        if not combine:
+            return _fail("coverage_gate", "CI runs coverage in shards and never combines them, so no floor sees "
+                                          "the whole measurement")
+        of = re.search(r"--combine[^\n]*--of\s+(\d+)", combine[0])
+        if not n or not of or n.group(1) != of.group(1):
+            return _fail("coverage_gate", "the combining step must name the number of shards the matrix runs "
+                                          "(--of N, with ${{ matrix.shard }}/N on the shards)")
+        if not all(f in combine[0] for f in ("COVERAGE_FLOOR", "BRANCH_FLOOR")):
+            return _fail("coverage_gate", "the floors must be set on the step that combines the shards, where the "
+                                          "whole measurement is")
+        if "--combine" not in sh or "is missing" not in sh or "holds no data file" not in sh:
+            return _fail("coverage_gate", "polaris-coverage.sh must refuse to combine without every shard's data "
+                                          "(a missing shard, one with no data file)")
     if "fail-under-lines" not in ci:
         return _fail("coverage_gate",
                      "CI does not gate the Rust library coverage (cargo llvm-cov "
@@ -20274,6 +20297,13 @@ def check_triggers_are_mutation_tested(root: pathlib.Path) -> list[Finding]:
         problems.append("the drill does not count its cases (v9.403)")
     if "polaris-trigger-mutation-drill.py" not in ci:
         problems.append("CI does not run the drill, so the mutation happens only by hand")
+    # Both modes, 2026-10-15: they left the product suite's core part for a job each, and the move
+    # must not drop one. The refusal mode deletes one RAISE inside a trigger function; dropping the
+    # whole trigger is the other question.
+    elif not re.search(r"polaris-trigger-mutation-drill\.py[ \t]*(\n|$)", ci) \
+            or not re.search(r"polaris-trigger-mutation-drill\.py[ \t]+--refusals\b", ci):
+        problems.append("CI must run the drill in both modes, each trigger dropped (no flag) and each refusal "
+                        "inside a trigger function deleted (--refusals)")
     if problems:
         return _fail(name, "; ".join(problems[:3]))
     declared = len(re.findall(r'(?m)^\s+"trg_\w+",', drill))
@@ -26429,6 +26459,200 @@ def check_publishable_packages_keep_their_dependency_budget(root: pathlib.Path) 
                      % (len(_PACKAGE_DEPENDENCY_BUDGET), total))
 
 
+#: Every name a published manifest asks an installer to fetch, and the project that name
+#: must be on its registry. A registry resolves a NAME, never a project: polaris-verify
+#: 0.1.0 and 1.0.0rc8 shipped `oqs = ["oqs>=0.10"]`, and PyPI's `oqs` is an unrelated
+#: expression interpreter whose wheel installs a top-level `oqs` package, the import name
+#: liboqs-python uses (2026-10-15). The value is the source repository the registry's own
+#: metadata named when the entry was written, read anonymously; adding a name means doing
+#: that again. Python names are normalized as PEP 503 does.
+_PUBLISHED_DEPENDENCY_PROJECTS = {
+    "pypi:cryptography": "github.com/pyca/cryptography",
+    "pypi:liboqs-python": "github.com/open-quantum-safe/liboqs-python",
+    "pypi:psycopg2-binary": "github.com/psycopg/psycopg2",
+    "pypi:setuptools": "github.com/pypa/setuptools",
+    "pypi:werkzeug": "github.com/pallets/werkzeug",
+    "npm:@noble/post-quantum": "github.com/paulmillr/noble-post-quantum",
+}
+
+#: An install instruction that fetches the wrong project for liboqs: PyPI's `oqs` is the
+#: unrelated package above, and a bare `liboqs` is unclaimed there, so anyone may claim it.
+#: Case-blind, as PyPI's names are.
+_WRONG_LIBOQS_INSTALL = re.compile(
+    r"\bpip3?\s+install\b[^\n|;&]*?(?<![\w.\[,-])['\"]?(?:lib)?oqs(?![\w.-])", re.I)
+_WRONG_LIBOQS_REQUIREMENT = re.compile(r"^\s*(?:lib)?oqs(?![\w.-])", re.M | re.I)
+
+
+def _toml_without_comments(text: str) -> str:
+    """`text` with each `#` comment removed; a `#` inside a quoted string is kept."""
+    out = []
+    for line in text.splitlines():
+        quote, cut = None, len(line)
+        for i, ch in enumerate(line):
+            if quote:
+                if ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "#":
+                cut = i
+                break
+        out.append(line[:cut])
+    return "\n".join(out)
+
+
+def _toml_arrays(body: str) -> list:
+    """(key, [strings]) for each `key = [ ... ]` in one TOML table body, brackets balanced."""
+    arrays = []
+    for m in re.finditer(r"^\s*([\w.\"'-]+)\s*=\s*\[", body, re.M):
+        depth, i = 0, m.end() - 1
+        while i < len(body):
+            if body[i] == "[":
+                depth += 1
+            elif body[i] == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        arrays.append((m.group(1).strip("\"'"),
+                       re.findall(r'"([^"]*)"|\'([^\']*)\'', body[m.end():i])))
+    return [(k, [a or b for a, b in v]) for k, v in arrays]
+
+
+def _pyproject_requirement_names(text: str):
+    """(names, problem): every requirement name in [build-system].requires,
+    [project].dependencies and [project.optional-dependencies], PEP 503-normalized."""
+    text = _toml_without_comments(text)
+    if re.search(r"^\s*optional-dependencies\s*=", text, re.M):
+        return set(), "declares optional-dependencies inline, a form this check does not read"
+    if re.search(r"^\s*dynamic\s*=\s*\[[^\]]*[\"'](?:optional-)?dependencies[\"']", text, re.M):
+        return set(), "declares its dependencies dynamic, so the manifest does not list them"
+    tables, current = {}, None
+    for line in text.splitlines():
+        h = re.match(r"^\s*\[([^\[\]]+)\]\s*$", line)
+        if h:
+            current = h.group(1).strip()
+            tables.setdefault(current, [])
+        elif current is not None:
+            tables[current].append(line)
+    reqs = []
+    for table, key in (("build-system", "requires"), ("project", "dependencies"),
+                       ("project.optional-dependencies", None)):
+        for k, values in _toml_arrays("\n".join(tables.get(table, []))):
+            if key is None or k == key:
+                reqs.extend(values)
+    names = set()
+    for req in reqs:
+        m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", req)
+        if not m:
+            return set(), "has a requirement this check cannot name: %r" % req
+        names.add(re.sub(r"[-_.]+", "-", m.group(1)).lower())
+    return names, None
+
+
+def _published_manifests(root: pathlib.Path):
+    """(manifests, problem): the manifest of every package publish.yml builds or packs."""
+    text = _read_raw(root, ".github/workflows/publish.yml")
+    if not text:
+        return [], ".github/workflows/publish.yml is missing"
+    manifests = []
+    for line in text.splitlines():
+        if re.search(r"\bpython3? -m build\b", line):
+            manifests.append("%s/pyproject.toml" % line.split()[-1].rstrip("/"))
+        elif re.search(r"\bnpm pack\b", line):
+            m = re.search(r"\bcd (\S+) && npm pack\b", line)
+            if not m:
+                return [], ("publish.yml packs npm without `cd <dir> && npm pack`, so this check "
+                            "cannot tell which package.json is published: %s" % line.strip())
+            manifests.append("%s/package.json" % m.group(1).rstrip("/"))
+    if not manifests:
+        return [], ("publish.yml builds no package this check can read (no `python -m build` "
+                    "and no `npm pack` line), so it would pass having checked nothing")
+    return manifests, None
+
+
+def check_published_dependency_names_are_the_intended_projects(root: pathlib.Path) -> list[Finding]:
+    """Every dependency a published package declares is the project we mean, by name.
+
+    The dependency budget above counts what a package installs; it read polaris-verify's
+    runtime list as empty and was right, while its `oqs` extra named an unrelated project.
+    This check reads every name an installer fetches for a published package (build
+    requirements, runtime dependencies, every extra; npm dependencies, peer and optional
+    ones), from the manifests publish.yml actually builds, and holds each to
+    `_PUBLISHED_DEPENDENCY_PROJECTS`. An unknown name, a missing manifest, a manifest with
+    no names, an empty build list and a stale entry all fail. So does a `pip install` line
+    (in a text file or a Dockerfile) or a requirement file anywhere in the tree that names
+    `oqs` or a bare `liboqs`, in any case.
+    """
+    name = "published_dependency_names"
+    manifests, problem = _published_manifests(root)
+    if problem:
+        return _fail(name, problem)
+    findings, declared = [], set()
+    for rel in manifests:
+        text = _read_raw(root, rel)
+        if not text:
+            findings.extend(_fail(name, "%s is built by publish.yml but missing" % rel))
+            continue
+        if rel.endswith("package.json"):
+            try:
+                doc = json.loads(text)
+            except ValueError:
+                findings.extend(_fail(name, "%s is not valid JSON" % rel))
+                continue
+            names = {"npm:" + n.lower() for key in ("dependencies", "peerDependencies",
+                                                     "optionalDependencies")
+                     for n in (doc.get(key) or {})}
+        else:
+            raw, why = _pyproject_requirement_names(text)
+            if why:
+                findings.extend(_fail(name, "%s %s" % (rel, why)))
+                continue
+            names = {"pypi:" + n for n in raw}
+        if not names:
+            findings.extend(_fail(name, "%s declares no dependency at all, not even a build "
+                                        "requirement: the parse found nothing" % rel))
+            continue
+        unknown = sorted(names - set(_PUBLISHED_DEPENDENCY_PROJECTS))
+        if unknown:
+            findings.extend(_fail(name, "%s declares %s, which _PUBLISHED_DEPENDENCY_PROJECTS does "
+                                        "not list. A registry installs whatever project holds a "
+                                        "name: read the registry's metadata, confirm the source "
+                                        "repository, and add the name with it"
+                                        % (rel, ", ".join(unknown))))
+        declared |= names
+    if findings:
+        return findings
+    stale = sorted(set(_PUBLISHED_DEPENDENCY_PROJECTS) - declared)
+    if stale:
+        return _fail(name, "_PUBLISHED_DEPENDENCY_PROJECTS lists %s, which no published manifest "
+                           "declares now: remove the entry" % ", ".join(stale))
+    wrong = []
+    for rel in _tracked_files(root):
+        parts = rel.split("/")
+        if any(d in _NAMED_REF_SKIP_DIRS for d in parts) or rel in _NAMED_REF_EXEMPT:
+            continue
+        base = parts[-1]
+        is_req = base.startswith("requirements") and base.endswith((".txt", ".in"))
+        is_image = base.startswith(("Dockerfile", "Containerfile"))
+        if (not is_req and not is_image
+                and pathlib.PurePosixPath(rel).suffix.lower() not in _NAMED_REF_EXTS):
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _WRONG_LIBOQS_INSTALL.search(text) or (is_req and _WRONG_LIBOQS_REQUIREMENT.search(text)):
+            wrong.append(rel)
+    if wrong:
+        return _fail(name, "%s fetch PyPI's `oqs` or a bare `liboqs`: neither is liboqs. `oqs` is "
+                           "an unrelated project and `liboqs` is unclaimed; the bindings are "
+                           "`liboqs-python`" % ", ".join(wrong))
+    return _ok(name, "%d published manifests declare %d dependency names, each the project "
+                     "_PUBLISHED_DEPENDENCY_PROJECTS records, and no `pip install` line or "
+                     "requirement file in the tree names `oqs` or a bare `liboqs`"
+                     % (len(manifests), len(declared)))
+
 def _seeded_algorithms(root: pathlib.Path) -> dict:
     """name -> (level, public_key_size, signature_size, nist_standard) from the seed."""
     sql = _read(root, "polaris_sql/04_data.sql")
@@ -27173,6 +27397,184 @@ def check_pre_commit_folded_entries_stay_one_line(root: pathlib.Path) -> list[Fi
     return _ok(name, "of %d hook entries, %d use a folded scalar and every one keeps its "
                      "continuation lines at a single indentation, so each folds back into "
                      "the one command it reads as" % (len(entries), len(folded)))
+
+
+#: The pre-commit stages a tree receipt may stand in for are the ones this script runs; these
+#: hooks are cheap and always run, so no receipt may ever stand in for them.
+_TREE_GATE_REL = "scripts/polaris-tree-gate.py"
+_PRECOMMIT_ALWAYS_RUN = ("ruff", "em-dash-block-new", "no-secret-in-prod-compose")
+
+
+def _tree_gate_hook_returns(fn: ast.FunctionDef) -> tuple[int, list[int], bool]:
+    """In `hook()`: how many passing returns before the stage runs sit under `if skip:`, the
+    lines of those that do not, and whether `skip` comes from `verdict(...)`."""
+    runs = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name) and n.func.id == "run_stage"]
+    if not runs:
+        return 0, [], False
+    first_run = min(runs)
+    from_verdict = any(
+        isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)
+        and isinstance(n.value.func, ast.Name) and n.value.func.id == "verdict"
+        and any(isinstance(t, ast.Tuple) and t.elts and isinstance(t.elts[0], ast.Name)
+                and t.elts[0].id == "skip" for t in n.targets)
+        for n in ast.walk(fn))
+    guarded, unguarded = [0], []
+
+    def walk(stmts, under_skip):
+        for st in stmts:
+            if isinstance(st, ast.Return) and st.lineno < first_run:
+                v = st.value
+                if isinstance(v, ast.Constant) and type(v.value) is int and v.value != 0:
+                    continue
+                if under_skip:
+                    guarded[0] += 1
+                else:
+                    unguarded.append(st.lineno)
+            elif isinstance(st, ast.If):
+                is_skip = isinstance(st.test, ast.Name) and st.test.id == "skip"
+                walk(st.body, under_skip or is_skip)
+                walk(st.orelse, under_skip)
+            else:
+                for field in ("body", "orelse", "finalbody", "handlers"):
+                    inner = getattr(st, field, None)
+                    if isinstance(inner, list):
+                        walk([s for s in inner if isinstance(s, ast.stmt)]
+                             + [s for h in inner if isinstance(h, ast.ExceptHandler)
+                                for s in h.body], under_skip)
+    walk(fn.body, False)
+    return guarded[0], unguarded, from_verdict
+
+
+def check_precommit_tree_receipts_skip_only_a_measured_pass(root: pathlib.Path) -> list[Finding]:
+    """A tree receipt may stand in for a hook stage only where a pass was measured.
+
+    The four heavy pre-commit stages run through scripts/polaris-tree-gate.py, which skips a
+    stage when a receipt in the common git dir records a pass of it measured on an EXPORT of
+    the identical tree, by the same command, under the same interpreter, pytest, ruff and set
+    of installed distributions (2026-10-14: the hook was
+    re-measuring trees already measured on an export minutes before, 36 minutes of a 65-minute
+    stretch). A cache in front of a gate is a way for the gate to stop gating, so this holds
+    the three ways it could, none of which a passing commit would show:
+
+      - the wiring: every hook routed through the script names ITS OWN stage, the script's
+        stages are exactly the routed hooks, and ruff and the greps are never routed, so a
+        receipt for one stage can never answer for another and the cheap hooks always run;
+      - the decision: the script's own `verdict` is asked about a receipt for another tree,
+        a recorded failure, a missing entry, an entry measured on the work tree rather than
+        an export (which sees untracked files), a changed command, another interpreter, tool
+        or distribution set, a malformed table and no receipt at all, and must run the stage
+        for every one; and must SKIP the matching export pass, or this probe would be
+        measuring a cache that never hits;
+      - the path to it: in `hook()`, every passing return before the stage runs sits under
+        `if skip:` with `skip` taken from `verdict(...)`, so no early exit bypasses the
+        decision; and a receipt path built from a tree id that is not one is refused.
+
+    The behaviour end to end (a scratch repository, the linked-worktree case, the hook's
+    GIT_INDEX_FILE) is scripts/test_tree_gate.py's; this is what keeps it from drifting
+    between the script and the config without that suite being asked.
+    """
+    name = "precommit_tree_receipts"
+    cfg = _read_raw(root, ".pre-commit-config.yaml")
+    src = _read_raw(root, _TREE_GATE_REL)
+    if not cfg or not src:
+        return _fail(name, ".pre-commit-config.yaml or %s is missing" % _TREE_GATE_REL)
+    parts = re.split(r"^\s*-\s*id:\s*(\S+)\s*$", cfg, flags=re.M)
+    blocks = {parts[i]: parts[i + 1] for i in range(1, len(parts) - 1, 2)}
+    if len(blocks) < 3:
+        return _fail(name, "only %d hook(s) parsed out of .pre-commit-config.yaml; the parse "
+                           "has broken and this check would pass by finding nothing" % len(blocks))
+    routed = {}
+    for hid, body in blocks.items():
+        # The live `entry:` line only. A comment naming the gate is not wiring: grepping the
+        # whole block, this passed with every routed entry commented out (the check-mutation
+        # drill, 2026-10-15).
+        for m in re.finditer(r"^\s*entry:\s*python3\s+scripts/polaris-tree-gate\.py\s+hook\s+([\w.-]+)\s*$",
+                             body, re.M):
+            routed.setdefault(hid, []).append(m.group(1))
+    problems = []
+    for hid, stages in sorted(routed.items()):
+        if stages != [hid]:
+            problems.append("hook %s runs tree-gate stage(s) %s, not its own" % (hid, ", ".join(stages)))
+    cached_cheap = sorted(h for h in _PRECOMMIT_ALWAYS_RUN if h in routed)
+    if cached_cheap:
+        problems.append("%s must always run, and a receipt now stands in for it"
+                        % ", ".join(cached_cheap))
+    try:
+        import contextlib as _ctx
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("polaris_tree_gate_check", str(root / _TREE_GATE_REL))
+        mod = _ilu.module_from_spec(spec)
+        with _ctx.redirect_stdout(io.StringIO()):
+            spec.loader.exec_module(mod)
+        stages = dict(mod.STAGES)
+        tree_fn = next(n for n in ast.parse(src).body
+                       if isinstance(n, ast.FunctionDef) and n.name == "hook")
+    except Exception as e:  # noqa: BLE001 -- a wrapper that cannot load is a failed check
+        return _fail(name, "%s does not load: %s: %s" % (_TREE_GATE_REL, type(e).__name__, e))
+    if not stages:
+        return _fail(name, "%s defines no stage; a probe of nothing proves nothing" % _TREE_GATE_REL)
+    if set(stages) != set(routed):
+        problems.append("the script's stages (%s) are not the hooks routed through it (%s)"
+                        % (", ".join(sorted(stages)), ", ".join(sorted(routed)) or "none"))
+    t, other = "a" * 40, "b" * 40
+    env = {"python": "/probe/python3", "python_version": "3.12.0", "pytest": "9.0",
+           "ruff": "ruff 0.1", "distributions": "d" * 64}
+    for stage in sorted(stages):
+        try:
+            h = mod.command_hash(stage)
+            entry = {"exit": 0, "summary": "1 ok", "command_sha256": h, "env": dict(env),
+                     "at": "probe", "where": "export"}
+            good = {"format": mod.FORMAT, "tree": t, "stages": {stage: entry}}
+
+            def ask(receipt, tree=t, hh=h, ee=env, st=stage):
+                return bool(mod.verdict(receipt, tree, st, hh, ee)[0])
+            if not ask(good):
+                problems.append("%s: the matching pass is not skipped, so this probe measures "
+                                "a cache that never hits" % stage)
+                continue
+            cases = {
+                "no receipt": ask(None),
+                "a receipt for another tree": ask(good, tree=other),
+                "a receipt naming another tree": ask(dict(good, tree=other)),
+                "a recorded failure": ask(dict(good, stages={stage: dict(entry, exit=1)})),
+                "an exit of True": ask(dict(good, stages={stage: dict(entry, exit=True)})),
+                "no entry for the stage": ask(dict(good, stages={})),
+                "an entry measured on the work tree": ask(dict(good, stages={stage: dict(entry, where="worktree")})),
+                "an entry that names no measurement": ask(dict(good, stages={stage: {k: v for k, v in entry.items() if k != "where"}})),
+                "a changed command": ask(good, hh="0" * 64),
+                "another interpreter": ask(good, ee=dict(env, python="/other/python3")),
+                "another pytest": ask(good, ee=dict(env, pytest="1.0")),
+                "another distribution set": ask(good, ee=dict(env, distributions="e" * 64)),
+                "a malformed stage table": ask(dict(good, stages=[entry])),
+                "another receipt format": ask(dict(good, format="other")),
+            }
+            bad_path = mod.receipt_path(str(root), "../" + t)
+            good_path = mod.receipt_path(str(root), t) or ""
+        except Exception as e:  # noqa: BLE001
+            problems.append("%s: the decision does not run: %s: %s" % (stage, type(e).__name__, e))
+            continue
+        skipped = sorted(k for k, v in cases.items() if v)
+        if skipped:
+            problems.append("%s is skipped on %s" % (stage, ", ".join(skipped)))
+        if bad_path is not None or not good_path.endswith("/polaris-tree-receipts/%s.json" % t):
+            problems.append("receipt_path must refuse a tree id that is not one and place a "
+                            "real one under polaris-tree-receipts/ (got %r, %r)" % (bad_path, good_path))
+    guarded, unguarded, from_verdict = _tree_gate_hook_returns(tree_fn)
+    if unguarded or not guarded or not from_verdict:
+        problems.append("hook() must leave before running its stage only under `if skip:` with "
+                        "skip from verdict(...) (passing returns outside it at line(s) %s; %d "
+                        "under it; skip from verdict: %s)"
+                        % (", ".join(map(str, unguarded)) or "none", guarded, from_verdict))
+    if problems:
+        return _fail(name, "a tree receipt could skip a stage nobody measured: " + "; ".join(problems))
+    return _ok(name, "%d hook stage(s) run through the tree gate, each under its own name (%s); "
+                     "%s always run; the gate runs every stage for no receipt, another tree, a "
+                     "failure, a work-tree entry, a changed command, another interpreter, pytest "
+                     "or distribution set and a malformed receipt, skips only the matching export "
+                     "pass, and hook() reaches no passing exit before its stage except through "
+                     "that decision"
+               % (len(routed), ", ".join(sorted(routed)), ", ".join(_PRECOMMIT_ALWAYS_RUN)))
 
 
 def check_every_check_has_a_detection_test(root: pathlib.Path) -> list[Finding]:
@@ -28645,7 +29047,9 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
     # A sharded part's `strategy:` block (its matrix) is not setup: the shards are copies of one
     # job, and check_product_suite_parts_share_setup pins the matrix separately.
     head = re.sub(r"(?m)^    strategy:\s*\n(?:(?:      .*| *)\n)*", "", head + "\n")
-    head = keep("\n".join(l for l in head.splitlines() if not re.match(r"^    name:", l)))
+    # Nor are `needs:` and `if:` (2026-10-15): they say when a part runs, which the changes job
+    # decides for some parts and not others; check_ci_skips_are_gated pins them.
+    head = keep("\n".join(l for l in head.splitlines() if not re.match(r"^    (name|needs|if):", l)))
     out = {}
     for chunk in re.split(r"(?m)^(?=      - name:)", steps):
         m = re.match(r'      - name:\s*"?(.+?)"?\s*$', chunk.split("\n", 1)[0])
@@ -28657,7 +29061,11 @@ def _job_parts(block: str) -> tuple[str, dict[str, str]]:
 # The product suite's work, by what it runs: a job that runs any of it is a part, whatever its label says (review
 # of #309, 2026-10-09: a part renamed out of "Product suite:" and dropped from the gate's needs passed).
 _PRODUCT_SUITE_WORK = ("scripts/polaris-coverage.sh", "polaris-procedure-mutation-drill.py", "polaris-app-role-suite.py",
-                       "cargo test --release", "cargo llvm-cov", "polaris-zk-mutation-drill.py")
+                       "cargo test --release", "cargo llvm-cov", "polaris-zk-mutation-drill.py",
+                       "polaris-trigger-mutation-drill.py")
+# Work the required gate must reach though it is not the product suite's (2026-10-15): drills moved out of the
+# product boundary and Real PQC into jobs of their own, which must not become non-required by moving.
+_GATED_DRILLS = ("polaris-oid4vp-mutation-drill.py", "polaris-sdk-mutation-drill.py")
 
 
 def _job_needs(block: str) -> list[str]:
@@ -28665,23 +29073,56 @@ def _job_needs(block: str) -> list[str]:
     m = re.search(r"(?m)^    needs:\s*\[([^\]]*)\]", block)
     if m:
         return [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
-    m = re.search(r"(?m)^    needs:\s*\n((?:      - \S+\s*\n?)+)", block)
+    m = re.search(r"(?m)^    needs:[ \t]*\n((?:      - \S+[ \t]*(?:\n|$))+)", block)
     return re.findall(r"- (\S+)", m.group(1)) if m else []
 
 
+def _gate_args(block: str):
+    """A gate's judgement as scripts/polaris-ci-gate.py is told it: (changes job or None,
+    {output: [jobs]}, [always jobs]), or None when the block does not run the script on its
+    needs' results."""
+    steps = block.split("\n    steps:\n", 1)[-1]
+    if "toJSON(needs)" not in steps:
+        return None
+    m = re.search(r"scripts/polaris-ci-gate\.py((?:[^\n]*\n?)(?:\s{10,}[^\n]*\n?)*)", steps)
+    if not m:
+        return None
+    text = " ".join(m.group(1).split())
+    changes = re.search(r"--changes\s+([\w-]+)", text)
+    when: dict[str, list[str]] = {}
+    for out, jobs in re.findall(r"--when\s+([\w-]+)=([\w,-]+)", text):
+        when.setdefault(out, []).extend(j for j in jobs.split(",") if j)
+    always = [j for grp in re.findall(r"--always\s+([\w,-]+)", text) for j in grp.split(",") if j]
+    return (changes.group(1) if changes else None), when, always
+
+
 def _gate_problems(label: str, block: str, needs: list[str]) -> list[str]:
-    """What is wrong with a gate job: it must run `if: always()` and judge all of its needs."""
+    """What is wrong with a gate job: it runs `if: always()`, and scripts/polaris-ci-gate.py judges
+    each of its needs, every one named exactly once as always required, as the changes job, or as
+    governed by one of that job's outputs. Nothing in it reads "skipped" itself."""
     problems = []
-    if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)", block):
-        problems.append(f"{label} does not run `if: always()`: when a part fails it is skipped, and "
+    if not re.search(r"(?m)^    if:\s*\$?\{?\{?\s*always\(\)\s*\}?\}?\s*$", block):
+        problems.append(f"{label} does not run `if: always()` alone: when a part fails it is skipped, and "
                         "GitHub reports a skipped required check as passing")
-    # Every result, and as many as it needs: `any(... == "success")`, or a count short of the parts, passed one
-    # green part as the whole suite (review of #309).
     judge = block.split("\n    steps:\n", 1)[-1]
-    if "toJSON(needs)" not in judge or f"len(r) == {len(needs)} and" not in judge \
-            or 'all(v == "success" for v in r.values())' not in judge:
-        problems.append(f"{label} must judge all {len(needs)} parts' results (len(r) == {len(needs)} and "
-                        "all(v == \"success\" ...)), not one of them")
+    if re.search(r"skipped", judge):
+        problems.append(f"{label} reads \"skipped\" itself; only scripts/polaris-ci-gate.py may pass a skip, "
+                        "and only on the changes job's \"false\"")
+    args = _gate_args(block)
+    if args is None:
+        problems.append(f"{label} must judge its needs' results (toJSON(needs)) with scripts/polaris-ci-gate.py")
+        return problems
+    changes, when, always = args
+    named = [changes] if changes else []
+    named += always + [j for js in when.values() for j in js]
+    dupes = sorted({j for j in named if named.count(j) > 1})
+    if dupes:
+        problems.append(f"{label} names {', '.join(dupes)} more than once")
+    if sorted(set(named)) != sorted(needs):
+        problems.append(f"{label} needs {', '.join(needs) or 'nothing'} but judges {', '.join(sorted(set(named))) or 'nothing'}; "
+                        "every need is judged, and nothing else")
+    if when and not changes:
+        problems.append(f"{label} explains skips by outputs (--when) without naming the changes job")
     return problems
 
 
@@ -28706,6 +29147,11 @@ def _shard_problems(job: str, block: str) -> tuple[int, list[str]]:
     return n, problems
 
 
+def _required_gate(jobs: dict):
+    return next((j for j, b in jobs.items()
+                 if re.search(r'(?m)^    name:\s*"?Polaris product test suite"?\s*$', b)), None)
+
+
 def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
     """The product suite's parallel parts carry one setup, and its required job gates on each.
 
@@ -28717,16 +29163,19 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
     does not run when a part fails is SKIPPED, which GitHub reports to a required check as
     success, so a red part could merge.
 
-    So: the gate needs every `Product suite:` job, runs `if: always()`, and judges each part's
-    result; every part has the same runner, services and environment; and every step a part
-    shares by name with another is the same step. A setup step added to one part only is not
-    caught by name (nothing marks a step as setup); its absence fails that part's own run.
+    So: the gate needs every `Product suite:` job and every job that runs the suite's work or a
+    drill moved out of another job, runs `if: always()`, and has scripts/polaris-ci-gate.py judge
+    each part's result; every part has the same runner, services and environment; and every step
+    a part shares by name with another is the same step. A setup step added to one part only is
+    not caught by name (nothing marks a step as setup); its absence fails that part's own run.
     A suite still run as one job has no copies and passes.
 
     A part may itself be a gate over a `shard:` matrix (the procedure drill since 2026-10-10,
-    so its name stays the one the docs and the ruleset know). That gate is held to the same
-    rules as the required job, its shards count as parts for the setup comparison, and the
-    matrix must be shards 1 to N, each passing its own number of N to `--shard`.
+    the coverage run since 2026-10-15, so their names stay the ones the docs and the ruleset
+    know). Such a gate is held to the same rules as the required job, its shards count as parts
+    for the setup comparison, and the matrix must be shards 1 to N, each passing its own number
+    of N to `--shard`. When the changes job skips parts (check_ci_skips_are_gated), the gates
+    need it too and say which output explains which skip.
     """
     name = "product_suite_parts_share_setup"
     jobs = _ci_jobs(_read(root, ".github/workflows/ci.yml"))
@@ -28745,31 +29194,35 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         return _ok(name, "the product suite runs as one job; there are no copies to keep in step")
     problems = [f"the required job needs {j}, which ci.yml does not define" for j in needs if j not in jobs]
     problems += _gate_problems("the required job", block, needs)
-    # A needed job with needs of its own is a gate over parts (one level: a shard matrix).
-    parts, gated, sharded = [], set(needs), []
-    for j in (j for j in needs if j in jobs):
-        sub = _job_needs(jobs[j])
+    changes = (_gate_args(block) or (None,))[0]
+    # A needed job with needs of its own, beyond the changes job, is a gate over parts (one level).
+    leaves, gated, sharded = [], set(needs), []
+    for j in (j for j in needs if j in jobs and j != changes):
+        sub = [s for s in _job_needs(jobs[j]) if s != changes]
         if not sub:
-            parts.append(j)
+            leaves.append(j)
             continue
-        problems += _gate_problems(f"{j}, the gate over {', '.join(sub)},", jobs[j], sub)
+        problems += _gate_problems(f"{j}, the gate over {', '.join(sub)},", jobs[j], _job_needs(jobs[j]))
         for s in sub:
             if s not in jobs:
                 problems.append(f"{j} needs {s}, which ci.yml does not define")
-            elif _job_needs(jobs[s]):
+            elif [x for x in _job_needs(jobs[s]) if x != changes]:
                 problems.append(f"{s} is a gate under the gate {j}; gates nest one level")
             else:
-                parts.append(s)
+                leaves.append(s)
                 gated.add(s)
-    for j in parts:
+    for j in leaves:
         n, why = _shard_problems(j, jobs[j])
         problems += why
         if n:
             sharded.append(f"{j} in {n} shards")
     problems += [f"{j} is a part of the product suite the required job does not need" for j in labelled
                  if j not in gated]
-    problems += [f"{j} runs the product suite's work but the required job does not need it"
-                 for j, b in jobs.items() if j != gate and j not in gated and any(w in b for w in _PRODUCT_SUITE_WORK)]
+    problems += [f"{j} runs the product suite's work, or a drill moved out of another job, but the required "
+                 "job does not need it"
+                 for j, b in jobs.items() if j != gate and j not in gated
+                 and any(w in b for w in _PRODUCT_SUITE_WORK + _GATED_DRILLS)]
+    parts = [j for j in leaves if j in labelled or any(w in jobs[j] for w in _PRODUCT_SUITE_WORK)]
     split = {j: _job_parts(jobs[j]) for j in parts}
     shared = 0
     # Every pair, not neighbours in needs: a step two parts share that a third lacks is still compared.
@@ -28784,9 +29237,192 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
         shared = max(shared, len(common))
     if problems:
         return _fail(name, "; ".join(problems))
-    return _ok(name, f"the required job gates on {len(parts)} parallel parts ({', '.join(parts)}"
-                     f"{'; ' + ', '.join(sharded) if sharded else ''}), every gate runs always and judges "
-                     f"each result; they share runner, services, environment and {shared} setup steps verbatim")
+    return _ok(name, f"the required job gates on {len(leaves)} parallel jobs, {len(parts)} of them the product "
+                     f"suite's parts ({', '.join(parts)}{'; ' + ', '.join(sharded) if sharded else ''}); every gate "
+                     f"runs always and has scripts/polaris-ci-gate.py judge each result; the parts share runner, "
+                     f"services, environment and {shared} setup steps verbatim")
+
+
+#: The outputs the changes job writes, each "true" or "false" (scripts/polaris-ci-changes.py).
+_CHANGES_OUTPUTS = ("full", "oid4vp", "sdk")
+
+#: What moved out of a required job on 2026-10-15, as each must still run.
+_MOVED_DRILLS = (
+    ("the OID4VP mutation drill, sharded", r"polaris-oid4vp-mutation-drill\.py[^\n]*--shard"),
+    ("the SDK mutation drill, --changed and sharded", r"polaris-sdk-mutation-drill\.py[^\n]*--changed[^\n]*--shard"),
+    ("the trigger mutation drill", r"polaris-trigger-mutation-drill\.py[ \t]*(\n|$)"),
+    ("the trigger refusal drill", r"polaris-trigger-mutation-drill\.py[ \t]+--refusals"),
+    ("the coverage shards", r"polaris-coverage\.sh[^\n]*--shard"),
+    ("the coverage combination and floors", r"polaris-coverage\.sh[^\n]*--combine"),
+)
+
+
+def check_ci_skips_are_gated(root: pathlib.Path) -> list[Finding]:
+    """A job the changes job can skip is still a job the required gate waits for (2026-10-15).
+
+    scripts/polaris-ci-changes.py lets a pull request whose every path is on a measured allowlist
+    skip the jobs that cannot read those paths. GitHub reports a skipped job as passing, so the
+    whole arrangement is safe only if each skip is explained to a gate that cannot be fooled:
+
+      - the changes job runs the classifier and exports its outputs, and no job the classifier
+        treats as always-run is skipped by them (the audit leaves those jobs' reads unmeasured);
+      - every job whose `if:` reads an output reads exactly `needs.changes.outputs.X == 'true'`,
+        so a missing or garbled output skips it, and the gate then fails on that output;
+      - every such job is needed by the required gate, directly or through one gate over its
+        shards, and that gate says the same output explains its skip (--when X=job);
+      - the gates judge with scripts/polaris-ci-gate.py, and that script, handed a skip the
+        output does not explain, or a skip with no output at all, fails.
+    """
+    name = "ci_skips_are_gated"
+    ci = _read(root, ".github/workflows/ci.yml")
+    jobs = _ci_jobs(ci)
+    classifier = _read(root, "scripts/polaris-ci-changes.py")
+    gate_script = root / "scripts" / "polaris-ci-gate.py"
+    if not jobs or not classifier or not gate_script.is_file():
+        return _fail(name, ".github/workflows/ci.yml, scripts/polaris-ci-changes.py or scripts/polaris-ci-gate.py "
+                           "could not be read")
+    problems = []
+    changes = jobs.get("changes", "")
+    if "scripts/polaris-ci-changes.py" not in changes:
+        problems.append("no `changes` job runs scripts/polaris-ci-changes.py")
+    for out in _CHANGES_OUTPUTS:
+        if not re.search(r"(?m)^      %s:\s*\$\{\{\s*steps\.classify\.outputs\.%s\s*\}\}" % (out, out), changes):
+            problems.append(f"the changes job does not export its {out} output")
+    if re.search(r"(?m)^    (if|needs|continue-on-error):", changes):
+        problems.append("the changes job must run on every event, unconditionally, and fail when it fails")
+    m = re.search(r"ALWAYS_RUN_JOBS\s*=\s*\(([^)]*)\)", classifier)
+    always_run = re.findall(r'"([\w-]+)"', m.group(1)) if m else []
+    if not always_run:
+        problems.append("ALWAYS_RUN_JOBS could not be read out of scripts/polaris-ci-changes.py")
+    gate = _required_gate(jobs)
+    if gate is None:
+        return _fail(name, "ci.yml has no job named \"Polaris product test suite\"")
+    # Every gate the required one reaches, and what it says explains each skip.
+    gates = {gate: jobs[gate]}
+    for j in _job_needs(jobs[gate]):
+        if j in jobs and j != "changes" and [x for x in _job_needs(jobs[j]) if x != "changes"]:
+            gates[j] = jobs[j]
+    explained = {}
+    for g, b in gates.items():
+        args = _gate_args(b)
+        if args is None:
+            problems.append(f"{g} does not judge its needs with scripts/polaris-ci-gate.py")
+            continue
+        if not re.search(r"(?m)^    if:\s*always\(\)\s*$", b):
+            problems.append(f"{g} does not run `if: always()`")
+        if "skipped" in b.split("\n    steps:\n", 1)[-1]:
+            problems.append(f"{g} reads \"skipped\" itself rather than through scripts/polaris-ci-gate.py")
+        g_changes, when, _always = args
+        for out, js in when.items():
+            if g_changes != "changes" or "changes" not in _job_needs(b):
+                problems.append(f"{g} explains skips by {out} without needing the changes job")
+            for j in js:
+                explained[j] = (g, out)
+    governed = 0
+    for j, b in jobs.items():
+        cond = re.search(r"(?m)^    if:\s*(.*)$", b)
+        cond = cond.group(1).strip() if cond else ""
+        if "needs.changes" not in cond:
+            continue
+        governed += 1
+        m = re.fullmatch(r"needs\.changes\.outputs\.(\w+) == 'true'", cond)
+        if not m or m.group(1) not in _CHANGES_OUTPUTS:
+            problems.append(f"{j} is skipped on `{cond}`; the only form is needs.changes.outputs.X == 'true' "
+                            "(a missing output then skips it, and the gate fails on that output)")
+            continue
+        if "changes" not in _job_needs(b):
+            problems.append(f"{j} reads the changes outputs without needing the changes job")
+        if j in always_run:
+            problems.append(f"{j} is always-run for the classifier's audit, yet the changes outputs skip it")
+        if j not in explained:
+            problems.append(f"{j} can be skipped by the changes outputs, but no gate the required check reaches "
+                            "needs it, so a red one would not block a merge")
+        elif explained[j][1] != m.group(1):
+            problems.append(f"{j} is skipped on {m.group(1)} but {explained[j][0]} explains its skip by {explained[j][1]}")
+    for j, (g, out) in explained.items():
+        cond = re.search(r"(?m)^    if:\s*(.*)$", jobs.get(j, ""))
+        if not cond or cond.group(1).strip() != "needs.changes.outputs.%s == 'true'" % out:
+            problems.append(f"{g} would pass {j} skipped on {out}=false, but {j} is not skipped on that output")
+    for j in always_run:
+        if j in jobs and "needs.changes.outputs" in (re.search(r"(?m)^    if:\s*(.*)$", jobs[j]) or [""])[0]:
+            problems.append(f"{j} is always-run for the classifier's audit, yet its `if:` reads the changes outputs")
+    if not governed:
+        problems.append("no job reads the changes outputs; a check that finds nothing to gate measures nothing")
+    # The drills that left a required job (2026-10-15) still run, sharded where they were split, each
+    # in a job the required gate reaches: moving a drill must not make it optional.
+    reach = set(gates) | {j for g in gates.values() for j in _job_needs(g)}
+    for what, pattern in _MOVED_DRILLS:
+        holders = [j for j, b in jobs.items() if re.search(pattern, b)]
+        if not holders:
+            problems.append(f"no job runs {what}")
+        for j in holders:
+            if j not in reach:
+                problems.append(f"{j} runs {what}, but the required gate does not reach it")
+    # The script itself, asked: a skip the output does not explain, and a skip no output governs.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_polaris_ci_gate_for_check", gate_script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        res = lambda r, full: json.dumps({"changes": {"result": "success", "outputs": {"full": full}},
+                                          "a": {"result": r, "outputs": {}}, "b": {"result": "success"}})
+        verdicts = {
+            "a skip the output says was needed": mod.judge(res("skipped", "true"), "changes", {"full": ["a"]}, ["b"])[0],
+            "a skip no output governs": mod.judge(res("skipped", "false"), "changes", {}, ["a", "b"])[0],
+            "a skip with no changes job": mod.judge(res("skipped", "false"), None, {}, ["a", "b", "changes"])[0],
+            "a failure": mod.judge(res("failure", "false"), "changes", {"full": ["a"]}, ["b"])[0],
+            "results that do not parse": mod.judge("", "changes", {"full": ["a"]}, ["b"])[0],
+        }
+        control = mod.judge(res("skipped", "false"), "changes", {"full": ["a"]}, ["b"])[0]
+    except Exception as exc:  # a gate script that cannot be asked is a gate nobody can trust
+        return _fail(name, f"scripts/polaris-ci-gate.py could not be exercised: {type(exc).__name__}: {exc}")
+    passed = [k for k, v in verdicts.items() if v]
+    if passed:
+        problems.append("scripts/polaris-ci-gate.py passes " + ", ".join(passed))
+    if not control:
+        problems.append("scripts/polaris-ci-gate.py fails a skip the changes output explains, so the control "
+                        "that makes its refusals mean something does not hold")
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name, f"{governed} job(s) can be skipped by the changes job's outputs, each on exactly "
+                     "`needs.changes.outputs.X == 'true'`, each needed by the required gate (directly or through "
+                     f"a gate over its shards) that explains its skip by the same output; the {len(gates)} gate(s) "
+                     "run always and judge with scripts/polaris-ci-gate.py, which fails a skip its output does not "
+                     "explain, a skip no output governs, a failure and results it cannot read, and passes the "
+                     "explained skip")
+
+
+def check_ci_changes_allowlist_measured(root: pathlib.Path) -> list[Finding]:
+    """The paths a change may skip CI for are still unread by the jobs it skips (2026-10-15).
+
+    The allowlist in scripts/polaris-ci-changes.py was built by measuring: every file a skippable
+    job may execute, read for any string, join or shell line that names an allowlisted path or
+    a directory above it. That stays true only if it is measured again on every change, because
+    the change that makes a test open a document is not the change that touches the document.
+    This runs the script's own audit (`--audit`): no skippable code names an allowlisted path,
+    every entry matches a file, no drill input is on the list, and every script declared as run
+    only by always-run jobs is named by no skippable one.
+    """
+    name = "ci_changes_allowlist_measured"
+    path = root / "scripts" / "polaris-ci-changes.py"
+    if not path.is_file() or not _read(root, ".github/workflows/ci.yml"):
+        return _fail(name, "scripts/polaris-ci-changes.py or .github/workflows/ci.yml is missing")
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_polaris_ci_changes_for_check", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        out = io.StringIO()
+        problems = mod.audit(root, out=out)
+        allowlisted = sum(1 for p in mod._tracked(root) if mod.allowlisted(p))
+    except Exception as exc:  # a measurement that cannot run is a failure, not a pass
+        return _fail(name, f"the allowlist could not be measured: {type(exc).__name__}: {exc}")
+    if problems:
+        return _fail(name, f"{len(problems)} problem(s) with the CI allowlist: " + "; ".join(problems[:5]))
+    if not allowlisted:
+        return _fail(name, "no file is on the CI allowlist; a measurement over nothing proves nothing")
+    return _ok(name, f"the {allowlisted} file(s) a change may skip CI for are named by none of the code the "
+                     "skippable jobs run, measured again on this tree (" + out.getvalue().strip() + ")")
 
 
 # 2026-10-11: docs/reference/INTEROP.md gives each outside implementation's latest run, one row each, so its rows are
@@ -28866,12 +29502,14 @@ def check_interop_page_matches_the_count(root: pathlib.Path) -> list[Finding]:
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_pooler_keeps_the_operator_scope,
     check_publishable_packages_keep_their_dependency_budget,
+    check_published_dependency_names_are_the_intended_projects,
     check_published_algorithm_table_matches_the_seed,
     check_security_page_matches_the_release_ledger,
     check_stranger_path_was_walked_against_what_is_published,
     check_install_instructions_reach_the_current_candidate,
     check_precommit_config_wires_what_the_docs_claim,
     check_pre_commit_folded_entries_stay_one_line,
+    check_precommit_tree_receipts_skip_only_a_measured_pass,
     check_git_spawning_tests_drop_the_hook_environment,
     check_verification_plan_covers_the_check_layer,
     check_verification_plan_covers_published_artifacts,
@@ -29246,6 +29884,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_database_instants_read_the_utc_clock,
     check_openapi_covers_api_v1,
     check_product_suite_parts_share_setup,
+    check_ci_skips_are_gated,
+    check_ci_changes_allowlist_measured,
     check_interop_page_matches_the_count,
 ]
 

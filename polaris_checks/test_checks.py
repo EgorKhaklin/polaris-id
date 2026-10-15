@@ -4444,6 +4444,28 @@ def test_coverage_gated_check_discriminates(tmp_path):
         "must FAIL when CI sets no branch floor"
     assert level(gate, good_ci.replace("      - run: cargo llvm-cov --fail-under-lines 85\n", "")) == "FAIL", \
         "must FAIL when Rust coverage is not gated (no fail-under-lines)"
+    # 2026-10-15: sharded. The floors belong on the step that combines every shard's data.
+    sgate = gate + ('[ "$1" = --combine ] && echo "coverage shard is missing"\n'
+                    'echo "coverage shard holds no data file"\n')
+    sharded = ("jobs:\n  shard:\n    strategy:\n      matrix:\n        shard: [1, 2, 3]\n    steps:\n"
+               "      - env:\n          S: \"${{ matrix.shard }}/3\"\n"
+               "        run: bash scripts/polaris-coverage.sh --shard \"$S\"\n"
+               "  combine:\n    steps:\n"
+               "      - env:\n          COVERAGE_FLOOR: \"86\"\n          BRANCH_FLOOR: \"83\"\n"
+               "        run: bash scripts/polaris-coverage.sh --combine \"$D\" --of 3\n"
+               "      - run: cargo llvm-cov --fail-under-lines 85\n")
+    assert level(sgate, sharded) == "OK", "must PASS with shards combined and floored where the data is"
+    assert level(sgate, sharded.replace("--combine", "--report")) == "FAIL", \
+        "must FAIL when the shards are never combined"
+    assert level(sgate, sharded.replace("--of 3", "--of 2")) == "FAIL", \
+        "must FAIL when the combination expects fewer shards than the matrix runs"
+    moved = sharded.replace('      - env:\n          COVERAGE_FLOOR: "86"\n          BRANCH_FLOOR: "83"\n'
+                            '        run: bash scripts/polaris-coverage.sh --combine',
+                            '      - run: bash scripts/polaris-coverage.sh --combine').replace(
+        '          S: "${{ matrix.shard }}/3"\n',
+        '          S: "${{ matrix.shard }}/3"\n          COVERAGE_FLOOR: "86"\n          BRANCH_FLOOR: "83"\n')
+    assert level(sgate, moved) == "FAIL", "must FAIL when the floors sit on a shard, which sees a third"
+    assert level(gate, sharded) == "FAIL", "must FAIL when the script would combine without every shard"
 
 
 def test_dockerfile_copies_app_modules_check_discriminates(tmp_path):
@@ -17713,7 +17735,8 @@ def test_trigger_mutation_check_discriminates(tmp_path):
              '    cur.execute("DROP TRIGGER IF EXISTS x ON y")\n'
              '    cur.execute("SELECT pg_get_triggerdef(oid) FROM pg_trigger")\n'
              'ap.add_argument("--exhaustive", action="store_true")\n')
-    CI = "      - name: triggers\n        run: python scripts/polaris-trigger-mutation-drill.py\n"
+    CI = ("      - name: triggers\n        run: python scripts/polaris-trigger-mutation-drill.py\n"
+          "      - name: refusals\n        run: python scripts/polaris-trigger-mutation-drill.py --refusals\n")
     SWEEP = "name: Trigger sweep (exhaustive)\non:\n  schedule:\n    - cron: \"23 4 * * 2\"\n"
     good = {
         "scripts/polaris-trigger-mutation-drill.py": DRILL,
@@ -17750,6 +17773,11 @@ def test_trigger_mutation_check_discriminates(tmp_path):
     # CI does not run it
     write({".github/workflows/ci.yml": "      - name: other\n        run: true\n"})
     assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the drill"
+    # 2026-10-15: the two modes moved into jobs of their own; losing either in the move must fail
+    write({".github/workflows/ci.yml": CI.split("      - name: refusals")[0]})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when CI drops --refusals"
+    write({".github/workflows/ci.yml": "      - name: refusals" + CI.split("      - name: refusals")[1]})
+    assert checks.check_triggers_are_mutation_tested(tmp_path)[0].level == "FAIL", "must FAIL when CI drops the whole-trigger mode"
     # the declaration is emptied, which satisfies the assertions above vacuously
     write({"scripts/polaris-trigger-mutation-drill.py":
            DRILL.replace("".join('    "trg_t%d",\n' % i for i in range(6)), '    "trg_t0",\n')})
@@ -19510,6 +19538,13 @@ def test_local_gate_covers_ci_check_discriminates(tmp_path):
                '                    "polaris_web": ["test_capacity"]}\n' + RUNNERS)
     assert level("polaris_sim.test_sim") == "FAIL", \
         "must FAIL, and name it, when a CI suite is unknown to the ship tool"
+    # 2026-10-15: the coverage shards run every third suite as `mine && run ...`. A parser that
+    # skipped those lines would lose every suite the shards run, and with them this check.
+    write(cov=COV.replace('run "$ROOT" unittest polaris_sim', 'mine && run "$ROOT" unittest polaris_sim'),
+          ship='DEFAULT_MODULES = ["test_app"]\nUNSHARDED_SUITES = {"polaris_cli": ["test_cli"],\n'
+               '                    "polaris_web": ["test_capacity"]}\n' + RUNNERS)
+    assert level("polaris_sim.test_sim") == "FAIL", \
+        "must read a sharded `mine && run` line and FAIL on the suite it names"
 
     # The 2026-09-17 shape, and the one the old check could not see: the suite runs in the
     # WORKFLOW and appears nowhere in coverage.sh. Reading coverage.sh alone reports OK.
@@ -21331,6 +21366,97 @@ def test_dependency_budget_check_discriminates(tmp_path):
         "must FAIL when a manifest is absent rather than report a clean budget"
 
 
+def test_published_dependency_names_check_discriminates(tmp_path):
+    """Every name a published package asks an installer to fetch is the project we mean.
+
+    The defect (2026-10-15): polaris-verify's `oqs` extra named PyPI's `oqs`, an unrelated
+    project whose wheel installs a top-level `oqs` package, while the dependency budget,
+    which reads runtime dependencies only, stayed green.
+    """
+    PUBLISH = ("jobs:\n  build:\n    steps:\n      - run: |\n"
+               "          python -m build --no-isolation --outdir dist/polaris-verify packages/polaris-verify\n"
+               "          python -m build --no-isolation --outdir dist/polaris-id-cli polaris_cli\n"
+               "      - run: cd sdk/typescript && npm pack --pack-destination \"$GITHUB_WORKSPACE/dist\"\n")
+    VERIFY = ('[build-system]\nrequires = ["setuptools>=68"]\n\n[project]\nname = "x"\n'
+              '# "oqs>=0.10" in a comment is not a dependency\ndependencies = []\n\n'
+              '[project.optional-dependencies]\ncryptography = ["cryptography>=48"]\n'
+              'oqs = ["Liboqs_Python>=0.16"]\n')
+    CLI = ('[build-system]\nrequires = ["setuptools>=68"]\n\n[project]\nname = "y"\n'
+           'dependencies = [\n    "psycopg2-binary>=2.9,<3.0",\n]\n\n'
+           '[project.optional-dependencies]\nuser-mgmt = [\n    "Werkzeug>=3.0,<4.0",\n]\n')
+    TS = '{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1"}}\n'
+    DOC = "pip install liboqs-python\npip install --pre 'polaris-verify[oqs]'\n"
+
+    def write(publish=PUBLISH, verify=VERIFY, cli=CLI, ts=TS, doc=DOC):
+        for rel, body in ((".github/workflows/publish.yml", publish),
+                          ("packages/polaris-verify/pyproject.toml", verify),
+                          ("polaris_cli/pyproject.toml", cli),
+                          ("sdk/typescript/package.json", ts),
+                          ("docs/INSTALL.md", doc)):
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body)
+
+    fn = checks.check_published_dependency_names_are_the_intended_projects
+
+    def fails(why, *words):
+        out = fn(tmp_path)
+        assert out[0].level == "FAIL" and all(w in out[0].message for w in words), (why, out)
+
+    write()
+    out = fn(tmp_path)
+    assert out[0].level == "OK" and "3 published manifests declare 6" in out[0].message, \
+        ("must PASS when every name is listed, normalized as PEP 503 does", out)
+
+    # THE defect: the extra names PyPI's unrelated `oqs`.
+    write(verify=VERIFY.replace('"Liboqs_Python>=0.16"', '"oqs>=0.10"'))
+    fails("must FAIL on the extra that named the unrelated project", "pypi:oqs")
+    # A bare `liboqs` is unclaimed on PyPI: anyone could publish it.
+    write(verify=VERIFY.replace('"Liboqs_Python>=0.16"', '"liboqs"'))
+    fails("must FAIL on a bare liboqs", "pypi:liboqs")
+    # Build requirements are fetched too.
+    write(verify=VERIFY.replace('"setuptools>=68"', '"setuptools>=68", "hatchling"'))
+    fails("must FAIL on an unknown build requirement", "pypi:hatchling")
+    # npm peer and optional dependencies are fetched too.
+    write(ts='{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1"}, '
+             '"peerDependencies": {"left-pad": "^1"}}\n')
+    fails("must FAIL on an unknown npm peer dependency", "npm:left-pad")
+    # Nothing built is a failure, not a pass by checking nothing.
+    write(publish="jobs: {}\n")
+    fails("must FAIL when publish.yml builds nothing it can read", "builds no package")
+    write(publish=PUBLISH.replace("cd sdk/typescript && npm pack", "npm pack"))
+    fails("must FAIL when it cannot tell which package.json is packed", "cannot tell")
+    write()
+    (tmp_path / "polaris_cli/pyproject.toml").unlink()
+    fails("must FAIL when a built manifest is missing", "polaris_cli/pyproject.toml", "missing")
+    write(cli='[project]\nname = "y"\n')
+    fails("must FAIL when a manifest yields no names", "declares no dependency")
+    write(cli=CLI.replace('[project.optional-dependencies]', '[tool.x]'))
+    fails("must FAIL on a stale allowlist entry", "pypi:werkzeug", "remove the entry")
+    write(cli=CLI.replace('[project.optional-dependencies]\nuser-mgmt = [\n    "Werkzeug>=3.0,<4.0",\n]\n',
+                          'optional-dependencies = { user-mgmt = ["requests"] }\n'))
+    fails("must FAIL on an inline optional-dependencies table it does not read", "inline")
+    # Install instructions and requirement files anywhere in the tree.
+    write(doc=DOC + "Then `pip install oqs`.\n")
+    fails("must FAIL on an instruction that installs PyPI's oqs", "docs/INSTALL.md")
+    write(doc=DOC + "pip3 install --user liboqs\n")
+    fails("must FAIL on an instruction that installs a bare liboqs", "docs/INSTALL.md")
+    write(doc=DOC + "pip install OQS\n")
+    fails("must FAIL whatever the case, as PyPI's names are case-blind", "docs/INSTALL.md")
+    write()
+    dockerfile = tmp_path / "polaris_web/Dockerfile"
+    dockerfile.parent.mkdir(parents=True, exist_ok=True)
+    dockerfile.write_text("FROM python:3.12\nRUN pip install oqs\n")
+    fails("must FAIL on a Dockerfile, which has no suffix", "polaris_web/Dockerfile")
+    dockerfile.unlink()
+    write()
+    req = tmp_path / "polaris_web/requirements-pqc.txt"
+    req.parent.mkdir(parents=True, exist_ok=True)
+    req.write_text("oqs==0.10.2 \\\n    --hash=sha256:00\n")
+    fails("must FAIL on a requirement file that pins PyPI's oqs", "requirements-pqc.txt")
+    req.write_text("liboqs-python==0.16.0.1 \\\n    --hash=sha256:00\n")
+    assert fn(tmp_path)[0].level == "OK", "liboqs-python in a requirement file must PASS"
+
 def test_published_algorithms_check_discriminates(tmp_path):
     """A published cryptographic parameter must not drift from the row it restates.
 
@@ -21961,6 +22087,69 @@ def test_precommit_folded_entry_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "missing" in out[0].message, \
         "must FAIL when the config is absent"
+
+
+def test_precommit_tree_receipts_check_discriminates(tmp_path):
+    fn = checks.check_precommit_tree_receipts_skip_only_a_measured_pass
+    cfg = (REPO / ".pre-commit-config.yaml").read_text()
+    src = (REPO / "scripts" / "polaris-tree-gate.py").read_text()
+    (tmp_path / "scripts").mkdir()
+
+    def run(cfg_text=cfg, src_text=src):
+        (tmp_path / ".pre-commit-config.yaml").write_text(cfg_text)
+        (tmp_path / "scripts" / "polaris-tree-gate.py").write_text(src_text)
+        return fn(tmp_path)[0]
+
+    assert run().level == "OK", "must PASS on the real hook config and tree gate"
+
+    def mutate(text, old, new):
+        assert old in text, "fixture is stale: %r is gone" % old
+        return text.replace(old, new, 1)
+
+    # The decision ignores the tree id: another tree's pass would skip this one.
+    out = run(src_text=mutate(src, 'if receipt.get("tree") != tree:', "if False:"))
+    assert out.level == "FAIL" and "another tree" in out.message
+    # The decision always skips.
+    out = run(src_text=mutate(src, '    if not isinstance(receipt, dict):\n        return False, "no receipt',
+                              '    return True, "always"\n    if not isinstance(receipt, dict):\n'
+                              '        return False, "no receipt'))
+    assert out.level == "FAIL" and "no receipt" in out.message
+    # The decision trusts a pass measured on the work tree, untracked files and all.
+    out = run(src_text=mutate(src, 'if entry.get("where") != "export":', "if False:"))
+    assert out.level == "FAIL" and "work tree" in out.message
+    # The decision ignores the installed distributions.
+    out = run(src_text=mutate(src, 'if not isinstance(recorded, dict) or recorded != env:',
+                              'if not isinstance(recorded, dict) or {k: v for k, v in recorded.items() '
+                              'if k != "distributions"} != {k: v for k, v in env.items() if k != "distributions"}:'))
+    assert out.level == "FAIL" and "distribution set" in out.message
+    # A passing exit before the stage runs, outside the decision.
+    out = run(src_text=mutate(src, "    root = os.getcwd()\n    tree = index_tree(root)\n",
+                              "    return 0\n    root = os.getcwd()\n    tree = index_tree(root)\n"))
+    assert out.level == "FAIL" and "if skip:" in out.message
+    # ruff routed through the cache.
+    out = run(cfg_text=mutate(cfg, "entry: ruff check", "entry: python3 scripts/polaris-tree-gate.py hook ruff"))
+    assert out.level == "FAIL" and "ruff" in out.message
+    # One hook answering with another stage's receipt.
+    out = run(cfg_text=mutate(cfg, "hook polaris-link-check", "hook polaris-checks"))
+    assert out.level == "FAIL" and "polaris-link-check" in out.message
+    # A heavy hook unrouted while the script still carries its stage.
+    out = run(cfg_text=mutate(cfg, "python3 scripts/polaris-tree-gate.py hook polaris-link-check",
+                              "bash scripts/polaris-link-check.sh --ci"))
+    assert out.level == "FAIL" and "not the hooks routed" in out.message
+    # Comments are not wiring: every routed entry commented out, as the check-mutation drill
+    # does it, while the comments still name the gate and each stage.
+    commented = re.sub(r"^(\s*)(entry: python3 scripts/polaris-tree-gate\.py hook )", r"\1# \2",
+                       cfg, flags=re.M)
+    assert commented.count("# entry: python3 scripts/polaris-tree-gate.py hook ") == 4, \
+        "fixture is stale: expected four routed entries to comment out"
+    out = run(cfg_text=commented)
+    assert out.level == "FAIL" and "not the hooks routed" in out.message
+    # Anti-vacuity: no script, and a config too small to have been parsed.
+    (tmp_path / "scripts" / "polaris-tree-gate.py").unlink()
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "missing" in out.message
+    out = run(cfg_text="repos:\n  - repo: local\n    hooks:\n      - id: only-one\n        entry: ruff\n")
+    assert out.level == "FAIL" and "finding nothing" in out.message
 
 
 def test_git_spawning_tests_drop_the_hook_environment_check_discriminates(tmp_path):
@@ -23595,24 +23784,32 @@ def test_license_headers_check_discriminates(tmp_path):
 
 
 
+def _gate_job(jid, label, needs, always=None, when=None, changes=None, cond="always()"):
+    """A gate job as ci.yml writes one: needs, `if:`, and scripts/polaris-ci-gate.py judging them."""
+    args = (" --changes %s" % changes if changes else "") \
+        + (" --always %s" % ",".join(always) if always else "") \
+        + "".join(" --when %s=%s" % (o, ",".join(js)) for o, js in (when or {}).items())
+    return (f"  {jid}:\n    name: {label}\n    needs: [{', '.join(needs)}]\n"
+            + (f"    if: {cond}\n" if cond else "") + "    runs-on: ubuntu-latest\n    steps:\n"
+            "      - name: Checkout\n        uses: actions/checkout@abc\n"
+            "      - name: Every part passed\n        env:\n          RESULTS: ${{ toJSON(needs) }}\n"
+            f"        run: python3 scripts/polaris-ci-gate.py{args}\n")
+
+
 def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
     gh = tmp_path / ".github" / "workflows"
     gh.mkdir(parents=True)
 
     def part(jid, label, image="postgres:16-alpine@sha256:aa", deps="pip install -r req.txt",
-             comment="# a note", last="run tests"):
-        return (f"  {jid}:\n    name: \"Product suite: {label}\"\n    runs-on: ubuntu-latest\n"
+             comment="# a note", last="run tests", sched=""):
+        return (f"  {jid}:\n    name: \"Product suite: {label}\"\n{sched}    runs-on: ubuntu-latest\n"
                 f"    services:\n      postgres:\n        image: {image}\n    env:\n      A: '1'\n"
                 f"    steps:\n      - name: Checkout\n        uses: actions/checkout@abc\n\n"
                 f"      - name: Install deps\n        run: |\n          {comment}\n          {deps}\n\n"
                 f"      - name: {label} only\n        run: {last}\n")
 
-    gate_ok = ("  test:\n    name: Polaris product test suite\n    needs: [test-core, test-coverage]\n"
-               "    if: always()\n    runs-on: ubuntu-latest\n    steps:\n"
-               "      - name: Every part passed\n        env:\n          RESULTS: ${{ toJSON(needs) }}\n"
-               "        run: echo \"$RESULTS\" | python3 -c 'import json, sys; r = {k: v[\"result\"] for k, v in "
-               "json.load(sys.stdin).items()}; sys.exit(0 if len(r) == 2 and all(v == \"success\" for v in r.values()) "
-               "else 1)'\n")
+    gate_ok = _gate_job("test", "Polaris product test suite", ["test-core", "test-coverage"],
+                        always=["test-core", "test-coverage"])
 
     def write(core=None, cov=None, gate=gate_ok, extra=""):
         (gh / "ci.yml").write_text("on: push\njobs:\n" + (core or part("test-core", "core"))
@@ -23626,22 +23823,41 @@ def test_product_suite_parts_share_setup_check_discriminates(tmp_path):
         "    runs-on:", "    # Split out of the product suite.\n    runs-on:")
     assert write(cov=extra_comment).level == "OK", \
         "a part with an extra comment line in its header (as every split part has) must pass"
+    # 2026-10-15: when a part runs (its needs and if) is not its setup.
+    sched = "    needs: [changes]\n    if: needs.changes.outputs.full == 'true'\n"
+    assert write(cov=part("test-coverage", "coverage", sched=sched), extra=_changes_job(),
+                 gate=_gate_job("test", "Polaris product test suite", ["changes", "test-core", "test-coverage"],
+                                changes="changes", always=["test-core"], when={"full": ["test-coverage"]})
+                 ).level == "OK", "a part the changes job can skip still shares the others' setup"
     assert write(cov=part("test-coverage", "coverage", image="postgres:16-alpine")).level == "FAIL", \
         "a part left on an unpinned service image (the 2026-10-08 merge) must FAIL"
     assert write(cov=part("test-coverage", "coverage", deps="pip install -r other.txt")).level == "FAIL", \
         "a shared setup step changed in one part only must FAIL"
     assert write(gate=gate_ok.replace("    if: always()\n", "")).level == "FAIL", \
         "a gate without if: always() is skipped when a part fails, and skipped reads as passing"
-    assert write(gate=gate_ok.replace("all(v ==", "any(v ==")).level == "FAIL", \
-        "a gate that passes one green part as the suite must FAIL"
-    assert write(gate=gate_ok.replace("len(r) == 2 and", "len(r) == 1 and")).level == "FAIL", \
-        "a gate that counts fewer results than it needs must FAIL"
+    assert write(gate=gate_ok.replace("    if: always()\n", "    if: always() && success()\n")).level == "FAIL", \
+        "a gate whose condition is more than always() must FAIL"
+    inline = gate_ok.replace("python3 scripts/polaris-ci-gate.py --always test-core,test-coverage",
+                             "echo \"$RESULTS\" | python3 -c 'import json, sys; r = {k: v[\"result\"] for k, v in "
+                             "json.load(sys.stdin).items()}; sys.exit(0 if all(v in (\"success\", \"skipped\") "
+                             "for v in r.values()) else 1)'")
+    assert write(gate=inline).level == "FAIL", \
+        "a gate that judges inline, passing skipped as success, must FAIL"
+    assert write(gate=gate_ok.replace("--always test-core,test-coverage", "--always test-core")).level == "FAIL", \
+        "a gate that judges fewer parts than it needs must FAIL"
+    assert write(gate=gate_ok.replace("--always test-core,test-coverage",
+                                      "--always test-core,test-coverage,test-core")).level == "FAIL", \
+        "a gate that names a part twice must FAIL"
     # Review of #309: a part known by its work, not its label, and every pair of parts compared.
     renamed = part("test-zk", "zk", last="cargo test --release").replace('"Product suite: zk"', '"ZK, somewhere"')
     assert write(extra=renamed).level == "FAIL", \
         "a job running the suite's work under another label, not needed by the gate, must FAIL"
-    three = gate_ok.replace("[test-core, test-coverage]", "[test-core, test-coverage, test-third]").replace(
-        "len(r) == 2 and", "len(r) == 3 and")
+    moved = part("test-sdk", "sdk", last="python scripts/polaris-sdk-mutation-drill.py --changed").replace(
+        '"Product suite: sdk"', '"SDK mutation drill"')
+    assert write(extra=moved).level == "FAIL", \
+        "a drill moved out of another job into one the required gate does not need must FAIL"
+    three = _gate_job("test", "Polaris product test suite", ["test-core", "test-coverage", "test-third"],
+                      always=["test-core", "test-coverage", "test-third"])
     mid = part("test-coverage", "coverage").replace("      - name: Install deps\n", "      - name: Install other\n")
     third = part("test-third", "third", deps="pip install -r drifted.txt")
     assert write(cov=mid, extra=third, gate=three).level == "FAIL", \
@@ -23669,13 +23885,8 @@ def test_product_suite_sharded_part_check_discriminates(tmp_path):
                 f"      - name: Install deps\n        run: {deps}\n\n"
                 f"      - name: {label} only\n        run: {run}\n")
 
-    def gate(jid, label, needs):
-        return (f"  {jid}:\n    name: {label}\n    needs: [{', '.join(needs)}]\n"
-                "    if: always()\n    runs-on: ubuntu-latest\n    steps:\n"
-                "      - name: Every part passed\n        env:\n          RESULTS: ${{ toJSON(needs) }}\n"
-                "        run: echo \"$RESULTS\" | python3 -c 'import json, sys; r = {k: v[\"result\"] for k, v in "
-                f"json.load(sys.stdin).items()}}; sys.exit(0 if len(r) == {len(needs)} and all(v == \"success\" for v in "
-                "r.values()) else 1)'\n")
+    def gate(jid, label, needs, cond="always()"):
+        return _gate_job(jid, label, needs, always=needs, cond=cond)
 
     matrix = "    strategy:\n      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n"
     drill = 'python scripts/polaris-procedure-mutation-drill.py --shard "${{ matrix.shard }}/3"'
@@ -23691,11 +23902,11 @@ def test_product_suite_sharded_part_check_discriminates(tmp_path):
     good = write()
     assert good.level == "OK", good.message
     assert "in 3 shards" in good.message
-    assert write(sub=gate("test-procedures", "drill", ["test-procedures-shard"]).replace(
-        "    if: always()\n", "")).level == "FAIL", \
+    assert write(sub=gate("test-procedures", "drill", ["test-procedures-shard"], cond="")).level == "FAIL", \
         "a shard gate without if: always() is skipped when a shard fails, and skipped reads as passing"
     assert write(sub=gate("test-procedures", "drill", ["test-procedures-shard"]).replace(
-        "all(v ==", "any(v ==")).level == "FAIL", "a shard gate that passes one green result must FAIL"
+        "--always test-procedures-shard", "--always test-core")).level == "FAIL", \
+        "a shard gate that judges something other than its shards must FAIL"
     assert write(shard=part("test-procedures-shard", "s", matrix.replace("[1, 2, 3]", "[1, 2, 4]"),
                             drill)).level == "FAIL", "a shard list with a gap leaves work to no shard"
     assert write(shard=part("test-procedures-shard", "s", matrix, drill.replace("}}/3", "}}/4"))).level == "FAIL", \
@@ -23713,6 +23924,147 @@ def test_product_suite_sharded_part_check_discriminates(tmp_path):
     named = write(shard=part("test-procedures-shard", "s", matrix, 'echo "${{ matrix.shard }}/3"; python drill.py'))
     assert named.level == "FAIL" and "to --shard" in named.message, \
         "a shard number printed but never passed to --shard splits nothing"
+
+
+def _changes_job():
+    return ("  changes:\n    name: Which parts of CI this change needs\n    runs-on: ubuntu-latest\n"
+            "    outputs:\n      full: ${{ steps.classify.outputs.full }}\n"
+            "      oid4vp: ${{ steps.classify.outputs.oid4vp }}\n      sdk: ${{ steps.classify.outputs.sdk }}\n"
+            "    steps:\n      - name: Classify\n        id: classify\n"
+            "        run: python scripts/polaris-ci-changes.py --event \"$EVENT\"\n")
+
+
+def test_ci_skips_are_gated_check_discriminates(tmp_path):
+    """2026-10-15: a job the changes job can skip must be one the required gate waits for, with
+    its skip explained by the same output, and the gate script must never pass a skip that no
+    "false" explains."""
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+    sc = tmp_path / "scripts"
+    sc.mkdir()
+    (sc / "polaris-ci-gate.py").write_text((REPO / "scripts" / "polaris-ci-gate.py").read_text())
+    (sc / "polaris-ci-changes.py").write_text('ALWAYS_RUN_JOBS = (\n    "changes", "test-core", "test",\n)\n')
+
+    DRILL_RUNS = ['python scripts/polaris-oid4vp-mutation-drill.py --shard "$S"',
+                  'python scripts/polaris-sdk-mutation-drill.py --changed --shard "$S"',
+                  "python scripts/polaris-trigger-mutation-drill.py",
+                  "python scripts/polaris-trigger-mutation-drill.py --refusals",
+                  'bash scripts/polaris-coverage.sh --shard "$S"',
+                  'bash scripts/polaris-coverage.sh --combine "$D" --of 3']
+
+    def job(jid, cond="needs.changes.outputs.full == 'true'", needs="[changes]", work=None):
+        work = DRILL_RUNS if work is None and jid == "test-drill-shard" else (work or ["echo work"])
+        return (f"  {jid}:\n    name: {jid}\n" + (f"    needs: {needs}\n" if needs else "")
+                + (f"    if: {cond}\n" if cond else "") + "    runs-on: ubuntu-latest\n    steps:\n"
+                + "".join(f"      - name: Work {k}\n        run: {w}\n" for k, w in enumerate(work)))
+
+    shard_gate = _gate_job("test-drill", "drill", ["changes", "test-drill-shard"], changes="changes",
+                           when={"full": ["test-drill-shard"]})
+    top = _gate_job("test", "Polaris product test suite",
+                    ["changes", "test-core", "test-drill", "test-app", "test-oid"], changes="changes",
+                    always=["test-core", "test-drill"], when={"full": ["test-app"], "oid4vp": ["test-oid"]})
+
+    def write(jobs=None, gate=top, changes=None):
+        body = (changes if changes is not None else _changes_job()) + job("test-core", cond="", needs="") \
+            + (jobs if jobs is not None else job("test-drill-shard") + shard_gate + job("test-app")
+               + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")) + gate
+        (gh / "ci.yml").write_text("on: push\njobs:\n" + body)
+        return checks.check_ci_skips_are_gated(tmp_path)[0]
+
+    good = write()
+    assert good.level == "OK", good.message
+    assert checks.check_ci_skips_are_gated(tmp_path)[0].level == "OK"
+    assert write(gate=top.replace("--when full=test-app ", "")).level == "FAIL", \
+        "a skippable job the gate does not explain must FAIL"
+    assert write(gate=top.replace("      - test-app\n", "").replace("test-drill, test-app, test-oid",
+                                                                    "test-drill, test-oid")
+                 .replace(" --when full=test-app", "")).level == "FAIL", \
+        "a skippable job the required gate does not need must FAIL"
+    assert write(gate=top.replace("--when full=test-app --when oid4vp=test-oid",
+                                  "--when full=test-app,test-oid")).level == "FAIL", \
+        "a job skipped on one output and explained by another must FAIL"
+    assert write(jobs=job("test-drill-shard") + shard_gate
+                 + job("test-app", cond="needs.changes.outputs.full != 'false'")
+                 + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")).level == "FAIL", \
+        "a condition a missing output does not skip on must FAIL"
+    assert write(jobs=job("test-drill-shard") + shard_gate + job("test-app", needs="[test-core]")
+                 + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")).level == "FAIL", \
+        "a job reading the outputs without needing the changes job must FAIL"
+    assert write(gate=top.replace("    if: always()\n", "")).level == "FAIL", "a gate without always() must FAIL"
+    inline = top.replace(top[top.index("python3 scripts/polaris-ci-gate.py"):].split("\n")[0],
+                         "python3 -c 'import json, os, sys; r = json.loads(os.environ[\"RESULTS\"]); "
+                         "sys.exit(0 if all(v[\"result\"] in (\"success\", \"skipped\") for v in r.values()) else 1)'")
+    assert write(gate=inline).level == "FAIL", "a gate that passes skipped as success must FAIL"
+    assert write(jobs=job("test-drill-shard") + shard_gate.replace(" --changes changes", "")
+                 + job("test-app") + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")).level == "FAIL", \
+        "a shard gate that explains skips without the changes job must FAIL"
+    assert write(changes=_changes_job().replace("      sdk: ${{ steps.classify.outputs.sdk }}\n", "")).level == "FAIL", \
+        "a changes job that does not export an output must FAIL"
+    assert write(changes="").level == "FAIL", "no changes job must FAIL"
+    always_skipped = job("test-drill-shard") + shard_gate + job("test-app") \
+        + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")
+    (sc / "polaris-ci-changes.py").write_text('ALWAYS_RUN_JOBS = (\n    "changes", "test-core", "test-app",\n)\n')
+    assert write(jobs=always_skipped).level == "FAIL", \
+        "a job the classifier's audit treats as always-run, skipped by the outputs, must FAIL"
+    (sc / "polaris-ci-changes.py").write_text('ALWAYS_RUN_JOBS = (\n    "changes", "test-core", "test",\n)\n')
+    # The script, asked directly: a gate script that passes a skip with no "false" behind it.
+    script = (REPO / "scripts" / "polaris-ci-gate.py").read_text()
+    lax = script.replace('elif r == "skipped" and job in governed and outputs.get(governed[job]) == "false":',
+                         'elif r == "skipped":')
+    assert lax != script
+    (sc / "polaris-ci-gate.py").write_text(lax)
+    assert write().level == "FAIL", "a gate script that passes every skip must FAIL"
+    (sc / "polaris-ci-gate.py").write_text(script.replace('outputs.get(governed[job]) == "false"',
+                                                          'outputs.get(governed[job]) in ("false", "true")'))
+    assert write().level == "FAIL", "a gate script that passes a skip its output says was needed must FAIL"
+    (sc / "polaris-ci-gate.py").write_text(script)
+    assert write().level == "OK"
+    (gh / "ci.yml").write_text("on: push\njobs:\n" + _changes_job() + job("test-core", cond="", needs="") + top)
+    assert checks.check_ci_skips_are_gated(tmp_path)[0].level == "FAIL", \
+        "a gate needing jobs that do not exist, or no job gated at all, must FAIL"
+    # The drills that moved out of required jobs must still run, each somewhere the gate reaches.
+    write()
+    assert checks.check_ci_skips_are_gated(tmp_path)[0].level == "OK"
+    for i, (what, _pattern) in enumerate(checks._MOVED_DRILLS):
+        runs = DRILL_RUNS[:i] + DRILL_RUNS[i + 1:]
+        assert write(jobs=job("test-drill-shard", work=runs) + shard_gate + job("test-app")
+                     + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")).level == "FAIL", \
+            "must FAIL when %s no longer runs" % what
+    assert write(jobs=job("test-drill-shard") + shard_gate + job("test-app")
+                 + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")
+                 + job("test-stray", cond="", needs="", work=["python scripts/polaris-oid4vp-mutation-drill.py --shard 1/1"])
+                 ).level == "FAIL", "must FAIL when a moved drill runs in a job the required gate does not reach"
+
+
+def test_ci_changes_allowlist_measured_check_discriminates(tmp_path):
+    """2026-10-15: the allowlist is re-measured on every run. A copy of this tree passes; a copy
+    in which a skippable script opens an allowlisted document fails, as does one in which a
+    job the classifier treats as always-run reads the outputs, and one with the classifier gone."""
+    import shutil
+    tree = tmp_path / "tree"
+    shutil.copytree(REPO, tree, ignore=shutil.ignore_patterns(
+        ".git", "node_modules", "__pycache__", "target", "venv", ".venv", ".hypothesis", ".pytest_cache",
+        ".ruff_cache", "dist", "build", ".coverage*", "coverage.*"))
+    good = checks.check_ci_changes_allowlist_measured(tree)[0]
+    assert good.level == "OK", good.message
+    reader = tree / "scripts" / "polaris-read-a-doc.py"
+    reader.write_text('import pathlib\nROOT = pathlib.Path(__file__).parent.parent\n'
+                      'print((ROOT / "docs" / "reference" / "API.md").read_text()[:10])\n')
+    bad = checks.check_ci_changes_allowlist_measured(tree)[0]
+    assert bad.level == "FAIL" and "docs/reference/API.md" in bad.message, bad.message
+    reader.write_text('print("the routes are listed in docs/reference/API.md")\n')
+    assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "OK", \
+        "a sentence that names a document reads nothing, and must pass"
+    reader.unlink()
+    ci = tree / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text()
+    ci.write_text(text.replace("  test-core:\n", "  test-core:\n    if: needs.changes.outputs.full == 'true'\n", 1))
+    assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
+        "an always-run job the outputs can skip leaves its reads unmeasured, and must FAIL"
+    ci.write_text(text)
+    (tree / "scripts" / "polaris-ci-changes.py").unlink()
+    assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
+        "with the classifier gone there is nothing measured, and the check must FAIL"
 
 
 def test_edge_tls_state_shared_check_discriminates(tmp_path):

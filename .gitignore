@@ -51,6 +51,7 @@ env/
 .coverage.*
 coverage.xml
 coverage.json
+coverage-shard.txt
 htmlcov/
 .tox/
 .nox/

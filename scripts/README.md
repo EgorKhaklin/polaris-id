@@ -47,7 +47,9 @@ block after the shebang is its documentation, and `--help` prints it.
 | Script | What it proves | Called by |
 |---|---|---|
 | `polaris-image-build.sh` | Builds one image, or the four-image set, retried and version-stamped | Every image build in both workflows |
-| `polaris-coverage.sh` | Runs the suites under coverage and gates statements and branches, each on its floor | `ci.yml` |
+| `polaris-coverage.sh` | Runs the suites under coverage and gates statements and branches, each on its floor. In CI as three shards (`--shard I/3`, each a third of the suites) and a job that combines their data and applies the floors (`--combine DIR --of 3`), which fails on a missing, empty or mismatched shard | `ci.yml` |
+| `polaris-ci-changes.py` | Which jobs a pull request can skip (a push runs everything): every changed path must be on an allowlist of paths the skippable jobs were measured not to read, or everything runs (an unknown path, an empty diff and an unreadable base included). `--audit` repeats the measurement over the tree; `--measure` prints it | `ci.yml`'s `changes` job; `polaris_checks` (the audit) |
+| `polaris-ci-gate.py` | A gate over the jobs it needs: a part passes when it succeeded, or when it was skipped and the changes output governing it says "false"; any other skip, a failure, a cancellation or results it cannot read fail it | `ci.yml`'s required gate and the two gates over sharded parts |
 | `polaris-link-check.sh` | Every cross-reference, HTML attribute and repository link resolves | `ci.yml`, `pages.yml`, `polaris-preflight.sh`, pre-commit |
 | `polaris-cli-package-check.sh` | The `polaris-id-cli` wheel, installed alone outside the repository, reports its own version and refuses (exit 2, naming the clone) the commands that need the application | `publish.yml`, before an upload |
 | `polaris-verifier-differential.py` | The detached verifier and the Python SDK answer the same hostile battery: 340 comparisons over 10 shared functions, and any input where they give a different KIND of answer is a finding. A note may differ; a verdict may not | by hand, after touching either |
@@ -104,6 +106,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | Script | What it does | Called by |
 |---|---|---|
 | `polaris-preflight.sh` | The pre-ship gate: the invariant layer plus the link check | A contributor, before every commit |
+| `polaris-tree-gate.py` | Runs the heavy pre-commit stages on a `git archive` export of the staged tree and, when all pass, writes a receipt for that tree id in the common git dir; the hooks skip a stage only on a recorded export pass for the identical tree, command, interpreter, pytest, ruff and installed distributions; a hook run records nothing (CONTRIBUTING.md, Tree receipts) | A contributor, before a commit; the four heavy pre-commit hooks |
 | `polaris-test.sh` | One-shot runner for the database-backed suites, with the env set | A contributor; `polaris-coverage.sh` |
 | `polaris-release-notes.sh` | Renders a release body from the CHANGELOG entry | A contributor, at release time |
 | `polaris-authz-audit.sh` | The who-can-do-what report across all four authorization surfaces | A contributor or an assessor; `RED-TEAM-SCOPE.md` points here |
