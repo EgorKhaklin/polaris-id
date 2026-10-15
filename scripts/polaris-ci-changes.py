@@ -292,6 +292,8 @@ ALWAYS_RUN_ONLY = {
     "polaris_web/test_capacity.py": "the coverage shards",
     "scripts/test_coverage_script.py": "the coverage shards",
     "scripts/test_ci_gate.py": "the coverage shards",
+    "scripts/polaris-tree-gate.py": "the local hooks; run by test_tree_gate under the coverage shards",
+    "scripts/test_tree_gate.py": "the coverage shards",
 }
 
 #: Files no job of this workflow executes: local tools, configuration other services read, and

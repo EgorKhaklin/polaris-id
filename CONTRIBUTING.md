@@ -131,6 +131,28 @@ pip install pre-commit && pre-commit install
 | `no-secret-in-prod-compose` | Refuses a literal secret in the production compose file |
 | `em-dash-block-new` | Refuses a new em dash on a human-facing surface |
 
+### Tree receipts
+
+The four heavy hooks (`polaris-checks`, `polaris-detection-tests`, `polaris-link-check`,
+`polaris-script-tool-tests`) run through `scripts/polaris-tree-gate.py`. Measure the staged tree
+once, on a `git archive` export, before committing it:
+
+```bash
+python3 scripts/polaris-tree-gate.py         # the stages this commit's hooks would run; --all for every one
+```
+
+When every stage it ran passes, it writes a receipt to
+`$(git rev-parse --git-common-dir)/polaris-tree-receipts/<tree>.json`, shared by every worktree.
+At commit time each heavy hook skips, printing the tree and the summary it trusted, only when that
+receipt records a pass of the same stage, measured on an export, for the tree being committed
+(`git write-tree` on the index the commit records), with the same stage command (by hash),
+interpreter path and version, pytest, ruff and set of installed distributions (a sha256 of every
+`name==version`). Anything else runs the stage as before: no receipt, an unreadable one, another
+tree, a recorded failure, a changed command, another `python3` or package set. Run the gate with
+the `python3` the hooks run under. Only the gate makes a stage skippable: a hook run sees untracked
+files, so its pass records nothing, and its failure drops that stage from the receipt. `ruff`,
+`no-secret-in-prod-compose` and `em-dash-block-new` always run, and CI runs everything regardless.
+
 ## Style
 
 Declarative, present tense, no em dashes, no filler; every statement traceable to the code it

@@ -517,7 +517,7 @@ class VerifiableCredentialDecisions(unittest.TestCase):
     def setUpClass(cls):
         cls.sign, cls.pk = _mldsa_signer()
 
-    def credential(self, proof_changes=None, **changes):
+    def credential(self, proof_changes=None, twice=False, **changes):
         doc = {"@context": ["https://www.w3.org/ns/credentials/v2"],
                "type": ["VerifiableCredential", V._VC_TYPE], "issuer": "did:example:authority",
                "validFrom": "2026-01-01T00:00:00Z", "validUntil": "2027-01-01T00:00:00Z",
@@ -525,7 +525,10 @@ class VerifiableCredentialDecisions(unittest.TestCase):
         doc.update(changes)
         proof = {"type": "DataIntegrityProof", "cryptosuite": V._VC_CRYPTOSUITE,
                  "polarisAlgorithm": "ML-DSA-65", "polarisPublicKeyHex": self.pk.hex()}
-        proof["proofValue"] = self.sign(hashlib.sha3_256(V._vc_canonical(doc)).digest()).hex()
+        signed = hashlib.sha3_256(V._vc_canonical(doc)).digest()
+        if twice:   # the form /api/v1/verifiable-credential signed until 2026-10-14
+            signed = hashlib.sha3_256(signed).digest()
+        proof["proofValue"] = self.sign(signed).hex()
         proof.update(proof_changes or {})
         doc["proof"] = proof
         return doc
@@ -541,6 +544,20 @@ class VerifiableCredentialDecisions(unittest.TestCase):
         self.assertIsNone(V.verify_verifiable_credential(self.credential(), now=self.NOW)["issuer_trusted"])
         as_bytes = json.dumps(self.credential()).encode("utf-8")
         self.assertIs(V.verify_verifiable_credential(as_bytes, now=self.NOW)["proof_authentic"], True)
+
+    def test_a_proof_over_the_canonical_bytes_hashed_twice_is_refused(self):
+        # 2026-10-14. The route hashed the canonical bytes before signature_over_message hashed
+        # them again, so it signed SHA3-256 twice. The proof is ML-DSA over ONE SHA3-256 of the
+        # canonical bytes (the digest step of WIRE-SPEC 2.1's signed statements), and the old
+        # form gets no second meaning: refused, under the very key that made it.
+        anchor = [self.pk.hex()]
+        self.assertIs(V.verify_verifiable_credential(self.credential(), anchor_keys=anchor,
+                                                     now=self.NOW)["proof_authentic"], True, "control")
+        v = V.verify_verifiable_credential(self.credential(twice=True), anchor_keys=anchor, now=self.NOW)
+        self.assertIs(v["structure_valid"], True, "the structure is fine; the refusal is the proof's")
+        self.assertIs(v["proof_authentic"], False)
+        self.assertIsNot(v["issuer_trusted"], True)
+        self.assertIn("the credential proof is invalid", v["note"] or "")
 
     def test_freshness_is_the_window_and_an_unreadable_window_is_not_fresh(self):
         self.assertIs(V.verify_verifiable_credential(self.credential(), now="2027-01-01T00:00:00Z")["fresh"], False)

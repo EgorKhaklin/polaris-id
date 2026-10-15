@@ -30,9 +30,10 @@ verify the proof, for two reasons, and neither is fixable without giving somethi
   THE CANONICALISATION. Data Integrity's `-rdfc-` suites canonicalise with RDF Dataset
   Canonicalization, which needs a full JSON-LD processor. The detached verifier must stay
   import-standalone, and a verifier that could not check its own format would be worse than
-  one that used a simpler canonicalisation and said so. This uses JCS (RFC 8785) over the
-  document minus its proof, which is the same sorted-keys compact JSON every other Polaris
-  artifact is signed over. `-jcs-` is a shape the Data Integrity specification itself defines;
+  one that used a simpler canonicalisation and said so. This uses a JCS-style subset of RFC
+  8785 over the document minus its proof: sorted keys and compact separators, as the other
+  Polaris artifacts are signed over, with UTF-8 written as it is (ensure_ascii off, as RFC 8785
+  does). `-jcs-` is a shape the Data Integrity specification itself defines;
   what is not standard is the algorithm inside it.
 
 WHAT IT REFUSES TO CARRY
@@ -67,9 +68,10 @@ FORBIDDEN_SUBJECT_FIELDS = frozenset({"token_value", "tokenValue", "token_id", "
 def canonical_bytes(document: dict) -> bytes:
     """JCS-style canonical bytes of the document MINUS its proof (RFC 8785 subset).
 
-    The proof is excluded because it cannot cover itself. Sorted keys and compact separators
-    are the same canonicalisation every other Polaris artifact is signed over, which is what
-    lets the detached verifier check this without a JSON-LD processor.
+    The proof is excluded because it cannot cover itself. Sorted keys and compact separators,
+    as the other Polaris artifacts are signed over, with UTF-8 written as it is (ensure_ascii
+    off, as RFC 8785 does), which is what lets the detached verifier check this without a
+    JSON-LD processor.
     """
     body = {k: v for k, v in document.items() if k != "proof"}
     return json.dumps(body, sort_keys=True, separators=(",", ":"),

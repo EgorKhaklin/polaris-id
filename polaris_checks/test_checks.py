@@ -17193,19 +17193,31 @@ def test_vc_format_check_discriminates(tmp_path):
            "    if forbidden:\n        raise ValueError('identity attributes')\n"
            "    unknown = set(subject) - set(SUBJECT_FIELDS)\n"
            "    if unknown:\n        raise ValueError('unknown subject fields')\n"
+           "    document = {}\n"
+           "    sign(canonical_bytes(document))\n"
            "    return {'subject_id': subject_id}\n")
+    ROUTE = ("def api_v1_verifiable_credential():\n"
+             "    row = {'issuing_agency_id': 1}\n"
+             "\n"
+             "    def _sign(data):\n"
+             "        return pqc_signing.signature_over_message(data, agency_id=row['issuing_agency_id'])\n"
+             "\n"
+             "    return vc.build_credential('polaris:agency:1', {}, _sign, subject_id=None)\n")
     VERIFY = ('_VC_CRYPTOSUITE = "polaris-mldsa-jcs-2026"\n'
               "\ndef _vc_canonical(d):\n    return json.dumps(d, sort_keys=True)\n"
               "\ndef verify_verifiable_credential(doc):\n"
               '    v = {"structure_valid": False, "proof_authentic": False,\n'
               '         "verifier_interop": None}\n'
               "    if p.get('cryptosuite') != _VC_CRYPTOSUITE:\n        return v\n    return v\n")
-    DRILL = ("a credential relabelled to a registered suite is refused\n"
+    DRILL = ("def sign(data):\n"
+             "    return pqc_signing.signature_over_message(data, agency_id=1)\n"
+             "a credential relabelled to a registered suite is refused\n"
              "refusing an identity attribute in the subject\n"
              "with no verifier scope the subject carries NO id\n")
     DOC = "This attests a verification result, not an identity.\n"
     good = {
         'polaris_web/vc.py': MOD,
+        'polaris_web/rp_api.py': ROUTE,
         'packages/polaris-verify/polaris_verify_cli/verifier.py': VERIFY,
         'scripts/polaris-vc-format-drill.py': DRILL,
         'docs/design/vc-format.md': DOC,
@@ -17263,6 +17275,34 @@ def test_vc_format_check_discriminates(tmp_path):
         "    return json.dumps(d, sort_keys=True)\n", "    return json.dumps(d)\n")})
     assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
         "must FAIL when the verifier canonicalises differently from the signer"
+
+    # THE DOUBLE HASH (CORE-BUG, 2026-10-14): the route hashed the canonical bytes before
+    # signature_over_message hashed them again, and the verifier, which reconstructs one
+    # SHA3-256, refused every credential signed with a real key.
+    write({'polaris_web/rp_api.py': ROUTE.replace(
+        "signature_over_message(data,", "signature_over_message(hashlib.sha3_256(data).digest(),")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the route hashes the canonical bytes before signature_over_message"
+    write({'polaris_web/rp_api.py': ROUTE.replace(
+        "        return pqc_signing",
+        "        data = hashlib.sha3_256(data).digest()\n        return pqc_signing")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the route hashes the bytes a line before the call"
+    write({'polaris_web/rp_api.py': ROUTE.replace(
+        "{}, _sign,", "{}, lambda d: pqc_signing.signature_over_message(hashlib.sha3_256(d).digest()),")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the route hands the builder a signer other than the pinned _sign"
+    write({'polaris_web/vc.py': MOD.replace(
+        "sign(canonical_bytes(document))", "sign(hashlib.sha3_256(canonical_bytes(document)).digest())")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the builder hands the signer a digest of the canonical bytes"
+    # The drill signing with its own key over its own digest agreed with the verifier while
+    # the route did not: it must sign the way the app signs.
+    write({'scripts/polaris-vc-format-drill.py': DRILL.replace(
+        "    return pqc_signing.signature_over_message(data, agency_id=1)\n",
+        "    return signer.sign(hashlib.sha3_256(data).digest()), 'ML-DSA-65', pk\n")})
+    assert checks.check_vc_format(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the drill does not sign through the app's signature_over_message"
 
     # The verifier stops COMPARING against the pinned suite, so a relabelled document is
     # accepted. Removing the constant alone is not the regression; removing the comparison is.
@@ -21956,6 +21996,61 @@ def test_precommit_folded_entry_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "missing" in out[0].message, \
         "must FAIL when the config is absent"
+
+
+def test_precommit_tree_receipts_check_discriminates(tmp_path):
+    fn = checks.check_precommit_tree_receipts_skip_only_a_measured_pass
+    cfg = (REPO / ".pre-commit-config.yaml").read_text()
+    src = (REPO / "scripts" / "polaris-tree-gate.py").read_text()
+    (tmp_path / "scripts").mkdir()
+
+    def run(cfg_text=cfg, src_text=src):
+        (tmp_path / ".pre-commit-config.yaml").write_text(cfg_text)
+        (tmp_path / "scripts" / "polaris-tree-gate.py").write_text(src_text)
+        return fn(tmp_path)[0]
+
+    assert run().level == "OK", "must PASS on the real hook config and tree gate"
+
+    def mutate(text, old, new):
+        assert old in text, "fixture is stale: %r is gone" % old
+        return text.replace(old, new, 1)
+
+    # The decision ignores the tree id: another tree's pass would skip this one.
+    out = run(src_text=mutate(src, 'if receipt.get("tree") != tree:', "if False:"))
+    assert out.level == "FAIL" and "another tree" in out.message
+    # The decision always skips.
+    out = run(src_text=mutate(src, '    if not isinstance(receipt, dict):\n        return False, "no receipt',
+                              '    return True, "always"\n    if not isinstance(receipt, dict):\n'
+                              '        return False, "no receipt'))
+    assert out.level == "FAIL" and "no receipt" in out.message
+    # The decision trusts a pass measured on the work tree, untracked files and all.
+    out = run(src_text=mutate(src, 'if entry.get("where") != "export":', "if False:"))
+    assert out.level == "FAIL" and "work tree" in out.message
+    # The decision ignores the installed distributions.
+    out = run(src_text=mutate(src, 'if not isinstance(recorded, dict) or recorded != env:',
+                              'if not isinstance(recorded, dict) or {k: v for k, v in recorded.items() '
+                              'if k != "distributions"} != {k: v for k, v in env.items() if k != "distributions"}:'))
+    assert out.level == "FAIL" and "distribution set" in out.message
+    # A passing exit before the stage runs, outside the decision.
+    out = run(src_text=mutate(src, "    root = os.getcwd()\n    tree = index_tree(root)\n",
+                              "    return 0\n    root = os.getcwd()\n    tree = index_tree(root)\n"))
+    assert out.level == "FAIL" and "if skip:" in out.message
+    # ruff routed through the cache.
+    out = run(cfg_text=mutate(cfg, "entry: ruff check", "entry: python3 scripts/polaris-tree-gate.py hook ruff"))
+    assert out.level == "FAIL" and "ruff" in out.message
+    # One hook answering with another stage's receipt.
+    out = run(cfg_text=mutate(cfg, "hook polaris-link-check", "hook polaris-checks"))
+    assert out.level == "FAIL" and "polaris-link-check" in out.message
+    # A heavy hook unrouted while the script still carries its stage.
+    out = run(cfg_text=mutate(cfg, "python3 scripts/polaris-tree-gate.py hook polaris-link-check",
+                              "bash scripts/polaris-link-check.sh --ci"))
+    assert out.level == "FAIL" and "not the hooks routed" in out.message
+    # Anti-vacuity: no script, and a config too small to have been parsed.
+    (tmp_path / "scripts" / "polaris-tree-gate.py").unlink()
+    out = fn(tmp_path)[0]
+    assert out.level == "FAIL" and "missing" in out.message
+    out = run(cfg_text="repos:\n  - repo: local\n    hooks:\n      - id: only-one\n        entry: ruff\n")
+    assert out.level == "FAIL" and "finding nothing" in out.message
 
 
 def test_git_spawning_tests_drop_the_hook_environment_check_discriminates(tmp_path):
