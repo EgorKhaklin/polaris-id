@@ -203,6 +203,11 @@ def _import_oqs():
     """
     with contextlib.redirect_stdout(sys.stderr):
         import oqs  # type: ignore
+    # PyPI's `oqs` is an unrelated project whose wheel also installs a top-level `oqs`.
+    # Imported, it is not liboqs: it counts as absent, never as a witness that refuses
+    # every credential or a backend `auto` picks.
+    if not hasattr(oqs, "Signature"):
+        raise ImportError("the importable `oqs` is not liboqs-python: it has no Signature")
     return oqs
 
 
@@ -5471,7 +5476,7 @@ def resolve_crypto_mode(provider, dev_placeholder):
             if _provider_available(name):
                 return name, None
         return None, ("refusing to start: --pqc-provider auto found no real ML-DSA backend. "
-                      "Install one (`pip install oqs` with liboqs, or `pip install "
+                      "Install one (`pip install liboqs-python`, or `pip install "
                       "'cryptography>=48'`), or run with --dev-placeholder and accept that "
                       "nothing is authenticated.")
     if not _provider_available(provider):

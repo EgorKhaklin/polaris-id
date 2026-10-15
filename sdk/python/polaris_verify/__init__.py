@@ -209,6 +209,11 @@ def _import_oqs():
     import sys as _sys
     with contextlib.redirect_stdout(_sys.stderr):
         import oqs  # type: ignore
+    # PyPI's `oqs` is an unrelated project whose wheel also installs a top-level `oqs`.
+    # Imported, it is not liboqs: it counts as absent, never as a witness that refuses
+    # every credential.
+    if not hasattr(oqs, "Signature"):
+        raise ImportError("the importable `oqs` is not liboqs-python: it has no Signature")
     return oqs
 
 
