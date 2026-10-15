@@ -1964,7 +1964,8 @@ jobs:
           os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = f.name
           sig, alg = p.signature_bytes_for_token("TKN-PROD-IMAGE")
           assert alg == "ML-DSA-65" and len(sig) == 3309, f"bad signature: {alg} {len(sig)}"
-          assert p.verify_token_signature("TKN-PROD-IMAGE", sig, alg), "verify-at-use failed in the prod image"
+          assert p.verify_token_signature("TKN-PROD-IMAGE", sig, alg), "verify under the configured key failed in the prod image"
+          assert p.verify_stored_signature("TKN-PROD-IMAGE", sig, p.trust_anchor_public_key_hex(), algorithm=alg), "verify under the stored key failed in the prod image"
           print("prod image real ML-DSA-65 OK")
           PY
           )

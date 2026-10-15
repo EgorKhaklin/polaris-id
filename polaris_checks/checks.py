@@ -1789,7 +1789,7 @@ def check_possession_requires_registered_key(root: pathlib.Path) -> list[Finding
 # Real PQC must be the PRODUCTION DEFAULT, not merely testable. That needs three
 # things together: liboqs in the prod image (so oqs imports at runtime), the
 # flag on in the prod compose (POLARIS_USE_REAL_PQC=1), and the signing-key
-# secret mounted (the stable trust anchor verify-at-use checks against). CI
+# secret mounted (the key the instance signs with). CI
 # verifies real ML-DSA-65 actually works inside the prod image. The real key
 # CUSTODY (HSM/KMS) stays operator-gated; the compose ships a generated key.
 # ---------------------------------------------------------------------------
