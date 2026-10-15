@@ -42,14 +42,20 @@ that reason rather than merely failing to check it.
 **The canonicalisation.** Data Integrity's `-rdfc-` suites canonicalise with RDF Dataset
 Canonicalization, which requires a full JSON-LD processor. The detached verifier must stay
 import-standalone, and a verifier that could not check its own format would be worse than one
-that used a simpler canonicalisation and said so. This uses JCS (RFC 8785) over the document
-minus its proof: the same sorted-keys compact JSON every other Polaris artifact is signed over.
+that used a simpler canonicalisation and said so. This uses a JCS-style subset of RFC 8785 over
+the document minus its proof: sorted keys and compact separators, as the other Polaris artifacts are signed
+over, with UTF-8 written as it is (`ensure_ascii` off, as RFC 8785 does).
 `-jcs-` is a shape the Data Integrity specification itself defines; what is not standard is the
 algorithm inside it.
 
+The proof is ML-DSA over one SHA3-256 of those bytes: the same digest step as the signed
+statements of [the wire spec](../reference/WIRE-SPEC.md) (2.1), over this document's own
+canonical bytes. The same bytes hashed twice are refused, so a proof has one meaning.
+
 The app's `canonical_bytes` and the verifier's `_vc_canonical` are the same construction, and a
 check pins that, because a mismatch would mean the app signs bytes the verifier never
-reconstructs.
+reconstructs. The route hands those bytes to the signer unhashed, since the signer takes the
+SHA3-256 itself, and the check pins that too.
 
 ## Read-only, and derived
 
@@ -60,8 +66,11 @@ credential.
 
 ## Proven by
 
-`scripts/polaris-vc-format-drill.py` on every push: the round trip, a plain JSON reader finding
-the structure, a tampered subject and an extended window each breaking the proof, a relabelled
-cryptosuite refused, and all three subject refusals. `check_vc_format` pins the naming, the
-closed vocabulary and its ordering, the optional subject identifier, and that both sides
-canonicalise the same way.
+`scripts/polaris-vc-format-drill.py` on every push, signing through the app's own signer with
+a real ML-DSA-65 key: the round trip, a plain JSON reader finding the structure, a tampered
+subject and an extended window each breaking the proof, the bytes hashed twice refused, a
+relabelled cryptosuite refused, and all three subject refusals. A test posts to the route, and
+under real signing the detached verifier and an independent ML-DSA implementation both check
+the proof. `check_vc_format` pins the naming, the closed vocabulary and its ordering, the optional
+subject identifier, that both sides canonicalise the same way, and that the route and the drill
+hand the canonical bytes to the signer unhashed.

@@ -21271,6 +21271,72 @@ class VerifiableCredentialShapeTests(unittest.TestCase):
         self.assertEqual(out, '{"a":1,"b":"é"}'.encode('utf-8'))
 
 
+class VerifiableCredentialProofTests(PolarisTestCase):
+    """CORE-BUG 2026-10-14: the /api/v1/verifiable-credential proof, end to end through the
+    route. Not in ZKSnarkTests, beside the other VC route tests, because that class skips
+    without the polaris-zk binary, and the real-signer job has none: this must run under both
+    signers."""
+
+    _possession_credential = ZKSnarkTests._possession_credential
+
+    def test_the_proof_is_ml_dsa_over_one_sha3_256_of_the_canonical_bytes(self):
+        """CORE-BUG 2026-10-14. docs/design/vc-format.md: the proof covers the JCS bytes the
+        detached verifier reconstructs, ML-DSA over their one SHA3-256 (the digest step of
+        WIRE-SPEC 2.1's signed statements). The route handed SHA3-256 of those bytes to
+        signature_over_message, which hashed them again, so the verifier polaris-verify ships
+        refused every credential the route signed with a real key. The effect, in either
+        profile: under real signing that verifier accepts the credential under the authority's
+        custodied key, and an implementation that is not the tree's accepts the proof over one
+        SHA3-256 of the canonical bytes and refuses it over two; under the placeholder the
+        proof is the labelled SHA3-256 of those bytes, with no key, and the verifier does not
+        accept it."""
+        import importlib.util
+        tv, sig = self._possession_credential()
+        r = self.client.post('/api/v1/verifiable-credential',
+                             json={'token_value': tv, 'signature_hex': sig})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        document = r.get_json()['verifiable_credential']
+        proof = document['proof']
+        # The JCS bytes as a stranger reconstructs them from the design record: the document
+        # minus its proof, sorted keys, compact separators, UTF-8. Not the app's own function.
+        canonical = json.dumps({k: v for k, v in document.items() if k != 'proof'},
+                               sort_keys=True, separators=(',', ':'),
+                               ensure_ascii=False).encode('utf-8')
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'packages', 'polaris-verify', 'polaris_verify_cli', 'verifier.py')
+        spec = importlib.util.spec_from_file_location('_vc_route_verifier', path)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+        if pqc_signing.is_enabled():
+            from cryptography.hazmat.primitives.asymmetric import mldsa
+            from cryptography.exceptions import InvalidSignature
+            anchor = custody.public_key_hex(1)
+            # The published detached verifier first: our own verifier refusing our own
+            # real-signed credential is the failure the real-signer suite missed.
+            verdict = verifier.verify_verifiable_credential(document, anchor_keys=[anchor])
+            self.assertIs(verdict['proof_authentic'], True, verdict['note'])
+            self.assertIs(verdict['issuer_trusted'], True)
+            self.assertEqual(proof['polarisPublicKeyHex'], anchor,
+                             "signed with the authority's custodied key")
+            self.assertEqual(proof['polarisAlgorithm'], 'ML-DSA-65')
+            key = mldsa.MLDSA65PublicKey.from_public_bytes(bytes.fromhex(anchor))
+            signature = bytes.fromhex(proof['proofValue'])
+            once = hashlib.sha3_256(canonical).digest()
+            key.verify(signature, once)     # raises unless ML-DSA-65 over one SHA3-256
+            with self.assertRaises(InvalidSignature):
+                key.verify(signature, hashlib.sha3_256(once).digest())
+        else:
+            self.assertEqual((proof['polarisAlgorithm'], proof['polarisPublicKeyHex'],
+                              proof['verificationMethod']),
+                             (pqc_signing.PLACEHOLDER_LABEL, None, 'polaris:key:none'))
+            self.assertEqual(proof['proofValue'], hashlib.sha3_256(canonical).hexdigest())
+            verdict = verifier.verify_verifiable_credential(document)
+            self.assertIs(verdict['structure_valid'], True)
+            self.assertIs(verdict['proof_authentic'], False)
+            self.assertIsNot(verdict['issuer_trusted'], True)
+            self.assertIn('unaccepted signature algorithm', verdict['note'] or '')
+
+
 class MdocStructureHeldOutTests(unittest.TestCase):
     """Properties of mdoc.py a held-out mutation round found nothing pinned (2026-09-24).
 

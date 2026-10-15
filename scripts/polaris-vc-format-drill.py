@@ -18,14 +18,22 @@ never an identity attribute, because Polaris makes no identity claims anywhere e
 that did would be a larger claim than the whole system supports. And it never carries the token
 value, for the reason every surface refuses it.
 
+It signs the way /api/v1/verifiable-credential signs: the app's own signature_over_message,
+real ML-DSA-65 under a file key, handed the canonical bytes. Until 2026-10-14 it signed with
+its own digest, so it agreed with the verifier while the route, which hashed the bytes twice,
+did not; the old form is now a refused case here.
+
 Run: python3 scripts/polaris-vc-format-drill.py
-Exit 0 iff every case holds, 3 to skip (needs liboqs).
+Exit 0 iff every case holds, 3 to skip (needs liboqs and cryptography).
 """
+import atexit
 import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -47,25 +55,43 @@ def _row(label, got, want):
 
 
 def main():
+    # The real profile is declared here, and the guard is on the libraries, not the caller's
+    # flag, as the other real-signer drills do. The key is the custodied file key the route
+    # signs with in a single-key deployment, for the authority the route names.
+    os.environ["POLARIS_USE_REAL_PQC"] = "1"
+    os.environ.pop("POLARIS_CUSTODY_DRIVER", None)
+    os.environ.pop("POLARIS_AGENCY_KEYS_DIR", None)
     try:
-        import oqs  # type: ignore
+        import pqc_signing
         import vc
     except Exception as e:  # noqa: BLE001
-        print("vc-format drill needs liboqs-python: %s" % e, file=sys.stderr)
+        print("vc-format drill needs the app's pqc_signing (and liboqs): %s" % e, file=sys.stderr)
+        return 3
+    if not (pqc_signing.is_available() and pqc_signing.second_witness_available()):
+        print("vc-format drill needs real ML-DSA (liboqs + cryptography); skipping", file=sys.stderr)
         return 3
     spec = importlib.util.spec_from_file_location("polaris_verify",
                                                   os.path.join(HERE, "polaris-verify.py"))
     V = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(V)
 
-    with oqs.Signature("ML-DSA-65") as s:
-        pk = bytes(s.generate_keypair()); sk = bytes(s.export_secret_key())
-    with oqs.Signature("ML-DSA-65") as s:
-        other_pk = bytes(s.generate_keypair())
+    tmp = tempfile.mkdtemp(prefix="polaris-vc-format-")
+    atexit.register(shutil.rmtree, tmp, True)
+    kp = pqc_signing.generate_keypair()
+    key_file = os.path.join(tmp, "issuer.key.json")
+    with open(key_file, "w") as f:
+        json.dump(kp, f)
+    os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = key_file
+    pk = kp["public_key_hex"]
+    other_pk = pqc_signing.generate_keypair()["public_key_hex"]
 
     def sign(data):
-        with oqs.Signature("ML-DSA-65", secret_key=sk) as signer:
-            return bytes(signer.sign(hashlib.sha3_256(data).digest())), "ML-DSA-65", pk.hex()
+        return pqc_signing.signature_over_message(data, agency_id=1)
+
+    def sign_twice(data):
+        # The route's form until 2026-10-14: the canonical bytes hashed before
+        # signature_over_message hashed them again.
+        return pqc_signing.signature_over_message(hashlib.sha3_256(data).digest(), agency_id=1)
 
     SUBJECT = {"verificationResult": "usable", "credentialStatus": "ACTIVE",
                "context": "BANKING", "assuranceLevel": "polaris:possession",
@@ -78,9 +104,10 @@ def main():
 
     doc = vc.build_credential("polaris:agency:1", SUBJECT, sign,
                               subject_id="polaris:handle:abc")
-    v = V.verify_verifiable_credential(doc, anchor_keys=[pk.hex()])
+    v = V.verify_verifiable_credential(doc, anchor_keys=[pk])
     ok &= _row("a genuine credential verifies end to end", v["proof_authentic"], True)
     ok &= _row("...and is fresh within its own window", v["fresh"], True)
+    ok &= _row("...and is trusted under the custodied key that signed it", v["issuer_trusted"], True)
 
     # THE FORMAT CLAIM, tested with no Polaris code: a plain JSON reader sees a VC.
     parsed = json.loads(json.dumps(doc))
@@ -110,9 +137,16 @@ def main():
     ok &= _row("an extended validity window breaks the proof too",
                V.verify_verifiable_credential(rewindowed)["proof_authentic"], False)
 
+    # One proof, one meaning: ML-DSA over ONE SHA3-256 of the canonical bytes. The same bytes
+    # hashed twice, as the route signed them until 2026-10-14, are refused.
+    twice = vc.build_credential("polaris:agency:1", SUBJECT, sign_twice,
+                                subject_id="polaris:handle:abc")
+    ok &= _row("a proof over the canonical bytes hashed twice is refused",
+               V.verify_verifiable_credential(twice, anchor_keys=[pk])["proof_authentic"], False)
+
     # A credential is not trusted under an anchor that did not sign it.
     ok &= _row("a stranger's anchor does not trust this credential",
-               V.verify_verifiable_credential(doc, anchor_keys=[other_pk.hex()])["issuer_trusted"],
+               V.verify_verifiable_credential(doc, anchor_keys=[other_pk])["issuer_trusted"],
                False)
 
     # A document naming a REGISTERED suite is refused: it would be asserting something false
@@ -170,7 +204,9 @@ def main():
               "verify that proof, because the cryptosuite is Polaris's own and every registered "
               "Data Integrity suite is classical, and a document naming a registered suite is "
               "refused rather than accepted, since it would be asserting something false about how "
-              "its proof was made. The subject attests a verification RESULT and refuses identity "
+              "its proof was made. The proof is the app's own ML-DSA signature over one SHA3-256 "
+              "of the canonical bytes, and the same bytes hashed twice are refused. The subject "
+              "attests a verification RESULT and refuses identity "
               "attributes and the token value alike, and without a verifier scope it carries no "
               "subject identifier at all rather than minting a stable one.")
         return 0
