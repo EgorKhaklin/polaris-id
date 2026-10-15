@@ -281,6 +281,7 @@ paths:
                   reader_interop: { type: object, additionalProperties: true }
                 additionalProperties: true
         "400": { description: "The presented credential is not verifiable, or an unknown element was asked." }
+        "503": { description: "The authority's signing key is of a parameter set with no COSE algorithm (RFC 9964 registers ML-DSA-65 as -49 and ML-DSA-87 as -50)." }
   /api/v1/epoch/{epoch_id}/leaves:
     get:
       tags: [Federation artifacts]

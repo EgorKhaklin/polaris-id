@@ -18,7 +18,11 @@ how each is created, where it lives, and how it is replaced.
 The app talks to the key through one interface (`polaris_web/custody.py`):
 `public_key()` and `sign(digest)`, raw ML-DSA-65 bytes both ways. The two-witness
 verification (liboqs and OpenSSL must agree) sees identical bytes whichever
-driver signed, and checks every signature before it is stored.
+driver signed, and checks every signature before it is stored. The mdoc issuer
+signature uses `sign_message(message)`, the same pure ML-DSA over a COSE
+`Sig_structure` itself rather than a digest (COSE -49, RFC 9964); AWS KMS takes at
+most 4,096 bytes as `RAW`, so the `awskms` driver sends a longer message as its
+FIPS 204 mu (`EXTERNAL_MU`).
 
 | Driver | `POLARIS_CUSTODY_DRIVER` | The private key is | Use when |
 |---|---|---|---|
