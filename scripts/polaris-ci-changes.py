@@ -11,8 +11,8 @@ change may skip, and it is built so that the mistake it can make is running too 
     and an entry is there because the jobs that skip were measured not to read it (`--audit`,
     below, repeats that measurement on every run of the invariant checks). Anything else, a
     path nobody has looked at included, means "run everything".
-  - Only a pull request is classified. A merge-queue group, a push, a manual run or any
-    other event runs everything, whatever it touched.
+  - Only a pull request is classified. A push, a manual run, a merge group (unused while
+    this repository is user-owned) or any other event runs everything, whatever it touched.
   - An empty diff, a base that is not in the checkout, or a git that fails, runs everything.
     "I could not tell" and "nothing changed" must not look alike.
 

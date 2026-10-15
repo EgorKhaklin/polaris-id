@@ -99,7 +99,7 @@ polaris/
 
 **CI jobs** ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)):
 
-- `changes`: which parts of CI a change needs (`scripts/polaris-ci-changes.py`). A pull request whose every changed path is on the measured allowlist (documentation, the site, `lab/` and the like) skips the jobs that cannot read them; anything else, every merge-queue group and every push runs everything.
+- `changes`: which parts of CI a change needs (`scripts/polaris-ci-changes.py`). A pull request whose every changed path is on the measured allowlist (documentation, the site, `lab/` and the like) skips the jobs that cannot read them; anything else, and every push, runs everything.
 - `test`: the required product-suite check; it needs every job the `changes` outputs can skip, and passes only when each part succeeded or was skipped with its output saying the change does not need it (`scripts/polaris-ci-gate.py`).
 - `test-core`: the product suite against Postgres 16 and Redis; the checks layer, the constraint drill, the encrypted backup and restore round trip, the abuse drill, the performance smoke.
 - `test-coverage-shard`: the DB suites under coverage as a matrix of three shards, each keeping its coverage data.
