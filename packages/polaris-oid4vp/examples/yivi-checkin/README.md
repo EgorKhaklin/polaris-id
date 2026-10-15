@@ -3,8 +3,9 @@
 A door check-in built on polaris-oid4vp's public `Verifier`. The desk shows a QR code. The Yivi app
 presents its email credential with one claim disclosed, `domain`. If that domain is on the
 allow-list, the desk shows "Checked in" and the domain. When an authentic presentation is refused
-(its domain off the list, or another issuer), it shows "Not checked in" and the reason. A
-presentation that is not authentic leaves the desk waiting. [`app.py`](app.py) is the whole app.
+(its domain off the list, another issuer, a claim withheld), it shows "Not checked in" and the
+reason. A presentation that is not authentic leaves the desk waiting. [`app.py`](app.py) is the
+whole app.
 
 This runs in developer mode, not production. The phone trusts this verifier only because its root
 was added by hand in the Yivi app's developer mode. For the store app to trust a verifier as

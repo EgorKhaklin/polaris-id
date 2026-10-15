@@ -194,7 +194,11 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
         attempt, form = attempts.get(aid), await _form(request)
         if attempt is None or form is None:
             return JSONResponse(dict(Verifier.REFUSAL_BODY), 400)
-        verifier = attempt[0]
+        verifier, state = attempt[0], attempt[1].state
+        # Whether THIS post finds the request open. Sound because response() is async and nothing
+        # below awaits, so posts are judged one at a time; as a plain def (a thread pool) they
+        # could interleave.
+        was_open = verifier.request_object(state) is not None
         try:
             status, body, verdict = verifier.handle_direct_post(form)
         except Exception:  # noqa: BLE001  never a 5xx to a wallet: see serve.py
@@ -216,11 +220,12 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
             else:
                 attempt[3] = (False, "%s is not on the list for this check-in." % domain)
                 status, body = 400, dict(Verifier.REFUSAL_BODY)
-        # Anything else changes nothing here. polaris-oid4vp closes a request only on an authentic
-        # presentation, and anyone who saw the QR code can fetch the request object and post to
-        # it, so a refusal says nothing about the person at the desk: the wallet is told, the
-        # request stays open and the desk keeps waiting. A post after the request closed,
-        # answered or expired, changes nothing either.
+        elif status != 200 and was_open and verifier.request_object(state) is None:
+            # polaris-oid4vp closes a request only on an authentic presentation, so a refusal
+            # that closed it is the holder's (a claim withheld, a revoked credential): shown.
+            # A post that is not authentic could come from anyone who saw the QR code and leaves
+            # the request open; one after it closed, answered or expired, changes nothing.
+            attempt[3] = (False, "refused: %s" % (verdict.code if verdict else "invalid_request"))
         return JSONResponse(body, status)
 
     @app.get("/logo.webp")

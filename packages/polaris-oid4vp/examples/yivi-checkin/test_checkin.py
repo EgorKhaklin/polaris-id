@@ -290,6 +290,17 @@ class CheckIn(unittest.TestCase):
         self.assertIn(self.REFUSED, said)
         self.assertIn("Not checked in \u212aexample.org is not on the list for this check-in.", shown)
 
+    def test_an_authentic_presentation_the_verifier_refuses_shows_why(self):
+        # Authentic, with `domain` withheld (sent under another name): polaris-oid4vp closes the
+        # request and refuses it over its claims. That refusal is the holder's: the desk shows it.
+        base = self.serve(["example.org"])
+        real = standin_wallet._disclosure
+        renamed = lambda name, value: real("department" if name == "domain" else name, value)  # noqa: E731
+        with mock.patch.object(standin_wallet, "_disclosure", renamed):
+            shown, said = self.scan(base, self.expected, ISSUER)
+        self.assertIn(self.REFUSED, said)
+        self.assertIn("Not checked in refused: claims", shown)
+
     def test_a_post_that_does_not_open_leaves_the_request_open(self):
         base = self.serve(["example.org"])
         _, desk, _ = _get(base + "/")
