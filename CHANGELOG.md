@@ -25,6 +25,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- polaris-verify `check_revocation_progression` reports a pair of feeds as not progressing when either `as_of` is missing or not a timestamp; it reported "forward progression", so an unreadable `as_of` hid whether the newer feed moved back.
 - polaris-verify `verify_signed_document`: given `trusted_anchors`, `valid_long_term` now also requires the signer trusted (its key among the anchors, or active at the instant on a trust list an anchor publishes). It was true for a stranger's key carrying its own manifest and a trusted authority's timestamp, beside `signer_trusted: false`.
 - The conformance runner scores `authentic` only as a JSON boolean: a verifier answering `1`/`0` or `"true"`/`"false"` was scored by truthiness and could conform. conformance/SPEC.md restates its measured counts (284 cases enter 20 of 23 public SDK functions; 98 accounted divergences; 184,784 hostile inputs), and the spec-count check now holds every whole-suite case count to cases.json.
 - `POST /api/v1/verifiable-credential` signed SHA3-256 applied twice to the credential's canonical bytes, so the VC verifier polaris-verify ships (`verify_verifiable_credential`) refused every verifiable credential the route signed with real ML-DSA-65. It now signs one SHA3-256 of those bytes, the digest the detached verifier reconstructs (docs/design/vc-format.md).

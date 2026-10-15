@@ -1511,12 +1511,18 @@ def check_revocation_progression(prev_feed, next_feed):
         return {"progresses": False, "rolled_back": True,
                 "note": "ROLLBACK: %d revocation(s) in the older feed are missing from the newer one"
                         % len(dropped)}
+    # Until 2026-10-15 an as_of that did not parse was skipped and the pair reported as
+    # progressing, so a newer feed could hide a regressed as_of behind an unreadable one. A
+    # detector that cannot read the field it compares has not compared it.
     try:
-        if _parse_iso(next_feed["as_of"]) < _parse_iso(prev_feed["as_of"]):
-            return {"progresses": False, "rolled_back": True,
-                    "note": "ROLLBACK: the newer feed's as_of precedes the older feed's"}
+        prev_as_of, next_as_of = _parse_iso(prev_feed["as_of"]), _parse_iso(next_feed["as_of"])
     except Exception:
-        pass
+        return {"progresses": False, "rolled_back": False,
+                "note": "a feed's as_of is missing or not a timestamp, so whether the newer "
+                        "one moves forward cannot be decided"}
+    if next_as_of < prev_as_of:
+        return {"progresses": False, "rolled_back": True,
+                "note": "ROLLBACK: the newer feed's as_of precedes the older feed's"}
     return {"progresses": True, "rolled_back": False,
             "note": "forward progression (%d new revocation(s))" % len(next_leaves - prev_leaves)}
 
