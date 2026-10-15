@@ -21330,15 +21330,20 @@ def test_dependency_budget_check_discriminates(tmp_path):
     dependencies left all 283 checks green. The import scan does not see it either, because
     a declared dependency need not be imported yet.
     """
-    PY_EMPTY = '[project]\nname = "x"\ndependencies = []\n'
-    PY_ONE = '[project]\nname = "y"\ndependencies = ["cryptography>=48"]\n'
+    PY_EMPTY = ('[project]\nname = "x"\ndependencies = []\n\n[project.optional-dependencies]\n'
+                'cryptography = ["cryptography>=50.0.0"]\noqs = ["oqs>=0.10"]\n')
+    PY_ONE = '[project]\nname = "y"\ndependencies = ["cryptography>=50.0.0"]\n'
     JS_ONE = '{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1"}}\n'
+    CLI = ('[project]\nname = "c"\ndependencies = ["psycopg2-binary>=2.9"]\n\n'
+           '[project.optional-dependencies]\nuser-mgmt = [\n    "werkzeug>=3.1.9,<4.0",\n]\n'
+           '\n[project.scripts]\nc = "c:main"\n')
 
-    def write(verify=PY_EMPTY, oid=PY_ONE, sdk=PY_ONE, ts=JS_ONE):
+    def write(verify=PY_EMPTY, oid=PY_ONE, sdk=PY_ONE, ts=JS_ONE, cli=CLI):
         for rel, body in (("packages/polaris-verify/pyproject.toml", verify),
                           ("packages/polaris-oid4vp/pyproject.toml", oid),
                           ("sdk/python/pyproject.toml", sdk),
-                          ("sdk/typescript/package.json", ts)):
+                          ("sdk/typescript/package.json", ts),
+                          ("polaris_cli/pyproject.toml", cli)):
             f = tmp_path / rel
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(body)
@@ -21354,7 +21359,7 @@ def test_dependency_budget_check_discriminates(tmp_path):
         "must FAIL when the detached verifier declares runtime dependencies"
 
     # One over budget on a package whose budget is one, not zero.
-    write(sdk='[project]\nname = "y"\ndependencies = ["cryptography>=48", "httpx"]\n')
+    write(sdk='[project]\nname = "y"\ndependencies = ["cryptography>=50.0.0", "httpx"]\n')
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "httpx" in out[0].message, \
         "must FAIL on a package that grows past a non-empty budget"
@@ -21370,6 +21375,31 @@ def test_dependency_budget_check_discriminates(tmp_path):
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "requests" in out[0].message, \
         "must strip extras and specifiers rather than miss the dependency"
+
+    # Version floors (2026-10-15): a runtime floor below the measured row is refused...
+    write(oid='[project]\nname = "y"\ndependencies = ["cryptography>=42"]\n')
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "polaris-oid4vp" in out[0].message \
+        and "cryptography>=42" in out[0].message, \
+        "must FAIL when a runtime floor lets a resolver install a release with an advisory"
+    # ...so is one in an optional extra, one release short of the row,
+    write(cli=CLI.replace("werkzeug>=3.1.9", "werkzeug>=3.1.8"))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "[user-mgmt]" in out[0].message \
+        and "3.1.9" in out[0].message, "must FAIL on an extra's floor one release short"
+    # ...a requirement with no floor at all,
+    write(verify=PY_EMPTY.replace('"cryptography>=50.0.0"', '"cryptography"'))
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "[cryptography]" in out[0].message, \
+        "must FAIL when the requirement states no floor"
+    # ...and a requirement that has vanished, rather than passing by finding nothing.
+    write(sdk='[project]\nname = "y"\ndependencies = []\n')
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "no longer names cryptography" in out[0].message, \
+        "must FAIL when the floor's requirement cannot be found"
+    # A floor ABOVE the row is fine: the row is a minimum.
+    write(oid='[project]\nname = "y"\ndependencies = ["cryptography>=51"]\n')
+    assert fn(tmp_path)[0].level == "OK", "a floor above the measured row must PASS"
 
     # A missing manifest is a failure, not a pass by finding nothing.
     write()

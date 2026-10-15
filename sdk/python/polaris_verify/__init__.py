@@ -275,7 +275,7 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
         ran.append("liboqs=%s" % ("valid" if witness else "invalid"))
     if primary is None and witness is None:
         return AuthenticityVerdict(False, None, alg, witnesses=ran,
-                                   note="no ML-DSA-65 verifier available: pip install 'cryptography>=48'")
+                                   note="no ML-DSA-65 verifier available: pip install 'cryptography>=50'")
     if primary is not None and witness is not None and primary != witness:
         return AuthenticityVerdict(False, None, alg, witnesses=ran,
                                    note="the two witnesses DISAGREE -- treat as invalid")
@@ -323,7 +323,7 @@ def _verify_over_digest(digest, sig_hex, pk_hex, alg=ALGORITHM):
     if witness is not None:
         ran.append("liboqs=%s" % ("valid" if witness else "invalid"))
     if primary is None and witness is None:
-        return None, ran, "no ML-DSA-65 verifier available: pip install 'cryptography>=48'"
+        return None, ran, "no ML-DSA-65 verifier available: pip install 'cryptography>=50'"
     if primary is not None and witness is not None and primary != witness:
         return None, ran, "the two witnesses DISAGREE -- treat as invalid"
     return (primary if primary is not None else witness), ran, None

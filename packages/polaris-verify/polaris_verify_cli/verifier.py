@@ -5472,7 +5472,7 @@ def resolve_crypto_mode(provider, dev_placeholder):
                 return name, None
         return None, ("refusing to start: --pqc-provider auto found no real ML-DSA backend. "
                       "Install one (`pip install oqs` with liboqs, or `pip install "
-                      "'cryptography>=48'`), or run with --dev-placeholder and accept that "
+                      "'cryptography>=50'`), or run with --dev-placeholder and accept that "
                       "nothing is authenticated.")
     if not _provider_available(provider):
         return None, ("refusing to start: --pqc-provider %s, but that backend is not usable "

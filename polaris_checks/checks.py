@@ -26398,6 +26398,87 @@ _PACKAGE_DEPENDENCY_BUDGET = {
 }
 
 
+#: The lowest version each published manifest lets a resolver choose, held at or above the
+#: lowest release every published advisory's fix covers. A `>=` floor is a promise that
+#: every version above it is acceptable, and a resolver that already has an older copy, or a
+#: lock file written against the floor, installs exactly the floor. Measured against OSV
+#: (api.osv.dev, querybatch by PyPI name and version) on 2026-10-15: cryptography 49.0.0 has
+#: GHSA-g6cj-pr64-35w5 and 50.0.0 none; werkzeug 3.1.8 has GHSA-g6x2-hccm-hh4m and 3.1.9
+#: none. ML-DSA itself needs cryptography 48, so the advisory floor dominates the feature
+#: floor. The table is static so the check needs no network; raising a row is a
+#: re-measurement, written here with its date.
+#: (manifest, extra or None for runtime dependencies, package, floor)
+_PACKAGE_DEPENDENCY_FLOORS = (
+    ("packages/polaris-oid4vp/pyproject.toml", None, "cryptography", "50.0.0"),
+    ("packages/polaris-verify/pyproject.toml", "cryptography", "cryptography", "50.0.0"),
+    ("sdk/python/pyproject.toml", None, "cryptography", "50.0.0"),
+    ("polaris_cli/pyproject.toml", "user-mgmt", "werkzeug", "3.1.9"),
+)
+
+
+def _toml_string_array(text: str, header: str, key: str):
+    """The strings of `key = [...]` in the TOML table `header` ("" for [project]), or None.
+
+    Balanced brackets, for the reason _declared_runtime_deps gives: a requirement may carry
+    its own `[extra]`."""
+    start = 0
+    if header:
+        h = re.search(r"^\[%s\]\s*$" % re.escape(header), text, re.M)
+        if not h:
+            return None
+        start = h.end()
+        nxt = re.search(r"^\[", text[start:], re.M)
+        text = text[start:start + nxt.start()] if nxt else text[start:]
+    m = re.search(r"^%s\s*=\s*\[" % re.escape(key), text, re.M)
+    if not m:
+        return None
+    depth, i = 0, m.end() - 1
+    while i < len(text):
+        if text[i] == "[":
+            depth += 1
+        elif text[i] == "]":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    return re.findall(r'"([^"]+)"', text[m.end():i])
+
+
+def _version_tuple(v: str):
+    """"50.0.0" -> (50, 0, 0); "3.1" -> (3, 1, 0). None for anything not dotted digits."""
+    if not re.fullmatch(r"\d+(\.\d+){0,3}", v or ""):
+        return None
+    parts = [int(x) for x in v.split(".")]
+    return tuple(parts + [0] * (4 - len(parts)))
+
+
+def _dependency_floor_problems(root: pathlib.Path) -> list:
+    """One sentence per manifest whose `>=` floor sits below its measured row."""
+    problems = []
+    for rel, extra, package, floor in _PACKAGE_DEPENDENCY_FLOORS:
+        text = _read_raw(root, rel)
+        where = "%s %s" % (rel, "[%s]" % extra if extra else "dependencies")
+        if not text:
+            problems.append("%s is missing, so its %s floor cannot be read" % (rel, package))
+            continue
+        reqs = _toml_string_array(text, "project.optional-dependencies" if extra else "",
+                                  extra or "dependencies")
+        mine = [r for r in (reqs or [])
+                if re.split(r"[<>=!~;\[ ]", r)[0].strip().lower() == package]
+        if not mine:
+            problems.append("%s no longer names %s, so the floor measured for it holds "
+                            "nothing; remove the row on purpose or restore the requirement"
+                            % (where, package))
+            continue
+        m = re.search(r">=\s*([0-9][0-9.]*)", mine[0])
+        stated = _version_tuple(m.group(1)) if m else None
+        if stated is None or stated < _version_tuple(floor):
+            problems.append("%s requires %r: a resolver may install a %s below %s, the floor "
+                            "measured clear of every published advisory (OSV, 2026-10-15)"
+                            % (where, mine[0], package, floor))
+    return problems
+
+
 def _declared_runtime_deps(root: pathlib.Path, rel: str) -> set:
     """Runtime dependency NAMES a manifest declares, version specifiers stripped."""
     text = _read_raw(root, rel)
@@ -26445,6 +26526,11 @@ def check_publishable_packages_keep_their_dependency_budget(root: pathlib.Path) 
 
     A budget is not a freeze. Widening one is a decision somebody makes on purpose, in this
     dict, with the reason written down, and the check then holds the new line.
+
+    The same manifests also say which VERSIONS are acceptable (2026-10-15): polaris-oid4vp
+    declared cryptography>=42 and the other two >=48, so a resolver could install a release
+    with a published advisory and stay inside the package's own promise. Each `>=` floor is
+    held at or above its row in _PACKAGE_DEPENDENCY_FLOORS.
     """
     name = "dependency_budget"
     findings = []
@@ -26463,14 +26549,17 @@ def check_publishable_packages_keep_their_dependency_budget(root: pathlib.Path) 
                       "dependency"
                       % (rel, ", ".join(extra),
                          ", ".join(sorted(allowed)) or "EMPTY", why)))
+    for problem in _dependency_floor_problems(root):
+        findings.extend(_fail(name, problem))
     if findings:
         return findings
     total = sum(len(a) for a, _w in _PACKAGE_DEPENDENCY_BUDGET.values())
     return _ok(name, "all %d publishable packages install within their declared dependency "
                      "budget (%d runtime dependencies between them, and polaris-verify's is "
                      "zero: its crypto backends are optional extras so the caller chooses "
-                     "one and names it)"
-                     % (len(_PACKAGE_DEPENDENCY_BUDGET), total))
+                     "one and names it), and all %d measured version floors hold"
+                     % (len(_PACKAGE_DEPENDENCY_BUDGET), total,
+                        len(_PACKAGE_DEPENDENCY_FLOORS)))
 
 
 def _seeded_algorithms(root: pathlib.Path) -> dict:
