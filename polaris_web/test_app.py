@@ -7956,11 +7956,26 @@ class TransparencyProofBoundsTests(UnauthenticatedTestCase):
             r = self.client.get('/api/v1/transparency/%sproof/%d' % (log, size))
             self.assertEqual(r.status_code, 400, (log, r.get_data(as_text=True)[:200]))
             self.assertEqual(r.get_json()['log_size'], size)
-        # Without login the anchor log's routes serve no batch proof; one that did would
-        # move batches to version 2 first (docs/design/anchoring.md).
+
+    def test_a_batch_proof_is_served_only_behind_login(self):
+        """docs/design/anchoring.md: the two routes that serve a stored batch proof,
+        /api/anchor/<token_id> and the token export, answer only behind login, and the anchor
+        log's public routes serve none. A change that serves one without login moves batches
+        to version 2 first."""
         served = {p: self.client.get('/api/v1/transparency/' + p) for p in ('sth', 'entries', 'proof/0')}
         self.assertEqual({p: (r.status_code, 'merkle_proof' in r.get_data(as_text=True))
                           for p, r in served.items()}, dict.fromkeys(served, (200, False)))
+        # Token 2's anchor is batched in the seed, so both routes hold a stored proof to serve.
+        routes = ('/api/anchor/2', '/api/tokens/2/export')
+        gated = {p: self.client.get(p) for p in routes}
+        self.assertEqual({p: (r.status_code, '/login' in r.headers.get('Location', ''),
+                              'merkle_proof' in r.get_data(as_text=True))
+                          for p, r in gated.items()}, dict.fromkeys(routes, (302, True, False)))
+        # The control: logged in, each route serves the proof.
+        self._login()
+        behind = {p: self.client.get(p) for p in routes}
+        self.assertEqual({p: (r.status_code, 'merkle_proof' in r.get_data(as_text=True))
+                          for p, r in behind.items()}, dict.fromkeys(routes, (200, True)))
 
 
 class ChainAnchorPublicationTests(UnauthenticatedTestCase):
@@ -21791,27 +21806,26 @@ class AnchoringMerkleHeldOutTests(unittest.TestCase):
 
 class AnchorBatchTreeDeclaredLimitTests(unittest.TestCase):
     """Pins a declared limitation of the per-batch tree as it stands: the root does not fix
-    the batch size, and a leaf and an interior node are hashed alike. docs/design/anchoring.md
-    declares both ("What a batch proof binds") and records the tree that removes them
-    ("Version 2 (recorded, not built)"). A version 2 tree makes this test fail, and the
-    document changes with it."""
+    the batch size. docs/design/anchoring.md declares it ("What a batch proof binds") and
+    records the tree that removes it ("Version 2 (recorded, not built)"). A version 2 tree
+    makes this test fail, and the document changes with it.
 
-    def test_the_root_binds_neither_the_batch_size_nor_the_leaf_role(self):
+    It pins the size property only. An interior node given as a leaf verifies in any Merkle
+    tree whose verifier takes a leaf hash, tagged or not; the missing tag is stated in the
+    document as defence in depth and not pinned here."""
+
+    def test_the_root_does_not_bind_the_batch_size(self):
         import anchoring
         a, b, c = (anchoring.leaf_hash(i, '%064x' % i) for i in (1, 2, 3))
-        levels = anchoring.merkle_tree([a, b, c])
-        root = levels[-1][0]
-        # The size: [a, b, c] and [a, b, c, c] have one root, so c has two different
-        # proofs against it, as the third of three leaves and as the fourth of four.
+        root = anchoring.merkle_root([a, b, c])
+        # [a, b, c] and [a, b, c, c] have one root, so c has two different proofs against it,
+        # as the third of three leaves and as the fourth of four.
         self.assertEqual(anchoring.merkle_root([a, b, c, c]), root)
         third_of_three = anchoring.inclusion_proof([a, b, c], 2)
         fourth_of_four = anchoring.inclusion_proof([a, b, c, c], 3)
         self.assertNotEqual(third_of_three, fourth_of_four)
         self.assertTrue(anchoring.verify_proof(c, third_of_three, root))
         self.assertTrue(anchoring.verify_proof(c, fourth_of_four, root))
-        # The role: the interior node H(a, b), given as a leaf, proves with a one-step path.
-        ab, cc = levels[1]
-        self.assertTrue(anchoring.verify_proof(ab, [{'sibling': cc, 'position': 'R'}], root))
 
 
 class RefusalsTheAppMutationDrillFound(PolarisTestCase):

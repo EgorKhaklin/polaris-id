@@ -21,8 +21,8 @@ Tree shape: standard binary Merkle. For odd-numbered leaves at any level,
 the last leaf is duplicated (rather than promoted), as in Bitcoin's
 transaction tree. Two properties follow (docs/design/anchoring.md, "What a
 batch proof binds"): the root does not fix the batch size, since [a, b, c]
-and [a, b, c, c] have one root; and leaves and interior nodes are hashed
-alike, with no 0x00/0x01 prefix, so a proof binds an anchor only when the
+and [a, b, c, c] have one root; and leaves and interior nodes carry no
+0x00/0x01 tag; as in any Merkle tree, a proof binds an anchor only when the
 verifier recomputes the leaf from the anchor's row.
 
 Inclusion proof: a list of (sibling_hash_hex, position) pairs from leaf
