@@ -7948,7 +7948,11 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
 
 class TransparencyProofBoundsTests(UnauthenticatedTestCase):
     """The three logs' inclusion-proof routes answer an index past the end with 400. Switched
-    off, the route indexed past its list and answered 500; nothing noticed (2026-09-24)."""
+    off, the route indexed past its list and answered 500; nothing noticed (2026-09-24). And a
+    stored batch proof is served only behind login (docs/design/anchoring.md)."""
+
+    #: A path parameter as werkzeug writes one: <name>, <converter:name>, <converter(args):name>.
+    _PARAM = re.compile(r'<(?:(\w+)(?:\([^)]*\))?:)?(\w+)>')
 
     def test_an_index_past_the_end_is_a_clean_refusal(self):
         for log in ('', 'receipts/', 'timestamps/'):
@@ -7957,24 +7961,117 @@ class TransparencyProofBoundsTests(UnauthenticatedTestCase):
             self.assertEqual(r.status_code, 400, (log, r.get_data(as_text=True)[:200]))
             self.assertEqual(r.get_json()['log_size'], size)
 
+    def _close_a_batch_of_two(self):
+        """Anchor two credentials of one algorithm that have no anchor yet and close them into
+        one batch as POST /api/anchor/batch does (anchoring.compute_batch, then
+        close_anchor_batch), as the schema owner. Returns the first anchor's row, with its
+        batch's position in the anchor log, and the sibling hashes the two stored proofs hold.
+        The seed's batches hold one anchor each, so their stored proofs are empty."""
+        import anchoring
+        from psycopg2.extras import Json
+        pick = _sql("SELECT algorithm_id, (array_agg(token_id ORDER BY token_id))[1:2] AS token_ids "
+                    "FROM IdentityToken t WHERE NOT EXISTS (SELECT 1 FROM BlockchainAnchor a "
+                    "WHERE a.token_id = t.token_id) GROUP BY algorithm_id HAVING count(*) >= 2 "
+                    "ORDER BY algorithm_id LIMIT 1", fetch='one')
+        self.assertIsNotNone(pick, 'fixture: two credentials of one algorithm have no anchor')
+        for tid in pick['token_ids']:
+            _owner_write("INSERT INTO BlockchainAnchor (token_id, did, commitment_hash, ledger_network) "
+                         "VALUES (%s, %s, %s, 'ALGORAND_PQ')",
+                         (tid, 'did:polaris:test:proof-bounds-%d' % tid,
+                          '0x' + hashlib.sha3_256(b'proof-bounds-%d' % tid).hexdigest()))
+        pending = _sql("SELECT a.anchor_id, a.commitment_hash FROM BlockchainAnchor a "
+                       "JOIN IdentityToken t ON a.token_id = t.token_id "
+                       "WHERE a.batch_id IS NULL AND t.algorithm_id = %s ORDER BY a.anchor_id",
+                       (pick['algorithm_id'],))
+        self.assertEqual(len(pending), 2, 'fixture: the batch holds the two new anchors')
+        root, proofs = anchoring.compute_batch(
+            [(r['anchor_id'], r['commitment_hash']) for r in pending], 'SHA3-256')
+        _owner_write("CALL close_anchor_batch(%s, %s, %s)", (pick['algorithm_id'], root, Json(proofs)))
+        rows = _sql("SELECT a.anchor_id, a.token_id, a.batch_id, a.merkle_proof, t.issuing_agency_id, "
+                    "(SELECT count(*) FROM AnchorBatch b WHERE b.batch_id < a.batch_id) AS log_index "
+                    "FROM BlockchainAnchor a JOIN IdentityToken t ON t.token_id = a.token_id "
+                    "WHERE a.anchor_id = ANY(%s) ORDER BY a.anchor_id",
+                    ([r['anchor_id'] for r in pending],))
+        siblings = {step['sibling'] for r in rows for step in r['merkle_proof']}
+        self.assertEqual(len(siblings), 2, 'fixture: each stored proof holds the other leaf as its sibling')
+        return rows[0], siblings
+
+    def _url(self, rule, anchor):
+        """The rule with its path parameters filled: the closed batch's own ids where the rule
+        names one (credential, batch, anchor), the batch's position in the anchor log for a log
+        index, the credential's issuing authority for an authority, and otherwise a value the
+        converter accepts. A hash parameter gets zeros, never a hash from the batch, so a route
+        that echoes its path cannot pass for one that serves a proof."""
+        def value(m):
+            converter, name = m.group(1) or 'string', m.group(2)
+            if 'tok' in name:
+                return str(anchor['token_id'])
+            if 'batch' in name:
+                return str(anchor['batch_id'])
+            if 'anchor' in name:
+                return str(anchor['anchor_id'])
+            if name in ('agency_id', 'ag_id'):
+                return str(anchor['issuing_agency_id'])
+            if name in ('index', 'm'):
+                return str(anchor['log_index'])
+            if name == 'n':
+                return str(anchor['log_index'] + 1)
+            if name == 'day':
+                return datetime.now(timezone.utc).date().isoformat()
+            if name.endswith('_hash'):
+                return '00' * 32
+            return '1' if converter == 'int' else 'x'
+        return self._PARAM.sub(value, rule.rule)
+
+    def _public_bodies(self, anchor):
+        """Every GET rule in the route table, requested with no session: {url: (status, body)}
+        for each that answers without a redirect to the login page, a 401 or a 403."""
+        rules = [r for r in flask_app.app.url_map.iter_rules() if 'GET' in r.methods]
+        self.assertGreaterEqual(len(rules), 80, 'the route table yielded %d GET rules' % len(rules))
+        anon = flask_app.app.test_client()
+        public = {}
+        for rule in sorted(rules, key=lambda r: r.rule):
+            url = self._url(rule, anchor)
+            flask_app.security.rate_limiter.reset()
+            r = anon.get(url)
+            if r.status_code in (401, 403) or (300 <= r.status_code < 400
+                                               and '/login' in r.headers.get('Location', '')):
+                continue
+            public[url] = (r.status_code, r.get_data(as_text=True))
+        return public
+
     def test_a_batch_proof_is_served_only_behind_login(self):
-        """docs/design/anchoring.md: the two routes that serve a stored batch proof,
-        /api/anchor/<token_id> and the token export, answer only behind login, and the anchor
-        log's public routes serve none. A change that serves one without login moves batches
-        to version 2 first."""
-        served = {p: self.client.get('/api/v1/transparency/' + p) for p in ('sth', 'entries', 'proof/0')}
-        self.assertEqual({p: (r.status_code, 'merkle_proof' in r.get_data(as_text=True))
-                          for p, r in served.items()}, dict.fromkeys(served, (200, False)))
-        # Token 2's anchor is batched in the seed, so both routes hold a stored proof to serve.
-        routes = ('/api/anchor/2', '/api/tokens/2/export')
-        gated = {p: self.client.get(p) for p in routes}
+        """docs/design/anchoring.md: a stored batch proof is served only behind login. A batch of
+        two anchors is closed first, so each stored proof holds a sibling hash, and the issuing
+        authority is federated, so the routes that publish its artifacts answer in full. Every
+        GET rule in the route table is then requested with no session; 38 of them answer
+        without a redirect to the login page, a 401 or a 403, and the anchor log's public routes
+        among them serve no stored proof's hashes, nor does any other. The two routes built to
+        serve a stored batch proof, /api/anchor/<token_id> and the token export, redirect to the
+        login page, and serve the proof once logged in (the read-only SQL console returns one
+        too, to the admin and auditor roles). A change that serves a batch proof without login
+        moves batches to version 2 first."""
+        anchor, siblings = self._close_a_batch_of_two()
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = %s",
+                     ('ab' * 16, anchor['issuing_agency_id']))
+        public = self._public_bodies(anchor)
+        self.assertGreaterEqual(len(public), 30, 'only %d routes answered without a session; the '
+                                'sweep must reach the public surface' % len(public))
+        leaked = sorted(url for url, (_status, body) in public.items()
+                        if any(h in body or h.upper() in body for h in siblings))
+        self.assertEqual(leaked, [], 'served a stored proof\'s hashes without login')
+        own = {step['sibling'] for step in anchor['merkle_proof']}
+        routes = ('/api/anchor/%d' % anchor['token_id'], '/api/tokens/%d/export' % anchor['token_id'])
+        anon = flask_app.app.test_client()
+        gated = {p: anon.get(p) for p in routes}
         self.assertEqual({p: (r.status_code, '/login' in r.headers.get('Location', ''),
-                              'merkle_proof' in r.get_data(as_text=True))
+                              any(h in r.get_data(as_text=True) for h in own))
                           for p, r in gated.items()}, dict.fromkeys(routes, (302, True, False)))
-        # The control: logged in, each route serves the proof.
+        # The control: logged in, each serves the proof, so the hashes looked for above are the
+        # ones a route that served it would carry.
         self._login()
         behind = {p: self.client.get(p) for p in routes}
-        self.assertEqual({p: (r.status_code, 'merkle_proof' in r.get_data(as_text=True))
+        self.assertEqual({p: (r.status_code, any(h in r.get_data(as_text=True) for h in own))
                           for p, r in behind.items()}, dict.fromkeys(routes, (200, True)))
 
 

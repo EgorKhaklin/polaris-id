@@ -23,11 +23,11 @@ The commitment is what leaves; the data does not.
    root, and writes each leaf's inclusion proof back to its anchor row.
 3. The root is published; the proofs are not. Every batch root is an entry of
    the public transparency log, and the per-leaf proofs are served only behind
-   login (`/api/anchor/<token_id>` and the token export,
-   `/api/tokens/<token_id>/export`) and checked there by
-   `/api/anchor/verify/<token_id>`. Committing the logs' heads to a public
-   chain is the operator's decision, and the schema records that it happened
-   (`ChainAnchor`, below).
+   login (`/api/anchor/<token_id>`, the token export
+   `/api/tokens/<token_id>/export`, and the read-only SQL console (admin,
+   auditor)) and checked there by `/api/anchor/verify/<token_id>`. Committing
+   the logs' heads to a public chain is the operator's decision, and the schema
+   records that it happened (`ChainAnchor`, below).
 
 ## The Merkle maths runs in Python, not in the database
 
@@ -151,10 +151,10 @@ The tree inside a batch binds less than the log above it.
   proof carries no index and no tree size, and the log entry is the bare root;
   the size is only in the `AnchorBatch` row.
 - **No outside verifier checks a batch proof.** The proofs are served only
-  behind login (`/api/anchor/<token_id>` and the token export,
-  `/api/tokens/<token_id>/export`), checked there by
-  `/api/anchor/verify/<token_id>`, and neither the detached verifier nor the
-  SDKs implement them.
+  behind login (`/api/anchor/<token_id>`, the token export
+  `/api/tokens/<token_id>/export`, and the read-only SQL console (admin,
+  auditor)), checked there by `/api/anchor/verify/<token_id>`, and neither the
+  detached verifier nor the SDKs implement them.
 - **Outside verification goes through the transparency log.** Its entries are
   the batch roots, hashed as RFC 6962 prescribes, with `0x00` and `0x01`, so
   the log binds each root at its position, and a monitor proves the sequence
@@ -188,7 +188,8 @@ login or publishes one.
 - `polaris_sql/06_triggers.sql`: `trg_anchor_batch_append_only`.
 - `polaris_web/test_app.py`: `AnchorBatchTests`, the concurrency tests named
   above, `AnchorBatchTreeDeclaredLimitTests` (the size property only), and
-  `TransparencyProofBoundsTests`, which pins the login on the two routes that
-  serve a proof.
+  `TransparencyProofBoundsTests`, which pins the login on the two routes built
+  to serve a proof, and that no route answering without login serves a stored
+  proof's hashes.
 - [audit-of-record.md](audit-of-record.md): `AnchorBatch` is one of the
   thirteen instances of the principle.
