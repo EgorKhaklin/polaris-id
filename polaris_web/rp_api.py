@@ -280,9 +280,10 @@ def _possession_authenticated(token_value, presented_sig_hex):
     key that made the signature must be one the issuing authority had registered at the
     signature's instant (_issuer_key_facts: issuer_authorized_at_signing IS True); anything
     else, None included, fails closed. That refuses both plants: a row under an attacker's own
-    key has no recorded history, because registration is closed to the application role; and a
-    KEYLESS row has no key at all, which matters because verify_stored_signature's keyless
-    branch recomputes SHA3-256(token_value), which anyone can ("NOT an authenticity proof").
+    key has no recorded history, because the application role cannot write the authority key
+    register (AuthorityKeyEvent), which this check reads; and a KEYLESS row has no key at all,
+    which matters because verify_stored_signature's keyless branch recomputes
+    SHA3-256(token_value), which anyone can ("NOT an authenticity proof").
     The placeholder profile keeps its behaviour: it never claims real authenticity."""
     # In force: not deprecated, or deprecated with the date still ahead. The column says a
     # deprecated signature is "no longer accepted after this timestamp", and the window's grace

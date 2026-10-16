@@ -18395,8 +18395,8 @@ class RelyingPartyApiTests(PolarisTestCase):
             self.assertEqual((r['decision'], r['issuer_authorized_at_signing']), ('accept', True), r)
 
     # -- THREAT-MODEL (2026-10-04): a planted signature row. The application role could INSERT
-    # -- into TokenSignature until the same day's revoke; registration (AuthorityKeyEvent) is
-    # -- closed to it.
+    # -- into TokenSignature until the same day's revoke. It cannot write the authority key
+    # -- register (AuthorityKeyEvent), which the check reads.
 
     def _plant_signature_row(self, token_value, signature, key_hex):
         """Plant a TokenSignature row under ML-DSA-87, an algorithm the credential (issued under
@@ -18477,8 +18477,8 @@ class RelyingPartyApiTests(PolarisTestCase):
         """PLANT A. The attacker signs with its own ML-DSA-87 key; the signature check is stood
         in for (it would pass: the bytes are the attacker's genuine signature), so what decides
         is whether the issuing authority had registered that key. It had not, and the
-        application role cannot register one. Registering it (as the owner) is the control
-        that the refusal is that fact and nothing else."""
+        application role cannot write the authority key register. Registering it (as the
+        owner) is the control that the refusal is that fact and nothing else."""
         import pqc_signing
         cid = self._register_rp('plant-a-secret-1', suffix='0302')
         auth = self._bearer(cid, 'plant-a-secret-1')
