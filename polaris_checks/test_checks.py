@@ -3210,7 +3210,7 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
            "aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
            "aquasec/trivy:0.58.1", "must FAIL when the SBOM generator runs by tag")
     broken("polaris_web/docker-compose.yml",
-           "postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65",
+           "postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d",
            "postgres:16", "must FAIL when a compose file runs a third-party image by tag")
     broken(".github/dependabot.yml", "  - package-ecosystem: docker-compose\n",
            "  - package-ecosystem: docker-compose-unread\n",
