@@ -79,22 +79,27 @@ response encrypted to its key, which control (c) exercises from the wallet's sid
 A verifier that accepts everything prints the same success line, so each of these is the same
 wallet, credential and path with one thing wrong. Each is judged as
 [the next section](#how-a-verdict-is-read-2026-10-21) says: by the wallet's exit status and JSON,
-and by the verifier's record of this walk's own request, not by what either side prints.
+and by the verifier's record of this walk's own request, not by what either side prints, except
+that a control the wallet refuses needs the wallet to name that control's reason.
 
 | | What changed | Refused by | The walk requires, while that wallet runs |
 |---|---|---|---|
 | (a) | The verifier trusts a different issuer key under the same `kid` (with `EUDI_ISSUER=1` or `EUDI_CAPTURE`, an unrelated CA) | the verifier | one response to this walk's request, refused with `issuer_signature` (`issuer_key` under a CA), and the request object served; the wallet's JSON says HTTP 400, and a 3.x wallet exits non-zero |
-| (b) | The same request presented again after it was answered | the verifier, at the request | the wallet exits non-zero and no response arrives; the request object is not served, and is refused at least once |
-| (c) | The launch URI names a `client_id` that is not the signed request's | the wallet | the wallet exits non-zero and no response arrives; the request object was served, so the wallet read it before refusing |
-| (d) | The wallet trusts an unrelated certificate for the verifier's TLS (only when the wallet checks TLS) | the wallet | the wallet exits non-zero and no response arrives; the request object is neither served nor refused |
+| (b) | The same request presented again after it was answered | the verifier, at the request | the wallet exits non-zero, says its fetch of the request was answered 404, and no response arrives; the request object is not served, and is refused at least once |
+| (c) | The launch URI names a `client_id` that is not the signed request's | the wallet | the wallet exits non-zero, says the request object's `client_id` does not match the one this walk launched it with, and no response arrives; the request object was served, so the wallet read it before refusing |
+| (d) | The wallet trusts an unrelated certificate for the verifier's TLS (only when the wallet checks TLS) | the wallet | the wallet exits non-zero, names the untrusted certificate on its fetch of this walk's request, and no response arrives; the request object is neither served nor refused, on a count that (c), run just before on the same request, has already moved |
 
 The request object conditions are read from `serve --result`; against a `polaris-oid4vp` without
-it (1.0.0, from PyPI), (b), (c) and (d) rest on the exit status and on no response arriving. What
-the wallet said follows each control in the walk's output and is not judged: v2.3.7 said
-`POST to request_uri returned HTTP 404` for (b) and
+it (1.0.0, from PyPI), (b), (c) and (d) rest on the exit status, on no response arriving and on
+the wallet's refusal. An exit status and no response alone are what a wallet that stopped for any
+other reason leaves (a flag it does not know, a certificate file it could not open), so each
+control also needs the wallet's refusal for its own reason, read in eudi-dev's words on stderr:
+`POST to request_uri returned HTTP 404` for (b);
 `request object client_id "x509_hash:..." does not match outer client_id "x509_hash:AAAA..."` for
-(c), and v2.5.0 said `tls: failed to verify certificate: x509: certificate signed by unknown
-authority` for (d).
+(c), naming the `client_id` this walk launched it with; and, for (d), Go's
+`tls: failed to verify certificate: x509: certificate signed by unknown authority` on this walk's
+own request URI. v2.3.7 and v3.3.1 word (b) and (c) the same (3.x adds a prefix and the HTTP
+status); v2.5.0 and v3.3.1 word (d) so. A wallet that words a refusal otherwise fails that control.
 
 (c) is a control on the wallet: it shows eudi-dev reads the signed request object and compares
 it with what it was launched with, rather than presenting to whatever it is pointed at.
@@ -158,7 +163,7 @@ The walk now passes `--port` with two adjacent ports it found free, so 2.x asks 
 nothing answers, and 3.x serves there. Without Docker, the wallet's whole state directory is the
 work dir's (`EUDI_DEV_HOME`), so no URL handler or remote set up on the machine is read. The walk
 also clears `EUDI_DEV_SEED`: the 3.x image sets it to the public seed `eudi-dev`, from which the
-wallet derives its keys. Two wallets started from v3.3.1's image as the walk starts one, but with
+wallet derives its keys (eudi-dev's SECURITY.md, l.10 at v3.3.2). Two wallets started from v3.3.1's image as the walk starts one, but with
 that seed, held the same holder, issuer and CA keys (their CA certificates carried different
 serial numbers); with it cleared, each held its own (measured 2026-10-21).
 

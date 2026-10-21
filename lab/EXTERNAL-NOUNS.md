@@ -187,7 +187,7 @@ installs 0.1.0 of `polaris-verify` and `polaris-sdk-python`. Being installable i
 use: a download count is not a person.
 
 Listed by outside parties: eudi-dev's maintainer merged `polaris-oid4vp` into its README's
-comparison of EUDI developer tools (dominikschlosser/eudi-dev#22, 2026-10-04), and the IETF OAuth
+comparison of EUDI developer tools (eudi-dev/eudi-dev#22, 2026-10-04), and the IETF OAuth
 working group's SD-JWT repository merged it into its implementations list
 (oauth-wg/oauth-selective-disclosure-jwt#584, 2026-10-04), and best-of-digital-identity merged it
 into its ranked list (jruizaranguren/best-of-digital-identity#219, 2026-10-05). Proposed and not yet

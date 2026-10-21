@@ -36,7 +36,9 @@
 # of its one request, taken before and after each wallet run (the responses that reached it,
 # the latest one's outcome and the check that refused it, and the request object fetches it
 # served and refused, from `serve --result` where the installed polaris-oid4vp has it, else
-# from the lines its log prints).
+# from the lines its log prints). A control the wallet refuses also needs the wallet's own
+# refusal line for the control's reason: an exit status and no response alone are what any
+# wallet that stopped early leaves.
 set -euo pipefail
 # A run that stops before its last line fails, whatever its EXIT trap's last command returns:
 # after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
@@ -238,7 +240,25 @@ def judge(kind, name, before_path, after_path, uri, want=""):
               "%s %d response for %s; %s" % (verifier, arrived, where, record(after)))
     elif kind in ("b", "c", "d"):
         # The wallet refuses these: it must exit non-zero AND nothing may reach the response URI.
+        # A wallet that stopped for another reason (a flag it does not know, a file it could not
+        # open) does both too, so each control also needs the wallet's refusal for the control's
+        # own reason, in eudi-dev's words (the same in v2.3.7 and v3.3.1; (d)'s is Go's x509
+        # error), naming what this walk launched it with. A wallet that words it otherwise fails
+        # the control: a loud FAIL, never a pass.
         check(rc != 0, "the wallet exited %d%s" % (rc, ", having presented nothing" if rc else ""))
+        text = read(name + ".err")
+        outer = urllib.parse.parse_qs(urllib.parse.urlsplit(uri).query).get("client_id", [""])[0]
+        if kind == "b":
+            why, own = ("at its fetch of the answered request (HTTP 404)",
+                        "POST to request_uri returned HTTP 404" in text)
+        elif kind == "c":
+            why, own = ("the request object, whose client_id is not %s" % (outer or "given"),
+                        bool(outer) and ('does not match outer client_id "%s"' % outer) in text)
+        else:
+            why, own = ("the verifier's certificate when fetching this walk's request",
+                        bool(state) and ('request.jwt?state=%s"' % state) in text
+                        and "x509: certificate signed by unknown authority" in text)
+        check(own, "the wallet refused %s; it said: %s" % (why, said[:240] or "nothing"))
         if served is None:
             fetches, seen = True, ""
         elif kind == "b":
@@ -246,11 +266,14 @@ def judge(kind, name, before_path, after_path, uri, want=""):
         elif kind == "c":
             fetches, seen = served >= 1, "; it served the signed request object %d time(s), which the wallet read and refused" % served
         else:
-            fetches, seen = served == 0 and refused == 0, "; %d fetch(es) of the request object" % (served + refused)
+            # No fetch is a zero, so the count must be shown live on this very request first:
+            # control (c), run before (d) on the same verifier and request, was served it.
+            live = before["request_object"]["served"]
+            fetches = live >= 1 and served == 0 and refused == 0
+            seen = ("; %d fetch(es) of the request object, which had counted %d before this run"
+                    % (served + refused, live))
         check(ours and arrived == 0 and fetches,
               "%s %s for %s%s" % (verifier, "no response" if arrived == 0 else "%d response(s)" % arrived, where, seen))
-        if said:
-            print("        the wallet said (not judged): %s" % said[:200])
     else:
         sys.exit("walk_py judge: no kind %r" % kind)
     sys.exit(1 if failed else 0)
@@ -659,8 +682,9 @@ if [ -n "$CAPTURE" ]; then
   fi
 fi
 
-# The wallet refuses (b), (c) and (d): each passes only if it exits non-zero AND nothing reaches
-# the verifier's response URI while it runs.
+# The wallet refuses (b), (c) and (d): each passes only if it exits non-zero, nothing reaches the
+# verifier's response URI while it runs, AND the wallet's refusal names the control's own reason.
+# (d) runs after (c) on the same request: (c)'s counted fetch shows (d)'s count of none is live.
 echo "== control (b): the same request again, after it was answered"
 measure b verifier.log "$URI" wallet-replay
 stop_verifier

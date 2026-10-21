@@ -197,39 +197,98 @@ class IssuerControlTests(Judged):
 
 
 class WalletRefusalTests(Judged):
-    """(b), (c) and (d): the wallet refuses, so it exits non-zero AND nothing reaches the verifier."""
+    """(b), (c) and (d): the wallet refuses, so it exits non-zero, nothing reaches the verifier,
+    and the wallet's refusal names the control's own reason. Its words are eudi-dev's on stderr,
+    as v2.3.7 and v3.3.1 wrote them (3.x adds a prefix and the HTTP status)."""
     ANSWERED = record(1, "accepted", served=1, claims=CLAIMS)
     OPEN = record(0, served=0)
-    SAID = "parsing authorization request: fetching request_uri: POST to request_uri returned HTTP 404"
+    FETCHED = record(0, served=1)  # the request once (c) has fetched it: what (d) starts from
+    SAID = {
+        "b": "parsing authorization request: fetching request_uri: POST to request_uri returned HTTP 404",
+        "c": ('parsing authorization request: request object client_id "x509_hash:def" does not match '
+              'outer client_id "x509_hash:abc"'),
+        "d": ('parsing authorization request: fetching request_uri: POSTing to request_uri: Post '
+              '"https://localhost:9443/request.jwt?state=%s": tls: failed to verify certificate: '
+              'x509: certificate signed by unknown authority' % STATE),
+    }
+    V3 = "remote wallet: invalid_request: %s (HTTP 400)"
+
+    def err(self, kind, v3=False):
+        return "human lines\n" + (self.V3 % self.SAID[kind] if v3 else self.SAID[kind]) + "\n"
+
+    def counts(self, kind):
+        """The verifier's record before and after a run in which the control passes."""
+        return {"b": (self.ANSWERED, dict(self.ANSWERED, request_object={"served": 1, "refused": 1})),
+                "c": (self.OPEN, self.FETCHED), "d": (self.FETCHED, self.FETCHED)}[kind]
 
     def test_b_the_answered_request_refused_at_its_fetch(self):
-        out = self.passes("b", 1, "", self.ANSWERED, dict(self.ANSWERED, request_object={"served": 1, "refused": 1}),
-                          err="human lines\n" + self.SAID + "\n")
+        out = self.passes("b", 1, "", *self.counts("b"), err=self.err("b"))
         self.assertIn("the wallet exited 1, having presented nothing", out)
+        self.assertIn("ok    the wallet refused at its fetch of the answered request (HTTP 404); it said: "
+                      + self.SAID["b"], out)
         self.assertIn("no response for this walk's request (state %s...); it refused 1 fetch(es) of the "
                       "request object and served 0" % STATE[:8], out)
-        self.assertIn("the wallet said (not judged): " + self.SAID, out)
 
     def test_c_the_signed_request_fetched_then_refused(self):
-        out = self.passes("c", 1, "", self.OPEN, record(0, served=1))
+        out = self.passes("c", 1, "", *self.counts("c"), err=self.err("c"))
+        self.assertIn("ok    the wallet refused the request object, whose client_id is not x509_hash:abc", out)
         self.assertIn("it served the signed request object 1 time(s)", out)
 
-    def test_d_nothing_fetched(self):
-        self.passes("d", 1, "", self.OPEN, self.OPEN)
+    def test_d_nothing_fetched_where_the_count_is_live(self):
+        out = self.passes("d", 1, "", *self.counts("d"), err=self.err("d"))
+        self.assertIn("ok    the wallet refused the verifier's certificate when fetching this walk's request", out)
+        self.assertIn("0 fetch(es) of the request object, which had counted 1 before this run", out)
 
-    def test_read_off_a_log_each_needs_no_fetch_counts(self):
+    def test_each_in_3x_words(self):
         for kind in "bcd":
             with self.subTest(kind=kind):
-                self.passes(kind, 1, "", from_log(self.OPEN), from_log(self.OPEN))
+                self.passes(kind, 1, "", *self.counts(kind), err=self.err(kind, v3=True))
+
+    def test_read_off_a_log_each_needs_its_reason_and_no_fetch_counts(self):
+        for kind in "bcd":
+            with self.subTest(kind=kind):
+                before, after = self.counts(kind)
+                self.passes(kind, 1, "", from_log(before), from_log(after), err=self.err(kind))
+
+    # A wallet that stopped for another reason exits non-zero and sends nothing too.
+    def test_d_a_wallet_that_could_not_open_its_certificate_fails(self):
+        out = self.fails("d", 1, "", *self.counts("d"),
+                         err="open /work/in/pki/anchor.pem: no such file or directory\n")
+        self.assertIn("FAIL  the wallet refused the verifier's certificate when fetching this walk's "
+                      "request; it said: open /work/in/pki/anchor.pem", out)
+        self.assertEqual(out.count("FAIL"), 1, out)
+
+    def test_b_and_c_a_wallet_without_port_fail_read_off_a_log(self):
+        for kind in "bc":
+            with self.subTest(kind=kind):
+                before, after = self.counts(kind)
+                out = self.fails(kind, 2, "", from_log(before), from_log(after),
+                                 err="Error: unknown flag: --port\n")
+                self.assertIn("it said: Error: unknown flag: --port", out)
+                self.assertEqual(out.count("FAIL"), 1, out)
+
+    def test_each_with_another_controls_reason_fails(self):
+        for kind, other in (("b", "c"), ("c", "d"), ("d", "b")):
+            with self.subTest(kind=kind):
+                out = self.fails(kind, 1, "", *self.counts(kind), err=self.err(other))
+                self.assertEqual(out.count("FAIL"), 1, out)
+
+    def test_c_naming_another_client_id_fails(self):
+        self.fails("c", 1, "", *self.counts("c"), err=self.err("c").replace('"x509_hash:abc"', '"x509_hash:zzz"'))
+
+    def test_d_refused_for_another_request_fails(self):
+        self.fails("d", 1, "", *self.counts("d"), err=self.err("d").replace(STATE, "OtherState123"))
+
+    def test_d_where_no_fetch_was_ever_counted_fails(self):
+        out = self.fails("d", 1, "", self.OPEN, self.OPEN, err=self.err("d"))
+        self.assertIn("which had counted 0 before this run", out)
 
     def test_a_wallet_exiting_0_fails_each(self):
         # Another wallet answered for it: the run exits 0 having reached nothing here.
-        for kind, after in (("b", dict(self.ANSWERED, request_object={"served": 1, "refused": 1})),
-                            ("c", record(0, served=1)), ("d", self.OPEN)):
+        for kind in "bcd":
             with self.subTest(kind=kind):
-                before = self.ANSWERED if kind == "b" else self.OPEN
                 out = self.fails(kind, 0, json.dumps({"status": "submitted", "response": {"status_code": 200}}),
-                                 before, after)
+                                 *self.counts(kind))
                 self.assertIn("FAIL  the wallet exited 0", out)
 
     def test_a_response_reaching_the_verifier_fails_each(self):
@@ -238,25 +297,26 @@ class WalletRefusalTests(Judged):
         for kind, before, after in (
                 ("b", self.ANSWERED, dict(self.ANSWERED, responses=2, request_object={"served": 1, "refused": 1})),
                 ("c", self.OPEN, record(1, "refused", served=1, check="issuer_signature", reason="r")),
-                ("d", self.OPEN, record(1, "refused", check="issuer_signature", reason="r"))):
+                ("d", self.FETCHED, record(1, "refused", served=1, check="issuer_signature", reason="r"))):
             with self.subTest(kind=kind):
-                out = self.fails(kind, 1, V3_400, before, after)
+                out = self.fails(kind, 1, V3_400, before, after, err=self.err(kind))
                 self.assertIn("1 response(s) for this walk's request", out)
         with self.subTest(kind="c, read off a log"):
             self.fails("c", 1, V3_400, from_log(self.OPEN),
-                       from_log(record(1, "refused", check="issuer_signature", reason="r")))
+                       from_log(record(1, "refused", check="issuer_signature", reason="r")), err=self.err("c"))
 
     def test_b_with_the_request_object_served_again_fails(self):
-        self.fails("b", 1, "", self.ANSWERED, dict(self.ANSWERED, request_object={"served": 2, "refused": 0}))
+        self.fails("b", 1, "", self.ANSWERED, dict(self.ANSWERED, request_object={"served": 2, "refused": 0}),
+                   err=self.err("b"))
 
     def test_c_without_a_fetch_fails(self):
-        self.fails("c", 1, "", self.OPEN, self.OPEN)
+        self.fails("c", 1, "", self.OPEN, self.OPEN, err=self.err("c"))
 
     def test_d_with_a_fetch_fails(self):
-        self.fails("d", 1, "", self.OPEN, record(0, served=1))
+        self.fails("d", 1, "", self.FETCHED, record(0, served=2), err=self.err("d"))
 
     def test_a_record_of_another_request_fails(self):
-        self.fails("d", 1, "", self.OPEN, dict(self.OPEN, state="OtherState123"))
+        self.fails("d", 1, "", self.FETCHED, dict(self.FETCHED, state="OtherState123"), err=self.err("d"))
 
     def test_an_unknown_kind_stops(self):
         r = self.judge("e", 1, "", self.OPEN, self.OPEN)
