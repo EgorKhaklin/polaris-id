@@ -1,6 +1,6 @@
 {
  "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
- "version": "0.3.0",
+ "version": "0.3.1",
  "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them.",
  "settings": {
   "now": 1790812800,
@@ -43,14 +43,14 @@
   "sd-jwt-vc": "the SD-JWT VC profile, which a verifier of SD-JWT VCs applies",
   "openid4vp": "OpenID4VP 1.0, which a verifier receiving presentations over it applies",
   "haip-x509": "the issuer's x5c chain under HAIP 1.0 and RFC 5280, which a verifier resolving keys from x5c applies",
-  "x5c-issuer": "the binding of iss to the x5c leaf that signed (SD-JWT VC s2.5), which a verifier resolving keys from x5c applies",
+  "x5c-issuer": "the binding of iss to the x5c leaf that signed (SD-JWT VC s2.5), which a verifier resolving keys from x5c applies when it requires the leaf to name iss",
   "status-list": "the Token Status List (draft-ietf-oauth-status-list), which a verifier checking status applies under the vector's policy"
  },
  "classes": {
   "control": "a valid presentation: a correct verifier accepts it",
   "spec": "a sentence of the cited text requires the refusal",
   "spec-implied": "the cited sentence binds the issuer or the wallet, or a definition implies the refusal",
-  "policy": "the cited text says the verifier SHOULD refuse, and no sentence requires it: the verdict is the one the vector's policy reaches"
+  "policy": "no sentence requires the refusal: either the cited text says the verifier SHOULD refuse, and the verdict is the one the vector's policy reaches, or the text leaves the check to the verifier, and the verdict is that of a verifier that applies it (for x5c-issuer, one that requires the leaf to name iss)"
  },
  "policies": {
   "status-required": "the relying party checks status: a credential that names a Token Status List is accepted only when the list its uri answers with is a Status List Token, signed by the key settings.status_list_keys states for the credential's iss and that uri, not expired, covering the index, and VALID (0) there"
@@ -448,7 +448,7 @@
   {
    "id": "x5c-leaf-names-other-issuer",
    "changed": "another issuer's leaf, under the trusted root and naming https://other-issuer.example as its URI, signs a credential whose iss is https://issuer.example",
-   "class": "spec-implied",
+   "class": "policy",
    "layer": "x5c-issuer",
    "clauses": [
     {
@@ -472,7 +472,7 @@
   {
    "id": "x5c-leaf-names-other-host",
    "changed": "another issuer's leaf, under the trusted root and naming only the DNS host other-issuer.example, signs a credential whose iss is https://issuer.example: it names neither that URL nor its host",
-   "class": "spec-implied",
+   "class": "policy",
    "layer": "x5c-issuer",
    "clauses": [
     {
@@ -496,7 +496,7 @@
   {
    "id": "x5c-leaf-uri-beats-host",
    "changed": "another issuer's leaf, under the trusted root, names https://other-issuer.example as its URI and also the host issuer.example, which both share; it signs a credential whose iss is https://issuer.example",
-   "class": "spec-implied",
+   "class": "policy",
    "layer": "x5c-issuer",
    "clauses": [
     {
