@@ -404,12 +404,11 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
         legitimate service-to-service minting was refused 429 for the window. After the fix the
         unsigned attempt 401s at verify_both before the limiter, so the bucket is untouched.
 
-        Runs under the placeholder profile with POLARIS_USE_REAL_PQC=1 patched for the request
-        so the route does not fail closed (503); it needs no genuine ML-DSA key or second
-        witness, because every attempt here is unsigned and fails verify_both. The accept (200)
-        path is proven over HTTP by scripts/polaris-federation-instances-drill.py."""
-        import os
-        from unittest import mock
+        Runs under the placeholder profile with pqc_signing.is_enabled patched True for the
+        request, so the route does not fail closed (503) with or without liboqs; it needs no
+        genuine ML-DSA key or second witness, because every attempt here is unsigned and fails
+        verify_both. The accept (200) path is proven over HTTP by
+        scripts/polaris-federation-instances-drill.py."""
         from datetime import datetime, timezone
         # A federated responder authority: a registered key must be present. Its exact bytes do
         # not matter, because every mint below is unsigned and fails verify_both regardless.
@@ -424,7 +423,7 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
                                             .isoformat().replace('+00:00', 'Z')},
                     'signature_hex': '00' * 64}
 
-        with mock.patch.dict(os.environ, {'POLARIS_USE_REAL_PQC': '1'}):
+        with patch.object(pqc_signing, 'is_enabled', return_value=True):
             # Spread across four source addresses so the per-address write: limit (60/min) never
             # fires first; every request still lands on the one per-agency exmint:1 bucket.
             for i in range(rp_api._EXCHANGE_MINT_RATE_PER_MIN):
