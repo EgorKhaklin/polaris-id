@@ -3476,13 +3476,14 @@ def test_redis_persists_nothing_check_discriminates(tmp_path):
     assert checks.check_redis_persists_nothing(tmp_path)[0].level == "OK", \
         "must PASS on the real compose file, overlays and chart"
 
-    def broken(rel, old, new, why):
+    def broken(rel, old, new, why, reason=None):
         path = tmp_path / rel
         good = path.read_text()
         assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
         path.write_text(good.replace(old, new, 1))
         bad = checks.check_redis_persists_nothing(tmp_path)[0]
         assert bad.level == "FAIL", why
+        assert reason is None or reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
         path.write_text(good)
 
     broken(compose, "      --appendonly no\n", "      --appendonly yes\n",
@@ -3497,6 +3498,19 @@ def test_redis_persists_nothing_check_discriminates(tmp_path):
            "must FAIL when a second --save turns snapshots back on")
     broken(compose, "      redis-server\n", "      redis-server /usr/local/etc/redis/redis.conf\n",
            "must FAIL when Redis reads a configuration file that could set persistence")
+    broken(compose, "      --appendonly no\n", "      --appendonly no\n      --include /data/x.conf\n",
+           "must FAIL when the compose Redis includes a configuration file (--include)",
+           "the compose redis: it includes a configuration file (--include)")
+    broken(compose, '      --save ""\n', '      --save ""\n        --appendonly yes\n',
+           "must FAIL when a deeper-indented line of the folded command turns the append-only file on",
+           "the compose redis: the append-only file must be off, once")
+    broken(compose, '      --save ""\n', '      --save ""\n\n      --appendonly yes\n',
+           "must FAIL when a line after a blank line of the folded command turns the append-only file on",
+           "the compose redis: the append-only file must be off, once")
+    broken(compose, "    command: >\n      redis-server\n",
+           '    entrypoint: ["sh", "-c", "redis-server --appendonly yes"]\n    command: >\n      redis-server\n',
+           "must FAIL when the compose Redis sets an entrypoint, which runs instead of the checked command",
+           "the compose redis sets an entrypoint")
     broken(compose, "    command: >\n      redis-server\n", "    command: >\n      redis-check-aof\n",
            "must FAIL when the command does not start redis-server")
     broken(compose, "    command: >\n", "    command_was: >\n",
@@ -3511,6 +3525,9 @@ def test_redis_persists_nothing_check_discriminates(tmp_path):
            "must FAIL when an overlay puts a volume back under Redis")
     broken(helm, '"--appendonly", "no"', '"--appendonly", "yes"',
            "must FAIL when the chart's Redis writes an append-only file")
+    broken(helm, '"--appendonly", "no"', '"--appendonly", "no", "--include", "/x.conf"',
+           "must FAIL when the chart's Redis includes a configuration file (--include)",
+           "the chart's redis: it includes a configuration file (--include)")
     broken(helm, '"--save", "", ', "",
            "must FAIL when the chart's Redis snapshots by its compiled-in default")
     broken(helm, '"--save", ""', '"--save", "900 1"',

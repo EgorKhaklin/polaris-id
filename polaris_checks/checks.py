@@ -7379,8 +7379,9 @@ def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
 # "Nothing is written"), and both substrates ran Redis with the append-only file on, so every ZADD
 # outlived its 61 s window on disk. Redis now persists nothing in either: `--appendonly no` AND
 # `--save ""` (a redis-server with no config file snapshots by its compiled-in `save` default, and a
-# stop writes one whenever `save` is not empty), no configuration file that could set either, and
-# /data in memory (a compose tmpfs, a Memory emptyDir). An empty or missing command is a FAIL.
+# stop writes one whenever `save` is not empty), no configuration file that could set either (a path
+# argument or --include), no entrypoint on the compose service, and /data in memory (a compose tmpfs,
+# a Memory emptyDir). An empty or missing command is a FAIL.
 def _redis_options(words: list[str]) -> dict[str, list[list[str]]] | str:
     """redis-server argv -> {option: [values per occurrence]}, or the reason it cannot be read."""
     if not words or words[0] != "redis-server":
@@ -7395,6 +7396,8 @@ def _redis_options(words: list[str]) -> dict[str, list[list[str]]] | str:
             opts.setdefault(cur, []).append([])
         else:
             opts[cur][-1].append(w)
+    if "include" in opts:
+        return "it includes a configuration file (--include) that could set persistence"
     return opts
 
 
@@ -7418,7 +7421,9 @@ def check_redis_persists_nothing(root: pathlib.Path) -> list[Finding]:
     compose = _read(root, "polaris_web/docker-compose.prod.yml")
     svc = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", compose)
     rs = svc.group(1) if svc else ""
-    cmd = re.search(r"(?m)^    command: *>-? *\n((?:^      \S.*\n)+)", rs)
+    # A folded command runs to the next line indented less than six spaces: YAML keeps a blank line
+    # and a deeper-indented line in the command, so both reach redis-server's argv.
+    cmd = re.search(r"(?m)^    command: *>-? *\n((?:^(?:      .*)?\n)+)", rs)
     flow = re.search(r"(?m)^    command: *(\[.*\]) *$", rs)
     if not rs:
         problems.append("docker-compose.prod.yml has no redis service")
@@ -7433,6 +7438,8 @@ def check_redis_persists_nothing(root: pathlib.Path) -> list[Finding]:
     else:
         problems.append("the compose redis service has no command: (the image would start Redis with "
                         "its compiled-in snapshot schedule)")
+    if rs and re.search(r"(?m)^    entrypoint:", rs):
+        problems.append("the compose redis sets an entrypoint, which would run instead of the command read here")
     if rs and (re.search(r"(?m)^    volumes:", rs) or not re.search(r"(?m)^    tmpfs:\n      - /data:", rs)):
         problems.append("the compose redis must keep /data on a tmpfs and mount no volume")
     for p in sorted((root / "polaris_web").glob("docker-compose.*.yml")):
