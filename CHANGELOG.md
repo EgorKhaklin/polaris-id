@@ -17,11 +17,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- Negative vectors 0.3.1 (lab/interop/negative-vectors): the three "signer is not the named issuer" vectors (`x5c-leaf-names-other-issuer`, `x5c-leaf-names-other-host`, `x5c-leaf-uri-beats-host`) are graded `policy`, not `spec-implied`: oauth-wg/oauth-sd-jwt-vc#436 (merged 2026-10-14) adds to the draft that `iss` need not correspond to a subject name in the leaf, so refusing them is a relying party's choice. Their ids, verdicts and presentations are unchanged. Lab only; no product change.
 - polaris-oid4vp's README states what the `fetch` callable given to `status.decide_by_fetching` must enforce, since a status URI can come from the issuer: `https` only, no loopback, private or link-local address (judged on the address connected to), no redirect, a 2 MiB body cap and timeouts.
 - The eudi-dev walk removes its work dir, which holds the test wallet's key and credential, after a passing run; a failed run keeps it and prints one line naming it. The wallet canary runs the walk as a stranger does and checks that the dir is gone.
 - The SBOM checker moves to ntia-conformance-checker 6.0.0, and the release gate now also requires every listed component to be in the graph the checker judged (no floating component, no unknown pointer): 6.0.0 judges only what the document's root reaches.
 - polaris-oid4vp's README: anchor the CA that signs issuers, not a root that also certifies relying parties (`IssuerAnchorScopeTests`); where one root certifies both roles, neither anchoring nor the package can separate them. To accept only some of an anchor's issuers, pin `claims["iss"]` where `iss_bound` is `True`.
 - The project no longer uses the name VANTA in its current files: the maintainer is named as Egor Khaklin, and a local database user or path is written as `"$(whoami)"`, `<user>` or `<worktree>`. History and the released migrations (with the routine body in 06_triggers.sql that must match one of them) keep it; .mailmap shows the old commit identities under the project's commit identity.
+- polaris-oid4vp's ETSI TS 119 472-2 profile refuses a `verifier_info` with two or more `registrar_dataset` elements as this package's reading of RO-02 and RO-04, which state no count, and its vector is graded spec-implied; the `--verifier-info` example in the README and `--help` gives the certificate's `data` in RO-16's words.
 
 ### Fixed
 
@@ -36,6 +38,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - CONTRIBUTING.md and SECURITY.md said six checks are required to merge; the repository's ruleset requires seven, and CONTRIBUTING.md now names them, the product test suite's gate among them. The CI workflow's comments described a merge queue, which GitHub offers only to organization-owned repositories; this one is user-owned, so the workflow's `merge_group` trigger is unused and a push to `main` runs everything.
 - The mdoc issuer signature (COSE -49) is now pure ML-DSA-65 over the raw COSE Sig_structure, as RFC 9964 defines -49. It was over SHA3-256 applied twice to that structure, so the mdoc verifier polaris-verify ships (`verify_mdoc`) refused every mdoc the route signed with real ML-DSA-65, and an ML-DSA-65 implementation (pyca/cryptography) verifying the raw structure, as RFC 9964 defines -49, refused it too. `verify_mdoc` now checks -49 only over the raw structure, under the algorithm the protected header names, and `/api/v1/mdoc` answers 503 for an authority key with no COSE algorithm instead of labelling it -49. Polaris tokens and status assertions keep SHA3-256.
 - polaris-oid4vp `serve` prints its startup lines and the `--once` launch links before it waits, and each verdict line as it happens. When stdout was not a terminal (a pipe, a file, a container log), Python's buffering held them until its buffer filled or the process exited.
+- polaris-oid4vp's `serve` command and its `serve()` function listen on 127.0.0.1 by default, as the 1.0.0 README said ("localhost by default"); both listened on every interface, and a caller of `serve(verifier)` now gets this machine only. `--bind 0.0.0.0`, or `serve(..., host="0.0.0.0")`, listens on every interface.
 
 ### Security
 

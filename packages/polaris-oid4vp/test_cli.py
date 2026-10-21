@@ -441,6 +441,16 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         _, seen2, _, _ = self._serve()
         self.assertIsNotNone(seen2["kwargs"]["certfile"], "by default the listener still serves TLS")
 
+    def test_the_listener_binds_this_machine_only_by_default(self):
+        """The README says the listener binds --bind, localhost by default: 127.0.0.1, with or
+        without TLS. Every interface is the caller's choice."""
+        for extra in ((), ("--no-local-tls",)):
+            with self.subTest(extra=extra):
+                _, seen, _, _ = self._serve(*extra)
+                self.assertEqual(seen["kwargs"]["host"], "127.0.0.1")
+        _, seen, _, _ = self._serve("--bind", "0.0.0.0")
+        self.assertEqual(seen["kwargs"]["host"], "0.0.0.0")
+
     def test_an_unreadable_trust_anchor_file_is_refused(self):
         bad = self.tmp / "not-a-cert.pem"
         bad.write_text("hello")
