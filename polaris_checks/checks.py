@@ -7215,7 +7215,7 @@ _FAILURE_DOMAIN_NEEDLES = (
     ("deploy/helm/polaris/templates/pgbouncer.yaml", "replicas: {{ .Values.pgbouncer.replicas }}",
      "let pgbouncer run more than one pod"),
     ("deploy/helm/polaris/templates/redis.yaml", "kind: Deployment", "run Redis as something that can move"),
-    ("deploy/helm/polaris/templates/redis.yaml", "emptyDir: {}", "keep Redis off a node-local volume"),
+    ("deploy/helm/polaris/templates/redis.yaml", "emptyDir: {medium: Memory", "keep Redis off a node-local volume"),
     ("deploy/helm/polaris/templates/redis.yaml", 'include "polaris.fastEviction" .', "move Redis quickly"),
     ("scripts/polaris-zone-loss-drill.sh", 'docker kill "${L0NODE}"', "kill the leader's node"),
     ("scripts/polaris-zone-loss-drill.sh", "the database members share a zone", "require the members in two zones"),
@@ -7372,6 +7372,94 @@ def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
                "one rule string in the generator, rotation and Helm; production refuses an "
                "unauthenticated URL; rotation accepts both passwords until the app has moved; CI "
                "asserts the refusals on the live stack")
+
+
+# 2026-10-21: a sign-in leaves nothing on the Redis volume. The limiter's keys name a credential-hash
+# prefix, a client IP or a client_id (auth-broker.md, "No record of who authenticated where"; API.md,
+# "Nothing is written"), and both substrates ran Redis with the append-only file on, so every ZADD
+# outlived its 61 s window on disk. Redis now persists nothing in either: `--appendonly no` AND
+# `--save ""` (a redis-server with no config file snapshots by its compiled-in `save` default, and a
+# stop writes one whenever `save` is not empty), no configuration file that could set either, and
+# /data in memory (a compose tmpfs, a Memory emptyDir). An empty or missing command is a FAIL.
+def _redis_options(words: list[str]) -> dict[str, list[list[str]]] | str:
+    """redis-server argv -> {option: [values per occurrence]}, or the reason it cannot be read."""
+    if not words or words[0] != "redis-server":
+        return "it does not start redis-server"
+    if len(words) > 1 and not words[1].startswith("--"):
+        return f"it passes a configuration file ({words[1]}) that could set persistence"
+    opts: dict[str, list[list[str]]] = {}
+    cur = None
+    for w in words[1:]:
+        if w.startswith("--"):
+            cur = w[2:].lower()
+            opts.setdefault(cur, []).append([])
+        else:
+            opts[cur][-1].append(w)
+    return opts
+
+
+def _redis_persistence_problems(where: str, words: list[str]) -> list[str]:
+    opts = _redis_options(words)
+    if isinstance(opts, str):
+        return [f"{where}: {opts}"]
+    out = []
+    if opts.get("appendonly") != [["no"]]:
+        out.append(f"{where}: the append-only file must be off, once (--appendonly no); it has "
+                   f"{opts.get('appendonly')}")
+    if opts.get("save") != [[""]]:
+        out.append(f"{where}: snapshots must be off, once (--save \"\"); it has {opts.get('save')}")
+    return out
+
+
+def check_redis_persists_nothing(root: pathlib.Path) -> list[Finding]:
+    import shlex
+    name = "redis_persists_nothing"
+    problems = []
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    svc = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", compose)
+    rs = svc.group(1) if svc else ""
+    cmd = re.search(r"(?m)^    command: *>-? *\n((?:^      \S.*\n)+)", rs)
+    flow = re.search(r"(?m)^    command: *(\[.*\]) *$", rs)
+    if not rs:
+        problems.append("docker-compose.prod.yml has no redis service")
+    elif cmd:
+        problems += _redis_persistence_problems(
+            "the compose redis", shlex.split(" ".join(l.strip() for l in cmd.group(1).splitlines())))
+    elif flow:
+        try:
+            problems += _redis_persistence_problems("the compose redis", json.loads(flow.group(1)))
+        except ValueError:
+            problems.append("the compose redis command could not be read")
+    else:
+        problems.append("the compose redis service has no command: (the image would start Redis with "
+                        "its compiled-in snapshot schedule)")
+    if rs and (re.search(r"(?m)^    volumes:", rs) or not re.search(r"(?m)^    tmpfs:\n      - /data:", rs)):
+        problems.append("the compose redis must keep /data on a tmpfs and mount no volume")
+    for p in sorted((root / "polaris_web").glob("docker-compose.*.yml")):
+        if p.name == "docker-compose.prod.yml":
+            continue
+        over = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", _read_path(p))
+        if over and re.search(r"(?m)^    (command|volumes|entrypoint):", over.group(1)):
+            problems.append(f"{p.name} overrides the redis command, entrypoint or volumes")
+    helm = _read(root, "deploy/helm/polaris/templates/redis.yaml")
+    args = re.findall(r"(?m)^\s*args: *(\[.*\]) *$", helm)
+    if len(args) != 1:
+        problems.append(f"the chart's redis.yaml must have one args: list (found {len(args)})")
+    else:
+        try:
+            problems += _redis_persistence_problems("the chart's redis", json.loads(args[0]))
+        except ValueError:
+            problems.append("the chart's redis args: could not be read")
+    if not re.search(r"(?m)^        - name: data\n          emptyDir: \{medium: Memory, sizeLimit: [0-9]+[KM]i\}$",
+                     helm) or re.search(r"persistentVolumeClaim|volumeClaimTemplates|hostPath", helm):
+        problems.append("the chart's redis /data must be a Memory emptyDir, never a claim or a host path")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
+                                                       f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "Redis persists nothing in either substrate: no append-only file, no snapshot (--save \"\"), "
+               "no configuration file, /data in memory (a compose tmpfs, a Memory emptyDir); the limiter's "
+               "keys live in memory for their window only")
 
 
 # Lab record 017 (gate row OP-9): each secret reaches only the containers that read it. The chart
@@ -29878,6 +29966,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_session_key_rotation,
     check_release_images_signed,
     check_redis_authenticated,
+    check_redis_persists_nothing,
     check_ha_internal_auth,
     check_failure_domains,
     check_failover_keeps_acknowledged_writes,

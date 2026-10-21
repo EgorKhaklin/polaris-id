@@ -3467,6 +3467,67 @@ def test_redis_authenticated_check_discriminates(tmp_path):
            "must FAIL when CI no longer asserts an unauthenticated client is refused")
 
 
+def test_redis_persists_nothing_check_discriminates(tmp_path):
+    compose, helm = "polaris_web/docker-compose.prod.yml", "deploy/helm/polaris/templates/redis.yaml"
+    overlays = sorted(p.relative_to(REPO).as_posix() for p in (REPO / "polaris_web").glob("docker-compose.*.yml"))
+    for rel in {compose, helm, *overlays}:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_redis_persists_nothing(tmp_path)[0].level == "OK", \
+        "must PASS on the real compose file, overlays and chart"
+
+    def broken(rel, old, new, why):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        bad = checks.check_redis_persists_nothing(tmp_path)[0]
+        assert bad.level == "FAIL", why
+        path.write_text(good)
+
+    broken(compose, "      --appendonly no\n", "      --appendonly yes\n",
+           "must FAIL when the compose Redis writes an append-only file")
+    broken(compose, "      --appendonly no\n", "",
+           "must FAIL when the compose Redis leaves the append-only file to its default")
+    broken(compose, '      --save ""\n', "",
+           "must FAIL when the compose Redis snapshots by its compiled-in default")
+    broken(compose, '      --save ""\n', '      --save "3600 1"\n',
+           "must FAIL when the compose Redis snapshots on a schedule")
+    broken(compose, "      --maxmemory 256mb\n", '      --maxmemory 256mb\n      --save "60 1"\n',
+           "must FAIL when a second --save turns snapshots back on")
+    broken(compose, "      redis-server\n", "      redis-server /usr/local/etc/redis/redis.conf\n",
+           "must FAIL when Redis reads a configuration file that could set persistence")
+    broken(compose, "    command: >\n      redis-server\n", "    command: >\n      redis-check-aof\n",
+           "must FAIL when the command does not start redis-server")
+    broken(compose, "    command: >\n", "    command_was: >\n",
+           "must FAIL when the compose Redis has no command (an empty or missing command never passes)")
+    broken(compose, "    tmpfs:\n      - /data:size=1m,mode=0700\n", "    volumes:\n      - redis_data:/data\n",
+           "must FAIL when the compose Redis keeps /data on a volume")
+    broken(compose, "    tmpfs:\n      - /data:size=1m,mode=0700\n",
+           "    tmpfs:\n      - /data:size=1m,mode=0700\n    volumes:\n      - redis_data:/var/lib/redis\n",
+           "must FAIL when the compose Redis mounts any volume beside the tmpfs")
+    broken("polaris_web/docker-compose.bluegreen.yml", "services:\n",
+           "services:\n  redis:\n    volumes:\n      - redis_data:/data\n",
+           "must FAIL when an overlay puts a volume back under Redis")
+    broken(helm, '"--appendonly", "no"', '"--appendonly", "yes"',
+           "must FAIL when the chart's Redis writes an append-only file")
+    broken(helm, '"--save", "", ', "",
+           "must FAIL when the chart's Redis snapshots by its compiled-in default")
+    broken(helm, '"--save", ""', '"--save", "900 1"',
+           "must FAIL when the chart's Redis snapshots on a schedule")
+    broken(helm, 'args: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory", "256mb", '
+                 '"--maxmemory-policy", "allkeys-lru", "--aclfile", "/run/secrets/redis/users.acl"]',
+           "args: []", "must FAIL when the chart's Redis args are empty (an empty list never passes)")
+    broken(helm, "          args: [", "          argz: [",
+           "must FAIL when the chart's Redis has no args")
+    broken(helm, "emptyDir: {medium: Memory, sizeLimit: 1Mi}", "emptyDir: {}",
+           "must FAIL when the chart's /data is a disk-backed emptyDir")
+    broken(helm, "          emptyDir: {medium: Memory, sizeLimit: 1Mi}",
+           "          emptyDir: {medium: Memory, sizeLimit: 1Mi}\n        - name: old\n"
+           "          persistentVolumeClaim: {claimName: data}",
+           "must FAIL when the chart's Redis pod mounts a volume claim")
+
+
 def test_session_key_rotation_check_discriminates(tmp_path):
     files = ("polaris_web/app.py", "polaris_web/rp_auth.py", "polaris_web/rp_api.py",
              "polaris_web/oid4vci_routes.py", "scripts/polaris-rotate-secret.sh",
@@ -3751,8 +3812,8 @@ def test_failure_domains_check_discriminates(tmp_path):
            "must FAIL when a drain can take the router's last pod")
     broken("deploy/helm/polaris/values.yaml", "  # Two, spread across nodes (lab record 017, gate row OP-7). Each pools for the app pods that reach it.\n  replicas: 2",
            "  replicas: 1", "must FAIL when pgbouncer runs one pod")
-    broken("deploy/helm/polaris/templates/redis.yaml", "        - name: data\n          emptyDir: {}",
-           "        - name: data\n          emptyDir: {}\n  volumeClaimTemplates: []",
+    broken("deploy/helm/polaris/templates/redis.yaml", "        - name: data\n          emptyDir: {medium: Memory, sizeLimit: 1Mi}",
+           "        - name: data\n          emptyDir: {medium: Memory, sizeLimit: 1Mi}\n  volumeClaimTemplates: []",
            "must FAIL when Redis holds a node-local volume again")
 
 

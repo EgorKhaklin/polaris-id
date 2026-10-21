@@ -2328,7 +2328,8 @@ def api_v1_auth_authorize():
     duress code is served identically and recorded silently. The relying party's REGISTERED
     policy (require_zk, required_enrollment, required_context_id) binds; the request may only
     add to it, and a malformed addition is refused. Returns an encrypted, opaque,
-    stateless authorization code bound to the PKCE challenge. Nothing is written."""
+    stateless authorization code bound to the PKCE challenge. Nothing is written to the database or
+    to disk (the rate limiter's counters stay in Redis memory for their window)."""
     body = _json_object()
     client_id = body.get('client_id')
     rp = query("SELECT rp_id, client_id, scope, enabled, require_zk, required_enrollment, required_context_id "

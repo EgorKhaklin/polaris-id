@@ -7,7 +7,8 @@
 # (lb_try_duration) and polls /api/health/live every 2s. polaris-deploy.sh
 # detects this overlay and rolls: migrate (expand), recreate app-green, wait
 # for its healthcheck, recreate app, wait, smoke test, roll back both on
-# failure. Sessions are server-side in Redis, so a request may land on either
+# failure. Sessions are signed cookies checked against the database's session
+# registry (Redis holds only the rate limiter), so a request may land on either
 # colour. scripts/polaris-rolling-drill.sh proves zero dropped requests under
 # traffic, with a negative control, in the CI job rolling-deploy.
 #
