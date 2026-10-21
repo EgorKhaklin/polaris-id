@@ -9,6 +9,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Security
+
+- The responder-signed mint and holder-signing routes spend their per-principal rate limits (`exmint:` per authority, `sign:` per credential) only after the caller authenticates, so an unauthenticated caller can no longer fill a named authority's or credential's bucket and deny it the route until the limit resets (rp_api.py).
+
 ### Added
 
 - The Yivi app 8.3.1 (developer mode, our verifier root added) presents a Yivi-issued SD-JWT VC to polaris-oid4vp, at 8e6f4834; it counts as an unmodified wallet in place of the irmago library row, so the count stays 15 (lab/interop/yivi). Not in the weekly canary.
