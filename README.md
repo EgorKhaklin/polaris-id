@@ -52,7 +52,7 @@ It runs on **notional data**: it has never held real identity data, and no autho
 
 ## Try it
 
-One minute, from an empty folder. An independent, OpenID Certified wallet ([eudi-dev](https://github.com/dominikschlosser/eudi-dev)) presents a credential to the verifier installed from PyPI, then three tampered presentations must each be refused. Needs `python3` 3.9 or newer. Docker is optional: `run.sh` uses it when it is running, and `EUDI_NATIVE=1 bash run.sh` runs the wallet's own binary instead.
+One minute, from an empty folder. An independent, OpenID Certified wallet ([eudi-dev](https://github.com/eudi-dev/eudi-dev)) presents a credential to the verifier installed from PyPI, then three tampered presentations must each be refused. Needs `python3` 3.9 or newer. Docker is optional: `run.sh` uses it when it is running, and `EUDI_NATIVE=1 bash run.sh` runs the wallet's own binary instead.
 
 ```bash
 r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main
@@ -137,7 +137,7 @@ The migration path is tested beyond these: in the lab, one population moved thro
 ## When to use something else
 
 - To test a wallet, issuer or verifier against a ready-made counterpart, in the browser or on the command line:
-  [eudi-dev](https://github.com/dominikschlosser/eudi-dev) (its v2.3.7 is OpenID Certified for the wallet profiles).
+  [eudi-dev](https://github.com/eudi-dev/eudi-dev) (its v2.3.7 is OpenID Certified for the wallet profiles).
 - A full TypeScript framework for wallets, issuers and verifiers, DIDComm included: [Credo](https://github.com/openwallet-foundation/credo-ts).
 - The verifier the EU reference wallets are built against: [eudi-srv-verifier-endpoint](https://github.com/eu-digital-identity-wallet/eudi-srv-verifier-endpoint).
 - mdoc (ISO/IEC 18013-5) or the browser's Digital Credentials API: `polaris-oid4vp` supports neither;
