@@ -353,7 +353,7 @@ password from `POLARIS_DB_PASSWORD_FILE` rather than the environment
 ### TLS at the edge
 
 All operator and holder-facing traffic is terminated by Caddy, built from
-`caddy:2.11.4-alpine` with the rate-limit plugin compiled in
+`caddy:2.11.7-alpine` with the rate-limit plugin compiled in
 ([`Dockerfile.caddy`](../../polaris_web/Dockerfile.caddy)), using Let's
 Encrypt certificates for the configured `POLARIS_DOMAIN`. Caddy renews them
 automatically. The [`Caddyfile`](../../polaris_web/Caddyfile) sets the
