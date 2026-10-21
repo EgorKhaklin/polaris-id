@@ -283,7 +283,7 @@ cat <<EOF
   Rotation complete.
 
   Verify:
-    curl -fsS https://\${POLARIS_DOMAIN}/api/health | jq .checks
+    docker exec polaris-app curl -fsS http://localhost:8000/api/health | jq .checks
 
   If the stack misbehaves, the prior secret is at:
     ${ARCHIVE_PATH}

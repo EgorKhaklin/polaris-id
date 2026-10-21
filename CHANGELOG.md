@@ -55,6 +55,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp: a request now closes only on an authentic presentation. Before, any response encrypted to the request's key, which anyone who saw the request can fetch, closed it even when it was refused (one carrying only the `state` sufficed), so the holder's own presentation was then refused as a replay.
 - polaris-oid4vp: the encrypted response's protected header (64 KiB) and decrypted body (1 MiB) are size-bounded before they are parsed, and NaN and Infinity in either are refused, as in every SD-JWT document.
 - polaris-oid4vp: a posted `wallet_nonce` is held to 1 to 1024 printable ASCII characters before a request object is signed for it; any other gets 400 from `serve` and None from `Verifier.request_object`.
+- The health answers no longer name the signing key, and the shipped edges (the Caddyfile and the Helm chart's) answer `/api/health`, `/api/health/ready` and `/api/health/live` only to `POLARIS_METRICS_ALLOW` (`edge.metricsAllow`), as they do the metrics surfaces; probes and checks read them at the app's own address.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 

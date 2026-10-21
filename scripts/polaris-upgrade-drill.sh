@@ -186,8 +186,12 @@ grep -q "Rolled back" "${WORK}/deploy-broken.log" \
 after=$(app_content)
 [[ "${after}" == "${before}" ]] \
     || fail "after the rollback the app runs image content ${after}, not ${before}, the image the deploy replaced"
-status=$(curl -s --cacert "${OUT}/caddy-root.crt" https://localhost:8443/api/health \
+# The edge serves a public route (it refuses the health answers from outside POLARIS_METRICS_ALLOW);
+# the roll-up is read at the app's own address.
+edge=$(curl -s --cacert "${OUT}/caddy-root.crt" -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)
+status=$("${COMPOSE[@]}" exec -T app curl -s http://localhost:8000/api/health \
          | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status"))' 2> /dev/null || true)
+[[ "${edge}" == 200 ]] || fail "the edge does not serve after the rollback (HTTP ${edge:-none})"
 [[ "${status}" == healthy || "${status}" == degraded ]] || fail "the app does not serve after the rollback (status ${status:-none})"
 ok "a release that could not start was rolled back to the image it replaced (content ${before}); the app serves (${status})"
 # Its deploy ran the migrations (none pending) and the object sync again: neither may change a

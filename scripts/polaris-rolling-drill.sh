@@ -13,9 +13,12 @@
 #   scripts/polaris-rolling-drill.sh            # POLARIS_DRILL_URL defaults to https://localhost:8443
 #
 # What it does:
-#   1. Starts a traffic generator (8 threads, continuous GETs against the edge:
-#      /api/health/live and /api/health; every non-200 and every transport
-#      error is a DROP) and records the container ids of both app colours.
+#   1. Starts a traffic generator (continuous GETs against the edge on public
+#      routes: /.well-known/security.txt, which the app answers alone, and
+#      /api/v1/transparency/anchors, which reads the database; the edge refuses
+#      the health answers to a client outside POLARIS_METRICS_ALLOW. Every non-200
+#      and every transport error is a DROP) and records the container ids of
+#      both app colours.
 #   2. Runs `polaris-deploy.sh prod --no-pull` under that traffic: infra up,
 #      migrations, app-green recreated and health-waited, then app.
 #   3. Stops the traffic and asserts drops == 0 with a meaningful request
@@ -34,6 +37,10 @@ read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
 compose() { (cd "$ROOT/polaris_web" && docker compose -f docker-compose.prod.yml "${COMPOSE_EXTRA[@]}" "$@"); }
 WORK="$(mktemp -d)"
 fail() { echo "::error::$*" >&2; exit 1; }
+# The edge serves a public route and the app's roll-up, read at its own address, is healthy (the
+# edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW).
+healthy() { curl -sk -o /dev/null -w '%{http_code}' "$URL/.well-known/security.txt" | grep 200 >/dev/null \
+            && docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2>/dev/null | grep 200 >/dev/null; }
 
 cat > "$WORK/traffic.py" <<'PYEOF'
 import json, os, signal, ssl, sys, threading, time, urllib.request
@@ -58,7 +65,8 @@ def worker(path):
             stats["by"][key] = stats["by"].get(key, 0) + 1
         time.sleep(0.35)
 # 4 threads x ~2.5 rps stays well under the edge rate limit for a multi-minute drill.
-threads = [threading.Thread(target=worker, args=(p,), daemon=True) for p in ["/api/health/live"] * 3 + ["/api/health"]]
+threads = [threading.Thread(target=worker, args=(p,), daemon=True)
+           for p in ["/.well-known/security.txt"] * 3 + ["/api/v1/transparency/anchors?end=0"]]
 [t.start() for t in threads]
 while not stop.is_set(): time.sleep(0.2)
 time.sleep(0.5)
@@ -74,8 +82,8 @@ echo "== preflight: both colours up and the edge answers =="
 # kill compose with SIGPIPE, and the pipeline then fails although app-green was listed.
 SERVICES="$(compose config --services)"
 grep -qx app-green <<<"$SERVICES" || fail "the blue-green overlay is not active (set POLARIS_COMPOSE_EXTRA)"
-for i in $(seq 1 30); do curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep 200 >/dev/null && break; sleep 2; done
-curl -sk -o /dev/null -w '%{http_code}\n' "$URL/api/health" | grep 200 >/dev/null || fail "edge not healthy before the drill"
+for i in $(seq 1 30); do healthy && break; sleep 2; done
+healthy || fail "edge not healthy before the drill"
 BLUE0=$(cid app); GREEN0=$(cid app-green); [ -n "$BLUE0" ] && [ -n "$GREEN0" ] || fail "app containers not found"
 echo "  app=$BLUE0 app-green=$GREEN0"
 
@@ -142,7 +150,7 @@ print(f"  during the outage: {s['requests']} requests, {s.get('served', 0)} serv
 assert s["drops"] > 0, "the traffic generator saw no drops during a 20s outage: it cannot detect drops"
 print("  the generator detects an outage (control valid)")
 PYEOF
-for i in $(seq 1 45); do curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep 200 >/dev/null && break; sleep 2; done
-curl -sk -o /dev/null -w '%{http_code}\n' "$URL/api/health" | grep 200 >/dev/null || fail "stack not healthy after the control"
+for i in $(seq 1 45); do healthy && break; sleep 2; done
+healthy || fail "stack not healthy after the control"
 rm -rf "$WORK"
 echo "== ROLLING DEPLOY DRILL PASSED: zero drops under traffic, control detected the outage =="

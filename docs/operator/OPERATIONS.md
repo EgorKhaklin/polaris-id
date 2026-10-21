@@ -1098,8 +1098,10 @@ cold storage with the non-repudiation chain intact.
 
 ### Health check
 
-`GET /api/health` (no auth) returns structured JSON; the full payload and the
-per-component semantics are specified in
+`GET /api/health` (no auth; the shipped edge answers it 404 outside
+`POLARIS_METRICS_ALLOW`, so read it at the app's own address) returns
+structured JSON; the full payload and the per-component semantics are
+specified in
 [API.md](../reference/API.md#get-apihealth). The fields the thresholds hang
 on:
 
@@ -1141,8 +1143,8 @@ carries the duress signal, so it must be reachable only by the operator's
 monitoring, never the public internet ([HARDENING.md, section 10](HARDENING.md)).
 
 **Edge exposure.** The shipped [polaris_web/Caddyfile](../../polaris_web/Caddyfile) answers
-`/metrics` and `/api/metrics` with 404 unless the client address is in `POLARIS_METRICS_ALLOW`,
-and unset it names no client. The rule keys on the address the edge sees, and behind a load
+`/metrics`, `/api/metrics` and the three health answers with 404 unless the client address is in
+`POLARIS_METRICS_ALLOW`, and unset it names no client. The rule keys on the address the edge sees, and behind a load
 balancer or NAT that is a private address for every client on the internet, so a private-ranges
 default would serve them all; `scripts/polaris-metrics-edge-drill.sh` asks through such a hop in
 CI. A Prometheus on the stack's network scrapes `app:8000` directly; name a monitoring network

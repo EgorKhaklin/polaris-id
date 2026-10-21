@@ -12,8 +12,9 @@
 #     ../scripts/polaris-generate-secrets.sh   # one-time
 #     docker compose -f docker-compose.prod.yml up -d
 #
-# Smoke:
-#     curl -fsS https://${POLARIS_DOMAIN}/api/health | jq .
+# Smoke (the edge answers /api/health only to POLARIS_METRICS_ALLOW):
+#     curl -fsS https://${POLARIS_DOMAIN}/.well-known/security.txt
+#     docker exec polaris-app curl -fsS http://localhost:8000/api/health | jq .
 # ============================================================================
 
 services:

@@ -4,8 +4,8 @@
 #
 # The drill requires the database members, and the two pods of the edge, the app, the router and
 # pgbouncer, to be spread across nodes and zones; then kills the leader's node. Within its ceilings
-# the other member must lead, inserts through a surviving app pod must resume, /api/health must answer
-# 200 through a surviving edge pod with Redis moved if it was on that node, and the marker written
+# the other member must lead, inserts through a surviving app pod must resume, a surviving edge pod
+# must serve and /api/health answer 200 at a surviving app pod with Redis moved if it was on that node, and the marker written
 # before must be intact. The node then starts again and the old leader must rejoin as a replica.
 # Last, the node holding Redis is killed: Redis must run again elsewhere and the edge answer 200 with it.
 #

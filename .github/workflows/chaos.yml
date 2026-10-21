@@ -46,8 +46,11 @@ jobs:
           bash scripts/polaris-generate-secrets.sh
           cd polaris_web
           docker compose $COMPOSE_FILES up -d
+          # The edge serves a public route; the roll-up is read at the app's own address, since the
+          # edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
           for i in $(seq 1 60); do
-            if curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health | grep -q 200; then
+            if curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt | grep -q 200 \
+                && docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null | grep -q 200; then
               echo "stack healthy after ${i}s"; exit 0
             fi
             sleep 1

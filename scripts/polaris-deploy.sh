@@ -580,7 +580,8 @@ cat <<EOF
 
   Stack:        ${COMPOSE_FILE}
   Domain:       https://${POLARIS_DOMAIN}/
-  Health:       https://${POLARIS_DOMAIN}/api/health
+  Health:       docker exec polaris-app curl -fsS http://localhost:8000/api/health
+                (the edge answers it only to POLARIS_METRICS_ALLOW)
   Logs:         docker compose -f polaris_web/docker-compose.prod.yml logs -f
   Backup:       ./scripts/polaris-backup.sh
   Rotate key:   ./scripts/polaris-rotate-secret.sh <name>

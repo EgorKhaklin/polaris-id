@@ -17,8 +17,10 @@
 #             images built, secrets generated (scripts/polaris-generate-secrets.sh,
 #             if-missing), /etc/polaris/polaris.env written (if missing), the
 #             systemd units installed and enabled, the stack started, migrations
-#             + DB objects synced, and /api/health asserted healthy through the
-#             TLS edge. --no-start stops after installing the units.
+#             + DB objects synced, the TLS edge asserted to serve a public route,
+#             and /api/health asserted healthy at the app's own address (the edge
+#             refuses it from outside POLARIS_METRICS_ALLOW). --no-start stops
+#             after installing the units.
 #
 # Options / env:
 #   --domain <fqdn>        or POLARIS_DOMAIN (required for the app stage)
@@ -269,7 +271,7 @@ stage_app() {
     fi
     [ "$NO_START" = 1 ] && { skip "stack start (--no-start)"; return 0; }
 
-    # 6. Start, migrate/sync, and prove health through the TLS edge. The unit takes the host's image lock in a
+    # 6. Start, migrate/sync, and prove the TLS edge serves and the app is healthy. The unit takes the host's image lock in a
     # process of its own, so this run gives back the one it built under first.
     if declare -F polaris_host_release >/dev/null; then polaris_host_release; fi
     if ! systemctl start polaris.service; then
@@ -287,19 +289,23 @@ stage_app() {
     fi
     ok "polaris.service started (compose up)"
     migrate_stack
+    # The edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW, so the public
+    # assertion asks a route meant to be public, and the components are read at the app's own address.
     local url curlk=""
-    if [ -n "$COMPOSE_EXTRA" ]; then url="https://localhost:8443/api/health"; curlk="-k"; else url="https://${DOMAIN}/api/health"; fi
-    local i code body
+    if [ -n "$COMPOSE_EXTRA" ]; then url="https://localhost:8443/.well-known/security.txt"; curlk="-k"; else url="https://${DOMAIN}/.well-known/security.txt"; fi
+    local i code app body
     for i in $(seq 1 90); do
         code=$(curl -s $curlk -o /dev/null -w '%{http_code}' "$url" || true)
-        [ "$code" = 200 ] && break
+        app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2>/dev/null || true)
+        [ "$code" = 200 ] && [ "$app" = 200 ] && break
         sleep 4
     done
-    [ "$code" = 200 ] || { ( cd "$INSTALL_DIR/polaris_web" && docker compose -f docker-compose.prod.yml $COMPOSE_EXTRA ps ) >&2; die "the stack did not serve $url (last HTTP $code)"; }
-    body=$(curl -s $curlk "$url")
+    [ "$code" = 200 ] || { ( cd "$INSTALL_DIR/polaris_web" && docker compose -f docker-compose.prod.yml $COMPOSE_EXTRA ps ) >&2; die "the stack did not serve $url through the TLS edge (last HTTP $code)"; }
+    [ "$app" = 200 ] || { ( cd "$INSTALL_DIR/polaris_web" && docker compose -f docker-compose.prod.yml $COMPOSE_EXTRA ps ) >&2; die "/api/health at the app's own address answered ${app:-nothing}, not 200"; }
+    body=$(docker exec polaris-app curl -s http://localhost:8000/api/health)
     printf '%s' "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); c=d['checks']; bad=[k for k in ('database','redis','zk_binary') if c[k]['status']!='healthy']; assert not bad, 'unhealthy: %s' % bad; print('  checks:', {k: v.get('status') for k, v in c.items()})" \
         || die "/api/health reports unhealthy components"
-    ok "healthy through the TLS edge: $url"
+    ok "the TLS edge serves $url; /api/health healthy at the app's own address"
     printf '\n  Polaris is running under systemd.\n    systemctl status polaris      journalctl -u polaris\n    upgrades: docs/operator/LINUX-SERVER.md, Upgrade (in %s)\n    hardening: docs/operator/HARDENING.md\n\n' "$INSTALL_DIR"
     # Lab record 017 (gate row OP-2): the two steps a working install still needs, named exactly. The
     # key step is the authority's act, so the install never takes it: it says the one command.

@@ -42,13 +42,14 @@ scrape_configs:
 
   # Lab record 017 (gate row OP-15): the certificate the TLS edge serves, read by the blackbox
   # exporter (blackbox.yml, module edge_tls) from inside the network, under the deployment's own
-  # domain. PolarisCertificateExpiring pages on it.
+  # domain. PolarisCertificateExpiring pages on it. It asks a public route: the edge refuses the
+  # health answers to a client outside POLARIS_METRICS_ALLOW, the exporter included.
   - job_name: polaris-edge-tls
     metrics_path: /probe
     params:
       module: [edge_tls]
     static_configs:
-      - targets: ['https://caddy:8443/api/health/live']
+      - targets: ['https://caddy:8443/.well-known/security.txt']
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
