@@ -1645,8 +1645,6 @@ def api_v1_exchange_receipt_signed(agency_id):
     if abs((datetime.now(timezone.utc) - when).total_seconds()) > _EXCHANGE_MINT_WINDOW:
         return jsonify(error='stale',
                        error_description='mint.occurred_at is outside the %d-second freshness window' % _EXCHANGE_MINT_WINDOW), 401
-    if not security.rate_limiter.allow('exmint:%d' % agency_id, _EXCHANGE_MINT_RATE_PER_MIN, 60):
-        return jsonify(error='rate_limited'), 429
     # Authentication: the statement verifies, two-witness, under the responder's REGISTERED key.
     try:
         ok = pqc_signing.verify_both(_exchange_mint_statement(mint), sig_hex,
@@ -1656,6 +1654,14 @@ def api_v1_exchange_receipt_signed(agency_id):
     if not ok:
         return jsonify(error='invalid_signature',
                        error_description="the mint statement does not verify under the responder agency's registered ML-DSA-65 key"), 401
+    # The per-responder mint budget is spent only now, AFTER the signature authenticates the
+    # responder. Keyed on the addressed agency_id (a public value), it would otherwise let any
+    # unauthenticated caller who posts a well-formed, fresh-but-unsigned statement exhaust an
+    # authority's bucket and lock its legitimate service-to-service minting out for the window.
+    # The unauthenticated path above stays bounded by the per-address write limit
+    # (app.py _security_before_request); this bucket meters only authenticated responders.
+    if not security.rate_limiter.allow('exmint:%d' % agency_id, _EXCHANGE_MINT_RATE_PER_MIN, 60):
+        return jsonify(error='rate_limited'), 429
     return _mint_exchange_receipt(responder, agency_id, mint, occurred_at=str(mint['occurred_at']))
 
 
@@ -2233,13 +2239,18 @@ def api_v1_sign_holder(agency_id):
     token_value, presented = body.get('token_value'), body.get('signature_hex')
     if not isinstance(token_value, str) or not isinstance(presented, str):
         return jsonify(error='invalid_request', error_description='token_value and signature_hex (the presented credential) are required'), 400
-    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
-    if not security.rate_limiter.allow('sign:%s' % _tk, 10, 60):
-        return jsonify(error='rate_limited'), 429
     row = _possession_authenticated(token_value, presented)
     if row is None:
         return jsonify(error='not_verifiable',
                        error_description='present the genuine issued credential (token_value + signature_hex)'), 400
+    # The per-credential signing budget is spent only now, AFTER possession of the genuine issued
+    # credential is proven. Keyed on the token_value's hash, it would otherwise let a caller who
+    # merely KNOWS a token_value (without its issued signature) exhaust that credential's bucket
+    # and lock its holder out of the notary path for the window. The unauthenticated path above
+    # stays bounded by the per-address write limit (app.py _security_before_request).
+    _tk = hashlib.sha3_256(token_value.encode('utf-8')).hexdigest()[:16]
+    if not security.rate_limiter.allow('sign:%s' % _tk, 10, 60):
+        return jsonify(error='rate_limited'), 429
     if int(row['issuing_agency_id']) != int(agency_id):
         return jsonify(error='forbidden', error_description='this authority did not issue the presented credential'), 403
     if _effective_status(row) != 'ACTIVE':
@@ -2328,7 +2339,8 @@ def api_v1_auth_authorize():
     duress code is served identically and recorded silently. The relying party's REGISTERED
     policy (require_zk, required_enrollment, required_context_id) binds; the request may only
     add to it, and a malformed addition is refused. Returns an encrypted, opaque,
-    stateless authorization code bound to the PKCE challenge. Nothing is written."""
+    stateless authorization code bound to the PKCE challenge. Nothing is written to the database or
+    to disk (the rate limiter's counters stay in Redis memory for their window)."""
     body = _json_object()
     client_id = body.get('client_id')
     rp = query("SELECT rp_id, client_id, scope, enabled, require_zk, required_enrollment, required_context_id "

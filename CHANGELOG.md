@@ -9,6 +9,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ## Unreleased
 
+### Security
+
+- The responder-signed mint and holder-signing routes spend their per-principal rate limits (`exmint:` per authority, `sign:` per credential) only after the caller authenticates, so an unauthenticated caller can no longer fill a named authority's or credential's bucket and deny it the route until the limit resets (rp_api.py).
+
 ### Added
 
 - polaris-oid4vp `serve --once --result FILE` keeps FILE a JSON object, apart from the log on stdout, saying what became of the request: `nothing_received` until a response arrives, then `accepted` with the claim names, `refused` with the check and reason its `<-` line prints, or `wallet_error`; the HTTP status the wallet was answered; and the request object fetches served and refused. It is rewritten whole before each answer goes out.
@@ -58,6 +62,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp: a request now closes only on an authentic presentation. Before, any response encrypted to the request's key, which anyone who saw the request can fetch, closed it even when it was refused (one carrying only the `state` sufficed), so the holder's own presentation was then refused as a replay.
 - polaris-oid4vp: the encrypted response's protected header (64 KiB) and decrypted body (1 MiB) are size-bounded before they are parsed, and NaN and Infinity in either are refused, as in every SD-JWT document.
 - polaris-oid4vp: a posted `wallet_nonce` is held to 1 to 1024 printable ASCII characters before a request object is signed for it; any other gets 400 from `serve` and None from `Verifier.request_object`.
+- The rate limiter's Redis persists nothing in the compose stack or the chart (no append-only file, `--save ""`, `/data` in memory). It wrote an append-only file, so a sign-in through the auth broker left the credential-hash prefix, both client IPs and the client_id on disk after the counters expired, against auth-broker.md's "no record of who authenticated where". The upgrade needs one step: delete the old Redis volume (OPERATIONS.md, "Upgrading across the Redis persistence change").
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 

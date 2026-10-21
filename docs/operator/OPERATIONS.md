@@ -90,7 +90,8 @@ below.
 Volumes:
 - `pg_data` (named): Postgres data
 - `pgbackrest_repo` (named): the local pgBackRest repository when WAL archiving is enabled
-- `redis_data` (named): Redis AOF/RDB
+- Redis has no volume: it holds only the rate limiter's counters, in memory, with no
+  append-only file and no snapshot, and `/data` is a tmpfs
 - `caddy_data` (named): Caddy's Let's Encrypt certs + state
 - `caddy_config` (named): Caddy's config-time state
 - `polaris_state` (named): script state
@@ -1718,6 +1719,24 @@ file. A deployment created earlier has neither file. Run
 two missing files and leaves every existing one as it is. A Helm release adds
 both keys to its generated Secret on upgrade; an `existingSecret` must gain
 them (`kubectl create secret ... --from-file=polaris_web/secrets/` again).
+
+**Upgrading across the Redis persistence change.** Redis now writes no
+append-only file and no snapshot, and its `/data` is in memory. A deployment
+created earlier keeps the old Redis volume, and the files written to it before
+the upgrade name the credential-hash prefixes, client IPs and client_ids the
+rate limiter counted. Delete it once the upgraded stack is running. Compose,
+in the project the deploy runs (`polaris_web` unless you set another name):
+
+```bash
+docker volume ls --filter label=com.docker.compose.volume=redis_data   # names it
+docker volume rm polaris_web_redis_data
+```
+
+On Kubernetes the upgrade replaces the Redis pod, and its emptyDir goes with
+it. A release first installed with the Redis StatefulSet still has its claim:
+`kubectl -n <namespace> delete pvc data-<release>-redis-0`. A copy of the
+Docker volumes or of a node's disk taken before the upgrade holds the same
+files.
 
 ### Postgres version upgrade
 
