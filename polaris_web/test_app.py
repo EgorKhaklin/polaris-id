@@ -7948,8 +7948,8 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
 
 class TransparencyProofBoundsTests(UnauthenticatedTestCase):
     """The three logs' inclusion-proof routes answer an index past the end with 400. Switched
-    off, the route indexed past its list and answered 500; nothing noticed (2026-09-24). And a
-    stored batch proof is served only behind login (docs/design/anchoring.md)."""
+    off, the route indexed past its list and answered 500; nothing noticed (2026-09-24). And no
+    GET route answering without login serves a stored batch proof (docs/design/anchoring.md)."""
 
     #: A path parameter as werkzeug writes one: <name>, <converter:name>, <converter(args):name>.
     _PARAM = re.compile(r'<(?:(\w+)(?:\([^)]*\))?:)?(\w+)>')
@@ -7996,68 +7996,74 @@ class TransparencyProofBoundsTests(UnauthenticatedTestCase):
         self.assertEqual(len(siblings), 2, 'fixture: each stored proof holds the other leaf as its sibling')
         return rows[0], siblings
 
-    def _url(self, rule, anchor):
-        """The rule with its path parameters filled: the closed batch's own ids where the rule
-        names one (credential, batch, anchor), the batch's position in the anchor log for a log
-        index, the credential's issuing authority for an authority, and otherwise a value the
-        converter accepts. A hash parameter gets zeros, never a hash from the batch, so a route
-        that echoes its path cannot pass for one that serves a proof."""
-        def value(m):
-            converter, name = m.group(1) or 'string', m.group(2)
-            if 'tok' in name:
-                return str(anchor['token_id'])
-            if 'batch' in name:
-                return str(anchor['batch_id'])
-            if 'anchor' in name:
-                return str(anchor['anchor_id'])
-            if name in ('agency_id', 'ag_id'):
-                return str(anchor['issuing_agency_id'])
-            if name in ('index', 'm'):
-                return str(anchor['log_index'])
-            if name == 'n':
-                return str(anchor['log_index'] + 1)
-            if name == 'day':
-                return datetime.now(timezone.utc).date().isoformat()
-            if name.endswith('_hash'):
-                return '00' * 32
-            return '1' if converter == 'int' else 'x'
-        return self._PARAM.sub(value, rule.rule)
+    def _urls(self, rule, anchor):
+        """The rule with its path parameters filled, as one URL or more: the closed batch's own
+        ids where the rule names one (credential, batch, anchor), the batch's position in the
+        anchor log for a log index, the credential's issuing authority for an authority, and
+        today for a day. A parameter it does not recognise gets each of the batch's three ids in
+        turn, one URL apiece, so a route that reads a generic id as an anchor, a credential or a
+        batch is asked for this batch's proof. A hash parameter gets zeros, never a hash from
+        the batch, so a route that echoes its path cannot pass for one that serves a proof."""
+        def fill(generic):
+            def value(m):
+                name = m.group(2)
+                if 'tok' in name:
+                    return str(anchor['token_id'])
+                if 'batch' in name:
+                    return str(anchor['batch_id'])
+                if 'anchor' in name:
+                    return str(anchor['anchor_id'])
+                if name in ('agency_id', 'ag_id'):
+                    return str(anchor['issuing_agency_id'])
+                if name in ('index', 'm'):
+                    return str(anchor['log_index'])
+                if name == 'n':
+                    return str(anchor['log_index'] + 1)
+                if name == 'day':
+                    return datetime.now(timezone.utc).date().isoformat()
+                if name.endswith('_hash'):
+                    return '00' * 32
+                return generic
+            return self._PARAM.sub(value, rule.rule)
+        return sorted({fill(str(anchor[k])) for k in ('anchor_id', 'token_id', 'batch_id')})
 
     def _public_bodies(self, anchor):
-        """Every GET rule in the route table, requested with no session: {url: (status, body)}
-        for each that answers without a redirect to the login page, a 401 or a 403."""
+        """Every GET rule in the route table, requested with no session at each URL _urls gives
+        it: {rule: {url: (status, body)}} for each rule that answers without a redirect to the
+        login page, a 401 or a 403."""
         rules = [r for r in flask_app.app.url_map.iter_rules() if 'GET' in r.methods]
         self.assertGreaterEqual(len(rules), 80, 'the route table yielded %d GET rules' % len(rules))
         anon = flask_app.app.test_client()
         public = {}
         for rule in sorted(rules, key=lambda r: r.rule):
-            url = self._url(rule, anchor)
-            flask_app.security.rate_limiter.reset()
-            r = anon.get(url)
-            if r.status_code in (401, 403) or (300 <= r.status_code < 400
-                                               and '/login' in r.headers.get('Location', '')):
-                continue
-            public[url] = (r.status_code, r.get_data(as_text=True))
+            for url in self._urls(rule, anchor):
+                flask_app.security.rate_limiter.reset()
+                r = anon.get(url)
+                if r.status_code in (401, 403) or (300 <= r.status_code < 400
+                                                   and '/login' in r.headers.get('Location', '')):
+                    continue
+                public.setdefault(rule.rule, {})[url] = (r.status_code, r.get_data(as_text=True))
         return public
 
     def test_a_batch_proof_is_served_only_behind_login(self):
-        """docs/design/anchoring.md: a stored batch proof is served only behind login. A batch of
-        two anchors is closed first, so each stored proof holds a sibling hash, and the issuing
-        authority is federated, so the routes that publish its artifacts answer in full. Every
-        GET rule in the route table is then requested with no session; 38 of them answer
-        without a redirect to the login page, a 401 or a 403, and the anchor log's public routes
-        among them serve no stored proof's hashes, nor does any other. The two routes built to
-        serve a stored batch proof, /api/anchor/<token_id> and the token export, redirect to the
-        login page, and serve the proof once logged in (the read-only SQL console returns one
-        too, to the admin and auditor roles). A change that serves a batch proof without login
-        moves batches to version 2 first."""
+        """docs/design/anchoring.md: no GET route answering without login serves a stored batch
+        proof. A batch of two anchors is closed first, so each stored proof holds a sibling hash,
+        and the issuing authority is given a key, so the routes that publish its artifacts answer
+        in full. Every GET rule in the route table is then requested with no session, a path
+        parameter the sweep does not recognise once per id of the batch; 38 rules answered
+        without a redirect to the login page, a 401 or a 403 when this was written (2026-10-16;
+        the floors below are what is checked), and no body among them may carry a sibling hash.
+        The two routes built to serve a stored batch proof, /api/anchor/<token_id> and the token
+        export, redirect to the login page, and serve the proof once logged in (the read-only
+        SQL console returns one too, to the admin and auditor roles). A change that serves a
+        batch proof without login moves batches to version 2 first."""
         anchor, siblings = self._close_a_batch_of_two()
         _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = %s",
                      ('ab' * 16, anchor['issuing_agency_id']))
         public = self._public_bodies(anchor)
         self.assertGreaterEqual(len(public), 30, 'only %d routes answered without a session; the '
                                 'sweep must reach the public surface' % len(public))
-        leaked = sorted(url for url, (_status, body) in public.items()
+        leaked = sorted(url for answered in public.values() for url, (_status, body) in answered.items()
                         if any(h in body or h.upper() in body for h in siblings))
         self.assertEqual(leaked, [], 'served a stored proof\'s hashes without login')
         own = {step['sibling'] for step in anchor['merkle_proof']}

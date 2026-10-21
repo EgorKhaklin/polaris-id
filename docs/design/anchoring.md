@@ -189,7 +189,7 @@ login or publishes one.
 - `polaris_web/test_app.py`: `AnchorBatchTests`, the concurrency tests named
   above, `AnchorBatchTreeDeclaredLimitTests` (the size property only), and
   `TransparencyProofBoundsTests`, which pins the login on the two routes built
-  to serve a proof, and that no route answering without login serves a stored
-  proof's hashes.
+  to serve a proof, and that no GET route answering without login serves a
+  stored proof's hashes.
 - [audit-of-record.md](audit-of-record.md): `AnchorBatch` is one of the
   thirteen instances of the principle.
