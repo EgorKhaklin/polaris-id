@@ -431,6 +431,14 @@ def _etsi_refusal(numbers, reason):
         " and ".join("OIDFVP-HAIP-COMMON-REQ-RO-%02d" % n for n in numbers), reason))
 
 
+def _etsi_reading_refusal(numbers, reason):
+    """A refusal by this package's reading of the ETSI TS 119 472-2 V1.2.1 requirements it names,
+    where their text states no such rule; the reason gives the grounds."""
+    return VerifierInfoError("verifier_info fails this package's reading of ETSI TS 119 472-2 "
+                             "V1.2.1 %s: %s" % (" and ".join("OIDFVP-HAIP-COMMON-REQ-RO-%02d" % n
+                                                           for n in numbers), reason))
+
+
 def _over_asking_refusal(reason):
     """A refusal by the over-asking check (_within_registration), saying what it read."""
     return VerifierInfoError(
@@ -677,11 +685,18 @@ def check_etsi_119472_2(verifier_info, dcql_query):
             raise _etsi_refusal((3, 14), "verifier_info element %d is %s, not an object"
                                 % (position, _given(element)))
     elements = [e for e in verifier_info if isinstance(e, dict)]
-    # RO-02 and RO-04: one element, with format registrar_dataset, carries the registrar's data.
+    # RO-02 and RO-04: an element with format registrar_dataset carries the registrar's data.
     registrars = [e for e in elements if e.get("format") == "registrar_dataset"]
-    if len(registrars) != 1:
-        raise _etsi_refusal((2, 4), "verifier_info has %d elements with format registrar_dataset, "
-                                    "where it carries exactly one" % len(registrars))
+    if not registrars:
+        raise _etsi_refusal((2, 4), "verifier_info has 0 elements with format registrar_dataset")
+    # One, not two, is this package's reading: RO-03 to RO-05 speak of "the" registrar_dataset
+    # element, and no requirement states a count.
+    if len(registrars) > 1:
+        raise _etsi_reading_refusal((2, 4), "verifier_info has %d elements with format "
+                                            "registrar_dataset; this package carries one, as "
+                                            "RO-03 to RO-05 speak of the registrar_dataset "
+                                            "element, though no requirement states a count"
+                                    % len(registrars))
     registrar = registrars[0]
     # RO-03: the registrar_dataset element carries no credential_ids.
     if "credential_ids" in registrar:

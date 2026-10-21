@@ -537,7 +537,9 @@ and one that judges a response already captured:
     s.add_argument("--verifier-info", default=None, metavar="FILE",
                    help="verifier attestations to put in the request object: a JSON array "
                         "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
-                        "guide shows), e.g. {\"format\": \"registration_cert\", \"data\": \"<JWT>\"}")
+                        "guide shows), e.g. [{\"format\": \"registration_cert\", \"data\": "
+                        "\"<the base64url encoding of the serialized RP registration certificate>\"}] "
+                        "(ETSI TS 119 472-2 V1.3.1 RO-16's words)")
     s.add_argument("--verifier-info-profile", default=None, choices=VERIFIER_INFO_PROFILES,
                    help="hold --verifier-info to a profile before listening, and exit 2 naming the "
                         "requirement it fails: etsi-119472-2, ETSI TS 119 472-2 V1.2.1's RO-01 to "

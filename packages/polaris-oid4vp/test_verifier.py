@@ -591,8 +591,13 @@ class EtsiVerifierInfoTests(_EtsiProfile):
     def test_ro02_ro04_exactly_one_registrar_dataset(self):
         self.verifier([_registrar(), _certificate()])
         both = RO % 2 + " and " + RO % 4 + ":"
-        self.refused([_certificate()], both, "has 0 elements with format registrar_dataset")
-        self.refused([_registrar(), _registrar(), _certificate()], both, "has 2 elements")
+        zero = self.refused([_certificate()], both, "has 0 elements with format registrar_dataset")
+        self.assertIn("fails ETSI TS 119 472-2 V1.2.1 " + both, zero)
+        # One, not two, is this package's reading, and the refusal says so: no requirement states
+        # a count.
+        two = self.refused([_registrar(), _registrar(), _certificate()], both, "has 2 elements")
+        self.assertIn("fails this package's reading of ETSI TS 119 472-2 V1.2.1 " + both, two)
+        self.assertIn("no requirement states a count", two)
         self.refused([dict(_registrar(), format="Registrar_Dataset")], both, "has 0 elements")
 
     def test_ro05_the_registrar_data_is_a_non_empty_object(self):
