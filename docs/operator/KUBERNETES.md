@@ -20,7 +20,7 @@ backups through pgBackRest exactly as on compose.
 | `pgbouncer` | Deployment | uid 1000 | session pooling (transaction mode is refused: it hands the operator scope to the next client), TLS to postgres (verify-ca) and from the app |
 | `pg-router` | Deployment | uid 99 | HAProxy, the same as the compose HA profile: 5432 to the member answering Patroni's `/primary`, 5433 to a replica; sessions to a member marked down are cut, which is what frees the pool from a frozen leader |
 | `postgres` | StatefulSet, 2 members + PVCs | uid 70 | the self-contained image under Patroni ([FAILOVER.md](FAILOVER.md)): the Kubernetes API is the lease store, the leader Service's endpoints follow the lease, a replica Service selects on the `role` label; the data directory in a subdirectory of the volume; TLS on |
-| `redis` | StatefulSet + PVC | uid 999 | sessions and rate-limit state |
+| `redis` | Deployment, Memory emptyDir | uid 999 | the rate limiter's counters, in memory only: no append-only file, no snapshot |
 
 Every pod satisfies the **restricted** Pod Security Standard: non-root with a
 numeric uid, `seccompProfile: RuntimeDefault`, all capabilities dropped, no
@@ -187,7 +187,7 @@ kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/
     pgbouncer. A single-node cluster still schedules them all.
   - Pods Kubernetes may move leave a node that stopped answering after
     `spread.evictAfterSeconds` (30 s, not the default 300 s).
-  - Redis is a Deployment on an emptyDir, so it moves too. The rate limiter
+  - Redis is a Deployment on a Memory emptyDir, so it moves too. The rate limiter
     refuses requests while Redis is unreachable, and its windows are
     short-lived.
   - Disruption budgets keep a drain from taking the last pod of anything.

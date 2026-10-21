@@ -467,7 +467,7 @@
       "evidence": [
         "file:lab/EXTERNAL-NOUNS.md",
         "url:https://github.com/IDFoundry/OID4VCgo/issues/312",
-        "url:https://github.com/dominikschlosser/eudi-dev/issues/21"
+        "url:https://github.com/eudi-dev/eudi-dev/issues/21"
       ],
       "reproduce": "Read the notes below the Wallets table of lab/EXTERNAL-NOUNS.md (OID4VCgo and eudi-dev changed after a report from here) and the two linked issues."
     },

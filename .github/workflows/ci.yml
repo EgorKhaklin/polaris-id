@@ -3891,6 +3891,11 @@ jobs:
       # flipped byte in each signature refused.
       - name: A captured eudi-dev presentation, verified offline (lab/interop/eudi-dev/capture)
         run: python -m unittest lab/interop/eudi-dev/capture/test_capture.py
+      # lab/interop/eudi-dev/run.sh is the stranger's first minute. Each verdict it reaches (the
+      # genuine presentation and the four controls) passes and fails where it should, read from
+      # files shaped as eudi-dev 2.x and 3.x write them; no wallet here, the canary runs the walk.
+      - name: The eudi-dev walk's verdicts, each branch without a wallet (lab/interop/eudi-dev/test_walk.py)
+        run: python -m unittest lab/interop/eudi-dev/test_walk.py
       # lab/interop/negative-vectors (record 018): the vector set other verifiers can run, kept
       # true as this verifier moves: no drift from its generator, every verdict reached, and each
       # certificate defect shown to be the only one.

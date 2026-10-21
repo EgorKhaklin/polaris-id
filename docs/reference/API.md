@@ -907,7 +907,7 @@ a boolean `require_zk` and a `required_enrollment` of `PENDING_ENROLLMENT`, `ENR
 status and a different requested one both apply and cannot both be met (`403
 insufficient_enrollment`). Returns
 `{code, expires_in, acr}`: an encrypted, opaque, stateless, 60-second authorization code bound to
-the PKCE challenge. Nothing is written. The wallet's `login` command drives this route.
+the PKCE challenge. Nothing is written to the database or to disk: the rate limiter's counters, keyed by the credential-hash prefix and the client IP, live in Redis memory until 61 seconds after the last request ([auth-broker.md](../design/auth-broker.md)). The wallet's `login` command drives this route.
 
 ### `POST /api/v1/auth/token`
 
