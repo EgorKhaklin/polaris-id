@@ -225,7 +225,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             sys.stderr.write("%s %s\n" % (self.command, self.path))
 
 
-def serve(verifier, *, host="0.0.0.0", port=9443, certfile=None, keyfile=None,
+def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
           on_verdict=None, background=True, verbose=False):
     """Start the two endpoints. Returns the HTTPServer so a caller can shut it down.
 

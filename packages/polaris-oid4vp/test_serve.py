@@ -571,6 +571,19 @@ class TransportTests(unittest.TestCase):
             else:
                 self.assertEqual(captured.getvalue(), "")
 
+    def test_serve_listens_on_this_machine_only_by_default(self):
+        """serve() given no host listens on 127.0.0.1, not on every interface."""
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="http://127.0.0.1:0/request.jwt",
+                            response_uri="http://127.0.0.1:0/response")
+        httpd = serve(verifier, port=0)
+        try:
+            self.assertEqual(httpd.server_address[0], "127.0.0.1")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_a_post_to_an_unknown_path_is_404(self):
         cert_pem, key_pem = _client_chain()
         verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,

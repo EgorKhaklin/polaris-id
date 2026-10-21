@@ -348,7 +348,9 @@ def main() -> int:
             print("  <- %d refused: %s: %s" % (status, verdict.code, verdict.reason),
                   flush=True)
 
-    httpd = serve(verifier, port=PORT, certfile=str(workdir / FILES["tls_cert"]),
+    # Every interface: the suite's container reaches this by host.docker.internal, which on Linux
+    # is the bridge's address, not loopback.
+    httpd = serve(verifier, host="0.0.0.0", port=PORT, certfile=str(workdir / FILES["tls_cert"]),
                   keyfile=str(workdir / FILES["tls_key"]), on_verdict=_show)
     print("verifier listening on https://%s:%d, client_id %s...\n"
           % (HOST, PORT, verifier.client_id[:26]))

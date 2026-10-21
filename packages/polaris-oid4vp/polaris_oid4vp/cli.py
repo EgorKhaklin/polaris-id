@@ -513,7 +513,9 @@ and one that judges a response already captured:
     s = sub.add_parser("serve", help="run a verifier")
     s.add_argument("--pki", default="./pki")
     s.add_argument("--host", default="localhost", help="the name a wallet reaches this by")
-    s.add_argument("--bind", default="0.0.0.0")
+    s.add_argument("--bind", default="127.0.0.1",
+                   help="the address to listen on: 127.0.0.1, this machine only, by default; "
+                        "0.0.0.0 for every interface, as a wallet or suite elsewhere needs")
     s.add_argument("--port", type=int, default=9443)
     s.add_argument("--public-base-url", default=None, metavar="URL",
                    help="the HTTPS origin a wallet reaches this verifier by when it is behind a "
