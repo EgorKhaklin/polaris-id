@@ -8234,6 +8234,97 @@ class ConsoleReaderTests(unittest.TestCase):
                          ('refused', 'console_read runs only as polaris_console_reader, not as %s' % loader))
 
 
+class AuditedReadsFailClosedTests(PolarisTestCase):
+    """A read of a person's history whose AuditAccessLog row cannot be written is not returned:
+    security.record_audit_access fails closed. Each route that records its reads answers once as
+    it is, with what it read, and once more with AuditAccessLog refusing every insert (a trigger
+    the owner adds for the test), when it must answer 503 with none of it. Until 2026-10-21 the
+    record failed open, and the second answer carried the same rows, unrecorded."""
+
+    def _refuse_the_log(self):
+        """AuditAccessLog refuses every insert until the test ends."""
+        _owner_query("CREATE FUNCTION test_refuse_audit_access_write() RETURNS trigger "
+                     "LANGUAGE plpgsql AS $$ BEGIN "
+                     "RAISE EXCEPTION 'test: AuditAccessLog refuses this row'; END $$")
+        self.addCleanup(_owner_query,
+                        "DROP FUNCTION IF EXISTS test_refuse_audit_access_write() CASCADE")
+        _owner_query("CREATE TRIGGER test_refuse_audit_access_write BEFORE INSERT ON AuditAccessLog "
+                     "FOR EACH ROW EXECUTE FUNCTION test_refuse_audit_access_write()")
+
+    def _withheld(self, *answers):
+        """Each (name, fetch, shows): fetch() answers 200 with what the route read (shows(answer)
+        says so) while the log takes its row, and 503 without it once the log refuses."""
+        for name, fetch, shows in answers:
+            answer = fetch()
+            self.assertEqual(answer.status_code, 200, name)
+            self.assertTrue(shows(answer), '%s: the control answer must carry what it read' % name)
+        self._refuse_the_log()
+        for name, fetch, shows in answers:
+            answer = fetch()
+            self.assertFalse(shows(answer), '%s answered %d with what it read while AuditAccessLog '
+                             'refused its row' % (name, answer.status_code))
+            self.assertEqual(answer.status_code, 503, name)
+            self.assertIn('could not be recorded', answer.get_data(as_text=True), name)
+
+    @staticmethod
+    def _holder(token_id=2):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT i.individual_id, i.legal_name FROM IdentityToken t "
+                            "JOIN Individual i ON i.individual_id = t.individual_id "
+                            "WHERE t.token_id = %s", (token_id,))
+                return cur.fetchone()
+        finally:
+            conn.close()
+
+    def _page_naming(self, path, name):
+        return (path, lambda: self.client.get(path),
+                lambda answer: name in html.unescape(answer.get_data(as_text=True)))
+
+    def test_the_credential_pages_withhold_what_they_read(self):
+        holder = self._holder()
+        self._withheld(
+            self._page_naming('/tokens/2', holder['legal_name']),
+            self._page_naming('/investigate/token/2', holder['legal_name']),
+            self._page_naming('/investigate/individual/%d' % holder['individual_id'],
+                              holder['legal_name']),
+            ('/api/tokens/2/export', lambda: self.client.get('/api/tokens/2/export'),
+             lambda answer: ((answer.get_json(silent=True) or {}).get('token') or {}).get(
+                 'holder_name') == holder['legal_name']))
+
+    def test_the_verification_log_withholds_its_rows_in_each_mode(self):
+        def rows(answer):
+            return '<tr data-key="' in answer.get_data(as_text=True)
+        self._withheld(*[(path, (lambda p=path: self.client.get(p)), rows)
+                         for path in ('/verifications', '/verifications?outcome=SUCCESS',
+                                      '/verifications?page=1')])
+
+    def test_the_warrant_audit_withholds_the_history(self):
+        """uc7_warrant_audit holds its rows when it records the read, and catches psycopg2.Error
+        and ValueError to show its own errors; the refusal is neither, so it reaches the 503
+        handler and the rows do not reach the page."""
+        self._withheld(('/uc7/warrant-audit',
+                        lambda: self._post('/uc7/warrant-audit', data={'individual_id': '3'}),
+                        lambda answer: 'id="op-res-h"' in answer.get_data(as_text=True)))
+
+    def test_the_duress_pages_withhold_the_events(self):
+        _owner_query("CALL uc12_record_duress(%s, %s, %s, %s)", (2, 1, 5, 'AUDIT_TABLE'))
+        holder = self._holder()
+        self._withheld(
+            self._page_naming('/duress', holder['legal_name']),
+            ('/api/duress/events', lambda: self.client.get('/api/duress/events'),
+             lambda answer: bool((answer.get_json(silent=True) or {}).get('events'))))
+
+    def test_a_table_the_log_does_not_track_is_refused(self):
+        """No row can record a read of a table outside AUDIT_TABLES_TRACKED, so the call refuses
+        like any other unrecorded read, and the caller's rows are not returned."""
+        with flask_app.app.test_request_context('/'):
+            with self.assertRaises(flask_app.security.AuditAccessNotRecorded):
+                flask_app.security.record_audit_access(
+                    flask_app.get_db, 'IdentityToken', filter_criteria={'route': '/test'})
+
+
 # ============================================================================
 # ERROR HANDLING TESTS
 # ============================================================================

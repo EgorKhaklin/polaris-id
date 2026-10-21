@@ -1832,6 +1832,9 @@ Status codes:
 - `429`: rate limited
 - `500`: server error (sanitized)
 
+The pages and APIs that record their reads in `AuditAccessLog` answer `503`, without the rows,
+when that record cannot be written.
+
 A NUL character in the path, the query or a form field is `400` on every route: PostgreSQL text
 cannot hold one. A JSON body with a NUL in any string or key, a non-finite number (`NaN`,
 `Infinity`, `1e400`) or nesting past the parser's depth is malformed, and each route answers it as
