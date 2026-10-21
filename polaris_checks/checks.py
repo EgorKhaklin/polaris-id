@@ -7380,8 +7380,10 @@ def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
 # outlived its 61 s window on disk. Redis now persists nothing in either: `--appendonly no` AND
 # `--save ""` (a redis-server with no config file snapshots by its compiled-in `save` default, and a
 # stop writes one whenever `save` is not empty), no configuration file that could set either (a path
-# argument or --include), no entrypoint on the compose service, and /data in memory (a compose tmpfs,
-# a Memory emptyDir). An empty or missing command is a FAIL.
+# argument or --include), no entrypoint, extends: or merge key on the compose service and no container
+# command in the chart (each can replace the arguments read), no overlay that changes the service's
+# command, entrypoint, volumes or tmpfs or extends it, and /data in memory (a compose tmpfs, a Memory
+# emptyDir). An empty or missing command is a FAIL.
 def _redis_options(words: list[str]) -> dict[str, list[list[str]]] | str:
     """redis-server argv -> {option: [values per occurrence]}, or the reason it cannot be read."""
     if not words or words[0] != "redis-server":
@@ -7421,9 +7423,10 @@ def check_redis_persists_nothing(root: pathlib.Path) -> list[Finding]:
     compose = _read(root, "polaris_web/docker-compose.prod.yml")
     svc = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", compose)
     rs = svc.group(1) if svc else ""
-    # A folded command runs to the next line indented less than six spaces: YAML keeps a blank line
-    # and a deeper-indented line in the command, so both reach redis-server's argv.
-    cmd = re.search(r"(?m)^    command: *>-? *\n((?:^(?:      .*)?\n)+)", rs)
+    # A folded command runs to the next non-blank line indented less than six spaces: YAML keeps an
+    # empty or whitespace-only line and a deeper-indented line in the command, so each reaches
+    # redis-server's argv.
+    cmd = re.search(r"(?m)^    command: *>-? *\n((?:^(?:      .*|[ \t]*)\n)+)", rs)
     flow = re.search(r"(?m)^    command: *(\[.*\]) *$", rs)
     if not rs:
         problems.append("docker-compose.prod.yml has no redis service")
@@ -7438,18 +7441,31 @@ def check_redis_persists_nothing(root: pathlib.Path) -> list[Finding]:
     else:
         problems.append("the compose redis service has no command: (the image would start Redis with "
                         "its compiled-in snapshot schedule)")
-    if rs and re.search(r"(?m)^    entrypoint:", rs):
-        problems.append("the compose redis sets an entrypoint, which would run instead of the command read here")
+    # An entrypoint runs instead of the command read here; extends: or a YAML merge key (<<:) brings in
+    # another service's entrypoint, volumes or command.
+    if rs and re.search(r"(?m)^    (entrypoint|extends|<<):", rs):
+        problems.append("the compose redis sets an entrypoint, extends: or a merge key (<<:), which can "
+                        "replace the command or volumes read here")
     if rs and (re.search(r"(?m)^    volumes:", rs) or not re.search(r"(?m)^    tmpfs:\n      - /data:", rs)):
         problems.append("the compose redis must keep /data on a tmpfs and mount no volume")
     for p in sorted((root / "polaris_web").glob("docker-compose.*.yml")):
         if p.name == "docker-compose.prod.yml":
             continue
         over = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", _read_path(p))
-        if over and re.search(r"(?m)^    (command|volumes|entrypoint):", over.group(1)):
-            problems.append(f"{p.name} overrides the redis command, entrypoint or volumes")
+        if over and re.search(r"(?m)^    (command|volumes|entrypoint|tmpfs|extends):", over.group(1)):
+            problems.append(f"{p.name} overrides the redis command, entrypoint, volumes or tmpfs, or "
+                            "extends the service")
     helm = _read(root, "deploy/helm/polaris/templates/redis.yaml")
     args = re.findall(r"(?m)^\s*args: *(\[.*\]) *$", helm)
+    # A container command: runs in place of the image's entrypoint, so the args read here would not
+    # start Redis. It sits at the indentation of the container's image: (or opens the list item,
+    # "- command:"); a probe's command: sits deeper and is not the container's.
+    ind = re.search(r"(?m)^( {2,})image:", helm)
+    if not ind:
+        problems.append("the chart's redis has no container image: line to read its fields by")
+    elif re.search(rf"(?m)^(?:{ind.group(1)}|{ind.group(1)[:-2]}- )command:", helm):
+        problems.append("the chart's redis sets a container command:, which would run instead of the args "
+                        "read here")
     if len(args) != 1:
         problems.append(f"the chart's redis.yaml must have one args: list (found {len(args)})")
     else:

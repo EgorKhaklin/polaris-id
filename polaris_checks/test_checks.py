@@ -3507,10 +3507,20 @@ def test_redis_persists_nothing_check_discriminates(tmp_path):
     broken(compose, '      --save ""\n', '      --save ""\n\n      --appendonly yes\n',
            "must FAIL when a line after a blank line of the folded command turns the append-only file on",
            "the compose redis: the append-only file must be off, once")
+    broken(compose, '      --save ""\n', '      --save ""\n  \n      --appendonly yes\n',
+           "must FAIL when a line after a whitespace-only line of the folded command turns the append-only "
+           "file on", "the compose redis: the append-only file must be off, once")
     broken(compose, "    command: >\n      redis-server\n",
            '    entrypoint: ["sh", "-c", "redis-server --appendonly yes"]\n    command: >\n      redis-server\n',
            "must FAIL when the compose Redis sets an entrypoint, which runs instead of the checked command",
            "the compose redis sets an entrypoint")
+    broken(compose, "    command: >\n      redis-server\n",
+           "    extends:\n      file: docker-compose.ha.yml\n      service: redis\n    command: >\n      redis-server\n",
+           "must FAIL when the compose Redis extends another service, whose entrypoint or volumes it takes",
+           "the compose redis sets an entrypoint, extends: or a merge key")
+    broken(compose, "    command: >\n      redis-server\n", "    <<: *other\n    command: >\n      redis-server\n",
+           "must FAIL when the compose Redis merges a YAML anchor (<<:) that can bring an entrypoint or volumes",
+           "the compose redis sets an entrypoint, extends: or a merge key")
     broken(compose, "    command: >\n      redis-server\n", "    command: >\n      redis-check-aof\n",
            "must FAIL when the command does not start redis-server")
     broken(compose, "    command: >\n", "    command_was: >\n",
@@ -3523,11 +3533,39 @@ def test_redis_persists_nothing_check_discriminates(tmp_path):
     broken("polaris_web/docker-compose.bluegreen.yml", "services:\n",
            "services:\n  redis:\n    volumes:\n      - redis_data:/data\n",
            "must FAIL when an overlay puts a volume back under Redis")
+    broken("polaris_web/docker-compose.bluegreen.yml", "services:\n",
+           "services:\n  redis:\n    tmpfs: !reset []\n",
+           "must FAIL when an overlay drops the tmpfs under Redis (!reset)",
+           "docker-compose.bluegreen.yml overrides the redis command, entrypoint, volumes or tmpfs")
+    broken("polaris_web/docker-compose.bluegreen.yml", "services:\n",
+           "services:\n  redis:\n    extends:\n      service: app\n",
+           "must FAIL when an overlay makes Redis extend another service",
+           "docker-compose.bluegreen.yml overrides the redis command, entrypoint, volumes or tmpfs, or "
+           "extends the service")
     broken(helm, '"--appendonly", "no"', '"--appendonly", "yes"',
            "must FAIL when the chart's Redis writes an append-only file")
     broken(helm, '"--appendonly", "no"', '"--appendonly", "no", "--include", "/x.conf"',
            "must FAIL when the chart's Redis includes a configuration file (--include)",
            "the chart's redis: it includes a configuration file (--include)")
+    broken(helm, "          args: [",
+           '          command: ["sh", "-c", "exec redis-server --appendonly yes"]\n          args: [',
+           "must FAIL when the chart's Redis container sets a command:, which runs instead of the checked args",
+           "the chart's redis sets a container command:")
+    broken(helm, "          image: {{ .Values.images.redis }}\n",
+           "          image: {{ .Values.images.redis }}\n"
+           '          command: ["sh", "-c", "redis-server --appendonly yes --save 60 1"]\n',
+           "must FAIL when the chart's Redis container sets a command: beside its image:",
+           "the chart's redis sets a container command:")
+    broken(helm, "          args: [", '          command: ["sh", "-c", "redis-server --appendonly yes"]\n          argz: [',
+           "must FAIL when the chart's Redis container sets a command: and no args:",
+           "the chart's redis sets a container command:")
+    broken(helm, "      containers:\n        - name: redis\n",
+           '      containers:\n        - command: ["sh", "-c", "redis-server --appendonly yes"]\n          name: redis\n',
+           "must FAIL when the chart's Redis container opens with a command:",
+           "the chart's redis sets a container command:")
+    broken(helm, "          image: {{", "          imagez: {{",
+           "must FAIL when the chart's Redis container has no image: line to read its fields by",
+           "the chart's redis has no container image: line")
     broken(helm, '"--save", "", ', "",
            "must FAIL when the chart's Redis snapshots by its compiled-in default")
     broken(helm, '"--save", ""', '"--save", "900 1"',
