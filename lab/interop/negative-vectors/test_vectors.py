@@ -173,7 +173,8 @@ STATUS_FAMILY = {"status-list-unreachable": ("unreachable", None), "status-list-
 
 class SignerIsNotTheIssuer(unittest.TestCase):
     """0.3.0: another issuer's valid leaf under the trusted root signs a credential whose iss is the trusted
-    issuer. polaris-oid4vp refuses each because the leaf does not name that iss, and for nothing else."""
+    issuer. polaris-oid4vp refuses each because the leaf does not name that iss, and for nothing else. 0.3.1
+    grades the family policy: the verdict is that of a verifier requiring the leaf to name iss."""
 
     @classmethod
     def setUpClass(cls):
@@ -192,6 +193,8 @@ class SignerIsNotTheIssuer(unittest.TestCase):
         self.assertEqual([v["id"] for v in self.family], list(SIGNER_FAMILY))
         for vector in self.family:
             self.assertEqual((vector["trust"], vector["layer"], vector["expected"]), ("x5c", "x5c-issuer", "reject"))
+            # 0.3.1: graded policy, since oauth-wg/oauth-sd-jwt-vc#436 says iss need not match the leaf's names.
+            self.assertEqual((vector["class"], vector["expected"]), ("policy", "reject"), vector["id"])
             got, why = self.rv.polaris_oid4vp(vector, self.doc["settings"])
             self.assertEqual(got, "reject", vector["id"])
             # issuer_key is also a broken chain's code: the reason must be the naming, not the chain.

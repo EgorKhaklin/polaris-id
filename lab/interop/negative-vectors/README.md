@@ -23,16 +23,20 @@ changed, re-signed wherever the change needs it, so the only reason to refuse it
 | Key binding JWT | `aud` or `nonce` missing, `aud` as an array, `aud` without the Client Identifier prefix, `typ` JWT, `alg` none, HS256 keyed with the holder's public JWK, `iat` NaN, `exp` a string |
 | Disclosures | a digest committed twice, a claim already in the clear, `exp` or `iss` disclosed, four elements, a claim named `_sd` |
 | `x5c` chain | a self-signed leaf, the anchor sent in the chain, an unknown root, an expired leaf, an intermediate that is not a CA |
-| The signer is not the named issuer | another issuer's valid leaf under the trusted root signs a credential whose `iss` is the trusted issuer: the leaf names that issuer's URL; names only a DNS host that is not `iss`'s; names that URL and also a host both share |
+| The signer is not the named issuer | another issuer's valid leaf under the trusted root signs a credential whose `iss` is the trusted issuer: the leaf names that issuer's URL; names only a DNS host that is not `iss`'s; names that URL and also a host both share. Refused by a verifier that requires the leaf to name `iss` |
 | Status goes dark | the Token Status List the credential names gives no answer; answers with an HTML page; has a `lst` whose ZLIB stream never ends; is signed by another issuer's key under the same root; sits at a uri no key is stated for; has expired; does not reach the credential's index |
 
 **The signer is not the named issuer** is the class of swiyu change dossier CD-008 (2026-07-31), in which a
 verifier accepted a credential signed by an attacker's key while its `iss` named a trusted issuer. Its shape
-differs: there the key was a DID named by `kid` and checked against `iss`; here it is an `x5c` leaf, where
-SD-JWT VC draft-19 s2.5 makes the leaf's subject the issuer ("the Issuer of the Verifiable Digital Credential is the
-subject of the end-entity certificate") and refuses a credential whose key cannot be validated as the Issuer's, and
-s7.3 requires that "the integrity of the relationship between the iss value of the SD-JWT, if present, and the
-public keys of the Issuer" be kept. The family
+differs: there the key was a DID named by `kid` and checked against `iss`; here it is an `x5c` leaf. SD-JWT VC
+draft-19 s2.5 makes the leaf's subject the issuer ("the Issuer of the Verifiable Digital Credential is the subject
+of the end-entity certificate") and refuses a credential whose key cannot be validated as the Issuer's, and s7.3
+requires that "the integrity of the relationship between the iss value of the SD-JWT, if present, and the public
+keys of the Issuer" be kept. No sentence requires a verifier to compare `iss` with the leaf's names, and
+oauth-wg/oauth-sd-jwt-vc PR #436, merged 2026-10-14, adds to s2.5: "If the `iss` claim is also present, there is
+no requirement that its value directly correspond to a subject name in the end-entity certificate." So the three
+are graded `policy`: refusing them is a relying party's choice where one root certifies several issuers, and the
+verdict is that of a verifier that requires the leaf to name `iss`. The family
 holds `x5c` cases only and targets verification whose issuer key comes from `x5c`. polaris-oid4vp refuses all
 three there; no vector is graded under its `--issuer-jwks` mode, which is documented not to bind `iss` to a key
 (its README: "list one issuer's keys per verifier"), and each vector's `notes` says so.
@@ -50,8 +54,11 @@ revocation state (`unreachable`, `list_refused` with its code, `no_authority`, o
 to the relying party's policy. Each vector's `notes` names its state.
 
 `class` says how strong the requirement is: `spec` when a sentence requires the refusal, `spec-implied`
-when the sentence binds the issuer or the wallet, or a definition implies it, `policy` when the text says the
-verifier SHOULD refuse and the verdict is the one the vector's `policy` reaches. `layer` says whose job the
+when the sentence binds the issuer or the wallet, or a definition implies it, `policy` when no sentence requires
+it and the verdict is a relying party's choice. A `policy` vector is one of two kinds: the text says the verifier
+SHOULD refuse, and the verdict is the one the vector's `policy` reaches (the status-list vectors, under
+`status-required`); or the text leaves the check to the verifier, and the verdict is that of a verifier that
+applies it (the signer family: a verifier that requires the leaf to name `iss`). `layer` says whose job the
 refusal is: `jose`, `sd-jwt` (RFC 9901), `sd-jwt-vc` (the profile), `openid4vp`, `haip-x509` (the
 issuer's certificate chain), `x5c-issuer` (the binding of `iss` to that chain's leaf) or `status-list` (the
 Token Status List). A library that implements only some layers is judged on those alone.
@@ -170,13 +177,17 @@ suite's expected-failures files (MIT). Nothing of theirs is copied into this dir
   `x5c` and the issuer the leaf's subject, so no verdict follows. polaris-oid4vp accepts such a credential and
   reports its `iss` apart as unbound.
 - The signer family is for `x5c`. A verifier configured with several issuers' JWKs can bind `iss` to a key only
-  by a mapping the vectors do not carry.
+  by a mapping the vectors do not carry. Its verdicts are those of a verifier that requires the leaf to name `iss`;
+  the text does not require that, so a verifier that accepts the three is not wrong by the text.
 - The `sd-jwt-python` and `sd-jwt-js` adapters have not been run against 0.3.0, so nothing here says how they judge
   the two new families.
 - A status-list vector needs its `response` served at its `uri` and the verifier held to its `policy`; the EU
   view carries neither, so a run of that view judges the credential alone.
 - A verdict is pass or refuse. Why a verifier refused is compared for polaris-oid4vp only; for any other
   adapter, a refusal for the wrong reason counts as a pass.
-- Version 0.3.0 (0.2.0 plus the signer and status-list families; `settings.status_list_keys`, `policies`, the
-  `policy` class and the vector fields `policy`, `status_list` and `notes` are new). 0.2.0 added `kb-aud-missing`
-  and `kb-nonce-missing`. Vectors may be added, and none will change meaning under the same id.
+- Version 0.3.1 (0.3.0 with the signer family's three vectors graded `policy`, not `spec-implied`, since
+  oauth-wg/oauth-sd-jwt-vc PR #436; their ids, verdicts and presentations are unchanged, and the `policy` class
+  now also covers a check the text leaves to the verifier). 0.3.0 added the signer and status-list families
+  (`settings.status_list_keys`, `policies`, the `policy` class and the vector fields `policy`, `status_list` and
+  `notes`). 0.2.0 added `kb-aud-missing` and `kb-nonce-missing`. Vectors may be added, and none will change
+  meaning under the same id.

@@ -1,6 +1,6 @@
 {
   "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them.",
   "source": "vectors.json; these views are derived from it by make_vectors.py",
   "reference": "reference_rejected_at_mint: polaris-oid4vp's verdict when the views were made",
