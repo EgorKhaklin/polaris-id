@@ -3575,13 +3575,13 @@ jobs:
       # party can implement wrongly and still be told they conform, and it is invisible from
       # inside the suite because every case passes either way. SPEC.md states the number;
       # this fails the build if it changes without SPEC.md and the drill being updated.
-      - name: Contract reach — what the 118 published cases do not constrain
+      - name: Contract reach — what the published cases do not constrain
         run: |
           python -m pip install --quiet --require-hashes -r polaris_web/requirements-test.txt
           python scripts/polaris-contract-reach-drill.py
           python scripts/polaris-contract-reach-drill.py --prove-control
 
-      # Both reference SDKs pass all 118 cases. That is weaker than it sounds: a case
+      # Both reference SDKs pass every published case. That is weaker than it sounds: a case
       # constrains only the keys it names, so on every other key the two can disagree with
       # nothing noticing, and an integrator reads one and deploys the other. This compares
       # them to EACH OTHER, key for key, rather than to the contract.

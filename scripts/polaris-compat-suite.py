@@ -123,16 +123,30 @@ PINNED_KNOWN_DEFECTS = {
     "cross-authority-edge-context-boolean":
         "2026-10-01: a context is an id, so true is not context 1; the pinned verifier compares "
         "with Python's ==, which reads true as 1, and accepts the edge",
+    "transparency-sth-size-2-53":
+        "2026-10-21: a size a signature covers is an integer from 0 to 2**53 - 1, which JavaScript "
+        "holds exactly; the pinned verifier predates any rule on a head's tree_size and accepts 2**53",
+    "transparency-sth-size-10-20":
+        "2026-10-21: the same rule; the pinned verifier accepts a head of size 10**20",
+    "revocation-feed-count-one-point-zero":
+        "2026-10-21: a signed count is an integer, and 1.0 is not one; the pinned verifier compares "
+        "with Python's ==, which reads 1.0 as 1, and accepts the feed",
 }
 
 
 def _vkey(v):
     # The tree stopped counting ships at v9.467 and continued as 1.0.0 release candidates, so a
-    # case added in the 1.0 line (`since: "1.0.0-rc.N"`) sorts after every v9 release.
+    # case added in the 1.0 line (`since: "1.0.0-rc.N"`) sorts after every v9 release, and a
+    # release (`1.1.0`) after every candidate before it, and a later major (`2.0.0`) after both.
+    # Read as numbers, 1.1.0 sorted below v9.317, so a pinned v9 verifier declining a 1.1 case
+    # would have counted as a violation.
     s = str(v)
     if s.startswith("1.0.0-rc."):
-        return (10, 0, int(s.rsplit(".", 1)[1]))
-    return tuple(int(x) for x in s.split("."))
+        return (10, 0, 0, 0, int(s.rsplit(".", 1)[1]))
+    parts = tuple(int(x) for x in s.split("."))
+    if len(parts) == 3 and 1 <= parts[0] < 9:
+        return (9 + parts[0], parts[1], parts[2], 1, 0)
+    return parts
 
 
 def _read(rel):

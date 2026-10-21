@@ -310,6 +310,15 @@ as [K] matched K in the TypeScript SDK alone (`*-a-list`). Before these cases th
 failed five; both Python verifiers passed them, and a missing key on either side of their
 comparisons no longer matches a missing key on the other.
 
+Signed counts (1.1.0). Five cases pin that a count or size a signature covers is an integer from 0
+to 2**53 - 1 (WIRE-SPEC section 1), each refusal beside a control signed by the same key.
+JavaScript's JSON.parse reads 2**53 + 1 as 2**53 and `1.0` as 1, so past the bound, or written
+`1.0`, one signed number has two readings. A tree head of size 2**53 or 10**20 is refused
+(`transparency-sth-size-2-53`, `transparency-sth-size-10-20`, beside a head of size 2**53 - 1), and
+so is a revocation feed whose signer wrote its count of one leaf as `1.0`
+(`revocation-feed-count-one-point-zero`, beside the same feed counted as 1). Before these cases
+both SDKs accepted both heads and the Python SDK the feed; the detached verifier refused all three.
+
 WIRE-SPEC rules (1.0.0-rc.69). Eleven cases pin three rules a read of every verifier requirement
 found split or unenforced. A revoked leaf and an epoch leaf are 64 hex digits (3.3, 3.16): a feed
 with a `null` leaf, rooted as Python spells it or as JavaScript does, was accepted by one language's

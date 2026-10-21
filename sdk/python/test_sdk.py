@@ -54,6 +54,27 @@ def _conformance_vector(name):
         return json.load(f)
 
 
+class _OqsKey:
+    """A fresh ML-DSA-65 key, made and used through liboqs. The SDK checks a signature with each
+    witness it has, so what is signed here is also checked by cryptography's implementation."""
+
+    def __init__(self):
+        self._signer = pv._import_oqs().Signature("ML-DSA-65")
+        self.pk = self._signer.generate_keypair().hex()
+
+    def sign_digest(self, digest):
+        return self._signer.sign(digest).hex()
+
+    def sign(self, obj, keys=None):
+        """A copy of `obj` under this key, its signature over `keys` (when None, the keys its format lists)."""
+        import hashlib
+        o = dict(obj, algorithm="ML-DSA-65", public_key_hex=self.pk)
+        o.pop("signature_hex", None)
+        statement = pv._canonical(o, keys or pv._ARTIFACT_KEYS[o["format"]])
+        o["signature_hex"] = self.sign_digest(hashlib.sha3_256(statement).digest())
+        return o
+
+
 @unittest.skipUnless(_falcon_available(), "liboqs with Falcon is needed to witness the FN-DSA family")
 class FnDsaFamilyTests(unittest.TestCase):
     """The FN-DSA family (draft FIPS 206), verification only, on the published vectors that
@@ -1067,11 +1088,14 @@ class SignedCountsAreNumbersTests(unittest.TestCase):
     by the TypeScript SDK's `===`. The signature is stubbed to verify: only a signer can write
     these counts, so what is under test is the count rule and nothing else."""
 
-    def _authentic(self, obj):
+    def _verdict(self, obj):
         from unittest import mock
         with mock.patch.object(pv, "_verify_cryptography", return_value=True), \
                 mock.patch.object(pv, "_verify_liboqs", return_value=True):
-            return pv.verify_signed_artifact(obj).authentic
+            return pv.verify_signed_artifact(obj)
+
+    def _authentic(self, obj):
+        return self._verdict(obj).authentic
 
     def test_a_status_bundle_is_held_to_its_member_count(self):
         b = _conformance_vector("federation-status-bundle-count-mismatch.json")
@@ -1087,6 +1111,392 @@ class SignedCountsAreNumbersTests(unittest.TestCase):
                  leaves_root_hex=pv._revoked_root(one))
         self.assertTrue(self._authentic(dict(e, leaf_count=1)), "control: one leaf, counted as one")
         self.assertFalse(self._authentic(dict(e, leaf_count=True)))
+
+    def test_a_count_the_signer_wrote_as_1_0_is_not_one(self):
+        """WIRE-SPEC section 1 (2026-10-21): a signed count is an integer, as polaris-verify reads it.
+        By `1.0 == 1` this SDK took a count written `1.0` as one; the TypeScript SDK refuses it at the
+        signature, because JSON.parse reads `1.0` as 1 and its canonical bytes say `1`."""
+        one = ["aa" * 32]
+        feed = _conformance_vector("revocation-feed-valid.json")
+        feed = dict(feed, revoked_leaves=feed["revoked_leaves"][:1],
+                    revoked_root_hex=pv._revoked_root(feed["revoked_leaves"][:1]))
+        bundle = _conformance_vector("federation-status-bundle-count-mismatch.json")
+        leaves = dict(_conformance_vector("epoch-leaves-valid.json"), all_leaves_hex=one,
+                      leaves_root_hex=pv._revoked_root(one))
+        for obj, field in ((feed, "revoked_count"), (bundle, "member_count"), (leaves, "leaf_count")):
+            with self.subTest(field=field):
+                self.assertTrue(self._authentic(dict(obj, **{field: 1})), "control: one, counted as one")
+                self.assertFalse(self._authentic(dict(obj, **{field: 1.0})))
+
+    def test_a_head_size_is_an_integer_from_0_to_2_53_minus_1(self):
+        """WIRE-SPEC section 1 (2026-10-21): a head's size is a count its signature covers. polaris-verify
+        refused a head signed with 2**53, 10**20, `true`, -1, "1" or null, and this SDK accepted it, as
+        the TypeScript SDK did; 2**53 + 1 and `1.0` were accepted here alone."""
+        sth = _conformance_vector("timestamp-anchor-variants-base.json")["anchor"]["sth"]
+        for size in (0, 1, 2 ** 53 - 1):
+            with self.subTest(tree_size=size):
+                self.assertTrue(self._authentic(dict(sth, tree_size=size)))
+        for size in (2 ** 53, 2 ** 53 + 1, 2 ** 53 + 2, 10 ** 20, 1.0, True, "1", None, -1):
+            with self.subTest(tree_size=repr(size)):
+                v = self._verdict(dict(sth, tree_size=size))
+                self.assertFalse(v.authentic)
+                self.assertEqual(v.note, "tree_size is not an integer from 0 to 2**53 - 1")
+
+    def test_a_cosignature_size_of_true_or_1_0_counts_no_witness(self):
+        """A cosignature's size is a signed count too (2026-10-21). By `==` alone a witness's signed `true`
+        or `1.0` was the size 1 and counted toward the threshold; polaris-verify counts neither, nor does
+        the TypeScript SDK (`true === 1` is false, and a signed `1.0` fails its signature there)."""
+        import copy
+        from unittest import mock
+        ts = _conformance_vector("timestamp-anchor-variants-base.json")
+        both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
+
+        def anchor(size):
+            t = copy.deepcopy(ts)
+            for c in t["anchor"]["cosignatures"]:
+                c["tree_size"] = size
+            with mock.patch.object(pv, "_verify_cryptography", return_value=True), \
+                    mock.patch.object(pv, "_verify_liboqs", return_value=True):
+                return pv.verify_timestamp_anchor(t, trusted_witnesses=both, threshold=1)
+        v = anchor(1)
+        self.assertEqual((v.anchored, v.witnessed, v.cosigner_count), (True, True, 2), "control: the integer 1")
+        for size in (1.0, True):
+            with self.subTest(tree_size=repr(size)):
+                v = anchor(size)
+                self.assertEqual((v.anchored, v.witnessed, v.cosigner_count), (True, False, 0))
+
+
+def _node_sdk_available():
+    """node, and the TypeScript SDK's pinned dependencies (`npm ci` in sdk/typescript), which the CI
+    job that runs this suite installs for the agreement drills."""
+    return (shutil.which("node") is not None
+            and os.path.isdir(os.path.join(_ROOT, "sdk", "typescript", "node_modules", "@noble", "post-quantum")))
+
+
+#: The TypeScript SDK's verdicts on a list of [call, wire text, argument], in one node process. Each
+#: text is read by JSON.parse, as a JavaScript verifier reads the wire.
+_TS_VERDICTS = r"""
+import { readFileSync } from "node:fs";
+const S = await import(process.argv[1]);
+const hb = (h) => Uint8Array.from((h.match(/../g) ?? []).map((x) => parseInt(x, 16)));
+const out = JSON.parse(readFileSync(0, "utf8")).map(([call, text, arg]) => {
+  const o = JSON.parse(text);
+  if (call === "inclusion") {
+    return [S.verifyInclusion(o.index, o.tree_size, hb(o.leaf), hb(o.root), o.path.map(hb)), null];
+  }
+  if (call === "anchor") {
+    const v = S.verifyTimestampAnchor(o, arg.log_key, arg.witnesses, 1);
+    return [arg.witnesses === null ? v.anchored : v.witnessed, v.note ?? null];
+  }
+  if (call === "cosignature") {
+    const v = S.verifyCosignature(o);
+    return [v.authentic, v.note ?? null];
+  }
+  const v = S.verifySignedArtifact(o, arg);
+  return [v.authentic, v.note ?? null];
+});
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(_mldsa_available() and _node_sdk_available(),
+                     "needs ML-DSA-65 in cryptography, node, and the TypeScript SDK's dependencies "
+                     "(npm ci in sdk/typescript)")
+class ThreeVerifiersGiveOneVerdictTests(unittest.TestCase):
+    """polaris-verify, this SDK and the TypeScript SDK on the same wire text: one verdict per artifact
+    (2026-10-21). Each artifact is signed for real and written once by json.dumps, and each verifier
+    reads that text as its language reads JSON, the TypeScript SDK by JSON.parse in one node process.
+
+    A count or size a signature covers is an integer from 0 to 2**53 - 1 (WIRE-SPEC section 1). Before
+    this change neither SDK read a head's size: a head signed with 2**53, 2**53 + 2, 10**20, `true`, -1,
+    1.5, "1" or null was authentic in both and refused by polaris-verify, and a head of 2**53 + 1 or
+    `1.0`, a count of `1.0` and a cosignature's size of `1.0` or `true` were accepted by this SDK alone.
+    And the TypeScript SDK walked an inclusion proof with 32-bit operators, so index 0 of 2**31 + 1,
+    2**32 or 2**53 - 1 leaves was proved in the other two and refused there, and a two-leaf tree's
+    one-node path proved index 0 of 2**32 + 1 leaves there alone.
+    """
+
+    TOP = 2 ** 53 - 1
+    NOW = "2026-10-20T12:00:00Z"
+    WINDOW = {"issued_at": "2026-10-20T00:00:00Z", "expires_at": "2026-10-21T00:00:00Z"}
+    LEAF = "ab" * 32
+    MEMBER = {"authority": {"agency_id": 2}, "label": "member"}
+    SIZES = (("1", 1, True), ("2**53 - 1", TOP, True), ("2**53", TOP + 1, False), ("2**53 + 1", TOP + 2, False),
+             ("2**53 + 2", TOP + 3, False), ("10**20", 10 ** 20, False), ("1.0", 1.0, False), ("true", True, False),
+             ("-1", -1, False), ("1.5", 1.5, False), ('"1"', "1", False), ("null", None, False))
+    #: Refused by the TypeScript SDK at the signature: JSON.parse reads 1.0 as 1, so its canonical bytes
+    #: are not the signed ones. That is the mechanism, and it says so.
+    AT_THE_SIGNATURE = ("head of size 1.0", "revoked_count 1.0", "member_count 1.0", "leaf_count 1.0")
+    #: Refused by the rule, read before the signature as polaris-verify reads it (2**53 + 1 read as 2**53).
+    BY_THE_RULE = ("head of size 2**53", "head of size 2**53 + 1", "head of size 2**53 + 2", "head of size 10**20",
+                   "head of size true", "head of size -1", "head of size 1.5", 'head of size "1"',
+                   "head of size null")
+
+    @classmethod
+    def setUpClass(cls):
+        import hashlib
+        import importlib.util
+        import pathlib
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        name = "polaris_verify_detached_for_test_sdk"
+        spec = importlib.util.spec_from_file_location(name, os.path.join(_ROOT, "scripts", "polaris-verify.py"))
+        D = sys.modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(D)
+
+        def sha3(b):
+            return hashlib.sha3_256(b).digest()
+        log, authority, witness = (mldsa.MLDSA65PrivateKey.generate() for _ in range(3))
+        log_key, witness_key = (k.public_key().public_bytes_raw().hex() for k in (log, witness))
+        rows = []  # [label, expected, call, wire text, argument, polaris-verify, this SDK]
+
+        def signed(obj, canonical, sk):
+            obj = dict(obj, algorithm="ML-DSA-65", public_key_hex=sk.public_key().public_bytes_raw().hex())
+            obj["signature_hex"] = sk.sign(sha3(canonical(obj))).hex()
+            return obj
+
+        def head(size, root_hex):
+            return signed({"format": D._STH_FORMAT, "log_id": D._TIMESTAMP_LOG_ID, "tree_size": size,
+                           "root_hash_hex": root_hex, "timestamp": "2026-10-20T00:00:00Z"}, D._sth_canonical, log)
+
+        def artifact(label, want, obj, detached, now=None):
+            text = json.dumps(obj)
+            rows.append([label, want, "artifact", text, now, detached(json.loads(text)),
+                         pv.verify_signed_artifact(json.loads(text), now=now).authentic])
+
+        def anchor(label, want, t, witnesses):
+            text, key = json.dumps(t), "anchored" if witnesses is None else "witnessed"
+            d = D.verify_timestamp_anchor(json.loads(text), log_key=log_key, trusted_witnesses=witnesses)[key]
+            p = getattr(pv.verify_timestamp_anchor(json.loads(text), log_key=log_key, trusted_witnesses=witnesses), key)
+            rows.append([label, want, "anchor", text, {"log_key": log_key, "witnesses": witnesses}, d, p])
+
+        def inclusion(label, want, index, size, root, path):
+            text = json.dumps({"index": index, "tree_size": size, "leaf": leaf.hex(), "root": root.hex(),
+                               "path": [p.hex() for p in path]})
+            o = json.loads(text)
+            args = (o["index"], o["tree_size"], bytes.fromhex(o["leaf"]), bytes.fromhex(o["root"]),
+                    [bytes.fromhex(p) for p in o["path"]])
+            rows.append([label, want, "inclusion", text, None, D.verify_inclusion(*args), pv.verify_inclusion(*args)])
+
+        # Heads, and a witness's cosignature checked alone: the size is the only thing that differs, and
+        # every head is signed by one key and every cosignature by another.
+        root = sha3(b"a head").hex()
+        for label, size, want in cls.SIZES:
+            artifact("head of size " + label, want, head(size, root), lambda o: D.verify_sth(o, log_key)["sth_authentic"])
+        for label, size, want in cls.SIZES:
+            text = json.dumps(signed({"format": D._COSIGNATURE_FORMAT, "log_id": D._TIMESTAMP_LOG_ID, "tree_size": size,
+                                      "root_hash_hex": root}, D._cosignature_canonical, witness))
+            rows.append(["cosignature alone, size " + label, want, "cosignature", text, None,
+                         D.verify_cosignature(json.loads(text))["cosignature_authentic"],
+                         pv.verify_cosignature(json.loads(text)).authentic])
+
+        # Counts: one leaf or member, counted as 1, 1.0 or true.
+        def feed(count):
+            return signed(dict(cls.WINDOW, format="polaris-revocation-feed/1", authority={"agency_id": 1, "name": "A"},
+                               epoch_number=1, as_of="2026-10-20T00:00:00Z", revoked_root_hex=D.revoked_root([cls.LEAF]),
+                               revoked_count=count, revoked_leaves=[cls.LEAF]), D._revocation_feed_canonical, authority)
+
+        def bundle(count):
+            return signed(dict(cls.WINDOW, format="polaris-federation-status-bundle/1",
+                               publisher={"agency_id": 9, "name": "P"}, members=[cls.MEMBER],
+                               members_root_hex=D.bundle_members_root([cls.MEMBER]), member_count=count),
+                          D._status_bundle_canonical, authority)
+
+        def leaves(count):
+            return signed(dict(cls.WINDOW, format="polaris-epoch-leaves/1", authority={"agency_id": 1}, epoch_id=1,
+                               context_id=1, merkle_root="cd" * 32, leaf_count=count, all_leaves_hex=[cls.LEAF],
+                               leaves_root_hex=D._leaves_root([cls.LEAF])), D._epoch_leaves_canonical, authority)
+        for label, count, want in (("1", 1, True), ("1.0", 1.0, False), ("true", True, False)):
+            artifact("revoked_count " + label, want, feed(count),
+                     lambda o: D.verify_revocation_feed(o, now=cls.NOW)["feed_authentic"], cls.NOW)
+            artifact("member_count " + label, want, bundle(count),
+                     lambda o: D.verify_status_bundle(o, now=cls.NOW)["bundle_authentic"], cls.NOW)
+            artifact("leaf_count " + label, want, leaves(count),
+                     lambda o: D.verify_epoch_leaves(o, now=cls.NOW)["leaves_authentic"], cls.NOW)
+
+        # The published timestamp, anchored at index 0 of a tree of `size` under a head the log key signed.
+        # Index 0's siblings all sit to its right, so the root is folded here by RFC 6962 alone.
+        base = _conformance_vector("timestamp-anchor-variants-base.json")
+        tsh = D.timestamp_hash(base)
+        leaf = sha3(b"\x00" + tsh.encode())
+
+        def path(k):
+            return [sha3(b"sibling %d" % i) for i in range(k)]
+
+        def fold(nodes, right=True):
+            r = leaf
+            for p in nodes:
+                r = sha3(b"\x01" + r + p) if right else sha3(b"\x01" + p + r)
+            return r
+
+        def anchored(size, nodes):
+            t, r = json.loads(json.dumps(base)), fold(nodes).hex()
+            t["anchor"] = {"log_id": D._TIMESTAMP_LOG_ID, "timestamp_hash": tsh, "sth": head(size, r),
+                           "proof": {"entry_hex": tsh, "index": 0, "log_id": D._TIMESTAMP_LOG_ID, "tree_size": size,
+                                     "root_hash_hex": r, "proof_hex": [p.hex() for p in nodes]}}
+            return t
+
+        # A witness's cosignature over the head of size 1, its own size written 1, 1.0 or true.
+        for label, size, want in (("1", 1, True), ("1.0", 1.0, False), ("true", True, False)):
+            t = anchored(1, [])
+            t["anchor"]["cosignatures"] = [signed({"format": D._COSIGNATURE_FORMAT, "log_id": D._TIMESTAMP_LOG_ID,
+                                                   "tree_size": size, "root_hash_hex": leaf.hex()},
+                                                  D._cosignature_canonical, witness)]
+            anchor("cosignature of size " + label, want, t, [witness_key])
+
+        # Inclusion past 2**31, called directly and through an anchored timestamp.
+        for label, size, k in (("2**31", 2 ** 31, 31), ("2**31 + 1", 2 ** 31 + 1, 32), ("2**32", 2 ** 32, 32),
+                               ("2**53 - 1", cls.TOP, 53)):
+            inclusion("index 0 of " + label, True, 0, size, fold(path(k)), path(k))
+            anchor("anchored at index 0 of " + label, True, anchored(size, path(k)), None)
+        inclusion("index 2**31 of 2**31 + 1", True, 2 ** 31, 2 ** 31 + 1, fold(path(1), right=False), path(1))
+        inclusion("index 0 of 2**31, on the path of 2**31 + 1", False, 0, 2 ** 31, fold(path(32)), path(32))
+        inclusion("index 0 of 2**32 + 1, on a one-node path", False, 0, 2 ** 32 + 1, fold(path(1)), path(1))
+        anchor("anchored at index 0 of 2**32 + 1, on a one-node path", False, anchored(2 ** 32 + 1, path(1)), None)
+
+        url = pathlib.Path(_ROOT, "sdk", "typescript", "src", "index.ts").as_uri()
+        r = subprocess.run(["node", "--input-type=module", "-e", _TS_VERDICTS, url], cwd=_ROOT, timeout=300,
+                           input=json.dumps([row[2:5] for row in rows]), capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError("the TypeScript SDK did not answer: " + r.stderr[-2000:])
+        #: (label, expected, polaris-verify, this SDK, the TypeScript SDK, its note)
+        cls.rows = [(row[0], row[1], row[5], row[6], t[0], t[1]) for row, t in zip(rows, json.loads(r.stdout))]
+
+    def test_one_verdict_per_artifact(self):
+        self.assertEqual(len(self.rows), 48)
+        for label, want, detached, sdk, ts, _note in self.rows:
+            with self.subTest(label):
+                self.assertEqual({"polaris-verify": detached, "python sdk": sdk, "typescript sdk": ts},
+                                 dict.fromkeys(("polaris-verify", "python sdk", "typescript sdk"), want))
+
+    def test_the_typescript_sdk_refuses_by_the_signature_or_by_the_rule_and_says_which(self):
+        notes = {row[0]: row[5] for row in self.rows}
+        for label in self.AT_THE_SIGNATURE:
+            with self.subTest(label):
+                self.assertTrue(str(notes[label]).startswith(
+                    "the signature does not verify, AND this statement carries a whole number"), notes[label])
+        for label in self.BY_THE_RULE:
+            with self.subTest(label):
+                self.assertEqual(notes[label], "tree_size is not an integer from 0 to 2**53 - 1")
+
+
+@unittest.skipUnless(_liboqs_available(), "needs liboqs to sign ML-DSA-65")
+class SignedIntegersAreIntegersTests(unittest.TestCase):
+    """2026-10-21, WIRE-SPEC section 1: a signed integer (a head's or a cosignature's tree_size, a
+    revoked_count, member_count or leaf_count) is an integer from 0 to 2**53 - 1, read one way in
+    every language. `==` read a signed `true` and `1.0` as 1 (a cosignature counted, a count
+    matched); a head or a cosignature checked alone had no size rule; and past 2**53 - 1 the
+    TypeScript SDK's JSON.parse reads another number than the one signed (2**53 + 1 as 2**53). A
+    count must equal a list's length, so the bound shows only at the two sizes. Each artifact is
+    signed for real by a key made here, and each refusal is the rule's, by its note."""
+
+    VALUES = (True, 1.0, "1", None, -1)
+    PAST = (1.5, 2**53, 2**53 + 1)
+    BOUND = 2**53 - 1
+    HEAD = "tree_size is not an integer from 0 to 2**53 - 1"
+    COSIGNATURE = "the cosignature's tree_size is not an integer from 0 to 2**53 - 1"
+    LEAF = "ab" * 32
+    WINDOW = {"issued_at": "2026-10-20T00:00:00Z", "expires_at": "2026-10-21T00:00:00Z"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.key, cls.witness = _OqsKey(), _OqsKey()
+
+    def head(self, size, root="cd" * 32):
+        return self.key.sign({"format": "polaris-transparency-sth/1", "log_id": "polaris-timestamp-log",
+                              "tree_size": size, "root_hash_hex": root, "timestamp": "2026-05-01T00:00:10Z"})
+
+    def cosignature(self, size, root="cd" * 32):
+        return self.witness.sign({"format": "polaris-transparency-cosignature/1", "log_id": "polaris-timestamp-log",
+                                  "tree_size": size, "root_hash_hex": root}, keys=pv._COSIGNATURE_KEYS)
+
+    def test_a_head_checked_alone_is_held_to_its_size(self):
+        for size in (1, 0, self.BOUND):
+            with self.subTest(control=size):
+                v = pv.verify_signed_artifact(self.head(size))
+                self.assertTrue(v.authentic, v.note)
+        for size in self.VALUES + self.PAST:
+            with self.subTest(tree_size=size):
+                v = pv.verify_signed_artifact(self.head(size))
+                self.assertEqual((v.authentic, v.note), (False, self.HEAD))
+        # The rule is read first, as polaris-verify's verify_sth reads it: a placeholder head of a size
+        # outside it is refused by the rule.
+        v = pv.verify_signed_artifact(dict(self.head(True), algorithm=pv.PLACEHOLDER_LABEL))
+        self.assertEqual((v.authentic, v.note), (False, self.HEAD))
+
+    def test_a_cosignature_checked_alone_is_held_to_its_size(self):
+        for size in (1, 0, self.BOUND):
+            with self.subTest(control=size):
+                v = pv.verify_cosignature(self.cosignature(size), witness_key=self.witness.pk)
+                self.assertTrue(v.authentic, v.note)
+        for size in self.VALUES + self.PAST:
+            with self.subTest(tree_size=size):
+                v = pv.verify_cosignature(self.cosignature(size), witness_key=self.witness.pk)
+                self.assertEqual((v.authentic, v.note), (False, self.COSIGNATURE))
+
+    def test_an_anchor_holds_its_head_to_the_bound(self):
+        """A tree of 2**53 - 1 entries anchors a timestamp and is witnessed; a head of 2**53 or
+        2**53 + 1 entries is refused at the head, by the rule. Each proof is a real path to entry 0."""
+        import copy
+        base = _conformance_vector("timestamp-anchor-variants-base.json")
+
+        def anchor(size):
+            ts = copy.deepcopy(base)
+            path = ["%064x" % (i + 1) for i in range((size - 1).bit_length())]
+            root = pv._leaf_hash(ts["anchor"]["proof"]["entry_hex"])
+            for node in path:
+                root = pv._node_hash(root, bytes.fromhex(node))
+            ts["anchor"]["proof"].update(tree_size=size, proof_hex=path, root_hash_hex=root.hex())
+            ts["anchor"]["sth"] = self.head(size, root.hex())
+            ts["anchor"]["cosignatures"] = [self.cosignature(size, root.hex())]
+            return pv.verify_timestamp_anchor(ts, log_key=self.key.pk, trusted_witnesses=[self.witness.pk])
+        v = anchor(self.BOUND)
+        self.assertEqual((v.anchored, v.sth_authentic, v.witnessed, v.cosigner_count), (True, True, True, 1), v.note)
+        for size in (2**53, 2**53 + 1):
+            with self.subTest(tree_size=size):
+                v = anchor(size)
+                self.assertEqual((v.anchored, v.sth_authentic, v.note), (False, False, self.HEAD))
+
+    def test_a_cosignature_counts_only_at_the_heads_integer_size(self):
+        import copy
+        base = copy.deepcopy(_conformance_vector("timestamp-anchor-variants-base.json"))
+        sth = base["anchor"]["sth"] = self.key.sign(base["anchor"]["sth"])
+
+        def anchor(size):
+            ts = copy.deepcopy(base)
+            ts["anchor"]["cosignatures"] = [self.cosignature(size, sth["root_hash_hex"])]
+            return pv.verify_timestamp_anchor(ts, log_key=self.key.pk, trusted_witnesses=[self.witness.pk], threshold=1)
+        v = anchor(sth["tree_size"])
+        self.assertEqual((v.anchored, v.witnessed, v.cosigner_count), (True, True, 1), v.note)
+        for size in self.VALUES:
+            with self.subTest(tree_size=size):
+                v = anchor(size)
+                self.assertEqual((v.anchored, v.witnessed, v.cosigner_count), (True, False, 0), v.note)
+
+    def _count_is_an_integer(self, field, body):
+        def authentic(count):
+            return pv.verify_signed_artifact(self.key.sign(dict(body, **{field: count}))).authentic
+        self.assertTrue(authentic(1), "control: one, counted as one")
+        for count in self.VALUES:
+            with self.subTest(**{field: count}):
+                self.assertFalse(authentic(count))
+
+    def test_a_revocation_feed_is_held_to_an_integer_count(self):
+        self._count_is_an_integer("revoked_count", {
+            "format": "polaris-revocation-feed/1", "authority": {"agency_id": 1, "name": "A"}, "epoch_number": 1,
+            "as_of": "2026-10-20T00:00:00Z", "revoked_root_hex": pv._revoked_root([self.LEAF]),
+            "revoked_leaves": [self.LEAF], **self.WINDOW})
+
+    def test_a_status_bundle_is_held_to_an_integer_count(self):
+        member = {"authority": {"agency_id": 2}, "label": "member"}
+        self._count_is_an_integer("member_count", {
+            "format": "polaris-federation-status-bundle/1", "publisher": {"agency_id": 9, "name": "P"},
+            "members_root_hex": pv._members_root([member]), "members": [member], **self.WINDOW})
+
+    def test_an_epoch_leaves_bundle_is_held_to_an_integer_count(self):
+        self._count_is_an_integer("leaf_count", {
+            "format": "polaris-epoch-leaves/1", "authority": {"agency_id": 1}, "epoch_id": 1, "context_id": 1,
+            "merkle_root": "cd" * 32, "leaves_root_hex": pv._revoked_root([self.LEAF]),
+            "all_leaves_hex": [self.LEAF], **self.WINDOW})
 
 
 class InclusionProofShapeTests(unittest.TestCase):
