@@ -10,7 +10,10 @@
 #
 #   lab/interop/eudi-dev/run.sh                       # eudi-dev v2.3.7, newest polaris-oid4vp
 #   EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
+#   EUDI_IMAGE=ghcr.io/eudi-dev/eudi-dev:v3.3.1 lab/interop/eudi-dev/run.sh
+#                                                     # 3.x images are published under this name
 #   EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh         # the wallet's own binary, no Docker
+#   EUDI_NATIVE=1 EUDI_VERSION=v3.3.1 lab/interop/eudi-dev/run.sh
 #   EUDI_ISSUER=1 lab/interop/eudi-dev/run.sh         # eudi-dev's own issuer signs the credential
 #   EUDI_ISSUER=1 CLAIMS=age_equal_or_over.18=true lab/interop/eudi-dev/run.sh
 #                                                     # ask for one age statement of its PID
@@ -28,7 +31,12 @@
 #
 # Exits 0 only if the genuine presentation is accepted AND every control is refused where it
 # should be. A run that only printed the success line would say nothing: a verifier that
-# accepts everything prints it too.
+# accepts everything prints it too. Each verdict is read from what the two sides report, not
+# from their prose: the wallet's exit status and its --json output, and the verifier's record
+# of its one request, taken before and after each wallet run (the responses that reached it,
+# the latest one's outcome and the check that refused it, and the request object fetches it
+# served and refused, from `serve --result` where the installed polaris-oid4vp has it, else
+# from the lines its log prints).
 set -euo pipefail
 # A run that stops before its last line fails, whatever its EXIT trap's last command returns:
 # after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
@@ -62,6 +70,227 @@ clean_work() {  # $1 the run's exit status
     echo "work dir kept for its logs: $WORK"
   fi
 }
+
+# The walk's decisions, each a function lab/interop/eudi-dev/test_walk.py runs without a wallet.
+# walk_py runs them in Python ($WALK_PY, the venv's):
+#   walk_py ports               a port P with P+1 beside it, both free, for the wallet's own server
+#   walk_py snap LOG [RESULT]   the verifier's record of its request so far, as JSON: RESULT, the
+#                               file `serve --result` keeps, or else the same read off its LOG
+#   walk_py judge KIND NAME BEFORE AFTER URI [CHECK]
+#                               one wallet run's verdict (KIND genuine, or control a, b, c or d),
+#                               from NAME.rc, NAME.out (its --json output), the verifier's record
+#                               BEFORE and AFTER it, and the launch URI it was given
+walk_py() {
+  "$WALK_PY" -I - "$@" <<'EOF'
+import ast, errno, json, re, socket, sys, urllib.parse
+
+
+def read(path):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def free(port):
+    """Free on each address the wallet's server could bind, as eudi-dev's own check asks."""
+    for family, host in ((socket.AF_INET, "0.0.0.0"), (socket.AF_INET, "127.0.0.1"),
+                         (socket.AF_INET6, "::")):
+        try:
+            s = socket.socket(family, socket.SOCK_STREAM)
+        except OSError:
+            continue
+        try:
+            s.bind((host, port))
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE:
+                return False
+        finally:
+            s.close()
+    return True
+
+
+def ports():
+    for _ in range(50):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        if port < 65535 and free(port) and free(port + 1):
+            print(port)
+            return
+    sys.exit("found no two adjacent free ports for the wallet's server")
+
+
+def snap(log_path, result_path=""):
+    if result_path:
+        try:
+            doc = json.loads(read(result_path))
+        except (OSError, ValueError) as e:
+            sys.exit("the verifier's serve --result file could not be read: %s" % e)
+        doc["source"] = "serve --result"
+        return doc
+    # A log shows no request object fetches. An acceptance closes the request, so it stays the
+    # outcome, as it does in serve --result.
+    log = read(log_path)
+    answers = re.findall(r"^  <- (\d{3}) (.*)$", log, re.M)
+    states = re.findall(r"request\.jwt\?state=([A-Za-z0-9_-]+)", log)
+    doc = {"source": "its log", "state": states[-1] if states else None,
+           "responses": len(answers), "request_object": None,
+           "outcome": "nothing_received", "check": None, "reason": None}
+    accepted = [a for a in answers if a[1].startswith("authentic")]
+    if accepted:
+        status, text = accepted[0]
+        claims = re.search(r"claims (\[.*\])$", text)
+        doc.update(outcome="accepted", claims=ast.literal_eval(claims.group(1)) if claims else [])
+    elif answers:
+        status, text = answers[-1]
+        refused = re.match(r"refused: ([^:]+): (.*)$", text)
+        if text.startswith("wallet error: "):
+            doc.update(outcome="wallet_error", reason=text[len("wallet error: "):])
+        elif refused:
+            doc.update(outcome="refused", check=refused.group(1), reason=refused.group(2))
+        else:
+            doc.update(outcome="refused")
+    if answers:
+        doc["response"] = {"status_code": int(status)}
+    return doc
+
+
+def wallet_run(name):
+    """One `wallet accept --json` run: its exit status, the JSON it wrote and in which shape,
+    the HTTP status it says the verifier answered, and its last line on stderr. eudi-dev 3.x
+    writes only one JSON document to stdout, with response.status_code, and exits non-zero when
+    the verifier rejects. 2.x prints its text first, then the verifier's answer as a JSON object
+    with status_code, and exits 0 on a 400, so for 2.x that object is what is read."""
+    rc = int(read(name + ".rc").strip())
+    out = read(name + ".out")
+    doc, shape = None, None
+    try:
+        doc, shape = json.loads(out), "json"
+    except ValueError:
+        for m in reversed(list(re.finditer(r"^\{", out, re.M))):
+            try:
+                doc, shape = json.loads(out[m.start():]), "text, then json"
+                break
+            except ValueError:
+                pass
+    if not isinstance(doc, dict):
+        doc, shape = None, None
+    if shape == "json":
+        response = doc.get("response")
+        code = response.get("status_code") if isinstance(response, dict) else None
+    else:
+        code = doc.get("status_code") if doc else None
+    said = [line.strip() for line in read(name + ".err").splitlines() if line.strip()]
+    return rc, shape, doc, code, (said[-1] if said else "")
+
+
+def record(doc):
+    if doc.get("outcome") == "accepted":
+        return "accepted, claims %s" % doc.get("claims")
+    if doc.get("check"):
+        return "%s: %s: %s" % (doc.get("outcome"), doc["check"], doc.get("reason"))
+    if doc.get("reason"):
+        return "%s: %s" % (doc.get("outcome"), doc["reason"])
+    return str(doc.get("outcome"))
+
+
+def judge(kind, name, before_path, after_path, uri, want=""):
+    rc, shape, doc, code, said = wallet_run(name)
+    before, after = json.loads(read(before_path)), json.loads(read(after_path))
+    launched = urllib.parse.parse_qs(urllib.parse.urlsplit(uri).query).get("request_uri", [""])[0]
+    state = urllib.parse.parse_qs(urllib.parse.urlsplit(launched).query).get("state", [""])[0]
+    # Tied to this walk: the record is of the request this wallet run was launched with, and
+    # these are the responses and fetches that arrived while it ran.
+    ours = bool(state) and after.get("state") == state
+    where = ("this walk's request (state %s...)" % state[:8] if ours else
+             "a request other than the one the wallet was launched with (%s, not %s)"
+             % (after.get("state"), state or "none"))
+    arrived = after["responses"] - before["responses"]
+    served = refused = None
+    if isinstance(after.get("request_object"), dict) and isinstance(before.get("request_object"), dict):
+        served = after["request_object"]["served"] - before["request_object"]["served"]
+        refused = after["request_object"]["refused"] - before["request_object"]["refused"]
+    http = "HTTP %d" % code if isinstance(code, int) else "nothing"
+    verifier = "the verifier, by %s:" % after.get("source")
+    failed = []
+
+    def check(good, text):
+        print("  %s  %s" % ("ok  " if good else "FAIL", text))
+        if not good:
+            failed.append(text)
+
+    if kind == "genuine":
+        check(rc == 0 and code == 200 and (shape != "json" or doc.get("status") == "submitted"),
+              "the wallet exited %d and reports the verifier's answer: %s" % (rc, http))
+        check(ours and arrived == 1 and after.get("outcome") == "accepted"
+              and (served is None or served >= 1),
+              "%s %d response for %s; %s" % (verifier, arrived, where, record(after)))
+    elif kind == "a":
+        if shape == "json":
+            good, how = rc != 0 and code == 400, "exited %d" % rc
+        elif shape:
+            good, how = code == 400, "exited %d (2.x exits 0 on a 400; its JSON is read)" % rc
+        else:
+            good, how = False, "exited %d and wrote no JSON" % rc
+        check(good, "the wallet %s and reports the verifier's answer: %s" % (how, http))
+        check(ours and arrived == 1 and after.get("outcome") == "refused" and after.get("check") == want
+              and (served is None or served >= 1),
+              "%s %d response for %s; %s" % (verifier, arrived, where, record(after)))
+    elif kind in ("b", "c", "d"):
+        # The wallet refuses these: it must exit non-zero AND nothing may reach the response URI.
+        check(rc != 0, "the wallet exited %d%s" % (rc, ", having presented nothing" if rc else ""))
+        if served is None:
+            fetches, seen = True, ""
+        elif kind == "b":
+            fetches, seen = served == 0 and refused >= 1, "; it refused %d fetch(es) of the request object and served %d" % (refused, served)
+        elif kind == "c":
+            fetches, seen = served >= 1, "; it served the signed request object %d time(s), which the wallet read and refused" % served
+        else:
+            fetches, seen = served == 0 and refused == 0, "; %d fetch(es) of the request object" % (served + refused)
+        check(ours and arrived == 0 and fetches,
+              "%s %s for %s%s" % (verifier, "no response" if arrived == 0 else "%d response(s)" % arrived, where, seen))
+        if said:
+            print("        the wallet said (not judged): %s" % said[:200])
+    else:
+        sys.exit("walk_py judge: no kind %r" % kind)
+    sys.exit(1 if failed else 0)
+
+
+command, args = sys.argv[1], sys.argv[2:]
+if command == "ports":
+    ports()
+elif command == "snap":
+    print(json.dumps(snap(*args)))
+elif command == "judge":
+    judge(*args)
+else:
+    sys.exit("walk_py: no command %r" % command)
+EOF
+}
+# The wallet presents, its output kept apart: $1 the launch URI; $2 a name for the run's files,
+# $2.out (its --json output), $2.err and $2.rc (its exit status); $3, optionally, a certificate
+# the wallet trusts for the verifier's TLS in place of the listener's. --port: its own server on
+# the ports the walk found free, never a wallet server already running (see WALLET_PORT).
+present() {
+  local rc=0
+  local tls=(${TLS_CA[@]+"${TLS_CA[@]}"})
+  if [ -n "${3:-}" ]; then tls=(--tls-ca "$3"); fi
+  wallet accept "$1" --auto-accept --haip --mode strict --no-open --port "$WALLET_PORT" --json \
+    ${tls[@]+"${tls[@]}"} > "$2.out" 2> "$2.err" || rc=$?
+  echo "$rc" > "$2.rc"
+}
+snap() {  # $1 a verifier's log: its record so far (walk_py snap)
+  walk_py snap "$1" ${RESULT_FLAG:+"${1%.log}.result.json"}
+}
+measure() {  # $1 genuine, a, b, c or d; $2 the verifier's log; $3 the launch URI; $4 a name for
+             # the wallet run's files; $5 as present's $3. Prints the verdict; fail=1 if it fails.
+  snap "$2" > "$4.before.json"
+  present "$3" "$4" "${5:-}"
+  snap "$2" > "$4.after.json"
+  walk_py judge "$1" "$4" "$4.before.json" "$4.after.json" "$3" "$REFUSAL_A" || fail=1
+}
+# Sourced (test_walk.py does), the script stops here, having defined the functions above.
+(return 0 2>/dev/null) && return 0
 trap 'exit_rc=$?; clean_work "$exit_rc"; report_line; exit_trap "$exit_rc"' EXIT
 # pip's upgrade notice is the loudest line of a run and says nothing about this walk.
 export PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -184,6 +413,24 @@ fi
 venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
+WALK_PY="$WORK/venv/bin/python"
+# The verifier's record of its request, as JSON apart from its log, where the installed
+# polaris-oid4vp has `serve --result` (read off its own help); 1.0.0, the release on PyPI on
+# 2026-10-21, has not, and its record is read off the lines its log prints.
+RESULT_FLAG=""
+if venv/bin/polaris-oid4vp serve --help 2>&1 | grep -- '--result' >/dev/null; then
+  RESULT_FLAG=1
+  echo "record     the verifier's, from serve --result"
+else
+  echo "record     the verifier's, from its log (this polaris-oid4vp has no serve --result)"
+fi
+# The wallet's own server, which serves its consent page and trust list while it presents, on a
+# port this walk found free with the next one beside it (wallet accept --port). Without --port,
+# eudi-dev 2.x hands the request to any wallet server already answering on localhost:8085, which
+# presents ITS credential: the walk would judge another wallet. test_walk.py holds a listener on
+# 8085 and shows that nothing reaches it.
+WALLET_PORT="$(walk_py ports)"
+echo "ports      the verifier on $PORT, the wallet's own server on $WALLET_PORT and $((WALLET_PORT + 1))"
 venv/bin/polaris-oid4vp keygen --out pki --host "$VHOST" --port "$PORT" >/dev/null
 mkdir -p home in
 # In Docker the wallet runs as the image's own user and keeps its state in this directory.
@@ -201,22 +448,27 @@ chmod a+rx in
 # self-signed, and eudi-dev (v2.3.7 and v2.4.3, measured 2026-09-30) presents without being given
 # it, even to a host name the certificate does not carry: it does not validate it. What binds
 # the exchange is the signed request object (x509_hash) and the response encrypted to its key.
+#
+# The wallet's keys are its own. File storage through the environment: v2.4 and later read
+# EUDI_DEV_STORAGE, v2.3.7 has no --storage flag and keeps files by default. EUDI_DEV_SEED is
+# cleared: the 3.x image sets a public one, from which every container of it derives the same
+# holder key and CA, and an empty seed selects random keys. Without Docker the wallet's whole
+# state directory is the work dir's (EUDI_DEV_HOME), not this machine's ~/.eudi-dev, where an
+# installed wallet may have registered a URL handler's listener or a remote wallet to use.
 wallet() {
-  # File storage through the environment: v2.4 reads EUDI_DEV_STORAGE, v2.3.7 has no
-  # --storage flag and keeps files by default.
   if [ "$MODE" = docker ]; then
     # The ${a[@]+...} form because macOS's bash 3.2 calls an empty array unbound under set -u.
     docker run --rm ${ADD_HOST[@]+"${ADD_HOST[@]}"} -v "$WORK/home:/home/app/.eudi-dev" -v "$WORK/in:/in:ro" \
-      -e EUDI_DEV_STORAGE=file "$IMAGE" wallet "$@"
+      -e EUDI_DEV_STORAGE=file -e EUDI_DEV_SEED= "$IMAGE" wallet "$@"
   else
-    EUDI_DEV_STORAGE=file ./eudi wallet "$@" --wallet-dir "$WORK/home/wallet"
+    EUDI_DEV_HOME="$WORK/home" EUDI_DEV_STORAGE=file EUDI_DEV_SEED='' ./eudi wallet "$@" --wallet-dir "$WORK/home/wallet"
   fi
 }
 eudi() {  # a top-level eudi-dev command (issue), on the same wallet
   if [ "$MODE" = docker ]; then
-    docker run --rm -v "$WORK/home:/home/app/.eudi-dev" -e EUDI_DEV_STORAGE=file "$IMAGE" "$@"
+    docker run --rm -v "$WORK/home:/home/app/.eudi-dev" -e EUDI_DEV_STORAGE=file -e EUDI_DEV_SEED= "$IMAGE" "$@"
   else
-    EUDI_DEV_STORAGE=file ./eudi "$@" --wallet-dir "$WORK/home/wallet"
+    EUDI_DEV_HOME="$WORK/home" EUDI_DEV_STORAGE=file EUDI_DEV_SEED='' ./eudi "$@" --wallet-dir "$WORK/home/wallet"
   fi
 }
 in_wallet_view() {  # a file of the work dir, as the wallet sees it: in Docker, a copy in in/
@@ -322,7 +574,8 @@ CLAIM_ARGS=()
 for c in ${CLAIMS:-}; do CLAIM_ARGS+=(--claim "$c"); done
 
 start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), $2 log file,
-                    # $3 "capture" to run it through capture_serve.py into $CAPTURE
+                    # $3 "capture" to run it through capture_serve.py into $CAPTURE.
+                    # With serve --result, the record goes beside the log (snap reads it there).
   local serve=(venv/bin/polaris-oid4vp serve)
   [ "${3:-}" = capture ] && serve=(venv/bin/python "$HERE/capture_serve.py" "$CAPTURE" serve)
   if [ "$TUNNEL" = 1 ]; then
@@ -331,10 +584,12 @@ start_verifier() {  # $1 what the verifier trusts (a JWKS or a CA, per $TRUST), 
     venv/bin/polaris-oid4vp keygen --out "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" >/dev/null
     PYTHONUNBUFFERED=1 "${serve[@]}" --pki "pki-$TUNNELS" --host "${TUNNEL_URL#https://}" \
       --bind "$BIND" --port "$PORT" --public-base-url "$TUNNEL_URL" --no-local-tls \
-      "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once > "$2" 2>&1 &
+      "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once \
+      ${RESULT_FLAG:+--result "${2%.log}.result.json"} > "$2" 2>&1 &
   else
     PYTHONUNBUFFERED=1 "${serve[@]}" --pki pki --host "$VHOST" \
-      --bind "$BIND" --port "$PORT" "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once > "$2" 2>&1 &
+      --bind "$BIND" --port "$PORT" "$TRUST" "$1" ${CLAIM_ARGS[@]+"${CLAIM_ARGS[@]}"} --once \
+      ${RESULT_FLAG:+--result "${2%.log}.result.json"} > "$2" 2>&1 &
   fi
   VERIFIER_PID=$!
   local up=""
@@ -378,25 +633,12 @@ if [ "$TUNNEL" != 1 ] && wallet accept --help 2>&1 | grep -- '--tls-ca' >/dev/nu
   echo "TLS        the wallet checks the verifier's; it trusts keygen's listener certificate"
 fi
 
-present() {  # $1 launch URI, $2 wallet log
-  wallet accept "$1" --auto-accept --haip --mode strict --no-open ${TLS_CA[@]+"${TLS_CA[@]}"} \
-    > "$2" 2>&1 || true
-}
-
 fail=0
-expect() {  # $1 label, $2 file, $3 pattern that must appear
-  if grep -qE "$3" "$2"; then echo "  ok    $1"; else echo "  FAIL  $1 (no /$3/ in $2)"; fail=1; fi
-}
-
 echo "== genuine presentation"
 if [ -n "$CAPTURE" ]; then start_verifier "$TRUSTED" verifier.log capture
 else start_verifier "$TRUSTED" verifier.log; fi
 URI=$(launch_uri verifier.log)
-present "$URI" wallet.log
-expect "the wallet submitted and was answered 200" wallet.log 'Response: 200'
-expect "the verifier accepted it" verifier.log '<- 200 authentic'
-# A refused presentation prints nothing here; the controls still run and RESULT says FAILED.
-{ grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
+measure genuine verifier.log "$URI" wallet
 if [ -n "$CAPTURE" ]; then
   # Not a control: a run asked to capture that wrote less than all of it has not done what it
   # was asked. Every file must be there and non-empty, and the wrapper must not have said FAILED.
@@ -416,23 +658,21 @@ if [ -n "$CAPTURE" ]; then
   fi
 fi
 
+# The wallet refuses (b), (c) and (d): each passes only if it exits non-zero AND nothing reaches
+# the verifier's response URI while it runs.
 echo "== control (b): the same request again, after it was answered"
-present "$URI" wallet-replay.log
-expect "refused at the request stage" wallet-replay.log 'request_uri returned HTTP 404'
+measure b verifier.log "$URI" wallet-replay
 stop_verifier
 
 echo "== control (c): a launch URI whose client_id is not the signed request's"
 start_verifier "$OTHER" verifier-other.log
-present "$(launch_uri verifier-other.log x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)" wallet-c.log
-expect "the wallet refused the request" wallet-c.log 'does not match outer client_id'
+measure c verifier-other.log "$(launch_uri verifier-other.log x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)" wallet-c
 
 if [ -n "$TLS_CHECKED" ]; then
   # Proof that the TLS check ran: the same wallet, trusting an unrelated certificate for the
   # verifier's TLS, presents nothing. It refuses before it fetches, so (a) can still use the request.
   echo "== control (d): the wallet trusts an unrelated certificate for the verifier's TLS"
-  wallet accept "$(launch_uri verifier-other.log)" --auto-accept --haip --mode strict --no-open \
-    --tls-ca "$(in_wallet_view pki/anchor.pem)" > wallet-d.log 2>&1 || true
-  expect "the wallet refused the verifier's certificate" wallet-d.log 'certificate signed by unknown authority'
+  measure d verifier-other.log "$(launch_uri verifier-other.log)" wallet-d "$(in_wallet_view pki/anchor.pem)"
 fi
 
 if [ "$TRUST" = --issuer-jwks ]; then
@@ -440,9 +680,7 @@ if [ "$TRUST" = --issuer-jwks ]; then
 else
   echo "== control (a): the verifier trusts an unrelated CA"
 fi
-present "$(launch_uri verifier-other.log)" wallet-a.log
-expect "the wallet was told only that it was not accepted" wallet-a.log 'Response: 400'
-expect "the verifier refused the issuer" verifier-other.log "<- 400 refused: $REFUSAL_A"
+measure a verifier-other.log "$(launch_uri verifier-other.log)" wallet-a
 stop_verifier
 
 if [ "$fail" -ne 0 ]; then echo "RESULT: FAILED"

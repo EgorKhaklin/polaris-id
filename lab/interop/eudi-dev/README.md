@@ -34,8 +34,10 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
 
     lab/interop/eudi-dev/run.sh                                            # v2.3.7
     EUDI_IMAGE=ghcr.io/dominikschlosser/eudi-dev:v2.4.3 lab/interop/eudi-dev/run.sh
+    EUDI_IMAGE=ghcr.io/eudi-dev/eudi-dev:v3.3.1 lab/interop/eudi-dev/run.sh
     POLARIS_OID4VP=polaris-oid4vp==1.0.0rc7 lab/interop/eudi-dev/run.sh    # the run above, exactly
     EUDI_NATIVE=1 lab/interop/eudi-dev/run.sh                              # no Docker
+    EUDI_NATIVE=1 EUDI_VERSION=v3.3.1 lab/interop/eudi-dev/run.sh          # 3.x's own binary
     EUDI_ISSUER=1 lab/interop/eudi-dev/run.sh                              # eudi-dev's own issuer
     EUDI_TUNNEL=1 lab/interop/eudi-dev/run.sh                              # each verifier behind its own tunnel
 
@@ -75,17 +77,102 @@ response encrypted to its key, which control (c) exercises from the wallet's sid
 ## Controls
 
 A verifier that accepts everything prints the same success line, so each of these is the same
-wallet, credential and path with one thing wrong.
+wallet, credential and path with one thing wrong. Each is judged as
+[the next section](#how-a-verdict-is-read-2026-10-21) says: by the wallet's exit status and JSON,
+and by the verifier's record of this walk's own request, not by what either side prints.
 
-| | What changed | Refused by | What it said |
+| | What changed | Refused by | The walk requires, while that wallet runs |
 |---|---|---|---|
-| (a) | The verifier trusts a different issuer key under the same `kid` | the verifier | `<- 400 refused: issuer_signature`; the wallet got only `"the presentation was not accepted"` |
-| (b) | The same request presented again after it was answered | the verifier, at the request | the wallet: `POST to request_uri returned HTTP 404` |
-| (c) | The launch URI names a `client_id` that is not the signed request's | the wallet | `request object client_id "x509_hash:..." does not match outer client_id "x509_hash:AAAA..."` |
-| (d) | The wallet trusts an unrelated certificate for the verifier's TLS (only when the wallet checks TLS) | the wallet | `tls: failed to verify certificate: x509: certificate signed by unknown authority` |
+| (a) | The verifier trusts a different issuer key under the same `kid` (with `EUDI_ISSUER=1` or `EUDI_CAPTURE`, an unrelated CA) | the verifier | one response to this walk's request, refused with `issuer_signature` (`issuer_key` under a CA), and the request object served; the wallet's JSON says HTTP 400, and a 3.x wallet exits non-zero |
+| (b) | The same request presented again after it was answered | the verifier, at the request | the wallet exits non-zero and no response arrives; the request object is not served, and is refused at least once |
+| (c) | The launch URI names a `client_id` that is not the signed request's | the wallet | the wallet exits non-zero and no response arrives; the request object was served, so the wallet read it before refusing |
+| (d) | The wallet trusts an unrelated certificate for the verifier's TLS (only when the wallet checks TLS) | the wallet | the wallet exits non-zero and no response arrives; the request object is neither served nor refused |
+
+The request object conditions are read from `serve --result`; against a `polaris-oid4vp` without
+it (1.0.0, from PyPI), (b), (c) and (d) rest on the exit status and on no response arriving. What
+the wallet said follows each control in the walk's output and is not judged: v2.3.7 said
+`POST to request_uri returned HTTP 404` for (b) and
+`request object client_id "x509_hash:..." does not match outer client_id "x509_hash:AAAA..."` for
+(c), and v2.5.0 said `tls: failed to verify certificate: x509: certificate signed by unknown
+authority` for (d).
 
 (c) is a control on the wallet: it shows eudi-dev reads the signed request object and compares
 it with what it was launched with, rather than presenting to whatever it is pointed at.
+
+## How a verdict is read (2026-10-21)
+
+Until 2026-10-21 the walk matched what the two sides printed: the genuine presentation passed when
+the wallet printed `Response: 200` and the verifier `<- 200 authentic`, and each control when one
+of a few error texts appeared. eudi-dev 3.3.1 prints `submitted: HTTP 200` for the same answer.
+Run that way against v3.3.1's image by digest, with polaris-oid4vp 1.0.0 from PyPI, the walk printed
+`RESULT: FAILED` and exited 1 although the verifier accepted the presentation (`<- 200 authentic`)
+and every control was refused: the two checks that failed looked for `Response: 200` and
+`Response: 400`, where the wallet had printed `submitted: HTTP 200` and `submitted: HTTP 400`
+(measured 2026-10-21). Now each verdict is read from:
+
+- **The wallet**: its exit status and its `--json` output. 3.x writes one JSON document to stdout
+  (`status`, and the verifier's answer in `response.status_code`) and exits non-zero when the
+  verifier refuses or nothing is presented. 2.x, v2.3.7 included, prints lines of text and then a
+  JSON object (`status_code`, `body`, `redirect_uri`), and exits 0 when the verifier answers 400:
+  for 2.x the walk reads the status from that object, and asks for a non-zero exit only where the
+  wallet presented nothing.
+- **The verifier**: its record of its one request, read before and after each wallet run: the
+  responses received, the outcome of the latest (`accepted`, or `refused` with the check), and
+  the request object fetches it served and refused. The record comes from `serve --result FILE`
+  ([package README](../../../packages/polaris-oid4vp/README.md)) when the installed
+  `polaris-oid4vp` lists that option in its help; 1.0.0, the release on PyPI on 2026-10-21, does
+  not, and the walk reads the same off the `<-` lines its log prints, without the fetches.
+- **This walk's request**: the `state` in the launch URI the wallet was given must be the state of
+  the verifier's record, and only what changed during that wallet's run counts.
+
+The genuine presentation passes when the wallet exits 0 with HTTP 200 in its JSON (from 3.x, with
+`status` `submitted`) and exactly one response to this request arrived and was accepted. The
+controls are the table above.
+
+Measured on 2026-10-21 on macOS (arm64), each run exiting 0 with `RESULT: accepted`, against
+polaris-oid4vp 1.0.0 from PyPI (its record read off the log) and against the package with
+`serve --result`: eight runs.
+
+| eudi-dev | Run as | Controls refused |
+|---|---|---|
+| v2.3.7 | the image, `ghcr.io/dominikschlosser/eudi-dev@sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081` | three: it does not check the verifier's TLS, so there is no (d) |
+| v2.3.7 | its release binary (`EUDI_NATIVE=1`), SHA-256 `2cefced5cce8c25c4b1d5cf35796e8e4ce470c92067b176dd18e8c6061385fef` (darwin-arm64, as pinned) | three |
+| v3.3.1 | the image, `ghcr.io/eudi-dev/eudi-dev@sha256:69140395c4d82536ab468069c0a6a603a2215cfac7060f74ef3db5fd63706908` | four |
+| v3.3.1 | its release binary (`EUDI_NATIVE=1 EUDI_VERSION=v3.3.1`), SHA-256 `f0b8ebfc1aed9f1cc63a9756d492be0dd90ba3002dfdddb8f12cd4559fd16ce8` (darwin-arm64, as the release's checksums give it) | four |
+
+v3.3.2's image (`sha256:7c0d5cd742fa9c5ee21e12e36665cfe35969460fbc209f9b8acc0751a06d9741`),
+released that day, passed against 1.0.0 too. With the package changed to accept any issuer
+signature under a trusted `kid`, the v3.3.1 image run exited 1 with `RESULT: FAILED`: control (a)
+was accepted, and both of its checks failed.
+
+## No other wallet answers (2026-10-21)
+
+eudi-dev 2.x's `wallet accept` first offers the request to a wallet server already running on the
+machine: without `--port`, it tries the server its URL handler recorded and then `localhost:8085`,
+and when one answers `GET /api/log` it posts the request there and prints that server's result as
+its own. A walk run beside an eudi-dev wallet server on the default port would have judged that
+wallet, not the one it set up. 3.x presents from its own process, and starts its own server on a
+port pair, moving to another pair when that one is taken.
+
+The walk now passes `--port` with two adjacent ports it found free, so 2.x asks only there, where
+nothing answers, and 3.x serves there. Without Docker, the wallet's whole state directory is the
+work dir's (`EUDI_DEV_HOME`), so no URL handler or remote set up on the machine is read. The walk
+also clears `EUDI_DEV_SEED`: the 3.x image sets it to the public seed `eudi-dev`, from which the
+wallet derives its keys. Two wallets started from v3.3.1's image as the walk starts one, but with
+that seed, held the same holder, issuer and CA keys (their CA certificates carried different
+serial numbers); with it cleared, each held its own (measured 2026-10-21).
+
+[`test_walk.py`](test_walk.py) runs each verdict above without a wallet (CI runs it). With
+`EUDI_WALLET_TESTS=1` it also holds a listener on `localhost:8085` that answers as a wallet server
+would, runs the walk with v2.3.7's own binary, and fails if anything reaches the listener; the
+canary runs it. Measured 2026-10-21 on macOS (arm64), against the walk as it was before that day,
+which passed no `--port`: in each of v2.3.7's four wallet runs, the wallet asked the listener
+`GET /api/log`, posted the request to its `/api/presentations` and printed its answer
+(`Submitted: Response: 200`), and no response reached the verifier. The walk's check
+`the wallet submitted and was answered 200` passed on that answer, and the run failed on its other
+checks. With `--port`, nothing reached the listener and the walk passed; with only `--port`
+removed from this walk, the listener was reached again and the walk failed: the verifier's record
+showed no response to its request.
 
 ## An issuer nobody here wrote (2026-09-30)
 

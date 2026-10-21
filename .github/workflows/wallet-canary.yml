@@ -120,6 +120,15 @@ jobs:
           [ -n "$d" ] || { echo "run.sh printed no work dir"; exit 1; }
           if [ -e "$d" ]; then echo "the passing run left its work dir: $d"; exit 1; fi
           echo "work dir removed: $d"
+      # No other wallet answers for the walk: eudi-dev 2.x's `wallet accept` without --port hands the
+      # request to a wallet server already answering on localhost:8085. The test holds a listener
+      # there that answers as one would, runs the walk with v2.3.7's own binary, and fails if
+      # anything reaches the listener.
+      - name: A wallet server on localhost:8085 hears nothing from the walk
+        if: matrix.wallet.native == '1'
+        env:
+          EUDI_WALLET_TESTS: "1"
+        run: python -m unittest lab/interop/eudi-dev/test_walk.py
 
   waltid:
     name: walt.id ${{ matrix.label }} presents to polaris-oid4vp from PyPI
