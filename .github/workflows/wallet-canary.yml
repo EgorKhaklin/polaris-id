@@ -5,14 +5,17 @@
 # newest release, as `pip install --pre` gives a stranger; its dependencies by hash from
 # lab/interop/requirements.txt, which Dependabot keeps current), lets the eudi-dev wallet
 # generate its own key, mints one credential bound to it, has the wallet present it
-# with HAIP enforced in strict mode, and runs three controls that must each be refused.
-# It exits non-zero if any outcome differs.
+# with HAIP enforced in strict mode, and runs three controls that must each be refused, four when
+# the wallet checks the verifier's TLS (eudi-dev v2.5.0 and later). It exits non-zero if any
+# outcome differs.
 #
 # Two wallets, weekly. v2.3.7 by digest is the release the OpenID Foundation lists as a
 # certified OpenID4VP 1.0 + HAIP 1.0 wallet: if it stops working, something on OUR side
 # moved (the registry, the verifier, or a dependency pin Dependabot moved). `latest` floats on purpose: if it
 # alone stops working, the wallet moved, and that is worth knowing before a stranger
-# finds it. docs/STRANGER-PATH.md opens with the same script, so this is also the
+# finds it. It floats under the name eudi-dev publishes under now, ghcr.io/eudi-dev/eudi-dev (the
+# old name's `latest` stopped at v2.7.0), and a step after it fails unless the version it ran is
+# the newest release. docs/STRANGER-PATH.md opens with the same script, so this is also the
 # stranger's first minute, run on a machine nobody here set up. The third job is that
 # minute without Docker: v2.3.7's own release binary, checked against the SHA-256 run.sh pins.
 # The fourth has eudi-dev's own issuer sign the credential, so the verifier is the only Polaris
@@ -82,8 +85,11 @@ jobs:
         wallet:
           - label: v2.3.7 (the certified release)
             image: ghcr.io/dominikschlosser/eudi-dev@sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081
+          # The project's current name. Its old name, where v2.3.7 is published, kept a `latest`
+          # that stopped at v2.7.0 (2026-10-10).
           - label: latest
-            image: ghcr.io/dominikschlosser/eudi-dev:latest
+            image: ghcr.io/eudi-dev/eudi-dev:latest
+            latest: "1"
           # The stranger's first minute on a machine without Docker: v2.3.7's own binary,
           # checked against the SHA-256 run.sh pins.
           - label: v2.3.7, its own binary, no Docker
@@ -100,7 +106,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
-      - name: Present, then the three controls
+      - name: Present, then the controls
         env:
           EUDI_IMAGE: ${{ matrix.wallet.image }}
           EUDI_NATIVE: ${{ matrix.wallet.native }}
@@ -120,6 +126,46 @@ jobs:
           [ -n "$d" ] || { echo "run.sh printed no work dir"; exit 1; }
           if [ -e "$d" ]; then echo "the passing run left its work dir: $d"; exit 1; fi
           echo "work dir removed: $d"
+      # The latest lane ran under the old image name, green, for as long as that name's `latest`
+      # stood still at v2.7.0 while newer releases went out under the new one. So the lane checks
+      # what it ran: the version the image reports, against the release GitHub marks latest for
+      # eudi-dev/eudi-dev, asked with this workflow's own token (contents: read) so that a shared
+      # runner's anonymous rate limit cannot fail it. Any answer it cannot read fails the step.
+      - name: The latest lane ran eudi-dev's newest release
+        if: ${{ !cancelled() && matrix.wallet.latest == '1' }}
+        env:
+          EUDI_IMAGE: ${{ matrix.wallet.image }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ran="$(docker run --rm "$EUDI_IMAGE" version)" || ran=""
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$EUDI_IMAGE" 2>/dev/null)" || digest=""
+          echo "ran:    ${ran:-no version: the image did not report one} (${digest:-$EUDI_IMAGE})"
+          rel="$RUNNER_TEMP/eudi-dev-release.json"
+          auth=()
+          how="without a token"
+          if [ -n "${GITHUB_TOKEN:-}" ]; then
+            auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+            how="with the workflow's token"
+          fi
+          rc=0
+          code="$(curl -sS --retry 2 --max-time 30 ${auth[@]+"${auth[@]}"} -o "$rel" -w '%{http_code}' \
+            https://api.github.com/repos/eudi-dev/eudi-dev/releases/latest)" || rc=$?
+          newest=""
+          if [ "$rc" = 0 ] && [ "$code" = 200 ]; then
+            newest="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["tag_name"])' "$rel")" || newest=""
+          else
+            echo "the releases API answered HTTP ${code:-none} (curl exit $rc):"
+            head -c 300 "$rel" 2>/dev/null || true; echo
+          fi
+          echo "newest: ${newest:-unknown} (api.github.com/repos/eudi-dev/eudi-dev/releases/latest, $how)"
+          if [ -z "$ran" ] || [ -z "$newest" ]; then
+            echo "FAIL: the version run or the newest release could not be read, so this step fails closed"
+            exit 1
+          fi
+          case " $ran " in
+            *" $newest "*) echo "ok: the latest lane ran $newest, the newest release" ;;
+            *) echo "FAIL: the latest lane ran $ran, not the newest release, $newest"; exit 1 ;;
+          esac
       # No other wallet answers for the walk: eudi-dev 2.x's `wallet accept` without --port hands the
       # request to a wallet server already answering on localhost:8085. The test holds a listener
       # there that answers as one would, runs the walk with v2.3.7's own binary, and fails if

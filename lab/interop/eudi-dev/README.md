@@ -26,7 +26,7 @@ Verifier. The run below used exactly those two releases, and then the wallet's c
 
 | | |
 |---|---|
-| Wallet | `ghcr.io/dominikschlosser/eudi-dev:v2.3.7` (`sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081`), `:v2.4.3` (`sha256:d544031950e9b5e911fe2212e5e57e109459d53e294e1b6feb243036e5dac3fc`) and `:v2.5.0` (`sha256:c6d28d171f12db5410cd5b4670572b13c350aa9fd54e7c4389a7544fe404b6bc`), Apache-2.0, [source](https://github.com/dominikschlosser/eudi-dev) |
+| Wallet | `ghcr.io/dominikschlosser/eudi-dev:v2.3.7` (`sha256:2df7ac5c79206a29c66eb8c49acdcc07d0ec76c7d6d260056edccaac9257e081`), `:v2.4.3` (`sha256:d544031950e9b5e911fe2212e5e57e109459d53e294e1b6feb243036e5dac3fc`) and `:v2.5.0` (`sha256:c6d28d171f12db5410cd5b4670572b13c350aa9fd54e7c4389a7544fe404b6bc`), Apache-2.0, [source](https://github.com/eudi-dev/eudi-dev) |
 | Verifier | `polaris-oid4vp` 1.0.0rc7 from PyPI, with `cryptography` 50.0.1, in a fresh venv |
 | Runtime | Python 3.12.13, Docker 29.4.3, macOS 26.3 (Darwin 25.3.0) |
 
@@ -210,9 +210,9 @@ reference points at eudi-dev's own status list, which nothing here fetched, so r
 
 ## The verifier's TLS checked in strict mode (2026-10-02)
 
-[eudi-dev issue 21](https://github.com/dominikschlosser/eudi-dev/issues/21) reported that the wallet
+[eudi-dev issue 21](https://github.com/eudi-dev/eudi-dev/issues/21) reported that the wallet
 did not validate the verifier's TLS certificate, even in `--mode strict`. The maintainer fixed it in
-[v2.5.0](https://github.com/dominikschlosser/eudi-dev/releases/tag/v2.5.0) and asked for a re-test.
+[v2.5.0](https://github.com/eudi-dev/eudi-dev/releases/tag/v2.5.0) and asked for a re-test.
 
 - Wallet: `ghcr.io/dominikschlosser/eudi-dev:v2.5.0`
   (`sha256:c6d28d171f12db5410cd5b4670572b13c350aa9fd54e7c4389a7544fe404b6bc`).

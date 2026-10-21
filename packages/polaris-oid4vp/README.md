@@ -55,7 +55,7 @@ the walks against the newest release on PyPI.
 | [Credo on a cheqd ledger](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/cheqd/README.md), the issuer a `did:cheqd` with its status list on the ledger | cheqd, OpenWallet Foundation | TypeScript, Go | cheqd-node 4.2.1 and Credo 0.7.2, against 1.0.0rc15 (2026-10-04) |
 | [Multipaz](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/multipaz/README.md), under a short wallet built for the walk | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc16 (2026-10-04) |
 | [ERICA](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against the tree (2026-10-04) |
-| [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
+| [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | eudi-dev | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
 | [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |
 | [The OpenID Foundation's conformance suite](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | eleven of eleven HAIP verifier modules clean against 1.0.0rc15, both controls noticed (2026-10-04); 1.0.0rc7 certified (2026-09-24) |
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
-# eudi-dev presents an SD-JWT VC to the PUBLISHED polaris-oid4vp, then three controls.
+# eudi-dev presents an SD-JWT VC to the PUBLISHED polaris-oid4vp, then three or four controls.
 #
 # Everything runs from a scratch directory: a fresh venv with polaris-oid4vp from PyPI, the
 # verifier's test PKI, and the wallet's own state. The wallet generates its holder key itself;
@@ -374,7 +374,8 @@ fetch_wallet() {  # the release binary for this machine, into ./eudi, or exit 2
   case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; arm64|aarch64) arch=arm64 ;;
     *) echo "no eudi-dev binary for $(uname -m); install Docker instead" >&2; exit 2 ;; esac
   name="eudi-$EUDI_VERSION-$os-$arch"
-  rel="https://github.com/dominikschlosser/eudi-dev/releases/download/$EUDI_VERSION"
+  # The project's current name, where v2.3.7's assets are too, with the SHA-256 pinned above.
+  rel="https://github.com/eudi-dev/eudi-dev/releases/download/$EUDI_VERSION"
   curl -fsSL -o eudi "$rel/$name"
   want="$(pinned_sha256 "$name")"
   [ -n "$want" ] || want="$(curl -fsSL "$rel/checksums.txt" | awk -v n="$name" '$2 == n {print $1}')"
