@@ -32,7 +32,7 @@
 #   2. Edge recreation: `compose up --force-recreate caddy`. Measured: the
 #      window from the first dropped request to the last. Ceiling: 30 s.
 #   3. Database restart: `compose restart postgres`. Measured the same way
-#      (readiness answers 503 while the database is down). Ceiling: 60 s, and
+#      (a route that reads the database fails while it is down). Ceiling: 60 s, and
 #      the app containers must recover without being restarted.
 #
 # The numbers land in POLARIS_WINDOW_OUT (JSON) and on stdout; the ceilings
@@ -81,8 +81,10 @@ def worker(path):
                 stats["last_drop"] = now
             stats["by"][key] = stats["by"].get(key, 0) + 1
         time.sleep(0.25)
+# Public routes, since the edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW:
+# one the app answers alone, and one that reads the database (as /api/health did).
 threads = [threading.Thread(target=worker, args=(p,), daemon=True)
-           for p in ["/api/health/live"] * 2 + ["/api/health"] * 2]
+           for p in ["/.well-known/security.txt"] * 2 + ["/api/v1/transparency/anchors?end=0"] * 2]
 [t.start() for t in threads]
 while not stop.is_set(): time.sleep(0.2)
 time.sleep(0.5)
@@ -92,17 +94,21 @@ PYEOF
 traffic_start() { : > "$1"; python3 "$WORK/traffic.py" "$URL" "$1" & TRAFFIC_PID=$!; sleep 3; }
 traffic_stop()  { kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_PID" 2>/dev/null || true; }
 stat() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
+# The edge serves a public route; the roll-up is read at the app's own address, since the edge
+# refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
+app_health() { docker exec polaris-app curl -s "$@" http://localhost:8000/api/health 2>/dev/null; }
 wait_edge() {  # $1 = seconds
     local i
     for i in $(seq 1 "$1"); do
-        curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" | grep 200 >/dev/null && return 0; sleep 1
+        curl -sk -o /dev/null -w '%{http_code}' "$URL/.well-known/security.txt" | grep 200 >/dev/null \
+            && app_health -o /dev/null -w '%{http_code}' | grep 200 >/dev/null && return 0; sleep 1
     done
     return 1
 }
 # The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
 # piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
 db_healthy() {
-    local body; body=$(curl -sk "$URL/api/health") || return 1
+    local body; body=$(app_health) || return 1
     python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d['checks']['database']['status']=='healthy' else 1)" "$body" 2>/dev/null
 }
 
@@ -160,12 +166,12 @@ grep -q "X-Window-Drill" "$WORK/Caddyfile.drill" || fail "could not insert the d
 cat "$WORK/Caddyfile.drill" > "$CADDYFILE"
 "${RELOAD[@]}" >/dev/null 2>&1 || fail "caddy reload through the admin socket failed"
 sleep 1
-hdr=$(curl -skI "$URL/api/health/live" 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="x-window-drill"{print $2}')
+hdr=$(curl -skI "$URL/.well-known/security.txt" 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="x-window-drill"{print $2}')
 [[ "$hdr" == "live" ]] || fail "the reloaded configuration is not live at the edge (X-Window-Drill: '${hdr}')"
 restore_caddyfile
 "${RELOAD[@]}" >/dev/null 2>&1 || fail "caddy reload of the original Caddyfile failed"
 sleep 1
-hdr=$(curl -skI "$URL/api/health/live" 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="x-window-drill"{print $2}')
+hdr=$(curl -skI "$URL/.well-known/security.txt" 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="x-window-drill"{print $2}')
 [[ -z "$hdr" ]] || fail "the drill header survived the reload of the original Caddyfile (X-Window-Drill: '${hdr}')"
 sleep 2
 traffic_stop

@@ -55,7 +55,7 @@ the walks against the newest release on PyPI.
 | [Credo on a cheqd ledger](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/cheqd/README.md), the issuer a `did:cheqd` with its status list on the ledger | cheqd, OpenWallet Foundation | TypeScript, Go | cheqd-node 4.2.1 and Credo 0.7.2, against 1.0.0rc15 (2026-10-04) |
 | [Multipaz](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/multipaz/README.md), under a short wallet built for the walk | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc16 (2026-10-04) |
 | [ERICA](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against the tree (2026-10-04) |
-| [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
+| [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | eudi-dev | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
 | [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |
 | [The OpenID Foundation's conformance suite](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | eleven of eleven HAIP verifier modules clean against 1.0.0rc15, both controls noticed (2026-10-04); 1.0.0rc7 certified (2026-09-24) |
 
@@ -90,8 +90,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   None), and nothing is signed for it.
 - `--verifier-info FILE` puts attestations about the verifier into the request object, such as
   the registration certificate a registrar issues: a JSON array as OpenID4VP 1.0 section 5.1 has
-  it, or one object, `{"format": "registration_cert", "data": "<JWT>"}`, as the German EUDI
-  Wallet guide and its testing tool read it. The German ecosystem requires one for a PID request.
+  it, `[{"format": "registration_cert", "data": "<the base64url encoding of the serialized RP registration certificate>"}]`
+  (ETSI TS 119 472-2 V1.3.1 RO-16's words), or one object, as the German EUDI Wallet guide and its testing tool
+  read it. The German ecosystem requires one for a PID request.
   This package carries it as given, checking the shape section 5.1 asks for; a registration
   certificate labelled with its own media type is refused. `--verifier-info-profile
   etsi-119472-2` holds it to ETSI TS 119 472-2 (below).
@@ -118,13 +119,16 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   refused, because another spelling of an excluded host would not match it as a string.
 - `--issuer-jwks` trusts every key it lists for every `iss`, except one whose `use`, `key_ops` or `alg`
   says it is not for ES256 signatures; list one issuer's keys per verifier.
+- `--bind` is the address the listener binds: 127.0.0.1 by default, this machine only. A wallet on
+  another device needs `--bind 0.0.0.0` (every interface), or a reverse proxy or tunnel on this
+  machine (`--public-base-url`, below).
 - `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
   verifier by when it runs behind a reverse proxy or a tunnel, where the public URL differs
   from the local `--bind`/`--port`. It is used for the `request_uri` and `response_uri`;
   without it they are `https://<--host>:<--port>`.
 - `--no-local-tls` serves the local listener over plain HTTP, for when that proxy or tunnel
-  terminates TLS and provides the public HTTPS. The listener still binds `--bind` (localhost by
-  default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
+  terminates TLS and provides the public HTTPS. The listener still binds `--bind` (127.0.0.1, this
+  machine only, by default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
 - `--claim` names a claim to ask for (repeatable; without it, `given_name` and `family_name`): a
   name, a dotted path of object keys, or a JSON array of keys, optionally `=VALUE` (JSON) for
   the value it must have. A path asks for one member of a nested claim and nothing around it:
@@ -136,6 +140,14 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   signed. `--vct` (repeatable) names the credential types to accept; without it,
   `urn:eudi:pid:1`. `Verifier(claims=..., vct_values=...)` takes the same, a claim as a name, a
   list of keys, or `{"path": [...], "values": [...]}`.
+- `serve --once --result FILE` keeps FILE a JSON object saying what became of the request
+  `--once` started, apart from the log on stdout. `outcome` is `nothing_received` until a
+  response arrives, then that response's: `accepted` (with `claims`, the names), `refused` (with
+  `check` and `reason`, the code and text its `<-` line prints) or `wallet_error`; an acceptance
+  closes the request and stays. `response.status_code` is the HTTP status the wallet was
+  answered, `request_object` counts the fetches `served` and `refused`, and `responses` the
+  responses received. The file is replaced whole at startup and before each answer goes out;
+  without `--once` it is refused (exit 2).
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
@@ -300,7 +312,8 @@ carries no registration certificate. `Verifier(..., verifier_info_profile="etsi-
 does not meet those requirements: a `ValueError` names the requirement's ID, and `serve` exits 2
 before it listens. Under the profile:
 
-- `verifier_info` is an array of objects with exactly one `registrar_dataset` element, whose
+- `verifier_info` is an array of objects with one `registrar_dataset` element (one, not two, is
+  this package's reading: the requirements state no count), whose
   `data` holds `identifier`, `srvDescription`, `registryURI`, `intendedUseIdentifier`, `purpose`
   and `policyURI`, each non-empty and the two URIs absolute, and optionally `credential`;
 - it carries at most one `registration_cert` element, its `data` a non-empty string; neither
@@ -389,7 +402,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 649 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 663 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a

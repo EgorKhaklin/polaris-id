@@ -276,8 +276,13 @@ def _health_check_custody():
     """Which custody holds the issuer signing key (roadmap P1.2), non-secret.
 
     - real PQC off (the placeholder/dev mode): healthy, custody not required.
-    - real PQC on and a custody driver loads: healthy, with driver / key id /
-      public-key fingerprint so an operator can confirm WHICH key signs.
+    - real PQC on and a custody driver loads: healthy, with the driver and the
+      public-key fingerprint. The fingerprint is sha3-256 of the public key the
+      trust list already publishes, so it names nothing that is not public. The
+      key id is not reported: under AWS KMS it is the key's ARN (account, region,
+      key), under PKCS#11 the token and key labels, and this answer is
+      unauthenticated. An operator reads it from `python custody.py describe` in
+      the app container or scripts/polaris-pqc-status.sh (KEY-CEREMONY.md).
     - real PQC on but no persistent key: degraded (ephemeral per-process keys
       are not a production signing posture; nothing can verify them later).
     - real PQC on and the custody backend fails to load: unhealthy (issuance
@@ -296,7 +301,7 @@ def _health_check_custody():
             return {'status': 'healthy', 'note': 'real PQC off; custody not required'}
         return {'status': 'degraded', 'note': 'real PQC on with no persistent key (ephemeral signing)'}
     d = cust.describe()
-    return {'status': 'healthy', 'driver': d['driver'], 'key_id': d['key_id'],
+    return {'status': 'healthy', 'driver': d['driver'],
             'public_key_fingerprint': d['public_key_fingerprint']}
 
 

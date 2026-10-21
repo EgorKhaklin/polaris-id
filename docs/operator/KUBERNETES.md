@@ -20,7 +20,7 @@ backups through pgBackRest exactly as on compose.
 | `pgbouncer` | Deployment | uid 1000 | session pooling (transaction mode is refused: it hands the operator scope to the next client), TLS to postgres (verify-ca) and from the app |
 | `pg-router` | Deployment | uid 99 | HAProxy, the same as the compose HA profile: 5432 to the member answering Patroni's `/primary`, 5433 to a replica; sessions to a member marked down are cut, which is what frees the pool from a frozen leader |
 | `postgres` | StatefulSet, 2 members + PVCs | uid 70 | the self-contained image under Patroni ([FAILOVER.md](FAILOVER.md)): the Kubernetes API is the lease store, the leader Service's endpoints follow the lease, a replica Service selects on the `role` label; the data directory in a subdirectory of the volume; TLS on |
-| `redis` | StatefulSet + PVC | uid 999 | sessions and rate-limit state |
+| `redis` | Deployment, Memory emptyDir | uid 999 | the rate limiter's counters, in memory only: no append-only file, no snapshot |
 
 Every pod satisfies the **restricted** Pod Security Standard: non-root with a
 numeric uid, `seccompProfile: RuntimeDefault`, all capabilities dropped, no
@@ -142,11 +142,13 @@ startup probe surfaces. [`HARDENING.md`](HARDENING.md) section 13.
 kubectl -n polaris get pods
 kubectl -n polaris port-forward svc/polaris-caddy 8443:443 &
 # edge.tls=secret or acme (the install above): a certificate clients already trust, for the domain
-curl --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/api/health | python3 -m json.tool
+curl --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/.well-known/security.txt
 # edge.tls=internal: trust the chart's root (or edge.caSecret's) rather than skipping verification
 kubectl -n polaris get secret polaris-edge-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > edge-ca.crt
-curl --cacert edge-ca.crt --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/api/health
-# either way: database, redis, zk_binary, custody: healthy
+curl --cacert edge-ca.crt --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/.well-known/security.txt
+# the edge answers the health paths 404 outside edge.metricsAllow; read them at the app's own port
+kubectl -n polaris exec deploy/polaris-app -c app -- curl -s http://localhost:8000/api/health | python3 -m json.tool
+# database, redis, zk_binary, custody: healthy
 kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/patroni.yml list   # one Leader, one streaming Replica
 ```
 
@@ -185,7 +187,7 @@ kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/
     pgbouncer. A single-node cluster still schedules them all.
   - Pods Kubernetes may move leave a node that stopped answering after
     `spread.evictAfterSeconds` (30 s, not the default 300 s).
-  - Redis is a Deployment on an emptyDir, so it moves too. The rate limiter
+  - Redis is a Deployment on a Memory emptyDir, so it moves too. The rate limiter
     refuses requests while Redis is unreachable, and its windows are
     short-lived.
   - Disruption budgets keep a drain from taking the last pod of anything.
@@ -210,8 +212,9 @@ a kind cluster with the default CNI disabled and Calico installed, the four
 self-built images loaded (pull policy Never; redis pulled by its pinned digest),
 the namespace labelled restricted and a
 privileged pod rejected by the API server, the real secrets as a Secret,
-`helm lint` and `helm install --wait`, `/api/health` through the edge with
-database, redis, zk_binary, and custody healthy, a probe pod outside the
+`helm lint` and `helm install --wait`, the edge serving a public route and
+answering the three health paths 404 from outside, `/api/health` at the app's
+own port with database, redis, zk_binary, and custody healthy, a probe pod outside the
 topology denied by policy on postgres, pgbouncer, and app, a rolling
 restart that keeps the edge healthy, and (v9.244) the database failover
 under a writer with the app's labels inserting through pgbouncer: the leader

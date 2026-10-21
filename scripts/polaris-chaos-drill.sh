@@ -110,6 +110,9 @@ fail() { record_row FAIL "-" "$*"; echo "::error::$*" >&2; exit 1; }
 cat > "$WORK/traffic.py" <<'PYEOF'
 import json, signal, ssl, sys, threading, time, urllib.request
 base = sys.argv[1]; out = sys.argv[2]
+# Public routes, since the edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW:
+# one the app answers alone, and one that reads the database (as /api/health did).
+PATHS = ["/.well-known/security.txt"] * 2 + ["/api/v1/transparency/anchors?end=0"] * 2
 ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
 stats = {"requests": 0, "served": 0, "drops": 0, "by": {}, "first_drop": None, "last_drop": None, "max_latency_s": 0.0}
 lock = threading.Lock(); stop = threading.Event()
@@ -133,7 +136,7 @@ def worker(path):
                 stats["last_drop"] = now
             stats["by"][key] = stats["by"].get(key, 0) + 1
         time.sleep(0.25)
-threads = [threading.Thread(target=worker, args=(p,), daemon=True) for p in ["/api/health/live"] * 2 + ["/api/health"] * 2]
+threads = [threading.Thread(target=worker, args=(p,), daemon=True) for p in PATHS]
 [t.start() for t in threads]
 while not stop.is_set(): time.sleep(0.2)
 time.sleep(0.5)
@@ -143,15 +146,19 @@ PYEOF
 traffic_start() { : > "$1"; python3 "$WORK/traffic.py" "$URL" "$1" & TRAFFIC_PID=$!; sleep 3; }
 traffic_stop()  { kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_PID" 2>/dev/null || true; TRAFFIC_PID=""; }
 stat() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
-edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" 2>/dev/null | grep 200 >/dev/null; }
+# The edge serves a public route; the roll-up is read at the app's own address, since the edge
+# refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
+app_health() { docker exec polaris-app curl -s "$@" http://localhost:8000/api/health 2>/dev/null; }
+edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/.well-known/security.txt" 2>/dev/null | grep 200 >/dev/null \
+            && app_health -o /dev/null -w '%{http_code}' | grep 200 >/dev/null; }
 # The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
 # piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
 db_healthy() {
-    local body; body=$(curl -sk "$URL/api/health" 2>/dev/null) || return 1
+    local body; body=$(app_health) || return 1
     python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d['checks']['database']['status']=='healthy' else 1)" "$body" 2>/dev/null
 }
 db_down() {
-    local body; body=$(curl -sk "$URL/api/health" 2>/dev/null) || return 1
+    local body; body=$(app_health) || return 1
     python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d['checks']['database']['status']!='healthy' else 1)" "$body" 2>/dev/null
 }
 wait_for() {  # wait_for SECONDS FN ... -> prints elapsed seconds, returns 1 on timeout

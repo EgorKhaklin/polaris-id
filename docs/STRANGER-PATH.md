@@ -15,7 +15,7 @@ presented and the verifier answered `200 authentic`. Nothing here is from memory
 ## One minute first
 
 Before the ten minutes, one script checks the same published verifier against a different wallet
-nobody here wrote: [eudi-dev](https://github.com/dominikschlosser/eudi-dev), a 34 MB image, which
+nobody here wrote: [eudi-dev](https://github.com/eudi-dev/eudi-dev), a 34 MB image, which
 the OpenID Foundation lists (v2.3.7) as a certified OpenID4VP 1.0 + HAIP 1.0 wallet. It needs
 `python3` and port 9443, and nothing else: with Docker running it uses the wallet's image, and
 without Docker it downloads the wallet's own binary for macOS or Linux (16 MB) and checks it

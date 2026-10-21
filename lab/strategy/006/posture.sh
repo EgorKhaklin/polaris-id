@@ -10,6 +10,7 @@
 #      inside each is refused with "Read-only file system";
 #   2. what they must write lands in memory or a volume: the app's /tmp and pgbouncer's
 #      /etc/pgbouncer are tmpfs, and pgbouncer's userlist.txt (the database password) is there;
+#      Redis's /data is tmpfs, so the rate limiter's counters never reach a volume;
 #   3. every service's main process holds no effective capability and cannot gain privileges
 #      (CapEff 0, NoNewPrivs 1 in /proc/1/status), postgres and redis included: they drop to
 #      their own users after preparing their data directories.
@@ -46,12 +47,14 @@ for svc in caddy app pgbouncer redis; do
 done
 
 echo "== 2. what they write lands in memory"
-app=$(cid app); pgb=$(cid pgbouncer)
+app=$(cid app); pgb=$(cid pgbouncer); rds=$(cid redis)
 docker exec "${app}" sh -c "grep -q '^tmpfs /tmp ' /proc/mounts" 2> /dev/null \
     && ok "app: /tmp is tmpfs" || fail "app: /tmp is not tmpfs"
 docker exec "${pgb}" sh -c "grep -q '^tmpfs /etc/pgbouncer ' /proc/mounts && test -s /etc/pgbouncer/userlist.txt" 2> /dev/null \
     && ok "pgbouncer: userlist.txt is written to tmpfs /etc/pgbouncer" \
     || fail "pgbouncer: /etc/pgbouncer is not tmpfs, or it holds no userlist.txt"
+docker exec "${rds}" sh -c "grep -q '^tmpfs /data ' /proc/mounts" 2> /dev/null \
+    && ok "redis: /data is tmpfs (the limiter's counters never reach a volume)" || fail "redis: /data is not tmpfs"
 
 echo "== 3. no capabilities, no privilege escalation"
 for svc in caddy app pgbouncer redis postgres; do

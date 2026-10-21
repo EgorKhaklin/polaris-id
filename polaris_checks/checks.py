@@ -3598,7 +3598,9 @@ def check_caddy_self_built(root: pathlib.Path) -> list[Finding]:
 # (v9.140) — the prod stack had never come up. This pins the keystone test: a CI
 # job generates secrets, builds the prod images, boots docker-compose.prod.yml +
 # the citest override (Caddy internal CA instead of ACME), and asserts the stack
-# serves /api/health through the TLS edge with the DB-backed components healthy.
+# serves through the TLS edge with the DB-backed components healthy. Since
+# 2026-10-21 the edge refuses /api/health from outside the allow-list, so the
+# edge is asked for a public route and the roll-up is read at the app's address.
 # ---------------------------------------------------------------------------
 def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
     ci = _read(root, ".github/workflows/ci.yml")
@@ -3622,14 +3624,16 @@ def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_stack_boot",
                      "the prod-stack boot job must run polaris-generate-secrets.sh so the stack "
                      "boots on real generated secrets + certs, like a deploy")
-    # It must assert the stack actually SERVES through the edge (a health probe).
-    if "/api/health" not in ci:
+    # It must assert the stack actually SERVES through the edge, and that the roll-up is healthy.
+    if ("https://localhost:8443/.well-known/security.txt" not in ci
+            or "docker exec polaris-app curl -s http://localhost:8000/api/health" not in ci):
         return _fail("prod_stack_boot",
-                     "the prod-stack boot job must assert the stack serves /api/health through the "
-                     "Caddy TLS edge (a 200 + DB-backed components healthy), not just that it starts")
+                     "the prod-stack boot job must assert the stack serves through the Caddy TLS edge "
+                     "(a public route, /.well-known/security.txt) and that /api/health, read at the "
+                     "app's own address, reports the DB-backed components healthy, not just that it starts")
     return _ok("prod_stack_boot",
                "CI boots the FULL prod compose (generated secrets, real images, TLS edge) and "
-               "asserts it serves /api/health end to end")
+               "asserts it serves through the edge with a healthy roll-up at the app")
 
 
 # ---------------------------------------------------------------------------
@@ -5028,8 +5032,15 @@ def check_cli_help_lists_every_command(root: pathlib.Path) -> list[Finding]:
 # and roughly when, a duress alarm fired. Both shipped edges (the compose
 # Caddyfile and the Helm configmap) must refuse them from outside the
 # monitoring network. Through v9.208 neither did, and the docstrings described
-# an ACL that existed only in prose.
+# an ACL that existed only in prose. 2026-10-21: the health answers too
+# (/api/health and everything under it), which report every component of the
+# deployment unauthenticated; API.md said they "must be restricted at the edge
+# in production" while the shipped edges restricted only the metrics.
 # ---------------------------------------------------------------------------
+_EDGE_RULES = (("metrics_from_outside", ("/metrics", "/api/metrics"), "the metrics surfaces"),
+               ("health_from_outside", ("/api/health", "/api/health/*"), "the health answers"))
+
+
 def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
     name = "metrics_edge_acl"
     edges = (("polaris_web/Caddyfile", "POLARIS_METRICS_ALLOW"),
@@ -5040,37 +5051,47 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
         conf = _read(root, rel)
         if not conf:
             return _fail(name, f"{rel} is missing")
-        if "@metrics_from_outside" not in conf or "respond @metrics_from_outside 404" not in conf:
-            return _fail(name,
-                         f"{rel} must refuse /metrics and /api/metrics from outside the monitoring "
-                         "network (a named matcher plus `respond ... 404`)")
-        matcher = conf[conf.index("@metrics_from_outside"):]
-        matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
-        for needle in ("/metrics", "/api/metrics", "not remote_ip"):
-            if needle not in matcher:
-                return _fail(name, f"{rel}'s matcher does not cover {needle}")
         if knob not in conf:
             return _fail(name, f"{rel} must let the operator name the allowed range ({knob})")
-        blocks[rel] = matcher
+        for rule, paths, what in _EDGE_RULES:
+            # The respond line on a line of its own: a commented-out `# respond @rule 404` is no refusal.
+            if f"@{rule} {{" not in conf or not re.search(rf"^\s*respond @{rule} 404\s*$", conf, re.M):
+                return _fail(name,
+                             f"{rel} must refuse {what} ({' '.join(paths)}) from outside the monitoring "
+                             f"network (a named matcher @{rule} plus `respond @{rule} 404`)")
+            matcher = conf[conf.index(f"@{rule} {{"):]
+            matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
+            path_line = re.search(r"^\s*path\s+(.*)$", matcher, re.M)
+            listed = path_line.group(1).split() if path_line else []
+            for needle in paths:
+                if needle not in listed:
+                    return _fail(name, f"{rel}'s @{rule} matcher does not cover {needle}")
+            if "not remote_ip" not in matcher:
+                return _fail(name, f"{rel}'s @{rule} matcher does not cover not remote_ip")
+            blocks[(rel, rule)] = matcher
     # 2026-10-07 (lab record 017): unset, the allow-list names no client. Until then it defaulted to
     # private ranges, and behind an L4 load balancer, Kubernetes' default externalTrafficPolicy,
     # rootless Docker or Docker's IPv6 userland proxy every internet client reaches the edge from
     # a private address: the duress counter was public (scripts/polaris-metrics-edge-drill.sh).
-    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
-        m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[rel])
-        if not m or m.group(1).strip() != "0.0.0.0/32":
-            return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
-                         f"(0.0.0.0/32), not {m.group(1).strip() if m else 'nothing'}; behind SNAT "
-                         "every internet client is a private address")
-    helm = blocks["deploy/helm/polaris/templates/configmap-caddy.yaml"]
+    for rule, _paths, _what in _EDGE_RULES:
+        for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+            m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[(rel, rule)])
+            if not m or m.group(1).strip() != "0.0.0.0/32":
+                return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
+                             f"(0.0.0.0/32) in @{rule}, not {m.group(1).strip() if m else 'nothing'}; behind "
+                             "SNAT every internet client is a private address")
+        if '| default "0.0.0.0/32"' not in blocks[("deploy/helm/polaris/templates/configmap-caddy.yaml", rule)]:
+            return _fail(name, f"the chart's @{rule} must allow no client unless edge.metricsAllow names one "
+                         '(the template default "0.0.0.0/32")')
     values = re.search(r'^\s*metricsAllow:\s*"([^"]*)"', _read(root, "deploy/helm/polaris/values.yaml"), re.M)
-    if '| default "0.0.0.0/32"' not in helm or not values or values.group(1) != "":
+    if not values or values.group(1) != "":
         return _fail(name, "the chart must allow no client unless edge.metricsAllow names one "
                      '(values metricsAllow "" and the template default "0.0.0.0/32")')
     norm = lambda t: [line.strip() for line in t.splitlines() if line.strip()]
-    if norm(blocks["polaris_web/Caddyfile"]) != norm(blocks["polaris_web/Caddyfile.citest"]):
-        return _fail(name, "Caddyfile.citest's metrics rule differs from the production Caddyfile's; "
-                     "the stack CI and try.sh boot must refuse the metrics the way production does")
+    for rule, _paths, what in _EDGE_RULES:
+        if norm(blocks[("polaris_web/Caddyfile", rule)]) != norm(blocks[("polaris_web/Caddyfile.citest", rule)]):
+            return _fail(name, f"Caddyfile.citest's @{rule} rule differs from the production Caddyfile's; "
+                         f"the stack CI and try.sh boot must refuse {what} the way production does")
     ci = _read(root, ".github/workflows/ci.yml")
     if ("metrics surfaces are refused from outside" not in ci
             or "bash scripts/polaris-metrics-edge-drill.sh" not in ci):
@@ -5080,10 +5101,16 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
     if "/polaris_web/Caddyfile" not in drill or 'probe 404 "${where}" /metrics' not in drill or "via SNAT" not in drill:
         return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the rule from the shipped "
                      "Caddyfile and ask through an SNAT hop as well as in-network")
+    if ("/@health_from_outside {/,/respond @health_from_outside 404/p" not in drill
+            or "HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)" not in drill
+            or 'for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done' not in drill):
+        return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the health rule from the shipped "
+                     "Caddyfile and require 404 on /api/health, /api/health/ready and /api/health/live, "
+                     "in-network and through the SNAT hop")
     return _ok(name,
-               "all three edges refuse the metrics surfaces unless the monitoring network is named "
-               "(no client by default), the CI edge's rule is production's, and CI asks in-network "
-               "and through an SNAT hop against the shipped rule")
+               "all three edges refuse the metrics surfaces and the health answers unless the monitoring "
+               "network is named (no client by default), the CI edge's rules are production's, and CI asks "
+               "in-network and through an SNAT hop against the shipped rules")
 
 
 # ---------------------------------------------------------------------------
@@ -7126,8 +7153,14 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
 # rules are one string in the generator, the rotation script and the Helm Secret, production
 # refuses a Redis URL without the password file (or with a password in it), rotation never has
 # a moment in which Redis refuses the app's password, and CI asserts the refusals on the live stack.
-_REDIS_ACL_FORBIDDEN = ("+@all", "allcommands", "allkeys", "~*", "+flushall", "+flushdb",
-                        "+config", "+acl", "+keys", "+debug", "+eval ", "+module", "+@dangerous")
+# 2026-10-21: the polaris rule may carry only these tokens. A list of forbidden ones missed the command
+# categories: +@admin or +@slow passed, and Redis puts CONFIG SET (flagged ADMIN, not FAST) in @admin,
+# @dangerous and @slow (setImplicitACLCategories, src/server.c, 8.0.0). Each writer's whole users file is
+# pinned too: a token in the printf format, a fourth user, `on` after `off`, an append or a reassignment of
+# the rule widened it while the rule string stayed the same.
+_REDIS_ACL_POLARIS_TOKENS = ("~polaris:rl:*", "resetchannels", "-@all", "+ping", "+client|setinfo",
+                             "+script|load", "+evalsha", "+zremrangebyscore", "+zcard", "+zadd",
+                             "+pexpire", "+scan", "+del")
 
 
 # Lab record 017 (gate row OP-8): the HA profile's internal surfaces authenticate. Patroni's REST API
@@ -7215,7 +7248,7 @@ _FAILURE_DOMAIN_NEEDLES = (
     ("deploy/helm/polaris/templates/pgbouncer.yaml", "replicas: {{ .Values.pgbouncer.replicas }}",
      "let pgbouncer run more than one pod"),
     ("deploy/helm/polaris/templates/redis.yaml", "kind: Deployment", "run Redis as something that can move"),
-    ("deploy/helm/polaris/templates/redis.yaml", "emptyDir: {}", "keep Redis off a node-local volume"),
+    ("deploy/helm/polaris/templates/redis.yaml", "emptyDir: {medium: Memory", "keep Redis off a node-local volume"),
     ("deploy/helm/polaris/templates/redis.yaml", 'include "polaris.fastEviction" .', "move Redis quickly"),
     ("scripts/polaris-zone-loss-drill.sh", 'docker kill "${L0NODE}"', "kill the leader's node"),
     ("scripts/polaris-zone-loss-drill.sh", "the database members share a zone", "require the members in two zones"),
@@ -7301,6 +7334,19 @@ def check_failover_keeps_acknowledged_writes(root: pathlib.Path) -> list[Finding
                "loses with it on")
 
 
+#: The lines that carry the app password's SHA-256 to each script's users printf, exact (as `_read`
+#: gives them): the hash is refused unless it is 64 hex digits, so no `nopass` or other token rides in.
+_REDIS_ACL_GEN_HASH_LINES = '    local hash\n    hash=$(tr -d \'\\r\\n \' < "${pw}" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d\' \' -f1)\n    if [[ ! "${hash}" =~ ^[0-9a-f]{64}$ ]]; then\n        echo "  ✗ redis_users.acl  (could not hash polaris_redis_password)" >&2\n        return 1\n    fi\n    ( umask 0133 && printf \'user default off resetkeys resetchannels -@all\\nuser health on nopass resetkeys resetchannels -@all +ping\\nuser polaris on #%s %s\\n\' \\\n        "${hash}" "${REDIS_ACL_POLARIS_RULES}" > "${target}" )\n'
+_REDIS_ACL_ROT_HASH_LINES = 'redis_hash() { printf \'%s\' "$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d\' \' -f1; }\nwrite_redis_acl() {\n    local h; for h in "$@"; do [[ "${h}" =~ ^[0-9a-f]{64}$ ]] || {\n        echo "  ✗ redis_users.acl  (a password hash is not a SHA-256; nothing written)" >&2; exit 1; }; done\n    local acl="${SECRETS_DIR}/redis_users.acl" hashes="#$1"\n    [[ $# -gt 1 ]] && hashes="${hashes} #$2"\n    ( umask 0133 && printf \'user default off resetkeys resetchannels -@all\\nuser health on nopass resetkeys resetchannels -@all +ping\\nuser polaris on %s %s\\n\' \\\n        "${hashes}" "${REDIS_ACL_POLARIS_RULES}" > "${acl}.new" )\n'
+#: Each writer whole, from its first line to its closing brace (rotation's hash lines above already start
+#: before it), and how often each file names the users file: a sed -i, an append or a copy over the file
+#: after the printf is a line the hash pins do not hold.
+_REDIS_ACL_GEN_HEAD = 'write_redis_acl_if_missing() {\n    local pw="${SECRETS_DIR}/polaris_redis_password"\n    local target="${SECRETS_DIR}/redis_users.acl"\n    refuse_directory "${target}" "${pw}" || return 1\n    if [[ -s "${target}" ]]; then\n        echo "  ✓ redis_users.acl  (exists; not overwriting \u2014 use polaris-rotate-secret.sh to rotate)"\n        return 0\n    fi\n    if [[ ! -s "${pw}" ]]; then\n        echo "  ✗ redis_users.acl  (polaris_redis_password is missing; nothing to derive it from)" >&2\n        return 1\n    fi\n'
+_REDIS_ACL_GEN_TAIL = '    chmod 0644 "${target}"\n    echo "  ✓ redis_users.acl  (generated from polaris_redis_password; mode 0644, holds only its SHA-256)"\n}\n'
+_REDIS_ACL_ROT_TAIL = '    chmod 0644 "${acl}.new"\n    mv "${acl}.new" "${acl}"\n    if [[ "${POLARIS_SECRETS_BACKEND:-file}" != "file" ]]; then\n        POLARIS_SECRETS_PLAIN_DIR="${SECRETS_DIR}" "${SCRIPT_DIR}/polaris-secrets.sh" seal --only redis_users.acl >/dev/null\n    fi\n}\n'
+_REDIS_ACL_FILE_MENTIONS = {"polaris-generate-secrets.sh": 5, "polaris-rotate-secret.sh": 7, "the Helm Secret": 2}
+
+
 def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
     name = "redis_authenticated"
     problems = []
@@ -7309,24 +7355,93 @@ def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
     helm_secret = _read(root, "deploy/helm/polaris/templates/secret.yaml")
     rules = re.findall(r"REDIS_ACL_POLARIS_RULES='([^']+)'", gen)
     rules_rot = re.findall(r"REDIS_ACL_POLARIS_RULES='([^']+)'", rot)
+    helm_rules = re.findall(r'user polaris on #%s (.+?)\\n"', helm_secret)
+    # The capture stops at the closing quote; bash goes on joining words ('' +@admin, "${EXTRA}").
+    for where, text in (("polaris-generate-secrets.sh", gen), ("polaris-rotate-secret.sh", rot)):
+        if len(re.findall(r"(?m)^REDIS_ACL_POLARIS_RULES='[^'\n]+'[ \t]*$", text)) != 1:
+            problems.append(f"{where}: REDIS_ACL_POLARIS_RULES is not set by one whole line ending at its "
+                            "closing quote, so bash can join more words onto the rule")
     if not rules:
         problems.append("polaris-generate-secrets.sh writes no Redis ACL (REDIS_ACL_POLARIS_RULES)")
     else:
         r = rules[0] + " "
         if not r.startswith("~polaris:rl:* ") or "-@all" not in r:
             problems.append("the polaris Redis user is not confined to ~polaris:rl:* after -@all")
-        bad = [f for f in _REDIS_ACL_FORBIDDEN if f in r]
-        if bad:
-            problems.append(f"the polaris Redis user may run {', '.join(bad)}")
         if rules_rot != rules:
             problems.append("polaris-rotate-secret.sh writes different Redis ACL rules from the generator")
-        helm_rules = re.findall(r'user polaris on #%s (.+?)\\n"', helm_secret)
         if helm_rules != rules:
             problems.append("the Helm Secret's redis_users.acl has different rules from the generator")
+    # Each file is read on its own, so a token added to all three, which keeps them equal, still fails.
+    for where, found in (("polaris-generate-secrets.sh", rules), ("polaris-rotate-secret.sh", rules_rot),
+                         ("the Helm Secret", helm_rules)):
+        for tok in dict.fromkeys(t for rule in found for t in rule.split()):
+            if tok.startswith("+@"):
+                problems.append(f"{where}: the polaris Redis user's rule carries {tok}, a command category, "
+                                "which grants every command in it")
+            elif tok not in _REDIS_ACL_POLARIS_TOKENS:
+                problems.append(f"{where}: the polaris Redis user's rule carries {tok}, which is not one of "
+                                "the limiter's tokens")
+    # Each writer's users file, whole. One printf writes it; its lines are exactly `default` off, `health`
+    # PING-only and `polaris` with the rule; it takes only the hash and the rule variable. No other line of
+    # code names a user, there is no SETUSER, and the rule, hash and template variables are set only as they
+    # are today, so no append or reassignment reaches the file. A hash computed outside the writer
+    # (rotation's NEW_HASH and OLD_HASH) is not read here.
+    acl_head = ["user default off resetkeys resetchannels -@all",
+                "user health on nopass resetkeys resetchannels -@all +ping"]
+    for where, text, fmt_re, polaris_line, args, sets in (
+            ("polaris-generate-secrets.sh", gen, r"printf '(user [^']*)'", "user polaris on #%s %s",
+             "' \\\n        \"${hash}\" \"${REDIS_ACL_POLARIS_RULES}\" > \"${target}\" )",
+             {"hash= (one assignment)": (r"\bhash\+?=", 1),
+              "REDIS_ACL_POLARIS_RULES (its assignment and the printf)": ("REDIS_ACL_POLARIS_RULES", 2)}),
+            ("polaris-rotate-secret.sh", rot, r"printf '(user [^']*)'", "user polaris on %s %s",
+             "' \\\n        \"${hashes}\" \"${REDIS_ACL_POLARIS_RULES}\" > \"${acl}.new\" )",
+             {'hashes="#$1"': (r'\bhashes="#\$1"', 1), 'hashes="${hashes} #$2"': (r'\bhashes="\$\{hashes\} #\$2"', 1),
+              "hashes= (those two assignments only)": (r"\bhashes\+?=", 2),
+              "REDIS_ACL_POLARIS_RULES (its assignment and the printf)": ("REDIS_ACL_POLARIS_RULES", 2)}),
+            ("the Helm Secret", helm_secret, r'printf "(user [^"]*)"',
+             "user polaris on #%s " + (rules[0] if rules else "(the generator's rule)"), '" (sha256sum $redisPw) }}',
+             {"$redisAcl (its printf and the Secret's key)": (r"\$redisAcl\b", 2)})):
+        fmts = re.findall(fmt_re, text)
+        if len(fmts) != 1:
+            problems.append(f"{where}: {len(fmts)} printf formats write Redis users, not one")
+        want = [*acl_head, polaris_line]
+        for i, fmt in enumerate(fmts):
+            got = fmt.split("\\n")
+            got = got[:-1] if got[-1] == "" else got
+            for n in range(max(len(got), len(want))):
+                line = got[n] if n < len(got) else None
+                expected = want[n] if n < len(want) and not i else None
+                if line != expected:
+                    problems.append(f"{where}: Redis users line {n + 1} of format {i + 1} reads {line!r}, not {expected!r}")
+            if not i and text.count(fmt + args) != 1:
+                problems.append(f"{where}: the Redis users printf takes other arguments than the hash and the rule")
+        # Every line of code (_read has removed the comments), so a heredoc, an unquoted echo or a template
+        # join is read too, not only a quoted string.
+        named = re.findall(r"(?i)(?:(?<=\\n)|(?<!\w))(user\s+[\w.-]+\s+(?:on|off))\b", text)
+        if len(named) != 3:
+            problems.append(f"{where}: its code names the Redis users {named}, not default, health and polaris once each")
+        if re.search(r"(?i)\bsetuser\b", text):
+            problems.append(f"{where}: it runs ACL SETUSER")
+        for label, (pattern, count) in sets.items():
+            if len(re.findall(pattern, text)) != count:
+                problems.append(f"{where}: {label} appears {len(re.findall(pattern, text))} times, not {count}")
+    for where, text, head, lines, tail in (
+            ("polaris-generate-secrets.sh", gen, _REDIS_ACL_GEN_HEAD, _REDIS_ACL_GEN_HASH_LINES, _REDIS_ACL_GEN_TAIL),
+            ("polaris-rotate-secret.sh", rot, "", _REDIS_ACL_ROT_HASH_LINES, _REDIS_ACL_ROT_TAIL)):
+        if text.count(lines) != 1:
+            problems.append(f"{where}: the lines from the password's hash to the users printf are not the "
+                            "pinned ones, which refuse a hash that is not 64 hex digits")
+        elif text.count(head + lines + tail) != 1:
+            problems.append(f"{where}: the users file's writer is not the pinned one from its first line to its "
+                            "closing brace, so another line in it can edit or append to the file")
     for where, text in (("polaris-generate-secrets.sh", gen), ("polaris-rotate-secret.sh", rot),
                         ("the Helm Secret", helm_secret)):
-        if "user default off" not in text or not re.search(r"user health on nopass[^\n]*-@all \+ping\\n", text):
-            problems.append(f"{where}: `default` must be off and `health` limited to PING")
+        if text.count("redis_users.acl") != _REDIS_ACL_FILE_MENTIONS[where]:
+            problems.append(f"{where}: its code names redis_users.acl {text.count('redis_users.acl')} times, not "
+                            f"{_REDIS_ACL_FILE_MENTIONS[where]}, so a line outside the pinned writer can touch it")
+    if helm_secret.count("  redis_users.acl: {{ $redisAcl | b64enc }}\n") != 1:
+        problems.append("the Helm Secret: its redis_users.acl key is not exactly {{ $redisAcl | b64enc }}, so "
+                        "the template can join more text onto the users file")
     if "write_secret_if_missing polaris_redis_password" not in gen:
         problems.append("polaris-generate-secrets.sh does not generate polaris_redis_password")
     if not re.search(r'write_redis_acl "\$\{NEW_HASH\}" "\$\{OLD_HASH\}"[\s\S]*recreate_apps'
@@ -7372,6 +7487,117 @@ def check_redis_authenticated(root: pathlib.Path) -> list[Finding]:
                "one rule string in the generator, rotation and Helm; production refuses an "
                "unauthenticated URL; rotation accepts both passwords until the app has moved; CI "
                "asserts the refusals on the live stack")
+
+
+# 2026-10-21: a sign-in leaves nothing on the Redis volume. The limiter's keys name a credential-hash
+# prefix, a client IP or a client_id (auth-broker.md, "No record of who authenticated where"; API.md,
+# "Nothing is written"), and both substrates ran Redis with the append-only file on, so every ZADD
+# outlived its 61 s window on disk. Redis now persists nothing in either: `--appendonly no` AND
+# `--save ""` (a redis-server with no config file snapshots by its compiled-in `save` default, and a
+# stop writes one whenever `save` is not empty), no configuration file that could set either (a path
+# argument or --include), no entrypoint, extends: or merge key on the compose service and no container
+# command in the chart (each can replace the arguments read), no overlay that changes the service's
+# command, entrypoint, volumes or tmpfs or extends it, and /data in memory (a compose tmpfs, a Memory
+# emptyDir). An empty or missing command is a FAIL.
+def _redis_options(words: list[str]) -> dict[str, list[list[str]]] | str:
+    """redis-server argv -> {option: [values per occurrence]}, or the reason it cannot be read."""
+    if not words or words[0] != "redis-server":
+        return "it does not start redis-server"
+    if len(words) > 1 and not words[1].startswith("--"):
+        return f"it passes a configuration file ({words[1]}) that could set persistence"
+    opts: dict[str, list[list[str]]] = {}
+    cur = None
+    for w in words[1:]:
+        if w.startswith("--"):
+            cur = w[2:].lower()
+            opts.setdefault(cur, []).append([])
+        else:
+            opts[cur][-1].append(w)
+    if "include" in opts:
+        return "it includes a configuration file (--include) that could set persistence"
+    return opts
+
+
+def _redis_persistence_problems(where: str, words: list[str]) -> list[str]:
+    opts = _redis_options(words)
+    if isinstance(opts, str):
+        return [f"{where}: {opts}"]
+    out = []
+    if opts.get("appendonly") != [["no"]]:
+        out.append(f"{where}: the append-only file must be off, once (--appendonly no); it has "
+                   f"{opts.get('appendonly')}")
+    if opts.get("save") != [[""]]:
+        out.append(f"{where}: snapshots must be off, once (--save \"\"); it has {opts.get('save')}")
+    return out
+
+
+def check_redis_persists_nothing(root: pathlib.Path) -> list[Finding]:
+    import shlex
+    name = "redis_persists_nothing"
+    problems = []
+    compose = _read(root, "polaris_web/docker-compose.prod.yml")
+    svc = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", compose)
+    rs = svc.group(1) if svc else ""
+    # A folded command runs to the next non-blank line indented less than six spaces: YAML keeps an
+    # empty or whitespace-only line and a deeper-indented line in the command, so each reaches
+    # redis-server's argv.
+    cmd = re.search(r"(?m)^    command: *>-? *\n((?:^(?:      .*|[ \t]*)\n)+)", rs)
+    flow = re.search(r"(?m)^    command: *(\[.*\]) *$", rs)
+    if not rs:
+        problems.append("docker-compose.prod.yml has no redis service")
+    elif cmd:
+        problems += _redis_persistence_problems(
+            "the compose redis", shlex.split(" ".join(l.strip() for l in cmd.group(1).splitlines())))
+    elif flow:
+        try:
+            problems += _redis_persistence_problems("the compose redis", json.loads(flow.group(1)))
+        except ValueError:
+            problems.append("the compose redis command could not be read")
+    else:
+        problems.append("the compose redis service has no command: (the image would start Redis with "
+                        "its compiled-in snapshot schedule)")
+    # An entrypoint runs instead of the command read here; extends: or a YAML merge key (<<:) brings in
+    # another service's entrypoint, volumes or command.
+    if rs and re.search(r"(?m)^    (entrypoint|extends|<<):", rs):
+        problems.append("the compose redis sets an entrypoint, extends: or a merge key (<<:), which can "
+                        "replace the command or volumes read here")
+    if rs and (re.search(r"(?m)^    volumes:", rs) or not re.search(r"(?m)^    tmpfs:\n      - /data:", rs)):
+        problems.append("the compose redis must keep /data on a tmpfs and mount no volume")
+    for p in sorted((root / "polaris_web").glob("docker-compose.*.yml")):
+        if p.name == "docker-compose.prod.yml":
+            continue
+        over = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [^\s#]|^[^\s#])", _read_path(p))
+        if over and re.search(r"(?m)^    (command|volumes|entrypoint|tmpfs|extends):", over.group(1)):
+            problems.append(f"{p.name} overrides the redis command, entrypoint, volumes or tmpfs, or "
+                            "extends the service")
+    helm = _read(root, "deploy/helm/polaris/templates/redis.yaml")
+    args = re.findall(r"(?m)^\s*args: *(\[.*\]) *$", helm)
+    # A container command: runs in place of the image's entrypoint, so the args read here would not
+    # start Redis. It sits at the indentation of the container's image: (or opens the list item,
+    # "- command:"); a probe's command: sits deeper and is not the container's.
+    ind = re.search(r"(?m)^( {2,})image:", helm)
+    if not ind:
+        problems.append("the chart's redis has no container image: line to read its fields by")
+    elif re.search(rf"(?m)^(?:{ind.group(1)}|{ind.group(1)[:-2]}- )command:", helm):
+        problems.append("the chart's redis sets a container command:, which would run instead of the args "
+                        "read here")
+    if len(args) != 1:
+        problems.append(f"the chart's redis.yaml must have one args: list (found {len(args)})")
+    else:
+        try:
+            problems += _redis_persistence_problems("the chart's redis", json.loads(args[0]))
+        except ValueError:
+            problems.append("the chart's redis args: could not be read")
+    if not re.search(r"(?m)^        - name: data\n          emptyDir: \{medium: Memory, sizeLimit: [0-9]+[KM]i\}$",
+                     helm) or re.search(r"persistentVolumeClaim|volumeClaimTemplates|hostPath", helm):
+        problems.append("the chart's redis /data must be a Memory emptyDir, never a claim or a host path")
+    if problems:
+        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
+                                                       f" (+{len(problems) - 4} more)"))
+    return _ok(name,
+               "Redis persists nothing in either substrate: no append-only file, no snapshot (--save \"\"), "
+               "no configuration file, /data in memory (a compose tmpfs, a Memory emptyDir); the limiter's "
+               "keys live in memory for their window only")
 
 
 # Lab record 017 (gate row OP-9): each secret reaches only the containers that read it. The chart
@@ -7827,7 +8053,7 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
     judges = (("compose ps -a --format json", "the services and their healthchecks"),
               ('"secrets"', "the secret files"),
               ("config_schema.py check --production", "the production configuration contract"),
-              ("/api/health/live", "the TLS edge"),
+              ('"${URL}/.well-known/security.txt" 2> /dev/null)', "the TLS edge (a public route)"),
               ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
               ('< "${SCRIPT_DIR}/polaris-key-register-check.sql"', "the key register"),
               ("printenv POLARIS_PGBACKREST_S3_BUCKET", "where the backup repository is (OP-14)"))
@@ -9084,7 +9310,7 @@ def check_key_custody_abstraction(root: pathlib.Path) -> list[Finding]:
     if "## Rotation" not in cer or "pkcs11-keygen" not in cer or "ML_DSA_65" not in cer:
         return _fail("key_custody", "KEY-CEREMONY.md must document the ceremony per driver and a Rotation section")
     if "'custody':" not in app or "def _health_check_custody" not in app:
-        return _fail("key_custody", "/api/health must report the custody component (driver, key id, fingerprint)")
+        return _fail("key_custody", "/api/health must report the custody component (driver, public-key fingerprint)")
     return _ok("key_custody", "issuer-key custody: file / PKCS#11 (CKM_ML_DSA, in-token, non-extractable) / "
                "AWS KMS (ML_DSA_65, RAW ML_DSA_SHAKE_256) behind one interface, PIN never from env, "
                "pqc_signing routed through it with the two-witness verify unchanged, rotation anchors, "
@@ -30064,6 +30290,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_session_key_rotation,
     check_release_images_signed,
     check_redis_authenticated,
+    check_redis_persists_nothing,
     check_ha_internal_auth,
     check_failure_domains,
     check_failover_keeps_acknowledged_writes,

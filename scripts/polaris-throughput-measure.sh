@@ -191,11 +191,14 @@ overlay() {  # overlay <app cpus> <replicas>
 }
 
 wait_healthy() {
-    local code=""
+    local code="" app=""
     for _ in $(seq 1 100); do
         compose exec -T caddy cat /data/caddy/pki/authorities/local/root.crt > "${WORK}/caddy-root.crt" 2> /dev/null || true
-        code=$(curl -s --cacert "${WORK}/caddy-root.crt" -o /dev/null -w '%{http_code}' "${BASE}/api/health" || true)
-        if [[ "${code}" == 200 ]]; then
+        # The edge serves a public route (it refuses the health answers from outside
+        # POLARIS_METRICS_ALLOW); the roll-up is read at the app's own address.
+        code=$(curl -s --cacert "${WORK}/caddy-root.crt" -o /dev/null -w '%{http_code}' "${BASE}/.well-known/security.txt" || true)
+        app=$(compose exec -T app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+        if [[ "${code}" == 200 && "${app}" == 200 ]]; then
             # Every app replica healthy, not only the one the edge reached first.
             local want got
             want=$(compose config --services | grep -c -x -E 'app|app-green' || true)
@@ -205,7 +208,7 @@ wait_healthy() {
         sleep 3
     done
     compose ps >&2; compose logs --tail 30 app caddy >&2 || true
-    fail "the stack did not answer /api/health (last ${code})"
+    fail "the stack did not serve with a healthy roll-up (edge ${code}, /api/health at the app ${app})"
 }
 
 prepare() {  # an operator, one credential, a relying party allowed to ask without limit

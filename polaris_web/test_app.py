@@ -409,6 +409,51 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
         self.assertNotEqual(r.status_code, 200)
         self.assertIn(r.status_code, (302, 401, 403))
 
+    def test_exmint_budget_is_not_spent_by_an_unauthenticated_caller(self):
+        """THREAT-MODEL: the exmint: limiter must be spent only AFTER the responder signature
+        authenticates the caller.
+
+        A caller needs only a federated authority's PUBLIC agency_id to post a well-formed,
+        fresh-but-unsigned polaris-exchange-mint/1 statement. While the limiter sat before
+        verify_both, each such attempt consumed a slot in the authority's per-agency bucket
+        (exmint:<id>, 120/min); an unauthenticated flood then filled it and the authority's
+        legitimate service-to-service minting was refused 429 for the window. After the fix the
+        unsigned attempt 401s at verify_both before the limiter, so the bucket is untouched.
+
+        Runs under the placeholder profile with pqc_signing.is_enabled patched True for the
+        request, so the route does not fail closed (503) with or without liboqs; it needs no
+        genuine ML-DSA key or second witness, because every attempt here is unsigned and fails
+        verify_both. The accept (200) path is proven over HTTP by
+        scripts/polaris-federation-instances-drill.py."""
+        from datetime import datetime, timezone
+        # A federated responder authority: a registered key must be present. Its exact bytes do
+        # not matter, because every mint below is unsigned and fails verify_both regardless.
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
+        flask_app.security.rate_limiter.reset()
+
+        def unsigned():
+            return {'mint': {'format': rp_api._EXCHANGE_MINT_FORMAT, 'requester_public_key_hex': 'cd' * 32,
+                             'context_id': 1, 'request_hash': '00' * 32, 'response_hash': '11' * 32,
+                             'responder_agency_id': 1,
+                             'occurred_at': datetime.now(timezone.utc).replace(microsecond=0)
+                                            .isoformat().replace('+00:00', 'Z')},
+                    'signature_hex': '00' * 64}
+
+        with patch.object(pqc_signing, 'is_enabled', return_value=True):
+            # Spread across four source addresses so the per-address write: limit (60/min) never
+            # fires first; every request still lands on the one per-agency exmint:1 bucket.
+            for i in range(rp_api._EXCHANGE_MINT_RATE_PER_MIN):
+                r = self.client.post('/api/v1/exchange-receipt/1/signed', json=unsigned(),
+                                     environ_overrides={'REMOTE_ADDR': '10.0.0.%d' % (i % 4)})
+                self.assertEqual(r.status_code, 401, r.get_data(as_text=True)[:200])
+            # The (N+1)th unsigned attempt. On 40f63aeb the 120 unsigned attempts above filled
+            # exmint:1, so this one is refused 429 before verify_both; with the fix the unsigned
+            # path never reached the limiter, so the bucket is empty and this is still 401.
+            r = self.client.post('/api/v1/exchange-receipt/1/signed', json=unsigned(),
+                                 environ_overrides={'REMOTE_ADDR': '10.0.0.0'})
+        self.assertEqual(r.status_code, 401, 'an unsigned caller filled the exmint: budget before '
+                         'authenticating: the limiter is spent before verify_both')
+
 
 class ExchangeReceiptLogTests(PolarisTestCase):
     """P8.2c: the receipt transparency log's public surface -- a signed head, RFC-6962
@@ -778,6 +823,37 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         self.assertEqual((same.status_code, same.get_json()['error']), (400, 'invalid_request'))
         self.assertEqual(self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id='x')).status_code, 400)
         self.assertEqual(self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id=999999)).status_code, 404)
+
+    def test_sign_budget_is_not_spent_by_a_nonpossessing_caller(self):
+        """THREAT-MODEL: the sign: limiter must be spent only AFTER possession is proven.
+
+        A full presentation shows a stable token value, so a hostile relying party that received
+        one knows a holder's token_value, but not the credential's issued signature. While the
+        limiter sat before _possession_authenticated, that relying party could replay the
+        token_value with a garbage signature and, at 10/min per credential, hold the holder's
+        notary route (POST /api/v1/sign/<agency>/holder) at 429 for one window after another,
+        without ever possessing the credential. After the fix the non-possessing attempt is
+        refused 'not_verifiable' before the limiter, so the budget is untouched and the genuine
+        holder can still sign. Runs under the placeholder profile (the signature it presents is
+        the deployment placeholder, as the rest of this suite)."""
+        tv, sig = self._credential()          # an ACTIVE credential issued by agency 1
+        self._federate(1)
+        flask_app.security.rate_limiter.reset()
+        nonpossessing = {'token_value': tv, 'signature_hex': '00' * 64, 'digest_hex': 'cd' * 32}
+        # The hostile relying party knows the token_value and floods the per-credential bucket
+        # (sign:<hash(tv)>, 10/min) with presentations it cannot sign for.
+        for _ in range(10):
+            r = self.client.post('/api/v1/sign/1/holder', json=nonpossessing)
+            self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+            self.assertEqual(r.get_json()['error'], 'not_verifiable')
+        # The genuine holder presents the real credential and must still be signed. On 40f63aeb
+        # the ten non-possessing attempts drained sign:<hash(tv)>, so this is refused 429; with
+        # the fix the budget was never touched, so it is signed (200).
+        genuine = {'token_value': tv, 'signature_hex': sig, 'digest_hex': 'cd' * 32,
+                   'name': 'report.txt', 'purpose': 'test'}
+        r = self.client.post('/api/v1/sign/1/holder', json=genuine)
+        self.assertEqual(r.status_code, 200, 'the holder is locked out of the notary route: the '
+                         'sign: budget was spent by a non-possessing caller')
 
 
 class AuthBrokerTests(UnauthenticatedTestCase):
@@ -12944,6 +13020,40 @@ class HealthEndpointTests(PolarisTestCase):
         # The state-dir probe (present on a healthy disk check before this fix)
         # must not appear anywhere in the serialized body.
         self.assertNotIn('mount_probe', json.dumps(data))
+
+    def test_no_health_answer_names_the_signing_key(self):
+        """The health answers are unauthenticated. The custody key id names where the signing key
+        lives: under AWS KMS the key's ARN (account, region, key), under PKCS#11 the token and key
+        labels. No health route carries it, whatever the edge in front does; an operator reads it
+        from `custody.py describe` (KEY-CEREMONY.md). The driver and the public-key fingerprint stay:
+        the fingerprint is sha3-256 of the public key the trust list already publishes."""
+        import threading
+        from unittest import mock
+        from app import app as polaris_app
+        pk = bytes(range(256)) * 7 + bytes(160)          # ML-DSA-65's 1952 bytes
+        arn = 'arn:aws:kms:eu-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab'
+        kms = object.__new__(custody.AwsKmsCustody)   # no __init__: no AWS call
+        kms._arn, kms._pk = arn, pk
+        hsm = object.__new__(custody.Pkcs11Custody)   # no __init__: no token opened
+        hsm._token_label, hsm._key_label, hsm._pk, hsm._lock = 'ops-hsm-7', 'issuer-2026', pk, threading.Lock()
+        # Every health route the app serves, read from its URL map: a fourth one is either covered
+        # here or fails this count.
+        health_paths = sorted({r.rule for r in polaris_app.url_map.iter_rules() if r.rule.startswith('/api/health')})
+        self.assertEqual(len(health_paths), 3, health_paths)
+        for driver, held, needles in (('awskms', kms, (arn, '111122223333', 'eu-west-1', '1234abcd-12ab')),
+                                      ('pkcs11', hsm, ('ops-hsm-7', 'issuer-2026'))):
+            self.assertTrue(all(n in held.key_id for n in needles), held.key_id)
+            with mock.patch.object(custody, 'get_custody', return_value=held):
+                with polaris_app.test_client() as c:
+                    bodies = {p: c.get(p) for p in health_paths}
+            for path, r in bodies.items():
+                text = r.get_data(as_text=True)
+                for needle in needles:
+                    self.assertNotIn(needle, text, f"{path} names the {driver} signing key ({needle})")
+            for path in ('/api/health', '/api/health/ready'):
+                c_check = json.loads(bodies[path].get_data(as_text=True))['checks']['custody']
+                self.assertEqual(c_check['driver'], driver, path)
+                self.assertEqual(c_check['public_key_fingerprint'], custody.fingerprint(pk), path)
 
     def test_stats_endpoint_returns_hud_signals(self):
         """The headline the map's corners show: the window's counts and the population's active
