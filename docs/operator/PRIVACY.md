@@ -48,6 +48,7 @@ events stay (the action is permanent, even when the actor is gone).
 | `VerificationEvent` (SELECTIVE) | token_id, requesting agency, context, timestamp, geo, attribute set | Append-only (C1); same `VERIFICATION` retention |
 | `VerificationEvent` (ZERO_KNOWLEDGE) | requesting agency, context, timestamp, geo | Append-only (C1); same `VERIFICATION` retention; note `token_id IS NULL` (C2) |
 | `AuthAuditLog` | username, event_type, ip_address, timestamp | Append-only; archived and purged after the `AUTH_AUDIT` retention, five years by default |
+| Rate-limiter counters (Redis, not the database) | one entry per counted request (its time in milliseconds and a random nonce), under a key naming a credential-hash prefix, a client IP, a relying party's client_id or id, an agency or an operator account | In memory until the key's window plus one second has passed since its last counted request (61 s on the sign-in routes); never written to disk: Redis runs with no append-only file, no snapshot and `/data` in memory. Anyone who can read Redis memory in that time (the application, an operator with access to Redis) sees the keys |
 
 "Archived and purged" means the rows leave the hot table only after a
 manifest-hashed archive holds them and a checkpoint records the deletion; the
@@ -370,7 +371,10 @@ canonical security-header set:
 
 Internal hops run on the isolated compose network. The app-to-pgbouncer and
 pgbouncer-to-postgres hops use the self-signed pairs from the secrets matrix
-with `sslmode=verify-ca`; Redis runs without AUTH on the private network
+with `sslmode=verify-ca`. Redis authenticates its clients against the users in
+`redis_users.acl` (lab record 017, phase 4a): `default` is off, `health` may only PING,
+and the app's `polaris` user may run only the rate limiter's commands on its own keys; that
+hop is not encrypted and stays on the private network
 ([SECRETS.md, section 1](SECRETS.md#1-the-secrets-matrix)). The privacy claim
 is that nothing leaves the host without TLS termination first.
 
