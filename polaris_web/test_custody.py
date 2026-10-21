@@ -321,7 +321,7 @@ class FileKeyLoaderTests(unittest.TestCase):
         the key's name before the key exists, 0644 so no write bit gives it away, and uid 1000
         (the image's user) and root load it: refused. A key root created in the same directory,
         as the kubelet creates a secret mount's entries, loads for both."""
-        os.chmod(self.dir, 0o1777)
+        os.chmod(self.dir, 0o1777)  # nosec B103  # the refusal under test needs a world-writable fixture
         self.addCleanup(os.chmod, self.dir, 0o700)
         os.chmod(self.path, 0o644)
         planted = os.path.join(self.dir, "planted_signing_key")
@@ -364,7 +364,7 @@ class FileKeyLoaderTests(unittest.TestCase):
         self.addCleanup(os.chmod, mount, 0o700)
         self.addCleanup(os.chmod, stamped, 0o700)
         os.chmod(stamped, 0o755)
-        os.chmod(mount, 0o1777)
+        os.chmod(mount, 0o1777)  # nosec B103  # the refusal under test needs a world-writable fixture
         self.assertEqual(custody.FileCustody(name).public_key(), bytes(custody.PUBLIC_KEY_LEN))
         # The kubelet creates the name as root; a name another user planted first is refused.
         with _lstat_owned_by(name, 0):
@@ -375,7 +375,7 @@ class FileKeyLoaderTests(unittest.TestCase):
         for writable, other, other_mode in ((mount, stamped, 0o755), (stamped, mount, 0o1777)):
             with self.subTest(writable=os.path.basename(writable)):
                 os.chmod(other, other_mode)
-                os.chmod(writable, 0o777)
+                os.chmod(writable, 0o777)  # nosec B103  # the refusal under test needs a world-writable fixture
                 with self.assertRaises(custody.CustodyError) as caught:
                     custody.FileCustody(name)
                 self.assertIn("/%s, which group or others can write" % os.path.basename(writable),
