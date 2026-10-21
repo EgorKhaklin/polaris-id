@@ -140,6 +140,14 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   signed. `--vct` (repeatable) names the credential types to accept; without it,
   `urn:eudi:pid:1`. `Verifier(claims=..., vct_values=...)` takes the same, a claim as a name, a
   list of keys, or `{"path": [...], "values": [...]}`.
+- `serve --once --result FILE` keeps FILE a JSON object saying what became of the request
+  `--once` started, apart from the log on stdout. `outcome` is `nothing_received` until a
+  response arrives, then that response's: `accepted` (with `claims`, the names), `refused` (with
+  `check` and `reason`, the code and text its `<-` line prints) or `wallet_error`; an acceptance
+  closes the request and stays. `response.status_code` is the HTTP status the wallet was
+  answered, `request_object` counts the fetches `served` and `refused`, and `responses` the
+  responses received. The file is replaced whole at startup and before each answer goes out;
+  without `--once` it is refused (exit 2).
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
@@ -394,7 +402,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 651 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 663 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a
