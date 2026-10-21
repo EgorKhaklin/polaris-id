@@ -3431,24 +3431,28 @@ def test_redis_authenticated_check_discriminates(tmp_path):
     assert checks.check_redis_authenticated(tmp_path)[0].level == "OK", \
         "must PASS on the real generator, rotation, compose, chart, schema and CI"
 
-    def broken(rel, old, new, why):
+    def broken(rel, old, new, why, reason=None):
         path = tmp_path / rel
         good = path.read_text()
         assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
         path.write_text(good.replace(old, new, 1))
-        assert checks.check_redis_authenticated(tmp_path)[0].level == "FAIL", why
+        bad = checks.check_redis_authenticated(tmp_path)[0]
+        assert bad.level == "FAIL", why
+        assert reason is None or reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
         path.write_text(good)
 
     gen, rot = "scripts/polaris-generate-secrets.sh", "scripts/polaris-rotate-secret.sh"
     compose = "polaris_web/docker-compose.prod.yml"
     broken(gen, "resetchannels -@all +ping +client|setinfo", "resetchannels -@all +@all +ping +client|setinfo",
-           "must FAIL when the app's Redis user may run every command")
+           "must FAIL when the app's Redis user may run every command",
+           "polaris-generate-secrets.sh: the polaris Redis user's rule carries +@all, a command category")
     broken(gen, "printf 'user default off", "printf 'user default on nopass",
            "must FAIL when an unauthenticated client is the default user, enabled")
     broken(gen, "write_secret_if_missing polaris_redis_password", "true",
            "must FAIL when no Redis password is generated")
     broken(rot, "+scan +del'", "+scan +del +get'",
-           "must FAIL when rotation writes different ACL rules from the generator")
+           "must FAIL when rotation writes different ACL rules from the generator",
+           "polaris-rotate-secret.sh writes different Redis ACL rules from the generator")
     broken(rot, 'write_redis_acl "${NEW_HASH}" "${OLD_HASH}"', 'write_redis_acl "${NEW_HASH}"',
            "must FAIL when rotation refuses the app's old password before the app has moved")
     broken("deploy/helm/polaris/templates/secret.yaml", "+scan +del\\n", "+scan +del +get\\n",
@@ -3465,6 +3469,151 @@ def test_redis_authenticated_check_discriminates(tmp_path):
            "must FAIL when production accepts a password in the Redis URL")
     broken(".github/workflows/ci.yml", "grep -q NOAUTH", "grep -q .",
            "must FAIL when CI no longer asserts an unauthenticated client is refused")
+
+    # A token added to the rule in all three files keeps them equal, so only the tokens, read file by
+    # file, can refuse it. CONFIG SET is in @admin, @dangerous and @slow; GET is not a limiter command.
+    acl_files = (gen, rot, "deploy/helm/polaris/templates/secret.yaml")
+    for tok, what, said in (("+@admin", "a category holding CONFIG SET", "a command category"),
+                            ("+@slow", "a category holding CONFIG SET", "a command category"),
+                            ("+@dangerous", "a category holding CONFIG SET", "a command category"),
+                            ("+config", "CONFIG", "which is not one of the limiter's tokens"),
+                            ("+get", "a command the limiter does not run", "which is not one of the limiter's tokens")):
+        goods = {rel: (tmp_path / rel).read_text() for rel in acl_files}
+        for rel, good in goods.items():
+            assert good.count("+scan +del") == 1, f"the fixture drifted: one '+scan +del' expected in {rel}"
+            (tmp_path / rel).write_text(good.replace("+scan +del", "+scan +del " + tok))
+        bad = checks.check_redis_authenticated(tmp_path)[0]
+        why = f"must FAIL when the app's Redis user gains {tok} ({what}) in all three files"
+        assert bad.level == "FAIL", why
+        for where in ("polaris-generate-secrets.sh", "polaris-rotate-secret.sh", "the Helm Secret"):
+            reason = f"{where}: the polaris Redis user's rule carries {tok}, {said}"
+            assert reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
+        for rel, good in goods.items():
+            (tmp_path / rel).write_text(good)
+    assert checks.check_redis_authenticated(tmp_path)[0].level == "OK", "the fixture was not restored"
+    # The shell keeps the last assignment, so a second rule line later in the generator is the one used.
+    broken(gen, "+scan +del'", "+scan +del'\nREDIS_ACL_POLARIS_RULES='~polaris:rl:* resetchannels -@all +@admin'",
+           "must FAIL when a later assignment in the generator gives the app's Redis user +@admin",
+           "polaris-generate-secrets.sh: the polaris Redis user's rule carries +@admin, a command category")
+
+    # The users file outside the rule string: each widening below left the rule the same, and each passed
+    # the token check. The message shows the first four problems, so each asserts the first file's reason.
+    def widened(edits, why, reason):
+        goods = {}
+        for rel, old, new in edits:
+            path = tmp_path / rel
+            goods.setdefault(rel, path.read_text())
+            text = path.read_text()
+            assert text.count(old) == 1, f"the fixture drifted: one {old!r} expected in {rel}"
+            path.write_text(text.replace(old, new, 1))
+        bad = checks.check_redis_authenticated(tmp_path)[0]
+        assert bad.level == "FAIL", why
+        assert reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
+        for rel, good in goods.items():
+            (tmp_path / rel).write_text(good)
+
+    helm_secret = "deploy/helm/polaris/templates/secret.yaml"
+    ops = "user ops on nopass ~* +@all\\n"
+    default = "user default off resetkeys resetchannels -@all"
+    rule = (tmp_path / gen).read_text().split("REDIS_ACL_POLARIS_RULES='", 1)[1].split("'", 1)[0]
+    assignment = f"REDIS_ACL_POLARIS_RULES='{rule}'\n"
+    widened([(gen, "user polaris on #%s %s\\n", "user polaris on #%s +@all %s\\n"),
+             (rot, "user polaris on %s %s\\n", "user polaris on %s +@all %s\\n")],
+            "must FAIL when the printf format gives polaris +@all outside the rule",
+            "polaris-generate-secrets.sh: Redis users line 3 of format 1 reads 'user polaris on #%s +@all %s'")
+    widened([(f, "+ping\\nuser polaris", "+ping\\n" + ops + "user polaris") for f in (gen, rot, helm_secret)],
+            "must FAIL when a fourth user with +@all is written before polaris",
+            "polaris-generate-secrets.sh: Redis users line 3 of format 1 reads 'user ops on nopass ~* +@all'")
+    widened([(f, default, default + " on nopass ~* +@all") for f in (gen, rot, helm_secret)],
+            "must FAIL when the default user is turned on again after off",
+            f"polaris-generate-secrets.sh: Redis users line 1 of format 1 reads '{default} on nopass ~* +@all'")
+    widened([(f, assignment, assignment + "REDIS_ACL_POLARIS_RULES+=' +@admin'\n") for f in (gen, rot)],
+            "must FAIL when the rule gains +@admin by += after its assignment",
+            "polaris-generate-secrets.sh: REDIS_ACL_POLARIS_RULES (its assignment and the printf) appears 3 times")
+    widened([(f, assignment, assignment + 'REDIS_ACL_POLARIS_RULES="${REDIS_ACL_POLARIS_RULES} +@admin"\n')
+             for f in (gen, rot)],
+            "must FAIL when the rule is reassigned with +@admin",
+            "polaris-generate-secrets.sh: REDIS_ACL_POLARIS_RULES (its assignment and the printf) appears 4 times")
+    widened([(gen, '"${REDIS_ACL_POLARIS_RULES}" > "${target}" )\n',
+              '"${REDIS_ACL_POLARIS_RULES}" > "${target}" )\n    printf \'user ops on nopass ~* +@all\\n\' >> "${target}"\n')],
+            "must FAIL when a second printf appends a user",
+            "polaris-generate-secrets.sh: 2 printf formats write Redis users, not one")
+    widened([(f, '"${REDIS_ACL_POLARIS_RULES}" >', '"${REDIS_ACL_POLARIS_RULES} +@all" >') for f in (gen, rot)],
+            "must FAIL when the printf's rule argument carries +@all",
+            "polaris-generate-secrets.sh: the Redis users printf takes other arguments than the hash and the rule")
+    widened([(rot, 'hashes="#$1"', 'hashes="#$1 +@all"')],
+            "must FAIL when rotation's hashes carry +@all",
+            'polaris-rotate-secret.sh: hashes="#$1" appears 0 times, not 1')
+    widened([(rot, '    chmod 0644 "${acl}.new"\n', '    echo "user ops on nopass ~* +@all" >> "${acl}.new"\n    chmod 0644 "${acl}.new"\n')],
+            "must FAIL when an echo appends a user",
+            "polaris-rotate-secret.sh: its code names the Redis users ['user default off', 'user health on', "
+            "'user polaris on', 'user ops on']")
+    widened([(rot, '    chmod 0644 "${acl}.new"\n', '    chmod 0644 "${acl}.new"\n    redis-cli ACL SETUSER ops on nopass +@all\n')],
+            "must FAIL when a writer adds a user through ACL SETUSER",
+            "polaris-rotate-secret.sh: it runs ACL SETUSER")
+    # A heredoc, an unquoted echo or a template join adds a user outside any quoted string.
+    printf_end = '"${REDIS_ACL_POLARIS_RULES}" > "${target}" )\n'
+    helm_end = '" (sha256sum $redisPw) }}\n'
+    widened([(gen, printf_end, printf_end + "    cat >> \"${target}\" <<'ACL'\nuser ops on nopass ~* +@all\nACL\n")],
+            "must FAIL when a heredoc appends a user",
+            "polaris-generate-secrets.sh: its code names the Redis users ['user default off', 'user health on', "
+            "'user polaris on', 'user ops on']")
+    widened([(gen, printf_end, printf_end + '    echo user ops on nopass ~* +@all >> "${target}"\n')],
+            "must FAIL when an unquoted echo appends a user",
+            "polaris-generate-secrets.sh: its code names the Redis users ['user default off', 'user health on', "
+            "'user polaris on', 'user ops on']")
+    widened([(helm_secret, helm_end, helm_end + '{{- $redisAcl = printf "%s user ops on nopass ~* +@all" $redisAcl }}\n')],
+            "must FAIL when the template joins a user onto $redisAcl",
+            "the Helm Secret: its code names the Redis users ['user default off', 'user health on', "
+            "'user polaris on', 'user ops on']")
+    widened([(helm_secret, helm_end, helm_end + '{{- $redisAcl = printf "%suser ops on nopass ~* +@all\\n" $redisAcl }}\n')],
+            "must FAIL when the template joins a user onto $redisAcl with no space before it",
+            "the Helm Secret: $redisAcl (its printf and the Secret's key) appears 4 times, not 2")
+    # The hash reaches the users line only through pinned lines that refuse anything but 64 hex digits:
+    # a `nopass` riding in on it makes polaris accept every password, and the line checks above see the
+    # format and the arguments, not what the hash variable holds.
+    pinned = "the lines from the password's hash to the users printf are not the pinned ones"
+    widened([(gen, "        return 1\n    fi\n    ( umask 0133 && printf 'user default",
+              "        return 1\n    fi\n    printf -v hash '%s nopass' \"${hash}\"\n    ( umask 0133 && printf 'user default")],
+            "must FAIL when the generator's hash gains nopass after its hex check",
+            f"polaris-generate-secrets.sh: {pinned}")
+    widened([(gen, '=~ ^[0-9a-f]{64}$ ]]; then\n        echo "  ✗ redis_users.acl  (could not hash',
+              '=~ ^[0-9a-f]{64} ]]; then\n        echo "  ✗ redis_users.acl  (could not hash')],
+            "must FAIL when the generator's hex check is loosened", f"polaris-generate-secrets.sh: {pinned}")
+    widened([(rot, "| cut -d' ' -f1; }\nwrite_redis_acl", "| cut -d' ' -f1 | sed 's/$/ nopass/'; }\nwrite_redis_acl")],
+            "must FAIL when rotation's hash function adds nopass", f"polaris-rotate-secret.sh: {pinned}")
+    widened([(rot, 'for h in "$@"; do', 'for h in "$1"; do')],
+            "must FAIL when rotation's guard skips the old password's hash", f"polaris-rotate-secret.sh: {pinned}")
+    # The rule line read by bash, not by the capture; and the users file after the printf.
+    whole = "REDIS_ACL_POLARIS_RULES is not set by one whole line ending at its closing quote"
+    widened([(f, assignment, f"REDIS_ACL_POLARIS_RULES='{rule}'' +@admin'\n") for f in (gen, rot)],
+            "must FAIL when bash joins a quoted +@admin onto the rule's line",
+            f"polaris-generate-secrets.sh: {whole}")
+    widened([(f, assignment, f"REDIS_ACL_POLARIS_RULES='{rule}'\"${{POLARIS_REDIS_ACL_EXTRA:-}}\"\n")
+             for f in (gen, rot)],
+            "must FAIL when the rule's line takes more words from the environment",
+            f"polaris-generate-secrets.sh: {whole}")
+    writer = "the users file's writer is not the pinned one from its first line to its closing brace"
+    widened([(gen, '    refuse_directory "${target}" "${pw}" || return 1\n',
+              '    refuse_directory "${target}" "${pw}" || return 1\n'
+              '    cat "${SECRETS_DIR}/redis_users.extra" > "${target}" && return 0\n')],
+            "must FAIL when the generator's writer fills the users file from another file before its printf",
+            f"polaris-generate-secrets.sh: {writer}")
+    widened([(gen, printf_end, printf_end + "    sed -i.bak 's/ -@all +ping +client/ +@all +ping +client/' \"${target}\"\n")],
+            "must FAIL when a sed -i edits the users file after the printf",
+            f"polaris-generate-secrets.sh: {writer}")
+    widened([(rot, '    mv "${acl}.new" "${acl}"\n', '    mv "${acl}.new" "${acl}"\n    sed -i.bak \'s/~polaris:rl:\\*/~*/\' "${acl}"\n')],
+            "must FAIL when a sed -i edits rotation's users file after the move",
+            f"polaris-rotate-secret.sh: {writer}")
+    widened([(gen, "write_redis_acl_if_missing\n",
+              'write_redis_acl_if_missing\ncat "${SECRETS_DIR}/redis_users.extra" >> "${SECRETS_DIR}/redis_users.acl"\n')],
+            "must FAIL when a line outside the writer appends another file to the users file",
+            "polaris-generate-secrets.sh: its code names redis_users.acl 6 times, not 5")
+    widened([(helm_secret, "  redis_users.acl: {{ $redisAcl | b64enc }}\n",
+              '  redis_users.acl: {{ printf "%s%s" $redisAcl (.Values.redis.extraAcl | default "") | b64enc }}\n')],
+            "must FAIL when the Secret's key joins a values string onto the users file",
+            "the Helm Secret: its redis_users.acl key is not exactly {{ $redisAcl | b64enc }}")
+    assert checks.check_redis_authenticated(tmp_path)[0].level == "OK", "the fixture was not restored"
 
 
 def test_redis_persists_nothing_check_discriminates(tmp_path):
