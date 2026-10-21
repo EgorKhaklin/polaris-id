@@ -75,9 +75,11 @@ Under real signing this is not optional. Every possession route (`/api/v1/verify
 assertion, holder signing, the verifiable credential, the mdoc, sign-in) accepts a signature only
 under a key its authority had registered at the instant the signature was made, and refuses one
 whose key has no recorded history. The application role cannot add to the authority key register
-(since 2026-09-27) or write a signature row (since 2026-10-04); this refusal stays so that a row
-that reaches the table another way is still not vouched for. A credential issued before its key
-was registered is refused until the registration's `--effective-at` covers its signing instant.
+(since 2026-09-27) or write a signature row directly (since 2026-10-04; `uc6_migrate_algorithm`,
+a definer routine it may call, still inserts one from the bytes it is given); this refusal stays
+so that a row that reaches the table another way is still not vouched for. A credential issued
+before its key was registered is refused until the registration's `--effective-at` covers its
+signing instant.
 
 ### file
 
@@ -184,8 +186,8 @@ cryptographically its own (roadmap PE.3b), give each agency its own key:
    `polaris key-register <id> <hex>`, run as the schema owner, which appends the key to
    the authority's register and makes it current in one transaction. The application role
    cannot append key events (2026-09-27), so `key-register`, `key-retire` and
-   `key-compromise` exit 3 under it. Since 1.0.0-rc.57 the
-   application role cannot set a key the register does not hold (or holds as retired or
+   `key-compromise` exit 3 under it. Since 1.0.0-rc.57 an `UPDATE` by the application role
+   cannot change an authority's key to one the register does not hold (or holds as retired or
    compromised); a plain `UPDATE Agency` works only as the schema owner, and leaves no register
    entry, so the trust list would serve a key with no history.
 3. Once registered, `/uc1/issue` REFUSES to issue a token for that agency whose real
