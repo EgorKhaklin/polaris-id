@@ -61,7 +61,11 @@ signed fields listed for that artifact, serialized with
 - the compact separators `,` and `:` (no whitespace).
 
 A JavaScript verifier cannot tell an integral value written with a fraction (`1.0`) from the
-integer, nor hold an integer beyond 2^53 exactly, so a signer SHOULD NOT sign either.
+integer, nor hold an integer beyond 2^53 exactly, so a signer SHOULD NOT sign either: such a
+verifier refuses a `1.0` the signer wrote, and accepts an integer re-encoded as `1.0` in transit,
+which a verifier that keeps `1.0` apart from the integer refuses. polaris-verify refuses a signed
+count or size (a tree head's or a cosignature's `tree_size`, `revoked_count`, `member_count`,
+`leaf_count`) that is not an integer from 0 to 2^53 - 1.
 
 Concretely, `canonical = json.dumps(statement, sort_keys=True,
 separators=(",", ":")).encode("utf-8")` and `digest = SHA3-256(canonical)`. The
