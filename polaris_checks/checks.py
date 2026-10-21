@@ -3598,7 +3598,9 @@ def check_caddy_self_built(root: pathlib.Path) -> list[Finding]:
 # (v9.140) — the prod stack had never come up. This pins the keystone test: a CI
 # job generates secrets, builds the prod images, boots docker-compose.prod.yml +
 # the citest override (Caddy internal CA instead of ACME), and asserts the stack
-# serves /api/health through the TLS edge with the DB-backed components healthy.
+# serves through the TLS edge with the DB-backed components healthy. Since
+# 2026-10-21 the edge refuses /api/health from outside the allow-list, so the
+# edge is asked for a public route and the roll-up is read at the app's address.
 # ---------------------------------------------------------------------------
 def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
     ci = _read(root, ".github/workflows/ci.yml")
@@ -3622,14 +3624,16 @@ def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_stack_boot",
                      "the prod-stack boot job must run polaris-generate-secrets.sh so the stack "
                      "boots on real generated secrets + certs, like a deploy")
-    # It must assert the stack actually SERVES through the edge (a health probe).
-    if "/api/health" not in ci:
+    # It must assert the stack actually SERVES through the edge, and that the roll-up is healthy.
+    if ("https://localhost:8443/.well-known/security.txt" not in ci
+            or "docker exec polaris-app curl -s http://localhost:8000/api/health" not in ci):
         return _fail("prod_stack_boot",
-                     "the prod-stack boot job must assert the stack serves /api/health through the "
-                     "Caddy TLS edge (a 200 + DB-backed components healthy), not just that it starts")
+                     "the prod-stack boot job must assert the stack serves through the Caddy TLS edge "
+                     "(a public route, /.well-known/security.txt) and that /api/health, read at the "
+                     "app's own address, reports the DB-backed components healthy, not just that it starts")
     return _ok("prod_stack_boot",
                "CI boots the FULL prod compose (generated secrets, real images, TLS edge) and "
-               "asserts it serves /api/health end to end")
+               "asserts it serves through the edge with a healthy roll-up at the app")
 
 
 # ---------------------------------------------------------------------------
@@ -5028,8 +5032,15 @@ def check_cli_help_lists_every_command(root: pathlib.Path) -> list[Finding]:
 # and roughly when, a duress alarm fired. Both shipped edges (the compose
 # Caddyfile and the Helm configmap) must refuse them from outside the
 # monitoring network. Through v9.208 neither did, and the docstrings described
-# an ACL that existed only in prose.
+# an ACL that existed only in prose. 2026-10-21: the health answers too
+# (/api/health and everything under it), which report every component of the
+# deployment unauthenticated; API.md said they "must be restricted at the edge
+# in production" while the shipped edges restricted only the metrics.
 # ---------------------------------------------------------------------------
+_EDGE_RULES = (("metrics_from_outside", ("/metrics", "/api/metrics"), "the metrics surfaces"),
+               ("health_from_outside", ("/api/health", "/api/health/*"), "the health answers"))
+
+
 def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
     name = "metrics_edge_acl"
     edges = (("polaris_web/Caddyfile", "POLARIS_METRICS_ALLOW"),
@@ -5040,37 +5051,47 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
         conf = _read(root, rel)
         if not conf:
             return _fail(name, f"{rel} is missing")
-        if "@metrics_from_outside" not in conf or "respond @metrics_from_outside 404" not in conf:
-            return _fail(name,
-                         f"{rel} must refuse /metrics and /api/metrics from outside the monitoring "
-                         "network (a named matcher plus `respond ... 404`)")
-        matcher = conf[conf.index("@metrics_from_outside"):]
-        matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
-        for needle in ("/metrics", "/api/metrics", "not remote_ip"):
-            if needle not in matcher:
-                return _fail(name, f"{rel}'s matcher does not cover {needle}")
         if knob not in conf:
             return _fail(name, f"{rel} must let the operator name the allowed range ({knob})")
-        blocks[rel] = matcher
+        for rule, paths, what in _EDGE_RULES:
+            # The respond line on a line of its own: a commented-out `# respond @rule 404` is no refusal.
+            if f"@{rule} {{" not in conf or not re.search(rf"^\s*respond @{rule} 404\s*$", conf, re.M):
+                return _fail(name,
+                             f"{rel} must refuse {what} ({' '.join(paths)}) from outside the monitoring "
+                             f"network (a named matcher @{rule} plus `respond @{rule} 404`)")
+            matcher = conf[conf.index(f"@{rule} {{"):]
+            matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
+            path_line = re.search(r"^\s*path\s+(.*)$", matcher, re.M)
+            listed = path_line.group(1).split() if path_line else []
+            for needle in paths:
+                if needle not in listed:
+                    return _fail(name, f"{rel}'s @{rule} matcher does not cover {needle}")
+            if "not remote_ip" not in matcher:
+                return _fail(name, f"{rel}'s @{rule} matcher does not cover not remote_ip")
+            blocks[(rel, rule)] = matcher
     # 2026-10-07 (lab record 017): unset, the allow-list names no client. Until then it defaulted to
     # private ranges, and behind an L4 load balancer, Kubernetes' default externalTrafficPolicy,
     # rootless Docker or Docker's IPv6 userland proxy every internet client reaches the edge from
     # a private address: the duress counter was public (scripts/polaris-metrics-edge-drill.sh).
-    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
-        m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[rel])
-        if not m or m.group(1).strip() != "0.0.0.0/32":
-            return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
-                         f"(0.0.0.0/32), not {m.group(1).strip() if m else 'nothing'}; behind SNAT "
-                         "every internet client is a private address")
-    helm = blocks["deploy/helm/polaris/templates/configmap-caddy.yaml"]
+    for rule, _paths, _what in _EDGE_RULES:
+        for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+            m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[(rel, rule)])
+            if not m or m.group(1).strip() != "0.0.0.0/32":
+                return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
+                             f"(0.0.0.0/32) in @{rule}, not {m.group(1).strip() if m else 'nothing'}; behind "
+                             "SNAT every internet client is a private address")
+        if '| default "0.0.0.0/32"' not in blocks[("deploy/helm/polaris/templates/configmap-caddy.yaml", rule)]:
+            return _fail(name, f"the chart's @{rule} must allow no client unless edge.metricsAllow names one "
+                         '(the template default "0.0.0.0/32")')
     values = re.search(r'^\s*metricsAllow:\s*"([^"]*)"', _read(root, "deploy/helm/polaris/values.yaml"), re.M)
-    if '| default "0.0.0.0/32"' not in helm or not values or values.group(1) != "":
+    if not values or values.group(1) != "":
         return _fail(name, "the chart must allow no client unless edge.metricsAllow names one "
                      '(values metricsAllow "" and the template default "0.0.0.0/32")')
     norm = lambda t: [line.strip() for line in t.splitlines() if line.strip()]
-    if norm(blocks["polaris_web/Caddyfile"]) != norm(blocks["polaris_web/Caddyfile.citest"]):
-        return _fail(name, "Caddyfile.citest's metrics rule differs from the production Caddyfile's; "
-                     "the stack CI and try.sh boot must refuse the metrics the way production does")
+    for rule, _paths, what in _EDGE_RULES:
+        if norm(blocks[("polaris_web/Caddyfile", rule)]) != norm(blocks[("polaris_web/Caddyfile.citest", rule)]):
+            return _fail(name, f"Caddyfile.citest's @{rule} rule differs from the production Caddyfile's; "
+                         f"the stack CI and try.sh boot must refuse {what} the way production does")
     ci = _read(root, ".github/workflows/ci.yml")
     if ("metrics surfaces are refused from outside" not in ci
             or "bash scripts/polaris-metrics-edge-drill.sh" not in ci):
@@ -5080,10 +5101,16 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
     if "/polaris_web/Caddyfile" not in drill or 'probe 404 "${where}" /metrics' not in drill or "via SNAT" not in drill:
         return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the rule from the shipped "
                      "Caddyfile and ask through an SNAT hop as well as in-network")
+    if ("/@health_from_outside {/,/respond @health_from_outside 404/p" not in drill
+            or "HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)" not in drill
+            or 'for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done' not in drill):
+        return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the health rule from the shipped "
+                     "Caddyfile and require 404 on /api/health, /api/health/ready and /api/health/live, "
+                     "in-network and through the SNAT hop")
     return _ok(name,
-               "all three edges refuse the metrics surfaces unless the monitoring network is named "
-               "(no client by default), the CI edge's rule is production's, and CI asks in-network "
-               "and through an SNAT hop against the shipped rule")
+               "all three edges refuse the metrics surfaces and the health answers unless the monitoring "
+               "network is named (no client by default), the CI edge's rules are production's, and CI asks "
+               "in-network and through an SNAT hop against the shipped rules")
 
 
 # ---------------------------------------------------------------------------
@@ -8026,7 +8053,7 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
     judges = (("compose ps -a --format json", "the services and their healthchecks"),
               ('"secrets"', "the secret files"),
               ("config_schema.py check --production", "the production configuration contract"),
-              ("/api/health/live", "the TLS edge"),
+              ('"${URL}/.well-known/security.txt" 2> /dev/null)', "the TLS edge (a public route)"),
               ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
               ('< "${SCRIPT_DIR}/polaris-key-register-check.sql"', "the key register"),
               ("printenv POLARIS_PGBACKREST_S3_BUCKET", "where the backup repository is (OP-14)"))
@@ -9283,7 +9310,7 @@ def check_key_custody_abstraction(root: pathlib.Path) -> list[Finding]:
     if "## Rotation" not in cer or "pkcs11-keygen" not in cer or "ML_DSA_65" not in cer:
         return _fail("key_custody", "KEY-CEREMONY.md must document the ceremony per driver and a Rotation section")
     if "'custody':" not in app or "def _health_check_custody" not in app:
-        return _fail("key_custody", "/api/health must report the custody component (driver, key id, fingerprint)")
+        return _fail("key_custody", "/api/health must report the custody component (driver, public-key fingerprint)")
     return _ok("key_custody", "issuer-key custody: file / PKCS#11 (CKM_ML_DSA, in-token, non-extractable) / "
                "AWS KMS (ML_DSA_65, RAW ML_DSA_SHAKE_256) behind one interface, PIN never from env, "
                "pqc_signing routed through it with the two-witness verify unchanged, rotation anchors, "

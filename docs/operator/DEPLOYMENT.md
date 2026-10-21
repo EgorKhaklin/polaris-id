@@ -51,7 +51,8 @@ git clone https://github.com/EgorKhaklin/polaris-id.git && cd polaris-id
 ./scripts/polaris-generate-secrets.sh          # once
 export POLARIS_DOMAIN=polaris.example.org
 ./scripts/polaris-deploy.sh prod               # or: prod --no-pull
-curl -fsS https://${POLARIS_DOMAIN}/api/health | jq .
+curl -fsS https://${POLARIS_DOMAIN}/.well-known/security.txt >/dev/null && echo edge OK
+docker exec polaris-app curl -fsS http://localhost:8000/api/health | jq .
 ```
 
 Under `POLARIS_ENV=production` the application checks every setting against the
@@ -270,7 +271,7 @@ the remaining variables come from the shell or `polaris.env`.
 | `POLARIS_DEMO_MODE` | Serves the public synthetic walkthrough at `/demo` and the landing page's demo call to action. Defaults to on outside production and is ignored under `POLARIS_ENV=production`, so real records are never advertised as notional. | on outside production, off in production |
 | `POLARIS_LAUNCHER_WATCH` | Turns on the macOS launcher's browser-presence beacon and its two control routes (`/api/heartbeat`, `/api/quit`). Set by the launcher and the dev compose; a server deployment leaves it off and the routes answer 404. | off |
 | `POLARIS_DEPLOYMENT_LABEL` | The provenance label a production Atlas shows (an operator-chosen deployment name, for example `COUNTY OF EXAMPLE`). Outside production the Atlas labels itself `NOTIONAL DATA`; in production with no label it shows none. | unset |
-| `POLARIS_METRICS_ALLOW` | Which clients the edge lets reach `/metrics` and `/api/metrics`; everyone else gets 404. Both surfaces carry the duress signal and neither authenticates. Caddy syntax, a CIDR such as `10.20.0.0/16`; a Prometheus on the stack's network scrapes `app:8000` directly instead. | unset: no client (behind a load balancer or NAT every internet client is a private address) |
+| `POLARIS_METRICS_ALLOW` | Which clients the edge lets reach `/metrics`, `/api/metrics` and the health answers (`/api/health`, `/api/health/ready`, `/api/health/live`); everyone else gets 404. The metrics surfaces carry the duress signal, the health answers report every component, and none authenticates. Caddy syntax, a CIDR such as `10.20.0.0/16`; a Prometheus or a probe on the stack's network asks `app:8000` directly instead. | unset: no client (behind a load balancer or NAT every internet client is a private address) |
 | `POLARIS_DB_PASSWORD` / `POLARIS_DB_PASSWORD_FILE` | `polaris_app` role password. The file form wins. | dev fallback; prod compose mounts `/run/secrets/polaris_db_password` |
 | `POLARIS_APP_PASSWORD` / `POLARIS_APP_PASSWORD_FILE` | `docker-init.sh` only, first boot: rotates the `polaris_app` role to this value. Refused under 16 characters; under 24 it must also carry a digit, a letter, and a symbol. | unset; prod compose points the file form at the same DB-password secret |
 | `POLARIS_RATE_LIMIT_BACKEND` | `auto` / `memory` / `redis`. `auto` picks Redis when `POLARIS_REDIS_URL` is set, otherwise in-memory. | `auto` |
@@ -308,7 +309,7 @@ The login and write rate limiter in `security.py` has two backends:
 `/api/health` reports the limiter under `checks.redis`:
 
 ```bash
-curl -fsS https://${POLARIS_DOMAIN}/api/health | jq .checks.redis
+docker exec polaris-app curl -fsS http://localhost:8000/api/health | jq .checks.redis
 # {"status": "healthy", "backend": "redis", "latency_ms": 1.2}
 # {"status": "healthy", "backend": "memory", "latency_ms": 0.0}   single-worker development
 ```
@@ -325,7 +326,7 @@ Against the running stack:
 ```bash
 curl -fsS https://${POLARIS_DOMAIN}/login | grep -q POLARIS && echo OK   # web reachable
 curl -sSI https://${POLARIS_DOMAIN}/dashboard | head -1                  # 302 FOUND: /dashboard is login-gated; / is the public landing page
-curl -fsS https://${POLARIS_DOMAIN}/api/health | jq .status               # "healthy"
+docker exec polaris-app curl -fsS http://localhost:8000/api/health | jq .status   # "healthy" (the edge answers it 404)
 ```
 
 From a development checkout (the suites need the `polaris_test` development

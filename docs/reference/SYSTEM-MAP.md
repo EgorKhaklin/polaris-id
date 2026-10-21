@@ -136,7 +136,7 @@ polaris/
 - `osv-scan`: malicious packages and known vulnerabilities (OSV-Scanner) in each image's installed Python set and the npm and Rust lockfiles.
 - `cve-scan`: dependency CVE audit (pip-audit) plus SAST (bandit).
 - `image-cve-scan`: Trivy scan of the self-built prod images; gates on fixable CRITICALs.
-- `prod-stack-boot`: boots the full prod compose end to end and asserts `/api/health` serves through the TLS edge.
+- `prod-stack-boot`: boots the full prod compose end to end and asserts the TLS edge serves a public route and answers the three health paths 404 from outside, and `/api/health` is healthy at the app's own address.
 - `managed-postgres`: initialises a PostgreSQL Polaris does not ship, owned by a role that is not a superuser, with `scripts/polaris-db-init.sh`: refused before any write without the parameter grant, a production database with it.
 - `ui-drill`: drives the Atlas live-simulation mode in a headless Chromium (Playwright) and asserts the console actually streams: the sim counter climbs and the Overview aggregate grows: uploading the screenshots.
 

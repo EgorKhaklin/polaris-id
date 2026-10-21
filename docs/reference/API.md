@@ -13,8 +13,12 @@ and the JSON API under `/api/`. Every `/api/*` endpoint requires the
 session cookie established by `POST /login` except the health probes
 (`/api/health`, `/api/health/live`, `/api/health/ready`) and the two
 metrics surfaces (`/api/metrics`, `/metrics`), which are meant for
-probes and scrapers on an operator-internal network and must be
-restricted at the edge in production.
+probes and scrapers on an operator-internal network. The shipped TLS
+edges (the Caddyfile and the Helm chart's) answer all five with 404
+unless the client address is in `POLARIS_METRICS_ALLOW`
+(`edge.metricsAllow` in Helm), which unset names no client; the probes
+and scrapers reach the app's own address. No health answer names the
+signing key.
 
 **Machine-readable contract.** An OpenAPI 3.1 description of every `/api/v1` and OpenID4VCI route is at [`openapi.yaml`](openapi.yaml); [`API-CLIENTS.md`](API-CLIENTS.md) shows how to generate a typed client in any language from it.
 
@@ -54,8 +58,11 @@ Invalidates the session.
 
 ### `GET /api/health`
 
-**No authentication required.** Consumed by Caddy's upstream
-health check, load-balancer probes, and external uptime monitors.
+**No authentication required; the shipped edge restricts it** (see
+above). The roll-up for the operator's monitoring, read at the app's own
+address (`docker exec polaris-app curl -s http://localhost:8000/api/health`,
+or a `kubectl exec` into the app pod). A check from outside that the
+edge serves asks a public route, such as `/.well-known/security.txt`.
 
 Structured JSON contract:
 
@@ -70,7 +77,7 @@ Structured JSON contract:
     "zk_binary": {"status": "healthy", "path": "/opt/polaris/zk", "version": "0.2.0"},
     "disk":     {"status": "healthy", "free_gb": 42.7, "used_pct": 23.1},
     "atlas_cache": {"status": "healthy", "entries": 8, "hits": 142, "misses": 23},
-    "custody": {"status": "healthy", "driver": "file", "key_id": "..."}
+    "custody": {"status": "healthy", "driver": "file", "public_key_fingerprint": "..."}
   },
   "timestamp": "2026-05-14T12:34:56.789Z"
 }
@@ -95,7 +102,7 @@ Structured JSON contract:
 | `zk_binary` | binary exists, executable, `--version` returns within 2s | binary missing, not executable, or `--version` timed out | (not used today; ZK absence is degraded) |
 | `disk` | <85% used AND >5GB free | <85% used but <5GB free, OR >85% used | <500MB free |
 | `atlas_cache` | always healthy (informational only) | n/a | n/a |
-| `custody` | real PQC off (custody not required), or real PQC on and the custody driver loaded (driver and key id reported) | real PQC on with no persistent key (ephemeral signing) | the custody backend failed to load; issuance would fail |
+| `custody` | real PQC off (custody not required), or real PQC on and the custody driver loaded (the driver and the public key's fingerprint reported, never the key id) | real PQC on with no persistent key (ephemeral signing) | the custody backend failed to load; issuance would fail |
 
 `atlas_cache` does NOT contribute to the overall status: it's
 preserved for backwards compatibility with operational
@@ -122,7 +129,8 @@ blip cannot trigger a restart storm. Always `200` with
 `{"status": "alive", "version": ..., "uptime_seconds": ...}` unless the
 worker is wedged, in which case it does not answer at all, which is
 what an orchestrator should act on. The container `HEALTHCHECK` and the
-Kubernetes liveness probe use this route.
+Kubernetes liveness probe use this route, at the app's own port; the
+shipped edge restricts it as it does `/api/health`.
 
 ### `GET /api/health/ready`
 
@@ -132,8 +140,10 @@ custody, its second ML-DSA witness and its local disk, and returns `503`
 when one of those is unhealthy, so the edge or an orchestrator stops routing
 to it without restarting it. The shared database and redis are not part of
 it: they fail for every replica at once, and they are reported by
-`/api/health`. The payload carries `"scope": "instance"`. The TLS edge's
-upstream check and the Kubernetes readiness probe route on this route.
+`/api/health`. The payload carries `"scope": "instance"` and the same
+`custody` component as `/api/health`. The TLS edge's upstream check and
+the Kubernetes readiness probe route on this route, at the app's own
+port; the shipped edge restricts it from outside as it does `/api/health`.
 
 ---
 

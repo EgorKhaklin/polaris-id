@@ -3801,6 +3801,8 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
     broken(doc, "printenv POLARIS_PGBACKREST_S3_BUCKET", "printenv POLARIS_UNSET",
            "must FAIL when the doctor no longer reads where the backup repository is")
     broken(doc, "(start with ${FAILING[0]})", "", "must FAIL when the last line names no component")
+    broken(doc, '"${URL}/.well-known/security.txt" 2> /dev/null)', '"${URL}/api/health/live" 2> /dev/null)',
+           "must FAIL when the doctor judges the edge on a health answer, which the edge refuses from outside")
     broken(drill, "stop redis", "restart redis", "must FAIL when the drill no longer stops Redis")
     broken(drill, 'expect_named secrets', 'expect_clean secrets', "must FAIL when an emptied secret need not be named")
     broken(drill, "POLARIS_DB_SSLMODE: disable", "POLARIS_DB_SSLMODE: require",
@@ -5491,7 +5493,8 @@ def test_prod_stack_boot_check_discriminates(tmp_path):
     GOOD_CI = ("jobs:\n  prod-stack-boot:\n    steps:\n      run: |\n"
                "        bash scripts/polaris-generate-secrets.sh\n"
                "        docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml up -d\n"
-               "        curl -sk https://localhost:8443/api/health\n")
+               "        curl -sk https://localhost:8443/.well-known/security.txt\n"
+               "        docker exec polaris-app curl -s http://localhost:8000/api/health\n")
 
     def write(ci_text=GOOD_CI, override=True, caddyfile=True):
         ci.write_text(ci_text)
@@ -5526,10 +5529,18 @@ def test_prod_stack_boot_check_discriminates(tmp_path):
     assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
         "must FAIL when the boot does not assert serving through the edge"
 
+    # 4b. Asks the edge for /api/health, which the edge refuses from outside the allow-list -> FAIL.
+    write(ci_text=GOOD_CI.replace("/.well-known/security.txt", "/api/health"))
+    assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the edge is asked for the health answers it refuses"
+    write(ci_text=GOOD_CI.replace("        docker exec polaris-app curl -s http://localhost:8000/api/health\n", ""))
+    assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the roll-up is not read at the app"
+
     # 5. Override + Caddyfile + boots prod compose + secrets + health probe -> OK.
     write()
     assert checks.check_prod_stack_boot(tmp_path)[0].level == "OK", \
-        "must PASS for a full prod-compose boot that generates secrets and probes /api/health"
+        "must PASS for a full prod-compose boot that generates secrets, asks the edge and reads the roll-up"
 
 
 def test_container_hardening_check_discriminates(tmp_path):
@@ -9416,11 +9427,17 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
             p = tmp_path / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
     matcher = ("@metrics_from_outside {\n    path /metrics /api/metrics\n"
                "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
-               "respond @metrics_from_outside 404\n")
+               "respond @metrics_from_outside 404\n"
+               "@health_from_outside {\n    path /api/health /api/health/*\n"
+               "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
+               "respond @health_from_outside 404\n")
     helm = matcher.replace("{$POLARIS_METRICS_ALLOW:0.0.0.0/32}",
                            '{{ .Values.edge.metricsAllow | default "0.0.0.0/32" }}')
-    drill = ('sed -n x "${ROOT}/polaris_web/Caddyfile"\nfor where in "in-network" "via SNAT"; do\n'
-             '    probe 404 "${where}" /metrics\ndone\n')
+    drill = ('sed -n -e x -e \'/@health_from_outside {/,/respond @health_from_outside 404/p\' "${ROOT}/polaris_web/Caddyfile"\n'
+             'HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)\n'
+             'for where in "in-network" "via SNAT"; do\n'
+             '    probe 404 "${where}" /metrics\n'
+             '    for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done\ndone\n')
     good = {
         "polaris_web/Caddyfile": "site {\n" + matcher + "reverse_proxy app:8000\n}\n",
         "polaris_web/Caddyfile.citest": "localhost:8443 {\n" + matcher + "reverse_proxy app:8000\n}\n",
@@ -9453,6 +9470,25 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
            "must FAIL when the chart's default lets private addresses in")
     broken("scripts/polaris-metrics-edge-drill.sh", drill.replace('"via SNAT"', ""),
            "must FAIL when the drill no longer asks through an SNAT hop")
+    # 2026-10-21: the health answers, refused at every edge like the metrics.
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("path /api/health /api/health/*", "path /api/health"),
+           "must FAIL when the compose edge leaves a health path open")
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("respond @health_from_outside 404\n", ""),
+           "must FAIL when the compose edge matches the health paths and serves them anyway")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml",
+           good["deploy/helm/polaris/templates/configmap-caddy.yaml"].replace("path /api/health /api/health/*", "path /api/health/*"),
+           "must FAIL when the chart leaves /api/health open")
+    broken("polaris_web/Caddyfile.citest", good["polaris_web/Caddyfile.citest"].replace(
+               "path /api/health /api/health/*", "path /api/health /api/health/* /api/healthz"),
+           "must FAIL when the CI edge's health rule is not production's")
+    broken("scripts/polaris-metrics-edge-drill.sh", drill.replace("/api/health/ready ", ""),
+           "must FAIL when the drill no longer asks a health path")
+    # A respond line that is commented out refuses nothing: each rule, at each edge.
+    for rule in ("metrics_from_outside", "health_from_outside"):
+        for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
+                    "deploy/helm/polaris/templates/configmap-caddy.yaml"):
+            broken(rel, good[rel].replace(f"respond @{rule} 404\n", f"    # respond @{rule} 404\n"),
+                   f"must FAIL when {rel}'s `respond @{rule} 404` is commented out")
 
 
 def test_image_builds_are_retried_check_fails_when_a_build_bypasses_the_helper(tmp_path):
