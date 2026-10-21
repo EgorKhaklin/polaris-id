@@ -5,7 +5,7 @@
 
 This repository ships THREE verifiers of the same artifacts: the detached verifier a relying
 party installs (`packages/polaris-verify`), and the two reference SDKs `conformance/SPEC.md`
-publishes, Python and TypeScript. CI runs each against all 118 published cases. All three
+publishes, Python and TypeScript. CI runs each against every published case. All three
 pass. **That is weaker than it sounds**, because a case constrains only the keys it names:
 `authentic`, sometimes `issuer_trusted`, `fresh`, `audience_matches`. A verifier may report
 more, and on every key the case does not name, the three can disagree with nothing noticing.

@@ -18,8 +18,12 @@ publish-then-fork attack — even if the same set of (anchor_id, commitment_hash
 tuples is batched at different times, the root reproduces.
 
 Tree shape: standard binary Merkle. For odd-numbered leaves at any level,
-the last leaf is duplicated (rather than promoted). This is the same shape
-Bitcoin's transaction-merkle uses; well-understood failure modes.
+the last leaf is duplicated (rather than promoted), as in Bitcoin's
+transaction tree. Two properties follow (docs/design/anchoring.md, "What a
+batch proof binds"): the root does not fix the batch size, since [a, b, c]
+and [a, b, c, c] have one root; and leaves and interior nodes carry no
+0x00/0x01 tag; as in any Merkle tree, a proof binds an anchor only when the
+verifier recomputes the leaf from the anchor's row.
 
 Inclusion proof: a list of (sibling_hash_hex, position) pairs from leaf
 upward, where position is 'L' or 'R' indicating which side of the pairing

@@ -20,8 +20,7 @@ signs. Each driver is exercised for real, not mocked:
                         POLARIS_CUSTODY_PKCS11_MODULE is set; the CI job also
                         sets POLARIS_CUSTODY_PKCS11_REQUIRE=1 so a skip is a
                         failure there.
-  EnvSelectionTests     driver selection, the PIN-never-from-env refusal, the
-                        rotation anchors file.
+  EnvSelectionTests     driver selection and the PIN-never-from-env refusal.
 
 Run: python3 -m unittest test_custody
 """
@@ -30,9 +29,12 @@ import base64
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import custody
@@ -74,8 +76,8 @@ class _EnvSnapshot:
     KEYS = ("POLARIS_CUSTODY_DRIVER", "POLARIS_PQC_SIGNING_KEY_FILE", "POLARIS_CUSTODY_PKCS11_MODULE",
             "POLARIS_CUSTODY_PKCS11_TOKEN_LABEL", "POLARIS_CUSTODY_PKCS11_PIN_FILE", "POLARIS_CUSTODY_PKCS11_PIN",
             "POLARIS_CUSTODY_PKCS11_KEY_LABEL", "POLARIS_CUSTODY_AWSKMS_KEY_ID", "POLARIS_CUSTODY_AWSKMS_REGION",
-            "POLARIS_CUSTODY_AWSKMS_ENDPOINT_URL", "POLARIS_PQC_TRUST_ANCHORS_FILE", "POLARIS_USE_REAL_PQC",
-            "POLARIS_AGENCY_KEYS_DIR", "POLARIS_MIGRATION_SIGNING_KEY_FILE",
+            "POLARIS_CUSTODY_AWSKMS_ENDPOINT_URL", "POLARIS_USE_REAL_PQC",
+            "POLARIS_AGENCY_KEYS_DIR", "POLARIS_MIGRATION_SIGNING_KEY_FILE", "POLARIS_ENV",
             "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION")
 
     def __enter__(self):
@@ -162,33 +164,251 @@ class FileCustodyTests(unittest.TestCase):
             with self.assertRaises(custody.CustodyError, msg=repr(bad)):
                 c.sign_message(bad)
 
-    def test_rotation_anchor_file_keeps_old_key_verifying(self):
+    def test_after_a_rotation_an_old_token_verifies_under_its_stored_key(self):
+        """A rotation switches the custody key. A token signed before it still verifies under
+        the public key stored with its signature, as the relying-party door checks it; the
+        custody key, now the new one, does not verify it, and the new key signs."""
         os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = self.kf.name
         os.environ["POLARIS_USE_REAL_PQC"] = "1"
         custody.reset()
-        sig, alg, _pk = pqc_signing.signature_with_key_for_token("token-ABC")
-        self.assertEqual(alg, "ML-DSA-65")
+        sig, alg, pk_old = pqc_signing.signature_with_key_for_token("token-ABC")
+        self.assertEqual((alg, pk_old), ("ML-DSA-65", self.kp["public_key_hex"]))
         self.assertTrue(pqc_signing.verify_token_signature("token-ABC", sig, alg))
-        # Rotate: a NEW current key; the old signature must fail without an anchor
-        # for the old key, and verify again once the old key is listed.
         newkp = pqc_signing.generate_keypair()
         nf = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         json.dump(newkp, nf); nf.close()
-        af = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-        json.dump({"anchors": [{"public_key_hex": self.kp["public_key_hex"], "label": "issuer-2026",
-                                "retired": "2026-09-01"}]}, af); af.close()
         try:
             os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = nf.name
             custody.reset()
+            self.assertEqual(pqc_signing.trust_anchor_public_key_hex(), newkp["public_key_hex"])
+            self.assertTrue(pqc_signing.verify_stored_signature("token-ABC", sig, pk_old, algorithm=alg))
             self.assertFalse(pqc_signing.verify_token_signature("token-ABC", sig, alg))
-            os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"] = af.name
-            self.assertTrue(pqc_signing.verify_token_signature("token-ABC", sig, alg))
-            self.assertEqual(pqc_signing.trust_anchor_public_keys()[0], newkp["public_key_hex"])
-            os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"] = "/nonexistent/anchors.json"
-            with self.assertRaises(RuntimeError):
-                pqc_signing.trust_anchor_public_keys()
+            sig_new, alg_new, pk_new = pqc_signing.signature_with_key_for_token("token-DEF")
+            self.assertEqual(pk_new, newkp["public_key_hex"])
+            self.assertTrue(pqc_signing.verify_token_signature("token-DEF", sig_new, alg_new))
         finally:
-            os.unlink(nf.name); os.unlink(af.name)
+            os.unlink(nf.name)
+
+
+# ---------------------------------------------------------------------------
+class _Owned:
+    """A stat result with another owner: the owners a test cannot create without root."""
+
+    def __init__(self, st, uid):
+        self._st, self.st_uid = st, uid
+
+    def __getattr__(self, attr):
+        return getattr(self._st, attr)
+
+
+def _lstat_owned_by(path, uid):
+    """os.lstat, reporting `uid` as the owner of the entry `path` names."""
+    real, name = os.lstat, os.path.abspath(path)
+
+    def lstat(p, *a, **kw):
+        st = real(p, *a, **kw)
+        return _Owned(st, uid) if os.fspath(p) == name else st
+    return mock.patch.object(custody.os, "lstat", lstat)
+
+
+def _fstat_owned_by(path, uid):
+    """os.fstat, reporting `uid` as the owner of the file `path` names, once opened."""
+    real, target = os.fstat, os.stat(path)
+
+    def fstat(fd):
+        st = real(fd)
+        same = (st.st_dev, st.st_ino) == (target.st_dev, target.st_ino)
+        return _Owned(st, uid) if same else st
+    return mock.patch.object(custody.os, "fstat", fstat)
+
+
+#: Loads the key file argv[2] with the custody module in argv[1], as whichever user runs it.
+_LOAD = ("import sys\n"
+         "sys.path.insert(0, sys.argv[1])\n"
+         "import custody\n"
+         "try:\n"
+         "    custody.FileCustody(sys.argv[2])\n"
+         "    print('loaded')\n"
+         "except custody.CustodyError as exc:\n"
+         "    print('refused:', exc)\n")
+
+
+class FileKeyLoaderTests(unittest.TestCase):
+    """The file driver reads the issuer key only from a regular file that group and others
+    cannot write, in directories they cannot write, or in a sticky one where root or this
+    process owns the entry: whoever can write the file can rewrite the key, whoever can write
+    its directory can replace it, and in a sticky directory whoever creates the name first owns
+    it. Read bits are accepted, since the shipped Compose secret is 0644 inside the 0700
+    secrets directory and Helm mounts it 0440. The key here has the right shape and is never
+    used (zeros), so loading it needs no liboqs."""
+
+    def setUp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.dir = d.name
+        self.path = os.path.join(self.dir, "polaris_signing_key")
+        with open(self.path, "w") as fh:
+            json.dump({"algorithm": "ML-DSA-65", "secret_key_hex": "00" * 4032,
+                       "public_key_hex": "00" * custody.PUBLIC_KEY_LEN}, fh)
+
+    def test_the_shipped_modes_load(self):
+        for mode in (0o600, 0o644, 0o440, 0o400):
+            with self.subTest(mode=oct(mode)):
+                os.chmod(self.path, mode)
+                self.assertEqual(custody.FileCustody(self.path).public_key(),
+                                 bytes(custody.PUBLIC_KEY_LEN))
+
+    def test_a_key_file_group_or_others_can_write_is_refused(self):
+        for mode in (0o666, 0o620, 0o602):
+            with self.subTest(mode=oct(mode)):
+                os.chmod(self.path, mode)
+                with self.assertRaisesRegex(custody.CustodyError, "writable by group or others"):
+                    custody.FileCustody(self.path)
+
+    def test_a_key_in_a_directory_others_can_write_is_refused(self):
+        for dir_mode in (0o777, 0o775, 0o770, 0o703):
+            with self.subTest(dir_mode=oct(dir_mode)):
+                os.chmod(self.dir, dir_mode)
+                try:
+                    with self.assertRaisesRegex(custody.CustodyError, "which group or others can write"):
+                        custody.FileCustody(self.path)
+                finally:
+                    os.chmod(self.dir, 0o700)
+
+    def test_a_key_in_a_sticky_directory_loads(self):
+        """The sticky bit lets only an entry's owner, the directory's owner or root rename or
+        remove it, so others cannot replace a key this process owns there. /tmp on Linux is
+        1777."""
+        for dir_mode in (0o1777, 0o1770):
+            with self.subTest(dir_mode=oct(dir_mode)):
+                os.chmod(self.dir, dir_mode)
+                try:
+                    self.assertEqual(custody.FileCustody(self.path).public_key(),
+                                     bytes(custody.PUBLIC_KEY_LEN))
+                finally:
+                    os.chmod(self.dir, 0o700)
+
+    def test_in_a_sticky_directory_the_key_must_be_root_s_or_this_process_s(self):
+        """Anyone who can write a sticky directory can create the key's name before the key
+        exists and keep what they planted, so there the name and the file must belong to root
+        or to this process. The other owners are simulated, so this runs as any user: the
+        name's owner comes from lstat, the opened file's from fstat. A directory others cannot
+        write keeps any owner: under Compose the key carries the host operator's uid."""
+        other = os.geteuid() + 1
+        self.addCleanup(os.chmod, self.dir, 0o700)
+        for dir_mode in (0o1777, 0o1770):
+            os.chmod(self.dir, dir_mode)
+            for owned in (_lstat_owned_by, _fstat_owned_by):
+                with self.subTest(dir_mode=oct(dir_mode), owner_from=owned.__name__), \
+                        owned(self.path, other):
+                    with self.assertRaisesRegex(custody.CustodyError,
+                                                f"sticky directory others can write .*uid {other} owns it"):
+                        custody.FileCustody(self.path)
+            with self.subTest(dir_mode=oct(dir_mode), owner="root"), \
+                    _lstat_owned_by(self.path, 0), _fstat_owned_by(self.path, 0):
+                self.assertEqual(custody.FileCustody(self.path).public_key(),
+                                 bytes(custody.PUBLIC_KEY_LEN))
+        for dir_mode in (0o755, 0o700):
+            os.chmod(self.dir, dir_mode)
+            with self.subTest(dir_mode=oct(dir_mode), owner="another user"), \
+                    _lstat_owned_by(self.path, other), _fstat_owned_by(self.path, other):
+                self.assertEqual(custody.FileCustody(self.path).public_key(),
+                                 bytes(custody.PUBLIC_KEY_LEN))
+
+    @unittest.skipUnless(os.geteuid() == 0, "creates files as other users, which needs root")
+    def test_a_key_name_another_user_planted_in_a_sticky_directory_is_refused(self):
+        """The case above, for real. In a sticky directory anyone can write, uid 65534 creates
+        the key's name before the key exists, 0644 so no write bit gives it away, and uid 1000
+        (the image's user) and root load it: refused. A key root created in the same directory,
+        as the kubelet creates a secret mount's entries, loads for both."""
+        os.chmod(self.dir, 0o1777)  # nosec B103  # the refusal under test needs a world-writable fixture
+        self.addCleanup(os.chmod, self.dir, 0o700)
+        os.chmod(self.path, 0o644)
+        planted = os.path.join(self.dir, "planted_signing_key")
+        with open(self.path, "rb") as fh:
+            key = fh.read()
+        subprocess.run([sys.executable, "-c",
+                        "import os, sys\n"
+                        "fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)\n"
+                        "os.fchmod(fd, 0o644)\n"
+                        "os.write(fd, sys.stdin.buffer.read())\n", planted],
+                       input=key, check=True, user=65534, group=65534, extra_groups=[])
+        self.assertEqual((os.stat(planted).st_uid, os.stat(self.path).st_uid), (65534, 0))
+        here = os.path.dirname(os.path.abspath(__file__))
+
+        def load_as_uid_1000(path):
+            return subprocess.run([sys.executable, "-c", _LOAD, here, path], check=True,
+                                  capture_output=True, text=True, user=1000, group=1000,
+                                  extra_groups=[]).stdout.strip()
+        self.assertRegex(load_as_uid_1000(planted), "^refused: .*uid 65534 owns it there")
+        with self.assertRaisesRegex(custody.CustodyError, "uid 65534 owns it there"):
+            custody.FileCustody(planted)
+        self.assertEqual(load_as_uid_1000(self.path), "loaded")
+        self.assertEqual(custody.FileCustody(self.path).public_key(), bytes(custody.PUBLIC_KEY_LEN))
+
+    def test_the_kubernetes_secret_layout(self):
+        """The kubelet's atomic writer (pkg/volume/util/atomic_writer.go) writes each key into a
+        0755 timestamped directory and gives the pod the name as a symlink beside it, name ->
+        ..data/name and ..data -> that directory, on a tmpfs that is world-writable and sticky.
+        That layout loads. Each of the two directories, made writable without the sticky bit,
+        refuses the key: the name's directory holds the symlink, the other holds the file."""
+        mount = os.path.join(self.dir, "secrets")
+        stamped = os.path.join(mount, "..2026_10_15_00_00_00.000000001")
+        os.makedirs(stamped)
+        key = os.path.join(stamped, "polaris_signing_key")
+        os.rename(self.path, key)
+        os.chmod(key, 0o440)
+        os.symlink(os.path.basename(stamped), os.path.join(mount, "..data"))
+        name = os.path.join(mount, "polaris_signing_key")
+        os.symlink(os.path.join("..data", "polaris_signing_key"), name)
+        self.addCleanup(os.chmod, mount, 0o700)
+        self.addCleanup(os.chmod, stamped, 0o700)
+        os.chmod(stamped, 0o755)
+        os.chmod(mount, 0o1777)  # nosec B103  # the refusal under test needs a world-writable fixture
+        self.assertEqual(custody.FileCustody(name).public_key(), bytes(custody.PUBLIC_KEY_LEN))
+        # The kubelet creates the name as root; a name another user planted first is refused.
+        with _lstat_owned_by(name, 0):
+            self.assertEqual(custody.FileCustody(name).public_key(), bytes(custody.PUBLIC_KEY_LEN))
+        with _lstat_owned_by(name, os.geteuid() + 1), self.assertRaises(custody.CustodyError) as caught:
+            custody.FileCustody(name)
+        self.assertIn("/secrets, a sticky directory others can write", str(caught.exception))
+        for writable, other, other_mode in ((mount, stamped, 0o755), (stamped, mount, 0o1777)):
+            with self.subTest(writable=os.path.basename(writable)):
+                os.chmod(other, other_mode)
+                os.chmod(writable, 0o777)  # nosec B103  # the refusal under test needs a world-writable fixture
+                with self.assertRaises(custody.CustodyError) as caught:
+                    custody.FileCustody(name)
+                self.assertIn("/%s, which group or others can write" % os.path.basename(writable),
+                              str(caught.exception))
+
+    def test_a_fifo_is_refused_without_blocking(self):
+        """Opened for reading, a FIFO blocks until a writer comes. A load still blocked after
+        five seconds reads red, and the test then releases it, so a failure never leaves the
+        suite stuck."""
+        fifo = os.path.join(self.dir, "fifo")
+        os.mkfifo(fifo, 0o600)
+        outcome = []
+
+        def load():
+            try:
+                custody.FileCustody(fifo)
+                outcome.append("loaded")
+            except Exception as exc:  # noqa: BLE001  the assertion below names what it was
+                outcome.append(f"{type(exc).__name__}: {exc}")
+
+        t = threading.Thread(target=load, daemon=True)
+        t.start()
+        t.join(5)
+        if t.is_alive():
+            try:  # a writer that opens and closes gives the blocked reader end-of-file
+                os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+            t.join(5)
+            self.fail("FileCustody blocked opening a FIFO instead of refusing it")
+        self.assertEqual(len(outcome), 1, outcome)
+        self.assertTrue(outcome[0].startswith("CustodyError: "), outcome)
+        self.assertIn("is not a regular file", outcome[0])
 
 
 # ---------------------------------------------------------------------------
@@ -429,10 +649,11 @@ class Pkcs11CustodyTests(unittest.TestCase):
         os.unlink(pf.name)
 
     def test_in_token_rotation_old_token_still_verifies_new_key_signs(self):
-        """PE.4: rotate the in-token issuer key. A token signed under the OLD key
-        must STILL verify (its public key stays a trusted anchor), while new
-        issuance signs under the NEW key — the sole-HSM profile's rotation, end to
-        end and in-token. Dropping the old anchor completes retirement."""
+        """PE.4: rotate the in-token issuer key. New issuance signs under the NEW key, and a
+        token signed under the OLD key still verifies under the public key stored with its
+        signature, as the relying-party door checks it, while the custody key, now the new
+        one, no longer verifies it: the sole-HSM profile's rotation, end to end and in-token.
+        The key register says whether the old key was authorized when it signed."""
         if not pqc_signing.is_available():
             self.skipTest("liboqs not installed")
         pin_file = tempfile.NamedTemporaryFile("w", delete=False)
@@ -440,9 +661,6 @@ class Pkcs11CustodyTests(unittest.TestCase):
         new_label = self.label + "-v2"
         new_pk = custody.pkcs11_generate_key(self.module, self.token, self.pin, new_label)
         self.assertNotEqual(new_pk, self.pk)  # two distinct in-token roots
-        anchors = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-        json.dump({"anchors": [{"public_key_hex": self.pk.hex(), "label": self.label,
-                                "retired": "2026-09-08"}]}, anchors); anchors.close()
         try:
             with _EnvSnapshot():
                 base = {"POLARIS_CUSTODY_DRIVER": "pkcs11",
@@ -457,27 +675,27 @@ class Pkcs11CustodyTests(unittest.TestCase):
                 sig_old, alg, pk_old = pqc_signing.signature_with_key_for_token("token-ROT-1")
                 self.assertEqual(pk_old, self.pk.hex())
                 self.assertTrue(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
-                # ROTATE: current key = v2, with v1 listed as a previous trusted anchor.
+                # ROTATE: the custody key is now v2.
                 os.environ["POLARIS_CUSTODY_PKCS11_KEY_LABEL"] = new_label
-                os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"] = anchors.name
                 custody.reset()
                 sig_new, alg2, pk_new = pqc_signing.signature_with_key_for_token("token-ROT-2")
                 self.assertEqual(pk_new, new_pk.hex())
-                self.assertEqual(pqc_signing.trust_anchor_public_keys()[0], new_pk.hex())  # current is v2
-                # New token verifies (v2); the OLD token STILL verifies (v1 is a listed anchor).
+                self.assertEqual(pqc_signing.trust_anchor_public_key_hex(), new_pk.hex())
                 self.assertTrue(pqc_signing.verify_token_signature("token-ROT-2", sig_new, alg2))
-                self.assertTrue(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
-                # Retirement complete: drop v1's anchor and the old token no longer verifies.
-                del os.environ["POLARIS_PQC_TRUST_ANCHORS_FILE"]
-                custody.reset()
+                # The OLD token still verifies under the key stored with its signature (v1), and
+                # the custody key (v2) does not verify it.
+                self.assertTrue(pqc_signing.verify_stored_signature("token-ROT-1", sig_old, pk_old,
+                                                                    algorithm=alg))
                 self.assertFalse(pqc_signing.verify_token_signature("token-ROT-1", sig_old, alg))
         finally:
-            os.unlink(pin_file.name); os.unlink(anchors.name)
+            os.unlink(pin_file.name)
 
 
 # ---------------------------------------------------------------------------
 class EnvSelectionTests(unittest.TestCase):
     def test_nothing_configured_means_no_custody(self):
+        """The lookup reports None in every environment. What refuses in production is
+        signing without custody (ProductionSigningKeyTests)."""
         with _EnvSnapshot():
             self.assertIsNone(custody.get_custody())
             self.assertIsNone(pqc_signing.trust_anchor_public_key_hex())
@@ -497,6 +715,35 @@ class EnvSelectionTests(unittest.TestCase):
                 custody.get_custody()
             self.assertIn("PIN_FILE", str(cm.exception))
 
+    def test_the_pin_file_is_read_under_the_key_file_checks(self):
+        """The PIN file goes through the key file's reader: one that group or others can write,
+        or one in a directory they can write, is refused before any module loads. A PIN file
+        that passes gets as far as the module, which does not exist here."""
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        pin = os.path.join(d.name, "pkcs11_pin")
+        with open(pin, "w") as fh:
+            fh.write("1234\n")
+        for file_mode, dir_mode, refusal in ((0o620, 0o700, "is writable by group or others"),
+                                             (0o600, 0o777, "which group or others can write"),
+                                             (0o600, 0o700, None)):
+            with self.subTest(file_mode=oct(file_mode), dir_mode=oct(dir_mode)), _EnvSnapshot():
+                os.chmod(pin, file_mode)
+                os.chmod(d.name, dir_mode)
+                os.environ.update({"POLARIS_CUSTODY_DRIVER": "pkcs11",
+                                   "POLARIS_CUSTODY_PKCS11_MODULE": "/nonexistent/libpkcs11.so",
+                                   "POLARIS_CUSTODY_PKCS11_PIN_FILE": pin})
+                try:
+                    with self.assertRaises(custody.CustodyError) as cm:
+                        custody.get_custody()
+                finally:
+                    os.chmod(d.name, 0o700)
+                if refusal:
+                    self.assertTrue(str(cm.exception).startswith("pkcs11 PIN: "), cm.exception)
+                    self.assertIn(refusal, str(cm.exception))
+                else:
+                    self.assertFalse(str(cm.exception).startswith("pkcs11 PIN"), cm.exception)
+
     def test_incomplete_driver_config_fails_loud(self):
         with _EnvSnapshot():
             os.environ["POLARIS_CUSTODY_DRIVER"] = "awskms"
@@ -511,6 +758,45 @@ class EnvSelectionTests(unittest.TestCase):
             os.environ["POLARIS_CUSTODY_DRIVER"] = "nope"
             self.assertIn("error", pqc_signing.availability_report()["custody"])
 
+
+
+@unittest.skipUnless(pqc_signing.is_available() and pqc_signing.second_witness_available(),
+                     "needs liboqs and the second witness")
+class ProductionSigningKeyTests(unittest.TestCase):
+    """With no custody configured, real signing makes a keypair for each call, which no key
+    register, trust list or anchor file names. Development and test sign that way; under
+    POLARIS_ENV=production every entry point that would refuses instead (app.py also refuses
+    to boot there without a key)."""
+
+    def setUp(self):
+        self._env = _EnvSnapshot().__enter__()
+        os.environ["POLARIS_USE_REAL_PQC"] = "1"
+
+    def tearDown(self):
+        self._env.__exit__()
+
+    ENTRY_POINTS = (
+        ("sign", lambda: pqc_signing.sign(b"token-ABC")),
+        ("issuance", lambda: pqc_signing.signature_with_key_for_token("token-ABC")),
+        ("a signed statement", lambda: pqc_signing.signature_over_message(b'{"format":"x"}')),
+        ("COSE", lambda: pqc_signing.signature_over_cose_sig_structure(_SIG_STRUCTURE)),
+        ("migration", lambda: pqc_signing.signature_for_migration("token-ABC", "ML-DSA-65")),
+    )
+
+    def test_development_signs_under_a_key_made_for_each_call(self):
+        self.assertIsNone(custody.get_custody())
+        first, second = pqc_signing.sign(b"token-ABC"), pqc_signing.sign(b"token-ABC")
+        self.assertNotEqual(first.public_key_hex, second.public_key_hex)
+        for name, call in self.ENTRY_POINTS:
+            self.assertTrue(call(), name)
+
+    def test_production_refuses_to_sign_without_custody(self):
+        os.environ["POLARIS_ENV"] = "production"
+        self.assertIsNone(custody.get_custody(), "the lookup reports the absence; signing refuses")
+        for name, call in self.ENTRY_POINTS:
+            with self.assertRaises(custody.CustodyError, msg=name) as cm:
+                call()
+            self.assertIn("no signing key is configured", str(cm.exception), name)
 
 
 @unittest.skipUnless(pqc_signing.is_available(), "liboqs not installed")

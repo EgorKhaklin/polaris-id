@@ -3687,6 +3687,58 @@
       },
       "note": "A GENUINE Falcon-padded-512 signature MUST be refused: category 1 is below the floor (wire spec section 6).",
       "since": "1.0.0-rc.71"
+    },
+    {
+      "name": "transparency-sth-size-2-53-minus-1",
+      "artifact": "transparency-sth",
+      "object_file": "conformance/vectors/transparency-sth-size-2-53-minus-1.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.1.0",
+      "note": "The positive control for the head-size cases: a head of size 2**53 - 1, the largest every verifier holds exactly, signed by the same key (WIRE-SPEC section 1)."
+    },
+    {
+      "name": "transparency-sth-size-2-53",
+      "artifact": "transparency-sth",
+      "object_file": "conformance/vectors/transparency-sth-size-2-53.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.1.0",
+      "note": "A size a signature covers is an integer from 0 to 2**53 - 1 (WIRE-SPEC section 1). JavaScript reads 2**53 + 1 as 2**53, so past 2**53 - 1 one signed size has two readings. Before this case both SDKs accepted this head; the detached verifier refused it."
+    },
+    {
+      "name": "transparency-sth-size-10-20",
+      "artifact": "transparency-sth",
+      "object_file": "conformance/vectors/transparency-sth-size-10-20.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.1.0",
+      "note": "The same rule far past the bound: JavaScript holds 10**20 exactly and writes it as Python does, so the signature verifies everywhere and only the rule refuses the head. Before this case both SDKs accepted it; the detached verifier refused it."
+    },
+    {
+      "name": "revocation-feed-count-one",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-count-one.json",
+      "expect": {
+        "authentic": true
+      },
+      "since": "1.1.0",
+      "note": "The positive control for the count written as 1.0: one leaf, counted as the integer 1, signed by the same key.",
+      "now": "2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "revocation-feed-count-one-point-zero",
+      "artifact": "revocation-feed",
+      "object_file": "conformance/vectors/revocation-feed-count-one-point-zero.json",
+      "expect": {
+        "authentic": false
+      },
+      "since": "1.1.0",
+      "note": "A signed count is an integer, and the signer wrote 1.0 (WIRE-SPEC section 1). JavaScript reads it as 1, so a JavaScript verifier's canonical bytes say 1 and the signature over the bytes the signer wrote fails there. Before this case the Python SDK accepted it; the detached verifier refused it.",
+      "now": "2026-06-01T00:00:00Z"
     }
   ]
 }

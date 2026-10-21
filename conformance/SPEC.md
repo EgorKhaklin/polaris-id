@@ -310,6 +310,15 @@ as [K] matched K in the TypeScript SDK alone (`*-a-list`). Before these cases th
 failed five; both Python verifiers passed them, and a missing key on either side of their
 comparisons no longer matches a missing key on the other.
 
+Signed counts (1.1.0). Five cases pin that a count or size a signature covers is an integer from 0
+to 2**53 - 1 (WIRE-SPEC section 1), each refusal beside a control signed by the same key.
+JavaScript's JSON.parse reads 2**53 + 1 as 2**53 and `1.0` as 1, so past the bound, or written
+`1.0`, one signed number has two readings. A tree head of size 2**53 or 10**20 is refused
+(`transparency-sth-size-2-53`, `transparency-sth-size-10-20`, beside a head of size 2**53 - 1), and
+so is a revocation feed whose signer wrote its count of one leaf as `1.0`
+(`revocation-feed-count-one-point-zero`, beside the same feed counted as 1). Before these cases
+both SDKs accepted both heads and the Python SDK the feed; the detached verifier refused all three.
+
 WIRE-SPEC rules (1.0.0-rc.69). Eleven cases pin three rules a read of every verifier requirement
 found split or unenforced. A revoked leaf and an epoch leaf are 64 hex digits (3.3, 3.16): a feed
 with a `null` leaf, rooted as Python spells it or as JavaScript does, was accepted by one language's
@@ -360,7 +369,7 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 
 A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
 rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
-records which of the reference SDK's public functions actually execute: **the 284 cases enter
+records which of the reference SDK's public functions actually execute: **the 289 cases enter
 20 of the SDK's 23 public functions.** Three are never entered by any case, which means an
 implementation can get them wrong, or omit them, and still pass every case here.
 
@@ -379,7 +388,7 @@ runs it with collection disabled and requires that refusal.
 
 **The same gap, between the implementations.** Three verifiers here check these artifacts:
 the detached verifier a relying party installs, and the two reference SDKs. All three pass all
-284 cases, and a case constrains only the keys it names, so on every other key they could
+289 cases, and a case constrains only the keys it names, so on every other key they could
 differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py` compares them
 to EACH OTHER, key for key, on every case, and CI runs it.
 
@@ -391,12 +400,12 @@ siblings fell through, so one implementation answered the same question two ways
 pinned by a test whose failure message names both values. **The two SDKs now return identical
 verdicts, key for key, on every published case.**
 
-The boundary: **98 unconstrained divergences remain, every one of them between the detached
+The boundary: **100 unconstrained divergences remain, every one of them between the detached
 verifier and an SDK**, on two keys and for two reasons.
 
 | key | detached | SDKs | why |
 |---|---|---|---|
-| `fresh`, on an artifact that failed authentication (34 cases) | `null` | the window's answer | the detached verifier RETURNS at the failure, so freshness is never asked. The SDKs fall through to a tail that answers it regardless, which is separately true of a forgery |
+| `fresh`, on an artifact that failed authentication (35 cases) | `null` | the window's answer | the detached verifier RETURNS at the failure, so freshness is never asked. The SDKs fall through to a tail that answers it regardless, which is separately true of a forgery |
 | `issuer_trusted`, on 15 cross-authority cases | `true` | `false` | on the detached side this key is not reported by the verifier at all: the conformance adapter derives it from `key_status`, which asks "is this key revoked or unknown" rather than "is it in the anchor set the caller supplied" |
 
 Neither convention is wrong and this contract does not choose between them. A relying party
@@ -408,8 +417,8 @@ them**. The known ones stay visible rather than being buried in a count.
 
 **The same question on hostile input.** A presenter does not send published cases.
 `scripts/polaris-hostile-agreement-drill.py` takes every case, replaces each node of what a
-presenter supplies with a value of the wrong JSON type or deletes it (184,784 inputs from the
-284 cases, measured 2026-10-15), and has
+presenter supplies with a value of the wrong JSON type or deletes it (186,639 inputs from the
+289 cases, measured 2026-10-21), and has
 all three verifiers decide each one. It fails on a verifier that raises, on any disagreement
 about the primary decision, and on any other disagreement that is not between two refusals or
 one of the conventions it names with its reason; `--prove-control` requires an inverted verdict

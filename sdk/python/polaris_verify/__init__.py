@@ -545,11 +545,24 @@ def _revoked_root(leaves) -> str:
     return hashlib.sha3_256("\n".join(uniq).encode("utf-8")).hexdigest()
 
 
+def _signed_count(x) -> bool:
+    """A count or size a signature covers (a tree head's or a cosignature's `tree_size`, a
+    `member_count`, `leaf_count` or `revoked_count`): a JSON integer from 0 to 2**53 - 1
+    (`_MAX_SAFE_INTEGER`), never a boolean, a string, null or `1.0`: polaris-verify's rule
+    (`_signed_count`).
+
+    JavaScript's JSON.parse reads `1.0` as 1 and 2**53 + 1 as 2**53. The TypeScript SDK refuses
+    `1.0` at the signature, its canonical bytes saying `1`, and a size of 2**53 + 1 by this rule,
+    read before the signature; this SDK verified the bytes as written and accepted both (until
+    2026-10-21)."""
+    return type(x) is int and 0 <= x <= _MAX_SAFE_INTEGER
+
+
 def _count_is(count, n) -> bool:
-    """A signed count equals `n`, read as JSON: a number, never a boolean. Python's `True == 1`
-    otherwise accepts `"member_count": true` for one member, which the TypeScript SDK's `===`
+    """A signed count equals `n`, read by `_signed_count`. Python's `True == 1` and `1.0 == 1`
+    otherwise accept `"member_count": true` or `1.0` for one member, which the TypeScript SDK
     refuses; the same artifact would get two verdicts."""
-    return isinstance(count, (int, float)) and not isinstance(count, bool) and count == n
+    return _signed_count(count) and count == n
 
 
 def _wire_int(x) -> int:
@@ -645,6 +658,11 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     keys = _ARTIFACT_KEYS.get(fmt) if isinstance(fmt, str) else None
     if keys is None:
         return ArtifactVerdict(False, None, "unknown or unsupported artifact: %s" % fmt)
+    # WIRE-SPEC section 1: a head's size is a count its signature covers, read first, as
+    # polaris-verify's verify_sth reads it. A head signed with 2**53, 10**20, -1, 1.5, "1" or null
+    # was authentic here and in the TypeScript SDK and refused there (2026-10-21).
+    if fmt == _STH_FORMAT and not _signed_count(obj.get("tree_size")):
+        return ArtifactVerdict(False, None, "tree_size is not an integer from 0 to 2**53 - 1")
     if obj.get("algorithm") == PLACEHOLDER_LABEL or not obj.get("public_key_hex"):
         return ArtifactVerdict(False, None, "placeholder -- not authenticatable offline")
     ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(obj, keys)).digest(),
@@ -802,6 +820,13 @@ def verify_cosignature(cosig: dict, witness_key=None) -> ArtifactVerdict:
         return ArtifactVerdict(False, None, "not a %s" % _COSIGNATURE_FORMAT)
     if c.get("algorithm") == PLACEHOLDER_LABEL or not c.get("public_key_hex"):
         return ArtifactVerdict(False, None, "placeholder cosignature -- not authenticatable offline")
+    # The size a witness signs is a signed integer from 0 to 2**53 - 1, read as a head's is
+    # (`_signed_count`: past the bound the TypeScript SDK reads the nearest double and checks other
+    # bytes). Until 2026-10-21 none was read here, and `==` in the anchor counted a witness that
+    # signed `true` or `1.0` over a head of size 1. It is read after the placeholder and the
+    # algorithm, as in polaris-sdk-ts, so each of those keeps its own refusal.
+    if _accepted(c.get("algorithm")) and not _signed_count(c.get("tree_size")):
+        return ArtifactVerdict(False, None, "the cosignature's tree_size is not an integer from 0 to 2**53 - 1")
     ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(c, _COSIGNATURE_KEYS)).digest(),
                                         c.get("signature_hex"), c.get("public_key_hex"), c.get("algorithm"))
     if ok is None:

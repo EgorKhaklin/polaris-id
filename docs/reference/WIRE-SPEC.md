@@ -61,7 +61,11 @@ signed fields listed for that artifact, serialized with
 - the compact separators `,` and `:` (no whitespace).
 
 A JavaScript verifier cannot tell an integral value written with a fraction (`1.0`) from the
-integer, nor hold an integer beyond 2^53 exactly, so a signer SHOULD NOT sign either.
+integer, nor hold an integer beyond 2^53 exactly, so a signer SHOULD NOT sign either: such a
+verifier refuses a `1.0` the signer wrote, and accepts an integer re-encoded as `1.0` in transit,
+which a verifier that keeps `1.0` apart from the integer refuses. polaris-verify and both reference
+SDKs refuse a signed count or size (a tree head's or a cosignature's `tree_size`, `revoked_count`,
+`member_count`, `leaf_count`) that is not an integer from 0 to 2^53 - 1.
 
 Concretely, `canonical = json.dumps(statement, sort_keys=True,
 separators=(",", ":")).encode("utf-8")` and `digest = SHA3-256(canonical)`. The
@@ -149,6 +153,15 @@ key), `status == "ACTIVE"`, and fresh. A key the verifier trusts for other crede
 not answer for this one.
 Note that `algorithm` is not a signed field of this artifact; a verifier MUST still
 reject a placeholder-signed assertion.
+
+The assertion names no relying party and carries no challenge: until `expires_at`, a copy
+presented with the credential passes the checks above at any verifier that trusts its
+issuer. The signed window bounds that replay. `max_window_seconds` is not a signed field, so
+a verifier takes no bound from it; it MAY refuse a window longer than its own maximum (2.2).
+The reference issuer's window is at most 3600 seconds by default
+(`POLARIS_STATUS_ASSERTION_TTL`). The assertion attests the credential's status, not who
+presents it; a verifier that needs the presenter to hold the holder key bound to the
+credential requires a holder proof (3.15) over a `verifier_nonce` it issued.
 
 ### 3.6 `polaris-transparency-sth/1`
 

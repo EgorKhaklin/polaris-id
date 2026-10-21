@@ -19,7 +19,7 @@ fails otherwise.
 | [`OPERATIONS.md`](OPERATIONS.md) | Day 2: backup and restore, the running stack, scaling, monitoring, archive and purge, certificate transparency, incidents, common errors, upgrades, decommissioning |
 | [`VERIFY-RELEASE.md`](VERIFY-RELEASE.md) | Checking that a released image or the chart was built and signed by this repository's release workflow |
 | [`SECRETS.md`](SECRETS.md) | Every secret the stack uses, how each is generated, read and rotated, and the sealed store |
-| [`KEY-CEREMONY.md`](KEY-CEREMONY.md) | The issuer signing key: custody drivers (file, PKCS#11, AWS KMS), the witnessed ceremony, rotation with trust anchors |
+| [`KEY-CEREMONY.md`](KEY-CEREMONY.md) | The issuer signing key: custody drivers (file, PKCS#11, AWS KMS), the witnessed ceremony, rotation through the key register |
 | [`WEBAUTHN-ROLLOUT.md`](WEBAUTHN-ROLLOUT.md) | Rolling WebAuthn MFA out to operators in phases, the attestation policy, enrollment and recovery |
 | [`SECURITY-CONTROLS.md`](SECURITY-CONTROLS.md) | The security posture: every control, where it is enforced, which check pins it, and the dated hardening engagement |
 | [`PRIVACY.md`](PRIVACY.md) | Data minimization and the operational privacy posture |

@@ -2227,7 +2227,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 with self.assertRaises(pg_errors.InsufficientPrivilege):
                     cur.execute(sql, params)
             conn.rollback()
-        # The rc.57 guard still refuses a key the register does not hold, so the circle is closed.
+        # The rc.57 guard still refuses an UPDATE to a key the register does not hold.
         with conn.cursor() as cur:
             with self.assertRaises(psycopg2.Error):
                 cur.execute("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (key,))
