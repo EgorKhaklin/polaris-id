@@ -60,7 +60,7 @@ POLARIS_DB_STATE_FULL_KINDS=(rows seq)
 # The kinds a sound Polaris database may hold no fact of, each with why. Every other kind must read
 # at least one fact.
 POLARIS_DB_STATE_MAY_BE_EMPTY=(
-    "member:Polaris grants no role to another, so a sound database holds no membership; one that appears is a change the comparison shows"
+    "member:Polaris grants a role to another only when a loader that is not a superuser takes the SQL console's role, so a database a superuser loaded holds no membership; one that appears is a change the comparison shows"
     "event_trigger:none in a sound database (Polaris creates none); one that appears is a change the comparison shows"
 )
 

@@ -12,45 +12,69 @@ The guarantee here is that the console cannot write. The real boundary is
 first-keyword check would wave through; `check_sql_console_readonly` pins that, and it reads
 the whole polaris_web package rather than app.py, which is what makes this move safe.
 
+And since 2026-10-21 it reads as a role of its own. The caller's text ran as polaris_app, so an
+admin's or an auditor's SELECT returned rows of TokenLifecycleEvent, VerificationEvent,
+AuthAuditLog and DuressEvent, the four tables AuditAccessLog tracks, and left no record: the
+record is written by the route that returns the rows, and the console's SQL is its caller's. The
+text now reaches the database only as a parameter of console_read(), a SECURITY DEFINER function
+in polaris_sql/05_procedures.sql owned by polaris_console_reader, which cannot log in, is a member
+of no role, and holds SELECT on the tables in CONSOLE_TABLES and nothing else. The function runs
+the text as a subquery of one SELECT and refuses a transaction that is not READ ONLY, so a second
+statement and a data-modifying WITH are refused by the parser before anything runs.
+`check_audited_reads_are_logged` holds this handler to it: every execute() below takes a constant
+statement, and one of them calls console_read.
+
 Routes register by import: app.py imports this module at the END, after `app` and the
 helpers below exist. That ordering is the whole contract, and reversing it is a circular
 import rather than a subtle bug.
 """
-import psycopg2
-
+import decimal
+import json
 import re
+
+import psycopg2
 
 from flask import render_template, request, session
 
 import security
 from app import DB_CONFIG, _apply_operator_scope, app, db_error_to_message
 
-#: The most rows the console shows of one query (lab/strategy/008, step 4). The rows come from a
-#: server-side cursor, so the database hands over only these and the rest of a large result never
-#: leaves it: `SELECT * FROM IdentityToken` at eight billion rows reads a page, not the table.
+#: The most rows the console shows of one query (lab/strategy/008, step 4). console_read reads the
+#: query through a cursor and stops one row past this bound (the one that says there were more), so
+#: the database hands over only these and the rest of a large result never leaves it: a cross join
+#: of a hundred million rows reads a page, not the product.
 SQL_MAX_ROWS = 500
+
+#: The tables the console's role reads, and nothing else: reference data. The same list is granted
+#: to polaris_console_reader in polaris_sql/09_grants.sql and its migration, and a test reads the
+#: grants back from the database. Left out: the four tables AuditAccessLog tracks, every table
+#: holding one person's or one credential's rows, the operator accounts and the tables naming the
+#: operator who acted, the replay registers and logs, and the count tables (the population,
+#: enrolment and activity roll-ups and their deltas). A cell of them can be one event at a known
+#: authority, context and hour; the Atlas reads them and withholds every count below
+#: atlas_routes._ATLAS_MIN_CELL, and the console, which records no read, would return it whole.
+CONSOLE_TABLES = (
+    'Agency', 'AgencyAlgorithmAuth', 'CryptographicAlgorithm', 'VerificationContext',
+)
+
+#: The pages that return rows of the four tracked tables, each writing its AuditAccessLog row; the
+#: console names them where it refuses those tables. A test holds the list to the routes that call
+#: security.record_audit_access.
+AUDITED_PAGES = (
+    '/tokens/<id>', '/investigate/token/<id>', '/investigate/individual/<id>',
+    '/verifications', '/uc7/warrant-audit', '/api/tokens/<id>/export',
+    '/duress', '/api/duress/events',
+)
 
 _IDENT_CHAR = re.compile(r"[A-Za-z0-9_$\u0080-\uffff]")
 _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$")
 
 
-def statement_count(sql):
-    """How many statements PostgreSQL would run for this text (lab/strategy/008, step 4).
-
-    One execute() runs every statement in its string, and SET is permitted in a read-only
-    transaction, so `SELECT ...; SET statement_timeout = 0; SELECT pg_sleep(600)` ran its last
-    statement with no limit. A statement cannot lift its own limit, which is set when it starts,
-    so the console runs one statement and refuses text that holds more.
-
-    A semicolon separates statements only outside a string ('...', E'...' with backslash
-    escapes), a quoted identifier ("..."), a dollar-quoted body ($tag$...$tag$) and a comment
-    (-- to the end of the line, /* ... */ nested). This reads strings the way the server does
-    with standard_conforming_strings on, its default; where the two could differ (the setting
-    off), this sees a string end no later than the server does, so it can count a separator the
-    server would not and refuse a query, never the reverse. Text left open at the end (an
-    unterminated quote, comment or body) is a syntax error the server raises before it runs
-    anything."""
-    i, n, count, content = 0, len(sql), 0, False
+def _separators(sql):
+    """The offsets of the semicolons that separate statements, each with whether a
+    statement's text came before it, and whether text follows the last of them. The lexing
+    is statement_count's, below."""
+    i, n, found, content = 0, len(sql), [], False
     while i < n:
         c = sql[i]
         if sql.startswith('--', i):
@@ -92,12 +116,63 @@ def statement_count(sql):
                 i = n if j < 0 else j + len(m.group(0))
                 continue
         if c == ';':
-            count += content
+            found.append((i, content))
             content = False
         elif not c.isspace():
             content = True
         i += 1
-    return count + content
+    return found, content
+
+
+def statement_count(sql):
+    """How many statements PostgreSQL would run for this text (lab/strategy/008, step 4).
+
+    One execute() runs every statement in its string, and SET is permitted in a read-only
+    transaction, so `SELECT ...; SET statement_timeout = 0; SELECT pg_sleep(600)` ran its last
+    statement with no limit. A statement cannot lift its own limit, which is set when it starts,
+    so the console runs one statement and refuses text that holds more.
+
+    A semicolon separates statements only outside a string ('...', E'...' with backslash
+    escapes), a quoted identifier ("..."), a dollar-quoted body ($tag$...$tag$) and a comment
+    (-- to the end of the line, /* ... */ nested). This reads strings the way the server does
+    with standard_conforming_strings on, its default; where the two could differ (the setting
+    off), this sees a string end no later than the server does, so it can count a separator the
+    server would not and refuse a query, never the reverse. Text left open at the end (an
+    unterminated quote, comment or body) is a syntax error the server raises before it runs
+    anything."""
+    found, tail = _separators(sql)
+    return sum(1 for _, had in found if had) + tail
+
+
+def _without_terminator(sql):
+    """The text with the semicolon that ends its one statement taken out (console_read runs
+    the text as a subquery, where a terminator is a syntax error). Anything after that
+    semicolon is whitespace or a comment, which console_read ends with a newline."""
+    found, tail = _separators(sql)
+    if found and not tail:
+        at = found[-1][0]
+        return sql[:at] + ' ' + sql[at + 1:]
+    return sql
+
+
+class _Row(dict):
+    """One row as console_read hands it over (a JSON object), keeping its columns in order
+    with a repeated name kept twice, as the table shows it; a dict alone keeps the last."""
+
+    def __init__(self, pairs):
+        super().__init__(pairs)
+        self.pairs = pairs
+
+
+def _refusal(e):
+    """What the page says when the console's role does not hold a read the query needs: the
+    server's own sentence, which names the object, then why, and where those rows are read."""
+    said = (e.diag.message_primary or '').strip()
+    return ((said[:1].upper() + said[1:] + '. ' if said else '') +
+            'The console reads as polaris_console_reader, which holds SELECT on the tables listed '
+            'on this page and on nothing else. It cannot read TokenLifecycleEvent, '
+            'VerificationEvent, AuthAuditLog or DuressEvent: the pages listed above return '
+            'their rows, and each of them records the read in AuditAccessLog.')
 
 
 # ============================================================================
@@ -110,25 +185,25 @@ def statement_count(sql):
 @security.csrf_protect
 def sql_query():
     """
-    Read-only SQL console. The polaris_app role only has SELECT/INSERT/UPDATE/DELETE,
-    not DDL, so users can't drop tables. We additionally refuse anything that's
-    not a SELECT to keep this strictly read-only from this page.
+    Read-only SQL console, reading as polaris_console_reader (see the module docstring).
 
     Hardening:
         - Query length capped at 5000 chars to prevent pasting huge payloads
-        - Statement timeout of 5 seconds so a runaway query can't hang the worker, and one
-          statement per request so a second one cannot lift it (statement_count)
-        - At most SQL_MAX_ROWS rows, fetched from a server-side cursor, so a query over the
-          whole population sends the page what it shows and no more
-        - The session is set READ ONLY (`set_session(readonly=True)`) before any
-          statement opens a transaction, so the engine itself refuses every write.
-          This is the real boundary: the first-keyword whitelist below is only a
-          friendly early error, and it is bypassable by a data-modifying CTE
-          (`WITH t AS (DELETE ... RETURNING *) SELECT * FROM t` starts with WITH).
-          The read-only session makes Postgres reject that CTE with "cannot
-          execute DELETE in a read-only transaction" regardless.
-        - Whitelist on first keyword (SELECT or WITH only) — UX, not security
-        - EXPLAIN ANALYZE button surfaces query plans (still read-only)
+        - Statement timeout of 5 seconds so a runaway query can't hang the worker. The text runs
+          inside the one statement that calls console_read, and the limit is armed when that
+          statement starts, so nothing the text sets can lift it
+        - At most SQL_MAX_ROWS rows: console_read stops reading the query's cursor one row past
+          the bound, so a query over a large result sends the page what it shows and no more
+        - The caller's text is a parameter of console_read, never a statement. The function runs
+          as polaris_console_reader, which holds SELECT on CONSOLE_TABLES and nothing else, and it
+          takes the text only as a subquery of one SELECT, which the parser refuses to hold a
+          second statement, a data-modifying WITH or a utility command
+        - The session is set READ ONLY (`set_session(readonly=True)`) before any statement opens
+          a transaction, so the engine itself refuses every write, and console_read refuses to
+          run in a transaction that is not READ ONLY
+        - Whitelist on first keyword (SELECT or WITH only), and one statement per request
+          (statement_count): UX, and a first guard, not the boundary
+        - EXPLAIN ANALYZE button surfaces query plans (run the same way, as the reader)
         - Refused outright to an account bound to one authority (1.0.0-rc.18). See below.
     """
     # AN AUTHORITY SCOPE CANNOT BOUND SQL ITS HOLDER WRITES. The row-level policies read the
@@ -173,61 +248,45 @@ def sql_query():
             else:
                 conn = None
                 try:
-                    # Use a plain cursor here (NOT RealDictCursor) so cur.fetchall()
-                    # returns tuples we can zip with column names.
                     conn = psycopg2.connect(**DB_CONFIG)
-                    # The security boundary: make the whole session read-only at
-                    # the engine level, BEFORE any statement opens a transaction.
-                    # `set_session(readonly=True)` must be issued outside a
-                    # transaction, so it goes here, immediately after connect and
-                    # before the first execute — `SET default_transaction_read_only`
-                    # issued mid-transaction would NOT bind the query's own
-                    # (already-started) transaction. Now any write — including one
-                    # smuggled past the first-keyword whitelist via a data-modifying
-                    # CTE (`WITH t AS (DELETE ... RETURNING *) SELECT * FROM t`) — is
-                    # refused by Postgres ("cannot execute DELETE in a read-only
-                    # transaction"), not just discouraged by the keyword gate.
+                    # The session is read-only at the engine level BEFORE any statement opens a
+                    # transaction: `set_session(readonly=True)` must be issued outside one, so it
+                    # goes here, immediately after connect and before the first execute. A
+                    # `SET default_transaction_read_only` issued mid-transaction would NOT bind the
+                    # transaction already started. console_read checks the same flag and refuses
+                    # to run without it.
                     conn.set_session(readonly=True)
                     # The console is a database connection like any other, so it carries the
-                    # operator's authority like any other: without this the row-level policies
-                    # see an unset GUC and go permissive, and an operator scoped to one
-                    # authority everywhere else would read every authority's rows here. A SET
-                    # is permitted inside a read-only transaction, so this is safe after
-                    # set_session() above.
+                    # operator's authority like any other: the row-level policies on the count
+                    # tables apply to the reader too. A SET is permitted inside a read-only
+                    # transaction, so this is safe after set_session() above.
                     _apply_operator_scope(conn)
-                    # Set statement_timeout BEFORE starting our query. SET of a
-                    # runtime parameter is permitted inside a read-only transaction;
-                    # it lasts until this connection closes — scoped to the request.
                     with conn.cursor() as cur:
-                        cur.execute(f"SET statement_timeout = {SQL_TIMEOUT_MS}")
-
+                        # Armed when the next statement starts, for the whole of it.
+                        cur.execute("SET statement_timeout = %s", (SQL_TIMEOUT_MS,))
+                        # The caller's text is the function's argument: it runs as
+                        # polaris_console_reader, as a subquery, and comes back one JSON object a
+                        # row (a plan line a row under EXPLAIN), at most SQL_MAX_ROWS + 1 of them.
+                        cur.execute("SELECT line FROM console_read(%s, %s, %s) AS line",
+                                    (_without_terminator(sql), SQL_MAX_ROWS + 1, explain_mode))
+                        lines = [row[0] for row in cur.fetchall()]
                     if explain_mode:
-                        # A plan is a few dozen lines, and DECLARE takes no EXPLAIN.
-                        with conn.cursor() as cur:
-                            cur.execute(f"EXPLAIN ANALYZE {sql}")
-                            columns = [c.name for c in cur.description]
-                            results = [dict(zip(columns, row)) for row in cur.fetchall()]
+                        columns = ['QUERY PLAN']
+                        results = [[line] for line in lines]
                     else:
-                        # A server-side cursor: the query runs at the first FETCH, under the
-                        # timeout above, and only the rows fetched leave the database
-                        # (lab/strategy/008, step 4). It takes one query, which is all the console
-                        # has ever been for.
-                        with conn.cursor(name='polaris_console') as cur:
-                            cur.execute(sql)
-                            # The query runs at the FETCH, not here, so the limit is set again
-                            # in between: whatever ran with the DECLARE cannot have lifted it.
-                            with conn.cursor() as guard:
-                                guard.execute(f"SET statement_timeout = {SQL_TIMEOUT_MS}")
-                            rows = cur.fetchmany(SQL_MAX_ROWS + 1)
-                            if cur.description:
-                                columns = [c.name for c in cur.description]
-                                truncated = len(rows) > SQL_MAX_ROWS
-                                results = [dict(zip(columns, row)) for row in rows[:SQL_MAX_ROWS]]
-                            else:
-                                error = "Query returned no result set."
+                        rows = [json.loads(line, object_pairs_hook=_Row, parse_float=decimal.Decimal)
+                                for line in lines]
+                        truncated = len(rows) > SQL_MAX_ROWS
+                        rows = rows[:SQL_MAX_ROWS]
+                        # A query that returns no rows names no columns: the reader's function
+                        # hands over rows, not a description.
+                        columns = [name for name, _ in rows[0].pairs] if rows else []
+                        results = [[value for _, value in row.pairs] for row in rows]
                 except psycopg2.errors.QueryCanceled:
                     error = (f"Query timed out after {SQL_TIMEOUT_MS}ms. "
                              f"Add LIMIT, narrow WHERE conditions, or use the appropriate index.")
+                except psycopg2.errors.InsufficientPrivilege as e:
+                    error = _refusal(e)
                 except psycopg2.Error as e:
                     error = db_error_to_message(e)
                 finally:
@@ -244,37 +303,27 @@ def sql_query():
                         conn.close()
 
     examples = [
-        ("Active tokens with PQ algorithms (Q2)",
-         "SELECT t.token_id, i.legal_name, alg.name AS algorithm\n"
-         "FROM IdentityToken t\n"
-         "JOIN Individual i ON t.individual_id = i.individual_id\n"
-         "JOIN CryptographicAlgorithm alg ON t.algorithm_id = alg.algorithm_id\n"
-         "WHERE alg.quantum_resistant = TRUE AND t.status = 'ACTIVE'\n"
-         "ORDER BY t.token_id DESC\n"
-         "LIMIT 100;"),
-        ("Verification volume by context, the last 7 days (Q5)",
-         "SELECT vc.context_type, COUNT(ve.event_id) AS vol\n"
-         "FROM VerificationEvent ve\n"
-         "JOIN VerificationContext vc ON ve.context_id = vc.context_id\n"
-         "WHERE ve.event_timestamp >= now() - INTERVAL '7 days'\n"
-         "GROUP BY vc.context_type\n"
-         "ORDER BY vol DESC;"),
+        ("Verification contexts and what each requires",
+         "SELECT context_type, requires_biometric, min_security_level, description\n"
+         "FROM VerificationContext\n"
+         "ORDER BY min_security_level DESC, context_type;"),
         ("Agencies with BOTH grants on ML-DSA-65 (Q3)",
          "SELECT ag.name, ag.jurisdiction\n"
          "FROM CryptographicAlgorithm CA\n"
          "JOIN AgencyAlgorithmAuth aaa ON CA.algorithm_id = aaa.algorithm_id\n"
          "JOIN Agency ag ON aaa.agency_id = ag.agency_id\n"
          "WHERE CA.name = 'ML-DSA-65' AND aaa.authorization_type = 'BOTH';"),
-        ("Token succession lineage (Q6)",
-         "SELECT t1.token_id AS current_token,\n"
-         "       t1.activation_sequence,\n"
-         "       t2.token_id AS predecessor_token,\n"
-         "       t2.status AS predecessor_status\n"
-         "FROM IdentityToken t1\n"
-         "JOIN IdentityToken t2 ON t1.predecessor_token_id = t2.token_id\n"
-         "WHERE t1.status = 'ACTIVE'\n"
-         "ORDER BY t1.token_id DESC\n"
-         "LIMIT 100;"),
+        ("Algorithms each agency may issue or verify with",
+         "SELECT ag.name AS agency, CA.name AS algorithm, aaa.authorization_type\n"
+         "FROM AgencyAlgorithmAuth aaa\n"
+         "JOIN Agency ag ON ag.agency_id = aaa.agency_id\n"
+         "JOIN CryptographicAlgorithm CA ON CA.algorithm_id = aaa.algorithm_id\n"
+         "ORDER BY ag.name, CA.name;"),
+        ("Algorithms the catalogue marks quantum_resistant, by security level",
+         "SELECT name, family, nist_standard, security_level_bits\n"
+         "FROM CryptographicAlgorithm\n"
+         "WHERE quantum_resistant\n"
+         "ORDER BY security_level_bits DESC, name;"),
     ]
 
     return render_template('sql_console.html',
@@ -287,4 +336,6 @@ def sql_query():
                            truncated=truncated,
                            max_rows=SQL_MAX_ROWS,
                            max_length=SQL_MAX_LENGTH,
-                           timeout_ms=SQL_TIMEOUT_MS)
+                           timeout_ms=SQL_TIMEOUT_MS,
+                           console_tables=CONSOLE_TABLES,
+                           audited_pages=AUDITED_PAGES)

@@ -17,10 +17,10 @@
 # of the same release is drift.
 #
 # The two clusters' roles are compared too, for the roles Polaris creates (polaris_sql's and the
-# init's: polaris_app, and polaris_replicator, which the init creates, or Patroni under the HA
-# profile, when the stack has a replication password): an upgraded role whose attributes,
-# memberships or settings differ from a fresh one's is drift, and so is one on one side only. Facts
-# about a role only one cluster has and Polaris does not create are left out, and named.
+# init's: polaris_app, polaris_console_reader, and polaris_replicator, which the init creates, or
+# Patroni under the HA profile, when the stack has a replication password): an upgraded role whose
+# attributes, memberships or settings differ from a fresh one's is drift, and so is one on one side
+# only. Facts about a role only one cluster has and Polaris does not create are left out, and named.
 #
 # polaris_db_reference_carries runs `pg_run` (the caller's): given an argv, it runs it inside a
 # database server's container as the superuser, with stdin closed, and fails when it fails.

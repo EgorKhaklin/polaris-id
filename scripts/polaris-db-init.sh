@@ -86,7 +86,7 @@ if (( version < 160000 )); then
     exit 3
 fi
 # One row of facts about the owner and the database; nothing is written until every one holds.
-IFS='|' read -r super owns createrole app_exists app_admin tables can_set < <(q "
+IFS='|' read -r super owns createrole app_exists app_admin tables can_set reader_exists reader_ok < <(q "
     SELECT r.rolsuper, d.datdba = r.oid, r.rolcreaterole,
            to_regrole('polaris_app') IS NOT NULL,
            COALESCE((SELECT bool_or(m.admin_option) FROM pg_auth_members m
@@ -97,7 +97,12 @@ IFS='|' read -r super owns createrole app_exists app_admin tables can_set < <(q 
                                               AND typrelid = 0),
            has_parameter_privilege('polaris.min_epoch_anonymity_set', 'SET')
              AND has_parameter_privilege('polaris.default_max_revoke_percent', 'SET')
-             AND has_parameter_privilege('polaris.default_window_days', 'SET')
+             AND has_parameter_privilege('polaris.default_window_days', 'SET'),
+           to_regrole('polaris_console_reader') IS NOT NULL,
+           COALESCE((SELECT bool_or(m.admin_option) FROM pg_auth_members m
+                      WHERE m.roleid = to_regrole('polaris_console_reader') AND m.member = r.oid)
+                    OR (pg_has_role(r.oid, to_regrole('polaris_console_reader'), 'USAGE')
+                        AND pg_has_role(r.oid, to_regrole('polaris_console_reader'), 'SET')), false)
       FROM pg_roles r, pg_database d
      WHERE r.rolname = current_user AND d.datname = current_database()")
 refusals=()
@@ -119,6 +124,13 @@ if [[ "${super}" != t && "${app_exists}" != t && "${createrole}" != t ]]; then
 fi
 if [[ "${super}" != t && "${app_exists}" == t && "${app_admin}" != t ]]; then
     refusals+=("polaris_app exists and ${PGUSER} does not hold ADMIN on it, so it cannot set its password")
+fi
+if [[ "${super}" != t && "${reader_exists}" != t && "${createrole}" != t ]]; then
+    refusals+=("${PGUSER} lacks CREATEROLE, which creates polaris_console_reader, the role the SQL console reads as")
+fi
+if [[ "${super}" != t && "${reader_exists}" == t && "${reader_ok}" != t ]]; then
+    refusals+=("polaris_console_reader exists and ${PGUSER} holds neither ADMIN on it nor its privileges, so it cannot give it the SQL console's function; a superuser grants it once:
+         GRANT polaris_console_reader TO \"${PGUSER}\";")
 fi
 if (( ${#refusals[@]} )); then
     echo "refused: ${WHERE}; nothing was written:" >&2

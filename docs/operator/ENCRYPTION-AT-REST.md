@@ -254,11 +254,13 @@ place of `secrets/postgres_server.crt` at the path
 [`scripts/polaris-db-init.sh`](../../scripts/polaris-db-init.sh): the schema, the migrations,
 the application role's password and the production hardening `docker-init.sh` applies, run
 against the provider's server as the database's owner, which need not be a superuser. The
-owner needs CREATEROLE (it creates `polaris_app`) and, on PostgreSQL 15 and later, SET on the
+owner needs CREATEROLE (it creates `polaris_app`, and `polaris_console_reader`, the role the SQL
+console reads as, which cannot log in) and, on PostgreSQL 15 and later, SET on the
 three `polaris.*` settings the schema keeps on the database, which a superuser grants once:
 `GRANT SET ON PARAMETER polaris.min_epoch_anonymity_set, polaris.default_max_revoke_percent,
 polaris.default_window_days TO <owner>;`. The script refuses, before writing anything, when one
-is missing, when the application password is empty, or when `polaris_app` already exists on the
+is missing, when the application password is empty, when `polaris_console_reader` exists and the
+owner holds neither ADMIN on it nor its privileges, or when `polaris_app` already exists on the
 server: a role belongs to the server, not to one database, so setting its password could lock out
 another database's stack, and an existing one is used only with `POLARIS_DB_INIT_REUSE_APP_ROLE=1`.
 `polaris_app` gets its password before the schema loads, so the public development password is

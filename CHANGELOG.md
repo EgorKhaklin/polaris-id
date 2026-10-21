@@ -36,6 +36,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - CONTRIBUTING.md and SECURITY.md said six checks are required to merge; the repository's ruleset requires seven, and CONTRIBUTING.md now names them, the product test suite's gate among them. The CI workflow's comments described a merge queue, which GitHub offers only to organization-owned repositories; this one is user-owned, so the workflow's `merge_group` trigger is unused and a push to `main` runs everything.
 - The mdoc issuer signature (COSE -49) is now pure ML-DSA-65 over the raw COSE Sig_structure, as RFC 9964 defines -49. It was over SHA3-256 applied twice to that structure, so the mdoc verifier polaris-verify ships (`verify_mdoc`) refused every mdoc the route signed with real ML-DSA-65, and an ML-DSA-65 implementation (pyca/cryptography) verifying the raw structure, as RFC 9964 defines -49, refused it too. `verify_mdoc` now checks -49 only over the raw structure, under the algorithm the protected header names, and `/api/v1/mdoc` answers 503 for an authority key with no COSE algorithm instead of labelling it -49. Polaris tokens and status assertions keep SHA3-256.
 - polaris-oid4vp `serve` prints its startup lines and the `--once` launch links before it waits, and each verdict line as it happens. When stdout was not a terminal (a pipe, a file, a container log), Python's buffering held them until its buffer filled or the process exited.
+- docs/RED-TEAM-SCOPE.md said every read of an audit-tracked table must leave an `AuditAccessLog` row, wider than the review packet's A-8: a count over those tables (the dashboard's figures) returns no one's rows. Both now name the four tables and the rows a page returns, and name the tables holding one person's rows that are outside the record, `TokenStateEpochLeaf` (`/epochs`) among them.
 
 ### Security
 
@@ -52,6 +53,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp: a request now closes only on an authentic presentation. Before, any response encrypted to the request's key, which anyone who saw the request can fetch, closed it even when it was refused (one carrying only the `state` sufficed), so the holder's own presentation was then refused as a replay.
 - polaris-oid4vp: the encrypted response's protected header (64 KiB) and decrypted body (1 MiB) are size-bounded before they are parsed, and NaN and Infinity in either are refused, as in every SD-JWT document.
 - polaris-oid4vp: a posted `wallet_nonce` is held to 1 to 1024 printable ASCII characters before a request object is signed for it; any other gets 400 from `serve` and None from `Verifier.request_object`.
+- The operator application's record of reads (`AuditAccessLog`): pages that returned rows of the four audit-tracked tables without recording the read now record it, and the SQL console no longer returns those rows or any count: a count cell can be one event, and counts are read on the Atlas, which withholds a small one.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 

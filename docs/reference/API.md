@@ -1434,7 +1434,9 @@ consistency model and the no-auto-derivation argument.
 ### `GET /tokens`, `GET /tokens/<id>`, `POST /tokens/<id>/transition`, `POST /tokens/<id>/delete`
 
 The token list and detail pages, the state transition form, and delete.
-There is no free-form edit: every status change goes through the
+The detail page shows the credential's lifecycle and the verifications of
+it, and records each of the two reads in `AuditAccessLog`, as
+`/investigate/token/<id>` does. There is no free-form edit: every status change goes through the
 state-machine trigger (`enforce_token_state_machine`), which rejects
 illegal transitions, and issuance goes through UC-1. Individuals and
 agencies have the usual `/new`, `/<id>/edit` and `/<id>/delete` forms.
@@ -1656,7 +1658,8 @@ verification (R2 audit refinement: identical observable behavior).
 
 ### `GET /api/duress/events` (admin/auditor)
 
-Returns up to 200 recent duress events. **NOT** accessible to the
+Returns up to 200 recent duress events, and records the read in
+`AuditAccessLog` as the `/duress` dashboard does. **NOT** accessible to the
 operator role, R6 anti-revealing posture means only admins and
 auditors can see the duress dashboard.
 

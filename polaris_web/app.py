@@ -2491,6 +2491,12 @@ def api_duress_events():
          ORDER BY d.event_timestamp DESC
          LIMIT 200
     """)
+    # The same read as /duress, so the same AuditAccessLog row.
+    security.record_audit_access(
+        get_db, 'DuressEvent',
+        filter_criteria={'route': '/api/duress/events', 'limit': 200},
+        result_row_count=len(rows),
+    )
     return jsonify(
         count=len(rows),
         events=[{

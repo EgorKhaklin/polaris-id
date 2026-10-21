@@ -21465,6 +21465,133 @@ _AUDITED_ROW_COLUMNS = re.compile(
     r"date_of_birth|duress_code_hash|holder\w*|subject\w*)\b", re.I)
 
 
+#: Routes whose own SQL names a tracked table and that are held to no AuditAccessLog row, each
+#: with its reason. An entry that no longer names such a route fails the check, so an exemption
+#: cannot outlive the reason it was given for.
+_AUDITED_READ_EXEMPT = {
+    "api_sim_tick": "answers 404 unless POLARIS_SIM_MODE is on, and reads count(*) of "
+                    "VerificationEvent: a count, no one's rows",
+    "api_duress_record": "reads back the event_id of the duress row it has just written, and "
+                         "nothing else of the table",
+}
+
+#: The console, held by name: its SQL is its caller's, so no string in the handler names what it
+#: reads, and no route can write the record for it. It reads as a role that holds none of it.
+_CONSOLE_MODULE, _CONSOLE_HANDLER, _CONSOLE_ROLE = "sql_console.py", "sql_query", "polaris_console_reader"
+
+
+def _sql_mentions(text: str, names) -> list[str]:
+    """The names a text mentions as whole words, case aside, with every INSERT INTO a table
+    taken out first: a write hands the caller no one's rows."""
+    text = re.sub(r'(?i)\bINSERT\s+INTO\s+(?:\w+\.)?"?\w+"?', " ", text)
+    return sorted({n for n in names if re.search(r"(?i)\b" + re.escape(n) + r"\b", text)})
+
+
+def _views_over(sql: str, tables) -> list[str]:
+    """The views whose definition, in any SQL source, reads one of the tables or a view that
+    does, to a fixed point. Every view runs as its caller, so a read through one is a read."""
+    defs: dict[str, str] = {}
+    for m in re.finditer(r"(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)(.*?);", sql):
+        defs[m.group(1)] = defs.get(m.group(1), "") + "\n" + m.group(2)
+    over: set[str] = set()
+    while True:
+        new = {v for v, body in defs.items()
+               if v not in over and _sql_mentions(body, list(tables) + sorted(over))}
+        if not new:
+            return sorted(over)
+        over |= new
+
+
+def _function_texts(src: str) -> list[tuple]:
+    """(name, line, whether it is a route, its own SQL text, whether it calls record_audit_access)
+    for every function in one module. Its own text: the string constants in its body, the
+    docstring left out and nested functions in, with each module-level string constant it names.
+    A comment is not a constant and a call that survives only as one is not a call. Raises
+    SyntaxError, which the caller reports."""
+    tree = ast.parse(src)
+    consts: dict[str, str] = {}
+    for stmt in tree.body:
+        targets = (stmt.targets if isinstance(stmt, ast.Assign)
+                   else [stmt.target] if isinstance(stmt, ast.AnnAssign) and stmt.value else [])
+        for t in targets:
+            if isinstance(t, ast.Name):
+                consts[t.id] = "\n".join(c.value for c in ast.walk(stmt.value)
+                                         if isinstance(c, ast.Constant) and isinstance(c.value, str))
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = node.body
+        if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            body = body[1:]
+        parts, calls = [], False
+        for stmt in body:
+            for c in ast.walk(stmt):
+                if isinstance(c, ast.Constant) and isinstance(c.value, str):
+                    parts.append(c.value)
+                elif isinstance(c, ast.Name) and c.id in consts:
+                    parts.append(consts[c.id])
+                elif isinstance(c, ast.Call) and (
+                        (isinstance(c.func, ast.Attribute) and c.func.attr == "record_audit_access")
+                        or (isinstance(c.func, ast.Name) and c.func.id == "record_audit_access")):
+                    calls = True
+        route = any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route"
+                    for d in node.decorator_list)
+        out.append((node.name, node.lineno, route, "\n".join(parts), calls))
+    return out
+
+
+def _console_problem(root: pathlib.Path, sql: str, modules, audited) -> str | None:
+    """Why the console could read what the record covers, or None. The handler hands the
+    database constant statements only, one of them a call of console_read; console_read is a
+    SECURITY DEFINER function given to the reader role; and no SQL source grants that role a
+    tracked table, a view over one, every table, a routine, a default privilege or a role."""
+    fn = None
+    for mod, src in modules:
+        if mod != _CONSOLE_MODULE:
+            continue
+        tree = ast.parse(src)
+        fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == _CONSOLE_HANDLER
+                   and any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route"
+                           for d in n.decorator_list)), None)
+    if fn is None:
+        return (f"the console route {_CONSOLE_HANDLER}() is not in polaris_web/{_CONSOLE_MODULE}, where this "
+                "check holds it by name")
+    statements = []
+    for c in ast.walk(fn):
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "execute":
+            first = c.args[0] if c.args else None
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+                return (f"{_CONSOLE_HANDLER}() line {c.lineno} executes a statement that is not a constant: "
+                        "the caller's text would run as the application role, which reads the tracked "
+                        "tables, and nothing would record it")
+            statements.append(first.value)
+    if not any(re.search(r"(?i)\bconsole_read\s*\(", t) for t in statements):
+        return f"{_CONSOLE_HANDLER}() never calls console_read(), the function that runs its text as {_CONSOLE_ROLE}"
+    head = re.search(r"(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+console_read\s*\((.*?)\bAS\s*\$", sql)
+    if not head or not re.search(r"(?i)\bSECURITY\s+DEFINER\b", head.group(1)):
+        return "no SQL source defines console_read() as a SECURITY DEFINER function"
+    if not re.search(r"(?is)\bALTER\s+FUNCTION\s+console_read\s*\([^)]*\)\s+OWNER\s+TO\s+"
+                     + _CONSOLE_ROLE + r"\b", sql):
+        return f"no SQL source gives console_read() to {_CONSOLE_ROLE}, so it would run as its loader"
+    for g in re.finditer(r"(?is)\bGRANT\s+((?:(?!\bGRANT\b|;).)*?)\s+TO\s+" + _CONSOLE_ROLE + r"\b", sql):
+        what = re.sub(r"\s+", " ", g.group(1)).strip()
+        on = re.search(r"(?is)\bON\b(.*)", what)
+        if not on:
+            return (f"GRANT {what} TO {_CONSOLE_ROLE} makes the reader a member of a role, whose rights "
+                    "it would then hold")
+        if (re.search(r"(?i)\bALL\s+TABLES\b|\b(?:FUNCTION|PROCEDURE|ROUTINE)S?\b", on.group(1))
+                or _sql_mentions(on.group(1), audited)):
+            return f"GRANT {what} TO {_CONSOLE_ROLE} lends the reader what the record covers"
+    if re.search(r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\b[^;]*\bTO\s+" + _CONSOLE_ROLE + r"\b", sql):
+        return f"a default privilege is granted to {_CONSOLE_ROLE}, so a table added later would be its"
+    if re.search(r"(?is)\bCREATE\s+ROLE\s+" + _CONSOLE_ROLE + r"\b[^;]*\b(?:IN\s+(?:ROLE|GROUP)|ROLE|ADMIN|USER)\b", sql) \
+            or re.search(r"(?is)\bALTER\s+GROUP\s+\w+\s+ADD\s+USER\b[^;]*\b" + _CONSOLE_ROLE + r"\b", sql):
+        return f"{_CONSOLE_ROLE} is created or added as a member of another role"
+    return None
+
+
 def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     """A read of an audited table must leave a row even when it hides behind a function (P7.7).
 
@@ -21490,7 +21617,18 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     event's own key or identifies a person or a credential (_AUDITED_ROW_COLUMNS), a SETOF a
     table, or an argument that selects one person's or one credential's rows. A function that
     returns only counts hands the caller nothing, as before. The check refuses to pass
-    vacuously: finding no such function means the parse broke."""
+    vacuously: finding no such function means the parse broke.
+
+    AND THE READS IN PLAIN SIGHT (2026-10-21). The rule above followed the read behind a function
+    and assumed the direct ones were covered. Three were not: /tokens/<id> returned a
+    credential's lifecycle and verification history, /api/duress/events the duress feed, and the
+    SQL console any SELECT its admin or auditor wrote, each with no AuditAccessLog row. So, per
+    module and by syntax tree: a route whose own SQL (its string constants, and the module's
+    constants it names) names a tracked table, or a view over one, calls record_audit_access, or
+    is in _AUDITED_READ_EXEMPT with its reason; no function that reads AuditAccessLog records
+    itself, since the regress stops at that table by construction; and the console, whose SQL is
+    its caller's, is held by name (_console_problem): it reads as polaris_console_reader, a role
+    the SQL sources grant none of what the record covers. A module that does not parse fails."""
     name = "audited_reads_are_logged"
     sec = _read(root, "polaris_web/security.py")
     app = _read_app(root)
@@ -21543,10 +21681,58 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
                              "AuditAccessLog row. A read that hides behind a function name is "
                              "still a read of somebody's history, and the most invasive one in "
                              "the system is exactly where the omission is least visible")
+
+    # The direct reads, per module and by syntax tree.
+    views = _views_over(sql, tracked)
+    audited = tracked + views
+    modules = _app_modules(root)
+    direct, exempt_seen = [], set()
+    for mod, src in modules:
+        try:
+            functions = _function_texts(src)
+        except SyntaxError as e:
+            return _fail(name, f"polaris_web/{mod} does not parse ({e.msg}, line {e.lineno}), so its "
+                               "routes' reads cannot be read")
+        for fname, line, route, text, calls in functions:
+            if calls and _sql_mentions(text, ["AuditAccessLog"]):
+                return _fail(name, f"{mod}:{line} {fname}() reads AuditAccessLog and calls "
+                                   "record_audit_access: reads of AuditAccessLog are not logged, "
+                                   "which is where the audit of the audit stops")
+            if not route or (mod == _CONSOLE_MODULE and fname == _CONSOLE_HANDLER):
+                continue
+            named = _sql_mentions(text, audited)
+            if not named:
+                continue
+            if fname in _AUDITED_READ_EXEMPT:
+                exempt_seen.add(fname)
+            elif not calls:
+                return _fail(name, f"{mod}:{line} {fname}() reads {', '.join(named)} and records no "
+                                   "AuditAccessLog row. A route that returns a tracked table's rows "
+                                   "writes the record, whether it reads the table, a view over it "
+                                   "or a function returning it")
+            else:
+                direct.append(fname)
+    stale = sorted(set(_AUDITED_READ_EXEMPT) - exempt_seen)
+    if stale:
+        return _fail(name, "_AUDITED_READ_EXEMPT names " + ", ".join(stale) + ", which no longer "
+                           "is a route reading a tracked table: an exemption outlives its reason")
+    if not direct:
+        return _fail(name, "found no route reading a tracked table directly. The parse has broken; "
+                           "this check must not pass by finding nothing to check")
+    try:
+        problem = _console_problem(root, sql, modules, audited)
+    except SyntaxError as e:
+        return _fail(name, f"polaris_web/{_CONSOLE_MODULE} does not parse ({e.msg}, line {e.lineno})")
+    if problem:
+        return _fail(name, "the SQL console could return rows the record covers: " + problem)
     return _ok(name,
                f"every route reading audited rows through the {len(exposing)} function(s) that "
-               "return a history, from any SQL source, leaves an AuditAccessLog row; the tracked "
-               "list is read from security.py rather than restated here")
+               f"return a history, from any SQL source, leaves an AuditAccessLog row, and so do the "
+               f"{len(direct)} routes whose own SQL names a tracked table or one of the {len(views)} "
+               f"views over one ({len(_AUDITED_READ_EXEMPT)} more exempt, each with its reason); no "
+               "function reading AuditAccessLog records itself; the SQL console reads as "
+               f"{_CONSOLE_ROLE}, which no SQL source grants any of them; the tracked list is read "
+               "from security.py rather than restated here")
 
 
 def check_transparency_program(root: pathlib.Path) -> list[Finding]:
