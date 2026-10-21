@@ -55,7 +55,7 @@ the walks against the newest release on PyPI.
 | [Credo on a cheqd ledger](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/cheqd/README.md), the issuer a `did:cheqd` with its status list on the ledger | cheqd, OpenWallet Foundation | TypeScript, Go | cheqd-node 4.2.1 and Credo 0.7.2, against 1.0.0rc15 (2026-10-04) |
 | [Multipaz](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/multipaz/README.md), under a short wallet built for the walk | OpenWallet Foundation | Kotlin | 0.101.0, against 1.0.0rc16 (2026-10-04) |
 | [ERICA](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/erica/README.md), the German EUDI Wallet programme's verifier testing tool, with its negative modes | the German EUDI Wallet programme (opencode.de) | TypeScript | 2c27dc92, against the tree (2026-10-04) |
-| [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | dominikschlosser | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
+| [eudi-dev](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/eudi-dev/README.md), HAIP strict mode with its TLS check on | eudi-dev | Go | v2.5.1, against 1.0.0rc15 (2026-10-04) |
 | [OID4VCgo](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/oid4vcgo/README.md) | IDFoundry | Go | 0.25.0, against 1.0.0rc14 (2026-10-03) |
 | [The OpenID Foundation's conformance suite](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified) | OpenID Foundation | Java | eleven of eleven HAIP verifier modules clean against 1.0.0rc15, both controls noticed (2026-10-04); 1.0.0rc7 certified (2026-09-24) |
 
@@ -85,10 +85,14 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   `enc` this package produces, A128GCM or A256GCM, and a P-256 key in `jwks`) gets the signed
   object encrypted to that key, as the EUDI iOS wallet kit requires. A wallet that asks for
   nothing, or for something this cannot produce, gets the signed object.
+- A `wallet_nonce` posted with it comes back in the request object when it is 1 to 1024
+  printable ASCII characters (%x20-7E); any other gets 400 (`Verifier.request_object` returns
+  None), and nothing is signed for it.
 - `--verifier-info FILE` puts attestations about the verifier into the request object, such as
   the registration certificate a registrar issues: a JSON array as OpenID4VP 1.0 section 5.1 has
-  it, or one object, `{"format": "registration_cert", "data": "<JWT>"}`, as the German EUDI
-  Wallet guide and its testing tool read it. The German ecosystem requires one for a PID request.
+  it, `[{"format": "registration_cert", "data": "<the base64url encoding of the serialized RP registration certificate>"}]`
+  (ETSI TS 119 472-2 V1.3.1 RO-16's words), or one object, as the German EUDI Wallet guide and its testing tool
+  read it. The German ecosystem requires one for a PID request.
   This package carries it as given, checking the shape section 5.1 asks for; a registration
   certificate labelled with its own media type is refused. `--verifier-info-profile
   etsi-119472-2` holds it to ETSI TS 119 472-2 (below).
@@ -97,8 +101,9 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   chain to an anchor, directly or through the CA certificates the `x5c` sends after it (at most
   three, in order, each certifying the one before it; each a CA allowed to sign certificates,
   inside its validity period and its path length, with no critical extension this does not
-  read, and none of them the anchor itself). The leaf must be inside its validity period and,
-  when it states a key usage, include digitalSignature; one that states extended key usages must name one an
+  read, and none of them the anchor itself). The leaf must be inside its validity period, carry
+  no critical extension beyond basic constraints, key usage, extended key usage and
+  subjectAltName (RFC 5280 section 4.2), and, when it states a key usage, include digitalSignature; one that states extended key usages must name one an
   issuer may hold (ISO 18013-5's document signer, as EUDI issuers use; the EUDI PID Rulebook's
   document signer, 1.3.130.2.0.0.1.2, as the EU reference PID issuer uses; or client auth, code
   signing or email protection). A leaf that states no key usage is not restricted by one. The
@@ -106,15 +111,24 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   must name the credential's `iss`: a URI subjectAltName exactly, or, for a leaf naming only DNS
   hosts, an https URL on one. A leaf with neither (the EU reference PID issuer's has no
   subjectAltName) leaves `iss` unbound: the verdict reports it apart, not in `claims`.
+  Name constraints stated by the anchor or a CA in the chain (RFC 5280 section 4.2.1.10) are
+  applied to the DNS and URI subjectAltNames of every certificate beneath them; a CA that
+  constrains any other name form (directoryName, rfc822Name, iPAddress, otherName) is refused,
+  since those are not applied. Under a constraint, a name whose host is not plain letters,
+  digits and hyphens in dot-separated labels (a trailing dot, an empty label, a `%` escape) is
+  refused, because another spelling of an excluded host would not match it as a string.
 - `--issuer-jwks` trusts every key it lists for every `iss`, except one whose `use`, `key_ops` or `alg`
   says it is not for ES256 signatures; list one issuer's keys per verifier.
+- `--bind` is the address the listener binds: 127.0.0.1 by default, this machine only. A wallet on
+  another device needs `--bind 0.0.0.0` (every interface), or a reverse proxy or tunnel on this
+  machine (`--public-base-url`, below).
 - `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
   verifier by when it runs behind a reverse proxy or a tunnel, where the public URL differs
   from the local `--bind`/`--port`. It is used for the `request_uri` and `response_uri`;
   without it they are `https://<--host>:<--port>`.
 - `--no-local-tls` serves the local listener over plain HTTP, for when that proxy or tunnel
-  terminates TLS and provides the public HTTPS. The listener still binds `--bind` (localhost by
-  default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
+  terminates TLS and provides the public HTTPS. The listener still binds `--bind` (127.0.0.1, this
+  machine only, by default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
 - `--claim` names a claim to ask for (repeatable; without it, `given_name` and `family_name`): a
   name, a dotted path of object keys, or a JSON array of keys, optionally `=VALUE` (JSON) for
   the value it must have. A path asks for one member of a nested claim and nothing around it:
@@ -126,6 +140,14 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   signed. `--vct` (repeatable) names the credential types to accept; without it,
   `urn:eudi:pid:1`. `Verifier(claims=..., vct_values=...)` takes the same, a claim as a name, a
   list of keys, or `{"path": [...], "values": [...]}`.
+- `serve --once --result FILE` keeps FILE a JSON object saying what became of the request
+  `--once` started, apart from the log on stdout. `outcome` is `nothing_received` until a
+  response arrives, then that response's: `accepted` (with `claims`, the names), `refused` (with
+  `check` and `reason`, the code and text its `<-` line prints) or `wallet_error`; an acceptance
+  closes the request and stays. `response.status_code` is the HTTP status the wallet was
+  answered, `request_object` counts the fetches `served` and `refused`, and `responses` the
+  responses received. The file is replaced whole at startup and before each answer goes out;
+  without `--once` it is refused (exit 2).
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
@@ -219,7 +241,9 @@ one constant body, so the verifier is not a per-check oracle:
 
 The response JWE (`jwe.py`) accepts only ECDH-ES over P-256 with A128GCM or A256GCM, with a
 fresh encryption key per request. The listener (`verifier.py`, `serve.py`) is standard library
-only.
+only. A request closes only on an authentic presentation; any other response, which anyone who
+fetched the request object can encrypt to its key, is refused and leaves the request open until
+it expires. A second authentic presentation for the same request is refused as a replay.
 
 ## Who sees the result
 
@@ -288,7 +312,8 @@ carries no registration certificate. `Verifier(..., verifier_info_profile="etsi-
 does not meet those requirements: a `ValueError` names the requirement's ID, and `serve` exits 2
 before it listens. Under the profile:
 
-- `verifier_info` is an array of objects with exactly one `registrar_dataset` element, whose
+- `verifier_info` is an array of objects with one `registrar_dataset` element (one, not two, is
+  this package's reading: the requirements state no count), whose
   `data` holds `identifier`, `srvDescription`, `registryURI`, `intendedUseIdentifier`, `purpose`
   and `policyURI`, each non-empty and the two URIs absolute, and optionally `credential`;
 - it carries at most one `registration_cert` element, its `data` a non-empty string; neither
@@ -338,6 +363,14 @@ The approach follows EUDIPLO's `registration_cert` configuration and ERICA's req
   nothing is fetched and the state is `not_evaluated`.
 - `status.py` decides a Token Status List (`draft-ietf-oauth-status-list`) without opening a
   socket; `decide_by_fetching` takes your `fetch` callable.
+- **Your `fetch` decides where a request may go.** When the list is to be signed by the
+  credential's own key, the URI is the one the issuer wrote into the credential, so a coerced
+  or compromised issuer chooses where your server sends a GET. The callable MUST accept `https`
+  only; refuse loopback, private, link-local (`169.254.0.0/16`, `fe80::/10`), unique-local and
+  unspecified addresses, judged on the address it connects to rather than on a name resolved
+  earlier; follow no redirect; stop reading past `status.MAX_TOKEN_BYTES` (2 MiB, the size
+  `decide` refuses above); and set connect and read timeouts. Whatever it raises becomes
+  `unreachable`.
 - **Who may publish status for whom is stated, not inferred:** `StatedAuthority` records that a
   named key may publish for a named issuer at a named URI. Anything else is `no_authority`, and
   no request is sent to a URI an unvetted credential names.
@@ -369,12 +402,13 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 628 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 663 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a
   test to fail: 172 are caught, and the 4 survivors are declared with their reasons. It also makes
-  8 named changes to the redirect's `response_code` and its redemption, each of which a test must
-  catch (all 8 are; measured 2026-10-14; CI runs it on every push).
+  19 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  the x5c leaf and name constraints, the JWE bounds, when a request closes), each of which a test
+  must catch (all 19 are; measured 2026-10-15; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

@@ -31,8 +31,11 @@ whatever authority its ecosystem trusts, not from a subcommand.
 import argparse
 import datetime
 import json
+import os
 import pathlib
 import sys
+import tempfile
+import threading
 import time
 import urllib.parse
 
@@ -285,6 +288,91 @@ def _operator_line(verdict):
     return "refused: %s: %s" % (verdict.code, verdict.reason)
 
 
+def _result_of(status, verdict):
+    """The members `--result` writes for one answer at the response URI, decided as
+    `_operator_line` decides: the HTTP status the wallet was answered, and for anything but an
+    acceptance the check that refused (the verdict's code) and its reason. Claim names only, as
+    the line prints them; never the response_code a redirect carries, which redeems the result."""
+    out = {"response": {"status_code": status}}
+    if verdict is None:
+        out.update(outcome="refused", check=None, reason=None)
+    elif verdict.authentic:
+        out.update(outcome="accepted", claims=sorted(verdict.claims))
+    elif getattr(verdict, "wallet_error", None) is not None:
+        out.update(outcome="wallet_error", check=verdict.code, reason=verdict.reason)
+    else:
+        out.update(outcome="refused", check=verdict.code, reason=verdict.reason)
+    return out
+
+
+class _ResultFile:
+    """`serve --once --result FILE`: what became of the request --once started, as one JSON
+    object in its own file, so it never mixes with the log on stdout.
+
+    Written whole at startup and again before each answer at either URI goes out, through a
+    temporary file renamed over it, so a reader finds the last complete document and finds it
+    by the time the wallet has its answer. The process is usually stopped by a signal, so
+    nothing waits for an exit to write. Until a response arrives the outcome is
+    `nothing_received`, which a refusal never reads as. Then it is the latest response's:
+    `accepted`, `refused` or `wallet_error`; an acceptance closes the request, so it stays.
+
+    A file that cannot be written at startup stops the command before it listens. One that
+    cannot be rewritten later is removed and the failure said on stderr: a document left saying
+    what it said before an answer would be read as the result, and the wallet still gets its
+    answer.
+    """
+
+    def __init__(self, path):
+        self.path = pathlib.Path(path)
+        self._lock = threading.Lock()
+        self._state = None
+        self._fetches = {"served": 0, "refused": 0}
+        self._responses = 0
+        self._latest = {"outcome": "nothing_received"}
+        self._write()
+
+    def request(self, state):
+        with self._lock:
+            self._state = state
+            self._rewrite()
+
+    def request_object(self, status):
+        with self._lock:
+            self._fetches["served" if status == 200 else "refused"] += 1
+            self._rewrite()
+
+    def verdict(self, status, verdict):
+        with self._lock:
+            self._responses += 1
+            if self._latest["outcome"] != "accepted":
+                self._latest = _result_of(status, verdict)
+            self._rewrite()
+
+    def _rewrite(self):
+        try:
+            self._write()
+        except OSError as exc:
+            try:
+                os.unlink(str(self.path))
+            except OSError:
+                pass
+            print("polaris-oid4vp: --result %s could not be rewritten (%s); it was removed rather "
+                  "than left stale" % (self.path, exc), file=sys.stderr, flush=True)
+
+    def _write(self):
+        doc = dict(self._latest, state=self._state, request_object=dict(self._fetches),
+                   responses=self._responses)
+        fd, tmp = tempfile.mkstemp(prefix=self.path.name + ".", dir=str(self.path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(doc, fh, indent=2)
+                fh.write("\n")
+            os.replace(tmp, str(self.path))
+        except BaseException:
+            os.unlink(tmp)
+            raise
+
+
 def _cmd_serve(args) -> int:
     pki = pathlib.Path(args.pki)
     missing = [name for name in FILES.values() if not (pki / name).is_file()]
@@ -318,6 +406,10 @@ def _cmd_serve(args) -> int:
             print("polaris-oid4vp: --verifier-info %s: %s" % (args.verifier_info, exc),
                   file=sys.stderr)
             return 2
+    if args.result and not args.once:
+        print("polaris-oid4vp: --result reports on the request --once starts; add --once",
+              file=sys.stderr)
+        return 2
     # The entries of the request --once starts, checked now so that one a wallet would refuse
     # stops the command before it listens, as a bad --verifier-info does.
     transaction_data = None
@@ -362,14 +454,26 @@ def _cmd_serve(args) -> int:
               "answer to an unconfigured verifier, and it is probably not what you wanted.",
               file=sys.stderr)
 
+    result = None
+    if args.result:
+        try:
+            result = _ResultFile(args.result)
+        except OSError as exc:
+            print("polaris-oid4vp: --result %s: %s" % (args.result, exc), file=sys.stderr)
+            return 2
+
+    def on_verdict(status, body, verdict):
+        if result is not None:
+            result.verdict(status, verdict)
+        # The operator sees the reason; the wallet never does. body carries the same constant
+        # refusal whatever went wrong.
+        print("  <- %d %s" % (status, _operator_line(verdict)), flush=True)
+
     httpd = serve(verifier, host=args.bind, port=args.port,
                   certfile=None if args.no_local_tls else str(pki / FILES["tls_cert"]),
                   keyfile=None if args.no_local_tls else str(pki / FILES["tls_key"]),
-                  verbose=args.verbose,
-                  # The operator sees the reason; the wallet never does. body carries the
-                  # same constant refusal whatever went wrong.
-                  on_verdict=lambda status, body, verdict: print(
-                      "  <- %d %s" % (status, _operator_line(verdict)), flush=True))
+                  verbose=args.verbose, on_verdict=on_verdict,
+                  on_request_object=result.request_object if result is not None else None)
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     if args.no_local_tls:
@@ -389,6 +493,8 @@ def _cmd_serve(args) -> int:
     print("\nStart a request with --once to print the parameters a wallet is launched with.")
     if args.once:
         session, _ = verifier.new_request(transaction_data=transaction_data)
+        if result is not None:
+            result.request(session.state)
         params = verifier.authorization_request_params(session)
         print("\nauthorization request parameters:")
         for key, value in params.items():
@@ -513,7 +619,9 @@ and one that judges a response already captured:
     s = sub.add_parser("serve", help="run a verifier")
     s.add_argument("--pki", default="./pki")
     s.add_argument("--host", default="localhost", help="the name a wallet reaches this by")
-    s.add_argument("--bind", default="0.0.0.0")
+    s.add_argument("--bind", default="127.0.0.1",
+                   help="the address to listen on: 127.0.0.1, this machine only, by default; "
+                        "0.0.0.0 for every interface, as a wallet or suite elsewhere needs")
     s.add_argument("--port", type=int, default=9443)
     s.add_argument("--public-base-url", default=None, metavar="URL",
                    help="the HTTPS origin a wallet reaches this verifier by when it is behind a "
@@ -537,7 +645,9 @@ and one that judges a response already captured:
     s.add_argument("--verifier-info", default=None, metavar="FILE",
                    help="verifier attestations to put in the request object: a JSON array "
                         "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
-                        "guide shows), e.g. {\"format\": \"registration_cert\", \"data\": \"<JWT>\"}")
+                        "guide shows), e.g. [{\"format\": \"registration_cert\", \"data\": "
+                        "\"<the base64url encoding of the serialized RP registration certificate>\"}] "
+                        "(ETSI TS 119 472-2 V1.3.1 RO-16's words)")
     s.add_argument("--verifier-info-profile", default=None, choices=VERIFIER_INFO_PROFILES,
                    help="hold --verifier-info to a profile before listening, and exit 2 naming the "
                         "requirement it fails: etsi-119472-2, ETSI TS 119 472-2 V1.2.1's RO-01 to "
@@ -555,6 +665,14 @@ and one that judges a response already captured:
     s.add_argument("--once", action="store_true",
                    help="start one authorization request at startup and print its parameters "
                         "and its launch links (openid4vp://, haip-vp://, eu-eaap://)")
+    s.add_argument("--result", default=None, metavar="FILE",
+                   help="with --once: keep FILE a JSON object saying what became of that "
+                        "request, rewritten whole at startup and before each answer goes out: "
+                        "outcome (nothing_received until a response arrives, then accepted, "
+                        "refused or wallet_error), response.status_code (the HTTP status the "
+                        "wallet was answered), check and reason (what refused it, as the <- "
+                        "line says), claims (the names accepted), state, request_object (the "
+                        "fetches served and refused) and responses (how many arrived)")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
 

@@ -44,12 +44,18 @@ verifies offline: signature, audience, nonce, freshness, issuer trust.
   the assurance reached (`acr`: possession, or possession plus a verified ZK proof), the
   holder's enrollment status, and the instants. No name, no attribute, nothing the
   context's C6 vocabulary would have to redact.
-- **No record of who authenticated where.** The authorize route writes nothing; the code
-  is stateless and signed under a salt distinct from access tokens; the token endpoint's
-  only write is the code's hash into `AuthCodeConsumed`, which holds no subject and no
-  relying party. Rate limiting is keyed by a credential-hash prefix. A check pins that the
-  authorize route contains no INSERT and that the register's columns name nothing but the
-  hash and the instant.
+- **No record of who authenticated where.** The authorize route writes nothing to the
+  database or to disk; the code is stateless and signed under a salt distinct from access
+  tokens; the token endpoint's only database write is the code's hash into
+  `AuthCodeConsumed`, which holds no subject and no relying party. The rate limiter counts
+  both routes in Redis memory, under keys naming a credential-hash prefix, the client IP and
+  the relying party's client_id, until 61 seconds (the default 60-second window plus one)
+  after the last request each counts. Redis persists nothing (no append-only file, no
+  snapshot, `/data` in memory), so none of those keys reaches disk. What remains: anyone who
+  can read Redis memory during that time (the application, an operator with access to
+  Redis) sees them. Checks pin that the authorize route contains no INSERT, that the
+  register's columns name nothing but the hash and the instant, and that both deployment
+  substrates run Redis without persistence.
 - **Duress served identically.** A presented duress code is recorded silently through the
   same helper every verification uses, and the response is byte-for-byte the same shape as
   a normal one; the test proves both the identical response and the recorded event.

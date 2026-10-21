@@ -27,7 +27,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-cryptography = ["cryptography>=48"]
+cryptography = ["cryptography>=50.0.0"]
 oqs = ["liboqs-python>=0.16"]
 
 [project.scripts]

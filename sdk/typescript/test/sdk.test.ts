@@ -55,7 +55,7 @@ test("a presentation that names a credential and supplies none is not read as a 
 test("only the JSON boolean true is currently authoritative", async () => {
   const pres = { credential: vec("ml-dsa-65-valid.json") };
   for (const [answer, decision] of [[true, "accept"], [{}, "reject"], ["true", "reject"], [1, "reject"]] as const) {
-    const v = new PolarisVerifier({ issuerUrl: "http://x" });
+    const v = new PolarisVerifier({ issuerUrl: "https://x" });
     (v as any).onlineStatus = async () => ({ currently_authoritative: answer, status: "ACTIVE" });
     assert.equal((await v.verifyPresentation(pres)).decision, decision, JSON.stringify(answer));
   }
@@ -164,7 +164,7 @@ test("offline presentation is provisional", async () => {
 
 test("active presentation is accepted; revoked is rejected but authentic", async () => {
   const mk = (authoritative: boolean) => {
-    const v = new PolarisVerifier({ issuerUrl: "http://x" });
+    const v = new PolarisVerifier({ issuerUrl: "https://x" });
     (v as any).onlineStatus = async () => ({ currently_authoritative: authoritative, status: authoritative ? "ACTIVE" : "REVOKED" });
     return v;
   };
@@ -176,7 +176,7 @@ test("active presentation is accepted; revoked is rejected but authentic", async
 });
 
 test("untrusted issuer is rejected without a status call", async () => {
-  const v = new PolarisVerifier({ issuerUrl: "http://x", anchors: ["00"] });
+  const v = new PolarisVerifier({ issuerUrl: "https://x", anchors: ["00"] });
   (v as any).onlineStatus = async () => { throw new Error("must not be called"); };
   assert.equal((await v.verifyPresentation({ credential: vec("ml-dsa-65-valid.json") })).decision, "reject");
 });
@@ -782,7 +782,7 @@ test("held-out: a grant amount is bounded at its limit", () => {
 const PRES = () => ({ credential: vec("ml-dsa-65-valid.json") });
 
 test("held-out: a status check that fails rejects", async () => {
-  const v = new PolarisVerifier({ issuerUrl: "http://x" });
+  const v = new PolarisVerifier({ issuerUrl: "https://x" });
   (v as any).onlineStatus = async () => { throw new Error("connection refused"); };
   const out = await v.verifyPresentation(PRES());
   assert.equal(out.decision, "reject");
@@ -790,7 +790,7 @@ test("held-out: a status check that fails rejects", async () => {
 });
 
 test("held-out: an untrusted issuer is rejected even when the status says current", async () => {
-  const v = new PolarisVerifier({ issuerUrl: "http://x", anchors: ["00"] });
+  const v = new PolarisVerifier({ issuerUrl: "https://x", anchors: ["00"] });
   (v as any).onlineStatus = async () => ({ currently_authoritative: true, status: "ACTIVE" });
   assert.equal((await v.verifyPresentation(PRES())).decision, "reject");
 });
@@ -799,7 +799,7 @@ test("held-out: only the authoritative flag makes a credential current", async (
   for (const status of [{ currently_authoritative: false, status: "SUSPENDED" },
                         { currently_authoritative: false, status: "ACTIVE" },
                         { status: "ACTIVE" }, {}]) {
-    const v = new PolarisVerifier({ issuerUrl: "http://x" });
+    const v = new PolarisVerifier({ issuerUrl: "https://x" });
     (v as any).onlineStatus = async () => status;
     assert.equal((await v.verifyPresentation(PRES())).decision, "reject", JSON.stringify(status));
   }
@@ -813,7 +813,7 @@ test("held-out: a bearer is reused until five seconds before expiry and no later
     return { ok: true, status: 200, json: async () => ({ access_token: "new", expires_in: 300 }) };
   }) as any;
   try {
-    const v = new PolarisVerifier({ issuerUrl: "http://x", clientId: "c", clientSecret: "s" });
+    const v = new PolarisVerifier({ issuerUrl: "https://x", clientId: "c", clientSecret: "s" });
     (v as any).bearer = "old";
     (v as any).bearerExp = Date.now() + 60_000;
     assert.equal(await (v as any).accessToken(), "old");
@@ -834,7 +834,7 @@ test("held-out: a non-OK answer from the verify endpoint is a failed check, not 
     ? { ok: true, status: 200, json: async () => ({ access_token: "t", expires_in: 300 }) }
     : { ok: false, status: 500, json: async () => ({ currently_authoritative: true, status: "ACTIVE" }) }) as any;
   try {
-    const v = new PolarisVerifier({ issuerUrl: "http://x", clientId: "c", clientSecret: "s" });
+    const v = new PolarisVerifier({ issuerUrl: "https://x", clientId: "c", clientSecret: "s" });
     assert.equal((await v.verifyPresentation(PRES())).decision, "reject");
   } finally {
     globalThis.fetch = saved;
@@ -849,7 +849,7 @@ test("held-out: a non-OK answer from the token endpoint is a failed check, not a
     ? { ok: false, status: 401, json: async () => ({ access_token: "t", expires_in: 300 }) }
     : { ok: true, status: 200, json: async () => ({ currently_authoritative: true, status: "ACTIVE" }) }) as any;
   try {
-    const v = new PolarisVerifier({ issuerUrl: "http://x", clientId: "c", clientSecret: "s" });
+    const v = new PolarisVerifier({ issuerUrl: "https://x", clientId: "c", clientSecret: "s" });
     assert.equal((await v.verifyPresentation(PRES())).decision, "reject");
   } finally {
     globalThis.fetch = saved;
@@ -1167,8 +1167,9 @@ test("a manifest set that is not an array is refused, never thrown", () => {
 // authority time-boxed kept granting acceptance after the box closed while the manifest carrying
 // it was fresh (WIRE-SPEC 3.14). One signed edge in three windows, each under a fresh manifest.
 const EDGE = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "federation-edge-window.json"), "utf8"));
-const edgeDecide = (w: string) => verifyCrossAuthority(EDGE.pack, EDGE._fixture.context_id,
-  [EDGE.manifests[w]], [EDGE.trusted_anchor], null, EDGE._fixture.now).decision;
+const edgeDecide = (w: string, requireSigned = false) => verifyCrossAuthority(EDGE.pack,
+  EDGE._fixture.context_id, [EDGE.manifests[w]], [EDGE.trusted_anchor], null, EDGE._fixture.now,
+  requireSigned).decision;
 
 test("a signed edge counts only inside its own window", () => {
   assert.equal(edgeDecide("open"), "accept");
@@ -1184,6 +1185,43 @@ test("an unsigned edge is held to the window it states", () => {
   assert.equal(edgeDecide("unsigned-closed"), "reject", "an unsigned edge past its valid_until");
   assert.equal(edgeDecide("unsigned-unreadable"), "reject", "an unsigned edge whose valid_until cannot be read");
   assert.equal(edgeDecide("unsigned-no-window"), "accept", "a legacy edge that states no window");
+});
+
+// 2026-10-15: version 1 manifests carry unsigned edges, so the default accepts one; a relying
+// party that wants the attesting agency's own signature sets requireSignedAttestation.
+test("requiring signed edges refuses only the unsigned one", () => {
+  assert.equal(edgeDecide("unsigned-open"), "accept");
+  assert.equal(edgeDecide("unsigned-open", true), "reject");
+  assert.equal(edgeDecide("open", true), "accept", "a signed edge meets the requirement");
+});
+
+// 2026-10-15: the exchange paths counted any edge naming the requester's key, so a badly signed
+// edge, or one signed by a key the manifest does not anchor, authorized the requester (WIRE-SPEC
+// 3.14 refuses both). One exchange and four genuine, fresh manifests that differ only in the edge.
+const XEDGE = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "exchange-edge-signature.json"), "utf8"));
+const xedgeVerdicts = (name: string) => {
+  const m = [XEDGE.manifests[name]], now = XEDGE._fixture.now;
+  const q = verifyExchangeRequest(XEDGE.request, null, m, undefined, now);
+  const r = verifyExchangeReceipt(XEDGE.receipt, now, m);
+  assert.ok(q.authentic && r.authentic, `${q.note} ${r.note}`);
+  return [q, r];
+};
+
+test("a badly signed or unanchored edge authorizes no exchange", () => {
+  for (const name of ["badly-signed", "stranger"]) {
+    for (const v of xedgeVerdicts(name)) {
+      assert.equal(v.requesterAuthorized, false, name);
+      assert.equal(v.attestationSigned ?? null, null, name);
+    }
+  }
+});
+
+test("an exchange verdict says whether the edge was signed", () => {
+  for (const [name, signed] of [["signed", true], ["unsigned", false]] as const) {
+    for (const v of xedgeVerdicts(name)) {
+      assert.deepEqual([v.requesterAuthorized, v.attestationSigned], [true, signed], name);
+    }
+  }
 });
 
 // 2026-09-23: a held-out round on verifyTimestampAnchor. The published witnessed anchor covers
@@ -1466,7 +1504,7 @@ test("an OK status answer decides the presentation: active accepts, anything els
     ? { ok: true, status: 200, json: async () => ({ access_token: "t", expires_in: 300 }) }
     : { ok: true, status: 200, json: async () => body }) as any;
   try {
-    const v = () => new PolarisVerifier({ issuerUrl: "http://x", clientId: "c", clientSecret: "s" });
+    const v = () => new PolarisVerifier({ issuerUrl: "https://x", clientId: "c", clientSecret: "s" });
     globalThis.fetch = answer({ currently_authoritative: true, status: "ACTIVE" });
     const yes = await v().verifyPresentation(PRES());
     assert.equal(yes.decision, "accept");
@@ -1509,9 +1547,9 @@ test("the issuer URL loses its trailing slashes and nothing else", async () => {
     return { ok: true, status: 200, json: async () => ({ access_token: "t", expires_in: 300 }) };
   }) as any;
   try {
-    for (const [given, base] of [["http://x", "http://x"], ["http://x/", "http://x"],
-                                 ["http://x///", "http://x"], ["http://x/a//b/", "http://x/a//b"],
-                                 ["http://x/a", "http://x/a"]]) {
+    for (const [given, base] of [["https://x", "https://x"], ["https://x/", "https://x"],
+                                 ["https://x///", "https://x"], ["https://x/a//b/", "https://x/a//b"],
+                                 ["https://x/a", "https://x/a"]]) {
       const v = new PolarisVerifier({ issuerUrl: given, clientId: "c", clientSecret: "s" });
       await (v as any).accessToken();
       assert.equal(urls.pop(), `${base}/api/v1/oauth/token`, given);
@@ -1521,8 +1559,73 @@ test("the issuer URL loses its trailing slashes and nothing else", async () => {
   }
 });
 
+// The status check carries the client secret (Basic) and then a bearer. Until 2026-10-15 an http
+// issuerUrl was used as given, and fetch followed redirects, dropping Authorization only on a
+// cross-origin one. Now https is required unless the caller asks for http, and no redirect is
+// followed. Real local servers: a stubbed fetch would not show what fetch itself does.
+async function localIssuer(redirectTo?: string, code = 302) {
+  const { createServer } = await import("node:http");
+  const seen: [string, string, string | undefined][] = [];
+  const server = createServer((req, res) => {
+    seen.push([req.method ?? "", req.url ?? "", req.headers.authorization]);
+    req.resume();
+    req.on("end", () => {
+      if (redirectTo) {
+        res.writeHead(code, { Location: redirectTo + (req.url ?? ""), "Content-Length": "0" });
+        res.end();
+        return;
+      }
+      const body = JSON.stringify({ access_token: "t", expires_in: 300, currently_authoritative: true, status: "ACTIVE" });
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)) });
+      res.end(body);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as any).port;
+  return { url: `http://127.0.0.1:${port}`, seen,
+           close: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }) };
+}
+
+test("an http issuerUrl is refused unless the caller asks for it", async () => {
+  const issuer = await localIssuer();
+  try {
+    const refused = new PolarisVerifier({ issuerUrl: issuer.url, clientId: "c", clientSecret: "s" });
+    const out = await refused.verifyPresentation(PRES());
+    assert.equal(out.decision, "reject");
+    assert.match((out.reasons ?? []).join(" "), /https/);
+    assert.equal(issuer.seen.length, 0, "the secret went out over http");
+    const asked = new PolarisVerifier({ issuerUrl: issuer.url, clientId: "c", clientSecret: "s", allowInsecureHttp: true });
+    assert.equal((await asked.verifyPresentation(PRES())).decision, "accept");
+    assert.deepEqual(issuer.seen.map(([m, p]) => [m, p]), [["POST", "/api/v1/oauth/token"], ["POST", "/api/v1/verify"]]);
+  } finally {
+    await issuer.close();
+  }
+});
+
+test("a redirect is not followed and no request reaches the other host", async () => {
+  const elsewhere = await localIssuer();
+  try {
+    for (const code of [301, 302, 303, 307, 308]) {
+      const issuer = await localIssuer(elsewhere.url, code);
+      try {
+        const v = new PolarisVerifier({ issuerUrl: issuer.url, clientId: "c", clientSecret: "s", allowInsecureHttp: true });
+        assert.equal((await v.verifyPresentation(PRES())).decision, "reject", String(code));
+        (v as any).bearer = "bearer-secret";
+        (v as any).bearerExp = Infinity;
+        assert.equal((await v.verifyPresentation(PRES())).decision, "reject", String(code));
+        assert.equal(issuer.seen.length, 2, String(code));
+        assert.equal(elsewhere.seen.length, 0, `a ${code} carried a request to another host`);
+      } finally {
+        await issuer.close();
+      }
+    }
+  } finally {
+    await elsewhere.close();
+  }
+});
+
 test("a long run of slashes inside the issuer URL is trimmed in linear time", () => {
-  const url = "http://x" + "/".repeat(200_000) + "y" + "/".repeat(3);
+  const url = "https://x" + "/".repeat(200_000) + "y" + "/".repeat(3);
   const started = Date.now();
   const v = new PolarisVerifier({ issuerUrl: url });
   assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);

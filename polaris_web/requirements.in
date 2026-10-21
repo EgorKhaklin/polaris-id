@@ -41,7 +41,7 @@ pyOpenSSL==26.4.0
 pyasn1==0.6.4
 pyasn1-modules==0.4.2
 cffi==2.1.1
-pycparser==3.0
+pycparser==3.11
 typing_extensions==4.16.0
 
 # ---- Runtime: Prometheus client (v8.93 /metrics) ----

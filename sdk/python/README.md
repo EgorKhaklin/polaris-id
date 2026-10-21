@@ -37,6 +37,10 @@ print(verdict.decision)                              # "accept" | "reject" | "pr
 Offline only (no `issuer_url`) yields a `provisional` verdict from authenticity
 alone. `verify_authenticity(pack, anchors)` exposes the offline check directly.
 
+`issuer_url` must be `https`: the status check sends the client secret and a bearer token.
+`allow_insecure_http=True` admits `http` for a local test issuer. No redirect is followed, so
+neither secret reaches another host; configure the issuer's final URL.
+
 A first run needs no issuer and no credential of your own: the repository publishes test
 vectors. `--pre` matters: this is a release candidate, and without it pip installs 0.1.0, which
 predates every fix in [SECURITY.md](https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md).
@@ -75,7 +79,7 @@ language.
   timestamp, registry, exchange request, exchange receipt, mint statement, signed document,
   ID token and trust list (authenticity, freshness where windowed, and the artifact's
   commitment or self-consistency).
-- `verify_cross_authority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted.
+- `verify_cross_authority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted. By default it accepts a trust edge the attesting agency did not sign, as version 1 manifests carry; a relying party should pass `require_signed_attestation=True` to require that agency's signature.
 - `verify_exchange_request(...)`, `verify_exchange_receipt(...)`, `verify_exchange_mint(...)`: an
   exchange artifact in use: whether it is by the party expected, whether the requester was
   attested in its context at a stated instant (and by whom, for a receipt), and whether the

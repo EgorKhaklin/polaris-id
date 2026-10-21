@@ -386,8 +386,9 @@ paths:
         scope. The credential must be ACTIVE and permitted in `context_id`; a wrong/unknown credential
         is the uniform not_verifiable; a duress code is served identically and recorded silently. The
         relying party's registered policy binds (require_zk, required_enrollment, required_context_id);
-        a request may only add a requirement. Nothing is written. The code is encrypted, opaque,
-        stateless, PKCE-bound, and lives 60 seconds.
+        a request may only add a requirement. Nothing is written to the database or to disk (the rate
+        limiter's counters live in Redis memory until 61 seconds after the last request). The code is
+        encrypted, opaque, stateless, PKCE-bound, and lives 60 seconds.
       requestBody:
         required: true
         content:

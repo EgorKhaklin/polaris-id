@@ -18,8 +18,9 @@ spec:
 # Lab record 017 (gate row OP-7): a Deployment on an emptyDir, so a node that stops answering does not
 # keep it: a StatefulSet's pod waits for its node forever, and the rate limiter fails closed without
 # Redis (writes and logins refused). Its sliding windows are short-lived and the ACL comes from the
-# Secret, so nothing is lost but the current windows. Upgrading from a chart with the StatefulSet leaves
-# its volume claim (data-<release>-redis-0) to delete.
+# Secret, so nothing is lost but the current windows. The emptyDir is memory (a tmpfs), and Redis
+# persists nothing to it. Upgrading from a chart with the StatefulSet leaves its volume claim
+# (data-<release>-redis-0) to delete.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,7 +54,10 @@ spec:
             {{- include "polaris.containerSecurityReadOnly" . | nindent 12 }}
           # Lab record 017, phase 4a: users come from the Secret's redis_users.acl, which holds
           # only the app password's SHA-256. `default` is off; `health` may only PING.
-          args: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--aclfile", "/run/secrets/redis/users.acl"]
+          # Redis holds only the rate limiter's short-lived counters, keyed by a credential-hash
+          # prefix, a client IP or a client_id, so it persists nothing: no append-only file, no
+          # snapshot (`--save ""`; without it a stop writes one), and /data is a small tmpfs.
+          args: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--aclfile", "/run/secrets/redis/users.acl"]
           ports:
             - name: redis
               containerPort: 6379
@@ -78,4 +82,4 @@ spec:
             items:
               - {key: redis_users.acl, path: users.acl}
         - name: data
-          emptyDir: {}
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}

@@ -591,8 +591,13 @@ class EtsiVerifierInfoTests(_EtsiProfile):
     def test_ro02_ro04_exactly_one_registrar_dataset(self):
         self.verifier([_registrar(), _certificate()])
         both = RO % 2 + " and " + RO % 4 + ":"
-        self.refused([_certificate()], both, "has 0 elements with format registrar_dataset")
-        self.refused([_registrar(), _registrar(), _certificate()], both, "has 2 elements")
+        zero = self.refused([_certificate()], both, "has 0 elements with format registrar_dataset")
+        self.assertIn("fails ETSI TS 119 472-2 V1.2.1 " + both, zero)
+        # One, not two, is this package's reading, and the refusal says so: no requirement states
+        # a count.
+        two = self.refused([_registrar(), _registrar(), _certificate()], both, "has 2 elements")
+        self.assertIn("fails this package's reading of ETSI TS 119 472-2 V1.2.1 " + both, two)
+        self.assertIn("no requirement states a count", two)
         self.refused([dict(_registrar(), format="Registrar_Dataset")], both, "has 0 elements")
 
     def test_ro05_the_registrar_data_is_a_non_empty_object(self):
@@ -1129,6 +1134,21 @@ class TheRequestTests(VerifierTestCase):
         self.assertIsNone(self.verifier.request_object("no-such-state",
                                                        wallet_nonce="w-1"))
 
+    def test_a_wallet_nonce_is_bounded_before_anything_is_signed_for_it(self):
+        """Every POST with a `wallet_nonce` gets a freshly signed object that carries it, so an
+        unbounded one had any body the server would read signed and sent back. 1 to 1024
+        characters of %x20-7E come back; longer, empty or other characters get nothing, and the
+        request stays answerable."""
+        session, _ = self.verifier.new_request()
+        for nonce in ("n" * 64, "n" * 1024, " !~" + "n" * 61):
+            with self.subTest(length=len(nonce)):
+                jar = self.verifier.request_object(session.state, wallet_nonce=nonce)
+                self.assertEqual(Wallet.read_request(jar)[1]["wallet_nonce"], nonce)
+        for nonce in ("n" * 1025, "n" * 2048, "", "w\n1", "w\x001", "w\u00e91", 7):
+            with self.subTest(nonce=repr(nonce)[:20]):
+                self.assertIsNone(self.verifier.request_object(session.state, wallet_nonce=nonce))
+        self.assertIsNotNone(self.verifier.request_object(session.state, wallet_nonce="w-1"))
+
 
 
 class RequestObjectEncryptionTests(VerifierTestCase):
@@ -1452,6 +1472,95 @@ class TheTransportRefusalsTests(VerifierTestCase):
         self.assertEqual(status, 400)
         self.assertEqual(body, verifier.REFUSAL_BODY)
         self.assertIn("expired", verdict.reason, "the operator was not told why either")
+
+
+class OnlyTheHolderClosesTheRequestTests(VerifierTestCase):
+    """The key a response is encrypted to and the `state` it must carry are both in the request
+    object, served to anyone who asks for the request_uri (the QR code, a deep link). Until
+    2026-10-15 a response was judged after the request was closed, so an onlooker's encrypted
+    `{"state": s}`, or one with a garbage vp_token, was refused and used the request up, and the
+    holder's genuine presentation, arriving second, was refused as a replay. A request now closes
+    only on an authentic presentation."""
+
+    def _onlooker(self, jar, body):
+        """What anyone who fetched `jar` can post: `body` with the request's state, encrypted to
+        the request's key."""
+        _, claims = Wallet.read_request(jar)
+        jwk = claims["client_metadata"]["jwks"]["keys"][0]
+        public = ec.EllipticCurvePublicNumbers(
+            int.from_bytes(b64u_decode(jwk["x"]), "big"), int.from_bytes(b64u_decode(jwk["y"]), "big"),
+            ec.SECP256R1()).public_key()
+        body = dict(body, state=claims["state"])
+        return {"response": [encrypt_compact(json.dumps(body).encode(), public)]}
+
+    def _first_refused_then_genuine_accepted(self, first):
+        session, jar = self.verifier.new_request()
+        status, body, _ = self.verifier.handle_direct_post(first(jar))
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertIs(self.verifier._sessions.get(session.state), session, "the request was closed")
+        status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual(status, 200, verdict.reason)
+        code = assert_redirect_with_code(self, body, self.verifier.redirect_uri)
+        redeemed = self.verifier.redeem(code, state=session.state)
+        self.assertIs(redeemed, verdict)
+        self.assertTrue(redeemed.authentic)
+        self.assertEqual(redeemed.claims["given_name"], "Jean")
+        self.assertNotIn(session.state, self.verifier._sessions)
+
+    def test_an_onlookers_state_alone_does_not_close_the_request(self):
+        self._first_refused_then_genuine_accepted(lambda jar: self._onlooker(jar, {}))
+
+    def test_an_onlookers_garbage_vp_token_does_not_close_the_request(self):
+        self._first_refused_then_genuine_accepted(
+            lambda jar: self._onlooker(jar, {"vp_token": {"pid": ["not-a-presentation"]}}))
+
+    def test_a_presentation_that_does_not_verify_does_not_close_the_request(self):
+        """A forged key binding signature: well formed, and not authentic."""
+        self._first_refused_then_genuine_accepted(
+            lambda jar: self.wallet.respond(jar, corrupt_kb_sig=True))
+
+    def test_a_replay_is_still_refused(self):
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        self.assertEqual(self.verifier.handle_direct_post(form)[0], 200)
+        self.assertEqual(self.verifier.handle_direct_post(form)[:2], (400, self.verifier.REFUSAL_BODY))
+
+    def _racing(self, between=None):
+        """Two authentic responses to one request, both past decryption before either is closed:
+        each waits for the other inside verify_presentation. `between(session)` runs once there."""
+        import threading
+        from polaris_oid4vp import verifier as module
+        session, jar = self.verifier.new_request()
+        forms = [self.wallet.respond(jar), self.wallet.respond(jar)]
+        barrier, original, results = threading.Barrier(2, timeout=30), module.verify_presentation, []
+
+        def waiting(*args, **kwargs):
+            verdict = original(*args, **kwargs)
+            if barrier.wait() == 0 and between:
+                between(session)
+            barrier.wait()
+            return verdict
+        module.verify_presentation = waiting
+        try:
+            threads = [threading.Thread(target=lambda f=f: results.append(
+                self.verifier.handle_direct_post(f)[0])) for f in forms]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(60)
+        finally:
+            module.verify_presentation = original
+        return sorted(results)
+
+    def test_two_authentic_responses_racing_close_the_request_once(self):
+        self.assertEqual(self._racing(), [200, 400])
+
+    def test_a_request_that_expires_while_it_is_judged_is_not_answered(self):
+        def expire(session):
+            session.created -= self.verifier.request_ttl_seconds + 1
+            with self.verifier._lock:
+                self.verifier._expire_locked()
+        self.assertEqual(self._racing(expire), [400, 400])
 
 
 class TheLastTwoRefusalsTests(VerifierTestCase):

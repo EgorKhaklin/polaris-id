@@ -22,7 +22,7 @@ classifiers = [
   "Topic :: Security :: Cryptography",
 ]
 authors = [{ name = "Egor Khaklin" }]
-dependencies = ["cryptography>=48"]
+dependencies = ["cryptography>=50.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/EgorKhaklin/polaris-id"

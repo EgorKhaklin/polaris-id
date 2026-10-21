@@ -539,6 +539,47 @@ def _mldsa_signer():
 
 
 @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class IdTokenAudienceAndNonceAreCompared(unittest.TestCase):
+    """A signed `aud` or `nonce` matches only a value of its own kind, as the TypeScript SDK's
+    `===` decides it. Until 2026-10-15 `==` let a token signed with "aud": true match audience
+    1, and nonce 1.0 match 1, in Python only."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.signer = _mldsa_signer()
+
+    def token(self, **over):
+        body = {"format": V._ID_TOKEN_FORMAT, "iss": "https://issuer.example", "sub": "ab" * 32,
+                "aud": "rp-1", "nonce": "n-1", "context_id": 1, "disclosure_level": 1,
+                "acr": "urn:polaris:acr:1", "enrollment": None, "auth_time": "2026-05-01T00:00:00Z",
+                "iat": "2026-05-01T00:00:00Z", "exp": "2026-05-01T01:00:00Z"}
+        body.update(over)
+        return SignedDocumentLongTermValidation.seal(body, V._id_token_canonical, self.signer)
+
+    def decide(self, tok, audience, nonce):
+        return V.verify_id_token(tok, audience=audience, nonce=nonce, now="2026-05-01T00:00:30Z")
+
+    def test_the_same_text_matches(self):
+        v = self.decide(self.token(), "rp-1", "n-1")
+        self.assertIs(v["token_authentic"], True, v["note"])
+        self.assertEqual((v["audience_matches"], v["nonce_matches"]), (True, True))
+        v = self.decide(self.token(aud=7, nonce=9), 7, 9)
+        self.assertEqual((v["audience_matches"], v["nonce_matches"]), (True, True))
+
+    def test_another_kind_of_value_matches_nothing(self):
+        for label, signed, expected in (("true against 1", True, 1), ("1.0 against 1", 1.0, 1),
+                                        ("\"1\" against 1", "1", 1), ("null against null", None, None)):
+            with self.subTest(label):
+                v = self.decide(self.token(aud=signed, nonce=signed), expected, expected)
+                self.assertIs(v["token_authentic"], True, v["note"])
+                if expected is not None:
+                    self.assertIs(v["audience_matches"], False)
+                    self.assertIs(v["nonce_matches"], False)
+                else:
+                    self.assertEqual((v["audience_matches"], v["nonce_matches"]), (None, None))
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
 class StapledStatusIsTheIssuers(unittest.TestCase):
     """WIRE-SPEC 3.5: a stapled status assertion is bound to the credential by the same token AND
     the credential's own key. Until 2026-09-30 verify_stapled bound by the token alone, so with
@@ -1009,6 +1050,29 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
                               trusted_anchors=anchors)
         self.assertEqual(retired["ltv"]["signer_key_status_per_trust_list"], "retired")
         self.assertIs(retired["valid_long_term"], False)
+
+    def test_with_anchors_an_untrusted_signer_is_not_valid_long_term(self):
+        """The container's manifest is the signer's own, so it says only that the key was active
+        in the signer's view. Before 2026-10-15 a stranger's key, its own manifest and a trusted
+        authority's timestamp were valid_long_term with signer_trusted False beside it."""
+        stranger = self.decide(self.container(), trusted_anchors=[self.second[1].hex()])
+        self.assertIs(stranger["signer_trusted"], False)
+        self.assertIs(stranger["ltv"]["signer_key_active_at_instant"], True,
+                      "the signer's own manifest still lists its key: only trust is missing")
+        self.assertIs(stranger["valid_long_term"], False)
+        self.assertIn("signer not trusted", stranger["note"])
+        # A trust list whose publisher is not an anchor does not vouch for the signer either.
+        unvouched = self.decide(self.container(), trust_list=self.trust_list(),
+                                trusted_anchors=[self.second[1].hex()])
+        self.assertEqual(unvouched["ltv"]["signer_key_status_per_trust_list"], "active")
+        self.assertIs(unvouched["valid_long_term"], False)
+        self.assertIn("signer not trusted", unvouched["note"])
+        # The controls: the signer among the anchors, or listed by an anchor's trust list.
+        anchored = self.decide(self.container(), trusted_anchors=[self.signer[1].hex()])
+        self.assertIs(anchored["valid_long_term"], True, anchored["note"])
+        listed = self.decide(self.container(), trust_list=self.trust_list(),
+                             trusted_anchors=[self.publisher[1].hex()])
+        self.assertIs(listed["valid_long_term"], True, listed["note"])
 
     def test_each_refusal_of_the_signature_itself(self):
         good = self.document()
@@ -1571,6 +1635,32 @@ class CommandLineExitCodes(unittest.TestCase):
                     self.assertEqual(vz.call_args.kwargs["trusted_anchors"], [key])
                     self.assertEqual(vz.call_args.kwargs["expected_nonce"], 7)
 
+    def test_require_signed_attestation_reaches_the_zero_knowledge_decision(self):
+        """2026-10-15: the command line had no way to ask for a signed trust edge."""
+        from unittest import mock
+        zk = ("--pqc-provider", "auto", "--zk-proof", str(self.blob), "--signature-only", "--nonce", "7")
+        for flags, want in (((), False), (("--require-signed-attestation",), True)):
+            with self.subTest(flags=flags), \
+                    mock.patch.object(V, "verify_cross_authority_zk",
+                                      return_value={"decision": "accept", "reasons": []}) as vz:
+                self.assertEqual(self.main(*zk, *flags), 0)
+                self.assertIs(vz.call_args.kwargs["require_signed_attestation"], want)
+
+    def test_an_accept_on_an_unsigned_edge_says_so(self):
+        """WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did. The
+        --json verdict carries attestation_signed; the plain output said nothing (2026-10-15)."""
+        import contextlib
+        import io
+        from unittest import mock
+        zk = ("--pqc-provider", "auto", "--zk-proof", str(self.blob), "--signature-only", "--nonce", "7")
+        for signed, said in ((False, True), (True, False), (None, False)):
+            out = io.StringIO()
+            verdict = {"decision": "accept", "reasons": [], "attestation_signed": signed}
+            with self.subTest(signed=signed), contextlib.redirect_stdout(out), \
+                    mock.patch.object(V, "verify_cross_authority_zk", return_value=verdict):
+                self.assertEqual(V.main(list(zk)), 0)
+                self.assertEqual("the trust edge is unsigned" in out.getvalue(), said)
+
     def test_a_json_decision_says_what_the_exit_code_says(self):
         """2026-10-01. A zero-knowledge accept held for a trust root or a nonce, and a stapled accept
         held for trust, printed `"decision": "accept"` and exited 2; a script reading the verdict
@@ -1621,6 +1711,7 @@ class CommandLineExitCodes(unittest.TestCase):
                            (("--pack", absent, "--min-anonymity-set", str(V.DEFAULT_MIN_ANONYMITY_SET)),
                             "--min-anonymity-set"),
                            (("--zk-proof", absent, "--verifier-scope", "bank.example"), "--verifier-scope"),
+                           (("--pack", absent, "--require-signed-attestation"), "--require-signed-attestation"),
                            (("--agent-grant", absent, "--nonce", "n-1"), "--nonce"),
                            (("--zk-proof", absent, "--pack", absent), "--pack"),
                            (("--selftest", "--json"), "--json"),
@@ -1747,6 +1838,95 @@ class StapledDecisionNeedsEveryFact(unittest.TestCase):
         self.assertEqual(self.decide(key=(None, None)), "reject",
                          "two missing keys are not the same issuer (they compared as \"\" until 2026-10-01)")
         self.assertEqual(self.decide(key=(["ab" * 32], "ab" * 32)), "reject", "a list is not a key")
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class AgentGrantContextAndProofTime(unittest.TestCase):
+    """Two signed fields nothing read until 2026-10-15: the grant's `context_id`, which the holder
+    signs to scope the grant, and the agent proof's `issued_at`. Real signatures throughout, so
+    each verdict is the verifier's whole decision; the binding and the credential are stubbed as
+    in AgentGrantPrincipalBinding, so `usable` turns on the link under test."""
+
+    NOW = "2026-05-01T00:00:30Z"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.holder, cls.agent = _mldsa_signer(), _mldsa_signer()
+
+    @staticmethod
+    def seal(obj, canonical, key):
+        return SignedDocumentLongTermValidation.seal(obj, canonical, key)
+
+    def grant(self, **over):
+        body = {"format": "polaris-agent-grant/1", "grant_id": "g-ctx-1",
+                "agent_public_key_hex": self.agent[1].hex(), "agent_algorithm": "ML-DSA-65",
+                "actions": ["read:status"], "limits": {}, "context_id": 7,
+                "issued_at": "2026-05-01T00:00:00Z", "expires_at": "2026-05-01T06:00:00Z"}
+        body.update(over)
+        return self.seal(body, V._agent_grant_canonical, self.holder)
+
+    def proof(self, issued_at="2026-05-01T00:00:10Z"):
+        return self.seal({"format": "polaris-agent-proof/1", "grant_id": "g-ctx-1",
+                          "action": "read:status", "service_nonce": "svc-1", "issued_at": issued_at},
+                         V._agent_proof_canonical, self.agent)
+
+    def decide(self, grant=None, proof=None, **kw):
+        from unittest import mock
+        good = {"binding_authentic": True, "fresh": True, "bound_to_credential": True,
+                "holder_public_key_hex": self.holder[1].hex(), "note": None}
+        with mock.patch.object(V, "verify_holder_binding", return_value=good), \
+                mock.patch.object(V, "verify_pack", return_value={"signature_valid": True,
+                                                                  "issuer_trusted": None, "note": None}):
+            return V.verify_agent_grant(grant or self.grant(), binding={"status": "active"},
+                                        credential={}, now=kw.pop("now", self.NOW),
+                                        requested_action="read:status",
+                                        agent_proof=proof or self.proof(), expected_nonce="svc-1", **kw)
+
+    def test_the_whole_chain_is_usable_in_its_own_context(self):
+        """The control, and the default: a service that names no context is not asked about one."""
+        for kw in ({}, {"expected_context": 7}):
+            with self.subTest(**kw):
+                v = self.decide(**kw)
+                self.assertIs(v["usable"], True, v["note"])
+                self.assertIs(v["agent_proved"], True)
+        self.assertIs(self.decide(expected_context=7)["context_matches"], True)
+        self.assertIsNone(self.decide()["context_matches"])
+
+    def test_a_grant_for_another_context_is_not_usable_here(self):
+        for other in (8, "7", True):
+            with self.subTest(expected_context=other):
+                v = self.decide(expected_context=other)
+                self.assertIs(v["context_matches"], False)
+                self.assertIs(v["usable"], False)
+
+    def test_a_proof_made_outside_the_grant_or_ahead_of_the_clock_proves_nothing(self):
+        for label, issued_at, why in (
+                ("before the grant was issued", "2026-04-30T23:59:59Z", "outside the grant's window"),
+                ("after the grant lapsed", "2026-05-01T06:00:00Z", "outside the grant's window"),
+                ("ahead of this clock", "2026-05-01T00:02:00Z", "ahead of this verifier's clock"),
+                ("not a timestamp", "yesterday", "not a timestamp")):
+            with self.subTest(label):
+                v = self.decide(proof=self.proof(issued_at))
+                self.assertIs(v["agent_proved"], False)
+                self.assertIs(v["usable"], False)
+                self.assertIn(why, v["note"])
+        # Within the clock's 60 seconds of skew it still proves.
+        self.assertIs(self.decide(proof=self.proof("2026-05-01T00:01:20Z"))["agent_proved"], True)
+
+    def test_the_command_line_takes_this_services_context(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            g, pr = pathlib.Path(d, "grant.json"), pathlib.Path(d, "proof.json")
+            g.write_text(json.dumps(self.grant()))
+            pr.write_text(json.dumps(self.proof()))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                V.main(["--pqc-provider", "cryptography", "--agent-grant", str(g),
+                        "--agent-proof", str(pr), "--action", "read:status",
+                        "--service-nonce", "svc-1", "--context", "8", "--json"])
+            self.assertIs(json.loads(out.getvalue())["context_matches"], False)
 
 
 @unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS),
@@ -2086,6 +2266,131 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
         self.assertEqual(self.decide(size=5), "reject")
         self.assertEqual(self.decide(size=5, min_anonymity_set=5), "accept")
         self.assertEqual(self.decide(size=4, min_anonymity_set=5), "reject")
+
+
+@unittest.skipUnless(V._provider_available("oqs") or _cryptography_mldsa(), "no ML-DSA verifier here")
+class CrossAuthorityZkEdgeSignature(unittest.TestCase):
+    """2026-10-15: verify_cross_authority_zk took any edge naming the checkpoint's key, signed
+    well, badly or not at all, while the credential path refused a badly signed edge and let a
+    relying party require a signed one. The edge here is the genuinely signed one in
+    sdk/testdata/federation-edge-window.json; the checkpoint, the manifest's own verdict and the
+    proof are replaced, so only the edge decides."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.loads((ROOT / "sdk" / "testdata" / "federation-edge-window.json").read_text())
+        cls.manifest = cls.f["manifests"]["open"]
+        cls.edge = cls.manifest["attestations"][0]
+
+    def decide(self, edge=None, manifest=None, field="decision", **kw):
+        from unittest import mock
+        edge = self.edge if edge is None else edge
+        manifest = self.manifest if manifest is None else manifest
+        mvr = {"manifest_authentic": True, "fresh": True, "issuer_trusted": True,
+               "authority": manifest["authority"], "attestations": [edge]}
+        zkr = {"bound": True, "proof_verified": True, "nullifier": "ab", "fresh_nullifier": True}
+        checkpoint = {"public_key_hex": self.edge["attested_public_key_hex"],
+                      "epoch": {"root_hex": "00", "number": 1, "committed_count": 20}}
+        with mock.patch.object(V, "verify_epoch_checkpoint",
+                               return_value={"checkpoint_authentic": True, "fresh": True}), \
+                mock.patch.object(V, "verify_manifest", return_value=mvr), \
+                mock.patch.object(V, "verify_zk_against_root", return_value=zkr):
+            return V.verify_cross_authority_zk({}, checkpoint, self.f["_fixture"]["context_id"], [manifest],
+                                               trusted_anchors=[self.f["trusted_anchor"]],
+                                               now=self.f["_fixture"]["now"], **kw)[field]
+
+    def unsigned(self):
+        return {k: v for k, v in self.edge.items() if k not in ("signature_hex", "public_key_hex")}
+
+    def test_a_signed_edge_is_accepted_with_or_without_the_requirement(self):
+        self.assertEqual(self.decide(), "accept")
+        self.assertEqual(self.decide(require_signed_attestation=True), "accept")
+
+    def test_an_unsigned_edge_is_accepted_by_default_and_refused_when_signatures_are_required(self):
+        """Version 1 manifests carry unsigned edges, so the default accepts one; a relying party
+        that wants the attesting agency's own signature asks for it."""
+        self.assertEqual(self.decide(edge=self.unsigned()), "accept")
+        self.assertEqual(self.decide(edge=self.unsigned(), require_signed_attestation=True), "reject")
+
+    def test_the_verdict_says_whether_the_edge_was_signed(self):
+        """WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did."""
+        self.assertIs(self.decide(field="attestation_signed"), True)
+        self.assertIs(self.decide(edge=self.unsigned(), field="attestation_signed"), False)
+
+    def test_a_badly_signed_edge_is_refused(self):
+        sig = self.edge["signature_hex"]
+        bad = dict(self.edge, signature_hex=("00" if sig[:2] != "00" else "01") + sig[2:])
+        self.assertEqual(self.decide(edge=bad), "reject")
+
+    def test_an_edge_signed_by_a_key_the_manifest_does_not_anchor_is_refused(self):
+        self.assertEqual(self.decide(manifest=dict(self.manifest, anchors=[])), "reject")
+
+
+@unittest.skipUnless(V._provider_available("oqs") or _cryptography_mldsa(), "no ML-DSA verifier here")
+class CrossAuthorityViaBundleRequiresSignedEdges(unittest.TestCase):
+    """require_signed_attestation reaches the decision a status bundle carries. The bundle's own
+    verdict is replaced, and its member's feed is not genuine, so every run rejects; what the
+    option changes is whether the unsigned edge was admitted before the feed was read."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.loads((ROOT / "sdk" / "testdata" / "federation-edge-window.json").read_text())
+
+    def decide(self, window, **kw):
+        from unittest import mock
+        f = self.f
+        member = {"revocation_feed": {"public_key_hex": f["pack"]["public_key_hex"]}}
+        bv = {"bundle_authentic": True, "fresh": True, "publisher_matches": None, "members": [member]}
+        with mock.patch.object(V, "verify_status_bundle", return_value=bv):
+            return V.verify_cross_authority_via_bundle(
+                f["pack"], f["_fixture"]["context_id"], [f["manifests"][window]], {},
+                now=f["_fixture"]["now"], trusted_anchors=[f["trusted_anchor"]], **kw)
+
+    def test_the_requirement_refuses_the_unsigned_edge_and_keeps_the_signed_one(self):
+        self.assertIs(self.decide("unsigned-open")["attestation_signed"], False)
+        refused = self.decide("unsigned-open", require_signed_attestation=True)
+        self.assertIsNone(refused["attestation_signed"])
+        self.assertIn("with a signature by the attesting agency", " ".join(refused["reasons"]))
+        self.assertIs(self.decide("open", require_signed_attestation=True)["attestation_signed"], True)
+
+
+@unittest.skipUnless(V._provider_available("oqs") or _cryptography_mldsa(), "no ML-DSA verifier here")
+class ExchangeEdgeSignature(unittest.TestCase):
+    """2026-10-15: verify_exchange_request and verify_exchange_receipt counted any edge naming
+    the requester's key, so a badly signed edge, or one signed by a key the manifest does not
+    anchor, authorized the requester; WIRE-SPEC 3.14 refuses both. sdk/testdata/
+    exchange-edge-signature.json holds one exchange and four genuine, fresh manifests that differ
+    only in the requester's edge."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.f = json.loads((ROOT / "sdk" / "testdata" / "exchange-edge-signature.json").read_text())
+
+    def verdicts(self, name):
+        f, now = self.f, self.f["_fixture"]["now"]
+        m = [f["manifests"][name]]
+        q = V.verify_exchange_request(f["request"], trusted_manifests=m, now=now)
+        r = V.verify_exchange_receipt(f["receipt"], now=now, trusted_manifests=m)
+        self.assertTrue(q["request_authentic"] and r["receipt_authentic"], (q["note"], r["note"]))
+        return q, r
+
+    def test_a_badly_signed_edge_authorizes_nothing(self):
+        for v in self.verdicts("badly-signed"):
+            self.assertIs(v["requester_authorized"], False)
+            self.assertIsNone(v["attestation_signed"])
+
+    def test_an_edge_signed_by_a_key_the_manifest_does_not_anchor_authorizes_nothing(self):
+        for v in self.verdicts("stranger"):
+            self.assertIs(v["requester_authorized"], False)
+            self.assertIsNone(v["attestation_signed"])
+
+    def test_the_verdict_says_whether_the_edge_was_signed(self):
+        """WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did."""
+        for name, signed in (("signed", True), ("unsigned", False)):
+            q, r = self.verdicts(name)
+            self.assertEqual((q["requester_authorized"], q["attestation_signed"]), (True, signed), name)
+            self.assertEqual((r["requester_authorized"], r["attestation_signed"]), (True, signed), name)
+            self.assertEqual(r["via"], {"agency_id": "B", "name": "Authority B"})
 
 
 ABSENT_SIZE = "the checkpoint has no committed_count"

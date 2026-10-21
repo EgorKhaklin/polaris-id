@@ -454,3 +454,45 @@ class HeldOutHeaderTests(unittest.TestCase):
                 with self.assertRaises(JweError) as caught:
                     decrypt_compact(token, key)
                 self.assertIn("not an EC P-256 JWK", str(caught.exception))
+
+
+class JsonBoundsTests(unittest.TestCase):
+    """Both JWE documents are the sender's to write, and until 2026-10-15 they were parsed at any
+    size with NaN and Infinity read as numbers, where every SD-JWT and status document refuses
+    both (`sdjwt._json_bounded`). Each refusal has its control beside it, sealed the same way."""
+
+    def _response(self, raw):
+        key = ec.generate_private_key(ec.SECP256R1())
+        return decrypt_response(encrypt_compact(raw, key.public_key()), key)
+
+    def _refused(self, call, fragment):
+        with self.assertRaises(JweError) as caught:
+            call()
+        self.assertIn(fragment, str(caught.exception))
+
+    def test_a_decrypted_response_with_a_non_json_number_is_refused(self):
+        self.assertEqual(self._response(json.dumps(BODY).encode()), BODY)
+        for literal in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(literal=literal):
+                raw = ('{"state": "s", "vp_token": %s}' % literal).encode()
+                self._refused(lambda raw=raw: self._response(raw), "non-JSON literal " + literal)
+
+    def test_a_decrypted_response_over_the_bound_is_refused(self):
+        from polaris_oid4vp.jwe import MAX_RESPONSE_BYTES
+        frame = json.dumps({"state": "s", "pad": ""}).encode()
+        at = frame.replace(b'""', b'"' + b"a" * (MAX_RESPONSE_BYTES - len(frame)) + b'"')
+        self.assertEqual(len(at), MAX_RESPONSE_BYTES)
+        self.assertEqual(self._response(at)["state"], "s")
+        over = at.replace(b'"s"', b'"st"')
+        self._refused(lambda: self._response(over), "over the %d byte limit" % MAX_RESPONSE_BYTES)
+
+    def test_a_protected_header_with_a_non_json_number_or_over_the_bound_is_refused(self):
+        from polaris_oid4vp.jwe import MAX_PROTECTED_HEADER_BYTES
+        seal = lambda edit: HeldOutHeaderTests._seal(self, edit)  # noqa: E731
+        token, key = seal(lambda h, n: h.update(x=1.5, pad="a" * 1024))
+        self.assertEqual(decrypt_compact(token, key), b"hello")
+        token, key = seal(lambda h, n: h.update(x=float("nan")))
+        self._refused(lambda: decrypt_compact(token, key), "non-JSON literal NaN")
+        token, key = seal(lambda h, n: h.update(pad="a" * MAX_PROTECTED_HEADER_BYTES))
+        self._refused(lambda: decrypt_compact(token, key),
+                      "over the %d byte limit" % MAX_PROTECTED_HEADER_BYTES)

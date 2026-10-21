@@ -23,7 +23,7 @@ classifiers = [
 # real choice to make, there is no choice here: the profile's mandatory algorithm is ES256
 # and `cryptography` is how this checks one. A hard dependency, because an optional extra
 # would only produce a verifier that cannot verify.
-dependencies = ["cryptography>=42"]
+dependencies = ["cryptography>=50.0.0"]
 
 [project.scripts]
 polaris-oid4vp = "polaris_oid4vp.cli:main"

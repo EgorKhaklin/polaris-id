@@ -2,8 +2,10 @@
 
 A door check-in built on polaris-oid4vp's public `Verifier`. The desk shows a QR code. The Yivi app
 presents its email credential with one claim disclosed, `domain`. If that domain is on the
-allow-list, the desk shows "Checked in" and the domain. Otherwise it shows "Not checked in" and
-the reason. [`app.py`](app.py) is the whole app.
+allow-list, the desk shows "Checked in" and the domain. When an authentic presentation is refused
+(its domain off the list, another issuer, a claim withheld), it shows "Not checked in" and the
+reason. A presentation that is not authentic leaves the desk waiting. [`app.py`](app.py) is the
+whole app.
 
 This runs in developer mode, not production. The phone trusts this verifier only because its root
 was added by hand in the Yivi app's developer mode. For the store app to trust a verifier as
@@ -62,9 +64,10 @@ site's colours, from `site/tokens.css`.
 - The desk pages, and the emblem they show, answer only on the laptop, checked by the loopback
   address and the `Host` header. Through the tunnel, only the wallet's paths answer: `/request/<id>` and `/response/<id>`.
   An accepted wallet gets no redirect: the desk shows the result.
-- Someone who sees the QR code can post to `/response/<id>`. If that post does not decrypt under
-  the request's key, it changes nothing: the request stays open and the desk keeps waiting. A
-  post after the request has closed, answered or expired, changes nothing either.
+- Someone who sees the QR code can fetch the request and post to `/response/<id>`. So a
+  presentation that is not authentic changes nothing: the wallet is refused, the request stays
+  open and the desk keeps waiting. A post after the request has closed, answered or expired,
+  changes nothing either.
 
 ## What it shows and keeps
 

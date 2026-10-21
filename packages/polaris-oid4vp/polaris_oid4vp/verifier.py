@@ -93,6 +93,21 @@ _ERROR_CODE = re.compile(r"[A-Za-z0-9_]{1,64}")
 #: The most of a wallet's `error_description` an operator is shown (`_printable`).
 ERROR_DESCRIPTION_MAX = 200
 
+#: The longest `wallet_nonce` a request object carries back. OpenID4VP 1.0 section 5.10 makes it
+#: a string and sets no length; every POST that carries one is answered with a freshly signed
+#: request object holding it, so an unbounded one let an unauthenticated client have a body of
+#: up to the server's limit signed and sent back, again and again. 1024 characters of RFC 6749's
+#: VSCHAR (%x20-7E, the syntax of `state`, Appendix A.5) is far beyond any nonce a wallet sends.
+WALLET_NONCE_MAX = 1024
+_WALLET_NONCE = re.compile(r"[\x20-\x7e]+")
+
+
+def wallet_nonce_acceptable(value):
+    """True when `value` is a `wallet_nonce` a request object may carry: a string of 1 to
+    WALLET_NONCE_MAX printable ASCII characters (%x20-7E)."""
+    return (isinstance(value, str) and 0 < len(value) <= WALLET_NONCE_MAX
+            and _WALLET_NONCE.fullmatch(value) is not None)
+
 #: TS12's payment transaction type (section 4.3.1).
 TS12_PAYMENT = "urn:eudi:sca:payment:1"
 
@@ -416,6 +431,14 @@ def _etsi_refusal(numbers, reason):
         " and ".join("OIDFVP-HAIP-COMMON-REQ-RO-%02d" % n for n in numbers), reason))
 
 
+def _etsi_reading_refusal(numbers, reason):
+    """A refusal by this package's reading of the ETSI TS 119 472-2 V1.2.1 requirements it names,
+    where their text states no such rule; the reason gives the grounds."""
+    return VerifierInfoError("verifier_info fails this package's reading of ETSI TS 119 472-2 "
+                             "V1.2.1 %s: %s" % (" and ".join("OIDFVP-HAIP-COMMON-REQ-RO-%02d" % n
+                                                           for n in numbers), reason))
+
+
 def _over_asking_refusal(reason):
     """A refusal by the over-asking check (_within_registration), saying what it read."""
     return VerifierInfoError(
@@ -662,11 +685,18 @@ def check_etsi_119472_2(verifier_info, dcql_query):
             raise _etsi_refusal((3, 14), "verifier_info element %d is %s, not an object"
                                 % (position, _given(element)))
     elements = [e for e in verifier_info if isinstance(e, dict)]
-    # RO-02 and RO-04: one element, with format registrar_dataset, carries the registrar's data.
+    # RO-02 and RO-04: an element with format registrar_dataset carries the registrar's data.
     registrars = [e for e in elements if e.get("format") == "registrar_dataset"]
-    if len(registrars) != 1:
-        raise _etsi_refusal((2, 4), "verifier_info has %d elements with format registrar_dataset, "
-                                    "where it carries exactly one" % len(registrars))
+    if not registrars:
+        raise _etsi_refusal((2, 4), "verifier_info has 0 elements with format registrar_dataset")
+    # One, not two, is this package's reading: RO-03 to RO-05 speak of "the" registrar_dataset
+    # element, and no requirement states a count.
+    if len(registrars) > 1:
+        raise _etsi_reading_refusal((2, 4), "verifier_info has %d elements with format "
+                                            "registrar_dataset; this package carries one, as "
+                                            "RO-03 to RO-05 speak of the registrar_dataset "
+                                            "element, though no requirement states a count"
+                                    % len(registrars))
     registrar = registrars[0]
     # RO-03: the registrar_dataset element carries no credential_ids.
     if "credential_ids" in registrar:
@@ -912,7 +942,8 @@ class Verifier:
         5.10: when a wallet POSTs one, the verifier MUST return a request object carrying it
         as a top-level claim. It is the wallet's replay protection against a request object
         minted before the wallet existed, and the mirror of the `nonce` we send it, so a
-        verifier that serves a cached object to a POST has taken that protection away.
+        verifier that serves a cached object to a POST has taken that protection away. A
+        `wallet_nonce` that `wallet_nonce_acceptable` refuses gets None: nothing is signed for it.
 
         `wallet_metadata`, posted beside it, may ask for the object encrypted to the wallet's
         key (`request_object_encryption`). Then the same signed object comes back encrypted:
@@ -927,7 +958,7 @@ class Verifier:
             cached = self._by_request.get(state)
         if wallet_nonce is None:
             jar = cached
-        elif session is None:
+        elif session is None or not wallet_nonce_acceptable(wallet_nonce):
             return None
         else:
             jar = self._request_object(session, wallet_nonce=wallet_nonce)
@@ -1020,6 +1051,11 @@ class Verifier:
         response said. So a 200 is not an acceptance. `verdict.authentic` is. Neither form of
         it, encrypted or in the clear, closes the request: anyone who saw the request could
         have sent either.
+
+        Only an authentic presentation closes the request (`verify_presentation` found it
+        signed by a trusted issuer and bound to this request's nonce by the holder's key). Any
+        other response is refused and leaves the request open until it expires, because
+        anyone who saw the request can encrypt one to its key.
         """
         # An error response sent in the clear: `error` and `state` as form parameters, where a
         # wallet that can encrypt sends `response` (section 8.3.1).
@@ -1070,15 +1106,14 @@ class Verifier:
             return self._wallet_error(session, body["error"], body.get("error_description"),
                                       encrypted=True)
 
-        with self._lock:
-            if session.answered:
-                return self._error("invalid_request",
-                                   "this request has already been answered; a second "
-                                   "presentation for the same nonce is a replay")
-            session.answered = True
-            self._sessions.pop(session.state, None)
-            self._by_request.pop(session.state, None)
-
+        # The request is NOT closed here. Everything up to this point, a state and a body encrypted
+        # to the request's key, anyone who saw the request can produce: the key and the state are
+        # in the request object, which is served to whoever asks. Until 2026-10-15 the request was
+        # closed at this line, before the presentation was judged, so an onlooker's `{"state": s}`
+        # or garbage vp_token was refused AND used up the request, and the holder's genuine
+        # presentation, arriving second, was refused as a replay. It closes below, once
+        # verify_presentation has found the presentation authentic: only the holder of the
+        # credential and its key can get that far, so only the holder can close it.
         presentation = self._single_presentation(body.get("vp_token"))
         if presentation is None:
             return self._error("invalid_request",
@@ -1108,8 +1143,23 @@ class Verifier:
                                       transaction_data=binding)
         if not verdict.authentic:
             # The reason goes to the operator through the returned verdict, and the wallet
-            # gets the same constant refusal every other cause gets.
+            # gets the same constant refusal every other cause gets. The request stays open.
             return self._error(verdict.code, verdict.reason)
+
+        # Authentic: the holder answered, and the request closes whatever is decided below, as it
+        # always did for an authentic presentation. Under the lock, so that of two authentic
+        # responses to one request (a replay racing the original) exactly one closes it and the
+        # other is refused; a request that expired while this one was being judged is not
+        # answered either.
+        with self._lock:
+            if session.answered or self._sessions.get(session.state) is not session:
+                return self._error("invalid_request",
+                                   "this request has already been answered, or expired while "
+                                   "this response was judged; a second presentation for the "
+                                   "same nonce is a replay")
+            session.answered = True
+            self._sessions.pop(session.state, None)
+            self._by_request.pop(session.state, None)
 
         # The claims the DCQL query above asked for. Every one is required (it names no
         # `claim_sets`), and a presentation that discloses fewer does not answer the request;

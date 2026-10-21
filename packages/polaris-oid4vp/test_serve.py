@@ -122,6 +122,21 @@ class RequestUriTests(ServeTestCase):
         _, claims = Wallet.read_request(body.decode())
         self.assertEqual(claims["wallet_nonce"], "w-from-the-wire")
 
+    def test_a_posted_wallet_nonce_out_of_bounds_is_400_and_nothing_is_signed(self):
+        """A 2 KiB nonce, or one with a control character, gets 400; 64 bytes still get the
+        object carrying them."""
+        session, _ = self.verifier.new_request()
+        url = "%s/request.jwt?state=%s" % (self.base, session.state)
+        for nonce in ("n" * 2048, "w\x01"):
+            with self.subTest(length=len(nonce)):
+                status, ctype, body = _post(url, {"wallet_nonce": nonce})
+                self.assertEqual((status, ctype), (400, "application/json"))
+                self.assertEqual(json.loads(body)["error"], "invalid_request")
+                self.assertNotIn(b"nnnn", body)
+        status, _, body = _post(url, {"wallet_nonce": "n" * 64})
+        self.assertEqual(status, 200)
+        self.assertEqual(Wallet.read_request(body.decode())[1]["wallet_nonce"], "n" * 64)
+
     def test_posted_wallet_metadata_that_asks_gets_the_object_encrypted(self):
         """The EUDI iOS wallet kit posts its key in wallet_metadata and refuses a request
         object that is not encrypted to it (lab/interop/eudi-ios, 2026-10-04)."""
@@ -268,6 +283,67 @@ class ResponseUriTests(ServeTestCase):
         # because the cause was going out on the wire instead.
         self.assertFalse(seen[1][1].authentic)
         self.assertEqual(seen[1][1].code, "nonce")
+
+    def test_a_request_object_callback_hears_each_answer_at_the_request_uri(self):
+        """200 with the object, 404 for no such request, 400 for a wallet_nonce out of bounds,
+        by GET and by POST. `serve --result` counts these, so a walk can tell a wallet that
+        fetched and refused the request from one that never reached this verifier."""
+        seen = []
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="http://127.0.0.1:0/request.jwt",
+                            response_uri="http://127.0.0.1:0/response",
+                            issuer_jwks=[self.wallet.issuer_jwk])
+        httpd = serve(verifier, host="127.0.0.1", port=0, on_request_object=seen.append)
+        base = "http://127.0.0.1:%d" % httpd.server_address[1]
+        try:
+            session, _ = verifier.new_request()
+            url = "%s/request.jwt?state=%s" % (base, session.state)
+            answers = [_get(url)[0], _post(url, {"wallet_nonce": "w"})[0],
+                       _get(base + "/request.jwt?state=nonsense")[0],
+                       _post(url, {"wallet_nonce": "w\x01"})[0],
+                       _get(base + "/done")[0], _post(base + "/response", {})[0]]
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        self.assertEqual(answers, [200, 200, 404, 400, 404, 400])
+        self.assertEqual(seen, [200, 200, 404, 400], "only the request URI's answers, each once")
+
+    def test_each_callback_is_heard_before_its_answer_goes_out(self):
+        """A caller that reads what a callback recorded once the wallet has its answer must find
+        it there: the wallet's answer waits for the callback, here held until released."""
+        import threading
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="http://127.0.0.1:0/request.jwt",
+                            response_uri="http://127.0.0.1:0/response",
+                            issuer_jwks=[self.wallet.issuer_jwk])
+        entered, release = threading.Event(), threading.Event()
+
+        def hold(*_):
+            entered.set()
+            release.wait(10)
+        httpd = serve(verifier, host="127.0.0.1", port=0, on_verdict=hold, on_request_object=hold)
+        base = "http://127.0.0.1:%d" % httpd.server_address[1]
+        session, _ = verifier.new_request()
+        try:
+            for name, call in (("request URI", lambda: _get("%s/request.jwt?state=%s"
+                                                            % (base, session.state))),
+                               ("response URI", lambda: _post(base + "/response", {}))):
+                with self.subTest(name):
+                    entered.clear()
+                    release.clear()
+                    answered = threading.Event()
+                    threading.Thread(target=lambda: (call(), answered.set()), daemon=True).start()
+                    self.assertTrue(entered.wait(10), "the callback was not heard")
+                    self.assertFalse(answered.wait(0.5), "the answer went out before the callback "
+                                                         "returned")
+                    release.set()
+                    self.assertTrue(answered.wait(10))
+        finally:
+            release.set()
+            httpd.shutdown()
+            httpd.server_close()
 
 
 class ErrorResponseOnTheWireTests(ServeTestCase):
@@ -555,6 +631,19 @@ class TransportTests(unittest.TestCase):
                 self.assertIn(expect, captured.getvalue())
             else:
                 self.assertEqual(captured.getvalue(), "")
+
+    def test_serve_listens_on_this_machine_only_by_default(self):
+        """serve() given no host listens on 127.0.0.1, not on every interface."""
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="http://127.0.0.1:0/request.jwt",
+                            response_uri="http://127.0.0.1:0/response")
+        httpd = serve(verifier, port=0)
+        try:
+            self.assertEqual(httpd.server_address[0], "127.0.0.1")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
     def test_a_post_to_an_unknown_path_is_404(self):
         cert_pem, key_pem = _client_chain()

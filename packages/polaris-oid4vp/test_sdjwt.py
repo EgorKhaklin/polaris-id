@@ -2246,6 +2246,36 @@ class IssuerCertificateTests(unittest.TestCase):
         v = self._verify(leaf, leaf_key, ca)
         self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
 
+    def test_a_leaf_with_a_critical_extension_this_code_does_not_read_is_refused(self):
+        """RFC 5280 4.2: a certificate with a critical extension the verifier does not recognize
+        is refused, and until 2026-10-15 only the CA certificates were held to it. The same
+        extension stated non-critically is the control, and so is a leaf that marks critical
+        every extension this verifier does read."""
+        unknown = x509.UnrecognizedExtension(x509.ObjectIdentifier("1.3.6.1.4.1.99999.1"), b"\x05\x00")
+        ca_key, ca_name, ca = self._ca()
+        for critical in (True, False):
+            with self.subTest(critical=critical):
+                leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=((unknown, critical),))
+                v = self._verify(leaf, leaf_key, ca)
+                if critical:
+                    self.assertFalse(v.authentic, "accepted")
+                    self.assertEqual(v.code, "issuer_key")
+                    self.assertIn("1.3.6.1.4.1.99999.1", v.reason)
+                    self.assertIn("RFC 5280 section 4.2", v.reason)
+                else:
+                    self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        read = ((x509.BasicConstraints(ca=False, path_length=None), True),
+                (x509.KeyUsage(digital_signature=True, content_commitment=False,
+                               key_encipherment=False, data_encipherment=False,
+                               key_agreement=False, key_cert_sign=False, crl_sign=False,
+                               encipher_only=False, decipher_only=False), True),
+                (x509.ExtendedKeyUsage([x509.ObjectIdentifier("1.0.18013.5.1.2")]), True),
+                (x509.SubjectAlternativeName(
+                    [x509.UniformResourceIdentifier("https://issuer.example")]), True))
+        leaf, leaf_key = self._leaf(ca_key, ca_name, extensions=read)
+        v = self._verify(leaf, leaf_key, ca)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
     def test_the_anchor_itself_sent_as_the_leaf_is_refused(self):
         """HAIP 1.0 6.1.1: the trust anchor's certificate MUST NOT be in the credential's
         x5c, and the signing certificate MUST NOT be self-signed. Sent as the leaf, an anchor
@@ -2851,11 +2881,10 @@ class IntermediateChainTests(unittest.TestCase):
 
     def test_an_intermediate_with_a_critical_extension_this_code_does_not_read_is_refused(self):
         """RFC 5280 4.2: a certificate with a critical extension the verifier does not process is
-        refused. Name constraints are not enforced here, so a CA that states them critically is
-        not one this verifier can stand behind; the same constraint stated non-critically is the
-        control."""
-        constraint = x509.NameConstraints(permitted_subtrees=[x509.DNSName("example.org")],
-                                          excluded_subtrees=None)
+        refused; the same extension stated non-critically is the control. Until 2026-10-15 this
+        used name constraints, which are now applied (NameConstraintTests)."""
+        constraint = x509.UnrecognizedExtension(x509.ObjectIdentifier("1.3.6.1.4.1.99999.1"),
+                                                b"\x05\x00")
         for critical in (True, False):
             with self.subTest(critical=critical):
                 root, chain, key = self._make(depth=1, change=lambda position, o, c=critical: o.update(
@@ -2876,6 +2905,149 @@ class IntermediateChainTests(unittest.TestCase):
         root, chain, key = self._make(depth=1)
         junk = base64.b64encode(b"not a certificate").decode()
         self._refused(self._verify(root, [chain[0], junk], key), "x5c certificate 1 does not parse")
+
+
+class NameConstraintTests(unittest.TestCase):
+    """RFC 5280 4.2.1.10: a CA's name constraints bind the certificates beneath it, and the trust
+    anchor's the whole path. Until 2026-10-15 none was read: an anchor that permitted only
+    other.example vouched for a leaf naming https://issuer.example. Each case is the control with
+    one constraint added; the credential's `iss` is https://issuer.example throughout, and the
+    leaf names it, so `_leaf_names` binds it and only the constraint can refuse."""
+
+    URI = x509.UniformResourceIdentifier
+
+    def _path(self, anchor=None, ca=None, leaf_names=(), critical=True, iss=None):
+        """A root, one CA and a leaf naming https://issuer.example and `leaf_names`; `anchor` and
+        `ca` are NameConstraints for the root and the CA. With `iss`, the leaf names only
+        `leaf_names` and the credential's `iss` is `iss`."""
+        make, name = IntermediateChainTests._cert, IntermediateChainTests._name
+        root_key, ca_key, leaf_key = (ec.generate_private_key(ec.SECP256R1()) for _ in range(3))
+        root = make("test root", name("test root"), root_key, root_key, ca=True,
+                    extensions=((anchor, critical),) if anchor else ())
+        middle = make("test CA 1", root.subject, root_key, ca_key, ca=True, path_length=0,
+                      extensions=((ca, critical),) if ca else ())
+        names = list(leaf_names) if iss else [self.URI("https://issuer.example"), *leaf_names]
+        leaf = make("issuer", middle.subject, ca_key, leaf_key, ca=False, usage="sign",
+                    extensions=((x509.SubjectAlternativeName(names), False),))
+        if iss is None:
+            return IntermediateChainTests._verify(self, root, [leaf, middle], leaf_key)
+        w = Wallet()
+        w.issuer_key = leaf_key
+        x5c = [base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode()
+               for c in (leaf, middle)]
+        original = _jws
+
+        def patched(key, header, payload):
+            if header.get("typ") == "dc+sd-jwt":
+                header = dict(header, x5c=x5c)
+                header.pop("kid", None)
+            return original(key, header, payload)
+        globals()["_jws"] = patched
+        try:
+            presentation = w.present(payload_extra={"iss": iss})
+        finally:
+            globals()["_jws"] = original
+        return verify_presentation(presentation, expected_nonce=NONCE, expected_audience=AUDIENCE,
+                                   trust_anchors=[root])
+
+    @staticmethod
+    def _nc(permitted=None, excluded=None):
+        return x509.NameConstraints(permitted_subtrees=permitted, excluded_subtrees=excluded)
+
+    def _accepted(self, v):
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+    def _refused(self, v, reason):
+        self.assertFalse(v.authentic, "accepted")
+        self.assertEqual(v.code, "issuer_key")
+        self.assertIn(reason, v.reason)
+
+    def test_a_path_inside_its_constraints_is_authentic(self):
+        """The positive control: without it every refusal below passes on a verifier that refuses
+        any constrained path."""
+        self._accepted(self._path())
+        self._accepted(self._path(anchor=self._nc([self.URI("issuer.example")])))
+        self._accepted(self._path(anchor=self._nc([self.URI(".example")])))
+        self._accepted(self._path(ca=self._nc(excluded=[self.URI("other.example")])))
+        self._accepted(self._path(anchor=self._nc([x509.DNSName("issuer.example")]),
+                                  leaf_names=[x509.DNSName("a.b.issuer.example")]))
+
+    def test_a_leaf_outside_the_anchors_permitted_subtrees_is_refused(self):
+        """Critical, as RFC 5280 requires a CA to mark it, or not: either way it is a statement
+        about the path, and it is applied."""
+        for critical in (True, False):
+            with self.subTest(critical=critical):
+                self._refused(self._path(anchor=self._nc([self.URI("other.example")]),
+                                         critical=critical),
+                              "outside the subtrees the trust anchor's name constraints permit")
+
+    def test_a_uri_constraint_names_a_host_not_a_domain(self):
+        """"issuer.example" is that host; only ".issuer.example" admits names under it."""
+        self._refused(self._path(anchor=self._nc([self.URI("example")])), "outside the subtrees")
+        self._refused(self._path(anchor=self._nc([self.URI(".issuer.example")])),
+                      "outside the subtrees")
+
+    def test_a_leaf_inside_an_intermediates_excluded_subtree_is_refused(self):
+        self._refused(self._path(ca=self._nc(excluded=[self.URI("issuer.example")])),
+                      "inside a subtree x5c certificate 1's name constraints exclude")
+
+    def test_a_dns_name_outside_a_dns_constraint_is_refused(self):
+        self._refused(self._path(anchor=self._nc([x509.DNSName("issuer.example")]),
+                                 leaf_names=[x509.DNSName("issuer.example.evil.test")]),
+                      "'issuer.example.evil.test', outside the subtrees")
+
+    def test_a_uri_with_no_host_under_a_uri_constraint_is_refused(self):
+        self._refused(self._path(anchor=self._nc([self.URI("issuer.example")]),
+                                 leaf_names=[self.URI("urn:example:issuer")]),
+                      "no host name a URI constraint can be applied to")
+
+    def test_another_spelling_of_an_excluded_host_is_refused(self):
+        """A subtree is matched as a string, and "evil.example.", "evil%2Eexample" and
+        "evil.example" are one host. Before 2026-10-15 each of these escaped an exclusion the
+        plain spelling could not. Under a constraint only the plain spelling is compared, as
+        Go's crypto/x509 requires: a trailing dot, an empty label or an escape is refused."""
+        D = x509.DNSName
+        for label, nc, names, iss in (
+                ("URI host with a trailing dot", self._nc(excluded=[self.URI("evil.example")]),
+                 [self.URI("https://evil.example./")], "https://evil.example./"),
+                ("URI host with a trailing dot, domain exclusion",
+                 self._nc(excluded=[self.URI(".example")]),
+                 [self.URI("https://evil.example./")], "https://evil.example./"),
+                ("DNS name with a trailing dot", self._nc(excluded=[D("evil.example")]),
+                 [D("evil.example.")], "https://evil.example./"),
+                ("percent-encoded URI host", self._nc(excluded=[self.URI("evil.example")]),
+                 [self.URI("https://evil%2Eexample/")], "https://evil%2Eexample/")):
+            with self.subTest(label):
+                self._refused(self._path(anchor=nc, leaf_names=names, iss=iss),
+                              "not in the plain spelling a name constraint is matched against")
+
+    def test_the_plain_spellings_still_decide_as_before(self):
+        """The controls for the test above: the plain form is refused by the exclusion itself,
+        a plain name inside a permitted subtree is authentic, a port is not part of the host, and
+        a "*." DNS name is matched like any other."""
+        D = x509.DNSName
+        self._refused(self._path(anchor=self._nc(excluded=[self.URI("evil.example")]),
+                                 leaf_names=[self.URI("https://evil.example")],
+                                 iss="https://evil.example"),
+                      "inside a subtree the trust anchor's name constraints exclude")
+        self._refused(self._path(anchor=self._nc(excluded=[D("evil.example")]),
+                                 leaf_names=[D("evil.example")], iss="https://evil.example"),
+                      "inside a subtree the trust anchor's name constraints exclude")
+        self._refused(self._path(anchor=self._nc(excluded=[self.URI("evil.example")]),
+                                 leaf_names=[self.URI("https://evil.example:443/")],
+                                 iss="https://evil.example:443/"),
+                      "inside a subtree the trust anchor's name constraints exclude")
+        self._accepted(self._path(anchor=self._nc([self.URI("issuer.example")]),
+                                  leaf_names=[self.URI("https://issuer.example:8443/")],
+                                  iss="https://issuer.example:8443/"))
+        self._accepted(self._path(anchor=self._nc([D("issuer.example")]),
+                                  leaf_names=[D("*.issuer.example")]))
+
+    def test_a_constraint_on_a_name_form_this_does_not_apply_refuses_the_path(self):
+        directory = x509.DirectoryName(x509.Name([x509.NameAttribute(NameOID.ORGANIZATION_NAME,
+                                                                     "Issuer")]))
+        self._refused(self._path(anchor=self._nc([directory])),
+                      "states name constraints on DirectoryName, which this verifier does not apply")
 
 
 class TheBoundsThemselvesAreAssertedTests(unittest.TestCase):

@@ -20,7 +20,7 @@ import sys
 import threading
 import urllib.parse
 
-from .verifier import Verifier  # noqa: F401  re-exported for callers of serve()
+from .verifier import Verifier, wallet_nonce_acceptable  # noqa: F401  Verifier re-exported for callers of serve()
 
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
@@ -84,6 +84,7 @@ def _content_length(headers):
 class _Handler(http.server.BaseHTTPRequestHandler):
     verifier = None
     on_verdict = None
+    on_request_object = None
     verbose = False
     server_version = "polaris-oid4vp"
     sys_version = ""
@@ -138,9 +139,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # be served from cache. A posted `wallet_metadata` is read for one thing only: a
             # key to encrypt the request object to, when the wallet asks for that.
             posted = urllib.parse.parse_qs(raw)
+            wallet_nonce = (posted.get("wallet_nonce") or [None])[0]
+            if wallet_nonce is not None and not wallet_nonce_acceptable(wallet_nonce):
+                self._request_object_answered(400)
+                return self._send(400, {"error": "invalid_request",
+                                        "error_description": "wallet_nonce is not 1 to 1024 "
+                                                             "printable ASCII characters"})
             return self._serve_request_object(urllib.parse.parse_qs(query),
-                                              wallet_nonce=(posted.get("wallet_nonce")
-                                                            or [None])[0],
+                                              wallet_nonce=wallet_nonce,
                                               wallet_metadata=(posted.get("wallet_metadata")
                                                                or [None])[0])
         if path != RESPONSE_PATH:
@@ -176,8 +182,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         jar = self.verifier.request_object(state, wallet_nonce=wallet_nonce,
                                            wallet_metadata=wallet_metadata)
         if not jar:
+            self._request_object_answered(404)
             return self._send(404, {"error": "not_found",
                                     "error_description": "no such outstanding request"})
+        self._request_object_answered(200)
         raw = jar.encode("ascii")
         self.send_response(200)
         self.send_header("Content-Type", "application/oauth-authz-req+jwt")
@@ -190,6 +198,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Pragma", "no-cache")
         self.end_headers()
         self.wfile.write(raw)
+
+    def _request_object_answered(self, status):
+        # Before the answer goes out, as on_verdict is: a caller that reads what the hook
+        # recorded once the wallet has its answer must find it there.
+        if self.on_request_object:
+            self.on_request_object(status)
 
     def _send(self, status, body):
         raw = json.dumps(body).encode("utf-8")
@@ -221,13 +235,18 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             sys.stderr.write("%s %s\n" % (self.command, self.path))
 
 
-def serve(verifier, *, host="0.0.0.0", port=9443, certfile=None, keyfile=None,
-          on_verdict=None, background=True, verbose=False):
+def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
+          on_verdict=None, background=True, verbose=False, on_request_object=None):
     """Start the two endpoints. Returns the HTTPServer so a caller can shut it down.
 
     TLS is not optional in the profile: the suite refuses a `request_uri` that is not HTTPS
     (JAR section 5.2). `certfile` may be self-signed, which was measured rather than assumed:
     the conformance suite fetched one without complaint.
+
+    `on_verdict(status, body, verdict)` hears each answer at the response URI, and
+    `on_request_object(status)` each answer at the request URI: 200 with the request object, 404
+    for no such outstanding request, 400 for a posted wallet_nonce out of bounds. Each is called
+    before its answer is sent.
 
     Shut it down with `httpd.shutdown()` followed by `httpd.server_close()`: the first stops
     the loop and the second releases the socket, and skipping the second leaks a listening
@@ -235,7 +254,9 @@ def serve(verifier, *, host="0.0.0.0", port=9443, certfile=None, keyfile=None,
     """
     handler = type("_BoundHandler", (_Handler,),
                    {"verifier": verifier, "verbose": verbose,
-                    "on_verdict": staticmethod(on_verdict) if on_verdict else None})
+                    "on_verdict": staticmethod(on_verdict) if on_verdict else None,
+                    "on_request_object": (staticmethod(on_request_object) if on_request_object
+                                          else None)})
     # ThreadingHTTPServer, not HTTPServer, and a read timeout on every connection. Both are
     # about one thing: a client that opens a socket and then goes quiet must not take the
     # listener off the air for every wallet. With a single accept loop it did, and it cost

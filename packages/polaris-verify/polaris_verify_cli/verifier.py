@@ -1068,6 +1068,37 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None, now=Non
     return v
 
 
+def _edge_signature_admits(att, manifest, mv, expected_key, now, require_signed):
+    """`(admitted, signed)` for one attestation edge of a trusted manifest: the signature half
+    of the edge rule, shared by the credential path and the zero-knowledge path.
+
+    P9.5: an edge is either signed by the agency that made it or the operator's word carried by
+    the manifest's signature. A signed edge is the attesting agency's only if one of ITS roots
+    signed it: the key must be among the active anchors of the manifest carrying it. Until
+    2026-09-30 any key's valid signature with the right agency id counted as the agency's, so
+    `require_signed_attestation` was met by a stranger. A present-but-bad signature is worse
+    than none and refuses the edge. An edge whose own window has closed is not an edge, however
+    fresh the manifest carrying it: before 2026-09-17 nothing read `valid_until` and a one-year
+    edge granted acceptance six years past its end. With `require_signed`, an unsigned (legacy)
+    edge is refused. Until 2026-10-15 the zero-knowledge path and both exchange paths did not
+    check the edge's signature: a badly signed edge counted there, and the zero-knowledge
+    path had no opt-in."""
+    agency = (mv["authority"] or {}).get("agency_id") if isinstance(mv["authority"], dict) else None
+    av = verify_attestation(att, attesting_agency_id=agency, expected_key=expected_key, now=now)
+    roots = {_hex_text(a.get("public_key_hex")) for a in (manifest.get("anchors") or [])
+             if isinstance(a, dict) and _status_of(a) == "active"}
+    if av["signed"] and not (av["attestation_authentic"]
+                             and av["attester_matches"] is not False
+                             and av["key_matches"] is not False
+                             and _hex_in(att.get("public_key_hex"), roots)):
+        return False, True
+    if av["expired"]:
+        return False, bool(av["signed"])
+    if require_signed and not av["signed"]:
+        return False, False
+    return True, bool(av["signed"])
+
+
 def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
                            max_window_seconds=None, trusted_anchors=None,
                            revocation_feed=None, trust_list=None,
@@ -1112,36 +1143,17 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
             # that left out `context_id` was accepted under another context's trust.
             same_ctx = _same_id(att.get("context_id"), context_id)
             if same_key and same_ctx:
-                # P9.5: is this edge signed by the agency that made it, or is it the
-                # operator's word carried by the manifest's signature?
-                agency = (mv["authority"] or {}).get("agency_id") if isinstance(mv["authority"], dict) else None
-                av = verify_attestation(att, attesting_agency_id=agency, expected_key=token_key,
-                                        now=now)
-                # A signed edge is the attesting agency's only if one of ITS roots signed it: the
-                # key must be among the active anchors of the (trusted) manifest carrying it.
-                # Until 2026-09-30 any key's valid signature with the right agency id counted
-                # as the agency's, so `require_signed_attestation` was met by a stranger.
-                roots = {_hex_text(a.get("public_key_hex")) for a in (manifest.get("anchors") or [])
-                         if isinstance(a, dict) and _status_of(a) == "active"}
-                if av["signed"] and not (av["attestation_authentic"]
-                                         and av["attester_matches"] is not False
-                                         and av["key_matches"] is not False
-                                         and _hex_in(att.get("public_key_hex"), roots)):
-                    continue   # a present-but-bad signature is worse than none: refuse the edge
-                # An edge whose own window has closed is not an edge, however fresh the
-                # manifest carrying it. Before 2026-09-17 nothing read `valid_until` and a
-                # one-year edge granted acceptance six years past its end.
-                if av["expired"]:
+                admitted, signed = _edge_signature_admits(att, manifest, mv, token_key, now,
+                                                          require_signed_attestation)
+                if not admitted:
                     continue
                 # Signed or not. `verify_attestation` returns before reading the window of an
                 # unsigned (legacy) edge, so until 2026-09-28 an edge whose own manifest said it
                 # had ended still counted here, while the exchange and zero-knowledge paths
                 # already refused it. A legacy edge that states no window stays open.
-                if not av["signed"] and not _attestation_window_open(att, now):
+                if not signed and not _attestation_window_open(att, now):
                     continue
-                if require_signed_attestation and not av["signed"]:
-                    continue
-                attestation_signed = bool(av["signed"])
+                attestation_signed = signed
                 via = mv["authority"]
                 break
         if via:
@@ -1531,12 +1543,18 @@ def check_revocation_progression(prev_feed, next_feed):
         return {"progresses": False, "rolled_back": True,
                 "note": "ROLLBACK: %d revocation(s) in the older feed are missing from the newer one"
                         % len(dropped)}
+    # Until 2026-10-15 an as_of that did not parse was skipped and the pair reported as
+    # progressing, so a newer feed could hide a regressed as_of behind an unreadable one. A
+    # detector that cannot read the field it compares has not compared it.
     try:
-        if _parse_iso(next_feed["as_of"]) < _parse_iso(prev_feed["as_of"]):
-            return {"progresses": False, "rolled_back": True,
-                    "note": "ROLLBACK: the newer feed's as_of precedes the older feed's"}
+        prev_as_of, next_as_of = _parse_iso(prev_feed["as_of"]), _parse_iso(next_feed["as_of"])
     except Exception:
-        pass
+        return {"progresses": False, "rolled_back": False,
+                "note": "a feed's as_of is missing or not a timestamp, so whether the newer "
+                        "one moves forward cannot be decided"}
+    if next_as_of < prev_as_of:
+        return {"progresses": False, "rolled_back": True,
+                "note": "ROLLBACK: the newer feed's as_of precedes the older feed's"}
     return {"progresses": True, "rolled_back": False,
             "note": "forward progression (%d new revocation(s))" % len(next_leaves - prev_leaves)}
 
@@ -1646,7 +1664,8 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
 
 def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundle,
                                       now=None, max_window_seconds=None,
-                                      trusted_anchors=None, publisher_key=None):
+                                      trusted_anchors=None, publisher_key=None,
+                                      require_signed_attestation=False):
     """Decide a FOREIGN credential OFFLINE using an aggregate status bundle (P3.2c) as the
     status transport, instead of the issuer's individually-fetched revocation feed. The
     answer equals what the issuer's own feed would give; the aggregator cannot change it.
@@ -1694,7 +1713,8 @@ def verify_cross_authority_via_bundle(pack, context_id, trusted_manifests, bundl
     decision = verify_cross_authority(pack, context_id, trusted_manifests, now=now,
                                       max_window_seconds=max_window_seconds,
                                       trusted_anchors=trusted_anchors,
-                                      revocation_feed=member.get("revocation_feed"))
+                                      revocation_feed=member.get("revocation_feed"),
+                                      require_signed_attestation=require_signed_attestation)
     decision["in_bundle"] = True
     decision["bundle_ok"] = True
     cp = member.get("epoch_checkpoint")
@@ -1848,7 +1868,8 @@ def verify_zk_against_root(proof_bundle, expected_root_hex, expected_epoch_id,
 def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, trusted_manifests,
                               now=None, max_window_seconds=None, trusted_anchors=None,
                               expected_nonce=None, zk_binary=None, expected_scope=None,
-                              seen_nullifiers=None, min_anonymity_set=DEFAULT_MIN_ANONYMITY_SET):
+                              seen_nullifiers=None, min_anonymity_set=DEFAULT_MIN_ANONYMITY_SET,
+                              require_signed_attestation=False):
     """Decide a HOLDER's zero-knowledge inclusion proof against a FOREIGN authority's epoch,
     OFFLINE (P3.2d). Accept iff: (1) the foreign epoch checkpoint is authentic and fresh, and
     signed by an authority a trusted manifest attests IN the presented context -- so the epoch
@@ -1875,13 +1896,13 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
     base = {"decision": "reject",
             "checkpoint_authentic": bool(cv["checkpoint_authentic"] and cv["fresh"]),
             "issuer_trusted": None, "bound": None, "proof_verified": None, "nullifier": None,
-            "fresh_nullifier": None, "via": None, "reasons": []}
+            "fresh_nullifier": None, "via": None, "attestation_signed": None, "reasons": []}
     if not (cv["checkpoint_authentic"] and cv["fresh"]):
         return {**base, "reasons": ["the foreign epoch checkpoint is not authentic or not fresh"]}
     cp_key = _hex_text((epoch_checkpoint or {}).get("public_key_hex")) if isinstance(epoch_checkpoint, dict) else None
     if not isinstance(trusted_manifests, (list, tuple)):
         trusted_manifests = []
-    via = None
+    via = attestation_signed = None
     for manifest in trusted_manifests:
         mv = verify_manifest(manifest, now=now, max_window_seconds=max_window_seconds,
                              trusted_anchors=trusted_anchors)
@@ -1895,11 +1916,15 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
             if (cp_key is not None and _hex_text(att.get("attested_public_key_hex")) == cp_key
                     and _same_id(att.get("context_id"), context_id)
                     and _attestation_window_open(att, now)):
-                via = mv["authority"]
-                break
+                admitted, signed = _edge_signature_admits(att, manifest, mv, cp_key, now,
+                                                          require_signed_attestation)
+                if admitted:
+                    via, attestation_signed = mv["authority"], signed
+                    break
         if via:
             break
     base["issuer_trusted"] = bool(via)
+    base["attestation_signed"] = attestation_signed
     if not via:
         return {**base, "reasons": ["no trusted authority attests to the checkpoint's issuer in this context"]}
     epoch = (epoch_checkpoint.get("epoch") if isinstance(epoch_checkpoint, dict) else None) or {}
@@ -2434,15 +2459,17 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     the expected requester); with trusted_manifests, that the requester is attested in the
     envelope's context by an authority the verifier trusts (the section 4 rule), decided at
     `now` (manifest freshness and each attestation's window; None is the wall clock, as for
-    verify_exchange_receipt); with body, that request_hash binds it. A third party holding the
-    envelope and the matching receipt (exchange_evidence) proves both sides of an exchange with
-    no access to either body."""
+    verify_exchange_receipt), under the edge's signature rule (WIRE-SPEC 3.14), with
+    `attestation_signed` saying whether the edge was signed; with body, that request_hash binds
+    it. A third party holding the envelope and the matching receipt (exchange_evidence) proves
+    both sides of an exchange with no access to either body."""
     if not isinstance(envelope, dict):
         envelope = {}
     req = envelope.get("requester") if isinstance(envelope.get("requester"), dict) else {}
     claimed = _hex_text(req.get("public_key_hex"))
     pk_hex = _hex_text(envelope.get("public_key_hex"))
     v = {"request_authentic": False, "requester_matches": None, "requester_authorized": None,
+         "attestation_signed": None,
          "body_bound": None, "requester": envelope.get("requester"), "target": envelope.get("target"),
          "context_id": envelope.get("context_id"), "request_hash": envelope.get("request_hash"),
          "nonce": envelope.get("nonce"), "issued_at": envelope.get("issued_at"), "witnesses": [], "note": None}
@@ -2503,7 +2530,14 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
                 if isinstance(att, dict) and pk_hex is not None and _hex_text(att.get("attested_public_key_hex")) == pk_hex \
                         and _same_id(att.get("context_id"), ctx) \
                         and _attestation_window_open(att, now):
-                    authorized = True
+                    # WIRE-SPEC 3.14, as for a credential. Until 2026-10-15 a badly signed edge,
+                    # or one signed by a key the manifest does not anchor, authorized here.
+                    admitted, signed = _edge_signature_admits(att, m, mv, pk_hex, now, False)
+                    if admitted:
+                        authorized, v["attestation_signed"] = True, signed
+                        break
+            if authorized:
+                break
         v["requester_authorized"] = authorized
     if body is not None:
         v["body_bound"] = (canonical_body_hash(body) == _hex_text(envelope.get("request_hash")))
@@ -2647,7 +2681,11 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     from the signer anchors: valid_long_term requires the timestamp trusted AND independent of
     the signing key, so neither a stranger's timestamp nor a signer's own (backdatable) one counts.
     valid_long_term is the conjunction: it holds even after the key is rotated or retired,
-    because it is decided at the instant the evidence fixes, not now. No network."""
+    because it is decided at the instant the evidence fixes, not now. With trusted_anchors it
+    also requires the SIGNER trusted: its key among the anchors, or active at the instant on a
+    trust list whose publisher is among them. The manifest in the container is the signer's
+    own, so without that a stranger's key with its own manifest and a trusted authority's
+    timestamp was valid long-term. No network."""
     if not isinstance(doc, dict):
         doc = {}
     d = doc.get("document") if isinstance(doc.get("document"), dict) else {}
@@ -2767,10 +2805,18 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     # P8.7b: with a trust list the verifier trusts, the signer key's status AT THE INSTANT is
     # decided independently of the signer's own manifest (which a compromised key could forge).
     L["signer_key_status_per_trust_list"] = None
+    listed_by_trusted_publisher = False
     if trust_list is not None:
         tlv = verify_trust_list(trust_list, now=now, trusted_anchors=trusted_anchors)
         L["signer_key_status_per_trust_list"] = (key_status_at(trust_list, signer_key, instant)
                                                  if (tlv["trust_list_authentic"] and tlv["fresh"] and instant is not None) else None)
+        listed_by_trusted_publisher = (tlv.get("issuer_trusted") is True
+                                       and L["signer_key_status_per_trust_list"] == "active")
+    # A trust anchor set names who may sign. The signer's own manifest says only that the key
+    # was active in ITS OWN view, so with anchors the signer must be one of them, or be listed
+    # active at the instant by a trust list one of them publishes.
+    signer_trust_ok = (trusted_anchors is None or v["signer_trusted"] is True
+                       or listed_by_trusted_publisher)
     # P8.5b (v9.341): every timestamp the container carries (ltv.timestamp, then ltv.timestamps)
     # is judged the same way; those that are authentic, bound, trusted and independent of the
     # signer count toward a QUORUM of distinct authorities. An anchored timestamp (inclusion
@@ -2822,7 +2868,8 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
                                 and L["independent_timestamps"] >= quorum and anchored_ok
                                 and L["signer_key_active_at_instant"]
                                 and L["credential_unrevoked_at_instant"] is not False
-                                and (trust_list is None or L["signer_key_status_per_trust_list"] == "active"))
+                                and (trust_list is None or L["signer_key_status_per_trust_list"] == "active")
+                                and signer_trust_ok)
     if not v["valid_long_term"]:
         v["note"] = "long-term validation failed: " + ", ".join(
             k for k in ("timestamp_authentic", "timestamp_binds", "timestamp_independent", "signer_key_active_at_instant") if not L[k]
@@ -2835,7 +2882,9 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         ) + (", no anchored timestamp under an anchored policy" if (require_anchored and not L["timestamp_anchored"])
              else (", the anchor's head is not witnessed by a trusted witness"
                    if (require_anchored and trusted_witnesses is not None and not L["timestamp_witnessed"]) else "")
-        ) + (", " + revocation_why if L["credential_unrevoked_at_instant"] is False else "")
+        ) + (", " + revocation_why if L["credential_unrevoked_at_instant"] is False else ""
+        ) + (", signer not trusted: its key is not among the trusted anchors nor active on a "
+             "trust list they publish" if not signer_trust_ok else "")
     return v
 
 
@@ -2904,10 +2953,12 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
     if not ok:
         v["note"] = "token signature is invalid"
         return v
+    # Compared as the TypeScript SDK's `===` compares them (_same_id): `==` let a signed
+    # "aud": true match audience 1, and a nonce of 1.0 match 1 (2026-10-15).
     if audience is not None:
-        v["audience_matches"] = (tok.get("aud") == audience)
+        v["audience_matches"] = bool(_same_id(tok.get("aud"), audience))
     if nonce is not None:
-        v["nonce_matches"] = (tok.get("nonce") == nonce)
+        v["nonce_matches"] = bool(_same_id(tok.get("nonce"), nonce))
     try:
         now = _instant(now)
         v["fresh"] = _parse_iso(tok["iat"]) <= now < _parse_iso(tok["exp"])
@@ -3075,8 +3126,9 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     exchange occurred and was authorized: the responder's ML-DSA-65 signature over
     SHA3-256(canonical) with two witnesses; (with responder_key) that the expected responder
     signed it; and (with trusted_manifests) that some authority the relying party trusts
-    attests the REQUESTER's key in the receipt's context -- the same non-transitive trust as a
-    foreign credential. A party that also holds the request and/or response body may pass it to
+    attests the REQUESTER's key in the receipt's context -- the same non-transitive trust, and
+    the same edge signature rule, as a foreign credential (`attestation_signed` says whether the
+    edge was signed). A party that also holds the request and/or response body may pass it to
     confirm the commitment binds (request_hash == SHA3-256(body)); a party that does not still
     obtains the responder's signed attestation of occurrence and authorization; a receipt is signed
     by the responder alone, so the REQUESTER'S participation is proven by the envelope it signed
@@ -3085,6 +3137,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     if not isinstance(receipt, dict):
         receipt = {}
     v = {"receipt_authentic": False, "responder_matches": None, "requester_authorized": None,
+         "attestation_signed": None,
          "request_bound": None, "response_bound": None, "via": None,
          "requester": receipt.get("requester"), "responder": None,
          "context_id": receipt.get("context_id"), "occurred_at": receipt.get("occurred_at"),
@@ -3128,7 +3181,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     if trusted_manifests is not None:
         req_key = _hex_text((receipt.get("requester") or {}).get("public_key_hex")) if isinstance(receipt.get("requester"), dict) else None
         ctx = receipt.get("context_id")
-        via = None
+        via = signed_edge = None
         for manifest in (trusted_manifests if isinstance(trusted_manifests, (list, tuple)) else []):
             mv = verify_manifest(manifest, now=now, max_window_seconds=max_window_seconds)
             if not (mv["manifest_authentic"] and mv["fresh"]):
@@ -3142,12 +3195,16 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
                 if req_key is not None and _hex_text(att.get("attested_public_key_hex")) == req_key and \
                    _same_id(att.get("context_id"), ctx) and \
                    _attestation_window_open(att, now):
-                    via = mv["authority"]
-                    break
+                    # WIRE-SPEC 3.14, as for a credential (until 2026-10-15 any signature counted).
+                    admitted, signed = _edge_signature_admits(att, manifest, mv, req_key, now, False)
+                    if admitted:
+                        via, signed_edge = mv["authority"], signed
+                        break
             if via:
                 break
         v["requester_authorized"] = bool(via)
         v["via"] = via
+        v["attestation_signed"] = signed_edge if via else None
     return v
 
 
@@ -4964,7 +5021,7 @@ def _wire_text_equal(signed, expected):
 
 def verify_agent_grant(grant, binding=None, credential=None, now=None, requested_action=None,
                        revocation=None, agent_proof=None, expected_nonce=None,
-                       anchor_keys=None, verifier_scope=None):
+                       anchor_keys=None, verifier_scope=None, expected_context=None):
     """Decide a delegated agent grant OFFLINE (P9.8). Total on hostile input.
 
     Every link is reported separately, because a service that only sees one boolean cannot
@@ -4973,11 +5030,16 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     CHECKED: the credential's issuer signature (and, with `anchor_keys`, an issuer among
     them), the issuer's binding of the holder key, the holder's grant covering the requested
     action, no holder revocation, and the agent's proof naming this action and this
-    service's nonce.
+    service's nonce, made while the grant was in force.
+
+    The grant's `context_id` is signed by the holder; with `expected_context` (this service's
+    context) it must name that context, reported as `context_matches`, or the grant is not
+    usable here.
     """
     v = {"grant_authentic": False, "fresh": None, "principal_bound": None,
          "credential_authentic": None, "issuer_trusted": None,
          "action_in_scope": None, "limits": None, "revoked": None, "agent_proved": None,
+         "context_matches": None,
          "pairwise_handle": None, "correlation": None, "usable": False,
          "witnesses": [], "note": None}
     if not isinstance(grant, dict) or grant.get("format") != _AGENT_GRANT_FORMAT:
@@ -5001,6 +5063,14 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     v["grant_authentic"] = True
 
     _verify_window(grant, v, now, None)
+
+    # The context is inside the statement the holder signed, and until 2026-10-15 nothing read
+    # it: a grant the holder scoped to one context was usable at a service in another.
+    if expected_context is not None:
+        v["context_matches"] = bool(_same_id(grant.get("context_id"), expected_context))
+        if not v["context_matches"]:
+            v["note"] = ("the grant names context %r, not this service's %r"
+                         % (grant.get("context_id"), expected_context))
 
     # Links 1 and 2: the holder key must be one an ISSUER bound to a real credential, or the
     # grant is signed by a key that speaks for nobody.
@@ -5118,7 +5188,25 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
             elif not aok:
                 v["note"] = anote or "the agent proof signature is invalid"
             else:
-                v["agent_proved"] = True
+                # The proof's issued_at is signed and was never read (2026-10-15): a proof made
+                # before the grant existed, after it lapsed, or dated ahead of this clock
+                # proved the agent all the same. It must fall inside the grant's window and
+                # not more than the usual 60 seconds ahead of `now`.
+                from datetime import timedelta
+                try:
+                    made = _parse_iso(agent_proof.get("issued_at"))
+                    start, end = _parse_iso(grant.get("issued_at")), _parse_iso(grant.get("expires_at"))
+                    ref = _instant(now)
+                except Exception:
+                    made = None
+                if made is None:
+                    v["note"] = "the agent proof's issued_at, or the grant's window, is not a timestamp"
+                elif not start <= made < end:
+                    v["note"] = "the agent proof was made outside the grant's window"
+                elif made > ref + timedelta(seconds=60):
+                    v["note"] = "the agent proof is dated ahead of this verifier's clock"
+                else:
+                    v["agent_proved"] = True
 
     # 2026-09-30: every link WIRE-SPEC 3.17 names must have been CHECKED, not merely not have
     # failed. `is not False` read a link nobody supplied as a pass, so a bare grant signed by
@@ -5137,6 +5225,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
                        and not v["revoked"]
                        and v["agent_proved"] is True
                        and expected_nonce is not None
+                       and v["context_matches"] is not False
                        and limits_ok)
     if not limits_ok and v["note"] is None:
         v["note"] = limits_note
@@ -5537,7 +5626,7 @@ def resolve_crypto_mode(provider, dev_placeholder):
                 return name, None
         return None, ("refusing to start: --pqc-provider auto found no real ML-DSA backend. "
                       "Install one (`pip install liboqs-python`, or `pip install "
-                      "'cryptography>=48'`), or run with --dev-placeholder and accept that "
+                      "'cryptography>=50'`), or run with --dev-placeholder and accept that "
                       "nothing is authenticated.")
     if not _provider_available(provider):
         return None, ("refusing to start: --pqc-provider %s, but that backend is not usable "
@@ -5609,13 +5698,14 @@ _MODE_FLAGS = {
     "--verify-dir": {"verify_dir"},
     "--agent-grant": {"agent_grant", "holder_binding", "credential", "grant_revocation", "agent_proof",
                       "action", "service_nonce", "verifier_scope", "issuer_anchor", "trusted_anchor",
-                      "signature_only", "json"},
+                      "context", "signature_only", "json"},
     "--qr-frames": {"qr_frames", "issuer_anchor", "trusted_anchor", "max_window", "context", "nonce",
                     "verifier_scope", "signature_only", "json"},
     "--presentation": {"presentation", "issuer_anchor", "trusted_anchor", "max_window", "context",
                        "nonce", "verifier_scope", "signature_only", "json"},
     "--zk-proof": {"zk_proof", "epoch_checkpoint", "trusted_manifest", "trusted_anchor", "issuer_anchor",
-                   "context", "nonce", "max_window", "min_anonymity_set", "signature_only", "json"},
+                   "context", "nonce", "max_window", "min_anonymity_set", "require_signed_attestation",
+                   "signature_only", "json"},
     "--pack with --status-assertion": {"pack", "status_assertion", "max_window", "issuer_anchor",
                                        "trusted_anchor", "signature_only", "json"},
     "--pack without --status-assertion": {"pack", "issuer_anchor", "trusted_anchor", "signature_only",
@@ -5709,8 +5799,12 @@ def main(argv=None):
                          "(default %(default)s, the issuing authority's own default)")
     ap.add_argument("--trusted-manifest", action="append",
                     help="a federation manifest the relying party trusts (repeatable)")
+    ap.add_argument("--require-signed-attestation", action="store_true",
+                    help="with --zk-proof, count only an attestation edge signed by the attesting "
+                         "agency; without it a version 1 unsigned edge is accepted")
     ap.add_argument("--trusted-anchor", help="an anchor public key hex the relying party trusts")
-    ap.add_argument("--context", type=int, help="the presented context id (for --zk-proof)")
+    ap.add_argument("--context", type=int, help="the presented context id (for --zk-proof); with "
+                                                "--agent-grant, this service's context")
     ap.add_argument("--nonce", default=None,
                     help="the challenge nonce the proof must carry: a holder proof's verifier nonce "
                          "with --presentation, an integer with --zk-proof")
@@ -5773,7 +5867,8 @@ def main(argv=None):
         verdict = verify_agent_grant(grant, binding=binding, credential=credential,
                                      requested_action=args.action, revocation=revocation,
                                      agent_proof=agent_proof, expected_nonce=args.service_nonce,
-                                     anchor_keys=anchor, verifier_scope=args.verifier_scope)
+                                     anchor_keys=anchor, verifier_scope=args.verifier_scope,
+                                     expected_context=args.context)
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
@@ -5784,8 +5879,8 @@ def main(argv=None):
                                ("fresh", "fresh"), ("credential valid", "credential_authentic"),
                                ("issuer trusted", "issuer_trusted"), ("principal bound", "principal_bound"),
                                ("action in scope", "action_in_scope"), ("revoked", "revoked"),
-                               ("agent proved", "agent_proved")):
-                print("%-18s%s" % (label + ":", _tri(verdict[key])))
+                               ("agent proved", "agent_proved"), ("context matches", "context_matches")):
+                print("%-18s%s" % (label + ":", _tri(verdict.get(key))))
             if verdict["pairwise_handle"]:
                 print("handle:           %s (correlation: %s)"
                       % (verdict["pairwise_handle"], verdict["correlation"]))
@@ -5861,7 +5956,8 @@ def main(argv=None):
             return 3
         verdict = verify_cross_authority_zk(
             proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
-            trusted_anchors=anchor, expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set)
+            trusted_anchors=anchor, expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set,
+            require_signed_attestation=args.require_signed_attestation)
         # The rules of every other path. --trusted-anchor alone reached this path, and with no
         # trust root every manifest named was trusted: a manifest is its authority's word about
         # itself (WIRE-SPEC 3.1). And a proof checked against no challenge is replayable, as a
@@ -5883,6 +5979,10 @@ def main(argv=None):
             print("decision: %s" % verdict["decision"])
             for r in verdict.get("reasons", []):
                 print("  - %s" % r)
+            # WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did.
+            if verdict.get("attestation_signed") is False:
+                print("  - the trust edge is unsigned (version 1): the manifest's signature carries "
+                      "it, not the attesting agency's; --require-signed-attestation refuses it")
         if held:
             print(held, file=sys.stderr)
             return 2
