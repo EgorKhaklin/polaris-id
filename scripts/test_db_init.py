@@ -27,7 +27,7 @@ GRANT = ("GRANT SET ON PARAMETER polaris.min_epoch_anonymity_set, polaris.defaul
          "polaris.default_window_days TO \"polaris_owner\";")
 
 # psql: the version query answers STUB_VERSION; the facts query answers STUB_FACTS, in the
-# script's column order: super|owns|createrole|app_exists|app_admin|tables|can_set.
+# script's column order: super|owns|createrole|app_exists|app_admin|tables|can_set|reader_exists|reader_ok.
 PSQL = r'''#!%(python)s
 import os, sys
 sql = " ".join(sys.argv[1:])
@@ -36,7 +36,7 @@ if "server_version_num" in sql:
         sys.stderr.write("psql: error: connection refused\n"); sys.exit(2)
     print(os.environ.get("STUB_VERSION", "160014")); sys.exit(0)
 if "rolsuper" in sql:
-    print(os.environ.get("STUB_FACTS", "f|t|t|f|f|0|t")); sys.exit(0)
+    print(os.environ.get("STUB_FACTS", "f|t|t|f|f|0|t|f|f")); sys.exit(0)
 sys.stderr.write("stand-in psql: unexpected query\n"); sys.exit(99)
 '''
 # docker-init.sh: records its environment; STUB_INIT_FAIL makes it fail as a load would.
@@ -108,11 +108,13 @@ class DbInitTests(unittest.TestCase):
 
     def test_each_missing_precondition_is_refused_before_a_write(self):
         cases = {
-            "f|t|t|f|f|87|t": "not empty",
-            "f|f|t|f|f|0|t": "does not own polaris",
-            "f|t|t|f|f|0|f": GRANT,
-            "f|t|f|f|f|0|t": "CREATEROLE",
-            "f|t|t|t|f|0|t": "does not hold ADMIN on it",
+            "f|t|t|f|f|87|t|f|f": "not empty",
+            "f|f|t|f|f|0|t|f|f": "does not own polaris",
+            "f|t|t|f|f|0|f|f|f": GRANT,
+            "f|t|f|f|f|0|t|t|t": "CREATEROLE, which creates the application role polaris_app",
+            "f|t|t|t|f|0|t|f|f": "does not hold ADMIN on it",
+            "f|t|f|t|t|0|t|f|f": "CREATEROLE, which creates polaris_console_reader",
+            "f|t|t|f|f|0|t|t|f": 'GRANT polaris_console_reader TO "polaris_owner";',
         }
         for facts, said in cases.items():
             with self.subTest(facts):
@@ -123,24 +125,34 @@ class DbInitTests(unittest.TestCase):
                 self.assertIsNone(self.init_env(), "docker-init.sh ran after a refusal")
 
     def test_every_missing_precondition_is_named_at_once(self):
-        r = self.run_script(STUB_FACTS="f|f|f|f|f|3|f")
+        r = self.run_script(STUB_FACTS="f|f|f|f|f|3|f|f|f")
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
-        for said in ("not empty", "does not own", "GRANT SET ON PARAMETER", "CREATEROLE"):
+        for said in ("not empty", "does not own", "GRANT SET ON PARAMETER", "polaris_app",
+                     "polaris_console_reader"):
             self.assertIn(said, r.stderr)
 
     def test_a_superuser_needs_no_grant(self):
-        r = self.run_script(STUB_FACTS="t|f|f|f|f|0|f")
+        r = self.run_script(STUB_FACTS="t|f|f|f|f|0|f|f|f")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIsNotNone(self.init_env())
+        r = self.run_script(STUB_FACTS="t|f|f|f|f|0|f|t|f")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_an_existing_console_role_is_used_when_the_owner_may_hand_it_the_function(self):
+        """The SQL console's role belongs to the server too; the owner gives it the console's function,
+        which takes ADMIN on the role or its privileges, and needs no CREATEROLE then."""
+        r = self.run_script(STUB_FACTS="f|t|f|t|t|0|t|t|t", POLARIS_DB_INIT_REUSE_APP_ROLE="1")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIsNotNone(self.init_env())
 
     def test_an_existing_app_role_is_used_only_when_the_operator_says_so(self):
         """A role is the server's: another database's stack may present polaris_app, and setting its
         password here would lock that stack out (the review of 2026-10-09)."""
-        r = self.run_script(STUB_FACTS="f|t|f|t|t|0|t")
+        r = self.run_script(STUB_FACTS="f|t|f|t|t|0|t|t|t")
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
         self.assertIn("polaris_app already exists", r.stderr)
         self.assertIsNone(self.init_env())
-        r = self.run_script(STUB_FACTS="f|t|f|t|t|0|t", POLARIS_DB_INIT_REUSE_APP_ROLE="1")
+        r = self.run_script(STUB_FACTS="f|t|f|t|t|0|t|t|t", POLARIS_DB_INIT_REUSE_APP_ROLE="1")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_a_server_older_than_sixteen_is_refused(self):

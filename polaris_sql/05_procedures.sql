@@ -3193,3 +3193,50 @@ COMMENT ON FUNCTION replica_replay_caught_up() IS
   'True on a replica whose startup process waits for WAL: it has replayed every complete record it '
   'received (lab record 017, gate row OP-6). The application asks when received and replayed WAL '
   'differ. False on a primary.';
+
+-- 2026-10-21. The SQL console's text, read as polaris_console_reader. polaris_web/sql_console.py
+-- hands the caller's text to this function and to nothing else; 09_grants.sql creates the reader,
+-- gives it this function and names the tables it may read, and the function runs as its owner.
+-- Inside a definer function PostgreSQL refuses SET ROLE, SET SESSION AUTHORIZATION and
+-- set_config() of either, so the text cannot climb back to the role that called it. The text runs
+-- only as a subquery of one SELECT, which the parser refuses to hold a second statement, a
+-- data-modifying WITH or a utility command; the function refuses a transaction that is not READ
+-- ONLY, and refuses to run as any role but the reader, so a copy left owned by the loader runs
+-- nothing. migrations/2026-10-21-002-console-reads-as-its-own-role.up.sql carries the same.
+CREATE OR REPLACE FUNCTION console_read(p_sql TEXT, p_max_rows INTEGER, p_explain BOOLEAN)
+RETURNS SETOF TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_row RECORD;
+    v_n   INTEGER := 0;
+BEGIN
+    IF current_user <> 'polaris_console_reader' THEN
+        RAISE EXCEPTION 'console_read runs only as polaris_console_reader, not as %', current_user
+            USING ERRCODE = 'object_not_in_prerequisite_state';
+    END IF;
+    IF NOT current_setting('transaction_read_only')::BOOLEAN THEN
+        RAISE EXCEPTION 'console_read runs only in a READ ONLY transaction'
+            USING ERRCODE = 'read_only_sql_transaction';
+    END IF;
+    IF p_max_rows IS NULL OR p_max_rows < 1 THEN
+        RAISE EXCEPTION 'console_read needs a positive row bound';
+    END IF;
+    IF p_explain THEN
+        FOR v_row IN EXECUTE 'EXPLAIN ANALYZE SELECT * FROM (' || chr(10) || p_sql || chr(10)
+                             || ') AS console_query' LOOP
+            RETURN NEXT v_row."QUERY PLAN";
+        END LOOP;
+        RETURN;
+    END IF;
+    FOR v_row IN EXECUTE 'SELECT row_to_json(console_query)::TEXT AS j FROM (' || chr(10) || p_sql
+                         || chr(10) || ') AS console_query' LOOP
+        RETURN NEXT v_row.j;
+        v_n := v_n + 1;
+        EXIT WHEN v_n >= p_max_rows;
+    END LOOP;
+    RETURN;
+END;
+$$;

@@ -15127,8 +15127,55 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
            "    security.record_audit_access(get_db, 'VerificationEvent',\n"
            "                                 result_row_count=len(results))\n"
            "    return render_template('uc7.html')\n")
+    # 2026-10-21: the direct reads (a route whose own SQL names a tracked table or a view over
+    # one), the two exempt routes, and the console with the role it reads as.
+    ROUTES = ("_DURESS = 'SELECT event_id, token_id FROM DuressEvent ORDER BY event_id DESC'\n\n"
+              "@app.route('/tokens/<int:tok_id>')\n"
+              "def tokens_detail(tok_id):\n"
+              "    lifecycle = query('SELECT * FROM TokenLifecycleEvent WHERE token_id = %s', (tok_id,))\n"
+              "    security.record_audit_access(get_db, 'TokenLifecycleEvent',\n"
+              "                                 result_row_count=len(lifecycle))\n"
+              "    return render_template('tokens_detail.html')\n\n"
+              "@app.route('/api/duress/events')\n"
+              "def api_duress_events():\n"
+              "    rows = query(_DURESS)\n"
+              "    security.record_audit_access(get_db, 'DuressEvent', result_row_count=len(rows))\n"
+              "    return jsonify(rows)\n\n"
+              "@app.route('/api/sim/tick', methods=['POST'])\n"
+              "def api_sim_tick():\n"
+              "    return query('SELECT count(*) AS n FROM VerificationEvent', fetch='one')\n\n"
+              "@app.route('/api/duress/record', methods=['POST'])\n"
+              "def api_duress_record():\n"
+              "    execute('INSERT INTO DuressEvent (token_id) VALUES (%s)', (1,))\n"
+              "    return query('SELECT event_id FROM DuressEvent ORDER BY event_id DESC LIMIT 1')\n\n"
+              "@app.route('/audit/access')\n"
+              "def audit_access():\n"
+              "    return query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n")
+    CONSOLE = ("@app.route('/sql', methods=['GET', 'POST'])\n"
+               "def sql_query():\n"
+               "    sql = request.form.get('sql', '')\n"
+               "    conn = psycopg2.connect(**DB_CONFIG)\n"
+               "    conn.set_session(readonly=True)\n"
+               "    with conn.cursor() as cur:\n"
+               "        cur.execute('SET statement_timeout = %s', (5000,))\n"
+               "        cur.execute('SELECT line FROM console_read(%s, %s, %s) AS line', (sql, 501, False))\n"
+               "        lines = cur.fetchall()\n"
+               "    return render_template('sql_console.html', lines=lines)\n")
+    GRANTS = ("CREATE OR REPLACE FUNCTION console_read(p_sql TEXT, p_max_rows INTEGER, p_explain BOOLEAN)\n"
+              "RETURNS SETOF TEXT\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = public, pg_temp\n"
+              "AS $$\nBEGIN\n    RETURN;\nEND;\n$$;\n"
+              "ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO polaris_console_reader;\n"
+              "REVOKE EXECUTE ON FUNCTION console_read(TEXT, INTEGER, BOOLEAN) FROM PUBLIC;\n"
+              "GRANT USAGE ON SCHEMA public TO polaris_console_reader;\n"
+              "GRANT SELECT ON Agency, VerificationContext TO polaris_console_reader;\n")
+    VIEWS = ("CREATE OR REPLACE VIEW v_timeline WITH (security_invoker = true) AS\n"
+             "    SELECT token_id, event_type FROM TokenLifecycleEvent;\n"
+             "CREATE OR REPLACE VIEW v_latest WITH (security_invoker = true) AS\n"
+             "    SELECT * FROM v_timeline;\n")
     good = {'polaris_web/security.py': SEC, 'polaris_sql/05_procedures.sql': SQL,
-            'polaris_web/app.py': APP}
+            'polaris_web/app.py': APP, 'polaris_web/operator_routes.py': ROUTES,
+            'polaris_web/sql_console.py': CONSOLE, 'polaris_sql/09_grants.sql': GRANTS,
+            'polaris_sql/03_view.sql': VIEWS}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -15204,6 +15251,92 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
         "\ndef api_atlas_breakdown():\n    return query('SELECT * FROM atlas_breakdown(%s)', (since,))\n")})
     assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
         "a function that only counts is not an audited read"
+    (tmp_path / 'polaris_sql' / '11_atlas.sql').unlink()
+    write()
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
+        "the good tree, with its direct reads, exemptions and console, must PASS"
+
+    def fails(overrides, why, expect="FAIL"):
+        write(overrides)
+        got = checks.check_audited_reads_are_logged(tmp_path)[0]
+        for rel in set(overrides) - set(good):
+            (tmp_path / rel).unlink()
+        write()
+        assert got.level == expect, why + f" (got {got.level}: {got.message})"
+
+    # THE READS IN PLAIN SIGHT (2026-10-21). /tokens/<id> and /api/duress/events returned a
+    # tracked table's rows with no record, which the procedure rule could not see.
+    drop_tokens_call = ("    security.record_audit_access(get_db, 'TokenLifecycleEvent',\n"
+                        "                                 result_row_count=len(lifecycle))\n")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(drop_tokens_call, "")},
+          "a route selecting a tracked table directly and recording nothing must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        drop_tokens_call, "    # security.record_audit_access(get_db, 'TokenLifecycleEvent')\n")},
+        "a record call that survives only as a comment must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    security.record_audit_access(get_db, 'DuressEvent', result_row_count=len(rows))\n", "")},
+        "a route whose SQL is a module constant it names, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + (
+        "\n@app.route('/timeline/<int:tok_id>')\ndef timeline(tok_id):\n"
+        "    return query('SELECT * FROM v_latest WHERE token_id = %s', (tok_id,))\n")},
+        "a route reading a view over a view over a tracked table, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + (
+        "\n@app.route('/note', methods=['POST'])\ndef note():\n"
+        "    execute('INSERT INTO AuthAuditLog (event_type) VALUES (%s)', ('NOTE',))\n"
+        "    return ''\n")},
+        "a route that only writes a tracked table returns no one's rows and must PASS", expect="OK")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace("def api_sim_tick():", "def api_sim_count():")},
+          "a route renamed out of its exemption, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    return query('SELECT count(*) AS n FROM VerificationEvent', fetch='one')\n",
+        "    return query('SELECT 1', fetch='one')\n")},
+        "an exemption that no longer exempts a read is stale and must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + "\ndef broken(:\n    pass\n"},
+          "a module that does not parse must FAIL rather than hide its routes")
+
+    # THE AUDIT OF THE AUDIT STOPS AT AuditAccessLog: a read of it never records itself.
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    return query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n",
+        "    rows = query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n"
+        "    security.record_audit_access(get_db, 'AuthAuditLog', result_row_count=len(rows))\n"
+        "    return rows\n")},
+        "a route reading AuditAccessLog that calls record_audit_access must FAIL")
+
+    # THE CONSOLE, BY NAME. Its SQL is its caller's, so it reads as a role that holds none of it.
+    fails({'polaris_web/sql_console.py': CONSOLE.replace(
+        "cur.execute('SELECT line FROM console_read(%s, %s, %s) AS line', (sql, 501, False))",
+        "cur.execute(sql)")},
+        "a console that executes its caller's text must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace(
+        "cur.execute('SET statement_timeout = %s', (5000,))", "cur.execute(f'EXPLAIN {sql}')")},
+        "a console that builds a statement from its caller's text must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace("console_read(%s, %s, %s)", "console_rows(%s, %s, %s)")},
+          "a console that does not call console_read must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace("def sql_query():", "def sql_page():")},
+          "a console handler this check cannot find by name must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS.replace("SECURITY DEFINER\n", "")},
+          "a console_read that runs as its caller must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS.replace(
+        "ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO polaris_console_reader;\n", "")},
+        "a console_read left with its loader must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON VerificationEvent TO polaris_console_reader;\n"},
+          "the reader granted a tracked table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON v_latest TO polaris_console_reader;\n"},
+          "the reader granted a view over a tracked table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON ALL TABLES IN SCHEMA public TO polaris_console_reader;\n"},
+          "the reader granted every table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT EXECUTE ON FUNCTION uc7_warrant_audit(INTEGER) TO polaris_console_reader;\n"},
+          "the reader lent a routine must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT polaris_app TO polaris_console_reader;\n"},
+          "the reader made a member of the application role must FAIL")
+    fails({'polaris_sql/migrations/2026-10-22-001-x.up.sql': "GRANT pg_read_all_data TO polaris_console_reader;\n"},
+          "a membership granted by a migration must FAIL too")
+    fails({'polaris_sql/09_grants.sql': GRANTS + (
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO polaris_console_reader;\n")},
+        "a default privilege for the reader must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT polaris_console_reader TO polaris_owner;\n"},
+          "the loader made a member OF the reader holds the reader's rights, not the reverse, "
+          "and must PASS", expect="OK")
 
 
 def test_transparency_program_check_discriminates(tmp_path):
