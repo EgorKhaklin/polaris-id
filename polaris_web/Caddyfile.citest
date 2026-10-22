@@ -58,6 +58,13 @@ localhost:8443 {
     }
     respond @metrics_from_outside 404
 
+    # The production edge's health rule, line for line (check_metrics_edge_acl).
+    @health_from_outside {
+        path /api/health /api/health/*
+        not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}
+    }
+    respond @health_from_outside 404
+
     # Lab record 017, phase 5: the app's own body limit (1 MiB), refused here, before the app.
     request_body {
         max_size 1MiB

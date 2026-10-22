@@ -3598,7 +3598,9 @@ def check_caddy_self_built(root: pathlib.Path) -> list[Finding]:
 # (v9.140) — the prod stack had never come up. This pins the keystone test: a CI
 # job generates secrets, builds the prod images, boots docker-compose.prod.yml +
 # the citest override (Caddy internal CA instead of ACME), and asserts the stack
-# serves /api/health through the TLS edge with the DB-backed components healthy.
+# serves through the TLS edge with the DB-backed components healthy. Since
+# 2026-10-21 the edge refuses /api/health from outside the allow-list, so the
+# edge is asked for a public route and the roll-up is read at the app's address.
 # ---------------------------------------------------------------------------
 def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
     ci = _read(root, ".github/workflows/ci.yml")
@@ -3622,14 +3624,16 @@ def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_stack_boot",
                      "the prod-stack boot job must run polaris-generate-secrets.sh so the stack "
                      "boots on real generated secrets + certs, like a deploy")
-    # It must assert the stack actually SERVES through the edge (a health probe).
-    if "/api/health" not in ci:
+    # It must assert the stack actually SERVES through the edge, and that the roll-up is healthy.
+    if ("https://localhost:8443/.well-known/security.txt" not in ci
+            or "docker exec polaris-app curl -s http://localhost:8000/api/health" not in ci):
         return _fail("prod_stack_boot",
-                     "the prod-stack boot job must assert the stack serves /api/health through the "
-                     "Caddy TLS edge (a 200 + DB-backed components healthy), not just that it starts")
+                     "the prod-stack boot job must assert the stack serves through the Caddy TLS edge "
+                     "(a public route, /.well-known/security.txt) and that /api/health, read at the "
+                     "app's own address, reports the DB-backed components healthy, not just that it starts")
     return _ok("prod_stack_boot",
                "CI boots the FULL prod compose (generated secrets, real images, TLS edge) and "
-               "asserts it serves /api/health end to end")
+               "asserts it serves through the edge with a healthy roll-up at the app")
 
 
 # ---------------------------------------------------------------------------
@@ -5028,8 +5032,15 @@ def check_cli_help_lists_every_command(root: pathlib.Path) -> list[Finding]:
 # and roughly when, a duress alarm fired. Both shipped edges (the compose
 # Caddyfile and the Helm configmap) must refuse them from outside the
 # monitoring network. Through v9.208 neither did, and the docstrings described
-# an ACL that existed only in prose.
+# an ACL that existed only in prose. 2026-10-21: the health answers too
+# (/api/health and everything under it), which report every component of the
+# deployment unauthenticated; API.md said they "must be restricted at the edge
+# in production" while the shipped edges restricted only the metrics.
 # ---------------------------------------------------------------------------
+_EDGE_RULES = (("metrics_from_outside", ("/metrics", "/api/metrics"), "the metrics surfaces"),
+               ("health_from_outside", ("/api/health", "/api/health/*"), "the health answers"))
+
+
 def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
     name = "metrics_edge_acl"
     edges = (("polaris_web/Caddyfile", "POLARIS_METRICS_ALLOW"),
@@ -5040,37 +5051,47 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
         conf = _read(root, rel)
         if not conf:
             return _fail(name, f"{rel} is missing")
-        if "@metrics_from_outside" not in conf or "respond @metrics_from_outside 404" not in conf:
-            return _fail(name,
-                         f"{rel} must refuse /metrics and /api/metrics from outside the monitoring "
-                         "network (a named matcher plus `respond ... 404`)")
-        matcher = conf[conf.index("@metrics_from_outside"):]
-        matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
-        for needle in ("/metrics", "/api/metrics", "not remote_ip"):
-            if needle not in matcher:
-                return _fail(name, f"{rel}'s matcher does not cover {needle}")
         if knob not in conf:
             return _fail(name, f"{rel} must let the operator name the allowed range ({knob})")
-        blocks[rel] = matcher
+        for rule, paths, what in _EDGE_RULES:
+            # The respond line on a line of its own: a commented-out `# respond @rule 404` is no refusal.
+            if f"@{rule} {{" not in conf or not re.search(rf"^\s*respond @{rule} 404\s*$", conf, re.M):
+                return _fail(name,
+                             f"{rel} must refuse {what} ({' '.join(paths)}) from outside the monitoring "
+                             f"network (a named matcher @{rule} plus `respond @{rule} 404`)")
+            matcher = conf[conf.index(f"@{rule} {{"):]
+            matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
+            path_line = re.search(r"^\s*path\s+(.*)$", matcher, re.M)
+            listed = path_line.group(1).split() if path_line else []
+            for needle in paths:
+                if needle not in listed:
+                    return _fail(name, f"{rel}'s @{rule} matcher does not cover {needle}")
+            if "not remote_ip" not in matcher:
+                return _fail(name, f"{rel}'s @{rule} matcher does not cover not remote_ip")
+            blocks[(rel, rule)] = matcher
     # 2026-10-07 (lab record 017): unset, the allow-list names no client. Until then it defaulted to
     # private ranges, and behind an L4 load balancer, Kubernetes' default externalTrafficPolicy,
     # rootless Docker or Docker's IPv6 userland proxy every internet client reaches the edge from
     # a private address: the duress counter was public (scripts/polaris-metrics-edge-drill.sh).
-    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
-        m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[rel])
-        if not m or m.group(1).strip() != "0.0.0.0/32":
-            return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
-                         f"(0.0.0.0/32), not {m.group(1).strip() if m else 'nothing'}; behind SNAT "
-                         "every internet client is a private address")
-    helm = blocks["deploy/helm/polaris/templates/configmap-caddy.yaml"]
+    for rule, _paths, _what in _EDGE_RULES:
+        for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+            m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[(rel, rule)])
+            if not m or m.group(1).strip() != "0.0.0.0/32":
+                return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
+                             f"(0.0.0.0/32) in @{rule}, not {m.group(1).strip() if m else 'nothing'}; behind "
+                             "SNAT every internet client is a private address")
+        if '| default "0.0.0.0/32"' not in blocks[("deploy/helm/polaris/templates/configmap-caddy.yaml", rule)]:
+            return _fail(name, f"the chart's @{rule} must allow no client unless edge.metricsAllow names one "
+                         '(the template default "0.0.0.0/32")')
     values = re.search(r'^\s*metricsAllow:\s*"([^"]*)"', _read(root, "deploy/helm/polaris/values.yaml"), re.M)
-    if '| default "0.0.0.0/32"' not in helm or not values or values.group(1) != "":
+    if not values or values.group(1) != "":
         return _fail(name, "the chart must allow no client unless edge.metricsAllow names one "
                      '(values metricsAllow "" and the template default "0.0.0.0/32")')
     norm = lambda t: [line.strip() for line in t.splitlines() if line.strip()]
-    if norm(blocks["polaris_web/Caddyfile"]) != norm(blocks["polaris_web/Caddyfile.citest"]):
-        return _fail(name, "Caddyfile.citest's metrics rule differs from the production Caddyfile's; "
-                     "the stack CI and try.sh boot must refuse the metrics the way production does")
+    for rule, _paths, what in _EDGE_RULES:
+        if norm(blocks[("polaris_web/Caddyfile", rule)]) != norm(blocks[("polaris_web/Caddyfile.citest", rule)]):
+            return _fail(name, f"Caddyfile.citest's @{rule} rule differs from the production Caddyfile's; "
+                         f"the stack CI and try.sh boot must refuse {what} the way production does")
     ci = _read(root, ".github/workflows/ci.yml")
     if ("metrics surfaces are refused from outside" not in ci
             or "bash scripts/polaris-metrics-edge-drill.sh" not in ci):
@@ -5080,10 +5101,16 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
     if "/polaris_web/Caddyfile" not in drill or 'probe 404 "${where}" /metrics' not in drill or "via SNAT" not in drill:
         return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the rule from the shipped "
                      "Caddyfile and ask through an SNAT hop as well as in-network")
+    if ("/@health_from_outside {/,/respond @health_from_outside 404/p" not in drill
+            or "HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)" not in drill
+            or 'for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done' not in drill):
+        return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the health rule from the shipped "
+                     "Caddyfile and require 404 on /api/health, /api/health/ready and /api/health/live, "
+                     "in-network and through the SNAT hop")
     return _ok(name,
-               "all three edges refuse the metrics surfaces unless the monitoring network is named "
-               "(no client by default), the CI edge's rule is production's, and CI asks in-network "
-               "and through an SNAT hop against the shipped rule")
+               "all three edges refuse the metrics surfaces and the health answers unless the monitoring "
+               "network is named (no client by default), the CI edge's rules are production's, and CI asks "
+               "in-network and through an SNAT hop against the shipped rules")
 
 
 # ---------------------------------------------------------------------------
@@ -8026,7 +8053,7 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
     judges = (("compose ps -a --format json", "the services and their healthchecks"),
               ('"secrets"', "the secret files"),
               ("config_schema.py check --production", "the production configuration contract"),
-              ("/api/health/live", "the TLS edge"),
+              ('"${URL}/.well-known/security.txt" 2> /dev/null)', "the TLS edge (a public route)"),
               ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
               ('< "${SCRIPT_DIR}/polaris-key-register-check.sql"', "the key register"),
               ("printenv POLARIS_PGBACKREST_S3_BUCKET", "where the backup repository is (OP-14)"))
@@ -9283,7 +9310,7 @@ def check_key_custody_abstraction(root: pathlib.Path) -> list[Finding]:
     if "## Rotation" not in cer or "pkcs11-keygen" not in cer or "ML_DSA_65" not in cer:
         return _fail("key_custody", "KEY-CEREMONY.md must document the ceremony per driver and a Rotation section")
     if "'custody':" not in app or "def _health_check_custody" not in app:
-        return _fail("key_custody", "/api/health must report the custody component (driver, key id, fingerprint)")
+        return _fail("key_custody", "/api/health must report the custody component (driver, public-key fingerprint)")
     return _ok("key_custody", "issuer-key custody: file / PKCS#11 (CKM_ML_DSA, in-token, non-extractable) / "
                "AWS KMS (ML_DSA_65, RAW ML_DSA_SHAKE_256) behind one interface, PIN never from env, "
                "pqc_signing routed through it with the two-witness verify unchanged, rotation anchors, "
@@ -21664,6 +21691,133 @@ _AUDITED_ROW_COLUMNS = re.compile(
     r"date_of_birth|duress_code_hash|holder\w*|subject\w*)\b", re.I)
 
 
+#: Routes whose own SQL names a tracked table and that are held to no AuditAccessLog row, each
+#: with its reason. An entry that no longer names such a route fails the check, so an exemption
+#: cannot outlive the reason it was given for.
+_AUDITED_READ_EXEMPT = {
+    "api_sim_tick": "answers 404 unless POLARIS_SIM_MODE is on, and reads count(*) of "
+                    "VerificationEvent: a count, no one's rows",
+    "api_duress_record": "reads back the event_id of the duress row it has just written, and "
+                         "nothing else of the table",
+}
+
+#: The console, held by name: its SQL is its caller's, so no string in the handler names what it
+#: reads, and no route can write the record for it. It reads as a role that holds none of it.
+_CONSOLE_MODULE, _CONSOLE_HANDLER, _CONSOLE_ROLE = "sql_console.py", "sql_query", "polaris_console_reader"
+
+
+def _sql_mentions(text: str, names) -> list[str]:
+    """The names a text mentions as whole words, case aside, with every INSERT INTO a table
+    taken out first: a write hands the caller no one's rows."""
+    text = re.sub(r'(?i)\bINSERT\s+INTO\s+(?:\w+\.)?"?\w+"?', " ", text)
+    return sorted({n for n in names if re.search(r"(?i)\b" + re.escape(n) + r"\b", text)})
+
+
+def _views_over(sql: str, tables) -> list[str]:
+    """The views whose definition, in any SQL source, reads one of the tables or a view that
+    does, to a fixed point. Every view runs as its caller, so a read through one is a read."""
+    defs: dict[str, str] = {}
+    for m in re.finditer(r"(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)(.*?);", sql):
+        defs[m.group(1)] = defs.get(m.group(1), "") + "\n" + m.group(2)
+    over: set[str] = set()
+    while True:
+        new = {v for v, body in defs.items()
+               if v not in over and _sql_mentions(body, list(tables) + sorted(over))}
+        if not new:
+            return sorted(over)
+        over |= new
+
+
+def _function_texts(src: str) -> list[tuple]:
+    """(name, line, whether it is a route, its own SQL text, whether it calls record_audit_access)
+    for every function in one module. Its own text: the string constants in its body, the
+    docstring left out and nested functions in, with each module-level string constant it names.
+    A comment is not a constant and a call that survives only as one is not a call. Raises
+    SyntaxError, which the caller reports."""
+    tree = ast.parse(src)
+    consts: dict[str, str] = {}
+    for stmt in tree.body:
+        targets = (stmt.targets if isinstance(stmt, ast.Assign)
+                   else [stmt.target] if isinstance(stmt, ast.AnnAssign) and stmt.value else [])
+        for t in targets:
+            if isinstance(t, ast.Name):
+                consts[t.id] = "\n".join(c.value for c in ast.walk(stmt.value)
+                                         if isinstance(c, ast.Constant) and isinstance(c.value, str))
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = node.body
+        if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            body = body[1:]
+        parts, calls = [], False
+        for stmt in body:
+            for c in ast.walk(stmt):
+                if isinstance(c, ast.Constant) and isinstance(c.value, str):
+                    parts.append(c.value)
+                elif isinstance(c, ast.Name) and c.id in consts:
+                    parts.append(consts[c.id])
+                elif isinstance(c, ast.Call) and (
+                        (isinstance(c.func, ast.Attribute) and c.func.attr == "record_audit_access")
+                        or (isinstance(c.func, ast.Name) and c.func.id == "record_audit_access")):
+                    calls = True
+        route = any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route"
+                    for d in node.decorator_list)
+        out.append((node.name, node.lineno, route, "\n".join(parts), calls))
+    return out
+
+
+def _console_problem(root: pathlib.Path, sql: str, modules, audited) -> str | None:
+    """Why the console could read what the record covers, or None. The handler hands the
+    database constant statements only, one of them a call of console_read; console_read is a
+    SECURITY DEFINER function given to the reader role; and no SQL source grants that role a
+    tracked table, a view over one, every table, a routine, a default privilege or a role."""
+    fn = None
+    for mod, src in modules:
+        if mod != _CONSOLE_MODULE:
+            continue
+        tree = ast.parse(src)
+        fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == _CONSOLE_HANDLER
+                   and any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route"
+                           for d in n.decorator_list)), None)
+    if fn is None:
+        return (f"the console route {_CONSOLE_HANDLER}() is not in polaris_web/{_CONSOLE_MODULE}, where this "
+                "check holds it by name")
+    statements = []
+    for c in ast.walk(fn):
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "execute":
+            first = c.args[0] if c.args else None
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+                return (f"{_CONSOLE_HANDLER}() line {c.lineno} executes a statement that is not a constant: "
+                        "the caller's text would run as the application role, which reads the tracked "
+                        "tables, and nothing would record it")
+            statements.append(first.value)
+    if not any(re.search(r"(?i)\bconsole_read\s*\(", t) for t in statements):
+        return f"{_CONSOLE_HANDLER}() never calls console_read(), the function that runs its text as {_CONSOLE_ROLE}"
+    head = re.search(r"(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+console_read\s*\((.*?)\bAS\s*\$", sql)
+    if not head or not re.search(r"(?i)\bSECURITY\s+DEFINER\b", head.group(1)):
+        return "no SQL source defines console_read() as a SECURITY DEFINER function"
+    if not re.search(r"(?is)\bALTER\s+FUNCTION\s+console_read\s*\([^)]*\)\s+OWNER\s+TO\s+"
+                     + _CONSOLE_ROLE + r"\b", sql):
+        return f"no SQL source gives console_read() to {_CONSOLE_ROLE}, so it would run as its loader"
+    for g in re.finditer(r"(?is)\bGRANT\s+((?:(?!\bGRANT\b|;).)*?)\s+TO\s+" + _CONSOLE_ROLE + r"\b", sql):
+        what = re.sub(r"\s+", " ", g.group(1)).strip()
+        on = re.search(r"(?is)\bON\b(.*)", what)
+        if not on:
+            return (f"GRANT {what} TO {_CONSOLE_ROLE} makes the reader a member of a role, whose rights "
+                    "it would then hold")
+        if (re.search(r"(?i)\bALL\s+TABLES\b|\b(?:FUNCTION|PROCEDURE|ROUTINE)S?\b", on.group(1))
+                or _sql_mentions(on.group(1), audited)):
+            return f"GRANT {what} TO {_CONSOLE_ROLE} lends the reader what the record covers"
+    if re.search(r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\b[^;]*\bTO\s+" + _CONSOLE_ROLE + r"\b", sql):
+        return f"a default privilege is granted to {_CONSOLE_ROLE}, so a table added later would be its"
+    if re.search(r"(?is)\bCREATE\s+ROLE\s+" + _CONSOLE_ROLE + r"\b[^;]*\b(?:IN\s+(?:ROLE|GROUP)|ROLE|ADMIN|USER)\b", sql) \
+            or re.search(r"(?is)\bALTER\s+GROUP\s+\w+\s+ADD\s+USER\b[^;]*\b" + _CONSOLE_ROLE + r"\b", sql):
+        return f"{_CONSOLE_ROLE} is created or added as a member of another role"
+    return None
+
+
 def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     """A read of an audited table must leave a row even when it hides behind a function (P7.7).
 
@@ -21689,7 +21843,18 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     event's own key or identifies a person or a credential (_AUDITED_ROW_COLUMNS), a SETOF a
     table, or an argument that selects one person's or one credential's rows. A function that
     returns only counts hands the caller nothing, as before. The check refuses to pass
-    vacuously: finding no such function means the parse broke."""
+    vacuously: finding no such function means the parse broke.
+
+    AND THE READS IN PLAIN SIGHT (2026-10-21). The rule above followed the read behind a function
+    and assumed the direct ones were covered. Three were not: /tokens/<id> returned a
+    credential's lifecycle and verification history, /api/duress/events the duress feed, and the
+    SQL console any SELECT its admin or auditor wrote, each with no AuditAccessLog row. So, per
+    module and by syntax tree: a route whose own SQL (its string constants, and the module's
+    constants it names) names a tracked table, or a view over one, calls record_audit_access, or
+    is in _AUDITED_READ_EXEMPT with its reason; no function that reads AuditAccessLog records
+    itself, since the regress stops at that table by construction; and the console, whose SQL is
+    its caller's, is held by name (_console_problem): it reads as polaris_console_reader, a role
+    the SQL sources grant none of what the record covers. A module that does not parse fails."""
     name = "audited_reads_are_logged"
     sec = _read(root, "polaris_web/security.py")
     app = _read_app(root)
@@ -21742,10 +21907,58 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
                              "AuditAccessLog row. A read that hides behind a function name is "
                              "still a read of somebody's history, and the most invasive one in "
                              "the system is exactly where the omission is least visible")
+
+    # The direct reads, per module and by syntax tree.
+    views = _views_over(sql, tracked)
+    audited = tracked + views
+    modules = _app_modules(root)
+    direct, exempt_seen = [], set()
+    for mod, src in modules:
+        try:
+            functions = _function_texts(src)
+        except SyntaxError as e:
+            return _fail(name, f"polaris_web/{mod} does not parse ({e.msg}, line {e.lineno}), so its "
+                               "routes' reads cannot be read")
+        for fname, line, route, text, calls in functions:
+            if calls and _sql_mentions(text, ["AuditAccessLog"]):
+                return _fail(name, f"{mod}:{line} {fname}() reads AuditAccessLog and calls "
+                                   "record_audit_access: reads of AuditAccessLog are not logged, "
+                                   "which is where the audit of the audit stops")
+            if not route or (mod == _CONSOLE_MODULE and fname == _CONSOLE_HANDLER):
+                continue
+            named = _sql_mentions(text, audited)
+            if not named:
+                continue
+            if fname in _AUDITED_READ_EXEMPT:
+                exempt_seen.add(fname)
+            elif not calls:
+                return _fail(name, f"{mod}:{line} {fname}() reads {', '.join(named)} and records no "
+                                   "AuditAccessLog row. A route that returns a tracked table's rows "
+                                   "writes the record, whether it reads the table, a view over it "
+                                   "or a function returning it")
+            else:
+                direct.append(fname)
+    stale = sorted(set(_AUDITED_READ_EXEMPT) - exempt_seen)
+    if stale:
+        return _fail(name, "_AUDITED_READ_EXEMPT names " + ", ".join(stale) + ", which no longer "
+                           "is a route reading a tracked table: an exemption outlives its reason")
+    if not direct:
+        return _fail(name, "found no route reading a tracked table directly. The parse has broken; "
+                           "this check must not pass by finding nothing to check")
+    try:
+        problem = _console_problem(root, sql, modules, audited)
+    except SyntaxError as e:
+        return _fail(name, f"polaris_web/{_CONSOLE_MODULE} does not parse ({e.msg}, line {e.lineno})")
+    if problem:
+        return _fail(name, "the SQL console could return rows the record covers: " + problem)
     return _ok(name,
                f"every route reading audited rows through the {len(exposing)} function(s) that "
-               "return a history, from any SQL source, leaves an AuditAccessLog row; the tracked "
-               "list is read from security.py rather than restated here")
+               f"return a history, from any SQL source, leaves an AuditAccessLog row, and so do the "
+               f"{len(direct)} routes whose own SQL names a tracked table or one of the {len(views)} "
+               f"views over one ({len(_AUDITED_READ_EXEMPT)} more exempt, each with its reason); no "
+               "function reading AuditAccessLog records itself; the SQL console reads as "
+               f"{_CONSOLE_ROLE}, which no SQL source grants any of them; the tracked list is read "
+               "from security.py rather than restated here")
 
 
 def check_transparency_program(root: pathlib.Path) -> list[Finding]:

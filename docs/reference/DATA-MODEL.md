@@ -597,8 +597,9 @@ acknowledges the alert.
 
 R6 anti-revealing posture: the `/verifications` operator dashboard
 does NOT join to `DuressEvent`. Only admins/auditors with explicit
-access (via `/api/duress/events` or SQL console) can see duress
-events. See `docs/design/duress-codes.md`.
+access (via `/duress` or `/api/duress/events`, each recording the read
+in `AuditAccessLog`) can see duress events; the SQL console cannot read
+the table. See `docs/design/duress-codes.md`.
 
 ### `TokenStateEpoch`
 

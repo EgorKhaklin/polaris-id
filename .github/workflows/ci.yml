@@ -2324,12 +2324,13 @@ jobs:
       # X25519MLKEM768, both when forced AND with the client's default groups
       # (so a modern browser gets PQ with no special config), and a classical
       # client must still connect (graceful fallback).
-      - name: The metrics surfaces are refused from outside the monitoring network
-        # The duress signal rides on /metrics and /api/metrics and neither route
-        # authenticates, so the edge is the control. The drill takes the rule out of the
-        # SHIPPED Caddyfile and asks in-network and through a TCP forwarder (what an
-        # internet client looks like behind an L4 load balancer or NAT): refused unless the
-        # monitoring network is named (lab record 017). Pinned by check_metrics_edge_acl.
+      - name: The metrics surfaces are refused from outside the monitoring network, and so are the health answers
+        # The duress signal rides on /metrics and /api/metrics, the health answers report
+        # every component, and none of them authenticates, so the edge is the control. The
+        # drill takes both rules out of the SHIPPED Caddyfile and asks in-network and through
+        # a TCP forwarder (what an internet client looks like behind an L4 load balancer or
+        # NAT): refused unless the monitoring network is named (lab record 017). Pinned by
+        # check_metrics_edge_acl.
         run: bash scripts/polaris-metrics-edge-drill.sh polaris-caddy:ci
 
       # Lab record 017 (gate row OP-26): behind an L7 load balancer named in
@@ -2522,8 +2523,8 @@ jobs:
   # real inside Debian 12 and Rocky Linux 9 containers (Docker's official apt
   # and dnf repositories, signing-key fingerprint verified, no curl|sh); the
   # full installer then runs on this Ubuntu host with REAL systemd: /opt/polaris,
-  # secrets, units, `systemctl start polaris`, migrations, /api/health healthy
-  # through the TLS edge, the backup service producing a tarball, and health
+  # secrets, units, `systemctl start polaris`, migrations, the TLS edge serving and
+  # /api/health healthy at the app, the backup service producing a tarball, and health
   # again after `systemctl restart polaris`. ACME cannot run here, so the edge
   # uses Caddy's internal CA (docker-compose.citest.yml), exactly as the
   # prod-stack-boot job does. Pinned by check_linux_server_deployment.
@@ -2580,13 +2581,16 @@ jobs:
           sudo ls -la /var/backups/polaris/
           sudo sh -c 'ls /var/backups/polaris/*.tar.gz'
           sudo systemctl restart polaris.service
-          code=""
+          # The edge serves a public route; the roll-up is read at the app's own address, since the
+          # edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
+          code=""; app=""
           for i in $(seq 1 60); do
-            code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
-            [ "$code" = 200 ] && break
+            code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)
+            app=$(sudo docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            [ "$code" = 200 ] && [ "$app" = 200 ] && break
             sleep 3
           done
-          [ "$code" = 200 ] || { echo "::error::stack not healthy after systemctl restart polaris (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1; }
+          [ "$code" = 200 ] && [ "$app" = 200 ] || { echo "::error::stack not healthy after systemctl restart polaris (edge $code, app roll-up $app)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1; }
           echo "healthy again after systemctl restart polaris (check $i)"
 
       # Lab record 017: an operator runs the scripts with sudo, which resets the environment, so each
@@ -2597,14 +2601,15 @@ jobs:
         working-directory: /opt/polaris
         run: |
           set -e
-          health() {
-            code=""
+          health() {  # the edge serves a public route; the roll-up is read at the app's own address
+            code=""; app=""
             for _ in $(seq 1 60); do
-              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
-              [ "$code" = 200 ] && { echo "healthy after $1"; return 0; }
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)
+              app=$(sudo docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+              [ "$code" = 200 ] && [ "$app" = 200 ] && { echo "healthy after $1"; return 0; }
               sleep 3
             done
-            echo "::error::not healthy after $1 (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
+            echo "::error::not healthy after $1 (edge $code, app roll-up $app)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
           }
           printf 'a-password-for-this-ci-run-only\n' > /tmp/ci-operator.pw
           sudo scripts/polaris-create-operator.sh --username ci-admin --role admin --password-file /tmp/ci-operator.pw \
@@ -2750,7 +2755,7 @@ jobs:
           [ "$rc" = 1 ] && grep -q "failing: .*A.doctor.edge" /tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json \
             || { cat /tmp/eval-noedge.out; echo "::error::the evaluation did not fail, with a report, with the edge down"; exit 1; }
           for _ in $(seq 1 60); do
-            [ "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)" = 200 ] && break
+            [ "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)" = 200 ] && break
             sleep 2
           done
           grep "^polaris-evaluate: [0-9]" /tmp/eval-notional.out >> "$GITHUB_STEP_SUMMARY"
@@ -2780,14 +2785,15 @@ jobs:
         working-directory: /opt/polaris
         run: |
           set -e
-          health() {
-            code=""
+          health() {  # the edge serves a public route; the roll-up is read at the app's own address
+            code=""; app=""
             for _ in $(seq 1 60); do
-              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
-              [ "$code" = 200 ] && { echo "healthy after $1"; return 0; }
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)
+              app=$(sudo docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+              [ "$code" = 200 ] && [ "$app" = 200 ] && { echo "healthy after $1"; return 0; }
               sleep 3
             done
-            echo "::error::not healthy after $1 (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
+            echo "::error::not healthy after $1 (edge $code, app roll-up $app)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
           }
           sudo apt-get install -y age > /dev/null
           sudo sh -c 'age-keygen -o /root/polaris-age.identity 2> /dev/null && age-keygen -y /root/polaris-age.identity > /root/polaris-age.recipients'
@@ -2904,12 +2910,15 @@ jobs:
         run: |
           set -e
           docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml up -d
+          # The edge serves a public route; the roll-up is read at the app's own address, since the
+          # edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
           for i in $(seq 1 60); do
-            code=$(curl -sk https://localhost:8443/api/health -o /dev/null -w '%{http_code}' || true)
-            [ "$code" = 200 ] && { echo "edge healthy after check $i"; break; }
+            code=$(curl -sk https://localhost:8443/.well-known/security.txt -o /dev/null -w '%{http_code}' || true)
+            app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            [ "$code" = 200 ] && [ "$app" = 200 ] && { echo "edge serves and the app is healthy after check $i"; break; }
             sleep 4
           done
-          [ "$code" = 200 ] || { docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps; docker logs polaris-app 2>&1 | tail -30; exit 1; }
+          [ "$code" = 200 ] && [ "$app" = 200 ] || { docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps; docker logs polaris-app 2>&1 | tail -30; exit 1; }
           docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps --format 'table {{.Service}}\t{{.Status}}'
 
       # Lab record 017, phase 4a: the rate limiter reaches Redis as its ACL user, and
@@ -2918,7 +2927,7 @@ jobs:
       - name: Redis authenticates (the app as its ACL user; others refused)
         run: |
           set -euo pipefail
-          health=$(curl -sk https://localhost:8443/api/health)
+          health=$(docker exec polaris-app curl -s http://localhost:8000/api/health)
           echo "$health" | jq -e '.checks.redis.backend == "redis" and .checks.redis.status == "healthy"' > /dev/null \
             || { echo "::error::the rate limiter is not on Redis"; echo "$health" | jq .checks.redis; exit 1; }
           out=$(docker exec polaris-redis redis-cli ping 2>&1 || true)
@@ -3040,12 +3049,14 @@ jobs:
         run: |
           set -e
           docker compose -f docker-compose.prod.yml $POLARIS_COMPOSE_EXTRA up -d || true   # the wait loop reports
+          # The edge serves a public route; the roll-up is read at the app's own address.
           for i in $(seq 1 90); do
-            code=$(curl -sk https://localhost:8443/api/health -o /dev/null -w '%{http_code}' || true)
-            [ "$code" = 200 ] && { echo "edge healthy after check $i"; break; }
+            code=$(curl -sk https://localhost:8443/.well-known/security.txt -o /dev/null -w '%{http_code}' || true)
+            app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            [ "$code" = 200 ] && [ "$app" = 200 ] && { echo "edge serves and the app is healthy after check $i"; break; }
             sleep 4
           done
-          [ "$code" = 200 ] || { docker compose -f docker-compose.prod.yml $POLARIS_COMPOSE_EXTRA ps; docker logs polaris-postgres 2>&1 | tail -40; docker logs polaris-postgres2 2>&1 | tail -20; exit 1; }
+          [ "$code" = 200 ] && [ "$app" = 200 ] || { docker compose -f docker-compose.prod.yml $POLARIS_COMPOSE_EXTRA ps; docker logs polaris-postgres 2>&1 | tail -40; docker logs polaris-postgres2 2>&1 | tail -20; exit 1; }
           docker exec polaris-postgres patronictl -c /var/lib/postgresql/patroni.yml list
 
       - name: Failover drill (leader crash, lease partition, switchover, etcd crash)
@@ -4321,8 +4332,9 @@ jobs:
   # before enabling TLS (v9.140) — the prod stack had never come up. This boots it
   # exactly like a deploy (real generated secrets + certs, the real images) with
   # only the Caddy ACME edge swapped for an internal CA (no public domain in CI),
-  # and asserts the stack SERVES /api/health through the TLS edge with the
-  # DB-backed components healthy. Pinned by check_prod_stack_boot.
+  # and asserts the stack SERVES through the TLS edge with the DB-backed
+  # components healthy at the app (the edge refuses /api/health from outside the
+  # allow-list, which the job asserts too). Pinned by check_prod_stack_boot.
   # --------------------------------------------------------------------------
   prod-stack-boot:
     name: Full prod compose boots + serves end to end
@@ -4389,19 +4401,22 @@ jobs:
             exit 1
           fi
 
-      - name: Assert the stack serves /api/health through the TLS edge
+      - name: Assert the stack serves through the TLS edge and its roll-up is healthy
         working-directory: polaris_web
         run: |
           set -e
           ok=0
+          # The edge serves a public route; the roll-up (/api/health) is read at the app's own
+          # address, since the edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
           for i in $(seq 1 60); do
-            code=$(curl -sk https://localhost:8443/api/health -o /dev/null -w '%{http_code}' || true)
-            if [ "$code" = "200" ]; then echo "served /api/health=200 through Caddy after check $i"; ok=1; break; fi
-            echo "check $i: /api/health through Caddy = $code"
+            code=$(curl -sk https://localhost:8443/.well-known/security.txt -o /dev/null -w '%{http_code}' || true)
+            app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            if [ "$code" = "200" ] && [ "$app" = "200" ]; then echo "the edge serves (security.txt=200) and /api/health=200 at the app after check $i"; ok=1; break; fi
+            echo "check $i: security.txt through Caddy = $code, /api/health at the app = $app"
             sleep 4
           done
           if [ "$ok" != "1" ]; then
-            echo "::error::the full prod stack did not serve /api/health through the TLS edge"
+            echo "::error::the full prod stack did not serve through the TLS edge with a healthy roll-up"
             docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml ps
             echo "=== postgres ==="; docker logs polaris-postgres 2>&1 | tail -40
             echo "=== pgbouncer ==="; docker logs polaris-pgbouncer 2>&1 | tail -20
@@ -4411,8 +4426,15 @@ jobs:
           fi
           # Not just 200: the DB-backed roll-up must be healthy (proves the whole
           # chain app -> pgbouncer verify-ca -> postgres TLS actually works).
-          body=$(curl -sk https://localhost:8443/api/health)
-          echo "$body" | python3 -c "import sys, json; d=json.load(sys.stdin); c=d['checks']; assert c['database']['status']=='healthy', 'database not healthy: %s' % c['database']; assert c['redis']['status']=='healthy', 'redis not healthy'; assert c['zk_binary']['status']=='healthy', 'zk_binary not healthy'; print('prod stack serves end to end: database + redis + zk_binary healthy through the TLS edge')"
+          body=$(docker exec polaris-app curl -s http://localhost:8000/api/health)
+          echo "$body" | python3 -c "import sys, json; d=json.load(sys.stdin); c=d['checks']; assert c['database']['status']=='healthy', 'database not healthy: %s' % c['database']; assert c['redis']['status']=='healthy', 'redis not healthy'; assert c['zk_binary']['status']=='healthy', 'zk_binary not healthy'; print('prod stack serves end to end: database + redis + zk_binary healthy at the app, the edge serving')"
+          # The shipped edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW,
+          # which is unset here, so no client is allowed.
+          for path in /api/health /api/health/ready /api/health/live; do
+            code=$(curl -sk "https://localhost:8443${path}" -o /dev/null -w '%{http_code}' || true)
+            [ "$code" = 404 ] || { echo "::error::the edge answered ${path} with ${code} to a client outside the allow-list"; exit 1; }
+          done
+          echo "the edge refuses /api/health, /api/health/ready and /api/health/live from outside the allow-list"
           # And postgres really has TLS on (the v9.140 regression that broke init).
           # Local socket as the postgres OS user (peer/trust auth, no password).
           docker exec -u postgres polaris-postgres psql -U postgres -d polaris -tAc "SHOW ssl" 2>/dev/null | grep -qx on \
@@ -4465,15 +4487,16 @@ jobs:
           sudo -E bash ../scripts/polaris-rotate-secret.sh polaris_secret_key
           after=$(sudo sha256sum /run/polaris/secrets/polaris_db_password | cut -c1-16)
           [ "$before" != "$after" ] || { echo "::error::db password did not change"; exit 1; }
-          code=""
+          code=""; app=""
           for i in $(seq 1 45); do
-            code=$(curl -sk https://localhost:8443/api/health -o /dev/null -w '%{http_code}' || true)
-            [ "$code" = 200 ] && break
+            code=$(curl -sk https://localhost:8443/.well-known/security.txt -o /dev/null -w '%{http_code}' || true)
+            app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            [ "$code" = 200 ] && [ "$app" = 200 ] && break
             sleep 4
           done
-          [ "$code" = 200 ] || { echo "::error::stack not healthy after rotation (last HTTP $code)"; docker logs polaris-app 2>&1 | tail -30; exit 1; }
+          [ "$code" = 200 ] && [ "$app" = 200 ] || { echo "::error::stack not healthy after rotation (edge $code, app roll-up $app)"; docker logs polaris-app 2>&1 | tail -30; exit 1; }
           # Fetched, then parsed from argv: a fetch piped into an interpreter reads as code being run.
-          health=$(curl -sk https://localhost:8443/api/health)
+          health=$(docker exec polaris-app curl -s http://localhost:8000/api/health)
           python3 -c "import sys,json; d=json.loads(sys.argv[1]); assert d['checks']['database']['status']=='healthy', d['checks']['database']; print('healthy after rotating polaris_db_password + polaris_secret_key')" "$health"
           sudo -E bash ../scripts/polaris-secrets.sh verify
           echo "sealed store matches the live tmpfs after rotation (write-through holds)"

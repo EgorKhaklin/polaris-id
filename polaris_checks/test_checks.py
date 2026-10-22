@@ -3801,6 +3801,8 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
     broken(doc, "printenv POLARIS_PGBACKREST_S3_BUCKET", "printenv POLARIS_UNSET",
            "must FAIL when the doctor no longer reads where the backup repository is")
     broken(doc, "(start with ${FAILING[0]})", "", "must FAIL when the last line names no component")
+    broken(doc, '"${URL}/.well-known/security.txt" 2> /dev/null)', '"${URL}/api/health/live" 2> /dev/null)',
+           "must FAIL when the doctor judges the edge on a health answer, which the edge refuses from outside")
     broken(drill, "stop redis", "restart redis", "must FAIL when the drill no longer stops Redis")
     broken(drill, 'expect_named secrets', 'expect_clean secrets', "must FAIL when an emptied secret need not be named")
     broken(drill, "POLARIS_DB_SSLMODE: disable", "POLARIS_DB_SSLMODE: require",
@@ -5491,7 +5493,8 @@ def test_prod_stack_boot_check_discriminates(tmp_path):
     GOOD_CI = ("jobs:\n  prod-stack-boot:\n    steps:\n      run: |\n"
                "        bash scripts/polaris-generate-secrets.sh\n"
                "        docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml up -d\n"
-               "        curl -sk https://localhost:8443/api/health\n")
+               "        curl -sk https://localhost:8443/.well-known/security.txt\n"
+               "        docker exec polaris-app curl -s http://localhost:8000/api/health\n")
 
     def write(ci_text=GOOD_CI, override=True, caddyfile=True):
         ci.write_text(ci_text)
@@ -5526,10 +5529,18 @@ def test_prod_stack_boot_check_discriminates(tmp_path):
     assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
         "must FAIL when the boot does not assert serving through the edge"
 
+    # 4b. Asks the edge for /api/health, which the edge refuses from outside the allow-list -> FAIL.
+    write(ci_text=GOOD_CI.replace("/.well-known/security.txt", "/api/health"))
+    assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the edge is asked for the health answers it refuses"
+    write(ci_text=GOOD_CI.replace("        docker exec polaris-app curl -s http://localhost:8000/api/health\n", ""))
+    assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the roll-up is not read at the app"
+
     # 5. Override + Caddyfile + boots prod compose + secrets + health probe -> OK.
     write()
     assert checks.check_prod_stack_boot(tmp_path)[0].level == "OK", \
-        "must PASS for a full prod-compose boot that generates secrets and probes /api/health"
+        "must PASS for a full prod-compose boot that generates secrets, asks the edge and reads the roll-up"
 
 
 def test_container_hardening_check_discriminates(tmp_path):
@@ -9416,11 +9427,17 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
             p = tmp_path / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
     matcher = ("@metrics_from_outside {\n    path /metrics /api/metrics\n"
                "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
-               "respond @metrics_from_outside 404\n")
+               "respond @metrics_from_outside 404\n"
+               "@health_from_outside {\n    path /api/health /api/health/*\n"
+               "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
+               "respond @health_from_outside 404\n")
     helm = matcher.replace("{$POLARIS_METRICS_ALLOW:0.0.0.0/32}",
                            '{{ .Values.edge.metricsAllow | default "0.0.0.0/32" }}')
-    drill = ('sed -n x "${ROOT}/polaris_web/Caddyfile"\nfor where in "in-network" "via SNAT"; do\n'
-             '    probe 404 "${where}" /metrics\ndone\n')
+    drill = ('sed -n -e x -e \'/@health_from_outside {/,/respond @health_from_outside 404/p\' "${ROOT}/polaris_web/Caddyfile"\n'
+             'HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)\n'
+             'for where in "in-network" "via SNAT"; do\n'
+             '    probe 404 "${where}" /metrics\n'
+             '    for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done\ndone\n')
     good = {
         "polaris_web/Caddyfile": "site {\n" + matcher + "reverse_proxy app:8000\n}\n",
         "polaris_web/Caddyfile.citest": "localhost:8443 {\n" + matcher + "reverse_proxy app:8000\n}\n",
@@ -9453,6 +9470,25 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
            "must FAIL when the chart's default lets private addresses in")
     broken("scripts/polaris-metrics-edge-drill.sh", drill.replace('"via SNAT"', ""),
            "must FAIL when the drill no longer asks through an SNAT hop")
+    # 2026-10-21: the health answers, refused at every edge like the metrics.
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("path /api/health /api/health/*", "path /api/health"),
+           "must FAIL when the compose edge leaves a health path open")
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("respond @health_from_outside 404\n", ""),
+           "must FAIL when the compose edge matches the health paths and serves them anyway")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml",
+           good["deploy/helm/polaris/templates/configmap-caddy.yaml"].replace("path /api/health /api/health/*", "path /api/health/*"),
+           "must FAIL when the chart leaves /api/health open")
+    broken("polaris_web/Caddyfile.citest", good["polaris_web/Caddyfile.citest"].replace(
+               "path /api/health /api/health/*", "path /api/health /api/health/* /api/healthz"),
+           "must FAIL when the CI edge's health rule is not production's")
+    broken("scripts/polaris-metrics-edge-drill.sh", drill.replace("/api/health/ready ", ""),
+           "must FAIL when the drill no longer asks a health path")
+    # A respond line that is commented out refuses nothing: each rule, at each edge.
+    for rule in ("metrics_from_outside", "health_from_outside"):
+        for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
+                    "deploy/helm/polaris/templates/configmap-caddy.yaml"):
+            broken(rel, good[rel].replace(f"respond @{rule} 404\n", f"    # respond @{rule} 404\n"),
+                   f"must FAIL when {rel}'s `respond @{rule} 404` is commented out")
 
 
 def test_image_builds_are_retried_check_fails_when_a_build_bypasses_the_helper(tmp_path):
@@ -15091,8 +15127,55 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
            "    security.record_audit_access(get_db, 'VerificationEvent',\n"
            "                                 result_row_count=len(results))\n"
            "    return render_template('uc7.html')\n")
+    # 2026-10-21: the direct reads (a route whose own SQL names a tracked table or a view over
+    # one), the two exempt routes, and the console with the role it reads as.
+    ROUTES = ("_DURESS = 'SELECT event_id, token_id FROM DuressEvent ORDER BY event_id DESC'\n\n"
+              "@app.route('/tokens/<int:tok_id>')\n"
+              "def tokens_detail(tok_id):\n"
+              "    lifecycle = query('SELECT * FROM TokenLifecycleEvent WHERE token_id = %s', (tok_id,))\n"
+              "    security.record_audit_access(get_db, 'TokenLifecycleEvent',\n"
+              "                                 result_row_count=len(lifecycle))\n"
+              "    return render_template('tokens_detail.html')\n\n"
+              "@app.route('/api/duress/events')\n"
+              "def api_duress_events():\n"
+              "    rows = query(_DURESS)\n"
+              "    security.record_audit_access(get_db, 'DuressEvent', result_row_count=len(rows))\n"
+              "    return jsonify(rows)\n\n"
+              "@app.route('/api/sim/tick', methods=['POST'])\n"
+              "def api_sim_tick():\n"
+              "    return query('SELECT count(*) AS n FROM VerificationEvent', fetch='one')\n\n"
+              "@app.route('/api/duress/record', methods=['POST'])\n"
+              "def api_duress_record():\n"
+              "    execute('INSERT INTO DuressEvent (token_id) VALUES (%s)', (1,))\n"
+              "    return query('SELECT event_id FROM DuressEvent ORDER BY event_id DESC LIMIT 1')\n\n"
+              "@app.route('/audit/access')\n"
+              "def audit_access():\n"
+              "    return query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n")
+    CONSOLE = ("@app.route('/sql', methods=['GET', 'POST'])\n"
+               "def sql_query():\n"
+               "    sql = request.form.get('sql', '')\n"
+               "    conn = psycopg2.connect(**DB_CONFIG)\n"
+               "    conn.set_session(readonly=True)\n"
+               "    with conn.cursor() as cur:\n"
+               "        cur.execute('SET statement_timeout = %s', (5000,))\n"
+               "        cur.execute('SELECT line FROM console_read(%s, %s, %s) AS line', (sql, 501, False))\n"
+               "        lines = cur.fetchall()\n"
+               "    return render_template('sql_console.html', lines=lines)\n")
+    GRANTS = ("CREATE OR REPLACE FUNCTION console_read(p_sql TEXT, p_max_rows INTEGER, p_explain BOOLEAN)\n"
+              "RETURNS SETOF TEXT\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = public, pg_temp\n"
+              "AS $$\nBEGIN\n    RETURN;\nEND;\n$$;\n"
+              "ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO polaris_console_reader;\n"
+              "REVOKE EXECUTE ON FUNCTION console_read(TEXT, INTEGER, BOOLEAN) FROM PUBLIC;\n"
+              "GRANT USAGE ON SCHEMA public TO polaris_console_reader;\n"
+              "GRANT SELECT ON Agency, VerificationContext TO polaris_console_reader;\n")
+    VIEWS = ("CREATE OR REPLACE VIEW v_timeline WITH (security_invoker = true) AS\n"
+             "    SELECT token_id, event_type FROM TokenLifecycleEvent;\n"
+             "CREATE OR REPLACE VIEW v_latest WITH (security_invoker = true) AS\n"
+             "    SELECT * FROM v_timeline;\n")
     good = {'polaris_web/security.py': SEC, 'polaris_sql/05_procedures.sql': SQL,
-            'polaris_web/app.py': APP}
+            'polaris_web/app.py': APP, 'polaris_web/operator_routes.py': ROUTES,
+            'polaris_web/sql_console.py': CONSOLE, 'polaris_sql/09_grants.sql': GRANTS,
+            'polaris_sql/03_view.sql': VIEWS}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -15168,6 +15251,92 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
         "\ndef api_atlas_breakdown():\n    return query('SELECT * FROM atlas_breakdown(%s)', (since,))\n")})
     assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
         "a function that only counts is not an audited read"
+    (tmp_path / 'polaris_sql' / '11_atlas.sql').unlink()
+    write()
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
+        "the good tree, with its direct reads, exemptions and console, must PASS"
+
+    def fails(overrides, why, expect="FAIL"):
+        write(overrides)
+        got = checks.check_audited_reads_are_logged(tmp_path)[0]
+        for rel in set(overrides) - set(good):
+            (tmp_path / rel).unlink()
+        write()
+        assert got.level == expect, why + f" (got {got.level}: {got.message})"
+
+    # THE READS IN PLAIN SIGHT (2026-10-21). /tokens/<id> and /api/duress/events returned a
+    # tracked table's rows with no record, which the procedure rule could not see.
+    drop_tokens_call = ("    security.record_audit_access(get_db, 'TokenLifecycleEvent',\n"
+                        "                                 result_row_count=len(lifecycle))\n")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(drop_tokens_call, "")},
+          "a route selecting a tracked table directly and recording nothing must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        drop_tokens_call, "    # security.record_audit_access(get_db, 'TokenLifecycleEvent')\n")},
+        "a record call that survives only as a comment must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    security.record_audit_access(get_db, 'DuressEvent', result_row_count=len(rows))\n", "")},
+        "a route whose SQL is a module constant it names, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + (
+        "\n@app.route('/timeline/<int:tok_id>')\ndef timeline(tok_id):\n"
+        "    return query('SELECT * FROM v_latest WHERE token_id = %s', (tok_id,))\n")},
+        "a route reading a view over a view over a tracked table, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + (
+        "\n@app.route('/note', methods=['POST'])\ndef note():\n"
+        "    execute('INSERT INTO AuthAuditLog (event_type) VALUES (%s)', ('NOTE',))\n"
+        "    return ''\n")},
+        "a route that only writes a tracked table returns no one's rows and must PASS", expect="OK")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace("def api_sim_tick():", "def api_sim_count():")},
+          "a route renamed out of its exemption, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    return query('SELECT count(*) AS n FROM VerificationEvent', fetch='one')\n",
+        "    return query('SELECT 1', fetch='one')\n")},
+        "an exemption that no longer exempts a read is stale and must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + "\ndef broken(:\n    pass\n"},
+          "a module that does not parse must FAIL rather than hide its routes")
+
+    # THE AUDIT OF THE AUDIT STOPS AT AuditAccessLog: a read of it never records itself.
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    return query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n",
+        "    rows = query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n"
+        "    security.record_audit_access(get_db, 'AuthAuditLog', result_row_count=len(rows))\n"
+        "    return rows\n")},
+        "a route reading AuditAccessLog that calls record_audit_access must FAIL")
+
+    # THE CONSOLE, BY NAME. Its SQL is its caller's, so it reads as a role that holds none of it.
+    fails({'polaris_web/sql_console.py': CONSOLE.replace(
+        "cur.execute('SELECT line FROM console_read(%s, %s, %s) AS line', (sql, 501, False))",
+        "cur.execute(sql)")},
+        "a console that executes its caller's text must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace(
+        "cur.execute('SET statement_timeout = %s', (5000,))", "cur.execute(f'EXPLAIN {sql}')")},
+        "a console that builds a statement from its caller's text must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace("console_read(%s, %s, %s)", "console_rows(%s, %s, %s)")},
+          "a console that does not call console_read must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace("def sql_query():", "def sql_page():")},
+          "a console handler this check cannot find by name must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS.replace("SECURITY DEFINER\n", "")},
+          "a console_read that runs as its caller must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS.replace(
+        "ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO polaris_console_reader;\n", "")},
+        "a console_read left with its loader must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON VerificationEvent TO polaris_console_reader;\n"},
+          "the reader granted a tracked table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON v_latest TO polaris_console_reader;\n"},
+          "the reader granted a view over a tracked table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON ALL TABLES IN SCHEMA public TO polaris_console_reader;\n"},
+          "the reader granted every table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT EXECUTE ON FUNCTION uc7_warrant_audit(INTEGER) TO polaris_console_reader;\n"},
+          "the reader lent a routine must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT polaris_app TO polaris_console_reader;\n"},
+          "the reader made a member of the application role must FAIL")
+    fails({'polaris_sql/migrations/2026-10-22-001-x.up.sql': "GRANT pg_read_all_data TO polaris_console_reader;\n"},
+          "a membership granted by a migration must FAIL too")
+    fails({'polaris_sql/09_grants.sql': GRANTS + (
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO polaris_console_reader;\n")},
+        "a default privilege for the reader must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT polaris_console_reader TO polaris_owner;\n"},
+          "the loader made a member OF the reader holds the reader's rights, not the reverse, "
+          "and must PASS", expect="OK")
 
 
 def test_transparency_program_check_discriminates(tmp_path):

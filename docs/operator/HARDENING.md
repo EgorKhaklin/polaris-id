@@ -253,7 +253,8 @@ is [WEBAUTHN-ROLLOUT.md](WEBAUTHN-ROLLOUT.md) Phase 6.
 sudo ss -tulpn | grep LISTEN              # expect 22, 80, 443 (tcp), 443 (udp), and docker-proxy for those only
 sudo ufw status verbose 2>/dev/null || sudo firewall-cmd --list-all
 systemctl is-active polaris chrony auditd fail2ban 2>/dev/null
-curl -fsS https://$POLARIS_DOMAIN/api/health | python3 -m json.tool | head -20
+curl -fsS https://$POLARIS_DOMAIN/.well-known/security.txt >/dev/null && echo edge OK   # the edge answers /api/health 404
+docker exec polaris-app curl -fsS http://localhost:8000/api/health | python3 -m json.tool | head -20
 ```
 
 Then the operations checklist in [`OPERATIONS.md`](OPERATIONS.md), and the

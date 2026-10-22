@@ -606,7 +606,7 @@ route to the app.
 **Diagnosis.**
 1. `docker compose ps caddy` and `docker compose logs --tail 50 caddy`.
 2. From the observability network, the probe's own detail:
-   `curl -s "http://blackbox:9115/probe?module=edge_tls&target=https://caddy:8443/api/health/live&debug=true"`.
+   `curl -s "http://blackbox:9115/probe?module=edge_tls&target=https://caddy:8443/.well-known/security.txt&debug=true"`.
 3. `scripts/polaris-doctor.sh` names the failing component of the stack.
 
 **Remediation.** Restart or reload the edge once the cause is fixed (a

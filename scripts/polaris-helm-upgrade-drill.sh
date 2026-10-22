@@ -224,10 +224,15 @@ ok "no migration pending; ${why}"
 ok "the marker written under ${FROM} is intact"
 kubectl -n "${NS}" port-forward "svc/${REL}-caddy" 18444:443 > /dev/null 2>&1 & PF_PID=$!
 code=""
+# The edge serves a public route (it refuses the health answers from outside edge.metricsAllow); the
+# roll-up is read at the app pod's own address.
+app=""
 for _ in $(seq 1 40); do
-    code=$(curl -sk --max-time 20 -o /dev/null -w '%{http_code}' https://localhost:18444/api/health || true)
-    [[ "${code}" == 200 ]] && break; sleep 3
+    code=$(curl -sk --max-time 20 -o /dev/null -w '%{http_code}' https://localhost:18444/.well-known/security.txt || true)
+    app=$(kubectl -n "${NS}" exec "deploy/${REL}-app" -c app -- curl -s --max-time 20 -o /dev/null -w '%{http_code}' \
+              http://localhost:8000/api/health 2> /dev/null || true)
+    [[ "${code}" == 200 && "${app}" == 200 ]] && break; sleep 3
 done
-[[ "${code}" == 200 ]] || { diagnose; fail "the edge did not serve /api/health after the upgrade (HTTP ${code})"; }
-ok "/api/health answers 200 through the edge on ${TARGET:0:8}"
+[[ "${code}" == 200 && "${app}" == 200 ]] || { diagnose; fail "after the upgrade the edge answered ${code} and /api/health at the app ${app}"; }
+ok "the edge serves and /api/health answers 200 at the app on ${TARGET:0:8}"
 echo "a Helm upgrade from ${FROM} migrated the database before the new release rolled, and the release came back healthy"

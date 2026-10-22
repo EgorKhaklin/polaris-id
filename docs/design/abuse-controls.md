@@ -66,7 +66,8 @@ constitutional revocation ceiling described in
   `quota-set --verify-per-hour` stops the sweep at the database on the next
   write, and the federation attestation behind it can be revoked.
 - *Someone bypasses the application with psql.* The trigger fires on the raw
-  insert. The SQL console runs as the same role and meets the same trigger.
+  insert. The SQL console writes nothing: its queries run read-only, as a
+  role that holds `SELECT` alone.
 - *Concurrent writers race a cap.* The advisory lock makes the loser see the
   winner's row, which the concurrency test asserts.
 - *A cap is set too low and legitimate operators are refused.*

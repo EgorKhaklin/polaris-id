@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
-# polaris-metrics-edge-drill.sh: who can read /metrics and /api/metrics through the edge?
-# (lab record 017, gate row OP-26)
+# polaris-metrics-edge-drill.sh: who can read /metrics, /api/metrics and the health answers
+# through the edge? (lab record 017, gate row OP-26)
 #
-# Both surfaces carry polaris_duress_events_total and neither authenticates, so whoever reads
-# them can see that, and roughly when, a duress alarm fired. The edge is the control. This
-# drill takes the matcher out of the SHIPPED polaris_web/Caddyfile (not a copy of it), puts
-# it in front of a stub upstream, and asks from two places:
+# Both metrics surfaces carry polaris_duress_events_total and neither authenticates, so whoever
+# reads them can see that, and roughly when, a duress alarm fired; the health answers
+# (/api/health, /api/health/ready, /api/health/live) report every component of the deployment
+# and do not authenticate either. The edge is the control. This drill takes both matchers out
+# of the SHIPPED polaris_web/Caddyfile (not a copy of it), puts them in front of a stub
+# upstream, and asks from two places:
 #
 #   in-network   a client on the stack's own network
 #   via SNAT     the same request through a TCP forwarder, which is what a client on the
@@ -16,9 +18,9 @@
 #                default externalTrafficPolicy, rootless Docker's port driver or Docker's
 #                userland proxy for IPv6: a private address that is not the client's
 #
-# With POLARIS_METRICS_ALLOW unset, both must get 404 (no one is allowed by default; a
-# monitoring network has to be named). Naming a range lets that range in and no one else.
-# Ordinary routes stay 200 throughout.
+# With POLARIS_METRICS_ALLOW unset, every one of them must get 404 (no one is allowed by
+# default; a monitoring network has to be named). Naming a range lets that range in and no one
+# else. Ordinary routes stay 200 throughout.
 #
 # Usage: polaris-metrics-edge-drill.sh [caddy image] (default polaris-caddy:prod)
 # Exit: 0 every probe answered as required; 1 one did not.
@@ -33,8 +35,10 @@ cleanup() { docker rm -f "${NET}-up" "${NET}-edge" "${NET}-fwd" > /dev/null 2>&1
             docker network rm "${NET}" > /dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-# The rule, exactly as shipped: from the matcher to its respond line.
-sed -n '/@metrics_from_outside {/,/respond @metrics_from_outside 404/p' "${ROOT}/polaris_web/Caddyfile" > "${WORK}/rule"
+# The rules, exactly as shipped: each from its matcher to its respond line. A missing health
+# rule is not refused here: the probes below find the health answers served.
+sed -n -e '/@metrics_from_outside {/,/respond @metrics_from_outside 404/p' \
+       -e '/@health_from_outside {/,/respond @health_from_outside 404/p' "${ROOT}/polaris_web/Caddyfile" > "${WORK}/rule"
 grep -q 'respond @metrics_from_outside 404' "${WORK}/rule" || { echo "FAIL: no metrics rule in the shipped Caddyfile" >&2; exit 1; }
 { printf '{\n    admin off\n    auto_https off\n}\n:8080 {\n'; cat "${WORK}/rule"; printf '    reverse_proxy %s-up:8000\n}\n' "${NET}"; } > "${WORK}/Caddyfile"
 
@@ -101,12 +105,15 @@ except Exception:
     fi
 }
 
-echo "== POLARIS_METRICS_ALLOW unset: no one reads the metrics"
+HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)
+echo "== POLARIS_METRICS_ALLOW unset: no one reads the metrics or the health answers"
 edge ""
 for where in "in-network" "via SNAT"; do
     probe 404 "${where}" /metrics
     probe 404 "${where}" /api/metrics
+    for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done
     probe 200 "${where}" /
+    probe 200 "${where}" /.well-known/security.txt
 done
 
 SUBNET=$(docker network inspect "${NET}" --format '{{(index .IPAM.Config 0).Subnet}}')
@@ -114,11 +121,13 @@ echo "== POLARIS_METRICS_ALLOW=${SUBNET} (the monitoring network named): it read
 edge "${SUBNET}"
 probe 200 "in-network" /metrics
 probe 200 "in-network" /api/metrics
+for path in "${HEALTH_PATHS[@]}"; do probe 200 "in-network" "${path}"; done
 
 echo "== POLARIS_METRICS_ALLOW=203.0.113.0/24 (somewhere else named): no one here reads them"
 edge "203.0.113.0/24"
 for where in "in-network" "via SNAT"; do
     probe 404 "${where}" /metrics
+    probe 404 "${where}" /api/health
     probe 200 "${where}" /
 done
-echo "the metrics surfaces are refused unless the monitoring network is named, through an SNAT hop too"
+echo "the metrics surfaces and the health answers are refused unless the monitoring network is named, through an SNAT hop too"

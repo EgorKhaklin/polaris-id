@@ -68,7 +68,7 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-partition-maintenance.sh` | Premake the event tables' monthly partitions ahead of time on the running stack | `polaris-partition-maintenance.timer`, monthly |
 | `polaris-helm-drill.sh` | The Kubernetes profile boots healthy with policies enforced | `ci.yml` |
 | `polaris-page-drill.sh` | A duress event reaches the pager webhook | `ci.yml` |
-| `polaris-metrics-edge-drill.sh` | The shipped edge rule refuses the duress-carrying metrics surfaces in-network and through an SNAT hop unless the monitoring network is named | `ci.yml` |
+| `polaris-metrics-edge-drill.sh` | The shipped edge rules refuse the duress-carrying metrics surfaces and the health answers in-network and through an SNAT hop unless the monitoring network is named | `ci.yml` |
 | `polaris-client-ip-drill.sh` | Behind an appending load balancer the app is told the client's own address only when the balancer is named, and no forged X-Forwarded-For gets through | `ci.yml` |
 | `polaris-edge-limits-drill.sh` | In front of an upstream that serves one request at a time, the shipped edge keeps a trickled body off it, ends the slow client, refuses a 2 MiB body and cuts off trickled headers | `ci.yml` |
 | `polaris-upgrade-drill.sh` | The previous release's own try.sh stack, upgraded to this commit as OPERATIONS.md says: no migration pending, every image rebuilt, a credential issued before the upgrade still verifies | `upgrade.yml` |

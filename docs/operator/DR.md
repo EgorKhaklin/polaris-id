@@ -315,7 +315,7 @@ $COMPOSE exec postgres psql -U postgres -d polaris -c "
 
 # 8. Only when step 6 exited 0: bring the app back and smoke-test.
 $COMPOSE up -d app
-curl -sf https://${POLARIS_DOMAIN}/api/health | jq .
+$COMPOSE exec -T app curl -sf http://localhost:8000/api/health | jq .
 ```
 
 For a restore that omits `--type=time`, pgBackRest replays every archived
@@ -773,7 +773,8 @@ Step 1.  Acknowledge the page within 5 min (SEV-1) / 15 min (SEV-2).
 Step 2.  Read the alert body first; RUNBOOKS.md has one entry per alert.
 
 Step 3.  Open three views:
-         (a) https://${POLARIS_DOMAIN}/api/health
+         (a) /api/health at the app's own address (the edge answers it 404):
+             docker exec polaris-app curl -s http://localhost:8000/api/health
          (b) the Grafana dashboards (deploy/observability/grafana)
          (c) docker compose logs --tail=200 over SSH
 
@@ -931,7 +932,7 @@ The section 8.4 template is the structure. Reviewers check:
   [`polaris-ct-monitor.sh`](../../scripts/polaris-ct-monitor.sh),
   [`polaris-rotate-secret.sh`](../../scripts/polaris-rotate-secret.sh).
   For a read-only health read of a running deployment, `GET /api/health`
-  reports structured per-component status; on a development checkout,
+  at the app's own address reports structured per-component status; on a development checkout,
   `./polaris_mac_launch.sh doctor` inspects the local stack.
 - [`polaris_web/docker-compose.prod.yml`](../../polaris_web/docker-compose.prod.yml):
   the production stack, including the `pg_data` and `pgbackrest_repo` volumes.
