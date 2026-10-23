@@ -12,6 +12,11 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 ### Security
 
 - The responder-signed mint and holder-signing routes spend their per-principal rate limits (`exmint:` per authority, `sign:` per credential) only after the caller authenticates, so an unauthenticated caller can no longer fill a named authority's or credential's bucket and deny it the route until the limit resets (rp_api.py).
+- OpenTelemetry moves to 1.45.1, with its instrumentations at 0.66b1: opentelemetry-api before 1.45.1 parses an inbound `tracestate` header in time quadratic in its length (GHSA-xcq7-p3pf-p88h). Polaris reaches that parser only with tracing on (`POLARIS_OTEL`) behind a trusted proxy (`POLARIS_TRUST_PROXY`).
+
+### Fixed
+
+- The project site scopes five sentences to the documents behind them: recovery after total loss runs through three channels, one of them a witness from a second authority (it added "never by one operator", which a holder of the application's database credential can defeat: docs/design/recovery-ceremony.md); a migration never leaves a token without an active signature (it said "exactly one active"; both stay active through the window); four of the five database rules are held by the database itself (the disclosure level is the application's, with the CHECK behind it); zero-knowledge mode proves a valid token exists without revealing identity (it said "no identifier at all"); and ProtocolSoup is listed as a wallet harness (the Foundation's listing names a commit other than the v4.0.0 tested here).
 
 ### Added
 
