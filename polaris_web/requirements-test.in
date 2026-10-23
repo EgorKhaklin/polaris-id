@@ -9,7 +9,7 @@
 -c requirements.txt
 
 # ---- Test-only: property testing (10 Hypothesis tests) ----
-hypothesis>=6.169.1,<7.0
+hypothesis>=6.170.0,<7.0
 
 # ---- Test-only: pytest (ZK two-witness suites, v9.44/v9.46) ----
 # polaris_zk/witness2/test_witness2.py and polaris_web/test_zk_second_witness.py
@@ -32,7 +32,7 @@ coverage>=7.16.2,<8.0
 # The pyflakes-family hygiene gate (unused imports, unused locals, undefined
 # names, placeholder-free f-strings), configured in ruff.toml with select = F.
 # Run by the pre-commit hook and the CI "Ruff" step; formatting is not enforced.
-ruff==0.17.0
+ruff==0.17.1
 
 # ---- Test-only: PyYAML (the pre-commit config's detection test) ----
 # polaris_checks/test_checks.py parses .pre-commit-config.yaml to hold the hooks to one
