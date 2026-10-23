@@ -241,6 +241,13 @@ updates:
       # own change, with CI, the venv and pip-compile moved together; removing semver-minor here records taking it.
       - dependency-name: "python"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Caddy 2.11.6 reworked the request-body read deadlines (caddyserver/caddy#7913). Under 2.11.7 a body
+      # trickled at a byte a second outlives the Caddyfile's read_body limit, and the edge-limits drill fails
+      # its case 2 (#388's run of 2026-10-21); 2.11.4 passes it. Caddy's master has since changed those
+      # deadlines again (caddyserver/caddy#8178), in no release as of 2026-10-23. Remove this block when a
+      # release passes the drill.
+      - dependency-name: "caddy"
+        versions: ["2.11.6", "2.11.7"]
     groups:
       docker-polaris_web-all:
         patterns:

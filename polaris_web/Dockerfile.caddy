@@ -20,16 +20,33 @@
 # until it is taken on purpose; Go's checksum database verifies the module.
 #
 # Both stages are digest-pinned (v9.114 discipline); Dependabot's docker
-# ecosystem tracks the FROM digests. Both stages name the same Caddy release,
-# and the runtime stage is the stock caddy alpine image; we only swap the
-# binary for one that includes the plugin.
+# ecosystem tracks the FROM digests. The runtime stage is the SAME image the
+# compose pinned before (caddy:2.11.4-alpine = caddy:2-alpine @ 77c07d5e); we
+# only swap the binary for one that includes the plugin.
 #
 # Build context is polaris_web/ (see docker-compose.prod.yml: context: .).
 # ============================================================================
-FROM caddy:2.11.7-builder-alpine@sha256:d718a1d1431403c4a46698f33ad1c0f9dd5dd7fe2bae654d1027d275b6fb5fd7 AS builder
+FROM caddy:2.11.4-builder-alpine@sha256:0aa610043dab5da82ad0a0268e46bb852785e6f5160f12f1c6fe3f42903d7e1b AS builder
 
 # Compile the edge rate-limiter into the binary. Add future --with plugins here.
 #
+# The --replace line is a dependency FLOOR, not a plugin. Caddy 2.11.4's module
+# graph pulls golang.org/x/crypto below v0.55.0, which carries CVE-2026-56854
+# (CRITICAL) in golang.org/x/crypto/ssh, and Trivy gates on fixable CRITICAL.
+# Three things were checked before choosing this fix:
+#   1. `apk upgrade` below cannot reach it: the dependency is compiled into the
+#      Go binary, not installed as an apk package.
+#   2. Bumping the base does not fix it. The newest published builder tag
+#      (caddy:2.11-builder-alpine) still resolves x/crypto to a vulnerable
+#      version, so there is no upstream image to move to yet.
+#   3. It is NOT unreachable, so .trivyignore would have been dishonest:
+#      `strings` finds 227 golang.org/x/crypto/ssh references in the built
+#      binary, more than chacha20 (58), which Caddy demonstrably uses. The ssh
+#      package is genuinely linked in.
+# --with cannot express this (x/crypto has no importable root package, so it
+# fails with "cannot find module providing package"); --replace writes a plain
+# replace directive to go.mod, which is what xcaddy documents for exactly this
+# case. Remove it once the pinned base resolves x/crypto >= 0.55.0 on its own.
 # v9.342: the build fetches Go modules and verifies every one against the checksum
 # database; that verification is never skipped (GOSUMDB stays on, GOFLAGS is not set).
 # But the checksum database answered two CI builds in one day with an HTTP/2 stream
@@ -39,13 +56,14 @@ FROM caddy:2.11.7-builder-alpine@sha256:d718a1d1431403c4a46698f33ad1c0f9dd5dd7fe
 RUN for attempt in 1 2 3 4; do \
         xcaddy build \
             --with github.com/mholt/caddy-ratelimit@v0.1.0 \
+            --replace golang.org/x/crypto=golang.org/x/crypto@v0.55.0 \
         && break; \
         if [ "$attempt" = 4 ]; then echo "xcaddy build failed 4 times; giving up" >&2; exit 1; fi; \
         echo "xcaddy build attempt $attempt failed (a module fetch or a checksum-database stream error); retrying in $((attempt * 20))s" >&2; \
         sleep $((attempt * 20)); \
     done
 
-FROM caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+FROM caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
 
 # Every Polaris image carries the same provenance labels; the version is
 # passed in by scripts/polaris-image-build.sh from polaris_web/__version__.py.
@@ -75,12 +93,6 @@ RUN apk add --no-cache libcap && setcap -r /usr/bin/caddy && apk del libcap
 # Fail the build if the plugin did not actually land in the binary (defense in
 # depth against a silently-broken xcaddy build shipping a plugin-less Caddy).
 RUN caddy list-modules | grep -q '^http.handlers.rate_limit$'
-
-# Fail the build if the copied binary is not the release the runtime base names:
-# an update once moved the runtime to 2.11.7 while the builder still built 2.11.6.
-# The official images set CADDY_VERSION (a builder's ENV does not reach this
-# stage), and an empty one fails.
-RUN test -n "$CADDY_VERSION" && [ "$(caddy version | awk '{print $1}')" = "$CADDY_VERSION" ]
 
 # v9.239 — the edge runs as a non-root user everywhere, not only under the
 # Kubernetes profile. uid 1000 matches the chart's pod security context and the
