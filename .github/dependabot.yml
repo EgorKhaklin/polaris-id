@@ -241,6 +241,14 @@ updates:
       # own change, with CI, the venv and pip-compile moved together; removing semver-minor here records taking it.
       - dependency-name: "python"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Under Caddy 2.11.7 a proxied HTTP/1.1 body that reaches the Caddyfile's read_body limit with less than
+      # 256 KiB unread is read to its end before the edge answers (caddyserver/caddy#8165): the edge-limits drill
+      # fails its case 2 there (CI, 2026-10-21), and 2.11.4 and 2.11.6 end the body at the limit. 2.11.6 can crash
+      # reading an HTTP/2 request body after its handler returns (caddyserver/caddy#8101), which 2.11.7 fixed.
+      # The fix for #8165, caddyserver/caddy#8178, is in no release as of 2026-10-23. Remove this block when a
+      # release carries it and passes the drill.
+      - dependency-name: "caddy"
+        versions: ["2.11.6", "2.11.7"]
     groups:
       docker-polaris_web-all:
         patterns:
