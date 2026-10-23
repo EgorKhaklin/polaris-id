@@ -63,11 +63,11 @@ redis==8.1.0
 # OPT-IN and optional at runtime, exactly like prometheus_client above:
 # tracing.py imports these behind a guard and instruments ONLY when
 # POLARIS_OTEL is truthy (off = zero overhead, zero telemetry). The sdk and
-# exporter track the stable 1.x line; the instrumentations version as 0.NNb0
-# betas paired to the sdk release (0.65b0 <-> 1.44.0); bump them together.
+# exporter track the stable 1.x line; the instrumentations version as 0.NN
+# betas paired to the sdk release (0.66b1 <-> 1.45.1); bump them together.
 # (No Flask auto-instrumentation package on purpose: the request span is
 # hand-rolled in tracing.py so its attribute surface is exactly what the
 # vocation allows: route template, scrubbed path, the ephemeral request id.)
-opentelemetry-sdk==1.44.0
-opentelemetry-exporter-otlp-proto-http==1.44.0
-opentelemetry-instrumentation-psycopg2==0.65b0
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1
+opentelemetry-instrumentation-psycopg2==0.66b1
