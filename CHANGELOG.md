@@ -13,6 +13,10 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The responder-signed mint and holder-signing routes spend their per-principal rate limits (`exmint:` per authority, `sign:` per credential) only after the caller authenticates, so an unauthenticated caller can no longer fill a named authority's or credential's bucket and deny it the route until the limit resets (rp_api.py).
 
+### Fixed
+
+- The project site scopes five sentences to the documents behind them: recovery after total loss runs through three channels, one of them a witness from a second authority (it added "never by one operator", which a holder of the application's database credential can defeat: docs/design/recovery-ceremony.md); a migration never leaves a token without an active signature (it said "exactly one active"; both stay active through the window); four of the five database rules are held by the database itself (the disclosure level is the application's, with the CHECK behind it); zero-knowledge mode proves a valid token exists without revealing identity (it said "no identifier at all"); and ProtocolSoup is listed as a wallet harness (the Foundation's listing names a commit other than the v4.0.0 tested here).
+
 ### Added
 
 - polaris-oid4vp `serve --once --result FILE` keeps FILE a JSON object, apart from the log on stdout, saying what became of the request: `nothing_received` until a response arrives, then `accepted` with the claim names, `refused` with the check and reason its `<-` line prints, or `wallet_error`; the HTTP status the wallet was answered; and the request object fetches served and refused. It is rewritten whole before each answer goes out.
