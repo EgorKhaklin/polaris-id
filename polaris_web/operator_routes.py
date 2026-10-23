@@ -689,6 +689,19 @@ def tokens_detail(tok_id):
     duress_enrolled = (bool(token.get('duress_code_hash'))
                        if _duress_visible_to_viewer() else None)
 
+    # The page shows this credential's lifecycle and verification history, so each read leaves
+    # its AuditAccessLog row, as /investigate/token/<id> does for the same two tables.
+    security.record_audit_access(
+        get_db, 'TokenLifecycleEvent',
+        filter_criteria={'route': '/tokens', 'token_id': tok_id},
+        result_row_count=len(lifecycle),
+    )
+    security.record_audit_access(
+        get_db, 'VerificationEvent',
+        filter_criteria={'route': '/tokens', 'token_id': tok_id},
+        result_row_count=len(verifications),
+    )
+
     return render_template('tokens_detail.html',
                            token=token,
                            lifecycle=lifecycle, lifecycle_more=lifecycle_more,

@@ -49,7 +49,7 @@ Defects found in a row's implementation and reported in public, with their state
 | Implementation | Report | State |
 |---|---|---|
 | OID4VCgo | [issue 312](https://github.com/IDFoundry/OID4VCgo/issues/312): its conformance wallet did not check the verifier's TLS certificate | closed; v0.22.0 added a warning and an optional chain check ([record](../../lab/EXTERNAL-NOUNS.md#wallets)) |
-| eudi-dev | [issue 21](https://github.com/dominikschlosser/eudi-dev/issues/21): the wallet did not check the verifier's TLS certificate, even in strict mode | closed; v2.5.0 checks it ([record](../../lab/interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02)) |
+| eudi-dev | [issue 21](https://github.com/eudi-dev/eudi-dev/issues/21): the wallet did not check the verifier's TLS certificate, even in strict mode | closed; v2.5.0 checks it ([record](../../lab/interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02)) |
 | EU reference PID issuer | [issue 662](https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer/issues/662): its docker-compose test keystore's `mso_mdoc` signing certificate lacks the ISO 18013-5 Annex B extensions | open |
 | Axle | [pull request 93](https://github.com/openwallet-foundation-labs/axle/pull/93): Bouncy Castle in its Kotlin test dependencies to 1.86, as the walk lifts it | open |
 

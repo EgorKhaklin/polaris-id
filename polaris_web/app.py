@@ -2491,6 +2491,12 @@ def api_duress_events():
          ORDER BY d.event_timestamp DESC
          LIMIT 200
     """)
+    # The same read as /duress, so the same AuditAccessLog row.
+    security.record_audit_access(
+        get_db, 'DuressEvent',
+        filter_criteria={'route': '/api/duress/events', 'limit': 200},
+        result_row_count=len(rows),
+    )
     return jsonify(
         count=len(rows),
         events=[{
@@ -2857,6 +2863,14 @@ def page_not_found(e):
 def server_error(e):
     return _error_response(500, 'The request could not be completed. The failure is recorded in the '
                                 'log with the request id.')
+
+
+@app.errorhandler(security.AuditAccessNotRecorded)
+def audit_access_not_recorded(e):
+    """A read of a person's history whose AuditAccessLog row was not written is not returned
+    (security.record_audit_access fails closed). Its own handler, not the 500 page, so the answer
+    is the same under TESTING, where an unhandled error propagates instead."""
+    return _error_response(503, 'This read could not be recorded, so its rows are not shown.')
 
 
 # ============================================================================

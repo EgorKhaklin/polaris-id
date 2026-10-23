@@ -92,9 +92,9 @@
             <ul>
                 <li><b><a href="https://github.com/walt-id/waltid-identity">walt.id Wallet API</a></b><span>Kotlin &middot; wallet</span></li>
                 <li><b><a href="https://github.com/openwallet-foundation/credo-ts">Credo</a></b><span>TypeScript &middot; wallet &middot; OpenWallet Foundation</span></li>
-                <li><b><a href="https://github.com/dominikschlosser/eudi-dev">eudi-dev</a></b><span>Go &middot; OpenID Certified wallet</span></li>
+                <li><b><a href="https://github.com/eudi-dev/eudi-dev">eudi-dev</a></b><span>Go &middot; OpenID Certified wallet</span></li>
                 <li><b><a href="https://github.com/IDFoundry/OID4VCgo">OID4VCgo</a></b><span>Go &middot; OpenID Certified wallet</span></li>
-                <li><b><a href="https://github.com/ParleSec/ProtocolSoup">ProtocolSoup</a></b><span>Go &middot; OpenID Certified wallet</span></li>
+                <li><b><a href="https://github.com/ParleSec/ProtocolSoup">ProtocolSoup</a></b><span>Go &middot; wallet harness</span></li>
                 <li><b><a href="https://github.com/procivis/one-core">Procivis One Core</a></b><span>Rust &middot; wallet</span></li>
                 <li><b><a href="https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vp-kt">EUDI Wallet OpenID4VP library</a></b><span>Kotlin &middot; European Commission</span></li>
                 <li><b><a href="https://github.com/eu-digital-identity-wallet/eudi-lib-ios-openid4vp-swift">EUDI Wallet OpenID4VP library</a></b><span>Swift &middot; European Commission</span></li>
@@ -181,7 +181,7 @@
             <li><span class="step">Issue</span>
                 <p>An authority signs it with ML-DSA-65; the algorithm is data, so it can change.</p></li>
             <li><span class="step">Hold</span>
-                <p>The person keeps it and shows only what they choose; zero-knowledge mode shows no identifier at all.</p></li>
+                <p>The person keeps it and shows only what they choose; zero-knowledge mode proves a valid token exists without revealing identity.</p></li>
             <li><span class="step">Verify</span>
                 <p>Anyone checks it offline, against published keys: no server, no network.</p></li>
         </ol>
@@ -201,7 +201,7 @@
     <div class="wrap">
         <p class="num">V</p>
         <h2 id="design-h">The rules live in the database.</h2>
-        <p class="intro">Enforced by the database itself, and checked on every build.</p>
+        <p class="intro">Four are held by the database itself; all five are checked on every build.</p>
         <details class="more-box">
             <summary><span>The five guarantees</span><span class="show" data-closed="Show" data-opened="Hide"></span></summary>
         <table class="rules">
@@ -209,7 +209,7 @@
                 <tr><th scope="row">The audit of record is append-only</th><td>A trigger on every audit table; the application role cannot reach the purge path</td></tr>
                 <tr><th scope="row">A zero-knowledge verification stores no credential identifier</th><td>A two-way CHECK constraint on the verification table</td></tr>
                 <tr><th scope="row">One active credential per person</th><td>A partial unique index</td></tr>
-                <tr><th scope="row">Disclosure is decided by the server, not the caller</th><td>The form handler, the CHECK above and every read path</td></tr>
+                <tr><th scope="row">The disclosure level is decided by the server, not the caller</th><td>The form handler, the CHECK above and every read path</td></tr>
                 <tr><th scope="row">Identity is not money</th><td>Structural absence: no monetary table or column exists</td></tr>
             </tbody>
         </table>
@@ -222,11 +222,11 @@
             </div>
             <div>
                 <h3>Total loss</h3>
-                <p>Lose every device and come back through three channels and a second authority, never by one operator.</p>
+                <p>Lose every device and come back through three channels, one of them a witness from a second authority.</p>
             </div>
             <div>
                 <h3>Algorithm migration</h3>
-                <p>Two signatures during a move between algorithms; the database keeps exactly one active.</p>
+                <p>Two signatures during a move between algorithms; the database never leaves a token without an active one.</p>
             </div>
         </div>
     </div>

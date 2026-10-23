@@ -3,13 +3,29 @@
 {% block content %}
 <h1>SQL Console</h1>
 <p class="subtitle">
-    A read-only query interface against this deployment's database. Only
-    <code>SELECT</code> and <code>WITH</code> queries are accepted, the
-    connection is opened read-only so the engine refuses a write smuggled
-    through a CTE, and the application's database role holds no DDL privileges.
-    A query is capped at <code>{{ max_length }}</code> characters and
-    <code>{{ (timeout_ms/1000)|int }}s</code> of execution time, and shows at most
-    <code>{{ max_rows }}</code> rows, read from the database a page at a time.
+    A read-only query interface against this deployment's database. A query runs as
+    <code>polaris_console_reader</code>, a database role that holds <code>SELECT</code> on the
+    tables listed below and on nothing else. It cannot read <code>TokenLifecycleEvent</code>,
+    <code>VerificationEvent</code>, <code>AuthAuditLog</code> or <code>DuressEvent</code>. The
+    pages that return rows of those four tables record each read in <code>AuditAccessLog</code>:
+    {% for page in audited_pages %}<code>{{ page }}</code>{{ ', ' if not loop.last else '.' }}{% endfor %}
+</p>
+<p class="help">
+    Other tables that hold one person's or one credential's rows, among them
+    <code>Individual</code>, <code>IdentityToken</code>, <code>EnrollmentStatusEvent</code>,
+    <code>HolderKeyEvent</code> and <code>RecoveryRequest</code>, are outside that record: no
+    <code>AuditAccessLog</code> row records a read of them. This console reads none of them, and
+    none of the count tables (the population, enrolment and activity roll-ups): a cell of them can
+    be a single event. The Atlas reads them and withholds a small count.
+</p>
+<p class="help">
+    Tables this console reads:
+    {% for table in console_tables %}<code>{{ table }}</code>{{ ', ' if not loop.last else '.' }}{% endfor %}
+    Only <code>SELECT</code> and <code>WITH</code> queries are accepted. Each runs as a subquery
+    of one <code>SELECT</code> in a read-only transaction, so a second statement or a
+    data-modifying <code>WITH</code> is refused. A query is capped at
+    <code>{{ max_length }}</code> characters and <code>{{ (timeout_ms/1000)|int }}s</code> of
+    execution time, and shows at most <code>{{ max_rows }}</code> rows.
 </p>
 
 <form method="post" class="standard wide">
@@ -18,7 +34,7 @@
         <div class="form-group full">
             <label for="sql">SQL Query</label>
             <textarea id="sql" name="sql" class="sql" maxlength="{{ max_length }}"
-                      placeholder="SELECT * FROM Individual ORDER BY individual_id;">{{ sql }}</textarea>
+                      placeholder="SELECT * FROM Agency ORDER BY agency_id;">{{ sql }}</textarea>
         </div>
     </div>
     <div class="form-actions">
@@ -56,16 +72,16 @@
             <tbody>
                 {% for row in results %}
                     <tr>
-                        {% for col in columns %}
+                        {% for value in row %}
                             <td class="mono">
-                                {%- if row[col] is none %}<em style="color: var(--steel-light);">NULL</em>
-                                {%- else %}{{ row[col] }}
+                                {%- if value is none %}<em style="color: var(--steel-light);">NULL</em>
+                                {%- else %}{{ value }}
                                 {%- endif %}
                             </td>
                         {% endfor %}
                     </tr>
                 {% else %}
-                    <tr><td colspan="{{ columns|length }}" class="empty">Query returned 0 rows.</td></tr>
+                    <tr><td colspan="{{ [columns|length, 1]|max }}" class="empty">Query returned 0 rows.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

@@ -90,6 +90,17 @@
     }
     respond @metrics_from_outside 404
 
+    # The health answers do not authenticate either, and report every component
+    # of the deployment. They are for the orchestrator, this edge's own upstream
+    # check and the operator's monitoring, all of which reach app:8000 directly
+    # or sit in the same named network: the same allow-list, and 404 to everyone
+    # else. An outside check that the edge serves asks /.well-known/security.txt.
+    @health_from_outside {
+        path /api/health /api/health/*
+        not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}
+    }
+    respond @health_from_outside 404
+
     # Lab record 017, phase 5: the app's own body limit (1 MiB), refused here, before the app.
     request_body {
         max_size 1MiB

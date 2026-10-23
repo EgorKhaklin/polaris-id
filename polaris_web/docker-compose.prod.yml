@@ -12,8 +12,9 @@
 #     ../scripts/polaris-generate-secrets.sh   # one-time
 #     docker compose -f docker-compose.prod.yml up -d
 #
-# Smoke:
-#     curl -fsS https://${POLARIS_DOMAIN}/api/health | jq .
+# Smoke (the edge answers /api/health only to POLARIS_METRICS_ALLOW):
+#     curl -fsS https://${POLARIS_DOMAIN}/.well-known/security.txt
+#     docker exec polaris-app curl -fsS http://localhost:8000/api/health | jq .
 # ============================================================================
 
 services:
@@ -529,13 +530,16 @@ services:
       - FOWNER
       - SETGID
       - SETUID
-    # Lab record 017, phase 5: the image's own filesystem is read-only; Redis
-    # writes its append-only file and snapshots to /data (a volume) only.
+    # Lab record 017, phase 5: the image's own filesystem is read-only.
+    # Redis holds only the rate limiter's short-lived counters, keyed by a
+    # credential-hash prefix, a client IP or a client_id, so it persists
+    # nothing: no append-only file, no snapshot (`--save ""`; without it a
+    # stop writes one), and /data is a small tmpfs, never a volume.
     read_only: true
     command: >
       redis-server
-      --appendonly yes
-      --appendfsync everysec
+      --appendonly no
+      --save ""
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --aclfile /run/secrets/redis_users_acl
@@ -545,8 +549,8 @@ services:
     # healthcheck does (nopass: any password is accepted for it).
     secrets:
       - redis_users_acl
-    volumes:
-      - redis_data:/data
+    tmpfs:
+      - /data:size=1m,mode=0700
     healthcheck:
       test: ["CMD", "redis-cli", "--no-auth-warning", "--user", "health", "--pass", "health", "ping"]
       interval: 10s
@@ -594,8 +598,6 @@ volumes:
   pgbackrest_repo:
     driver: local
   pg_data:
-    driver: local
-  redis_data:
     driver: local
   caddy_data:
     driver: local

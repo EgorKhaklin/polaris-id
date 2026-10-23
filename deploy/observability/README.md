@@ -74,8 +74,9 @@ signal in order to page, so the control is access to the surface, not
 suppression of the metric.
 
 **The shipped edges enforce it.** Both the compose `Caddyfile` and the Helm
-chart's Caddy config answer `404` on those two paths to any client outside the
-allowed range, and serve every other route normally. Unset, the range names no
+chart's Caddy config answer `404` on those two paths, and on the three health
+answers (`/api/health`, `/api/health/ready`, `/api/health/live`), to any client
+outside the allowed range, and serve every other route normally. Unset, the range names no
 client: behind an L4 load balancer, Kubernetes' default `externalTrafficPolicy`,
 rootless Docker or Docker's IPv6 userland proxy every internet client reaches the
 edge from a private address, so a private-ranges default would serve them all
@@ -94,7 +95,8 @@ edge:
 
 The `caddy-edge` CI job proves both branches on every push: an in-network client
 gets `200` on both paths, a client outside the range gets `404` on both, and an
-ordinary route is unaffected either way. `check_metrics_edge_acl` fails the
+ordinary route is unaffected either way; unset, the health answers get `404`
+from both clients and the public route `200`. `check_metrics_edge_acl` fails the
 build if either edge stops refusing.
 
 ## The alerts

@@ -90,7 +90,8 @@ below.
 Volumes:
 - `pg_data` (named): Postgres data
 - `pgbackrest_repo` (named): the local pgBackRest repository when WAL archiving is enabled
-- `redis_data` (named): Redis AOF/RDB
+- Redis has no volume: it holds only the rate limiter's counters, in memory, with no
+  append-only file and no snapshot, and `/data` is a tmpfs
 - `caddy_data` (named): Caddy's Let's Encrypt certs + state
 - `caddy_config` (named): Caddy's config-time state
 - `polaris_state` (named): script state
@@ -1098,8 +1099,10 @@ cold storage with the non-repudiation chain intact.
 
 ### Health check
 
-`GET /api/health` (no auth) returns structured JSON; the full payload and the
-per-component semantics are specified in
+`GET /api/health` (no auth; the shipped edge answers it 404 outside
+`POLARIS_METRICS_ALLOW`, so read it at the app's own address) returns
+structured JSON; the full payload and the per-component semantics are
+specified in
 [API.md](../reference/API.md#get-apihealth). The fields the thresholds hang
 on:
 
@@ -1141,8 +1144,8 @@ carries the duress signal, so it must be reachable only by the operator's
 monitoring, never the public internet ([HARDENING.md, section 10](HARDENING.md)).
 
 **Edge exposure.** The shipped [polaris_web/Caddyfile](../../polaris_web/Caddyfile) answers
-`/metrics` and `/api/metrics` with 404 unless the client address is in `POLARIS_METRICS_ALLOW`,
-and unset it names no client. The rule keys on the address the edge sees, and behind a load
+`/metrics`, `/api/metrics` and the three health answers with 404 unless the client address is in
+`POLARIS_METRICS_ALLOW`, and unset it names no client. The rule keys on the address the edge sees, and behind a load
 balancer or NAT that is a private address for every client on the internet, so a private-ranges
 default would serve them all; `scripts/polaris-metrics-edge-drill.sh` asks through such a hop in
 CI. A Prometheus on the stack's network scrapes `app:8000` directly; name a monitoring network
@@ -1718,6 +1721,24 @@ file. A deployment created earlier has neither file. Run
 two missing files and leaves every existing one as it is. A Helm release adds
 both keys to its generated Secret on upgrade; an `existingSecret` must gain
 them (`kubectl create secret ... --from-file=polaris_web/secrets/` again).
+
+**Upgrading across the Redis persistence change.** Redis now writes no
+append-only file and no snapshot, and its `/data` is in memory. A deployment
+created earlier keeps the old Redis volume, and the files written to it before
+the upgrade name the credential-hash prefixes, client IPs and client_ids the
+rate limiter counted. Delete it once the upgraded stack is running. Compose,
+in the project the deploy runs (`polaris_web` unless you set another name):
+
+```bash
+docker volume ls --filter label=com.docker.compose.volume=redis_data   # names it
+docker volume rm polaris_web_redis_data
+```
+
+On Kubernetes the upgrade replaces the Redis pod, and its emptyDir goes with
+it. A release first installed with the Redis StatefulSet still has its claim:
+`kubectl -n <namespace> delete pvc data-<release>-redis-0`. A copy of the
+Docker volumes or of a node's disk taken before the upgrade holds the same
+files.
 
 ### Postgres version upgrade
 

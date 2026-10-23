@@ -3210,7 +3210,7 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
            "aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
            "aquasec/trivy:0.58.1", "must FAIL when the SBOM generator runs by tag")
     broken("polaris_web/docker-compose.yml",
-           "postgres:16@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65",
+           "postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d",
            "postgres:16", "must FAIL when a compose file runs a third-party image by tag")
     broken(".github/dependabot.yml", "  - package-ecosystem: docker-compose\n",
            "  - package-ecosystem: docker-compose-unread\n",
@@ -3431,24 +3431,28 @@ def test_redis_authenticated_check_discriminates(tmp_path):
     assert checks.check_redis_authenticated(tmp_path)[0].level == "OK", \
         "must PASS on the real generator, rotation, compose, chart, schema and CI"
 
-    def broken(rel, old, new, why):
+    def broken(rel, old, new, why, reason=None):
         path = tmp_path / rel
         good = path.read_text()
         assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
         path.write_text(good.replace(old, new, 1))
-        assert checks.check_redis_authenticated(tmp_path)[0].level == "FAIL", why
+        bad = checks.check_redis_authenticated(tmp_path)[0]
+        assert bad.level == "FAIL", why
+        assert reason is None or reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
         path.write_text(good)
 
     gen, rot = "scripts/polaris-generate-secrets.sh", "scripts/polaris-rotate-secret.sh"
     compose = "polaris_web/docker-compose.prod.yml"
     broken(gen, "resetchannels -@all +ping +client|setinfo", "resetchannels -@all +@all +ping +client|setinfo",
-           "must FAIL when the app's Redis user may run every command")
+           "must FAIL when the app's Redis user may run every command",
+           "polaris-generate-secrets.sh: the polaris Redis user's rule carries +@all, a command category")
     broken(gen, "printf 'user default off", "printf 'user default on nopass",
            "must FAIL when an unauthenticated client is the default user, enabled")
     broken(gen, "write_secret_if_missing polaris_redis_password", "true",
            "must FAIL when no Redis password is generated")
     broken(rot, "+scan +del'", "+scan +del +get'",
-           "must FAIL when rotation writes different ACL rules from the generator")
+           "must FAIL when rotation writes different ACL rules from the generator",
+           "polaris-rotate-secret.sh writes different Redis ACL rules from the generator")
     broken(rot, 'write_redis_acl "${NEW_HASH}" "${OLD_HASH}"', 'write_redis_acl "${NEW_HASH}"',
            "must FAIL when rotation refuses the app's old password before the app has moved")
     broken("deploy/helm/polaris/templates/secret.yaml", "+scan +del\\n", "+scan +del +get\\n",
@@ -3465,6 +3469,267 @@ def test_redis_authenticated_check_discriminates(tmp_path):
            "must FAIL when production accepts a password in the Redis URL")
     broken(".github/workflows/ci.yml", "grep -q NOAUTH", "grep -q .",
            "must FAIL when CI no longer asserts an unauthenticated client is refused")
+
+    # A token added to the rule in all three files keeps them equal, so only the tokens, read file by
+    # file, can refuse it. CONFIG SET is in @admin, @dangerous and @slow; GET is not a limiter command.
+    acl_files = (gen, rot, "deploy/helm/polaris/templates/secret.yaml")
+    for tok, what, said in (("+@admin", "a category holding CONFIG SET", "a command category"),
+                            ("+@slow", "a category holding CONFIG SET", "a command category"),
+                            ("+@dangerous", "a category holding CONFIG SET", "a command category"),
+                            ("+config", "CONFIG", "which is not one of the limiter's tokens"),
+                            ("+get", "a command the limiter does not run", "which is not one of the limiter's tokens")):
+        goods = {rel: (tmp_path / rel).read_text() for rel in acl_files}
+        for rel, good in goods.items():
+            assert good.count("+scan +del") == 1, f"the fixture drifted: one '+scan +del' expected in {rel}"
+            (tmp_path / rel).write_text(good.replace("+scan +del", "+scan +del " + tok))
+        bad = checks.check_redis_authenticated(tmp_path)[0]
+        why = f"must FAIL when the app's Redis user gains {tok} ({what}) in all three files"
+        assert bad.level == "FAIL", why
+        for where in ("polaris-generate-secrets.sh", "polaris-rotate-secret.sh", "the Helm Secret"):
+            reason = f"{where}: the polaris Redis user's rule carries {tok}, {said}"
+            assert reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
+        for rel, good in goods.items():
+            (tmp_path / rel).write_text(good)
+    assert checks.check_redis_authenticated(tmp_path)[0].level == "OK", "the fixture was not restored"
+    # The shell keeps the last assignment, so a second rule line later in the generator is the one used.
+    broken(gen, "+scan +del'", "+scan +del'\nREDIS_ACL_POLARIS_RULES='~polaris:rl:* resetchannels -@all +@admin'",
+           "must FAIL when a later assignment in the generator gives the app's Redis user +@admin",
+           "polaris-generate-secrets.sh: the polaris Redis user's rule carries +@admin, a command category")
+
+    # The users file outside the rule string: each widening below left the rule the same, and each passed
+    # the token check. The message shows the first four problems, so each asserts the first file's reason.
+    def widened(edits, why, reason):
+        goods = {}
+        for rel, old, new in edits:
+            path = tmp_path / rel
+            goods.setdefault(rel, path.read_text())
+            text = path.read_text()
+            assert text.count(old) == 1, f"the fixture drifted: one {old!r} expected in {rel}"
+            path.write_text(text.replace(old, new, 1))
+        bad = checks.check_redis_authenticated(tmp_path)[0]
+        assert bad.level == "FAIL", why
+        assert reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
+        for rel, good in goods.items():
+            (tmp_path / rel).write_text(good)
+
+    helm_secret = "deploy/helm/polaris/templates/secret.yaml"
+    ops = "user ops on nopass ~* +@all\\n"
+    default = "user default off resetkeys resetchannels -@all"
+    rule = (tmp_path / gen).read_text().split("REDIS_ACL_POLARIS_RULES='", 1)[1].split("'", 1)[0]
+    assignment = f"REDIS_ACL_POLARIS_RULES='{rule}'\n"
+    widened([(gen, "user polaris on #%s %s\\n", "user polaris on #%s +@all %s\\n"),
+             (rot, "user polaris on %s %s\\n", "user polaris on %s +@all %s\\n")],
+            "must FAIL when the printf format gives polaris +@all outside the rule",
+            "polaris-generate-secrets.sh: Redis users line 3 of format 1 reads 'user polaris on #%s +@all %s'")
+    widened([(f, "+ping\\nuser polaris", "+ping\\n" + ops + "user polaris") for f in (gen, rot, helm_secret)],
+            "must FAIL when a fourth user with +@all is written before polaris",
+            "polaris-generate-secrets.sh: Redis users line 3 of format 1 reads 'user ops on nopass ~* +@all'")
+    widened([(f, default, default + " on nopass ~* +@all") for f in (gen, rot, helm_secret)],
+            "must FAIL when the default user is turned on again after off",
+            f"polaris-generate-secrets.sh: Redis users line 1 of format 1 reads '{default} on nopass ~* +@all'")
+    widened([(f, assignment, assignment + "REDIS_ACL_POLARIS_RULES+=' +@admin'\n") for f in (gen, rot)],
+            "must FAIL when the rule gains +@admin by += after its assignment",
+            "polaris-generate-secrets.sh: REDIS_ACL_POLARIS_RULES (its assignment and the printf) appears 3 times")
+    widened([(f, assignment, assignment + 'REDIS_ACL_POLARIS_RULES="${REDIS_ACL_POLARIS_RULES} +@admin"\n')
+             for f in (gen, rot)],
+            "must FAIL when the rule is reassigned with +@admin",
+            "polaris-generate-secrets.sh: REDIS_ACL_POLARIS_RULES (its assignment and the printf) appears 4 times")
+    widened([(gen, '"${REDIS_ACL_POLARIS_RULES}" > "${target}" )\n',
+              '"${REDIS_ACL_POLARIS_RULES}" > "${target}" )\n    printf \'user ops on nopass ~* +@all\\n\' >> "${target}"\n')],
+            "must FAIL when a second printf appends a user",
+            "polaris-generate-secrets.sh: 2 printf formats write Redis users, not one")
+    widened([(f, '"${REDIS_ACL_POLARIS_RULES}" >', '"${REDIS_ACL_POLARIS_RULES} +@all" >') for f in (gen, rot)],
+            "must FAIL when the printf's rule argument carries +@all",
+            "polaris-generate-secrets.sh: the Redis users printf takes other arguments than the hash and the rule")
+    widened([(rot, 'hashes="#$1"', 'hashes="#$1 +@all"')],
+            "must FAIL when rotation's hashes carry +@all",
+            'polaris-rotate-secret.sh: hashes="#$1" appears 0 times, not 1')
+    widened([(rot, '    chmod 0644 "${acl}.new"\n', '    echo "user ops on nopass ~* +@all" >> "${acl}.new"\n    chmod 0644 "${acl}.new"\n')],
+            "must FAIL when an echo appends a user",
+            "polaris-rotate-secret.sh: its code names the Redis users ['user default off', 'user health on', "
+            "'user polaris on', 'user ops on']")
+    widened([(rot, '    chmod 0644 "${acl}.new"\n', '    chmod 0644 "${acl}.new"\n    redis-cli ACL SETUSER ops on nopass +@all\n')],
+            "must FAIL when a writer adds a user through ACL SETUSER",
+            "polaris-rotate-secret.sh: it runs ACL SETUSER")
+    # A heredoc, an unquoted echo or a template join adds a user outside any quoted string.
+    printf_end = '"${REDIS_ACL_POLARIS_RULES}" > "${target}" )\n'
+    helm_end = '" (sha256sum $redisPw) }}\n'
+    widened([(gen, printf_end, printf_end + "    cat >> \"${target}\" <<'ACL'\nuser ops on nopass ~* +@all\nACL\n")],
+            "must FAIL when a heredoc appends a user",
+            "polaris-generate-secrets.sh: its code names the Redis users ['user default off', 'user health on', "
+            "'user polaris on', 'user ops on']")
+    widened([(gen, printf_end, printf_end + '    echo user ops on nopass ~* +@all >> "${target}"\n')],
+            "must FAIL when an unquoted echo appends a user",
+            "polaris-generate-secrets.sh: its code names the Redis users ['user default off', 'user health on', "
+            "'user polaris on', 'user ops on']")
+    widened([(helm_secret, helm_end, helm_end + '{{- $redisAcl = printf "%s user ops on nopass ~* +@all" $redisAcl }}\n')],
+            "must FAIL when the template joins a user onto $redisAcl",
+            "the Helm Secret: its code names the Redis users ['user default off', 'user health on', "
+            "'user polaris on', 'user ops on']")
+    widened([(helm_secret, helm_end, helm_end + '{{- $redisAcl = printf "%suser ops on nopass ~* +@all\\n" $redisAcl }}\n')],
+            "must FAIL when the template joins a user onto $redisAcl with no space before it",
+            "the Helm Secret: $redisAcl (its printf and the Secret's key) appears 4 times, not 2")
+    # The hash reaches the users line only through pinned lines that refuse anything but 64 hex digits:
+    # a `nopass` riding in on it makes polaris accept every password, and the line checks above see the
+    # format and the arguments, not what the hash variable holds.
+    pinned = "the lines from the password's hash to the users printf are not the pinned ones"
+    widened([(gen, "        return 1\n    fi\n    ( umask 0133 && printf 'user default",
+              "        return 1\n    fi\n    printf -v hash '%s nopass' \"${hash}\"\n    ( umask 0133 && printf 'user default")],
+            "must FAIL when the generator's hash gains nopass after its hex check",
+            f"polaris-generate-secrets.sh: {pinned}")
+    widened([(gen, '=~ ^[0-9a-f]{64}$ ]]; then\n        echo "  ✗ redis_users.acl  (could not hash',
+              '=~ ^[0-9a-f]{64} ]]; then\n        echo "  ✗ redis_users.acl  (could not hash')],
+            "must FAIL when the generator's hex check is loosened", f"polaris-generate-secrets.sh: {pinned}")
+    widened([(rot, "| cut -d' ' -f1; }\nwrite_redis_acl", "| cut -d' ' -f1 | sed 's/$/ nopass/'; }\nwrite_redis_acl")],
+            "must FAIL when rotation's hash function adds nopass", f"polaris-rotate-secret.sh: {pinned}")
+    widened([(rot, 'for h in "$@"; do', 'for h in "$1"; do')],
+            "must FAIL when rotation's guard skips the old password's hash", f"polaris-rotate-secret.sh: {pinned}")
+    # The rule line read by bash, not by the capture; and the users file after the printf.
+    whole = "REDIS_ACL_POLARIS_RULES is not set by one whole line ending at its closing quote"
+    widened([(f, assignment, f"REDIS_ACL_POLARIS_RULES='{rule}'' +@admin'\n") for f in (gen, rot)],
+            "must FAIL when bash joins a quoted +@admin onto the rule's line",
+            f"polaris-generate-secrets.sh: {whole}")
+    widened([(f, assignment, f"REDIS_ACL_POLARIS_RULES='{rule}'\"${{POLARIS_REDIS_ACL_EXTRA:-}}\"\n")
+             for f in (gen, rot)],
+            "must FAIL when the rule's line takes more words from the environment",
+            f"polaris-generate-secrets.sh: {whole}")
+    writer = "the users file's writer is not the pinned one from its first line to its closing brace"
+    widened([(gen, '    refuse_directory "${target}" "${pw}" || return 1\n',
+              '    refuse_directory "${target}" "${pw}" || return 1\n'
+              '    cat "${SECRETS_DIR}/redis_users.extra" > "${target}" && return 0\n')],
+            "must FAIL when the generator's writer fills the users file from another file before its printf",
+            f"polaris-generate-secrets.sh: {writer}")
+    widened([(gen, printf_end, printf_end + "    sed -i.bak 's/ -@all +ping +client/ +@all +ping +client/' \"${target}\"\n")],
+            "must FAIL when a sed -i edits the users file after the printf",
+            f"polaris-generate-secrets.sh: {writer}")
+    widened([(rot, '    mv "${acl}.new" "${acl}"\n', '    mv "${acl}.new" "${acl}"\n    sed -i.bak \'s/~polaris:rl:\\*/~*/\' "${acl}"\n')],
+            "must FAIL when a sed -i edits rotation's users file after the move",
+            f"polaris-rotate-secret.sh: {writer}")
+    widened([(gen, "write_redis_acl_if_missing\n",
+              'write_redis_acl_if_missing\ncat "${SECRETS_DIR}/redis_users.extra" >> "${SECRETS_DIR}/redis_users.acl"\n')],
+            "must FAIL when a line outside the writer appends another file to the users file",
+            "polaris-generate-secrets.sh: its code names redis_users.acl 6 times, not 5")
+    widened([(helm_secret, "  redis_users.acl: {{ $redisAcl | b64enc }}\n",
+              '  redis_users.acl: {{ printf "%s%s" $redisAcl (.Values.redis.extraAcl | default "") | b64enc }}\n')],
+            "must FAIL when the Secret's key joins a values string onto the users file",
+            "the Helm Secret: its redis_users.acl key is not exactly {{ $redisAcl | b64enc }}")
+    assert checks.check_redis_authenticated(tmp_path)[0].level == "OK", "the fixture was not restored"
+
+
+def test_redis_persists_nothing_check_discriminates(tmp_path):
+    compose, helm = "polaris_web/docker-compose.prod.yml", "deploy/helm/polaris/templates/redis.yaml"
+    overlays = sorted(p.relative_to(REPO).as_posix() for p in (REPO / "polaris_web").glob("docker-compose.*.yml"))
+    for rel in {compose, helm, *overlays}:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    assert checks.check_redis_persists_nothing(tmp_path)[0].level == "OK", \
+        "must PASS on the real compose file, overlays and chart"
+
+    def broken(rel, old, new, why, reason=None):
+        path = tmp_path / rel
+        good = path.read_text()
+        assert old in good, f"the fixture drifted: {old!r} is no longer in {rel}"
+        path.write_text(good.replace(old, new, 1))
+        bad = checks.check_redis_persists_nothing(tmp_path)[0]
+        assert bad.level == "FAIL", why
+        assert reason is None or reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
+        path.write_text(good)
+
+    broken(compose, "      --appendonly no\n", "      --appendonly yes\n",
+           "must FAIL when the compose Redis writes an append-only file")
+    broken(compose, "      --appendonly no\n", "",
+           "must FAIL when the compose Redis leaves the append-only file to its default")
+    broken(compose, '      --save ""\n', "",
+           "must FAIL when the compose Redis snapshots by its compiled-in default")
+    broken(compose, '      --save ""\n', '      --save "3600 1"\n',
+           "must FAIL when the compose Redis snapshots on a schedule")
+    broken(compose, "      --maxmemory 256mb\n", '      --maxmemory 256mb\n      --save "60 1"\n',
+           "must FAIL when a second --save turns snapshots back on")
+    broken(compose, "      redis-server\n", "      redis-server /usr/local/etc/redis/redis.conf\n",
+           "must FAIL when Redis reads a configuration file that could set persistence")
+    broken(compose, "      --appendonly no\n", "      --appendonly no\n      --include /data/x.conf\n",
+           "must FAIL when the compose Redis includes a configuration file (--include)",
+           "the compose redis: it includes a configuration file (--include)")
+    broken(compose, '      --save ""\n', '      --save ""\n        --appendonly yes\n',
+           "must FAIL when a deeper-indented line of the folded command turns the append-only file on",
+           "the compose redis: the append-only file must be off, once")
+    broken(compose, '      --save ""\n', '      --save ""\n\n      --appendonly yes\n',
+           "must FAIL when a line after a blank line of the folded command turns the append-only file on",
+           "the compose redis: the append-only file must be off, once")
+    broken(compose, '      --save ""\n', '      --save ""\n  \n      --appendonly yes\n',
+           "must FAIL when a line after a whitespace-only line of the folded command turns the append-only "
+           "file on", "the compose redis: the append-only file must be off, once")
+    broken(compose, "    command: >\n      redis-server\n",
+           '    entrypoint: ["sh", "-c", "redis-server --appendonly yes"]\n    command: >\n      redis-server\n',
+           "must FAIL when the compose Redis sets an entrypoint, which runs instead of the checked command",
+           "the compose redis sets an entrypoint")
+    broken(compose, "    command: >\n      redis-server\n",
+           "    extends:\n      file: docker-compose.ha.yml\n      service: redis\n    command: >\n      redis-server\n",
+           "must FAIL when the compose Redis extends another service, whose entrypoint or volumes it takes",
+           "the compose redis sets an entrypoint, extends: or a merge key")
+    broken(compose, "    command: >\n      redis-server\n", "    <<: *other\n    command: >\n      redis-server\n",
+           "must FAIL when the compose Redis merges a YAML anchor (<<:) that can bring an entrypoint or volumes",
+           "the compose redis sets an entrypoint, extends: or a merge key")
+    broken(compose, "    command: >\n      redis-server\n", "    command: >\n      redis-check-aof\n",
+           "must FAIL when the command does not start redis-server")
+    broken(compose, "    command: >\n", "    command_was: >\n",
+           "must FAIL when the compose Redis has no command (an empty or missing command never passes)")
+    broken(compose, "    tmpfs:\n      - /data:size=1m,mode=0700\n", "    volumes:\n      - redis_data:/data\n",
+           "must FAIL when the compose Redis keeps /data on a volume")
+    broken(compose, "    tmpfs:\n      - /data:size=1m,mode=0700\n",
+           "    tmpfs:\n      - /data:size=1m,mode=0700\n    volumes:\n      - redis_data:/var/lib/redis\n",
+           "must FAIL when the compose Redis mounts any volume beside the tmpfs")
+    broken("polaris_web/docker-compose.bluegreen.yml", "services:\n",
+           "services:\n  redis:\n    volumes:\n      - redis_data:/data\n",
+           "must FAIL when an overlay puts a volume back under Redis")
+    broken("polaris_web/docker-compose.bluegreen.yml", "services:\n",
+           "services:\n  redis:\n    tmpfs: !reset []\n",
+           "must FAIL when an overlay drops the tmpfs under Redis (!reset)",
+           "docker-compose.bluegreen.yml overrides the redis command, entrypoint, volumes or tmpfs")
+    broken("polaris_web/docker-compose.bluegreen.yml", "services:\n",
+           "services:\n  redis:\n    extends:\n      service: app\n",
+           "must FAIL when an overlay makes Redis extend another service",
+           "docker-compose.bluegreen.yml overrides the redis command, entrypoint, volumes or tmpfs, or "
+           "extends the service")
+    broken(helm, '"--appendonly", "no"', '"--appendonly", "yes"',
+           "must FAIL when the chart's Redis writes an append-only file")
+    broken(helm, '"--appendonly", "no"', '"--appendonly", "no", "--include", "/x.conf"',
+           "must FAIL when the chart's Redis includes a configuration file (--include)",
+           "the chart's redis: it includes a configuration file (--include)")
+    broken(helm, "          args: [",
+           '          command: ["sh", "-c", "exec redis-server --appendonly yes"]\n          args: [',
+           "must FAIL when the chart's Redis container sets a command:, which runs instead of the checked args",
+           "the chart's redis sets a container command:")
+    broken(helm, "          image: {{ .Values.images.redis }}\n",
+           "          image: {{ .Values.images.redis }}\n"
+           '          command: ["sh", "-c", "redis-server --appendonly yes --save 60 1"]\n',
+           "must FAIL when the chart's Redis container sets a command: beside its image:",
+           "the chart's redis sets a container command:")
+    broken(helm, "          args: [", '          command: ["sh", "-c", "redis-server --appendonly yes"]\n          argz: [',
+           "must FAIL when the chart's Redis container sets a command: and no args:",
+           "the chart's redis sets a container command:")
+    broken(helm, "      containers:\n        - name: redis\n",
+           '      containers:\n        - command: ["sh", "-c", "redis-server --appendonly yes"]\n          name: redis\n',
+           "must FAIL when the chart's Redis container opens with a command:",
+           "the chart's redis sets a container command:")
+    broken(helm, "          image: {{", "          imagez: {{",
+           "must FAIL when the chart's Redis container has no image: line to read its fields by",
+           "the chart's redis has no container image: line")
+    broken(helm, '"--save", "", ', "",
+           "must FAIL when the chart's Redis snapshots by its compiled-in default")
+    broken(helm, '"--save", ""', '"--save", "900 1"',
+           "must FAIL when the chart's Redis snapshots on a schedule")
+    broken(helm, 'args: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory", "256mb", '
+                 '"--maxmemory-policy", "allkeys-lru", "--aclfile", "/run/secrets/redis/users.acl"]',
+           "args: []", "must FAIL when the chart's Redis args are empty (an empty list never passes)")
+    broken(helm, "          args: [", "          argz: [",
+           "must FAIL when the chart's Redis has no args")
+    broken(helm, "emptyDir: {medium: Memory, sizeLimit: 1Mi}", "emptyDir: {}",
+           "must FAIL when the chart's /data is a disk-backed emptyDir")
+    broken(helm, "          emptyDir: {medium: Memory, sizeLimit: 1Mi}",
+           "          emptyDir: {medium: Memory, sizeLimit: 1Mi}\n        - name: old\n"
+           "          persistentVolumeClaim: {claimName: data}",
+           "must FAIL when the chart's Redis pod mounts a volume claim")
 
 
 def test_session_key_rotation_check_discriminates(tmp_path):
@@ -3536,6 +3801,8 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
     broken(doc, "printenv POLARIS_PGBACKREST_S3_BUCKET", "printenv POLARIS_UNSET",
            "must FAIL when the doctor no longer reads where the backup repository is")
     broken(doc, "(start with ${FAILING[0]})", "", "must FAIL when the last line names no component")
+    broken(doc, '"${URL}/.well-known/security.txt" 2> /dev/null)', '"${URL}/api/health/live" 2> /dev/null)',
+           "must FAIL when the doctor judges the edge on a health answer, which the edge refuses from outside")
     broken(drill, "stop redis", "restart redis", "must FAIL when the drill no longer stops Redis")
     broken(drill, 'expect_named secrets', 'expect_clean secrets', "must FAIL when an emptied secret need not be named")
     broken(drill, "POLARIS_DB_SSLMODE: disable", "POLARIS_DB_SSLMODE: require",
@@ -3751,8 +4018,8 @@ def test_failure_domains_check_discriminates(tmp_path):
            "must FAIL when a drain can take the router's last pod")
     broken("deploy/helm/polaris/values.yaml", "  # Two, spread across nodes (lab record 017, gate row OP-7). Each pools for the app pods that reach it.\n  replicas: 2",
            "  replicas: 1", "must FAIL when pgbouncer runs one pod")
-    broken("deploy/helm/polaris/templates/redis.yaml", "        - name: data\n          emptyDir: {}",
-           "        - name: data\n          emptyDir: {}\n  volumeClaimTemplates: []",
+    broken("deploy/helm/polaris/templates/redis.yaml", "        - name: data\n          emptyDir: {medium: Memory, sizeLimit: 1Mi}",
+           "        - name: data\n          emptyDir: {medium: Memory, sizeLimit: 1Mi}\n  volumeClaimTemplates: []",
            "must FAIL when Redis holds a node-local volume again")
 
 
@@ -5226,7 +5493,8 @@ def test_prod_stack_boot_check_discriminates(tmp_path):
     GOOD_CI = ("jobs:\n  prod-stack-boot:\n    steps:\n      run: |\n"
                "        bash scripts/polaris-generate-secrets.sh\n"
                "        docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml up -d\n"
-               "        curl -sk https://localhost:8443/api/health\n")
+               "        curl -sk https://localhost:8443/.well-known/security.txt\n"
+               "        docker exec polaris-app curl -s http://localhost:8000/api/health\n")
 
     def write(ci_text=GOOD_CI, override=True, caddyfile=True):
         ci.write_text(ci_text)
@@ -5261,10 +5529,18 @@ def test_prod_stack_boot_check_discriminates(tmp_path):
     assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
         "must FAIL when the boot does not assert serving through the edge"
 
+    # 4b. Asks the edge for /api/health, which the edge refuses from outside the allow-list -> FAIL.
+    write(ci_text=GOOD_CI.replace("/.well-known/security.txt", "/api/health"))
+    assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the edge is asked for the health answers it refuses"
+    write(ci_text=GOOD_CI.replace("        docker exec polaris-app curl -s http://localhost:8000/api/health\n", ""))
+    assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the roll-up is not read at the app"
+
     # 5. Override + Caddyfile + boots prod compose + secrets + health probe -> OK.
     write()
     assert checks.check_prod_stack_boot(tmp_path)[0].level == "OK", \
-        "must PASS for a full prod-compose boot that generates secrets and probes /api/health"
+        "must PASS for a full prod-compose boot that generates secrets, asks the edge and reads the roll-up"
 
 
 def test_container_hardening_check_discriminates(tmp_path):
@@ -9151,11 +9427,17 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
             p = tmp_path / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
     matcher = ("@metrics_from_outside {\n    path /metrics /api/metrics\n"
                "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
-               "respond @metrics_from_outside 404\n")
+               "respond @metrics_from_outside 404\n"
+               "@health_from_outside {\n    path /api/health /api/health/*\n"
+               "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
+               "respond @health_from_outside 404\n")
     helm = matcher.replace("{$POLARIS_METRICS_ALLOW:0.0.0.0/32}",
                            '{{ .Values.edge.metricsAllow | default "0.0.0.0/32" }}')
-    drill = ('sed -n x "${ROOT}/polaris_web/Caddyfile"\nfor where in "in-network" "via SNAT"; do\n'
-             '    probe 404 "${where}" /metrics\ndone\n')
+    drill = ('sed -n -e x -e \'/@health_from_outside {/,/respond @health_from_outside 404/p\' "${ROOT}/polaris_web/Caddyfile"\n'
+             'HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)\n'
+             'for where in "in-network" "via SNAT"; do\n'
+             '    probe 404 "${where}" /metrics\n'
+             '    for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done\ndone\n')
     good = {
         "polaris_web/Caddyfile": "site {\n" + matcher + "reverse_proxy app:8000\n}\n",
         "polaris_web/Caddyfile.citest": "localhost:8443 {\n" + matcher + "reverse_proxy app:8000\n}\n",
@@ -9188,6 +9470,25 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
            "must FAIL when the chart's default lets private addresses in")
     broken("scripts/polaris-metrics-edge-drill.sh", drill.replace('"via SNAT"', ""),
            "must FAIL when the drill no longer asks through an SNAT hop")
+    # 2026-10-21: the health answers, refused at every edge like the metrics.
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("path /api/health /api/health/*", "path /api/health"),
+           "must FAIL when the compose edge leaves a health path open")
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("respond @health_from_outside 404\n", ""),
+           "must FAIL when the compose edge matches the health paths and serves them anyway")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml",
+           good["deploy/helm/polaris/templates/configmap-caddy.yaml"].replace("path /api/health /api/health/*", "path /api/health/*"),
+           "must FAIL when the chart leaves /api/health open")
+    broken("polaris_web/Caddyfile.citest", good["polaris_web/Caddyfile.citest"].replace(
+               "path /api/health /api/health/*", "path /api/health /api/health/* /api/healthz"),
+           "must FAIL when the CI edge's health rule is not production's")
+    broken("scripts/polaris-metrics-edge-drill.sh", drill.replace("/api/health/ready ", ""),
+           "must FAIL when the drill no longer asks a health path")
+    # A respond line that is commented out refuses nothing: each rule, at each edge.
+    for rule in ("metrics_from_outside", "health_from_outside"):
+        for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
+                    "deploy/helm/polaris/templates/configmap-caddy.yaml"):
+            broken(rel, good[rel].replace(f"respond @{rule} 404\n", f"    # respond @{rule} 404\n"),
+                   f"must FAIL when {rel}'s `respond @{rule} 404` is commented out")
 
 
 def test_image_builds_are_retried_check_fails_when_a_build_bypasses_the_helper(tmp_path):
@@ -14826,8 +15127,55 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
            "    security.record_audit_access(get_db, 'VerificationEvent',\n"
            "                                 result_row_count=len(results))\n"
            "    return render_template('uc7.html')\n")
+    # 2026-10-21: the direct reads (a route whose own SQL names a tracked table or a view over
+    # one), the two exempt routes, and the console with the role it reads as.
+    ROUTES = ("_DURESS = 'SELECT event_id, token_id FROM DuressEvent ORDER BY event_id DESC'\n\n"
+              "@app.route('/tokens/<int:tok_id>')\n"
+              "def tokens_detail(tok_id):\n"
+              "    lifecycle = query('SELECT * FROM TokenLifecycleEvent WHERE token_id = %s', (tok_id,))\n"
+              "    security.record_audit_access(get_db, 'TokenLifecycleEvent',\n"
+              "                                 result_row_count=len(lifecycle))\n"
+              "    return render_template('tokens_detail.html')\n\n"
+              "@app.route('/api/duress/events')\n"
+              "def api_duress_events():\n"
+              "    rows = query(_DURESS)\n"
+              "    security.record_audit_access(get_db, 'DuressEvent', result_row_count=len(rows))\n"
+              "    return jsonify(rows)\n\n"
+              "@app.route('/api/sim/tick', methods=['POST'])\n"
+              "def api_sim_tick():\n"
+              "    return query('SELECT count(*) AS n FROM VerificationEvent', fetch='one')\n\n"
+              "@app.route('/api/duress/record', methods=['POST'])\n"
+              "def api_duress_record():\n"
+              "    execute('INSERT INTO DuressEvent (token_id) VALUES (%s)', (1,))\n"
+              "    return query('SELECT event_id FROM DuressEvent ORDER BY event_id DESC LIMIT 1')\n\n"
+              "@app.route('/audit/access')\n"
+              "def audit_access():\n"
+              "    return query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n")
+    CONSOLE = ("@app.route('/sql', methods=['GET', 'POST'])\n"
+               "def sql_query():\n"
+               "    sql = request.form.get('sql', '')\n"
+               "    conn = psycopg2.connect(**DB_CONFIG)\n"
+               "    conn.set_session(readonly=True)\n"
+               "    with conn.cursor() as cur:\n"
+               "        cur.execute('SET statement_timeout = %s', (5000,))\n"
+               "        cur.execute('SELECT line FROM console_read(%s, %s, %s) AS line', (sql, 501, False))\n"
+               "        lines = cur.fetchall()\n"
+               "    return render_template('sql_console.html', lines=lines)\n")
+    GRANTS = ("CREATE OR REPLACE FUNCTION console_read(p_sql TEXT, p_max_rows INTEGER, p_explain BOOLEAN)\n"
+              "RETURNS SETOF TEXT\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = public, pg_temp\n"
+              "AS $$\nBEGIN\n    RETURN;\nEND;\n$$;\n"
+              "ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO polaris_console_reader;\n"
+              "REVOKE EXECUTE ON FUNCTION console_read(TEXT, INTEGER, BOOLEAN) FROM PUBLIC;\n"
+              "GRANT USAGE ON SCHEMA public TO polaris_console_reader;\n"
+              "GRANT SELECT ON Agency, VerificationContext TO polaris_console_reader;\n")
+    VIEWS = ("CREATE OR REPLACE VIEW v_timeline WITH (security_invoker = true) AS\n"
+             "    SELECT token_id, event_type FROM TokenLifecycleEvent;\n"
+             "CREATE OR REPLACE VIEW v_latest WITH (security_invoker = true) AS\n"
+             "    SELECT * FROM v_timeline;\n")
     good = {'polaris_web/security.py': SEC, 'polaris_sql/05_procedures.sql': SQL,
-            'polaris_web/app.py': APP}
+            'polaris_web/app.py': APP, 'polaris_web/operator_routes.py': ROUTES,
+            'polaris_web/sql_console.py': CONSOLE, 'polaris_sql/09_grants.sql': GRANTS,
+            'polaris_sql/03_view.sql': VIEWS}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -14903,6 +15251,92 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
         "\ndef api_atlas_breakdown():\n    return query('SELECT * FROM atlas_breakdown(%s)', (since,))\n")})
     assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
         "a function that only counts is not an audited read"
+    (tmp_path / 'polaris_sql' / '11_atlas.sql').unlink()
+    write()
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
+        "the good tree, with its direct reads, exemptions and console, must PASS"
+
+    def fails(overrides, why, expect="FAIL"):
+        write(overrides)
+        got = checks.check_audited_reads_are_logged(tmp_path)[0]
+        for rel in set(overrides) - set(good):
+            (tmp_path / rel).unlink()
+        write()
+        assert got.level == expect, why + f" (got {got.level}: {got.message})"
+
+    # THE READS IN PLAIN SIGHT (2026-10-21). /tokens/<id> and /api/duress/events returned a
+    # tracked table's rows with no record, which the procedure rule could not see.
+    drop_tokens_call = ("    security.record_audit_access(get_db, 'TokenLifecycleEvent',\n"
+                        "                                 result_row_count=len(lifecycle))\n")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(drop_tokens_call, "")},
+          "a route selecting a tracked table directly and recording nothing must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        drop_tokens_call, "    # security.record_audit_access(get_db, 'TokenLifecycleEvent')\n")},
+        "a record call that survives only as a comment must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    security.record_audit_access(get_db, 'DuressEvent', result_row_count=len(rows))\n", "")},
+        "a route whose SQL is a module constant it names, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + (
+        "\n@app.route('/timeline/<int:tok_id>')\ndef timeline(tok_id):\n"
+        "    return query('SELECT * FROM v_latest WHERE token_id = %s', (tok_id,))\n")},
+        "a route reading a view over a view over a tracked table, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + (
+        "\n@app.route('/note', methods=['POST'])\ndef note():\n"
+        "    execute('INSERT INTO AuthAuditLog (event_type) VALUES (%s)', ('NOTE',))\n"
+        "    return ''\n")},
+        "a route that only writes a tracked table returns no one's rows and must PASS", expect="OK")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace("def api_sim_tick():", "def api_sim_count():")},
+          "a route renamed out of its exemption, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    return query('SELECT count(*) AS n FROM VerificationEvent', fetch='one')\n",
+        "    return query('SELECT 1', fetch='one')\n")},
+        "an exemption that no longer exempts a read is stale and must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + "\ndef broken(:\n    pass\n"},
+          "a module that does not parse must FAIL rather than hide its routes")
+
+    # THE AUDIT OF THE AUDIT STOPS AT AuditAccessLog: a read of it never records itself.
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    return query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n",
+        "    rows = query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n"
+        "    security.record_audit_access(get_db, 'AuthAuditLog', result_row_count=len(rows))\n"
+        "    return rows\n")},
+        "a route reading AuditAccessLog that calls record_audit_access must FAIL")
+
+    # THE CONSOLE, BY NAME. Its SQL is its caller's, so it reads as a role that holds none of it.
+    fails({'polaris_web/sql_console.py': CONSOLE.replace(
+        "cur.execute('SELECT line FROM console_read(%s, %s, %s) AS line', (sql, 501, False))",
+        "cur.execute(sql)")},
+        "a console that executes its caller's text must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace(
+        "cur.execute('SET statement_timeout = %s', (5000,))", "cur.execute(f'EXPLAIN {sql}')")},
+        "a console that builds a statement from its caller's text must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace("console_read(%s, %s, %s)", "console_rows(%s, %s, %s)")},
+          "a console that does not call console_read must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace("def sql_query():", "def sql_page():")},
+          "a console handler this check cannot find by name must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS.replace("SECURITY DEFINER\n", "")},
+          "a console_read that runs as its caller must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS.replace(
+        "ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO polaris_console_reader;\n", "")},
+        "a console_read left with its loader must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON VerificationEvent TO polaris_console_reader;\n"},
+          "the reader granted a tracked table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON v_latest TO polaris_console_reader;\n"},
+          "the reader granted a view over a tracked table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON ALL TABLES IN SCHEMA public TO polaris_console_reader;\n"},
+          "the reader granted every table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT EXECUTE ON FUNCTION uc7_warrant_audit(INTEGER) TO polaris_console_reader;\n"},
+          "the reader lent a routine must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT polaris_app TO polaris_console_reader;\n"},
+          "the reader made a member of the application role must FAIL")
+    fails({'polaris_sql/migrations/2026-10-22-001-x.up.sql': "GRANT pg_read_all_data TO polaris_console_reader;\n"},
+          "a membership granted by a migration must FAIL too")
+    fails({'polaris_sql/09_grants.sql': GRANTS + (
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO polaris_console_reader;\n")},
+        "a default privilege for the reader must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT polaris_console_reader TO polaris_owner;\n"},
+          "the loader made a member OF the reader holds the reader's rights, not the reverse, "
+          "and must PASS", expect="OK")
 
 
 def test_transparency_program_check_discriminates(tmp_path):

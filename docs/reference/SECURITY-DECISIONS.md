@@ -223,9 +223,11 @@ Pinned by `check_read_replica_routing`.
 ## 10. Audit events
 
 **Written by the application:** `_audit` and `record_audit_access` in
-`polaris_web/security.py`. Both fail open by design: an audit write must not deny a
-legitimate action. `record_audit_access` is the audit's audit, and it must never be called
-from a route that reads the access log itself; the regress stops there by construction.
+`polaris_web/security.py`. `_audit` fails open by design: an audit write must not deny a
+legitimate action. `record_audit_access`, the audit's audit, fails closed: a read of a person's
+history whose `AuditAccessLog` row cannot be written is answered `503`, without its rows. It must
+never be called from a route that reads the access log itself; the regress stops there by
+construction.
 
 **Written by the database**, which is the stronger guarantee: `audit_token_state_change`,
 `record_relying_party_change`, `record_agency_change` and `record_app_user_change` in

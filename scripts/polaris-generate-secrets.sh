@@ -346,7 +346,7 @@ cat <<BANNER
   Next steps:
     1. export POLARIS_DOMAIN=<your domain>
     2. ./scripts/polaris-deploy.sh prod
-    3. curl -fsS https://\${POLARIS_DOMAIN}/api/health | jq .
+    3. docker exec polaris-app curl -fsS http://localhost:8000/api/health | jq .
 
   Rotation:    ./scripts/polaris-rotate-secret.sh <name>
   Threat model & rotation cadence:  docs/operator/SECRETS.md

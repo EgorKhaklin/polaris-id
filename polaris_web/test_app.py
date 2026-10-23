@@ -78,6 +78,22 @@ def _owner_query(sql, params=(), fetch='none'):
         conn.commit()
     finally:
         conn.close()
+
+
+def _audit_access_rows(route):
+    """The AuditAccessLog rows whose filter names `route`, oldest first, read as the owner on a
+    fresh connection, so a request's committed record is seen. Item 14: a test holds a route to
+    its record by the rows one request adds."""
+    conn = psycopg2.connect(cursor_factory=RealDictCursor, **_OWNER_DB_CONFIG)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM AuditAccessLog WHERE filter_criteria_jsonb->>'route' = %s "
+                        "ORDER BY access_id", (route,))
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
 SQL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'polaris_sql')
 
 
@@ -392,6 +408,51 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
             'request_hash': '00' * 32, 'response_hash': '11' * 32})
         self.assertNotEqual(r.status_code, 200)
         self.assertIn(r.status_code, (302, 401, 403))
+
+    def test_exmint_budget_is_not_spent_by_an_unauthenticated_caller(self):
+        """THREAT-MODEL: the exmint: limiter must be spent only AFTER the responder signature
+        authenticates the caller.
+
+        A caller needs only a federated authority's PUBLIC agency_id to post a well-formed,
+        fresh-but-unsigned polaris-exchange-mint/1 statement. While the limiter sat before
+        verify_both, each such attempt consumed a slot in the authority's per-agency bucket
+        (exmint:<id>, 120/min); an unauthenticated flood then filled it and the authority's
+        legitimate service-to-service minting was refused 429 for the window. After the fix the
+        unsigned attempt 401s at verify_both before the limiter, so the bucket is untouched.
+
+        Runs under the placeholder profile with pqc_signing.is_enabled patched True for the
+        request, so the route does not fail closed (503) with or without liboqs; it needs no
+        genuine ML-DSA key or second witness, because every attempt here is unsigned and fails
+        verify_both. The accept (200) path is proven over HTTP by
+        scripts/polaris-federation-instances-drill.py."""
+        from datetime import datetime, timezone
+        # A federated responder authority: a registered key must be present. Its exact bytes do
+        # not matter, because every mint below is unsigned and fails verify_both regardless.
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))
+        flask_app.security.rate_limiter.reset()
+
+        def unsigned():
+            return {'mint': {'format': rp_api._EXCHANGE_MINT_FORMAT, 'requester_public_key_hex': 'cd' * 32,
+                             'context_id': 1, 'request_hash': '00' * 32, 'response_hash': '11' * 32,
+                             'responder_agency_id': 1,
+                             'occurred_at': datetime.now(timezone.utc).replace(microsecond=0)
+                                            .isoformat().replace('+00:00', 'Z')},
+                    'signature_hex': '00' * 64}
+
+        with patch.object(pqc_signing, 'is_enabled', return_value=True):
+            # Spread across four source addresses so the per-address write: limit (60/min) never
+            # fires first; every request still lands on the one per-agency exmint:1 bucket.
+            for i in range(rp_api._EXCHANGE_MINT_RATE_PER_MIN):
+                r = self.client.post('/api/v1/exchange-receipt/1/signed', json=unsigned(),
+                                     environ_overrides={'REMOTE_ADDR': '10.0.0.%d' % (i % 4)})
+                self.assertEqual(r.status_code, 401, r.get_data(as_text=True)[:200])
+            # The (N+1)th unsigned attempt. On 40f63aeb the 120 unsigned attempts above filled
+            # exmint:1, so this one is refused 429 before verify_both; with the fix the unsigned
+            # path never reached the limiter, so the bucket is empty and this is still 401.
+            r = self.client.post('/api/v1/exchange-receipt/1/signed', json=unsigned(),
+                                 environ_overrides={'REMOTE_ADDR': '10.0.0.0'})
+        self.assertEqual(r.status_code, 401, 'an unsigned caller filled the exmint: budget before '
+                         'authenticating: the limiter is spent before verify_both')
 
 
 class ExchangeReceiptLogTests(PolarisTestCase):
@@ -762,6 +823,37 @@ class DocumentSigningTests(UnauthenticatedTestCase):
         self.assertEqual((same.status_code, same.get_json()['error']), (400, 'invalid_request'))
         self.assertEqual(self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id='x')).status_code, 400)
         self.assertEqual(self.client.post('/api/v1/sign/1/holder', json=dict(base, timestamp_agency_id=999999)).status_code, 404)
+
+    def test_sign_budget_is_not_spent_by_a_nonpossessing_caller(self):
+        """THREAT-MODEL: the sign: limiter must be spent only AFTER possession is proven.
+
+        A full presentation shows a stable token value, so a hostile relying party that received
+        one knows a holder's token_value, but not the credential's issued signature. While the
+        limiter sat before _possession_authenticated, that relying party could replay the
+        token_value with a garbage signature and, at 10/min per credential, hold the holder's
+        notary route (POST /api/v1/sign/<agency>/holder) at 429 for one window after another,
+        without ever possessing the credential. After the fix the non-possessing attempt is
+        refused 'not_verifiable' before the limiter, so the budget is untouched and the genuine
+        holder can still sign. Runs under the placeholder profile (the signature it presents is
+        the deployment placeholder, as the rest of this suite)."""
+        tv, sig = self._credential()          # an ACTIVE credential issued by agency 1
+        self._federate(1)
+        flask_app.security.rate_limiter.reset()
+        nonpossessing = {'token_value': tv, 'signature_hex': '00' * 64, 'digest_hex': 'cd' * 32}
+        # The hostile relying party knows the token_value and floods the per-credential bucket
+        # (sign:<hash(tv)>, 10/min) with presentations it cannot sign for.
+        for _ in range(10):
+            r = self.client.post('/api/v1/sign/1/holder', json=nonpossessing)
+            self.assertEqual(r.status_code, 400, r.get_data(as_text=True)[:200])
+            self.assertEqual(r.get_json()['error'], 'not_verifiable')
+        # The genuine holder presents the real credential and must still be signed. On 40f63aeb
+        # the ten non-possessing attempts drained sign:<hash(tv)>, so this is refused 429; with
+        # the fix the budget was never touched, so it is signed (200).
+        genuine = {'token_value': tv, 'signature_hex': sig, 'digest_hex': 'cd' * 32,
+                   'name': 'report.txt', 'purpose': 'test'}
+        r = self.client.post('/api/v1/sign/1/holder', json=genuine)
+        self.assertEqual(r.status_code, 200, 'the holder is locked out of the notary route: the '
+                         'sign: budget was spent by a non-possessing caller')
 
 
 class AuthBrokerTests(UnauthenticatedTestCase):
@@ -2462,6 +2554,31 @@ class TokenTests(PolarisTestCase):
     def test_token_detail_404_for_unknown(self):
         r = self.client.get('/tokens/9999')
         self.assertEqual(r.status_code, 404)
+
+    def test_the_detail_page_records_its_reads_of_the_history(self):
+        """Item 14 (REVIEW-PACKET A-8). /tokens/<id> shows a credential's lifecycle and the
+        verifications of it, the rows /investigate/token/<id> records reading, and it recorded
+        nothing. Each of the two tables leaves one AuditAccessLog row naming the credential, the
+        reader, and how many rows the page shows."""
+        before = len(_audit_access_rows('/tokens'))
+        r = self.client.get('/tokens/2')
+        self.assertEqual(r.status_code, 200)
+        new = _audit_access_rows('/tokens')[before:]
+        self.assertEqual(sorted(row['accessed_table'] for row in new),
+                         ['TokenLifecycleEvent', 'VerificationEvent'])
+        admin = _sql("SELECT user_id FROM AppUser WHERE username = 'admin'", fetch='one')['user_id']
+        held = {table: _sql("SELECT count(*) AS n FROM %s WHERE token_id = 2" % table, fetch='one')['n']
+                for table in ('TokenLifecycleEvent', 'VerificationEvent')}
+        self.assertGreater(held['VerificationEvent'], 0, 'fixture: credential 2 has been verified')
+        for row in new:
+            with self.subTest(table=row['accessed_table']):
+                self.assertEqual(row['filter_criteria_jsonb'], {'route': '/tokens', 'token_id': 2})
+                self.assertEqual(row['actor_user_id'], admin)
+                self.assertEqual(row['result_row_count'],
+                                 min(held[row['accessed_table']], operator_routes.DETAIL_ROWS))
+        # A credential that does not exist is read nowhere and recorded nowhere.
+        self.assertEqual(self.client.get('/tokens/9999').status_code, 404)
+        self.assertEqual(len(_audit_access_rows('/tokens')), before + 2)
 
     def test_token_state_transition_legal(self):
         """ACTIVE → DORMANT is legal."""
@@ -7284,6 +7401,26 @@ class DuressCodeTests(PolarisTestCase):
         data = r.get_json()
         self.assertGreaterEqual(data['count'], 1)
 
+    def test_the_events_api_records_its_read_as_the_dashboard_does(self):
+        """Item 14 (REVIEW-PACKET A-8). /api/duress/events returns the duress rows /duress shows,
+        and only /duress recorded the read. One AuditAccessLog row per request, naming the
+        table, the reader, the bound and how many rows were returned."""
+        with self._db() as conn, conn.cursor() as cur:
+            cur.execute("CALL uc12_record_duress(%s, %s, %s, %s)", (2, 1, 5, 'AUDIT_TABLE'))
+            conn.commit()
+        before = len(_audit_access_rows('/api/duress/events'))
+        r = self.client.get('/api/duress/events')
+        self.assertEqual(r.status_code, 200)
+        returned = r.get_json()['count']
+        self.assertGreaterEqual(returned, 1)
+        new = _audit_access_rows('/api/duress/events')[before:]
+        self.assertEqual(len(new), 1)
+        self.assertEqual(new[0]['accessed_table'], 'DuressEvent')
+        self.assertEqual(new[0]['filter_criteria_jsonb'], {'route': '/api/duress/events', 'limit': 200})
+        admin = _sql("SELECT user_id FROM AppUser WHERE username = 'admin'", fetch='one')['user_id']
+        self.assertEqual(new[0]['actor_user_id'], admin)
+        self.assertEqual(new[0]['result_row_count'], returned)
+
     def test_api_duress_events_operator_rejected(self):
         """Operator role lacks admin/auditor privilege for the duress
         dashboard. Anti-revealing posture extends to API access."""
@@ -7556,9 +7693,9 @@ class SQLConsoleTests(PolarisTestCase):
         self.assertIn('bound to one authority', r.get_data(as_text=True))
         r = self._post('/sql', data={
             'sql': "SELECT set_config('polaris.operator_agency_id', '', false); "
-                   "SELECT individual_id, legal_name FROM Individual ORDER BY individual_id LIMIT 3"})
+                   "SELECT 'row:' || name AS r FROM Agency ORDER BY agency_id"})
         self.assertEqual(r.status_code, 403)
-        self.assertNotIn('Adrian Vasquez', r.get_data(as_text=True),
+        self.assertNotIn('row:California Identity Office', r.get_data(as_text=True),
                          'a bound account\'s query ran')
 
     def test_an_unbound_account_keeps_the_console(self):
@@ -7566,16 +7703,17 @@ class SQLConsoleTests(PolarisTestCase):
         with self.client.session_transaction() as sess:
             sess.pop('operator_agency_id', None)
             _bind_account(sess, None)
-        r = self._post('/sql', data={
-            'sql': 'SELECT individual_id, legal_name FROM Individual ORDER BY individual_id LIMIT 3'})
+        r = self._post('/sql', data={'sql': "SELECT 'row:' || name AS r FROM Agency ORDER BY agency_id"})
         self.assertEqual(r.status_code, 200)
-        self.assertIn('Adrian Vasquez', r.get_data(as_text=True))
+        self.assertIn('row:California Identity Office', _console_table(r)[1])
 
     def test_why_a_bound_account_cannot_have_it_a_query_lifts_its_own_scope(self):
         """The fact the refusal rests on, measured as the application role in a read-only
-        transaction, which is exactly what the console runs. If this ever stops holding (a
-        per-authority database role, say), the refusal can be revisited; until then it is
-        what keeps the isolation claim true."""
+        transaction. The console's text runs as polaris_console_reader since item 14, whose
+        tables are reference data that no authority's scope narrows; this is the fact the refusal
+        rests on again if the reader is ever given a scoped table. If this ever stops holding (a
+        per-authority database role, say), the refusal can be revisited; until then it is what
+        keeps the isolation claim true."""
         conn = psycopg2.connect(**DB_CONFIG)
         try:
             conn.set_session(readonly=True)
@@ -7608,11 +7746,13 @@ class SQLConsoleTests(PolarisTestCase):
         self.assertHTML(r, 'SQL Console', 'Example Queries')
 
     def test_simple_select_works(self):
-        r = self._post('/sql', data={
-            'sql': 'SELECT individual_id, legal_name FROM Individual ORDER BY individual_id LIMIT 3'
-        })
+        r = self._post('/sql', data={'sql': 'SELECT agency_id, name FROM Agency ORDER BY agency_id'})
         self.assertEqual(r.status_code, 200)
-        self.assertHTML(r, 'Adrian Vasquez', 'Maria Santos', 'James Chen')
+        columns, cells = _console_table(r)
+        self.assertEqual(columns, ['agency_id', 'name'])
+        for name in ('US National Identity Service', 'Pennsylvania Identity Bureau',
+                     'California Identity Office'):
+            self.assertIn(name, cells)
 
     def test_update_blocked_by_whitelist(self):
         r = self._post('/sql', data={
@@ -7635,23 +7775,57 @@ class SQLConsoleTests(PolarisTestCase):
         self.assertEqual(r.status_code, 200)
         # Should have rendered a result table
 
-    def test_data_modifying_cte_refused_by_db_readonly(self):
+    def test_data_modifying_cte_refused_in_the_database(self):
         """The keyword whitelist accepts WITH, so a data-modifying CTE
-        (`WITH x AS (DELETE ... RETURNING *) SELECT * FROM x`) slips straight
-        past it. The real boundary is the read-only transaction: Postgres
-        refuses the write itself. This discriminates cleanly — on a writable
-        transaction this 0-row CTE-DELETE would simply succeed and render an
-        empty result; refused, it surfaces the sanitized DB-error message. We
-        target a non-existent id so nothing is mutated even under regression."""
-        r = self._post('/sql', data={
-            'sql': ("WITH gone AS (DELETE FROM Individual WHERE individual_id = -99999 "
-                    "RETURNING individual_id) SELECT * FROM gone"),
-        })
-        self.assertEqual(r.status_code, 200)
-        body = r.get_data(as_text=True).lower()
-        self.assertIn('database error', body,
-                      "a data-modifying CTE must be refused by the read-only "
-                      "transaction, not executed")
+        (`WITH x AS (DELETE ... RETURNING *) SELECT * FROM x`) slips straight past it. The
+        database refuses it twice over: console_read runs the text as a subquery, where the parser
+        refuses a data-modifying WITH, and the transaction is read only. On a writable transaction
+        as the application role this 0-row DELETE would simply succeed and render an empty result;
+        refused, the page carries the sanitized error and no result. The id does not exist, so
+        nothing is changed even under regression."""
+        for explain in ('', '1'):
+            with self.subTest(explain=bool(explain)):
+                r = self._post('/sql', data={
+                    'sql': ("WITH gone AS (DELETE FROM Agency WHERE agency_id = -99999 "
+                            "RETURNING agency_id) SELECT * FROM gone"), 'explain': explain})
+                self.assertEqual(r.status_code, 200)
+                body = r.get_data(as_text=True)
+                self.assertIn('database error', body.lower(),
+                              'a data-modifying CTE must be refused, not executed')
+                self.assertNotIn('<table class="data">', body)
+
+    def test_a_data_modifying_with_is_refused_even_in_a_writable_session(self):
+        """Item 14, condition 4, red first: take the read-only session away. The console before
+        item 14 refused this WITH in its row path only because DECLARE CURSOR refuses one, and
+        its EXPLAIN path ran it; console_read refuses a transaction that is not read only, and
+        its subquery refuses the WITH (ConsoleReaderTests shows that one alone)."""
+        import sql_console
+
+        class _Writable:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def set_session(self, **_):
+                pass                                # the read-only session, taken away
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        class _Psycopg2:
+            errors, Error = psycopg2.errors, psycopg2.Error
+
+            @staticmethod
+            def connect(**kw):
+                return _Writable(psycopg2.connect(**kw))
+
+        for explain in ('', '1'):
+            with self.subTest(explain=bool(explain)), patch.object(sql_console, 'psycopg2', _Psycopg2):
+                r = self._post('/sql', data={
+                    'sql': ("WITH gone AS (DELETE FROM Agency WHERE agency_id = -99999 "
+                            "RETURNING agency_id) SELECT * FROM gone"), 'explain': explain})
+                body = r.get_data(as_text=True)
+                self.assertNotIn('<table class="data">', body, 'the data-modifying WITH ran')
+                self.assertIn('database error', body.lower())
 
     def test_oversized_query_rejected(self):
         """Queries over the length cap must be rejected before execution."""
@@ -7664,7 +7838,7 @@ class SQLConsoleTests(PolarisTestCase):
     def test_explain_analyze_button(self):
         """EXPLAIN ANALYZE button surfaces query plans."""
         r = self._post('/sql', data={
-            'sql': 'SELECT * FROM Individual',
+            'sql': 'SELECT * FROM Agency',
             'explain': '1',
         })
         self.assertEqual(r.status_code, 200)
@@ -7689,11 +7863,98 @@ class SQLConsoleTests(PolarisTestCase):
         # And specifically, the timeout error is what we expect
         self.assertIn('timed out', body.lower())
 
+    def test_the_console_reads_none_of_the_tracked_tables(self):
+        """Item 14 (REVIEW-PACKET A-8, RED-TEAM-SCOPE l.161-164, TA-2). The console's SQL is its
+        caller's, so no route can record what it reads: as polaris_app, an admin's or an
+        auditor's SELECT returned rows of the four tables AuditAccessLog tracks and left no
+        record. As polaris_console_reader the database refuses each of them and a view over
+        one, and the page says why and where those rows are read."""
+        for table in ('VerificationEvent', 'TokenLifecycleEvent', 'AuthAuditLog', 'DuressEvent',
+                      'v_ontology_verification'):
+            with self.subTest(table=table):
+                r = self._post('/sql', data={'sql': 'SELECT * FROM %s LIMIT 3' % table})
+                self.assertEqual(r.status_code, 200)
+                body = r.get_data(as_text=True)
+                self.assertNotIn('<table class="data">', body, '%s rows reached the page' % table)
+                self.assertIn('Permission denied for', body)
+                self.assertIn('It cannot read TokenLifecycleEvent, VerificationEvent, AuthAuditLog '
+                              'or DuressEvent', body)
+
+    def test_a_second_statement_never_runs(self):
+        """Item 14, condition 4, red first: take the one-statement lexer away. The console before
+        item 14 ran every statement in the text and showed the last one's rows on its EXPLAIN
+        path, and ran it unseen beside its cursor on the other; console_read takes the text only
+        as a subquery, where a semicolon is a syntax error, so nothing of it runs."""
+        import sql_console
+        text = "SELECT 1 AS first; SELECT upper('second ran') AS marker"
+        with patch.object(sql_console, 'statement_count', return_value=1):
+            for explain in ('', '1'):
+                with self.subTest(explain=bool(explain)):
+                    body = self._post('/sql', data={'sql': text, 'explain': explain}).get_data(as_text=True)
+                    self.assertNotIn('SECOND RAN', body, 'the second statement ran')
+                    self.assertIn('database error', body.lower())
+                    self.assertNotIn('<table class="data">', body)
+
+    def test_the_page_names_what_it_reads_and_where_the_tracked_rows_are_read(self):
+        import sql_console
+        body = self.client.get('/sql').get_data(as_text=True)
+        for name in sql_console.CONSOLE_TABLES + sql_console.AUDITED_PAGES + (
+                'TokenLifecycleEvent', 'VerificationEvent', 'AuthAuditLog', 'DuressEvent'):
+            with self.subTest(name=name):
+                self.assertIn('<code>%s</code>' % html.escape(name), body)
+
+    def test_the_audited_pages_named_are_the_routes_that_record_their_reads(self):
+        """The page tells its reader where the four tables' rows are read; the list is held to
+        the routes whose handlers call security.record_audit_access."""
+        import inspect
+        import sql_console
+        recording = set()
+        for rule in flask_app.app.url_map.iter_rules():
+            view = inspect.unwrap(flask_app.app.view_functions[rule.endpoint])
+            try:
+                source = inspect.getsource(view)
+            except (OSError, TypeError):
+                continue
+            if 'security.record_audit_access(' in source:
+                recording.add(re.sub(r'<[^>]+>', '<id>', rule.rule))
+        self.assertEqual(recording, set(sql_console.AUDITED_PAGES))
+
+    def test_a_repeated_column_name_keeps_both_columns(self):
+        """console_read hands each row over as a JSON object; the page keeps a name the query
+        repeats as two columns, as a result description would."""
+        r = self._post('/sql', data={'sql': "SELECT 1 AS a, 'two' AS a, NULL AS b"})
+        columns, cells = _console_table(r)
+        self.assertEqual(columns, ['a', 'a', 'b'])
+        self.assertEqual(cells[:2], ['1', 'two'])
+        self.assertIn('NULL', cells[2])
+
+    def test_every_example_runs(self):
+        """The examples are the console's own advice; each runs as the reader."""
+        body = self.client.get('/sql').get_data(as_text=True)
+        examples = [html.unescape(t) for t in re.findall(r'<pre>(.*?)</pre>', body, re.S)]
+        self.assertEqual(len(examples), 4)
+        for text in examples:
+            with self.subTest(text=text.splitlines()[0]):
+                r = self._post('/sql', data={'sql': text})
+                page = r.get_data(as_text=True)
+                self.assertNotIn('class="sql-error"', page)
+                self.assertIn('<table class="data">', page)
+
+
+def _console_table(response):
+    """The SQL console's result table: its column names and its cells, in order."""
+    body = response.get_data(as_text=True)
+    m = re.search(r'<table class="data">(.*?)</table>', body, re.S)
+    if m is None:
+        raise AssertionError('no result table on the page: %s' % body[-600:])
+    return (re.findall(r'<th>(.*?)</th>', m.group(1), re.S),
+            re.findall(r'<td[^>]*>\s*(.*?)\s*</td>', m.group(1), re.S))
+
 
 class BoundedConsoleTests(PolarisTestCase):
-    """lab/strategy/008, step 4. The SQL console reads a query's rows from a server-side cursor
-    and shows at most sql_console.SQL_MAX_ROWS of them, saying when there were more; a web
-    request's statements end before its worker does."""
+    """lab/strategy/008, step 4. The SQL console reads at most sql_console.SQL_MAX_ROWS + 1 rows
+    of a query (console_read stops there) and shows SQL_MAX_ROWS of them, saying when there
+    were more; a web request's statements end before its worker does."""
 
     def test_a_large_result_shows_its_first_rows_and_says_so(self):
         import sql_console
@@ -7764,13 +8025,12 @@ class BoundedConsoleTests(PolarisTestCase):
             with self.subTest(text=text):
                 self.assertEqual(sql_console.statement_count(text), n)
 
-    def test_the_limit_is_set_again_before_the_rows_are_read(self):
-        """A server-side cursor's query runs at the FETCH, after the DECLARE that carried the
-        text. Were a second statement ever let through (the lexer above is the first guard), a
-        SET riding with the DECLARE would otherwise lift the limit for the query itself."""
-        import sql_console
-        with patch.object(sql_console, 'statement_count', return_value=1):
-            r = self._post('/sql', data={'sql': "SELECT pg_sleep(8); SET statement_timeout = 0"})
+    def test_the_text_cannot_lift_its_own_limit(self):
+        """The limit is armed when the statement that calls console_read starts, and the text
+        runs inside that statement: a set_config() in it changes the setting for statements
+        after it, not for the one running."""
+        r = self._post('/sql', data={
+            'sql': "SELECT set_config('statement_timeout', '0', false) AS lifted, pg_sleep(8) AS slept"})
         # Lifted, the sleep would finish and its row would show; held, the database cancels it.
         self.assertIn('timed out', r.get_data(as_text=True).lower())
 
@@ -7780,6 +8040,365 @@ class BoundedConsoleTests(PolarisTestCase):
                               ({'POLARIS_TIMEOUT': '30', 'POLARIS_DB_STATEMENT_TIMEOUT_MS': '9000'}, 9_000)):
             with self.subTest(env=env):
                 self.assertEqual(flask_app._web_statement_timeout_ms(env), expected)
+
+
+class ConsoleReaderTests(unittest.TestCase):
+    """Item 14: the role the SQL console reads as, read back from the database. The census is
+    what makes the console's reads safe to leave unrecorded: polaris_console_reader holds SELECT
+    on the tables sql_console.CONSOLE_TABLES names and on nothing else, EXECUTE on no SECURITY
+    DEFINER routine but its own, no membership and no attribute. Each item is shown to detect
+    its loss, on a grant made inside the test and rolled back. Then the text itself, run as
+    polaris_app through console_read: each way back to the rows is refused, and each refusal
+    has its control, the same text as polaris_app's own statement."""
+
+    def setUp(self):
+        self.conn = psycopg2.connect(**_OWNER_DB_CONFIG)
+        self.addCleanup(self.conn.close)
+        self.addCleanup(self.conn.rollback)
+
+    @staticmethod
+    def census(cur):
+        """What the reader holds beyond its design, one line each; empty when sound."""
+        import sql_console
+        cur.execute("""
+            SELECT 'SELECT on ' || c.oid::regclass::text
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+               AND n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+               AND has_any_column_privilege('polaris_console_reader', c.oid, 'SELECT')
+               AND NOT (n.nspname = 'public' AND c.relname = ANY(%s))
+            UNION ALL
+            SELECT 'EXECUTE on ' || p.oid::regprocedure::text
+              FROM pg_proc p
+             WHERE p.prosecdef AND p.proowner <> 'polaris_console_reader'::regrole
+               AND has_function_privilege('polaris_console_reader', p.oid, 'EXECUTE')
+            UNION ALL
+            SELECT 'member of ' || m.roleid::regrole::text
+              FROM pg_auth_members m WHERE m.member = 'polaris_console_reader'::regrole
+            UNION ALL
+            SELECT 'can ' || a.attr
+              FROM pg_roles r, LATERAL (VALUES ('log in', r.rolcanlogin),
+                                               ('inherit', r.rolinherit),
+                                               ('bypass row-level security', r.rolbypassrls),
+                                               ('create roles', r.rolcreaterole),
+                                               ('create databases', r.rolcreatedb),
+                                               ('replicate', r.rolreplication),
+                                               ('act as a superuser', r.rolsuper)) AS a(attr, held)
+             WHERE r.rolname = 'polaris_console_reader' AND a.held
+             ORDER BY 1""", ([t.lower() for t in sql_console.CONSOLE_TABLES],))
+        return [row[0] for row in cur.fetchall()]
+
+    def test_the_reader_holds_its_tables_and_nothing_more(self):
+        import sql_console
+        with self.conn.cursor() as cur:
+            self.assertEqual(self.census(cur), [])
+            # And the whole list: a table left out of the grant is an example that fails.
+            cur.execute("SELECT c.relname FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace "
+                        "AND has_table_privilege('polaris_console_reader', c.oid, 'SELECT')")
+            self.assertEqual(sorted(row[0] for row in cur.fetchall()),
+                             sorted(t.lower() for t in sql_console.CONSOLE_TABLES))
+
+    def test_each_item_of_the_census_detects_its_loss(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT p.oid::regprocedure::text FROM pg_proc p "
+                        "WHERE p.prosecdef AND p.pronamespace = 'public'::regnamespace "
+                        "AND p.proowner <> 'polaris_console_reader'::regrole ORDER BY 1 LIMIT 1")
+            definer = cur.fetchone()[0]
+            cur.execute("SELECT c.oid::regclass::text FROM pg_class c WHERE c.relkind = 'S' "
+                        "AND c.relnamespace = 'public'::regnamespace ORDER BY 1 LIMIT 1")
+            sequence = cur.fetchone()[0]
+        self.conn.rollback()
+        for grant, said in (
+                ("GRANT SELECT ON VerificationEvent TO polaris_console_reader",
+                 'SELECT on verificationevent'),
+                ("GRANT SELECT ON SEQUENCE %s TO polaris_console_reader" % sequence,
+                 'SELECT on ' + sequence),
+                ("GRANT SELECT (event_id) ON VerificationEvent TO polaris_console_reader",
+                 'SELECT on verificationevent'),
+                ("GRANT SELECT ON v_ontology_verification TO polaris_console_reader",
+                 'SELECT on v_ontology_verification'),
+                ("GRANT EXECUTE ON ROUTINE %s TO polaris_console_reader" % definer,
+                 'EXECUTE on ' + definer),
+                ("GRANT polaris_app TO polaris_console_reader", 'member of polaris_app'),
+                ("GRANT pg_read_all_data TO polaris_console_reader", 'member of pg_read_all_data'),
+                ("ALTER ROLE polaris_console_reader LOGIN", 'can log in'),
+                ("ALTER ROLE polaris_console_reader INHERIT", 'can inherit')):
+            with self.subTest(grant=grant):
+                try:
+                    with self.conn.cursor() as cur:
+                        cur.execute(grant)
+                        self.assertIn(said, self.census(cur))
+                finally:
+                    self.conn.rollback()
+
+    def test_console_read_is_the_readers_with_its_search_path_pinned(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT p.prosecdef, p.proowner::regrole::text, p.proconfig, "
+                        "has_function_privilege('public', p.oid, 'EXECUTE'), "
+                        "has_function_privilege('polaris_app', p.oid, 'EXECUTE') "
+                        "FROM pg_proc p WHERE p.oid = 'console_read(text, integer, boolean)'::regprocedure")
+            definer, owner, config, public, app = cur.fetchone()
+        self.assertTrue(definer)
+        self.assertEqual(owner, 'polaris_console_reader')
+        self.assertEqual(config, ['search_path=public, pg_temp'])
+        self.assertFalse(public, 'PUBLIC may run console_read')
+        self.assertTrue(app)
+
+    def _app(self):
+        cfg = dict(_OWNER_DB_CONFIG, user='polaris_app',
+                   password=os.environ.get('POLARIS_APP_TEST_PASSWORD', 'polaris_dev_password'))
+        try:
+            conn = psycopg2.connect(**cfg)
+        except psycopg2.OperationalError as exc:
+            if os.environ.get('CI'):
+                self.fail('polaris_app unreachable in CI: %s' % exc)
+            self.skipTest('polaris_app unreachable: %s' % exc)
+        self.addCleanup(conn.close)
+        conn.set_session(readonly=True)
+        return conn
+
+    @staticmethod
+    def _console(conn, text, rows=10, explain=False):
+        """The text as the console sends it: ('rows', lines) or ('refused', the server's words)."""
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT line FROM console_read(%s, %s, %s) AS line", (text, rows, explain))
+                return 'rows', [row[0] for row in cur.fetchall()]
+        except psycopg2.Error as e:
+            return 'refused', e.diag.message_primary
+        finally:
+            conn.rollback()
+
+    @staticmethod
+    def _plain(conn, text):
+        """The same text as polaris_app's own statement: the control."""
+        try:
+            with conn.cursor() as cur:
+                cur.execute(text)
+                return 'rows', (cur.fetchall() if cur.description else [])
+        except psycopg2.Error as e:
+            return 'refused', e.diag.message_primary
+        finally:
+            conn.rollback()
+
+    def test_the_text_cannot_climb_back_to_the_role_that_called_it(self):
+        """Inside a SECURITY DEFINER function PostgreSQL refuses to change the role or the
+        session's authorization, and a statement of either is not a subquery: the parser refuses
+        it where the subquery's grammar ends (RESET and SET are unreserved words, so where that is
+        depends on the statement)."""
+        conn = self._app()
+        for text, said in (
+                ("SELECT set_config('role', 'polaris_app', false) AS r",
+                 'cannot set parameter "role" within security-definer function'),
+                ("SELECT set_config('role', 'none', false) AS r",
+                 'cannot set parameter "role" within security-definer function'),
+                ("SELECT set_config('session_authorization', 'polaris_app', false) AS r",
+                 'cannot set parameter "session_authorization" within security-definer function'),
+                ("RESET ROLE", 'syntax error at or near'),
+                ("SET ROLE polaris_app", 'syntax error at or near'),
+                ("SET SESSION AUTHORIZATION polaris_app", 'syntax error at or near')):
+            with self.subTest(text=text):
+                verdict, words = self._console(conn, text)
+                self.assertEqual(verdict, 'refused', words)
+                self.assertTrue(words.startswith(said), words)
+                self.assertEqual(self._plain(conn, text)[0], 'rows', 'control: polaris_app runs it')
+
+    def test_the_tracked_rows_are_out_of_reach_by_every_route_in(self):
+        """The table, a view over it, an invoker routine that reads it and a SECURITY DEFINER
+        routine, each refused through console_read and each open to polaris_app (the control)."""
+        conn = self._app()
+        with conn.cursor() as cur:
+            cur.execute("SELECT p.proname, p.oid::regprocedure::text FROM pg_proc p "
+                        "WHERE p.prosecdef AND p.prokind = 'f' "
+                        "AND p.pronargs = 0 AND p.pronamespace = 'public'::regnamespace "
+                        "AND p.proowner <> 'polaris_console_reader'::regrole "
+                        "AND has_function_privilege('polaris_app', p.oid, 'EXECUTE') "
+                        "ORDER BY 1 LIMIT 1")
+            row = cur.fetchone()
+        conn.rollback()
+        if row is None:
+            self.fail('fixture: no SECURITY DEFINER function polaris_app may run')
+        definer, signature = row
+        for text, said in (
+                ("SELECT * FROM VerificationEvent LIMIT 1", 'permission denied for table verificationevent'),
+                ("SELECT * FROM v_ontology_verification LIMIT 1",
+                 'permission denied for view v_ontology_verification'),
+                ("SELECT * FROM uc7_warrant_audit(3)", 'permission denied for table'),
+                ("SELECT %s() AS f" % definer, 'permission denied for function %s' % definer)):
+            with self.subTest(text=text):
+                verdict, words = self._console(conn, text)
+                self.assertEqual(verdict, 'refused')
+                self.assertTrue(words.startswith(said), words)
+                if text.startswith('SELECT * FROM'):
+                    self.assertEqual(self._plain(conn, text)[0], 'rows', 'control: polaris_app reads it')
+        with conn.cursor() as cur:
+            cur.execute("SELECT has_function_privilege('polaris_app', %s::regprocedure, 'EXECUTE')",
+                        (signature,))
+            self.assertTrue(cur.fetchone()[0], 'control: polaris_app may run %s' % definer)
+        conn.rollback()
+
+    def test_no_count_reaches_the_console(self):
+        """A count cell can be one event at a known authority, context and hour. The Atlas
+        withholds every count below atlas_routes._ATLAS_MIN_CELL, and the console, which records
+        no read, would return it whole. So each count table, and atlas_stats(), which reads them
+        as its caller, is refused through console_read. As polaris_app's own statements the
+        fixture's cell below the bound is there, and atlas_stats() answers (the controls)."""
+        conn = self._app()
+        small = "SELECT * FROM VerificationRollup WHERE n < %d" % atlas_routes._ATLAS_MIN_CELL
+        verdict, words = self._console(conn, small)
+        self.assertEqual(verdict, 'refused', words)
+        self.assertTrue(words.startswith('permission denied for table verificationrollup'), words)
+        verdict, cells = self._plain(conn, small)
+        self.assertEqual(verdict, 'rows', cells)
+        self.assertTrue(cells, 'control: the fixture has no cell below the bound')
+        stats = "SELECT * FROM atlas_stats(NULL, FALSE)"
+        verdict, words = self._console(conn, stats)
+        self.assertEqual(verdict, 'refused', words)
+        self.assertTrue(words.startswith('permission denied for table'), words)
+        verdict, row = self._plain(conn, stats)
+        self.assertEqual((verdict, len(row)), ('rows', 1), 'control: atlas_stats() answers polaris_app')
+        for table in ('PopulationCount', 'PopulationCountDelta', 'EnrollmentCount', 'EnrollmentCountDelta',
+                      'VerificationRollup', 'VerificationRollupDaily', 'VerificationRollupDelta',
+                      'LifecycleRollup', 'LifecycleRollupDaily', 'LifecycleRollupDelta'):
+            with self.subTest(table=table):
+                text = "SELECT * FROM %s LIMIT 1" % table
+                verdict, words = self._console(conn, text)
+                self.assertEqual(verdict, 'refused', words)
+                self.assertTrue(words.startswith('permission denied for table %s' % table.lower()), words)
+                self.assertEqual(self._plain(conn, text)[0], 'rows', 'control: polaris_app reads it')
+
+    def test_the_text_is_one_subquery_and_writes_nothing(self):
+        """Condition 4: a text that closes the subquery and opens more statements is refused
+        before any of them runs (its sleep would take three seconds), and a data-modifying WITH
+        is refused by the parser. As polaris_app's own statements, the first runs every statement
+        and the second reaches the read-only check (the controls)."""
+        import time
+        conn = self._app()
+        breakout = "SELECT 1 AS j) AS console_query; SELECT pg_sleep(3); SELECT * FROM (SELECT 1 AS a"
+        for explain in (False, True):
+            with self.subTest(explain=explain):
+                started = time.monotonic()
+                self.assertEqual(self._console(conn, breakout, explain=explain),
+                                 ('refused', 'cannot open multi-query plan as cursor'))
+                self.assertLess(time.monotonic() - started, 3, 'a statement after the subquery ran')
+        self.assertEqual(self._plain(conn, "SELECT 1 AS a; SELECT 2 AS b"), ('rows', [(2,)]))
+        cte = ("WITH gone AS (DELETE FROM Agency WHERE agency_id = -99999 RETURNING agency_id) "
+               "SELECT * FROM gone")
+        self.assertEqual(self._console(conn, cte),
+                         ('refused', 'WITH clause containing a data-modifying statement must be at the top level'))
+        # PostgreSQL names the statement it refuses by its top level, the SELECT.
+        self.assertEqual(self._plain(conn, cte), ('refused', 'cannot execute SELECT in a read-only transaction'))
+
+    def test_console_read_runs_read_only_as_the_reader_and_bounded(self):
+        conn = self._app()
+        self.assertEqual(self._console(conn, 'SELECT 1 AS a'), ('rows', ['{"a":1}']))
+        self.assertEqual(self._console(conn, 'SELECT n FROM generate_series(1, 9) n', rows=3),
+                         ('rows', ['{"n":1}', '{"n":2}', '{"n":3}']))
+        self.assertEqual(self._console(conn, 'SELECT 1 AS a', rows=0),
+                         ('refused', 'console_read needs a positive row bound'))
+        conn.set_session(readonly=False)
+        self.assertEqual(self._console(conn, 'SELECT 1 AS a'),
+                         ('refused', 'console_read runs only in a READ ONLY transaction'))
+        # A copy left owned by its loader (a load that stopped, say) runs nothing.
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT current_user")
+            loader = cur.fetchone()[0]
+            cur.execute("ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO %s"
+                        % psycopg2.extensions.quote_ident(loader, cur))
+            cur.execute("SET TRANSACTION READ ONLY")
+        self.assertEqual(self._console(self.conn, 'SELECT 1 AS a'),
+                         ('refused', 'console_read runs only as polaris_console_reader, not as %s' % loader))
+
+
+class AuditedReadsFailClosedTests(PolarisTestCase):
+    """A read of a person's history whose AuditAccessLog row cannot be written is not returned:
+    security.record_audit_access fails closed. Each route that records its reads answers once as
+    it is, with what it read, and once more with AuditAccessLog refusing every insert (a trigger
+    the owner adds for the test), when it must answer 503 with none of it. Until 2026-10-21 the
+    record failed open, and the second answer carried the same rows, unrecorded."""
+
+    def _refuse_the_log(self):
+        """AuditAccessLog refuses every insert until the test ends."""
+        _owner_query("CREATE FUNCTION test_refuse_audit_access_write() RETURNS trigger "
+                     "LANGUAGE plpgsql AS $$ BEGIN "
+                     "RAISE EXCEPTION 'test: AuditAccessLog refuses this row'; END $$")
+        self.addCleanup(_owner_query,
+                        "DROP FUNCTION IF EXISTS test_refuse_audit_access_write() CASCADE")
+        _owner_query("CREATE TRIGGER test_refuse_audit_access_write BEFORE INSERT ON AuditAccessLog "
+                     "FOR EACH ROW EXECUTE FUNCTION test_refuse_audit_access_write()")
+
+    def _withheld(self, *answers):
+        """Each (name, fetch, shows): fetch() answers 200 with what the route read (shows(answer)
+        says so) while the log takes its row, and 503 without it once the log refuses."""
+        for name, fetch, shows in answers:
+            answer = fetch()
+            self.assertEqual(answer.status_code, 200, name)
+            self.assertTrue(shows(answer), '%s: the control answer must carry what it read' % name)
+        self._refuse_the_log()
+        for name, fetch, shows in answers:
+            answer = fetch()
+            self.assertFalse(shows(answer), '%s answered %d with what it read while AuditAccessLog '
+                             'refused its row' % (name, answer.status_code))
+            self.assertEqual(answer.status_code, 503, name)
+            self.assertIn('could not be recorded', answer.get_data(as_text=True), name)
+
+    @staticmethod
+    def _holder(token_id=2):
+        conn = psycopg2.connect(cursor_factory=RealDictCursor, **_OWNER_DB_CONFIG)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT i.individual_id, i.legal_name FROM IdentityToken t "
+                            "JOIN Individual i ON i.individual_id = t.individual_id "
+                            "WHERE t.token_id = %s", (token_id,))
+                return cur.fetchone()
+        finally:
+            conn.close()
+
+    def _page_naming(self, path, name):
+        return (path, lambda: self.client.get(path),
+                lambda answer: name in html.unescape(answer.get_data(as_text=True)))
+
+    def test_the_credential_pages_withhold_what_they_read(self):
+        holder = self._holder()
+        self._withheld(
+            self._page_naming('/tokens/2', holder['legal_name']),
+            self._page_naming('/investigate/token/2', holder['legal_name']),
+            self._page_naming('/investigate/individual/%d' % holder['individual_id'],
+                              holder['legal_name']),
+            ('/api/tokens/2/export', lambda: self.client.get('/api/tokens/2/export'),
+             lambda answer: ((answer.get_json(silent=True) or {}).get('token') or {}).get(
+                 'holder_name') == holder['legal_name']))
+
+    def test_the_verification_log_withholds_its_rows_in_each_mode(self):
+        def rows(answer):
+            return '<tr data-key="' in answer.get_data(as_text=True)
+        self._withheld(*[(path, (lambda p=path: self.client.get(p)), rows)
+                         for path in ('/verifications', '/verifications?outcome=SUCCESS',
+                                      '/verifications?page=1')])
+
+    def test_the_warrant_audit_withholds_the_history(self):
+        """uc7_warrant_audit holds its rows when it records the read, and catches psycopg2.Error
+        and ValueError to show its own errors; the refusal is neither, so it reaches the 503
+        handler and the rows do not reach the page."""
+        self._withheld(('/uc7/warrant-audit',
+                        lambda: self._post('/uc7/warrant-audit', data={'individual_id': '3'}),
+                        lambda answer: 'id="op-res-h"' in answer.get_data(as_text=True)))
+
+    def test_the_duress_pages_withhold_the_events(self):
+        _owner_query("CALL uc12_record_duress(%s, %s, %s, %s)", (2, 1, 5, 'AUDIT_TABLE'))
+        holder = self._holder()
+        self._withheld(
+            self._page_naming('/duress', holder['legal_name']),
+            ('/api/duress/events', lambda: self.client.get('/api/duress/events'),
+             lambda answer: bool((answer.get_json(silent=True) or {}).get('events'))))
+
+    def test_a_table_the_log_does_not_track_is_refused(self):
+        """No row can record a read of a table outside AUDIT_TABLES_TRACKED, so the call refuses
+        like any other unrecorded read, and the caller's rows are not returned."""
+        with flask_app.app.test_request_context('/'):
+            with self.assertRaises(flask_app.security.AuditAccessNotRecorded):
+                flask_app.security.record_audit_access(
+                    flask_app.get_db, 'IdentityToken', filter_criteria={'route': '/test'})
 
 
 # ============================================================================
@@ -12401,6 +13020,40 @@ class HealthEndpointTests(PolarisTestCase):
         # The state-dir probe (present on a healthy disk check before this fix)
         # must not appear anywhere in the serialized body.
         self.assertNotIn('mount_probe', json.dumps(data))
+
+    def test_no_health_answer_names_the_signing_key(self):
+        """The health answers are unauthenticated. The custody key id names where the signing key
+        lives: under AWS KMS the key's ARN (account, region, key), under PKCS#11 the token and key
+        labels. No health route carries it, whatever the edge in front does; an operator reads it
+        from `custody.py describe` (KEY-CEREMONY.md). The driver and the public-key fingerprint stay:
+        the fingerprint is sha3-256 of the public key the trust list already publishes."""
+        import threading
+        from unittest import mock
+        from app import app as polaris_app
+        pk = bytes(range(256)) * 7 + bytes(160)          # ML-DSA-65's 1952 bytes
+        arn = 'arn:aws:kms:eu-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab'
+        kms = object.__new__(custody.AwsKmsCustody)   # no __init__: no AWS call
+        kms._arn, kms._pk = arn, pk
+        hsm = object.__new__(custody.Pkcs11Custody)   # no __init__: no token opened
+        hsm._token_label, hsm._key_label, hsm._pk, hsm._lock = 'ops-hsm-7', 'issuer-2026', pk, threading.Lock()
+        # Every health route the app serves, read from its URL map: a fourth one is either covered
+        # here or fails this count.
+        health_paths = sorted({r.rule for r in polaris_app.url_map.iter_rules() if r.rule.startswith('/api/health')})
+        self.assertEqual(len(health_paths), 3, health_paths)
+        for driver, held, needles in (('awskms', kms, (arn, '111122223333', 'eu-west-1', '1234abcd-12ab')),
+                                      ('pkcs11', hsm, ('ops-hsm-7', 'issuer-2026'))):
+            self.assertTrue(all(n in held.key_id for n in needles), held.key_id)
+            with mock.patch.object(custody, 'get_custody', return_value=held):
+                with polaris_app.test_client() as c:
+                    bodies = {p: c.get(p) for p in health_paths}
+            for path, r in bodies.items():
+                text = r.get_data(as_text=True)
+                for needle in needles:
+                    self.assertNotIn(needle, text, f"{path} names the {driver} signing key ({needle})")
+            for path in ('/api/health', '/api/health/ready'):
+                c_check = json.loads(bodies[path].get_data(as_text=True))['checks']['custody']
+                self.assertEqual(c_check['driver'], driver, path)
+                self.assertEqual(c_check['public_key_fingerprint'], custody.fingerprint(pk), path)
 
     def test_stats_endpoint_returns_hud_signals(self):
         """The headline the map's corners show: the window's counts and the population's active

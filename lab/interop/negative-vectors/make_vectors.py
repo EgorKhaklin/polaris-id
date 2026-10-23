@@ -426,19 +426,24 @@ def _make_vectors():
         ("kb-nonce-missing", "the Key Binding JWT has no nonce", "spec", "sd-jwt",
          (RFC9901_KB_NONCE_REQUIRED, RFC9901_KB_BOUND, OID4VP_NONCE), {"kb_payload": lambda b: b.pop("nonce")}, "reject"),
         # 0.3.0: the signer is not the named issuer. Another issuer's valid leaf, under the trusted root, signs
-        # with that issuer's own key a credential whose iss is ISSUER. spec-implied: s2.5 makes the leaf's
-        # subject the issuer and requires the key to be the issuer's; no sentence names the comparison.
+        # with that issuer's own key a credential whose iss is ISSUER. policy (0.3.1; spec-implied in 0.3.0): no
+        # sentence requires comparing iss with the leaf's names, and oauth-wg/oauth-sd-jwt-vc PR #436 (merged
+        # 2026-10-14) adds to s2.5: "If the `iss` claim is also present, there is no requirement that its value
+        # directly correspond to a subject name in the end-entity certificate." Refusing is a relying party's
+        # policy where one root certifies several issuers; the verdict is that of a verifier requiring the leaf
+        # to name iss. No published draft carries #436's text yet (draft-19 was the latest on 2026-10-21), so it
+        # is not one of the clauses.
         ("x5c-leaf-names-other-issuer", "another issuer's leaf, under the trusted root and naming %s as its URI, "
-         "signs a credential whose iss is %s" % (OTHER_ISSUER, ISSUER), "spec-implied", "x5c-issuer",
+         "signs a credential whose iss is %s" % (OTHER_ISSUER, ISSUER), "policy", "x5c-issuer",
          (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
          {"x5c": (OTHER_LEAF_URI, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
         ("x5c-leaf-names-other-host", "another issuer's leaf, under the trusted root and naming only the DNS host %s, "
          "signs a credential whose iss is %s: it names neither that URL nor its host" % (OTHER_HOST, ISSUER),
-         "spec-implied", "x5c-issuer", (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
+         "policy", "x5c-issuer", (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
          {"x5c": (OTHER_LEAF_DNS, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
         ("x5c-leaf-uri-beats-host", "another issuer's leaf, under the trusted root, names %s as its URI and also the "
          "host issuer.example, which both share; it signs a credential whose iss is %s" % (OTHER_ISSUER, ISSUER),
-         "spec-implied", "x5c-issuer", (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
+         "policy", "x5c-issuer", (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
          {"x5c": (OTHER_LEAF_URI_AND_HOST, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
         # 0.3.0: status goes dark. The control's credential with a status claim; `status_list` is what its uri
         # answers with (null: no answer). The verdict is the status-required policy's: the draft says SHOULD
@@ -507,7 +512,7 @@ def build():
                             **extra))
     return {
         "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
-        "version": "0.3.0",
+        "version": "0.3.1",
         "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them."
                    + "".join(" The %s key came from %s." % kv for kv in _SUPPLIED),
         "settings": {"now": NOW, "nonce": NONCE, "audience": AUDIENCE, "vct": VCT, "max_skew_seconds": 300,
@@ -520,12 +525,15 @@ def build():
                    "sd-jwt-vc": "the SD-JWT VC profile, which a verifier of SD-JWT VCs applies",
                    "openid4vp": "OpenID4VP 1.0, which a verifier receiving presentations over it applies",
                    "haip-x509": "the issuer's x5c chain under HAIP 1.0 and RFC 5280, which a verifier resolving keys from x5c applies",
-                   "x5c-issuer": "the binding of iss to the x5c leaf that signed (SD-JWT VC s2.5), which a verifier resolving keys from x5c applies",
+                   "x5c-issuer": "the binding of iss to the x5c leaf that signed (SD-JWT VC s2.5), which a verifier resolving keys from x5c "
+                                 "applies when it requires the leaf to name iss",
                    "status-list": "the Token Status List (draft-ietf-oauth-status-list), which a verifier checking status applies under the vector's policy"},
         "classes": {"control": "a valid presentation: a correct verifier accepts it",
                     "spec": "a sentence of the cited text requires the refusal",
                     "spec-implied": "the cited sentence binds the issuer or the wallet, or a definition implies the refusal",
-                    "policy": "the cited text says the verifier SHOULD refuse, and no sentence requires it: the verdict is the one the vector's policy reaches"},
+                    "policy": "no sentence requires the refusal: either the cited text says the verifier SHOULD refuse, and the verdict "
+                              "is the one the vector's policy reaches, or the text leaves the check to the verifier, and the verdict is "
+                              "that of a verifier that applies it (for x5c-issuer, one that requires the leaf to name iss)"},
         "policies": {"status-required": "the relying party checks status: a credential that names a Token Status List is "
                                         "accepted only when the list its uri answers with is a Status List Token, signed by "
                                         "the key settings.status_list_keys states for the credential's iss and that uri, "

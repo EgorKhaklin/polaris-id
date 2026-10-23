@@ -1,7 +1,7 @@
 {
   "id": "ro-02-ro-04-two-registrar-datasets",
   "changed": "a second registrar_dataset element",
-  "class": "spec",
+  "class": "spec-implied",
   "clauses": [
     "ETSI TS 119 472-2 V1.2.1 OIDFVP-HAIP-COMMON-REQ-RO-02",
     "ETSI TS 119 472-2 V1.2.1 OIDFVP-HAIP-COMMON-REQ-RO-04"

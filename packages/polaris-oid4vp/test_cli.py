@@ -441,6 +441,16 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         _, seen2, _, _ = self._serve()
         self.assertIsNotNone(seen2["kwargs"]["certfile"], "by default the listener still serves TLS")
 
+    def test_the_listener_binds_this_machine_only_by_default(self):
+        """The README says the listener binds --bind, localhost by default: 127.0.0.1, with or
+        without TLS. Every interface is the caller's choice."""
+        for extra in ((), ("--no-local-tls",)):
+            with self.subTest(extra=extra):
+                _, seen, _, _ = self._serve(*extra)
+                self.assertEqual(seen["kwargs"]["host"], "127.0.0.1")
+        _, seen, _, _ = self._serve("--bind", "0.0.0.0")
+        self.assertEqual(seen["kwargs"]["host"], "0.0.0.0")
+
     def test_an_unreadable_trust_anchor_file_is_refused(self):
         bad = self.tmp / "not-a-cert.pem"
         bad.write_text("hello")
@@ -584,6 +594,197 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         self.assertNotIn("\x1b", line)
         self.assertEqual(line.count("\n"), 1, line)
 
+
+class ServeResultFileTests(unittest.TestCase):
+    """`serve --once --result FILE`: what became of the request --once started, as one JSON
+    object in a file of its own, never on the stream the log goes to. Each case hands the hooks
+    `serve` was given a real verifier's answers, so the file is held to what the verifier decided
+    and to the `<-` line it printed."""
+
+    def setUp(self):
+        import json
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-result-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        keygen(self.tmp, "verifier.test")
+        self.wallet = Wallet()
+        self.jwks = self.tmp / "issuers.json"
+        self.jwks.write_text(json.dumps([self.wallet.issuer_jwk]))
+        self.path = self.tmp / "result.json"
+
+    def _serve(self, *extra):
+        return ServeCommandHeldOutTests._serve(self, *extra)
+
+    def _started(self):
+        rc, seen, out, err = self._serve("--issuer-jwks", str(self.jwks), "--once",
+                                         "--result", str(self.path))
+        self.assertEqual(rc, 0, err)
+        (session,) = seen["verifier"]._sessions.values()
+        return seen, session, out
+
+    def _read(self):
+        import json
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
+    def _answer(self, seen, form):
+        """One response at the response URI, as serve's handler answers it."""
+        import contextlib
+        import io
+        status, body, verdict = seen["verifier"].handle_direct_post(form)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            seen["kwargs"]["on_verdict"](status, body, verdict)
+        return status, verdict, out.getvalue()
+
+    def test_before_any_response_it_says_nothing_was_received(self):
+        seen, session, out = self._started()
+        self.assertEqual(self._read(), {"outcome": "nothing_received", "state": session.state,
+                                        "request_object": {"served": 0, "refused": 0},
+                                        "responses": 0})
+        self.assertNotIn('"outcome"', out, "the result went to the log's stream")
+
+    def test_a_refusal_names_the_check_and_the_reason_the_line_prints(self):
+        seen, session, _ = self._started()
+        jar = seen["verifier"].request_object(session.state)
+        status, verdict, line = self._answer(seen, self.wallet.respond(jar, nonce="wrong"))
+        doc = self._read()
+        self.assertEqual((status, verdict.code), (400, "nonce"))
+        self.assertEqual({k: doc[k] for k in ("outcome", "response", "check", "reason", "responses")},
+                         {"outcome": "refused", "response": {"status_code": 400}, "check": "nonce",
+                          "reason": verdict.reason, "responses": 1})
+        self.assertTrue(doc["reason"])
+        self.assertEqual(line, "  <- 400 refused: %s: %s\n" % (doc["check"], doc["reason"]))
+        self.assertNotIn("claims", doc)
+
+    def test_an_accepted_presentation_is_accepted_and_stays_so(self):
+        seen, session, _ = self._started()
+        seen["kwargs"]["on_request_object"](200)
+        form = self.wallet.respond(seen["verifier"].request_object(session.state))
+        status, verdict, line = self._answer(seen, form)
+        self.assertTrue(verdict.authentic)
+        doc = self._read()
+        self.assertEqual(doc, {"outcome": "accepted", "response": {"status_code": 200},
+                               "claims": sorted(verdict.claims), "state": session.state,
+                               "request_object": {"served": 1, "refused": 0}, "responses": 1})
+        self.assertIn("given_name", doc["claims"])
+        self.assertTrue(line.startswith("  <- 200 authentic, claims "), line)
+        # The redirect's response_code redeems the result once; it is not the file's to give.
+        self.assertNotIn(verdict.response_code, self.path.read_text(encoding="utf-8"))
+        # The same response again is refused: the request it answered is closed.
+        status, _, _ = self._answer(seen, form)
+        self.assertEqual(status, 400)
+        self.assertEqual({k: v for k, v in self._read().items() if k != "responses"},
+                         {k: v for k, v in doc.items() if k != "responses"})
+        self.assertEqual(self._read()["responses"], 2)
+
+    def test_a_wallet_error_is_neither_an_acceptance_nor_a_refusal(self):
+        seen, session, _ = self._started()
+        jar = seen["verifier"].request_object(session.state)
+        status, verdict, _ = self._answer(seen, self.wallet.respond_error(jar))
+        doc = self._read()
+        self.assertEqual(status, 200)
+        self.assertEqual({k: doc[k] for k in ("outcome", "response", "check", "reason")},
+                         {"outcome": "wallet_error", "response": {"status_code": 200},
+                          "check": "wallet_error", "reason": verdict.reason})
+        self.assertNotIn("claims", doc)
+
+    def test_a_verifier_that_raised_is_a_refusal_with_no_reason_to_give(self):
+        import contextlib
+        import io
+        seen, _, _ = self._started()
+        with contextlib.redirect_stdout(io.StringIO()):
+            seen["kwargs"]["on_verdict"](400, {}, None)
+        doc = self._read()
+        self.assertEqual({k: doc[k] for k in ("outcome", "response", "check", "reason")},
+                         {"outcome": "refused", "response": {"status_code": 400}, "check": None,
+                          "reason": None})
+
+    def test_each_answer_at_the_request_uri_is_counted_and_is_not_a_response(self):
+        seen, _, _ = self._started()
+        for status in (200, 404, 400, 200):
+            seen["kwargs"]["on_request_object"](status)
+        doc = self._read()
+        self.assertEqual(doc["request_object"], {"served": 2, "refused": 2})
+        self.assertEqual((doc["outcome"], doc["responses"]), ("nothing_received", 0))
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir() if "result" in p.name),
+                         ["result.json"], "a temporary file was left beside it")
+
+    def test_without_once_there_is_no_request_to_report_on(self):
+        rc, seen, _, err = self._serve("--issuer-jwks", str(self.jwks), "--result", str(self.path))
+        self.assertEqual(rc, 2)
+        self.assertIn("add --once", err)
+        self.assertNotIn("verifier", seen, "it listened")
+        self.assertFalse(self.path.exists())
+
+    def test_a_file_it_cannot_write_stops_it_before_it_listens(self):
+        rc, seen, _, err = self._serve("--issuer-jwks", str(self.jwks), "--once",
+                                       "--result", str(self.tmp / "no-such-dir" / "result.json"))
+        self.assertEqual(rc, 2)
+        self.assertIn("--result", err)
+        self.assertNotIn("kwargs", seen, "it listened")
+
+    def test_a_rewrite_that_fails_removes_the_file_rather_than_leave_it_stale(self):
+        import contextlib
+        import io
+        from unittest import mock
+        from polaris_oid4vp import cli
+        seen, session, _ = self._started()
+        jar = seen["verifier"].request_object(session.state)
+        err = io.StringIO()
+        with mock.patch.object(cli.os, "replace", side_effect=OSError("disk full")), \
+                contextlib.redirect_stderr(err):
+            status, _, line = self._answer(seen, self.wallet.respond(jar, nonce="wrong"))
+        self.assertEqual(status, 400)
+        self.assertTrue(line.startswith("  <- 400 refused: nonce: "), "the verdict line was lost")
+        self.assertFalse(self.path.exists(), "a result that says nothing arrived was left behind")
+        self.assertIn("could not be rewritten", err.getvalue())
+        self.assertEqual([p.name for p in self.tmp.iterdir() if "result" in p.name], [])
+
+    def test_the_listener_reports_through_the_file_before_it_answers(self):
+        """The real command over HTTP: each answer is in the file by the time the client has it,
+        with no wait, and the log carries the `<-` line and no JSON."""
+        import json
+        import socket
+        import time
+        import urllib.error
+        import urllib.request
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        log = self.tmp / "serve.log"
+        with open(log, "w") as fh:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "polaris_oid4vp.cli", "serve", "--pki", str(self.tmp),
+                 "--host", "verifier.test", "--bind", "127.0.0.1", "--port", str(port),
+                 "--no-local-tls", "--issuer-jwks", str(self.jwks), "--once", "--result",
+                 str(self.path)],
+                stdout=fh, stderr=subprocess.STDOUT, env=dict(os.environ, PYTHONUNBUFFERED="1"),
+                cwd=os.path.dirname(os.path.abspath(__file__)))
+        try:
+            deadline = time.monotonic() + 30
+            while not (self.path.exists() and self._read().get("state")):
+                self.assertIsNone(proc.poll(), log.read_text())
+                self.assertLess(time.monotonic(), deadline, "no request in the file")
+                time.sleep(0.1)
+            base = "http://127.0.0.1:%d" % port
+            for path, data in (("/request.jwt?state=nonsense", None), ("/response", b"response=x")):
+                try:
+                    urllib.request.urlopen(urllib.request.Request(base + path, data=data),
+                                           timeout=10)
+                except urllib.error.HTTPError as e:
+                    self.assertIn(e.code, (400, 404))
+                doc = self._read()
+                if path.startswith("/request"):
+                    self.assertEqual(doc["request_object"], {"served": 0, "refused": 1})
+            self.assertEqual({k: doc[k] for k in ("outcome", "response", "check", "responses")},
+                             {"outcome": "refused", "response": {"status_code": 400},
+                              "check": "invalid_request", "responses": 1})
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+        text = log.read_text()
+        self.assertIn("  <- 400 refused: invalid_request: %s" % doc["reason"], text)
+        self.assertNotIn('"outcome"', text)
+        self.assertEqual(json.loads(self.path.read_text())["outcome"], "refused")
 
 
 class TransactionDataServeTests(unittest.TestCase):

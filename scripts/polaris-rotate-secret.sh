@@ -169,6 +169,8 @@ esac
 REDIS_ACL_POLARIS_RULES='~polaris:rl:* resetchannels -@all +ping +client|setinfo +script|load +evalsha +zremrangebyscore +zcard +zadd +pexpire +scan +del'
 redis_hash() { printf '%s' "$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1; }
 write_redis_acl() {  # write_redis_acl <hash> [<another hash>]
+    local h; for h in "$@"; do [[ "${h}" =~ ^[0-9a-f]{64}$ ]] || {
+        echo "  ✗ redis_users.acl  (a password hash is not a SHA-256; nothing written)" >&2; exit 1; }; done
     local acl="${SECRETS_DIR}/redis_users.acl" hashes="#$1"
     [[ $# -gt 1 ]] && hashes="${hashes} #$2"
     ( umask 0133 && printf 'user default off resetkeys resetchannels -@all\nuser health on nopass resetkeys resetchannels -@all +ping\nuser polaris on %s %s\n' \
@@ -283,7 +285,7 @@ cat <<EOF
   Rotation complete.
 
   Verify:
-    curl -fsS https://\${POLARIS_DOMAIN}/api/health | jq .checks
+    docker exec polaris-app curl -fsS http://localhost:8000/api/health | jq .checks
 
   If the stack misbehaves, the prior secret is at:
     ${ARCHIVE_PATH}

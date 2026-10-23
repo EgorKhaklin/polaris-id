@@ -68,7 +68,9 @@ import pathlib
 import os
 import re
 import shutil
+import signal
 import sys
+import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -485,6 +487,20 @@ def opaque_inputs(fn):
 
 
 def main():
+    # The copies live in a directory of this run's own: with fixed /tmp paths, a second run
+    # on the machine deleted the first one's copy under it (three voided runs, 2026-10-21).
+    # It goes however the run ends; SIGTERM, which is how a held run is stopped, becomes an
+    # exit so the finally runs.
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-mutation-"))
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    print("tree copies in %s" % tmp)
+    try:
+        return _main(tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _main(tmp):
     from polaris_checks import checks as C
 
     source = (ROOT / "polaris_checks" / "checks.py").read_text(encoding="utf-8")
@@ -493,8 +509,7 @@ def main():
     fns = {n.name: n for n in tree.body
            if isinstance(n, ast.FunctionDef) and n.name in by_name}
 
-    base = pathlib.Path("/tmp/polaris-mutation-base")
-    shutil.rmtree(base, ignore_errors=True)
+    base = tmp / "base"
     shutil.copytree(ROOT, base, ignore=IGNORE)
 
     survived, mutated, skipped_opaque, skipped_nothing = [], 0, 0, 0
@@ -502,7 +517,7 @@ def main():
     no_named_input: list[str] = []
     unmutable_suffix: list = []
     no_line_matched: list[str] = []
-    work = pathlib.Path("/tmp/polaris-mutation-run")
+    work = tmp / "run"
 
     print("can a check pass on a tree where its property is gone?")
     print()
@@ -650,9 +665,6 @@ def main():
         except Exception:                      # noqa: BLE001
             notices_empty = True
         (prose_existence_only if notices_empty else prose_blind).append(name)
-
-    shutil.rmtree(work, ignore_errors=True)
-    shutil.rmtree(base, ignore_errors=True)
 
     print("  checks fully mutated and re-run              %4d" % mutated)
     print("  ...of those, still passing on a broken tree  %4d" % len(survived))

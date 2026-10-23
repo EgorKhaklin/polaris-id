@@ -109,7 +109,7 @@ chmod 0644 "${SECRETS}/polaris_signing_key.new"
 mv "${SECRETS}/polaris_signing_key.new" "${SECRETS}/polaris_signing_key"
 "${COMPOSE[@]}" up -d --no-deps --force-recreate app > /dev/null 2>&1
 for _ in $(seq 1 90); do
-    [[ "$(curl -s --cacert "${CA}" -o /dev/null -w '%{http_code}' "${BASE}/api/health/live")" == 200 ]] && break
+    [[ "$(curl -s --cacert "${CA}" -o /dev/null -w '%{http_code}' "${BASE}/.well-known/security.txt")" == 200 ]] && break
     sleep 2
 done
 key_event retire 1 "${K1}" --note "rotate.sh: an orderly rotation"

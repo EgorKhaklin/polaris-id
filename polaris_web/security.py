@@ -525,22 +525,21 @@ def _audit(get_conn, event_type, username=None, user_id=None, detail=None):
 #
 # per a recorded decision
 # Position A. Records WHO queried the audit tables (TokenLifecycleEvent /
-# VerificationEvent / AuthAuditLog / DuressEvent). The helper is fail-open
-# (logging failure does not block the actual query — accountability data
-# corrupts gracefully rather than blocking operator access to legitimate
-# audit data).
+# VerificationEvent / AuthAuditLog / DuressEvent). It fails closed: a read
+# whose row is not written raises AuditAccessNotRecorded and never reaches
+# the reader. Until 2026-10-21 it failed open, and a read whose row could
+# not be written was returned unrecorded.
 #
-# CONSTITUTIONAL BOUNDARY: this helper must NEVER be called from a route
+# CONSTITUTIONAL BOUNDARY: this function must NEVER be called from a route
 # that reads AuditAccessLog itself. The audit-of-audit-of-audit regress
-# stops at AuditAccessLog by construction. This is structurally enforced
-# by the structural invariant test_audit_access_log_reads_not_logged in
-# TestWave20V920 — any reference to record_audit_access alongside a
-# SELECT FROM AuditAccessLog will trip the test.
+# stops at AuditAccessLog by construction. check_audited_reads_are_logged
+# enforces it: a function that reads AuditAccessLog and calls
+# record_audit_access fails the build.
 # ----------------------------------------------------------------------------
 
 # The four tables whose reads are audited by AuditAccessLog. Pinned here
-# (rather than in app.py) so additions go through this constant + the
-# associated structural test in TestWave20V920.
+# (rather than in app.py): check_audited_reads_are_logged reads this tuple
+# from the source, so a table added here is held to the record at once.
 AUDIT_TABLES_TRACKED = (
     'TokenLifecycleEvent',
     'VerificationEvent',
@@ -549,17 +548,25 @@ AUDIT_TABLES_TRACKED = (
 )
 
 
+class AuditAccessNotRecorded(RuntimeError):
+    """A read of an audit-tracked table whose AuditAccessLog row was not written. The route that
+    made the read answers 503 instead of returning it (the handler in app.py). A RuntimeError on
+    purpose: pages catch psycopg2.Error and ValueError to show their own errors, and
+    uc7_warrant_audit holds its rows when it records them, so either class would let them out."""
+
+
 def record_audit_access(get_conn, accessed_table, filter_criteria=None,
                         result_row_count=None):
     """Append an AuditAccessLog row recording that the current actor read
-    from `accessed_table`. Best-effort + fail-open: any exception is
-    suppressed to stderr; the caller's actual query proceeds regardless.
+    from `accessed_table`, or raise AuditAccessNotRecorded: a read whose
+    row is not written never reaches the reader.
 
     Args:
         get_conn: callable returning a fresh DB connection (matches the
                   pattern of _audit + audit hooks elsewhere)
-        accessed_table: one of AUDIT_TABLES_TRACKED (raises ValueError
-                  otherwise — programmer error, not operator error)
+        accessed_table: one of AUDIT_TABLES_TRACKED. Any other name is a
+                  programmer error and raises AuditAccessNotRecorded,
+                  since no row can record it.
         filter_criteria: dict serializable to JSONB; describes what
                   filter the query applied (e.g., {"token_id": 42}).
                   None becomes {}.
@@ -569,22 +576,26 @@ def record_audit_access(get_conn, accessed_table, filter_criteria=None,
     Returns:
         None. The function is side-effect only.
 
+    Raises:
+        AuditAccessNotRecorded: the row was not written (an unknown table,
+                  or any failure to connect, insert or commit).
+
     Constitutional contract:
       - MUST NOT be called from any route that reads AuditAccessLog
-        itself (regress boundary; structurally pinned)
-      - Failures DO NOT propagate (fail-open)
+        itself: the regress stops there by construction, and
+        check_audited_reads_are_logged fails the build on such a route
+      - Fails closed: each caller calls it after its read and before its
+        response, and none catches AuditAccessNotRecorded, so a read
+        whose row is not written is answered 503 without its rows
       - Filter criteria are stored verbatim; no LLM analysis
     """
     if accessed_table not in AUDIT_TABLES_TRACKED:
-        # Programmer error: caller passed an unknown table name.
-        # Surface loudly in dev; do not propagate in production.
-        import sys
         sys.stderr.write(
-            f"[audit_access] WARNING: record_audit_access called with "
-            f"unknown table {accessed_table!r}; expected one of "
-            f"{AUDIT_TABLES_TRACKED}. Skipping log.\n"
+            f"[audit_access] record_audit_access called with unknown table "
+            f"{accessed_table!r}; expected one of {AUDIT_TABLES_TRACKED}. "
+            f"The read is not recorded, so it is not returned.\n"
         )
-        return
+        raise AuditAccessNotRecorded(f"unknown table {accessed_table!r}")
 
     user = current_user()
     actor_user_id = user['user_id'] if user else None
@@ -616,11 +627,13 @@ def record_audit_access(get_conn, accessed_table, filter_criteria=None,
             conn.commit()
         finally:
             conn.close()
-    except Exception as e:  # noqa: BLE001 — fail-open by design
-        import sys
+    except Exception as e:  # noqa: BLE001 -- no record, no read
         sys.stderr.write(
-            f"[audit_access] Failed to write read of {accessed_table}: {e}\n"
+            f"[audit_access] Failed to write read of {accessed_table}: {e}. "
+            f"The read is not returned.\n"
         )
+        raise AuditAccessNotRecorded(
+            f"the read of {accessed_table} could not be recorded") from e
 
 
 # ----------------------------------------------------------------------------
