@@ -3,7 +3,7 @@
 // A wallet on Multipaz, the OpenWallet Foundation's identity credential library (Kotlin
 // Multiplatform, its JVM target), to present to polaris-oid4vp.
 plugins {
-    kotlin("jvm") version "2.4.20"
+    kotlin("jvm") version "2.4.21"
     application
 }
 

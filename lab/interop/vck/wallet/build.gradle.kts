@@ -4,7 +4,7 @@
 // polaris-oid4vp. vck issues the credential too, so the verifier is the only Polaris software in
 // the exchange.
 plugins {
-    kotlin("jvm") version "2.4.20"
+    kotlin("jvm") version "2.4.21"
     application
 }
 
