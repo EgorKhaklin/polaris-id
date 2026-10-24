@@ -3260,8 +3260,40 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
         assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
             f"must FAIL when {why} appears that Dependabot does not read"
         (d / manifest).unlink()
+    # 2026-10-24: a requirements file pinning a version is a manifest too. Dependabot raised a HIGH
+    # alert on a pin in lab/strategy/013, a directory its version updates did not read, as pip was
+    # required only for the published packages. A file that pins nothing (a bare name, an include)
+    # is not one.
+    d = tmp_path / "lab/harness-x"
+    (d / "requirements.txt").write_text("-r ../other.txt\nrequests\n")
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on a requirements file that pins no version"
+    for pinned in ("gitpython==3.2.0\n", "uvicorn[standard] == 0.32.0 \\\n    --hash=sha256:" + "a" * 64 + "\n"):
+        (d / "requirements.txt").write_text(pinned)
+        found = checks.check_supply_chain_pins(tmp_path)[0]
+        assert found.level == "FAIL" and "pip manifest in /lab/harness-x" in found.message, \
+            f"must FAIL when Dependabot does not read a requirements file that pins {pinned!r}: {found.message}"
+    (d / "requirements.txt").unlink()
+    # A .in alone counts: pip-compile's input pins too, and its directory need hold no .txt.
+    (d / "tools.in").write_text("gitpython==3.2.0\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "pip manifest in /lab/harness-x" in found.message, \
+        f"must FAIL when Dependabot does not read a directory whose only pinning file is a .in: {found.message}"
+    (d / "tools.in").unlink()
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
         "must PASS again once the unread manifests are gone"
+    # Under any name and in .github too: CI's audit tools are pinned in .github/ci/audit.txt.
+    (tmp_path / ".github/ci").mkdir()
+    (tmp_path / ".github/ci/audit.txt").write_text((REPO / ".github/ci/audit.txt").read_text())
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on .github/ci/audit.txt while Dependabot reads /.github/ci"
+    dep = tmp_path / ".github/dependabot.yml"
+    entry = "  - package-ecosystem: pip\n    directory: /.github/ci\n"
+    assert dep.read_text().count(entry) == 1, "the fixture drifted: dependabot.yml has no one /.github/ci pip entry"
+    dep.write_text(dep.read_text().replace(entry, "  - package-ecosystem: pip\n    directory: /.github/ci-gone\n"))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "pip manifest in /.github/ci" in found.message, \
+        f"must FAIL when Dependabot no longer reads .github/ci/audit.txt: {found.message}"
 
 
 # A docker run, create or pull in a run step is read by docker's own option grammar, so the image is
@@ -3353,6 +3385,37 @@ def test_supply_chain_pins_holds_a_service_image_to_the_dependabot_pin(tmp_path)
     found = checks.check_supply_chain_pins(tmp_path)[0]
     assert found.level == "FAIL" and "runs postgres:16-alpine at bbbbbbbbbbbb, but polaris_web/Dockerfile.postgres" \
         in found.message, f"must FAIL on a service image the same way: {found.message}"
+
+
+def test_supply_chain_pins_holds_every_script_pin_to_the_dependabot_pin(tmp_path):
+    # 2026-10-21: scripts/polaris-deploy.sh re-owned the edge's volumes with alpine:3.24 at an older
+    # digest than the Dockerfiles' pin, which Dependabot refreshes, and nothing saw it. No workflow
+    # calls that script, and in the scripts a run step does call only a ref by tag was refused, not
+    # a digest that differs.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    deploy = tmp_path / "scripts/polaris-deploy.sh"
+    good = deploy.read_text()
+    pin = "alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+    assert good.count(pin) == 2, "the fixture drifted: polaris-deploy.sh no longer pins alpine:3.24 twice"
+    deploy.write_text(good.replace(pin, f"alpine:3.24@sha256:{'d' * 64}", 1))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and ("scripts/polaris-deploy.sh:289 pins alpine:3.24 at dddddddddddd, but "
+                                      "polaris_web/Dockerfile.etcd pins it at 294b683cb724") in found.message, \
+        f"must FAIL, naming both files, on a script no workflow calls: {found.message}"
+    deploy.write_text(good)
+    # As a ${VAR:-...} default the same; a comment is not a pin, and a tag no manifest Dependabot
+    # reads pins is refreshed by hand.
+    script = tmp_path / "lab/zz-fixture.sh"
+    script.write_text('#!/usr/bin/env bash\nIMG="${IMG:-docker.io/library/alpine:3.24@sha256:' + "e" * 64 + '}"\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "lab/zz-fixture.sh:2 pins alpine:3.24 at eeeeeeeeeeee" in found.message, \
+        f"must FAIL on a pinned default naming the same image another way: {found.message}"
+    script.write_text("#!/usr/bin/env bash\n# alpine:3.24@sha256:" + "e" * 64 + "\nIMG=alpine:3.99@sha256:"
+                      + "e" * 64 + "\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on a commented pin and an untwinned tag: {found.message}"
 
 
 def test_supply_chain_pins_fails_closed_on_an_unresolved_variable(tmp_path):
@@ -9954,6 +10017,56 @@ def test_site_pages_render_under_their_headers_check_discriminates(tmp_path):
 
     assert result() == "OK", \
         "must PASS when the policy is strict and the page loads only same-origin stylesheets and images (a canonical link loads nothing)"
+    with_fonts = headers.replace("img-src 'self';", "img-src 'self'; font-src 'self';")
+    same_origin_sets = ('<img src="logo.png" srcset="logo-1.png 1x, logo-2.png 2x" alt="">\n'
+                        '<picture><source type="image/avif" srcset="a-640.avif 640w, a-1280.avif 1280w">'
+                        '<img src="a.png" alt=""></picture>\n'
+                        '<link rel="preload" as="image" imagesrcset="a-640.avif 640w, a-1280.avif 1280w">\n')
+    assert result(site__index_dot_html=page + same_origin_sets) == "OK", \
+        "must PASS when every srcset and imagesrcset candidate is same-origin"
+    assert result(site___headers=with_fonts,
+                  site__index_dot_html=page + '<link rel="preload" href="f.woff2" as="font" type="font/woff2" crossorigin>\n') == "OK", \
+        "must PASS a same-origin font preload under font-src 'self'"
+    # each preload falls under the directive of what it says it is, and a module preload under script-src
+    with_kinds = headers.replace("img-src 'self';", "img-src 'self'; media-src 'self'; connect-src 'self'; "
+                                                    "frame-src 'self'; script-src 'self'; font-src 'self'; "
+                                                    "object-src 'self';")
+    preloads = {"font": '<link rel="preload" as="Font" href="f.woff2" crossorigin>\n',
+                "object": '<object data="o.svg"></object>\n<embed src="e.svg">\n',
+                "video": '<link rel="preload" as="video" href="v.mp4">\n',
+                "audio": '<link rel="preload" as="audio" href="a.mp3">\n',
+                "track": '<link rel="preload" as="track" href="t.vtt">\n',
+                "fetch": '<link rel="preload" as="fetch" href="d.json" crossorigin>\n',
+                "document": '<link rel="preload" as="document" href="b.html">\n',
+                "module": '<link rel="modulepreload" href="m.js">\n'}
+    assert result(site___headers=with_kinds, site__index_dot_html=page + "".join(preloads.values())) == "OK", \
+        "must PASS same-origin preloads of each kind under the directive that kind falls under"
+    # attributes as a browser reads them: either quote or none, any case
+    assert result(site__index_dot_html=page + "<IMG SRC='logo.png' ALT=''>\n<img src=logo.png alt=x>\n") == "OK", \
+        "must PASS same-origin images however their attributes are quoted"
+    # media loads under media-src and their posters and SVG images under img-src
+    media = ('<video src="v.mp4" poster="p.png"><source src="v.webm" type="video/webm"><track src="t.vtt"></video>\n'
+             '<audio src="a.mp3"></audio>\n<svg><image href="i.png"/><image xlink:href="j.png"/></svg>\n')
+    assert result(site___headers=with_kinds, site__index_dot_html=page + media) == "OK", \
+        "must PASS same-origin video, audio, track, poster and SVG image loads under the directives they fall under"
+    # an event handler or a style is an attribute the parser reads, not a word in the text
+    assert result(site__index_dot_html=page + "<p>count one = two; style = plain</p>\n") == "OK", \
+        "must not read prose that looks like an attribute as an inline handler or style"
+    # an image-set() may give its images as bare strings; the string in a type() names a format, not a file
+    assert result(site__a_dot_css="body{background:image-set(\"a.avif\" type(\"image/avif\") 1x, url(\"b.webp\") 1x)}\n"
+                                  "p{background:-webkit-image-set('c.png' 1x, 'c-2.png' 2x)}\n") == "OK", \
+        "must PASS an image-set whose bare strings and url()s are same-origin, its type() string not read as a URL"
+    cdn = headers.replace("img-src 'self';", "img-src https://cdn.example.org/;")
+    assert result(site___headers=cdn, site__index_dot_html='<link rel="stylesheet" href="a.css">\n',
+                  site__a_dot_css='body{background:image-set("https://cdn.example.org/a.avif" type("image/avif") 1x)}\n') == "OK", \
+        "must not read the string in an image-set's type() as a URL (under a policy with no 'self' for images)"
+    assert result(site__a_dot_css='body{background:x-image-set("https://example.org/x.png" 1x)}\n') == "OK", \
+        "must not read a function whose name only ends in image-set, which no browser runs"
+    # only an image input draws from its src, and the first type attribute is the one the parser keeps
+    assert result(site__index_dot_html=page + '<input type="text" src="https://example.org/x.png">\n'
+                                              '<input type="text" type="image" src="https://example.org/x.png">\n'
+                                              '<input type="image" src="go.png" alt="go">\n') == "OK", \
+        "must PASS an input that is not an image input whatever its src, and a same-origin image input"
     broken = {
         "the headers file is missing": {"site___headers": None},
         "the policy allows inline style": {"site___headers": headers.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")},
@@ -9968,11 +10081,57 @@ def test_site_pages_render_under_their_headers_check_discriminates(tmp_path):
         "a page carries an inline script": {"site__index_dot_html": page + "<script>go()</script>\n"},
         "a page loads a script the policy does not list": {"site__index_dot_html": page + '<script src="app.js"></script>\n'},
         "a page carries an event handler": {"site__index_dot_html": page + '<a href="#" onclick="go()">x</a>\n'},
+        "an event handler follows a slash": {"site__index_dot_html": page + '<img/onerror="x()" src="logo.png">\n'},
+        "an event handler follows a quote": {"site__index_dot_html": page + '<img src="logo.png"onerror="x()">\n'},
+        "a style attribute follows a slash": {"site__index_dot_html": page + '<p/style="color:red">x</p>\n'},
+        "a style block sits in a drawing": {"site__index_dot_html": page + "<svg><style>p{}</style></svg>\n"},
+        "a video source plays from the page's origin with no media-src": {"site__index_dot_html": page + '<video><source src="v.mp4"></video>\n'},
+        "a video plays from its src with no media-src": {"site__index_dot_html": page + '<video src="v.mp4"></video>\n'},
+        "audio plays from its src with no media-src": {"site__index_dot_html": page + '<audio src="a.mp3"></audio>\n'},
+        "a text track loads with no media-src": {"site__index_dot_html": page + '<video><track src="t.vtt"></video>\n'},
+        "a video poster comes from another origin": {"site__index_dot_html": page + '<video poster="https://example.org/p.png"></video>\n'},
+        "an SVG image comes from another origin": {"site__index_dot_html": page + '<svg><image href="https://example.org/x.png"/></svg>\n'},
+        "an off-origin image sits in an SVG title": {"site__index_dot_html": page + '<svg><title><img src="https://example.org/x.png" alt=""></title></svg>\n'},
+        "an SVG image comes from another origin by xlink:href": {"site__index_dot_html": page + '<svg><image xlink:href="https://example.org/x.png"/></svg>\n'},
+        "an off-origin image URL starts with a space": {"site__index_dot_html": page + '<img src=" https://example.org/x.png" alt="">\n'},
+        "an off-origin image URL writes a backslash for a slash": {"site__index_dot_html": page + '<img src="/\\example.org/x.png" alt="">\n'},
+        "an off-origin srcset candidate writes backslashes": {"site__index_dot_html": page + '<img src="logo.png" srcset="\\\\example.org/x.png 2x" alt="">\n'},
+        "an off-origin image URL has a tab in its scheme": {"site__index_dot_html": page + '<img src="ht&#9;tps://example.org/x.png" alt="">\n'},
+        "an off-origin image URL has a newline in its scheme": {"site__index_dot_html": page + '<img src="ht\ntps://example.org/x.png" alt="">\n'},
+        "a data: image starts with a space": {"site__index_dot_html": page + '<img src=" data:image/png;base64,AAAA" alt="">\n'},
+        "an off-origin poster starts with a space": {"site___headers": with_kinds, "site__index_dot_html": page + '<video poster=" https://example.org/p.png"></video>\n'},
+        "an off-origin stylesheet starts with a space": {"site__index_dot_html": page + '<link rel="stylesheet" href=" https://example.org/x.css">\n'},
         "a page loads an image from another origin": {"site__index_dot_html": page + '<img src="https://example.org/x.png" alt="">\n'},
+        "a srcset candidate comes from another origin": {"site__index_dot_html": page + '<img src="logo.png" srcset="logo.png 1x, https://example.org/x.png 2x" alt="">\n'},
+        "a picture source lists another origin": {"site__index_dot_html": page + '<picture><source type="image/avif" srcset="https://example.org/a.avif 640w"><img src="a.png" alt=""></picture>\n'},
+        "a srcset candidate is a data: image": {"site__index_dot_html": page + '<img src="logo.png" srcset="data:image/png;base64,AAAA 2x" alt="">\n'},
+        "a preloaded image set lists another origin": {"site__index_dot_html": page + '<link rel="preload" as="image" imagesrcset="a.avif 1x, https://example.org/b.avif 2x">\n'},
+        "a page preloads a font from another origin": {"site___headers": with_fonts, "site__index_dot_html": page + '<link rel="preload" href="https://example.org/f.woff2" as="font" crossorigin>\n'},
+        "a page preloads a font the policy has no font-src for": {"site__index_dot_html": page + '<link rel="preload" href="f.woff2" as="font" crossorigin>\n'},
+        "an image from another origin is single-quoted": {"site__index_dot_html": page + "<img src='https://example.org/x.png' alt=''>\n"},
+        "an image from another origin is unquoted and upper-case": {"site__index_dot_html": page + "<IMG SRC=https://example.org/x.png ALT=x>\n"},
+        "a srcset candidate from another origin is single-quoted": {"site__index_dot_html": page + "<img src='logo.png' srcset='https://example.org/x.png 2x' alt=''>\n"},
+        "a page preloads a video the policy has no media-src for": {"site__index_dot_html": page + '<link rel="preload" as="video" href="v.mp4">\n'},
+        "a page preloads audio the policy has no media-src for": {"site__index_dot_html": page + '<link rel="preload" as="audio" href="a.mp3">\n'},
+        "a page preloads a text track the policy has no media-src for": {"site__index_dot_html": page + '<link rel="preload" as="track" href="t.vtt">\n'},
+        "a page preloads a fetch the policy has no connect-src for": {"site__index_dot_html": page + '<link rel="preload" as="fetch" href="d.json" crossorigin>\n'},
+        "a page preloads a document the policy has no frame-src for": {"site__index_dot_html": page + '<link rel="preload" as="document" href="b.html">\n'},
+        "a page preloads a module the policy has no script-src for": {"site__index_dot_html": page + '<link rel="modulepreload" href="m.js">\n'},
+        "a page links a stylesheet from another origin, its rel capitalised": {"site__index_dot_html": page + '<link REL="Stylesheet" HREF="https://example.org/x.css">\n'},
+        "a page's icon comes from another origin": {"site__index_dot_html": page + '<link rel="icon" href="https://example.org/f.svg">\n'},
+        "an object loads from another origin": {"site__index_dot_html": page + '<object data="https://example.org/x.svg"></object>\n'},
+        "an embed loads from another origin": {"site__index_dot_html": page + '<embed src="https://example.org/x.svg">\n'},
         "a second page frames another origin": {"site__b_dot_html": '<iframe src="https://example.org/"></iframe>\n'},
         "a stylesheet uses a data: image": {"site__a_dot_css": "body{background:url(data:image/png;base64,AAAA)}\n"},
         "a stylesheet imports another origin": {"site__a_dot_css": "@import url(https://fonts.example.org/x.css);\n"},
         "a stylesheet loads a web font": {"site__a_dot_css": "@font-face{font-family:x;src:url(x.woff2)}\n"},
+        "an image-set names another origin in a bare string": {"site__a_dot_css": 'body{background:image-set("https://example.org/x.avif" 1x)}\n'},
+        "a -webkit-image-set names another origin in a single-quoted string": {"site__a_dot_css": "body{background:-webkit-image-set('https://example.org/x.png' 2x)}\n"},
+        "an image-set string is a data: image": {"site__a_dot_css": 'body{background:image-set("data:image/png;base64,AAAA" 1x)}\n'},
+        "an off-origin image-set string follows a url() and a type()": {"site__a_dot_css": 'body{background:image-set(url(a.avif) type("image/avif") 1x, "https://example.org/b.png" 1x)}\n'},
+        "an off-origin image-set string follows a string holding a parenthesis": {"site__a_dot_css": 'body{background:image-set("a).png" 1x, "https://example.org/b.png" 2x)}\n'},
+        "an image input draws from another origin": {"site__index_dot_html": page + '<input type="image" src="https://example.org/x.png" alt="go">\n'},
+        "an image input from another origin is written in capitals": {"site__index_dot_html": page + '<INPUT TYPE="IMAGE" SRC="https://example.org/x.png" ALT="go">\n'},
         "a linked stylesheet does not exist": {"site__a_dot_css": None},
         "there is no page at all": {"site__index_dot_html": None},
     }
@@ -10713,10 +10872,117 @@ def test_public_claims_honest_check_discriminates(tmp_path):
         (tmp_path / "site" / "index.html").write_text(site)
     write()
     assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the honest surfaces"
-    # bare title (Polaris presented AS a system, not as pre-pilot)
-    write(site=SITE.replace("a pre-pilot identity-token system",
-                            "an identity-token system"))
-    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a bare title"
+    # the bare name is a title that claims nothing (owner, 2026-10-23); an empty one is not a title
+    write(site='<title>Polaris ID</title>\n<meta property="og:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the bare name"
+    write(site='<title> </title>\n<meta property="og:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an empty title"
+    assert "missing or empty" in checks.check_public_claims_honest(tmp_path)[0].message, "must name an empty title as empty"
+    BARE = '<title>Polaris ID</title>\n<meta property="og:title" content="Polaris ID">\n'
+    write(site='<title>Polaris ID</title>\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL without an og:title"
+    write(site='<title>Polaris ID</title>\n<meta property="og:title" content=" ">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an empty og:title"
+    assert "missing or empty" in checks.check_public_claims_honest(tmp_path)[0].message, "must name an empty og:title as empty"
+    # a name longer than the bare name must say what Polaris is not yet
+    write(site='<title>Polaris ID: digital identity</title>\n<meta property="og:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a longer title without 'pre-pilot'"
+    write(site='<title>Polaris ID</title>\n<meta property="og:title" content="Polaris ID for everyone">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a longer og:title without 'pre-pilot'"
+    # each word a name field never says, even beside 'pre-pilot'
+    for word in ("deployed", "piloted", "production-ready", "production ready", "certified"):
+        write(site=SITE.replace("a pre-pilot identity-token system", f"a pre-pilot identity-token system, {word}"))
+        assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on {word!r} in the title"
+    # og:site_name and twitter:title are name fields too, held when present
+    write(site=BARE + '<meta property="og:site_name" content="Polaris ID">\n<meta name="twitter:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the bare name in every name field"
+    write(site=BARE + '<meta property="og:site_name" content="Polaris ID (pre-pilot), the national identity system">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on 'national' in og:site_name"
+    write(site=BARE + '<meta property="og:site_name" content="Polaris ID, an identity system">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a longer og:site_name without 'pre-pilot'"
+    write(site=BARE + '<meta name="twitter:title" content="Polaris ID (pre-pilot), production-ready">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an overclaim in twitter:title"
+    # either attribute order
+    write(site='<title>Polaris ID</title>\n<meta content="Polaris ID" property="og:title">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must find an og:title written content first"
+    write(site='<title>Polaris ID</title>\n<meta content="Polaris national ID" property="og:title">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must read content before property too"
+    # every tag of a field, read as a browser or a crawler reads it: a second tag, either quote or
+    # none, upper case
+    write(site=BARE + '<meta property="og:description" content="An identity-token system.">\n'
+                      '<meta property="og:description" content="Deployed nationwide.">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an overclaim in a second og:description"
+    write(site=BARE + '<meta property="og:title" content="Polaris ID (pre-pilot), certified">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on 'certified' in a second og:title"
+    write(site=BARE + '<meta property="og:description" content="Deployed nationwide.">\n'
+                      '<meta property="og:description" content="An identity-token system.">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an overclaim in the first of two tags"
+    write(site=BARE + '<meta property="og:site_name" content="Polaris ID">\n'
+                      '<meta property="og:site_name" content="Polaris ID, the national identity system">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a second og:site_name"
+    write(site=BARE + '<meta name="twitter:title" content="Polaris ID">\n'
+                      '<meta name="twitter:title" content="Polaris ID for every person">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a second twitter:title"
+    write(site='<title>Polaris ID (Pre-pilot)</title>\n<meta property="og:title" content="Polaris ID (PRE-PILOT)">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must read 'pre-pilot' in any case"
+    write(site='<title>Polaris ID (pre-pilot), OpenID Certified</title>\n<meta property="og:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on 'Certified' in any case"
+    write(site=BARE + "<meta property='og:description' content='a deployed system'>\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must read a single-quoted tag"
+    write(site=BARE + "<meta property=og:description content=deployed>\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must read an unquoted tag"
+    write(site=BARE + '<META PROPERTY="OG:DESCRIPTION" CONTENT="Polaris: DEPLOYED.">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must read a tag written in upper case"
+    write(site=BARE + '<meta property="og:description" content="Polaris: Deployed.">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a capitalised overclaim"
+    # the bare name with spaces around it, and the shorter bare name, claim nothing either
+    write(site='<title> Polaris ID </title>\n<meta property="og:title" content=" Polaris ID ">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the bare name with spaces around it"
+    write(site='<title>Polaris</title>\n<meta property="og:title" content="Polaris">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the shorter bare name"
+    # the <title> of an inline drawing names the drawing, not the page
+    write(site=BARE + '<body><svg viewBox="0 0 1 1"><title>Recovery after total loss</title></svg></body>\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must not read an inline SVG's title as the page's"
+    OG = '<meta property="og:title" content="Polaris ID">\n'
+    for page in ('<head>' + OG + '</head><body><svg><title>Polaris ID</title></svg></body>',
+                 '<head>' + OG + '</head><svg><title>Polaris ID</title></svg>',
+                 OG + '<body><svg><title>Polaris ID</title></svg></body>'):
+        write(site=page)
+        assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on a page whose only <title> is a drawing's: {page!r}"
+    # a drawing's title is skipped wherever the drawing sits, a head the parser leaves early included
+    write(site='<head>' + OG + '<svg><title>Recovery after total loss</title></svg><title>Polaris ID</title></head>')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must not read a drawing's title in the head as the page's"
+    write(site=BARE + '<body><svg><title>Recovery after <tspan>total</tspan> loss</title></svg></body>')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must not read a drawing's title in the body as the page's"
+    # every other <title> is a name field, wherever it sits and however many there are: an innocent
+    # one in a drawing, a template or a noscript does not stand in for the real one, and a reader
+    # with scripting and one without each take a different one, so both are held
+    LOUD = '<title>Polaris ID, deployed nationally</title>'
+    for page in ('<!doctype html><html><head>' + OG + '<svg><title>Polaris ID</title></svg>' + LOUD,
+                 '<!doctype html><html><head>' + OG + '<template><title>Polaris ID</title></template>' + LOUD,
+                 '<head><noscript><title>Polaris ID</title></noscript>' + LOUD + OG + '</head>',
+                 '<head>' + BARE + '<noscript>' + LOUD + '</noscript></head>',
+                 BARE + LOUD,
+                 BARE + '<title>Polaris ID, deployed nationally',
+                 BARE + '<body><svg><foreignObject>' + LOUD + '</foreignObject></svg></body>',
+                 BARE + '<body><svg><desc>' + LOUD + '</desc></svg></body>',
+                 BARE + '<body><svg><title>' + LOUD + '</title></svg></body>',
+                 BARE + '<body><svg><g><p>' + LOUD + '</p></g></svg></body>',
+                 BARE + '<body><math><mtext>' + LOUD + '</mtext></math></body>'):
+        write(site=page)
+        assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on an overclaiming <title> beside an innocent one: {page!r}"
+    # the card's descriptions and image text: the scoped certification sentence is theirs to carry,
+    # 'international' is not 'national', and every refused word fails in every one of them
+    CERT = "Its verifier is OpenID Certified at 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile; international standards."
+    TEXTS = (("name", "description"), ("property", "og:description"), ("property", "og:image:alt"),
+             ("name", "twitter:description"), ("name", "twitter:image:alt"))
+    for attr, key in TEXTS:
+        write(site=BARE + f'<meta {attr}="{key}" content="{CERT}">\n')
+        assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", f"must PASS the scoped sentence in {key}"
+        for bad in ("a national identity system", "deployed at scale", "already piloted", "production ready",
+                    "unlinkable by default", "issuer-unlinkable tokens; presentations unlinkable by default"):
+            write(site=BARE + f'<meta {attr}="{key}" content="Polaris: {bad}.">\n')
+            assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on {bad!r} in {key}"
     # the 'national' category leaks back into the shareable title
     write(site=SITE.replace("a pre-pilot identity-token system",
                             "a pre-pilot national identity-token system"))
@@ -10725,6 +10991,10 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     write(site=SITE.replace("a pre-pilot identity-token system",
                             "a pre-pilot unlinkable-by-default identity-token system"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on bare 'unlinkable' without the issuer qualifier"
+    # each occurrence is held: a qualified one in the same field does not excuse a bare one
+    write(site=SITE.replace("a pre-pilot identity-token system",
+                            "a pre-pilot issuer-unlinkable, unlinkable-by-default identity-token system"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a bare 'unlinkable' beside a qualified one"
     # the qualified form passes
     write(site=SITE.replace("a pre-pilot identity-token system",
                             "a pre-pilot issuer-unlinkable identity-token system"))

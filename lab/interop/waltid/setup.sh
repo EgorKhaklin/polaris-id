@@ -26,13 +26,17 @@ curl -sf -m 5 "$WALTID/livez" >/dev/null || { echo "walt.id is not answering at 
 
 say() { printf '  %-22s %s\n' "$1" "$2"; }
 
-# 1. Stores and a wallet. `noDidStore:false` matters: the key endpoint does not return a
+# 1. Stores and a wallet. The stores are named for this run alone: a wallet sees everything in
+#    its stores, so a second run on stores of a fixed name would hold the first run's credential
+#    too, and could present it. `noDidStore:false` matters: the key endpoint does not return a
 #    public JWK, so the only way to read one out is to make a did:jwk from it.
+STORE=$("$PY" -c 'import secrets; print("stranger-" + secrets.token_hex(8))')
 for s in keys credentials dids; do
-  curl -sf -X POST "$WALTID/stores/$s/stranger" -H 'Content-Type: application/json' -d '{}' >/dev/null || true
+  curl -sf -X POST "$WALTID/stores/$s/$STORE" -H 'Content-Type: application/json' -d '{}' >/dev/null \
+    || { echo "walt.id did not create the $s store $STORE" >&2; exit 1; }
 done
 WID=$(curl -sf -X POST "$WALTID/wallet" -H 'Content-Type: application/json' \
-  -d '{"keyStoreIds":["stranger"],"credentialStoreIds":["stranger"],"didStoreId":"stranger","noDidStore":false}' \
+  -d '{"keyStoreIds":["'"$STORE"'"],"credentialStoreIds":["'"$STORE"'"],"didStoreId":"'"$STORE"'","noDidStore":false}' \
   | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["walletId"])')
 
 # 2. walt.id generates the holder key. `backend` is the discriminator, not `type`: the
@@ -68,10 +72,16 @@ curl -sf -X POST "$WALTID/wallet/$WID/credentials/import" -H 'Content-Type: appl
 
 # 4. Two things walt.id must trust: the listener's TLS certificate, and the CA that signs
 #    the request object. The second is the registration `keygen` already tells you to do.
+#    keytool refuses an alias that exists, so a second run (after `keygen` made a new
+#    certificate) deletes the first one; only its absence, on a first run, is not an error.
+#    keytool's output is shown only when it fails.
 docker cp "$PKI/tls.pem" "$CONTAINER:/tmp/polaris-tls.pem" >/dev/null
-docker exec "$CONTAINER" keytool -importcert -noprompt -trustcacerts -alias polaris-stranger \
+gone=$(docker exec "$CONTAINER" keytool -delete -alias polaris-stranger \
+  -keystore /opt/java/openjdk/lib/security/cacerts -storepass changeit 2>&1) \
+  || case "$gone" in *"does not exist"*) ;; *) echo "$gone" >&2; exit 1 ;; esac
+added=$(docker exec "$CONTAINER" keytool -importcert -noprompt -trustcacerts -alias polaris-stranger \
   -file /tmp/polaris-tls.pem -keystore /opt/java/openjdk/lib/security/cacerts \
-  -storepass changeit >/dev/null 2>&1 || true
+  -storepass changeit 2>&1) || { echo "$added" >&2; exit 1; }
 "$PY" -c '
 pem = open("'"$PKI"'/anchor.pem").read().strip().replace(chr(10), "\\n")
 open("wallet-service.conf", "w").write(

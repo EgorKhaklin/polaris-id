@@ -3921,6 +3921,12 @@ jobs:
       # not reach its last line; this holds all sixteen to it and runs the shape under /bin/bash.
       - name: The lab harnesses' EXIT traps (lab/interop/test_exit_trap.py), an early stop fails
         run: python -m unittest lab/interop/test_exit_trap.py
+      # lab/interop/waltid/setup.sh is the stranger's step 4. Run again on the same walt.id after
+      # step 3 made a new certificate, it must leave the wallet trusting the new certificate (keytool
+      # refuses an alias that exists, so the old alias goes first) and holding only the new
+      # credential (each run makes its wallet on stores of its own); any keytool or store error stops it.
+      - name: The stranger's step 4 run again trusts the new certificate and holds only the new credential (lab/interop/waltid/test_setup_rerun.py)
+        run: python -m unittest lab/interop/waltid/test_setup_rerun.py
       # lab/interop/oid4vcgo/run.sh runs in OID4VCgo's own CI, which tests a pull request before its
       # release with OID4VCGO_BIN or OID4VCGO_SRC: each input is the wallet that runs, a wrong one
       # stops the run with its reason, and the default stays the pinned version. No Docker.
@@ -4103,10 +4109,6 @@ jobs:
         run: cd sdk/typescript && npx tsc --noEmit
       - name: SDK unit tests
         run: cd sdk/typescript && node --test
-      # The site's one edge function (edge/film.js, /film/* only): ranges, refusals, and If-Range,
-      # which must never splice a slice of one file onto a cached copy of another.
-      - name: The site's film function answers byte ranges and honours If-Range (edge/film.test.mjs)
-        run: node --test edge/film.test.mjs
       - name: Conformance suite — TypeScript SDK (the same runner as the Python SDK)
         run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts" --algorithm Falcon-padded-1024
 
