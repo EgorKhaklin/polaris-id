@@ -12124,9 +12124,10 @@ class _TagReader(HTMLParser):
         elif self._foreign and tag not in _VOID_TAGS:
             self._foreign.append((tag, True))
 
-    def set_cdata_mode(self, elem: str, *, escapable: bool = False) -> None:
+    def set_cdata_mode(self, elem: str, **kwargs: bool) -> None:
+        # The parser passes escapable only where its Python has it (3.12.13 has it, 3.9.6 does not).
         if self._raw_text:  # an SVG or MathML <title>, <style> or <script> holds markup
-            super().set_cdata_mode(elem, escapable=escapable)
+            super().set_cdata_mode(elem, **kwargs)
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "title" and self._title is not None:
