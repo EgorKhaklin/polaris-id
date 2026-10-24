@@ -22,6 +22,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The readiness ledger and the paper (v3, English and Russian) said nothing floors an epoch's anonymity set above one. Since 1.0.0-rc.46 an epoch below `polaris.min_epoch_anonymity_set` (20 unless set) is not closed, and a proof against a smaller one answers "privacy unavailable"; above the floor no verdict reports the set's size. Both corrections tables record it. The rebuilt PDFs, the mathematical edition included, also carry the 2026-10-21 correction of which pages return no location for a zero-knowledge event.
 
+- The transparency monitor and witness take `--log timestamps` and follow the timestamp log (`polaris-timestamp-log`), as docs/design/timestamp-transparency.md and docs/reference/API.md say they do; before, each stopped at its options with exit 2 (scripts/polaris-transparency-monitor.py, scripts/polaris-transparency-witness.py).
+
 ### Added
 
 - polaris-oid4vp `serve --once --result FILE` keeps FILE a JSON object, apart from the log on stdout, saying what became of the request: `nothing_received` until a response arrives, then `accepted` with the claim names, `refused` with the check and reason its `<-` line prints, or `wallet_error`; the HTTP status the wallet was answered; and the request object fetches served and refused. It is rewritten whole before each answer goes out.
