@@ -4277,7 +4277,7 @@ jobs:
           pip-audit -r polaris_web/requirements-dev.txt --progress-spinner off
 
       # SAST: scan our own source for security anti-patterns. GATES on HIGH
-      # severity + medium-confidence (a real, actionable finding — e.g. the
+      # severity at any confidence, as SECURITY.md states it (e.g. the
       # world-writable state dir bandit caught at v9.112). Lower-severity
       # findings (bind-all on the container, parameterized SQL flagged as string
       # building, the dev /tmp default) are reported but do not block; a
@@ -4285,7 +4285,7 @@ jobs:
       - name: SAST (bandit, gating on HIGH severity)
         run: |
           echo "Scanning polaris_web + polaris_cli for HIGH-severity issues"
-          bandit -r polaris_web polaris_cli -x '*/venv/*' --severity-level high --confidence-level medium -q
+          bandit -r polaris_web polaris_cli -x '*/venv/*' --severity-level high --confidence-level all -q
 
   # --------------------------------------------------------------------------
   # Container IMAGE CVE scanning (v9.138). pip-audit (the cve-scan job) covers
@@ -4298,49 +4298,15 @@ jobs:
   # (base-image HIGHs churn daily and are mostly unfixable, so gating on them
   # would flake). The Dockerfiles apk/apt upgrade on top of the pinned bases so
   # the fixable CVEs are actually patched in what ships, not just reported.
+  # The steps live in image-cve-scan.yml (2026-10-21), which this job calls and
+  # which also runs weekly on main, so a fixable CRITICAL published against an
+  # image no change touched fails a run within a week.
   # --------------------------------------------------------------------------
   image-cve-scan:
     name: Container image CVE scan (Trivy)
     needs: [changes]
     if: needs.changes.outputs.full == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Build the self-built prod images
-        run: bash scripts/polaris-image-build.sh --stack cve
-
-      - name: Trivy — GATE on fixable CRITICAL (after .trivyignore)
-        run: |
-          set -e
-          for img in polaris-app:cve polaris-caddy:cve polaris-pgbouncer:cve polaris-postgres:cve polaris-etcd:cve; do
-            echo "::group::Trivy CRITICAL gate — $img"
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD/.trivyignore:/.trivyignore:ro" \
-              aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 image \
-                --scanners vuln --severity CRITICAL --ignore-unfixed \
-                --ignorefile /.trivyignore --exit-code 1 --no-progress "$img" \
-              || { echo "::error::$img has a fixable CRITICAL CVE not covered by .trivyignore"; exit 1; }
-            echo "::endgroup::"
-          done
-          echo "All prod images: no fixable CRITICAL CVEs (post-.trivyignore)"
-
-      - name: Trivy — report HIGH (informational, non-gating)
-        continue-on-error: true
-        run: |
-          for img in polaris-app:cve polaris-caddy:cve polaris-pgbouncer:cve polaris-postgres:cve polaris-etcd:cve; do
-            echo "=== HIGH (informational) — $img ==="
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD/.trivyignore:/.trivyignore:ro" \
-              aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 image \
-                --scanners vuln --severity HIGH --ignore-unfixed \
-                --ignorefile /.trivyignore --exit-code 0 --no-progress "$img" || true
-          done
+    uses: ./.github/workflows/image-cve-scan.yml  # zizmor: ignore[self-repository] -- GitHub's "Reuse workflows": a ./ reusable workflow in the same repository is from the same commit as the caller, not the runner's workspace
 
   # --------------------------------------------------------------------------
   # Full PRODUCTION-compose boot (v9.140). The docker-image job boots the DEV
