@@ -3,27 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Polaris ID: an OpenID Certified verifier (1.0.0rc7) and pre-pilot identity credentials, built to be checked</title>
-<meta name="description" content="Open-source identity infrastructure: credentials signed with ML-DSA-65, verified offline against published keys. Its OpenID4VP verifier was OpenID Certified at version 1.0.0rc7, and seven wallets nobody here wrote have presented to it. Notional data only.">
-<meta property="og:title" content="Polaris ID: an OpenID Certified verifier (1.0.0rc7) and pre-pilot identity credentials, built to be checked">
-<meta property="og:description" content="Credentials signed with ML-DSA-65 and verified offline against published keys. An OpenID4VP verifier, certified at 1.0.0rc7, that seven independent wallets have presented to. Check it yourself in one minute.">
+<title>Polaris ID</title>
+<meta name="description" content="The identity token system: credentials signed with ML-DSA-65 and verified offline against published keys. Its OpenID4VP verifier is OpenID Certified at version 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, and seven wallets nobody here wrote have presented to it. Test data only.">
+<meta property="og:title" content="Polaris ID">
+<meta property="og:description" content="Credentials signed with ML-DSA-65 and verified offline against published keys. An OpenID4VP verifier, OpenID Certified at 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, that seven independent wallets have presented to. Check it yourself in one minute.">
 <meta property="og:image" content="https://polaris-id.org/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="The Polaris logo above the words: identity built to be checked, not trusted. Pre-pilot.">
-<meta name="twitter:image:alt" content="The Polaris logo above the words: identity built to be checked, not trusted. Pre-pilot.">
+<meta property="og:image:alt" content="The Polaris coin at the still centre of turning star trails, above the words: the identity token system; identity built to be checked, not trusted.">
+<meta name="twitter:image:alt" content="The Polaris coin at the still centre of turning star trails, above the words: the identity token system; identity built to be checked, not trusted.">
 <meta property="og:url" content="https://polaris-id.org/">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Polaris ID (pre-pilot)">
+<meta property="og:site_name" content="Polaris ID">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#09090b">
 <meta name="color-scheme" content="dark">
 <link rel="canonical" href="https://polaris-id.org/">
 <link rel="icon" type="image/png" href="polaris_logo_180.png">
 <link rel="apple-touch-icon" href="polaris_logo_180.png">
-<link rel="preload" href="fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter.ce552fd9.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="index.css">
+<link rel="stylesheet" href="film.css">
 </head>
 <body>
 
@@ -35,13 +36,12 @@
             <span>Polaris</span>
         </a>
         <nav aria-label="Sections">
+            <a href="#verify">The check</a>
             <a href="#evidence">Evidence</a>
-            <a href="#why">Why now</a>
-            <a href="#verify">Verify</a>
             <a href="#how">How it works</a>
+            <a href="#mission">Mission</a>
             <a href="#partners">Work with us</a>
         </nav>
-        <span class="tag">Pre-pilot</span>
         <a class="gh gh-keep" href="https://github.com/EgorKhaklin/polaris-id">GitHub</a>
     </div>
 </header>
@@ -49,22 +49,35 @@
 <main id="main">
 
 <section class="hero-band" id="top" aria-labelledby="hero-h">
-<div class="cosmos" aria-hidden="true">
-    <span class="milky"></span>
-    <span class="galaxy g1"></span><span class="galaxy g2"></span><span class="galaxy g3"></span>
-    <span class="meteor m1"></span><span class="meteor m2"></span>
-</div>
 <div class="hero">
     <div class="sky" aria-hidden="true">
-        <video class="sky-film" autoplay muted loop playsinline disablepictureinpicture preload="metadata" poster="sky-poster.8417ef84.webp">
-            <source src="film/sky-960.9d90a332.mp4" type="video/mp4" media="(max-width: 560px) and (prefers-reduced-motion: no-preference)">
-            <source src="film/sky-1440.432d5189.mp4" type="video/mp4" media="(prefers-reduced-motion: no-preference)">
-        </video>
-        <span class="halo"></span>
-        <img class="pole" src="polaris_logo.webp" alt="" width="220" height="220" fetchpriority="high">
+        <div class="heavens"><div class="turn">
+            <picture>
+                <source type="image/avif" sizes="(max-width: 384px) 193vw, (max-width: 560px) 742px, (max-width: 900px) 841px, 1285px"
+                        srcset="hero/sky-1600.2d882f89.avif 1600w, hero/sky-2400.25d2d7f9.avif 2400w, hero/sky-3200.9dfbe6c7.avif 3200w">
+                <img class="stars" src="hero/sky-2400.3e57bb28.webp" alt="" width="2400" height="2400" decoding="async" fetchpriority="low">
+            </picture>
+        </div></div>
+        <div class="shade"><div class="shade-drop"><picture><source type="image/avif" srcset="hero/coin-shadow-dir.178d0b37.avif"><img class="dir" src="hero/coin-shadow-dir.bcafbeff.webp" alt="" width="384" height="384"></picture><picture><source type="image/avif" srcset="hero/coin-shadow-ao.efe27524.avif"><img class="ao" src="hero/coin-shadow-ao.8d9bc093.webp" alt="" width="384" height="384"></picture></div></div>
+        <p class="polaris"><b>Polaris</b> fixed amid the changing</p>
+        <div class="coin">
+            <div class="coin-stage"><div class="coin-rise"><div class="coin-wob"><div class="coin-body"><div class="coin-land">
+                <div class="coin-rim"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                <div class="coin-face">
+                    <picture>
+                        <source type="image/avif" sizes="(max-width: 560px) 180px, (max-width: 900px) 204px, 312px"
+                                srcset="hero/coin-4-384.05215496.avif 384w, hero/coin-4-640.5af7aafd.avif 640w">
+                        <img src="hero/coin-4-640.043a7c4a.webp" alt="" width="640" height="640" fetchpriority="high">
+                    </picture>
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    <b></b><b></b><b></b><b></b>
+                </div>
+            </div></div></div></div></div>
+            <div class="coin-touch"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
     </div>
     <div class="hero-copy">
-        <p class="eyebrow">Open-source identity infrastructure</p>
+        <p class="eyebrow">The identity token system</p>
         <h1 id="hero-h">Identity built to be <span class="nb"><em>checked</em>, not trusted.</span></h1>
         <p class="lead">For the banks, platforms and public services that will accept Europe&rsquo;s digital
             identity wallets.</p>
@@ -73,222 +86,323 @@
             <a class="btn btn-line" href="#partners">Work with us</a>
         </div>
     </div>
-    <ul class="proof" aria-label="Outside evidence">
-        <li><a class="proof-cert" href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified" width="140" height="77"></a></li>
-        <li><a href="#evidence"><b>15 outside projects</b></a></li>
-        <li><a href="#evidence"><b>EU reference software</b></a></li>
-        <li><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/LICENSE"><b>Apache-2.0</b></a></li>
+    <ul class="proof" aria-label="Highlights">
+        <li><a class="proof-cert" href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified: the polaris-oid4vp 1.0.0rc7 verifier, OpenID4VP 1.0 and HAIP 1.0 Verifier profile" width="140" height="77"></a></li>
+        <li><a href="#evidence"><b>Tested with EU reference software</b></a></li>
+        <li><a class="proof-go" href="#mission"><b>Our mission</b></a></li>
     </ul>
+    <p class="proof-scope">OpenID Certified: polaris-oid4vp 1.0.0rc7, OpenID4VP 1.0 + HAIP 1.0 Verifier profile.</p>
 </div>
+<div class="horizon" aria-hidden="true"></div>
 </section>
 
-<section class="band" id="evidence" aria-labelledby="evidence-h">
-    <div class="wrap">
-        <p class="num">I</p>
-        <h2 id="evidence-h">Tested in the open.</h2>
+<nav class="reel" aria-label="Chapters">
+    <a class="pole" href="#top"><span>Polaris</span></a>
+    <a href="#verify"><b>I</b><span>The check</span></a>
+    <a href="#evidence"><b>II</b><span>Evidence</span></a>
+    <a href="#how"><b>III</b><span>How it works</span></a>
+    <a href="#design"><b>IV</b><span>The rules</span></a>
+    <a href="#hard"><b>V</b><span>The hard cases</span></a>
+    <a href="#why"><b>VI</b><span>Why now</span></a>
+    <a href="#mission"><b>VII</b><span>Mission</span></a>
+    <a href="#partners"><b>VIII</b><span>Work with us</span></a>
+</nav>
 
-        <details class="roster">
-            <summary><span>From the European Commission, the OpenWallet Foundation, walt.id, SpruceID, Yivi and more</span><span class="show" data-closed="Show all 15" data-opened="Hide"></span></summary>
-            <ul>
-                <li><b><a href="https://github.com/walt-id/waltid-identity">walt.id Wallet API</a></b><span>Kotlin &middot; wallet</span></li>
-                <li><b><a href="https://github.com/openwallet-foundation/credo-ts">Credo</a></b><span>TypeScript &middot; wallet &middot; OpenWallet Foundation</span></li>
-                <li><b><a href="https://github.com/eudi-dev/eudi-dev">eudi-dev</a></b><span>Go &middot; OpenID Certified wallet</span></li>
-                <li><b><a href="https://github.com/IDFoundry/OID4VCgo">OID4VCgo</a></b><span>Go &middot; OpenID Certified wallet</span></li>
-                <li><b><a href="https://github.com/ParleSec/ProtocolSoup">ProtocolSoup</a></b><span>Go &middot; wallet harness</span></li>
-                <li><b><a href="https://github.com/procivis/one-core">Procivis One Core</a></b><span>Rust &middot; wallet</span></li>
-                <li><b><a href="https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vp-kt">EUDI Wallet OpenID4VP library</a></b><span>Kotlin &middot; European Commission</span></li>
-                <li><b><a href="https://github.com/eu-digital-identity-wallet/eudi-lib-ios-openid4vp-swift">EUDI Wallet OpenID4VP library</a></b><span>Swift &middot; European Commission</span></li>
-                <li><b><a href="https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer">EUDI PID issuer</a></b><span>European Commission reference issuer</span></li>
-                <li><b><a href="https://github.com/a-sit-plus/vck">vck</a></b><span>Kotlin library &middot; A-SIT Plus</span></li>
-                <li><b><a href="https://github.com/openwallet-foundation/multipaz">Multipaz</a></b><span>Kotlin library &middot; OpenWallet Foundation</span></li>
-                <li><b><a href="https://github.com/privacybydesign/irmamobile">Yivi app (built on irmago)</a></b><span>Dart &middot; wallet in developer mode &middot; Yivi</span></li>
-                <li><b><a href="https://github.com/openwallet-foundation-labs/axle">Axle</a></b><span>Kotlin &middot; driven by a harness written here</span></li>
-                <li><b><a href="https://github.com/spruceid/openid4vp">openid4vp</a></b><span>Rust &middot; SpruceID conformance adapter</span></li>
-                <li><b><a href="https://gitlab.opencode.de/bmi/eudi-wallet/erica">ERICA</a></b><span>TypeScript &middot; verifier testing tool</span></li>
-            </ul>
-        </details>
-        <p class="src">Every run is dated in <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md">the scoreboard</a>. Also listed among the IETF SD-JWT implementations.</p>
-
-        <div class="zeros">
-            <h3>Where it stands</h3>
-            <dl>
-                <div><dt>Stage</dt><dd>1.0.0</dd></div>
-                <div><dt>OpenID Certified verifier</dt><dd>1.0.0rc7</dd></div>
-                <div><dt>First outside operator</dt><dd><a href="https://github.com/IDFoundry/OID4VCgo/issues/312">OID4VCgo&rsquo;s CI, daily</a></dd></div>
-                <div><dt>Ahead</dt><dd><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">Pilot, security review, real data</a></dd></div>
-            </dl>
-        </div>
-    </div>
-</section>
-
-<section class="band" id="why" aria-labelledby="why-h">
-    <div class="wrap">
-        <p class="num">II</p>
-        <p class="kicker">Why now</p>
-        <h2 id="why-h" class="statement">Every EU member state must provide a digital identity wallet.</h2>
-        <div class="zeros stats">
-            <dl>
-                <div><dt>EU member states</dt><dd>27</dd></div>
-                <div><dt>People with no official ID</dt><dd>~800M</dd></div>
-                <div><dt>Without a government digital ID usable online</dt><dd>2.8B+</dd></div>
-            </dl>
-        </div>
-        <p class="answer">Polaris is built to enrol a person with no documents through a trusted referee.</p>
-        <p class="src">Sources: <a href="https://eur-lex.europa.eu/eli/reg/2024/1183/oj">Regulation (EU) 2024/1183</a>, Article 5a; the World Bank&rsquo;s <a href="https://id4d.worldbank.org/global-dataset">ID4D Global Dataset</a>, 2025.</p>
-    </div>
-</section>
-
-<section class="band" id="verify" aria-labelledby="verify-h">
-    <div class="wrap split">
-        <div>
-            <p class="num">III</p>
+<section class="act act-check" id="verify" aria-labelledby="verify-h">
+    <div class="stage">
+        <div class="card">
+            <p class="slate"><b>I</b><span>The check</span></p>
             <h2 id="verify-h">One minute, from an empty folder.</h2>
-            <p>Don&rsquo;t take our word for it. One script runs an outside wallet against the verifier, then sends three controls that must each be refused.</p>
-            <p>It needs <code>python3</code> and a free port. Docker is optional.</p>
-            <p class="more"><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md">The ten-minute version, step by step</a>
-                <a href="https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml">Tell us where it broke</a></p>
+            <p class="dek">Don&rsquo;t take our word for it. One script runs an outside wallet against the verifier, then sends three controls that must each be refused.</p>
         </div>
-        <figure class="term">
-            <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i><span>bash</span></div>
-<pre><code><span class="l"><span class="c">$</span> mkdir polaris-quick &amp;&amp; cd polaris-quick</span>
-<span class="l"><span class="c">$</span> r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main</span>
-<span class="l"><span class="c">$</span> curl -fsSLO $r/lab/interop/eudi-dev/run.sh</span>
-<span class="l"><span class="c">$</span> curl -fsSLO $r/lab/interop/waltid/issue_sdjwt_vc.py</span>
-<span class="l"><span class="c">$</span> curl -fsSLO $r/lab/interop/requirements.txt</span>
-<span class="l"><span class="c">$</span> bash run.sh</span>
-<span class="l"><span class="d">wallet     ghcr.io/dominikschlosser/eudi-dev:v2.3.7</span></span>
-<span class="l"><span class="d">installed  polaris-oid4vp 1.0.0</span></span>
-<span class="l">== genuine presentation</span>
-<span class="l">  <span class="ok">ok</span>    the verifier accepted it</span>
-<span class="l">          <span class="d">&lt;- 200 authentic</span></span>
-<span class="l">== control (b): the same request again, after it was answered</span>
-<span class="l">  <span class="ok">ok</span>    refused at the request stage</span>
-<span class="l">== control (c): a launch URI whose client_id is not the signed request's</span>
-<span class="l">  <span class="ok">ok</span>    the wallet refused the request</span>
-<span class="l">== control (a): the verifier trusts a different issuer key under the same kid</span>
-<span class="l">  <span class="ok">ok</span>    the verifier refused the issuer</span>
-<span class="l"><span class="res">RESULT: accepted, and all three controls refused</span></span></code></pre>
-            <figcaption>Recorded 15 October 2026, abridged: 16 seconds from an empty folder.</figcaption>
+        <figure class="term" aria-labelledby="term-cap">
+            <p class="term-head" aria-hidden="true">bash &middot; recorded 15 October 2026 &middot; abridged</p>
+<pre><i class="playhead" aria-hidden="true"></i><code><span class="l"><span class="d">$</span> mkdir polaris-quick &amp;&amp; cd polaris-quick</span>
+<span class="l"><span class="d">$</span> r=https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main</span>
+<span class="l"><span class="d">$</span> curl -fsSLO $r/lab/interop/eudi-dev/run.sh</span>
+<span class="l"><span class="d">$</span> curl -fsSLO $r/lab/interop/waltid/issue_sdjwt_vc.py</span>
+<span class="l"><span class="d">$</span> curl -fsSLO $r/lab/interop/requirements.txt</span>
+<span class="l"><span class="d">$</span> bash run.sh</span>
+<span class="l o1"><span class="d">wallet     ghcr.io/dominikschlosser/eudi-dev:v2.3.7</span></span>
+<span class="l o1"><span class="d">installed  polaris-oid4vp 1.0.0</span></span>
+<span class="l o2">== genuine presentation</span>
+<span class="l o2">  <span class="ok">ok</span>    the verifier accepted it</span>
+<span class="l o2">          <span class="d">&lt;- 200 authentic</span></span>
+<span class="l o3">== control (b): the same request again, after it was answered</span>
+<span class="l o3">  <span class="ok">ok</span>    refused at the request stage</span>
+<span class="l o4">== control (c): a launch URI whose client_id is not the signed request's</span>
+<span class="l o4">  <span class="ok">ok</span>    the wallet refused the request</span>
+<span class="l o5">== control (a): the verifier trusts a different issuer key under the same kid</span>
+<span class="l o5">  <span class="ok">ok</span>    the verifier refused the issuer</span></code></pre>
         </figure>
+        <div class="verdict">
+            <p class="result"><b>RESULT:</b> accepted, and all three controls refused</p>
+            <p class="cap" id="term-cap">Recorded 15 October 2026, abridged: 16 seconds from an empty folder, with the wallet&rsquo;s image already pulled.</p>
+        </div>
+        <p class="more"><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md">Run it yourself, step by step</a>
+            <a href="https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml">Tell us where it broke</a></p>
     </div>
 </section>
 
-<section class="band" id="how" aria-labelledby="how-h">
-    <div class="wrap">
-        <p class="num">IV</p>
-        <h2 id="how-h">Issue. Hold. Verify.</h2>
-        <ol class="flow">
-            <li><span class="step">Issue</span>
-                <p>An authority signs it with ML-DSA-65; the algorithm is data, so it can change.</p></li>
-            <li><span class="step">Hold</span>
-                <p>The person keeps it and shows only what they choose; zero-knowledge mode proves a valid token exists without revealing identity.</p></li>
-            <li><span class="step">Verify</span>
-                <p>Anyone checks it offline, against published keys: no server, no network.</p></li>
+<section class="act act-outside" id="evidence" aria-labelledby="evidence-h">
+    <div class="ledger-wrap">
+        <div class="ledger-head">
+            <p class="slate"><b>II</b><span>Evidence</span></p>
+            <h2 id="evidence-h">Tested in the open.</h2>
+            <p class="dek">Working software on test data, tested against 15 outside projects.</p>
+            <p class="tally" aria-hidden="true"><b>15</b><span>outside projects</span></p>
+            <p class="tally-at" aria-hidden="true"></p>
+        </div>
+        <ol class="ledger">
+            <li><a href="https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vp-kt">EUDI Wallet OpenID4VP library</a><span>Kotlin &middot; European Commission</span></li>
+            <li><a href="https://github.com/eu-digital-identity-wallet/eudi-lib-ios-openid4vp-swift">EUDI Wallet OpenID4VP library</a><span>Swift &middot; European Commission</span></li>
+            <li><a href="https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer">EUDI PID issuer</a><span>European Commission reference issuer</span></li>
+            <li><a href="https://github.com/walt-id/waltid-identity">walt.id Wallet API</a><span>Kotlin &middot; wallet</span></li>
+            <li><a href="https://github.com/openwallet-foundation/credo-ts">Credo</a><span>TypeScript &middot; wallet &middot; OpenWallet Foundation</span></li>
+            <li><a href="https://github.com/eudi-dev/eudi-dev">eudi-dev</a><span>Go &middot; wallet, OpenID Certified at v2.3.7</span></li>
+            <li><a href="https://github.com/IDFoundry/OID4VCgo">OID4VCgo</a><span>Go &middot; wallet, OpenID Certified at 0.12.0</span></li>
+            <li><a href="https://github.com/ParleSec/ProtocolSoup">ProtocolSoup</a><span>Go &middot; wallet harness</span></li>
+            <li><a href="https://github.com/procivis/one-core">Procivis One Core</a><span>Rust &middot; wallet</span></li>
+            <li><a href="https://github.com/privacybydesign/irmamobile">Yivi app (built on irmago)</a><span>Dart &middot; wallet in developer mode &middot; Yivi</span></li>
+            <li><a href="https://github.com/a-sit-plus/vck">vck</a><span>Kotlin library &middot; A-SIT Plus</span></li>
+            <li><a href="https://github.com/openwallet-foundation/multipaz">Multipaz</a><span>Kotlin library &middot; OpenWallet Foundation</span></li>
+            <li><a href="https://github.com/openwallet-foundation-labs/axle">Axle</a><span>Kotlin &middot; OpenWallet Foundation Labs &middot; driven by a harness written here</span></li>
+            <li><a href="https://github.com/spruceid/openid4vp">openid4vp</a><span>Rust &middot; SpruceID conformance adapter</span></li>
+            <li><a href="https://gitlab.opencode.de/bmi/eudi-wallet/erica">ERICA</a><span>TypeScript &middot; verifier testing tool</span></li>
         </ol>
-        <details class="more-box">
-            <summary><span>Install it</span><span class="show" data-closed="Show" data-opened="Hide"></span></summary>
-        <div class="kit">
-            <code>pip install polaris-oid4vp</code>
-            <code>pip install --pre "polaris-verify[cryptography]"</code>
-            <code>pip install --pre polaris-sdk-python</code>
-            <code>npm install polaris-sdk-ts@next</code>
+        <div class="after">
+            <p class="endorse">A project listed here means Polaris was tested with it, not that it endorses Polaris.</p>
+            <div class="plate">
+                <a class="chip" href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified: the polaris-oid4vp 1.0.0rc7 verifier, OpenID4VP 1.0 and HAIP 1.0 Verifier profile" width="140" height="77" loading="lazy" decoding="async"></a>
+                <p>Of Polaris, only polaris-oid4vp version <span class="v">1.0.0rc7</span> is OpenID Certified, to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC; <a href="https://openid.net/certification/certified-oid4vp-haip-final/">the OpenID Foundation lists it</a>. It is not an endorsement and not an audit. The current release is <span class="v">1.0.0</span>.</p>
+            </div>
+            <dl class="lines">
+                <div><dt>First outside operator, in test</dt><dd><a href="https://github.com/IDFoundry/OID4VCgo/issues/312#issuecomment-6106407596">OID4VCgo&rsquo;s CI runs it daily</a>, since 11 October 2026.</dd></div>
+                <div><dt>Scoreboard</dt><dd>Dated runs are kept in <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md">a public scoreboard</a>. Also listed among <a href="https://github.com/oauth-wg/oauth-selective-disclosure-jwt#sd-jwt-implementations">the IETF SD-JWT implementations</a>.</dd></div>
+                <div><dt>Still ahead</dt><dd><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">A relying party, a pilot, an independent security review, real data.</a></dd></div>
+            </dl>
         </div>
-        </details>
     </div>
 </section>
 
-<section class="band" id="design" aria-labelledby="design-h">
-    <div class="wrap">
-        <p class="num">V</p>
+<section class="act act-how" id="how" aria-labelledby="how-h">
+    <div class="stage">
+        <header class="how-head">
+            <p class="slate"><b>III</b><span>How it works</span></p>
+            <h2 id="how-h">Issue. Hold. Verify.</h2>
+        </header>
+        <ol class="steps">
+            <li class="step-issue">
+                <p class="verb">Issue</p>
+                <p>An authority signs the credential with ML-DSA-65. The algorithm is data, so an issuer can switch it; each verifier takes a software update. A wallet's copy is signed with ES256, the algorithm Europe's wallets use today.</p>
+            </li>
+            <li class="step-hold">
+                <p class="verb">Hold</p>
+                <p>The person keeps it and shows only what they choose.</p>
+                <p class="zk">Zero-knowledge mode proves a valid token exists without revealing identity.</p>
+            </li>
+            <li class="step-verify">
+                <p class="verb">Verify</p>
+                <p>Anyone checks it offline, against published keys: no server, no network.</p>
+            </li>
+        </ol>
+        <div class="vitrine">
+            <figure class="obj obj-die">
+                <picture>
+                    <source type="image/avif" srcset="film/iii-die-540.e0803cb7.avif 540w, film/iii-die-1080.54d1dfb2.avif 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)">
+                    <img src="film/iii-die-540.c74ab427.webp" srcset="film/iii-die-540.c74ab427.webp 540w, film/iii-die-1080.552da887.webp 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)" alt="" width="540" height="540" loading="lazy" decoding="async" fetchpriority="low">
+                </picture>
+                <figcaption>A steel die, cut in reverse, as a die must be.</figcaption>
+            </figure>
+            <figure class="obj obj-paper">
+                <picture>
+                    <source type="image/avif" srcset="film/iii-paper-540.d3d87bd9.avif 540w, film/iii-paper-1080.32b04d89.avif 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)">
+                    <img src="film/iii-paper-540.fc938f9f.webp" srcset="film/iii-paper-540.fc938f9f.webp 540w, film/iii-paper-1080.b1bdd440.webp 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)" alt="" width="540" height="540" loading="lazy" decoding="async" fetchpriority="low">
+                </picture>
+                <picture>
+                    <source type="image/avif" srcset="film/iii-grille-540.960b6884.avif 540w, film/iii-grille-1080.bb90e8bf.avif 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)">
+                    <img class="over grille" src="film/iii-grille-540.5750b57f.webp" srcset="film/iii-grille-540.5750b57f.webp 540w, film/iii-grille-1080.3660f2c8.webp 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)" alt="" width="540" height="540" loading="lazy" decoding="async" fetchpriority="low">
+                </picture>
+                <figcaption>A Cardan grille (Girolamo Cardano, 1550): only what lies under its windows can be read.</figcaption>
+            </figure>
+            <figure class="obj obj-table">
+                <picture>
+                    <source type="image/avif" srcset="film/iii-table-540.3da767b3.avif 540w, film/iii-table-1080.e225b5a9.avif 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)">
+                    <img src="film/iii-table-540.747303e9.webp" srcset="film/iii-table-540.747303e9.webp 540w, film/iii-table-1080.48e25c39.webp 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)" alt="" width="540" height="540" loading="lazy" decoding="async" fetchpriority="low">
+                </picture>
+                <picture>
+                    <source type="image/avif" srcset="film/iii-loupe-540.54a9650b.avif 540w, film/iii-loupe-1080.a79b24e2.avif 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)">
+                    <img class="over loupe" src="film/iii-loupe-540.02ad1d4f.webp" srcset="film/iii-loupe-540.02ad1d4f.webp 540w, film/iii-loupe-1080.1354ac03.webp 1080w" sizes="(max-width: 900px) min(100vw - 32px, 540px), min(720px, 44vw)" alt="" width="540" height="540" loading="lazy" decoding="async" fetchpriority="low">
+                </picture>
+                <figcaption>A printed table of keys, under a loupe.</figcaption>
+            </figure>
+        </div>
+        <p class="note">Illustrations. No real keys or data are shown.</p>
+    </div>
+</section>
+
+<section class="act act-rules" id="design" aria-labelledby="design-h">
+    <div class="wall" aria-hidden="true">
+        <picture>
+            <source type="image/avif" media="(max-width: 900px)" srcset="film/iv-wall-lamp-900x1400.b10fc851.avif" width="900" height="1400">
+            <source media="(max-width: 900px)" srcset="film/iv-wall-lamp-900x1400.c6d4521d.webp" width="900" height="1400">
+            <source type="image/avif" srcset="film/iv-wall-lamp-1600x1000.0c0a3930.avif">
+            <img class="lamp" src="film/iv-wall-lamp-1600x1000.ce1793d6.webp" alt="" width="1600" height="1000" loading="lazy" decoding="async" fetchpriority="low">
+        </picture>
+        <picture>
+            <source type="image/avif" media="(max-width: 900px)" srcset="film/iv-wall-rake-900x1400.9b9b0756.avif" width="900" height="1400">
+            <source media="(max-width: 900px)" srcset="film/iv-wall-rake-900x1400.29b8a21e.webp" width="900" height="1400">
+            <source type="image/avif" srcset="film/iv-wall-rake-1600x1000.39782d95.avif">
+            <img class="rake" src="film/iv-wall-rake-1600x1000.c12ce992.webp" alt="" width="1600" height="1000" loading="lazy" decoding="async" fetchpriority="low">
+        </picture>
+    </div>
+    <div class="tablet">
+        <p class="slate"><b>IV</b><span>The rules</span></p>
         <h2 id="design-h">The rules live in the database.</h2>
-        <p class="intro">Four are held by the database itself; all five are checked on every build.</p>
-        <details class="more-box">
-            <summary><span>The five guarantees</span><span class="show" data-closed="Show" data-opened="Hide"></span></summary>
-        <table class="rules">
-            <tbody>
-                <tr><th scope="row">The audit of record is append-only</th><td>A trigger on every audit table; the application role cannot reach the purge path</td></tr>
-                <tr><th scope="row">A zero-knowledge verification stores no credential identifier</th><td>A two-way CHECK constraint on the verification table</td></tr>
-                <tr><th scope="row">One active credential per person</th><td>A partial unique index</td></tr>
-                <tr><th scope="row">The disclosure level is decided by the server, not the caller</th><td>The form handler, the CHECK above and every read path</td></tr>
-                <tr><th scope="row">Identity is not money</th><td>Structural absence: no monetary table or column exists</td></tr>
-            </tbody>
-        </table>
-        </details>
-
-        <div class="hard">
-            <div>
-                <h3>Duress-aware</h3>
-                <p>A second code verifies normally and silently records duress. It works against a coercer who doesn&rsquo;t know it exists.</p>
-            </div>
-            <div>
-                <h3>Total loss</h3>
-                <p>Lose every device and come back through three channels, one of them a witness from a second authority.</p>
-            </div>
-            <div>
-                <h3>Algorithm migration</h3>
-                <p>Two signatures during a move between algorithms; the database never leaves a token without an active one.</p>
-            </div>
-        </div>
+        <p class="dek">Four are held by the database itself; all five are checked on every build.</p>
+        <ol class="laws">
+            <li data-rule="The audit record is append-only.">The audit record is append-only.</li>
+            <li data-rule="A zero-knowledge verification stores no credential identifier.">A zero-knowledge verification stores no credential identifier.</li>
+            <li data-rule="One active credential per person.">One active credential per person.</li>
+            <li data-rule="The disclosure level is decided by the server, not the caller.">The disclosure level is decided by the server, not the caller.</li>
+            <li data-rule="Identity is not money.">Identity is not money.</li>
+        </ol>
+        <div class="cartouche" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <p class="cartouche-cap">No monetary table or column exists.</p>
     </div>
 </section>
 
-
-<section class="band" id="start" aria-labelledby="start-h">
-    <div class="wrap">
-        <p class="num">VI</p>
-        <h2 id="start-h">Where to start.</h2>
-        <div class="paths">
-            <a href="https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp">
-                <span class="who">Building a wallet or a verifier</span>
-                <b>polaris-oid4vp</b></a>
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md">
-                <span class="who">Accepting credentials</span>
-                <b>The SDKs and the offline verifier</b></a>
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/MISSION.md">
-                <span class="who">Assessing it for an authority</span>
-                <b>The constitution and the ledger</b></a>
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md">
-                <span class="who">Trying to break it</span>
-                <b>Security policy and red-team scope</b></a>
-        </div>
-        <p class="src">Run the whole stack locally:
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/operator/INSTALL.md">installation</a> &middot;
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SYSTEM-MAP.md">system map</a> &middot;
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/API.md">API</a> &middot;
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/ROADMAP.md">roadmap</a></p>
+<section class="act act-hard" id="hard" aria-labelledby="hard-h">
+    <div class="beat beat-duress">
+        <p class="slate"><b>V</b><span>The hard cases</span></p>
+        <h2 id="hard-h">When it goes wrong.</h2>
+        <h3>Duress-aware</h3>
+        <figure class="duress">
+            <p class="seen">What a coercer sees</p>
+            <div class="panes">
+                <div class="pane"><p class="code">Code one</p><p class="dots" aria-hidden="true">&#9679; &#9679; &#9679; &#9679; &#9679; &#9679;</p><p class="said">Verified</p></div>
+                <div class="pane"><p class="code">Code two</p><p class="dots" aria-hidden="true">&#9679; &#9679; &#9679; &#9679; &#9679; &#9679;</p><p class="said">Verified</p></div>
+            </div>
+            <p class="tell">Duress recorded, silently.</p>
+            <figcaption>Illustration.</figcaption>
+        </figure>
+        <p class="say">A second code verifies normally and silently records duress. It works against a coercer who does not know it exists, not one watching the holder, and against lawful or institutional access it is net-negative, because the application cannot change or delete the record it leaves.</p>
+    </div>
+    <div class="beat beat-loss">
+        <h3>Total loss</h3>
+        <figure class="crossing">
+            <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" viewBox="0 0 560 360" font-size="11" font-family="monospace" fill="none" stroke="currentColor"><mask id="cr-a" maskUnits="userSpaceOnUse" width="560" height="360"><path class="rv" pathLength="1" stroke="#fff" stroke-width="4" d="M60 270.3L500 81.7"/></mask><path class="ch" pathLength="1" mask="url(#cr-a)" d="M60 270.3L500 81.7"/><mask id="cr-b" maskUnits="userSpaceOnUse" width="560" height="360"><path class="rv" pathLength="1" stroke="#fff" stroke-width="4" d="M369.2 40L258.8 316"/></mask><path class="ch" pathLength="1" mask="url(#cr-b)" d="M369.2 40L258.8 316"/><mask id="cr-c" maskUnits="userSpaceOnUse" width="560" height="360"><path class="rv" pathLength="1" stroke="#fff" stroke-width="4" d="M150 66L450 319.8"/></mask><path class="ch" pathLength="1" mask="url(#cr-c)" d="M150 66L450 319.8"/><polygon class="cut" fill="#ddca9b" fill-opacity=".25" stroke="none" points="322,158 306,198 280,176"/><g class="lb" fill="currentColor" stroke="none"><text x="60" y="288">Biometric check</text><text x="257" y="338" text-anchor="middle">Sworn statement</text><text x="450" y="338" text-anchor="middle">Witness, second authority</text></g></svg>
+            <figcaption class="in-words">A position fixed by three lines: a biometric check, a sworn statement and a witness from a second authority.</figcaption>
+        </figure>
+        <p class="say">Lose every device and come back through three channels, one of them a witness from a second authority.</p>
+    </div>
+    <div class="beat beat-move">
+        <h3>Algorithm migration</h3>
+        <figure class="seals">
+            <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" viewBox="0 0 320 190" font-size="11" font-family="monospace" fill="none" stroke="currentColor"><g class="s1"><circle cx="80" cy="66" r="59"/><circle cx="80" cy="66" r="54"/><path class="hat" pathLength="1" d="M100 22.4L123.6 46M89.5 19L127 56.5M81.5 18L128 64.5M74.7 18.3L127.7 71.3M68.7 19.3L126.7 77.3M63.3 21L125 82.7M58.4 23.2L122.8 87.6M53.9 25.7L120.3 92.1M49.8 28.7L117.3 96.2M46.1 32.1L113.9 99.9M42.7 35.8L110.2 103.3M39.7 39.9L106.1 106.3M37.2 44.4L101.6 108.8M35 49.3L96.7 111M33.3 54.7L91.3 112.7M32.3 60.7L85.3 113.7M32 67.5L78.5 114M33 75.5L70.5 113M36.4 86L60 109.6"/></g><mask id="se-w" maskUnits="userSpaceOnUse" width="320" height="190"><path class="rv" pathLength="1" stroke="#fff" stroke-width="110" d="M201 27L279 105"/></mask><g class="s2"><circle cx="240" cy="66" r="59"/><circle cx="240" cy="66" r="54"/><path class="hat" pathLength="1" mask="url(#se-w)" d="M196.4 46L220 22.4M193 56.5L230.5 19M192 64.5L238.5 18M192.3 71.3L245.3 18.3M193.3 77.3L251.3 19.3M195 82.7L256.7 21M197.2 87.6L261.6 23.2M199.7 92.1L266.1 25.7M202.7 96.2L270.2 28.7M206.1 99.9L273.9 32.1M209.8 103.3L277.3 35.8M213.9 106.3L280.3 39.9M218.4 108.8L282.8 44.4M223.3 111L285 49.3M228.7 112.7L286.7 54.7M234.7 113.7L287.7 60.7M241.5 114L288 67.5M249.5 113L287 75.5M260 109.6L283.6 86"/></g><g class="lb" fill="currentColor" stroke="none" text-anchor="middle"><text x="80" y="150">Outgoing algorithm</text><text x="240" y="150">Incoming algorithm</text></g><g class="retired"><path d="M20 160h120"/><text x="80" y="180" text-anchor="middle" fill="currentColor" stroke="none">Retired</text></g></svg>
+            <figcaption class="in-words">Two seals, the outgoing algorithm's and the incoming algorithm's. When the incoming seal is complete, the outgoing one is marked retired.</figcaption>
+        </figure>
+        <p class="say">Two signatures during a move between algorithms; the database never leaves a token without an active one.</p>
     </div>
 </section>
 
-<section class="band closing" id="partners" aria-labelledby="partners-h">
-    <div class="wrap">
-        <p class="num">VII</p>
+<section class="act act-world" id="why" aria-labelledby="why-h">
+    <div class="stage">
+        <div class="law">
+            <p class="slate"><b>VI</b><span>Why now</span></p>
+            <h2 id="why-h"><span>Every EU member state</span> <span>must provide a digital</span> <span>identity wallet.</span></h2>
+            <p class="cite"><a href="https://eur-lex.europa.eu/eli/reg/2024/1183/oj">Regulation (EU) 2024/1183, Article 5a.</a></p>
+        </div>
+        <p class="states" aria-hidden="true"><b>27</b><span>member states</span></p>
+        <div class="count count-a">
+            <p class="figure">More than 800 million</p>
+            <p class="who">people have no official ID.</p>
+            <div class="field field-a" aria-hidden="true"></div>
+            <p class="key" aria-hidden="true">Each ring: 10 million people.</p>
+        </div>
+        <div class="count count-b">
+            <p class="figure">2.8 billion</p>
+            <p class="who">have no digital ID they can use online.</p>
+            <div class="field field-b" aria-hidden="true"></div>
+            <p class="key" aria-hidden="true">Each ring: 10 million people.</p>
+        </div>
+        <p class="source">Source: World Bank, <a href="https://blogs.worldbank.org/en/digital-development/global-progress-in-identification--3-findings-from-the-latest-da">Global progress in identification</a>, 2025.</p>
+        <p class="answer">Polaris is built to enrol a person with no documents through a trusted referee.</p>
+    </div>
+</section>
+
+<section class="act act-goal" id="mission" aria-labelledby="mission-h">
+    <div class="stage">
+        <div class="goal-head">
+            <p class="slate"><b>VII</b><span>Mission</span></p>
+            <h2 id="mission-h">One&nbsp;person. One&nbsp;token. <span>That is the goal.</span></h2>
+        </div>
+        <figure class="planchet">
+            <div class="sprite" aria-hidden="true">
+                <picture class="fa">
+                    <source type="image/avif" media="(min-resolution: 1.1dppx), (-webkit-min-device-pixel-ratio: 1.1), (min-width: 768px)" srcset="film/vii-sheet-2x.3edd14c2.avif">
+                    <source media="(min-resolution: 1.1dppx), (-webkit-min-device-pixel-ratio: 1.1), (min-width: 768px)" srcset="film/vii-sheet-2x.92390d4b.webp">
+                    <source type="image/avif" srcset="film/vii-sheet-1x.bb439b0b.avif">
+                    <img src="film/vii-sheet-1x.9c0b0f49.webp" alt="" width="1800" height="1500" loading="lazy" decoding="async" fetchpriority="low">
+                </picture>
+                <picture class="fb">
+                    <source type="image/avif" media="(min-resolution: 1.1dppx), (-webkit-min-device-pixel-ratio: 1.1), (min-width: 768px)" srcset="film/vii-sheet-2x.3edd14c2.avif">
+                    <source media="(min-resolution: 1.1dppx), (-webkit-min-device-pixel-ratio: 1.1), (min-width: 768px)" srcset="film/vii-sheet-2x.92390d4b.webp">
+                    <source type="image/avif" srcset="film/vii-sheet-1x.bb439b0b.avif">
+                    <img src="film/vii-sheet-1x.9c0b0f49.webp" alt="" width="1800" height="1500" loading="lazy" decoding="async" fetchpriority="low">
+                </picture>
+            </div>
+            <figcaption>A blank, before it is struck.</figcaption>
+        </figure>
+        <p class="dek">Proving who you are can take a stack of ID cards and papers. The goal: one token that stands in for all of them, held by you and checked by anyone you show it to.</p>
+    </div>
+</section>
+
+<div class="night">
+    <div class="sky-stage" aria-hidden="true">
+        <div class="aperture"><div class="exposure">
+            <picture>
+                <source type="image/avif" srcset="film/trails-30m-1280.c06df973.avif 1280w, film/trails-30m-1800.d425fcbc.avif 1800w, film/trails-30m-2400.4b52dc4c.avif 2400w, film/trails-30m-3200.e30887c9.avif 3200w" sizes="(orientation: portrait) 140vh, 130vw">
+                <img src="film/trails-30m-1800.f34bbdbb.webp" srcset="film/trails-30m-1280.c34587b8.webp 1280w, film/trails-30m-1800.f34bbdbb.webp 1800w, film/trails-30m-2400.fb680b07.webp 2400w, film/trails-30m-3200.2785a131.webp 3200w" sizes="(orientation: portrait) 140vh, 130vw" alt="" width="1800" height="1800" loading="lazy" decoding="async" fetchpriority="low">
+            </picture>
+            <picture>
+                <source type="image/avif" srcset="film/trails-30m-1280.c06df973.avif 1280w, film/trails-30m-1800.d425fcbc.avif 1800w, film/trails-30m-2400.4b52dc4c.avif 2400w, film/trails-30m-3200.e30887c9.avif 3200w" sizes="(orientation: portrait) 140vh, 130vw">
+                <img src="film/trails-30m-1800.f34bbdbb.webp" srcset="film/trails-30m-1280.c34587b8.webp 1280w, film/trails-30m-1800.f34bbdbb.webp 1800w, film/trails-30m-2400.fb680b07.webp 2400w, film/trails-30m-3200.2785a131.webp 3200w" sizes="(orientation: portrait) 140vh, 130vw" alt="" width="1800" height="1800" loading="lazy" decoding="async" fetchpriority="low">
+            </picture>
+            <picture>
+                <source type="image/avif" srcset="film/trails-30m-1280.c06df973.avif 1280w, film/trails-30m-1800.d425fcbc.avif 1800w, film/trails-30m-2400.4b52dc4c.avif 2400w, film/trails-30m-3200.e30887c9.avif 3200w" sizes="(orientation: portrait) 140vh, 130vw">
+                <img src="film/trails-30m-1800.f34bbdbb.webp" srcset="film/trails-30m-1280.c34587b8.webp 1280w, film/trails-30m-1800.f34bbdbb.webp 1800w, film/trails-30m-2400.fb680b07.webp 2400w, film/trails-30m-3200.2785a131.webp 3200w" sizes="(orientation: portrait) 140vh, 130vw" alt="" width="1800" height="1800" loading="lazy" decoding="async" fetchpriority="low">
+            </picture>
+            <picture>
+                <source type="image/avif" srcset="film/trails-30m-1280.c06df973.avif 1280w, film/trails-30m-1800.d425fcbc.avif 1800w, film/trails-30m-2400.4b52dc4c.avif 2400w, film/trails-30m-3200.e30887c9.avif 3200w" sizes="(orientation: portrait) 140vh, 130vw">
+                <img src="film/trails-30m-1800.f34bbdbb.webp" srcset="film/trails-30m-1280.c34587b8.webp 1280w, film/trails-30m-1800.f34bbdbb.webp 1800w, film/trails-30m-2400.fb680b07.webp 2400w, film/trails-30m-3200.2785a131.webp 3200w" sizes="(orientation: portrait) 140vh, 130vw" alt="" width="1800" height="1800" loading="lazy" decoding="async" fetchpriority="low">
+            </picture>
+        </div></div>
+        <p class="star"><b>Polaris</b> fixed amid the changing</p>
+        <p class="sky-cap">The northern sky as a two-hour exposure: the stars of the Yale Bright Star Catalogue, over NASA&rsquo;s Milky Way.</p>
+    </div>
+    <div class="voyage"><div class="voyage-frame">
+        <ol class="route">
+            <li><p class="stop">Today</p><h3>Tested in the open</h3><p>Working software on test data, tested against 15 outside projects.</p></li>
+            <li><p class="stop">Next</p><h3>The United States</h3><p>The goal: IDs that authorities in the United States issue with Polaris, and a verifier anyone can run to check them. Already built into the software: one active token per person.</p></li>
+            <li><p class="stop">Then</p><h3>The world</h3><p>The goal: one open way to prove who you are, anywhere, with a token from any trusted authority. Checking already works offline, with no call to Polaris.</p></li>
+        </ol>
+        <p class="purpose"><b>Our purpose: no one should be forced to give up or hand over their identity.</b></p>
+        <p class="motto" lang="la">Fixus inter mutabilia</p>
+    </div></div>
+    <section class="act act-end" id="partners" aria-labelledby="partners-h">
+        <p class="slate"><b>VIII</b></p>
         <h2 id="partners-h">Work with us.</h2>
-        <p class="intro">Accepting EU wallet presentations? We run Polaris against your flow and report what it finds.</p>
-        <div class="cta">
-            <a class="btn btn-gold" href="mailto:egor@polaris-id.org?subject=Polaris%20design%20partner">Become a design partner</a>
-            <a class="btn btn-line" href="mailto:egor@polaris-id.org?subject=Polaris">Investors: egor@polaris-id.org</a>
-        </div>
-    </div>
-</section>
+        <p class="dek">Design partners and investors:</p>
+        <p class="address"><a href="mailto:egor@polaris-id.org?subject=Polaris">egor@polaris-id.org</a></p>
+        <div class="cta"><a class="btn btn-gold" href="mailto:egor@polaris-id.org?subject=Polaris%20design%20partner">Become a design partner</a></div>
+    </section>
+    <div class="horizon" aria-hidden="true"></div>
+</div>
 
 </main>
 
-<footer class="foot">
-    <div class="wrap foot-in">
-        <a class="maker" href="https://github.com/EgorKhaklin"><img src="khaklin.svg" alt="Khaklin Technologies" width="192" height="60"></a>
-        <p class="motto">Fixus inter mutabilia &middot; fixed amid the mutable</p>
-        <nav class="foot-links" aria-label="Footer">
-            <a href="https://github.com/EgorKhaklin/polaris-id">GitHub</a>
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/CONTRIBUTING.md">Contribute</a>
-            <a href="https://discord.gg/ragewuCKj">Discord</a>
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md">Security policy</a>
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/LICENSE">License</a>
-            <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/TRADEMARKS.md">Trademarks</a>
-            <a href="mailto:egor@polaris-id.org">Contact</a>
-        </nav>
-        <p class="fine">&copy; 2026 Egor Khaklin and the Polaris contributors.</p>
-    </div>
-</footer>
+<footer class="foot"><p><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/NOTICE">&copy; 2026 Egor Khaklin</a></p></footer>
 
 </body>
 </html>

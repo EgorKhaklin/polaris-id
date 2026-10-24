@@ -61,5 +61,5 @@ Defects found in a row's implementation and reported in public, with their state
   mdoc, the Digital Credentials API or the post-quantum path.
 - A row is dated: a newer release of its implementation is unmeasured until a row says otherwise.
 
-The dated history of every run, earlier versions included, is the
+Dated runs, earlier versions included, are kept in the
 [scoreboard](../../lab/EXTERNAL-NOUNS.md#wallets).
