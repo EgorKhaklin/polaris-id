@@ -13783,6 +13783,31 @@ def test_roadmap_consistent_check_discriminates(tmp_path):
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a wrong stamp count"
     write({'ROADMAP.md': ROADMAP.replace("the protocol layer (P8, complete); ", "")})
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer once P8 is done"
+    # 2026-10-24 (owner): the "Do not have" paragraph is optional, and the roadmap claims nothing no check here backs
+    no_list = ROADMAP.replace("**Do not have:** hardware tokens; an external team's docs-only integration; and every institutional prerequisite.\n\n", "")
+    write({'ROADMAP.md': no_list})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "OK", "must PASS without a Do not have paragraph"
+    for claim, why in (("The sample has been independently audited.\n", "an outside audit in a sentence"),
+                       ("| P6 | Security | Penetration tested |\n", "a penetration test in a table row"),
+                       ("The signer uses FIPS 140-3 validated modules.\n", "validated cryptography"),
+                       ("Issuance conforms to NIST SP 800-63-4.\n", "an assessed 800-63 level"),
+                       ("The console is WCAG 2.2 AA compliant.\n", "accessibility conformance"),
+                       ("Audited by an outside firm, not by the author.\n", "a claim followed by a contrast"),
+                       ("Independently audited without a single critical finding.\n", "a claim followed by 'without'"),
+                       ("The console is WCAG 2.2 AA conformant, with no known failures.\n", "a claim followed by 'no'"),
+                       ("The sample completed an independent security audit in 2026.\n", "an outside audit as a noun"),
+                       ("A security audit by an outside firm covered the verifier.\n", "'security audit by'"),
+                       ("The project underwent an external security review.\n", "an outside review as a noun"),
+                       ("The sample, with no outside funding, was independently audited.\n", "an unrelated 'no' before the claim"),
+                       ("No findings remained after the sample was independently audited.\n", "a 'no' that negates something else"),
+                       ("| P6 | No regressions | Independently audited |\n", "a 'no' in an earlier table cell")):
+        write({'ROADMAP.md': no_list + "\n" + claim})
+        assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on " + why
+    for negated in ("The sample has not been independently audited.\n", "The sample has not yet been independently audited.\n",
+                    "It has never been externally audited.\n", "No independent audit has been done.\n",
+                    "The sample does not claim WCAG 2.2 AA conformance.\n"):
+        write({'ROADMAP.md': no_list + "\n" + negated})
+        assert checks.check_roadmap_consistent(tmp_path)[0].level == "OK", "a negated sentence is not a claim: " + negated
 
 
 def test_ship_tool_check_discriminates(tmp_path):
@@ -15535,10 +15560,6 @@ def test_review_packet_check_discriminates(tmp_path):
     # v9.388 (P1.18 item 8): the ways a review packet stops being true. The real packet is the
     # fixture because the check resolves its witnesses against real files -- a synthetic one
     # would be testing a document nobody hands to a reviewer.
-    #
-    # The fixed-limitation case is the one worth having. Every other rot here makes the packet
-    # look BETTER than the system; that one makes it look WORSE, and nobody catches it because
-    # an out-of-date limitation reads as modesty.
     import re as _re
     import shutil
 
@@ -15551,12 +15572,11 @@ def test_review_packet_check_discriminates(tmp_path):
     #
     # Reading the witnesses off the packet removes the class: a witness added tomorrow is
     # copied tomorrow.
+    #
+    # Since 2026-10-24 the real packet may carry no witness at all; one left in it must resolve.
     PACKET_REL = "docs/REVIEW-PACKET.md"
     WITNESSED = sorted({m.group(1) for m in
                         _re.finditer(r"witness:([^:`\s]+)::", (REPO / PACKET_REL).read_text())})
-    assert len(WITNESSED) >= 8, (
-        "the packet's witnesses could not be read; a fixture that copies nothing would test "
-        "a packet whose every witness is missing, which fails for the wrong reason")
 
     def write(old=None, new=None):
         for rel in ['docs/REVIEW-PACKET.md',
@@ -15574,18 +15594,27 @@ def test_review_packet_check_discriminates(tmp_path):
     assert checks.check_review_packet(tmp_path)[0].level == "OK", \
         "the real packet must PASS: every witness resolves and every cited check exists"
 
-    # A LIMITATION THAT WAS FIXED. The entry has to go, and until it does the packet
-    # understates the system to the one audience that should not be misled either way.
-    write('witness:polaris_web/kms_standin.py::stand-in',
-          'witness:polaris_web/kms_standin.py::a real managed service')
+    # A WITNESS LEFT IN THE PACKET resolves, or the packet FAILs: the entry is fixed, or it was never true.
+    write('## 1. Threat matrix by subsystem',
+          '## 1. Threat matrix by subsystem\n\n`witness:scripts/polaris-review-packet-drill.py::import`')
+    assert checks.check_review_packet(tmp_path)[0].level == "OK", "a witness that resolves must PASS"
+    write('## 1. Threat matrix by subsystem',
+          '## 1. Threat matrix by subsystem\n\n`witness:scripts/polaris-review-packet-drill.py::a real managed service`')
     assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a limitation whose witness has gone must FAIL: it is fixed, or it was never true"
+        "a witness that no longer resolves must FAIL: it is fixed, or it was never true"
 
-    # THE PACKET STOPS SAYING NOBODY HAS REVIEWED IT.
-    write('has been reviewed by anybody outside this repository',
-          'has been audited by three independent firms')
-    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a packet that drops the unreviewed admission must FAIL"
+    # THE PACKET CLAIMS WHAT NO CHECK HERE CAN BACK.
+    for claim in ("**Status:** audited by three independent firms.",
+                  "**Status:** the system passed a penetration test.",
+                  "**Status:** independently reviewed in 2026.",
+                  "**Status:** a security audit by an outside firm covered it, not the maintainers.",
+                  "**Status:** the signer runs FIPS 140-3 validated cryptography.",
+                  "**Status:** issuance conforms to NIST SP 800-63-4.",
+                  "**Status:** the console is WCAG 2.2 AA compliant."):
+        write('**Status:** a packet, not a certificate.', claim)
+        assert checks.check_review_packet(tmp_path)[0].level == "FAIL", "must FAIL on: " + claim
+    write('**Status:** a packet, not a certificate.', '**Status:** it has not been independently reviewed.')
+    assert checks.check_review_packet(tmp_path)[0].level == "OK", "a negated sentence is not a claim"
 
     # A CITED CHECK THAT DOES NOT EXIST. The commonest rot: a rename.
     write('`check:audited_reads_are_logged`', '`check:audited_reads_are_definitely_logged`')
@@ -15593,14 +15622,9 @@ def test_review_packet_check_discriminates(tmp_path):
         "a citation naming a check that does not exist must FAIL"
 
     # A SECTION DELETED.
-    write('## 3. Guarantee-attack prompts', '## 3. Some further thoughts')
+    write('## 2. Guarantee-attack prompts', '## 2. Some further thoughts')
     assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a packet missing one of its three sections must FAIL"
-
-    # THE WITNESSES STRIPPED, which would leave the limitations uncheckable.
-    write('`witness:', '`formerly:')
-    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "limitations with no witnesses must FAIL: nothing could tell they were fixed"
+        "a packet missing one of its two required sections must FAIL"
 
 
 def test_capacity_model_check_discriminates(tmp_path):
@@ -16945,7 +16969,7 @@ def test_accessibility_check_discriminates(tmp_path):
     DOC = ("A green run is a floor, not conformance. Automated testing detects roughly a\n"
            "third of WCAG failures. Polaris does not claim WCAG 2.2 AA conformance. Manual\n"
            "testing with assistive technology has not been done.\n")
-    ROADMAP = "Not claimed: accessibility conformance; any external audit.\n"
+    ROADMAP = "Planned: the console's next pages.\n"
     good = {
         'scripts/polaris-accessibility-drill.py': DRILL,
         'scripts/polaris-accessibility-drill.sh': RUNNER,
@@ -17011,10 +17035,17 @@ def test_accessibility_check_discriminates(tmp_path):
         assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
             f"the record must state: {phrase}"
 
-    # AND THE OUTWARD CLAIM, quietly upgraded because the checks now pass.
-    write({'ROADMAP.md': "Not claimed: any external audit.\n"})
+    # AND THE OUTWARD CLAIM, quietly upgraded because the checks now pass (2026-10-24: the
+    # surfaces no longer list it as not claimed; each refuses the claim instead).
+    write({'ROADMAP.md': "The console meets WCAG 2.2 AA conformance.\n"})
     assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
-        "removing the caveat turns a third of the criteria into an assertion about all of them"
+        "a roadmap that claims WCAG conformance turns a third of the criteria into an assertion about all of them"
+    write({'ROADMAP.md': ROADMAP, 'site/llms.txt': "- The console conforms to WCAG 2.2.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", "must FAIL when the site's llms.txt claims it"
+    write({'site/llms.txt': "- Accessibility conformance is not established.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "OK", "a negated sentence is not a claim"
+    write({'site/llms.txt': "- The console is WCAG 2.2 AA conformant, with no known failures.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", "a claim followed by 'no' is still a claim"
 
 
 def test_assurance_mapping_check_discriminates(tmp_path):

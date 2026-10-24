@@ -13569,7 +13569,7 @@ def check_status_assertion_window_is_caller_policy(root: pathlib.Path) -> list[F
     a limitation note from 2026-09-15 to 2026-09-20 reading "the `max_window_seconds` the
     artifact carries is never read by `verify_status_assertion`". That is a true sentence
     phrased as a defect, and the obvious repair is the vulnerability. A reviewer or a future
-    session tidying the known-limitations list is exactly who would implement it.
+    session tidying the scoreboard is exactly who would implement it.
 
     What genuinely bounds staleness is `expires_at`, which is signed and enforced. The
     caller's bound is a separate policy ceiling against a long-lived assertion, and it belongs
@@ -17666,21 +17666,79 @@ def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
                "status per the trust list; drilled under a stolen key, across two instances, and stated on every surface")
 
 
+# What no check written in this repository can back, stated as a claim: an outside review or
+# audit, a penetration test, validated cryptography, an assessed 800-63 level, accessibility
+# conformance. Since 2026-10-24 (owner: no limitation lists in public text) the checks that read
+# the public pages refuse such a claim.
+_OVERCLAIMS = {
+    "outside review": r"\b(?:independent(?:ly)?|external(?:ly)?|third[- ]party|outside)\s+(?:security\s+)?"
+                      r"(?:reviewed|audited|assessed|pen(?:etration)?[- ]tested)\b"
+                      r"|\b(?:reviewed|audited|assessed) by (?:an? )?(?:independent|external|third[- ]party|outside)\b"
+                      r"|\baudited by\b|\bpen(?:etration)?[- ]tested\b"
+                      r"|\bpassed (?:an? )?(?:independent |external |third[- ]party )?(?:security )?"
+                      r"(?:audit|review|assessment|pen(?:etration)?[- ]test)\b"
+                      r"|\b(?:independent|external|third[- ]party|outside)\s+(?:security\s+)?"
+                      r"(?:audit|assessment|pen(?:etration)?[- ]test)s?\b"
+                      r"|\b(?:completed|underwent|received|had)\s+(?:an?\s+)?(?:independent|external|third[- ]party|outside)"
+                      r"\s+(?:security\s+)?review\b"
+                      r"|\b(?:security\s+)?audit by\b",
+    "validated cryptography": r"\bfips[- ]?140(?:-[23])?\b.{0,40}?\b(?:validated|certified)\b"
+                              r"|\b(?:fips[- ]validated|validated|certified)\s+cryptograph",
+    "assessed 800-63": r"\b800-63\S*\s+(?:conformant|compliant|assessed|certified)\b"
+                       r"|\b(?:conforms|complies)\s+(?:to|with)\s+(?:nist\s+)?(?:sp\s+)?800-63",
+    "accessibility conformance": r"\b(?:wcag|accessibility)\b.{0,40}?\b(?:conformant|conformance|compliant|compliance|certified)\b"
+                                 r"|\b(?:conforms|complies)\s+(?:to|with)\s+wcag",
+}
+# Before a match, only a negation next to it unmakes the claim ("has not been independently
+# reviewed", "no independent audit"), up to three filler words away; an unrelated "no" earlier
+# in the sentence ("with no outside funding, was independently audited") does not. "Does not
+# claim WCAG 2.2 AA conformance" is a negation too.
+_OVERCLAIM_NEGATION = re.compile(r"\b(?:not|never|no|nor|without|isn't|aren't|hasn't)\s+(?:(?:been|yet|ever|be|an?|any|claim|claimed)\s+){0,3}$")
+# After a match, only a predicate that negates it ("conformance is not established") unmakes the
+# claim; "audited by X, not by the author" and "conformant, with no known failures" still claim.
+_OVERCLAIM_NEGATED_AFTER = re.compile(r"^\s*(?:(?:is|are|was|were|has been|have been|has|have)\s+)?(?:not|never)\b")
+
+
+def _overclaim(text: str, kinds: tuple[str, ...] = tuple(_OVERCLAIMS)) -> str | None:
+    """The first sentence or table row of `text` that makes one of the `kinds` of claim, or None.
+    A match directly after a negation, with up to three filler words between ("has not been
+    independently reviewed", "does not claim WCAG ... conformance"), or followed by a predicate
+    that negates it ("conformance is not established"), is not a claim."""
+    units = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = block.split("\n")
+        units += [ln for ln in lines if ln.lstrip().startswith("|")]
+        units += re.split(r"(?<=[.!?;])\s+", _claim_text(" ".join(ln for ln in lines if not ln.lstrip().startswith("|"))))
+    for unit in units:
+        sentence = _claim_text(unit)
+        for kind in kinds:
+            for m in re.finditer(_OVERCLAIMS[kind], sentence):
+                if not (_OVERCLAIM_NEGATION.search(sentence[max(0, m.start() - 40):m.start()])
+                        or _OVERCLAIM_NEGATED_AFTER.search(sentence[m.end():])):
+                    return "%s (%r)" % (kind, sentence[:160])
+    return None
+
+
 def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
     """v9.337: the roadmap cannot contradict itself. A subsystem whose row is marked done may
     not still sit under "Do not have"; a done row may not open its notes with IN PROGRESS, NEXT
     or TODO; the "N invariant checks (vX.Y)" stamp names the real count and a version within
     twenty minors of the tree; and once the protocol phase is done the "Have" paragraph says
     so. An outside review found all three drifts within a day of the prior drift fix, so the
-    class is now a gate, not a habit."""
+    class is now a gate, not a habit. Since 2026-10-24 (owner: no limitation lists in public text)
+    the "Do not have" paragraph is optional; where it appears its rule holds, and the roadmap
+    must not claim what no check here can back (an outside review or audit, validated
+    cryptography, an assessed 800-63 level, accessibility conformance). Detection: test_checks
+    restores each drift, each claim in a sentence, and an outside-review claim in a table row."""
     rm = _read(root, "ROADMAP.md")
     if not rm:
         return _fail("roadmap_consistent", "ROADMAP.md is missing")
     done = set(re.findall(r"^\| \[x\] ([A-Z0-9.]+) \|", rm, re.M))
     m = re.search(r"\*\*Do not have:\*\*(.*?)\n\n", rm, re.S)
-    if not m:
-        return _fail("roadmap_consistent", "ROADMAP.md must keep a 'Do not have' paragraph")
-    not_have = m.group(1).lower()
+    not_have = m.group(1).lower() if m else ""
+    claim = _overclaim(rm)
+    if claim:
+        return _fail("roadmap_consistent", "ROADMAP.md claims what no check here can back: %s" % claim)
     built = {"P8.1": ("normative wire specification",), "P8.2": ("secure-exchange gateway", "exchange gateway"),
              "P8.3": ("service-and-authority registry", "authority registry"), "P8.4": ("auth/sso broker", "auth broker"),
              "P8.5": ("general document signing",), "P8.6": ("wallet protocol surface",), "P8.7": ("trust list",),
@@ -17710,9 +17768,10 @@ def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
     if "P8.8" in done and "protocol layer" not in rm.split("**Do not have:**")[0].lower():
         return _fail("roadmap_consistent", "ROADMAP.md's 'Have' paragraph must name the protocol layer once P8 is done")
     return _ok("roadmap_consistent",
-               "the roadmap agrees with itself: nothing marked done sits under 'Do not have', no done row reads as in "
-               "progress, the check stamp names the real count and a current version, and the 'Have' paragraph names "
-               "the protocol layer")
+               "the roadmap agrees with itself: " + ("nothing marked done sits under 'Do not have', " if m else "")
+               + "no done row reads as in progress, the check stamp names the real count and a current version, the 'Have' paragraph names "
+               "the protocol layer, and it claims no outside review, validated cryptography, assessed 800-63 level "
+               "or accessibility conformance")
 
 
 def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
@@ -22308,23 +22367,14 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
 
     A review packet is a set of claims about a codebase, written once and read by somebody who
     cannot check them. It rots the way every such document rots: a check is renamed, a drill
-    deleted, a limitation fixed, and the page keeps saying what it said. Nothing turns red; the
+    deleted, and the page keeps saying what it said. Nothing turns red; the
     document becomes untrue, and it is most untrue exactly where it matters, in the hands of the
     reviewer it was written for.
 
-    So every citation resolves and every cited check runs -- the discipline the 800-63 mapping
-    already uses. The new half is the limitations, and it runs in the OTHER DIRECTION. Each
-    carries a WITNESS: a file and a string that must still be present for the limitation to hold.
-    Fix the limitation and the witness goes, the drill fails, and the entry has to be removed.
-
-    THAT DIRECTION IS THE POINT. A limitations list that can only be appended to is a confession
-    nobody maintains, and an out-of-date one tells a reviewer the system is WEAKER than it is --
-    dishonesty that nobody catches because it reads as modesty.
-
-    And the packet must say, in its own first paragraph, that nothing in it has been reviewed by
-    anybody outside this repository. Every guarantee it lists is checked by machinery written by
-    the same hand as the guarantee. A packet that opens with its controls and omits that sentence
-    is committing the failure it exists to prevent."""
+    So every citation resolves, every cited check runs, and any witness the packet gives
+    resolves. The packet may not claim an outside review or audit, validated cryptography, an
+    assessed 800-63 level or accessibility conformance. Detection: test_checks restores each claim, renames a cited check,
+    deletes a section and breaks a witness."""
     name = "review_packet"
     doc = _read(root, "docs/REVIEW-PACKET.md")
     drill = root / "scripts" / "polaris-review-packet-drill.py"
@@ -22335,24 +22385,16 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
                      "scripts/polaris-review-packet-drill.py must exist. A packet nothing "
                      "re-checks is a document that was true once")
 
-    for heading in ("## 1. Threat matrix by subsystem", "## 2. Known limitations",
-                    "## 3. Guarantee-attack prompts"):
+    for heading in ("## 1. Threat matrix by subsystem", "## 2. Guarantee-attack prompts"):
         if heading not in doc:
             return _fail(name, f"the packet must carry the section {heading!r}")
 
-    flat = re.sub(r"\s+", " ", doc)
-    if "has been reviewed by anybody outside this repository" not in flat:
+    claim = _overclaim(doc)
+    if claim:
         return _fail(name,
-                     "the packet must say that nothing in it has been externally reviewed. Every "
-                     "guarantee it lists is checked by machinery written by the same hand as the "
-                     "guarantee, and a packet that omits that is the failure it exists to prevent")
+                     "the packet claims what no check here can back: %s" % claim)
 
     witnesses = re.findall(r"`witness:([^:`]+(?::[^:`]+)*)::([^`]+)`", doc)
-    if len(witnesses) < 5:
-        return _fail(name,
-                     f"only {len(witnesses)} limitation(s) carry a witness. A limitation without "
-                     "one cannot be checked for having been FIXED, which is the direction that "
-                     "keeps the list honest")
     stale = []
     for rel, needle in witnesses:
         target = root / rel
@@ -22360,8 +22402,8 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
             stale.append(f"{rel}::{needle[:30]}")
     if stale:
         return _fail(name,
-                     "a limitation's witness no longer resolves, so the limitation is either "
-                     "fixed or misstated and the entry must go: " + "; ".join(stale[:3]))
+                     "a witness in the packet no longer resolves, so the sentence it backs is "
+                     "misstated and must change: " + "; ".join(stale[:3]))
 
     cited = set(re.findall(r"`check:([A-Za-z0-9_]+)`", doc))
     known = {f.__name__.replace("check_", "") for f in CHECKS}
@@ -22372,13 +22414,11 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
         return _fail(name,
                      f"the packet cites only {len(cited)} checks. A packet that points at almost "
                      "nothing gives a reviewer nothing to aim at")
+    held = f", each of its {len(witnesses)} witness(es) still resolves," if witnesses else ""
     return _ok(name,
-               f"the packet carries a threat matrix, {len(witnesses)} witnessed limitations and "
-               f"attack prompts; every one of its {len(cited)} cited checks exists, every "
-               "witness still resolves, and it says on its own first page that nobody outside "
-               "this repository has reviewed any of it. A resolving witness is evidence that a "
-               "limitation has not been quietly FIXED; it is not evidence that the sentence is "
-               "true, and L-11's second half drifted for months with its witness resolving")
+               f"the packet carries a threat matrix and attack prompts; every one of its "
+               f"{len(cited)} cited checks exists{held} and it claims no outside review, audit or "
+               "penetration test")
 
 
 def check_capacity_model(root: pathlib.Path) -> list[Finding]:
@@ -24180,13 +24220,15 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
         if phrase not in low:
             return _fail(name, why)
 
-    # The outward surfaces must not have quietly started claiming it either.
-    roadmap = _read(root, "ROADMAP.md")
-    if "accessibility conformance" not in roadmap:
-        return _fail(name,
-                     "ROADMAP.md's not-claimed list must still carry accessibility conformance. "
-                     "Automated checks passing is a floor; removing the caveat would turn a "
-                     "third of the criteria into an assertion about all of them")
+    # The outward surfaces must not have quietly started claiming it either. Until 2026-10-24
+    # ROADMAP.md listed accessibility conformance as not claimed; since then (owner: no
+    # limitation lists in public text) no outward surface may claim it.
+    for rel in ("README.md", "ROADMAP.md", "site/index.html", "site/llms.txt"):
+        claim = _overclaim(_read(root, rel), ("accessibility conformance",))
+        if claim:
+            return _fail(name,
+                         "%s claims %s. Automated checks passing is a floor; the claim would turn "
+                         "a third of the criteria into an assertion about all of them" % (rel, claim))
     return _ok(name,
                "every operator surface is audited in a real browser against a pinned, current "
                "axe-core at the WCAG 2.0, 2.1 and 2.2 A and AA tags, with the drill asserting "

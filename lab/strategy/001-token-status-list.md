@@ -24,7 +24,7 @@ about a credential whose issuer may have revoked it this morning, and the verdic
 at all about the question. That is a silent trust assumption on the external door of a system
 whose stated differentiator is *interoperability without silent trust assumptions*.
 
-It is not on `lab/EXTERNAL-NOUNS.md`'s known-limitations list. It is a new finding.
+It is a new finding.
 
 ---
 
@@ -184,9 +184,9 @@ complement, and it fails only in the world where the whole ecosystem fails.
 
   *What the measurement leaves worth keeping:* nothing here is a defect. It is a direction
   removed, which is the useful half of asking.
-- **A signed algorithm-policy artifact.** Already on the known-limitations list. Strong
-  differentiation, but there is no external standard, so Polaris would be inventing a format,
-  and the mandate is right to be wary of that. Also wants this record's machinery first.
+- **A signed algorithm-policy artifact.** Strong differentiation, but there is no external
+  standard, so Polaris would be inventing a format, and the mandate is right to be wary of that.
+  Also wants this record's machinery first.
 - **An `age_over_21` predicate proof.** High privacy payoff, high cost, and the correlation
   question has to be measured before it is claimed. LAB, later, on its own record.
 - **OID4VCI issuance.** Rejected. Mature issuance infrastructure exists, Polaris has no

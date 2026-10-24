@@ -42,9 +42,9 @@ contrast ratio, a broken ARIA reference, a control with no accessible name. It c
 - whether the language of the interface is comprehensible under stress.
 
 **So a green run is a floor, not conformance.** Polaris does not claim WCAG 2.2 AA conformance,
-and [ROADMAP.md](../../ROADMAP.md)'s "not claimed" list still carries accessibility conformance
-for that reason. What changed is that the mechanical third is now enforced rather than assumed,
-and cannot regress unnoticed.
+and `check_accessibility` refuses the claim in the README, [ROADMAP.md](../../ROADMAP.md),
+site/index.html and site/llms.txt. What changed is that the mechanical third is now
+enforced rather than assumed, and cannot regress unnoticed.
 
 Conformance requires manual testing with assistive technology, by people who use it. That has
 not been done and is not something this repository can do to itself.

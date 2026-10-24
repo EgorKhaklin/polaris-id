@@ -3,10 +3,8 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-check-mutation-drill.py - can a check pass on a tree where its property is gone?
 
-Every guarantee in this repository is believed because a check says so, and the checks are
-written by the same hand as the code. The review packet's last attack prompt (A-12) asks a
-reviewer to break that layer, on the grounds that if a check can be made to pass on a broken
-tree then everything above it is worth less than it looks.
+The review packet's last attack prompt (A-12) asks a reviewer to break the check layer: a
+check that passes on a broken tree is the finding worth most.
 
 This is that attack, run against ourselves on every push.
 
@@ -843,10 +841,9 @@ def _main(tmp):
             print("  %s" % name, file=sys.stderr)
         return 1
     if stale_exceptions:
-        # A limitations list that can only be appended to is a confession nobody
-        # maintains. polaris-review-packet-drill.py fails when one of ITS limitations is
-        # fixed, for the same reason: an exception that has stopped being true reads
-        # exactly like one that is still load-bearing, and the next person to read it
+        # An exception list that can only be appended to is one nobody maintains: an
+        # exception that has stopped being true reads exactly like one that is still
+        # load-bearing, and the next person to read it
         # believes it. check_image_builds_are_retried was listed here from the day its
         # needles lived in a file reads_of could not name, and stayed listed after that
         # was resolved.

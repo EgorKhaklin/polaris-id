@@ -83,17 +83,16 @@ format bridge here. The open question is demand rather than feasibility: SCITT's
 today are supply-chain tooling, and whether anything in identity consumes a SCITT receipt is
 exactly what a record would have to answer before this is worth building.
 
-**A signed algorithm-policy artifact.** On `lab/EXTERNAL-NOUNS.md`'s known-limitations list:
-algorithm deprecation lives in `CryptographicAlgorithm` rows, not in anything a detached
-verifier is handed and can check. Searched 2026-09-19 for a standard to adopt instead of
-inventing one, and there is none: RFC 7696 is agility *guidance*, RFC 3125 is a 2001 ASN.1
-signature-policy format with no live ecosystem, and NIST publishes deprecation *timelines*
-rather than a wire format. So this means inventing a format, which drops ecosystem momentum
-and raises maintenance and lock-in. It is not the credential-format mistake the mandate warns
-about, since such a policy is private between an issuer and its own verifiers and asks nobody
+**A signed algorithm-policy artifact.** Algorithm deprecation lives in `CryptographicAlgorithm`
+rows, not in anything a detached verifier is handed and can check. Searched 2026-09-19 for a
+standard to adopt instead of inventing one, and there is none: RFC 7696 is agility *guidance*, RFC
+3125 is a 2001 ASN.1 signature-policy format with no live ecosystem, and NIST publishes deprecation
+*timelines* rather than a wire format. So this means inventing a format, which drops ecosystem
+momentum and raises maintenance and lock-in. It is not the credential-format mistake the mandate
+warns about, since such a policy is private between an issuer and its own verifiers and asks nobody
 to migrate, but the payoff estimate has to carry the invention cost honestly. Note that
-`packages/polaris-oid4vp/polaris_oid4vp/status.py` now holds the freshness, staleness and
-rollback machinery such an artifact needs, so the cost is lower than it was before record 001.
+`packages/polaris-oid4vp/polaris_oid4vp/status.py` now holds the freshness, staleness and rollback
+machinery such an artifact needs, so the cost is lower than it was before record 001.
 
 ## What a record does not do
 
