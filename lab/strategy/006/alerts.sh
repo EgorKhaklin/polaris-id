@@ -100,7 +100,7 @@ docker run -d --name "${PROM}" --network "${NET}" \
     -v "${WORK}:/etc/prometheus:ro" "${PROM_IMAGE}" --config.file=/etc/prometheus/prometheus.yml > /dev/null \
     || fail "starting Prometheus"
 api() {  # api <path>: GET Prometheus's HTTP API from the stack's network
-    docker run --rm --network "${NET}" curlimages/curl:8.11.1 -s "http://${PROM}:9090$1"
+    docker run --rm --network "${NET}" curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69 -s "http://${PROM}:9090$1"
 }
 alert_state() {  # alert_state <alertname>: firing, pending or inactive
     api "/api/v1/alerts" | python3 -c 'import json,sys
