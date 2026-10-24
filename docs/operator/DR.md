@@ -480,7 +480,10 @@ aws s3 ls s3://${POLARIS_PGBACKREST_S3_BUCKET}/ --recursive | tail -10
 #    POLARIS_SECRET_KEY, the database passwords, AppUser password hashes, and
 #    session tokens. WebAuthn private keys never leave the authenticators.
 #    Rotation is per secret; SECRETS.md section 4 (Rotation) lists them.
-./scripts/polaris-rotate-secret.sh <name>
+#    The session key rotates with --drop-old, which keeps no retired key, so
+#    every session the old key signed ends.
+./scripts/polaris-rotate-secret.sh polaris_secret_key --drop-old
+./scripts/polaris-rotate-secret.sh <name>   # each other secret
 ./scripts/polaris-deploy.sh prod
 ```
 
