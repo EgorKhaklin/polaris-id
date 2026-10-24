@@ -11,7 +11,7 @@ Witnesses, each counted only for the stages its own code decides:
        SessionTranscript bytes its toHandover() builds, its PKIX trust (msoMdocIssuance), and its
        validity verdict. Its decoding, MSO signature, digests and device signature are walt.id's,
        the library that built the captures: reported, never counted.
-  owf  @owf/mdoc 0.8.2, witness_owf.mjs: its own SessionTranscript.forOid4Vp bytes, and every check
+  owf  @owf/mdoc 0.8.3, witness_owf.mjs: its own SessionTranscript.forOid4Vp bytes, and every check
        of Verifier.verifyDeviceResponse against that transcript (MSO signature, digests, validity,
        docType, device signature, the chain to the given roots, the DS certificate's countryName).
 
@@ -490,7 +490,8 @@ class WitnessEudiTests(unittest.TestCase):
             self.assertTrue("--network none" in line or "PHASE1" in line, line)
         lock = json.loads((HERE / "package-lock.json").read_text())
         self.assertTrue(all(v.get("integrity") for k, v in lock["packages"].items() if k))
-        self.assertEqual(lock["packages"]["node_modules/@owf/mdoc"]["version"], "0.8.2")
+        self.assertEqual(lock["packages"]["node_modules/@owf/mdoc"]["version"], "0.8.3")
+        self.assertEqual(self.meta["owf_mdoc"], "0.8.3", "run.json records the @owf/mdoc the run installed")
         for key in ("eu_image", "eu_commit", "kotlinc_sha256", "node_image", "network", "phase1_hosts"):
             self.assertIn(key, self.meta)
         self.assertEqual(self.meta["network"], "none")
