@@ -4185,10 +4185,12 @@ jobs:
     # OpenSSF Baseline OSPS-VM-05.03: every change is checked for malicious packages (the OpenSSF
     # Malicious Packages data in OSV) and known vulnerabilities, in the Python sets the images
     # actually install (each resolved in its own environment, so indirect dependencies count), in
-    # the npm and Rust lockfiles, and in every lab gradle/verification-metadata.xml (the files
-    # Scorecard's Vulnerabilities check reads). Any finding fails the job; one that does not affect
-    # Polaris is declared, with its reason, in osv-scanner.toml (the Gradle files have none). The
-    # scanner image is pinned by digest.
+    # the TypeScript SDK's npm lockfile and the Rust lockfile, in every lab
+    # gradle/verification-metadata.xml, and then in every file OSV-Scanner recognises anywhere in
+    # the tree, as Scorecard's Vulnerabilities check reads them, plus .github/ci/audit.txt, whose
+    # name it does not recognise. Any finding fails the job; one that does not affect Polaris is
+    # declared, with its reason, in the osv-scanner.toml beside the file (the Gradle files have
+    # none). The scanner image is pinned by digest.
     name: Malicious packages and known vulnerabilities (OSV)
     runs-on: ubuntu-latest
     steps:
@@ -4218,6 +4220,16 @@ jobs:
             -L requirements.txt:/scan/installed-patroni.txt \
             -L /src/sdk/typescript/package-lock.json \
             -L /src/polaris_zk/Cargo.lock
+      - name: Scan the whole tree as Scorecard does
+        # Scorecard's Vulnerabilities check runs OSV-Scanner recursively over the repository, with
+        # the osv-scanner.toml beside each file, so a lab lockfile or requirements file that no
+        # image installs still counts against the project. The CVE-scan job's own tool set is
+        # named explicitly: recursion finds requirements files by name, and audit.txt's is not one.
+        run: |
+          docker run --rm -v "$PWD:/src:ro" \
+            ghcr.io/google/osv-scanner@sha256:afd838850ac1a0fcc15ff4a041dc9ba11123c3f0d2666217a5f0fcf9222b55fa \
+            scan source --no-resolve -r /src \
+            -L requirements.txt:/src/.github/ci/audit.txt
       - name: Scan every Gradle verification-metadata file (detection fixture first)
         # The self-test must see a known-vulnerable file fail, an empty and a missing file fail,
         # and a clean file pass, before the tree's files are scanned; no file found also fails.

@@ -91,8 +91,12 @@ updates:
   # What lab/interop/*/run.sh install beside polaris-oid4vp: its one dependency (requirements.txt,
   # Python 3.9) and, for a run that builds it from the tree, the build backend
   # (requirements-build.txt, Python 3.10), hash-pinned by pip-compile; Dependabot recompiles both.
+  # lab/interop/mdoc's verifier set (cbor2, and cryptography as ../requirements.txt pins it) shares
+  # the entry and its Python 3.9 floor.
   - package-ecosystem: pip
-    directory: /lab/interop
+    directories:
+      - /lab/interop
+      - /lab/interop/mdoc
     schedule:
       interval: monthly
     cooldown:
@@ -116,6 +120,28 @@ updates:
         versions: [">=2.1"]
       - dependency-name: "pycparser"
         versions: [">=3"]
+
+  # The lab's other hash-pinned sets, both on Python 3.12: the access gate image's
+  # (lab/strategy/007) and the OpenTimestamps tools' (lab/strategy/013, compiled by pip-compile
+  # from requirements.in).
+  - package-ecosystem: pip
+    directories:
+      - /lab/strategy/007
+      - /lab/strategy/013
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      pip-lab-strategy-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # The dependency-audit tools the CVE-scan job runs (pip-audit, bandit), hash-pinned by
   # pip-compile in .github/ci; Dependabot recompiles the hashes.
