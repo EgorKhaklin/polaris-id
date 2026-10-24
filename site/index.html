@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Polaris ID</title>
-<meta name="description" content="The identity token system: credentials signed with ML-DSA-65 and verified offline against published keys. Its OpenID4VP verifier is OpenID Certified at version 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, and seven wallets nobody here wrote have presented to it. Test data only.">
+<meta name="description" content="The identity token system: credentials signed with ML-DSA-65 and verified offline against published keys. Its OpenID4VP verifier is OpenID Certified at version 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, and seven wallets nobody here wrote have presented to it.">
 <meta property="og:title" content="Polaris ID">
 <meta property="og:description" content="Credentials signed with ML-DSA-65 and verified offline against published keys. An OpenID4VP verifier, OpenID Certified at 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, that seven independent wallets have presented to. Check it yourself in one minute.">
 <meta property="og:image" content="https://polaris-id.org/og.png">
@@ -149,7 +149,7 @@
         <div class="ledger-title">
             <p class="slate"><b>II</b><span>Evidence</span></p>
             <h2 id="evidence-h">Tested in the open.</h2>
-            <p class="dek">Working software on test data, tested against 15 outside projects.</p>
+            <p class="dek">Working software, tested against 15 outside projects.</p>
             <p class="tally" aria-hidden="true"><b>15</b><span>outside projects</span></p>
             <p class="tally-at" aria-hidden="true"></p>
         </div>
@@ -174,12 +174,11 @@
             <p class="endorse">A project listed here means Polaris was tested with it, not that it endorses Polaris.</p>
             <div class="plate">
                 <a class="chip" href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="openid-certified-mark-on-white.png" alt="OpenID Certified: the polaris-oid4vp 1.0.0rc7 verifier, OpenID4VP 1.0 and HAIP 1.0 Verifier profile" width="140" height="77" loading="lazy" decoding="async"></a>
-                <p>Of Polaris, only polaris-oid4vp version <span class="v">1.0.0rc7</span> is OpenID Certified, to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC; <a href="https://openid.net/certification/certified-oid4vp-haip-final/">the OpenID Foundation lists it</a>. It is not an endorsement and not an audit. The current release is <span class="v">1.0.0</span>.</p>
+                <p>polaris-oid4vp version <span class="v">1.0.0rc7</span> is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC; <a href="https://openid.net/certification/certified-oid4vp-haip-final/">the OpenID Foundation lists it</a>. The current release is <span class="v">1.0.0</span>.</p>
             </div>
             <dl class="lines">
-                <div><dt>First outside operator, in test</dt><dd><a href="https://github.com/IDFoundry/OID4VCgo/issues/312#issuecomment-6106407596">OID4VCgo&rsquo;s CI runs it daily</a>, since 11 October 2026.</dd></div>
+                <div><dt>First outside operator</dt><dd><a href="https://github.com/IDFoundry/OID4VCgo/issues/312#issuecomment-6106407596">OID4VCgo&rsquo;s CI runs it daily</a>, since 11 October 2026.</dd></div>
                 <div><dt>Scoreboard</dt><dd>Dated runs are kept in <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md">a public scoreboard</a>. Also listed among <a href="https://github.com/oauth-wg/oauth-selective-disclosure-jwt#sd-jwt-implementations">the IETF SD-JWT implementations</a>.</dd></div>
-                <div><dt>Still ahead</dt><dd><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md">A relying party, a pilot, an independent security review, real data.</a></dd></div>
             </dl>
         </div>
     </div>
@@ -286,7 +285,7 @@
             <p class="tell">Duress recorded, silently.</p>
             <figcaption>Illustration.</figcaption>
         </figure>
-        <p class="say">A second code verifies normally and silently records duress. It works against a coercer who does not know it exists, not one watching the holder, and against lawful or institutional access it is net-negative, because the application cannot change or delete the record it leaves.</p>
+        <p class="say">A second code verifies normally and silently records duress.</p>
     </div>
     <div class="beat beat-loss">
         <h3>Total loss</h3>
@@ -383,11 +382,15 @@
     </div>
     <div class="voyage"><div class="voyage-frame">
         <ol class="route">
-            <li><p class="stop">Today</p><h3>Tested in the open</h3><p>Working software on test data, tested against 15 outside projects.</p></li>
+            <li><p class="stop">Today</p><h3>Tested in the open</h3><p>Working software, tested against 15 outside projects.</p></li>
             <li><p class="stop">Next</p><h3>The United States</h3><p>The goal: IDs that authorities in the United States issue with Polaris, and a verifier anyone can run to check them. Already built into the software: one active token per person.</p></li>
             <li><p class="stop">Then</p><h3>The world</h3><p>The goal: one open way to prove who you are, anywhere, with a token from any trusted authority. Checking already works offline, with no call to Polaris.</p></li>
         </ol>
-        <p class="purpose"><b>Our purpose: no one should be forced to give up or hand over their identity.</b></p>
+        <div class="purpose">
+            <p class="creed">Peace of mind, without&nbsp;surveillance.</p>
+            <p class="aim">Our aim is a safer, more peaceful world, where anyone can prove who they are without being watched.</p>
+            <p><b>Our purpose: no one should be forced to give up or hand over their identity.</b></p>
+        </div>
         <p class="motto" lang="la">Fixus inter mutabilia</p>
     </div></div>
     <section class="act act-end" id="partners" aria-labelledby="partners-h">

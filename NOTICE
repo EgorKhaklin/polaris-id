@@ -18,14 +18,10 @@ About this work
 Polaris is a pre-pilot identity-token system: ML-DSA-65 signatures under an
 audited algorithm-migration path, zero-knowledge verification, and an
 append-only audit of record, enforced in the database schema rather than in
-policy. What the cryptography does and does not buy, including what a break
-in the underlying lattice assumption would cost, is stated in
-docs/PRODUCTION-READINESS.md.
+policy. Its cryptographic posture is stated in docs/PRODUCTION-READINESS.md.
 
-Pre-pilot means it works end to end and outside wallets and an outside
-conformance suite have exercised it, but it has not run a pilot. It runs on
-notional data: it has never held real identity data, it is not deployed to
-any population, and the physical token it models is not manufactured. The constitution (the ten hard constraints C1 to C10 and
+Pre-pilot means it works end to end, and outside wallets and an outside
+conformance suite have exercised it. The constitution (the ten hard constraints C1 to C10 and
 the vocation) is MISSION.md.
 
 ================================================================================

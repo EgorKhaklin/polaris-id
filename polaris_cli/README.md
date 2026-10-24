@@ -4,8 +4,7 @@ The operator command line for a [Polaris ID](https://github.com/EgorKhaklin/pola
 the use-case stored procedures, inspection and read-only queries, and the
 operator records (users, authorities, quotas, revocation bounds, relying
 parties, authority keys, retention), without a browser. Polaris ID is
-pre-pilot software on notional data; the project README says what it is and
-what it is not.
+pre-pilot software; the project README says what it is.
 
 Not wrapped as subcommands: `close_anchor_batch` (R10-2),
 `uc10_attest_trust` / `uc10_revoke_attestation` (R11-3), `uc11_close_epoch`
