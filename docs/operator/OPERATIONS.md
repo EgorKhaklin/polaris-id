@@ -1709,7 +1709,9 @@ you bring the stack up some other way, do it by hand first:
 
 ```bash
 for v in polaris_web_caddy_data polaris_web_caddy_config; do
-    docker run --rm -v "$v:/v" alpine:3.24 chown -R 1000:1000 /v
+    docker run --rm -v "$v:/v" \
+      alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
+      chown -R 1000:1000 /v
 done
 ```
 
