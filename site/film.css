@@ -99,8 +99,8 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
 .act-outside { padding-block: clamp(120px, 12vw, 260px) clamp(120px, 10vw, 240px); }
 .ledger-wrap { --row: max(16svh, 104px); width: var(--frame); margin-inline: auto; display: grid;
                grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--col-gap); align-items: start; }
-.ledger-head { grid-column: 1 / span 4; position: sticky; top: clamp(72px, 9vh, 120px); }
-.ledger-head h2 { font-size: clamp(2.5rem, 0.6rem + 3.4vw, 6.5rem); }
+.ledger-title { grid-column: 1 / span 4; position: sticky; top: clamp(72px, 9vh, 120px); }
+.ledger-title h2 { font-size: clamp(2.5rem, 0.6rem + 3.4vw, 6.5rem); }
 .tally { margin: clamp(24px, 3vh, 48px) 0 0; display: grid; container-type: inline-size; }
 /* the count, then the same no wider than its column (64cqi), so a reader's wider letter spacing (WCAG 1.4.12) keeps it
    off the ledger's numbers; a browser without container units drops the second size and keeps the first */
@@ -402,8 +402,8 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
     .act-check .term code, .act-check .playhead { font-size: clamp(11px, 100cqi / 47, 15px); }
 }
 @media (max-width: 900px) {
-    .ledger-head, .ledger, .after { grid-column: 1 / -1; }
-    .ledger-head { position: static; margin-bottom: 40px; }
+    .ledger-title, .ledger, .after { grid-column: 1 / -1; }
+    .ledger-title { position: static; margin-bottom: 40px; }
     .ledger-wrap { --row: auto; }
     .ledger li { padding-block: 22px; }
     .tally b { font-size: min(38vw, 12rem); }
