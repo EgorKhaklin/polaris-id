@@ -319,6 +319,33 @@ class TheAudit(unittest.TestCase):
                              ["scripts/polaris-review-packet-drill.py"], exact=True)
         self.assertEqual(refs, {"scripts/polaris-review-packet-drill.py": ["scripts/b.sh"]})
 
+    def test_a_workflow_a_skippable_job_calls_is_measured(self):
+        # 2026-10-21: the image CVE scan's steps moved into a workflow ci.yml's image-cve-scan job
+        # calls. A called workflow runs as the job that calls it, so it is skippable code, and so is
+        # one it calls; a workflow only an always-run job calls, or none, is not, as before.
+        jobs = "".join("  %s:\n    runs-on: x\n" % j for j in ch.ALWAYS_RUN_JOBS)
+        reads = "jobs:\n  s:\n    runs-on: x\n    steps:\n      - run: wc -l docs/reference/API.md\n"
+        root = self.fixture({
+            ch.CI_YML: "jobs:\n" + jobs.replace("  test-core:\n    runs-on: x\n",
+                                                "  test-core:\n    uses: ./.github/workflows/always.yml\n")
+                       + "  scan:\n    uses: ./.github/workflows/scan.yml  # a comment\n",
+            ".github/workflows/scan.yml": "on:\n  workflow_call:\njobs:\n  s:\n    uses: ./.github/workflows/inner.yml\n",
+            ".github/workflows/inner.yml": reads,
+            ".github/workflows/always.yml": reads,
+            ".github/workflows/other.yml": reads})
+        code = ch.skippable_code(ch._tracked(root), root)
+        for rel in (".github/workflows/scan.yml", ".github/workflows/inner.yml"):
+            self.assertIn(rel, code)
+        for rel in (".github/workflows/always.yml", ".github/workflows/other.yml"):
+            self.assertNotIn(rel, code)
+        problems = ch.audit(root, out=io.StringIO())
+        self.assertIn("docs/reference/API.md is on the allowlist but .github/workflows/inner.yml names it", problems)
+        # A call to a workflow that is not there is a problem, not a file to skip.
+        (root / ".github/workflows/inner.yml").unlink()
+        problems = ch.audit(root, out=io.StringIO())
+        self.assertIn("a skippable job calls .github/workflows/inner.yml, which is not tracked, so what it runs "
+                      "is unmeasured", problems)
+
 
 if __name__ == "__main__":
     unittest.main()

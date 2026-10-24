@@ -153,6 +153,20 @@ def _package_modules(rel_dir):
             if not p.name.startswith("test_")]
 
 
+def _ci_and_called_workflow_files():
+    """ci.yml and each workflow a ci.yml job calls, as repo-relative paths.
+
+    The other door of the same kind as `_read_app`. 2026-10-24: the Trivy gate moved from ci.yml
+    to image-cve-scan.yml, which a ci.yml job calls, and three checks came to read the scan through
+    `_ci_and_called_workflows`. With no door for it the drill named no input at all for
+    check_image_cve_scanning, and never deleted or commented out image-cve-scan.yml for it,
+    check_sbom_trivy_matches_scan or check_ha_automation. The list comes from checks.py's own
+    function, so it is the files those checks read and follows ci.yml's calls, not a file name.
+    """
+    from polaris_checks import checks as C
+    return [rel for rel, _text in C._ci_and_called_workflows(ROOT)]
+
+
 _PATH_TUPLES = None
 
 
@@ -254,6 +268,8 @@ def reads_of(fn):
                 out.extend(_looped[arg.id])
         elif fname in ("_read_app", "_app_modules"):
             out.extend(_package_modules("polaris_web"))
+        elif fname == "_ci_and_called_workflows":
+            out.extend(_ci_and_called_workflow_files())
         elif fname == "_read_package" and len(node.args) >= 2:
             arg = node.args[1]
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
@@ -350,6 +366,54 @@ def _read_path_targets(fn):
 
 
 _COMPILED_PATTERNS = None
+_HELPER_PATTERNS = None
+
+
+def _helper_patterns():
+    """Helpers in checks.py that match through a module-level tuple of compiled patterns, as
+    helper name -> those patterns.
+
+    `regexes_of` takes the patterns a check writes itself and the ones it calls through a compiled
+    name. check_image_cve_scanning finds the Trivy gate through `_trivy_gate`, which loops over
+    the `_TRIVY_GATE` tuple, so the drill saw nothing to search for in it even once its files were
+    named. A helper qualifies when it iterates such a tuple and calls `.search` (or a sibling) on
+    the loop variable; a check calling it is credited with the tuple's patterns, which is what it
+    matches.
+    """
+    global _HELPER_PATTERNS
+    if _HELPER_PATTERNS is not None:
+        return _HELPER_PATTERNS
+    _HELPER_PATTERNS = {}
+    try:
+        tree = ast.parse((ROOT / "polaris_checks" / "checks.py").read_text(errors="replace"))
+    except Exception:
+        return _HELPER_PATTERNS
+    tuples = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Tuple):
+            pats = [e.args[0].value for e in node.value.elts
+                    if isinstance(e, ast.Call) and getattr(e.func, "attr", "") == "compile"
+                    and getattr(getattr(e.func, "value", None), "id", "") == "re"
+                    and e.args and isinstance(e.args[0], ast.Constant)
+                    and isinstance(e.args[0].value, str)]
+            if pats and len(pats) == len(node.value.elts):
+                tuples[node.targets[0].id] = pats
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for loop in ast.walk(node):
+            if isinstance(loop, (ast.For, ast.comprehension)) and isinstance(loop.iter, ast.Name) \
+                    and loop.iter.id in tuples and isinstance(loop.target, ast.Name):
+                var = loop.target.id
+                if any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                       and isinstance(c.func.value, ast.Name) and c.func.value.id == var
+                       and c.func.attr in ("search", "match", "fullmatch", "findall", "finditer")
+                       for c in ast.walk(node)):
+                    _HELPER_PATTERNS.setdefault(node.name, []).extend(tuples[loop.iter.id])
+    return _HELPER_PATTERNS
+
+
 
 
 def _module_compiled_patterns():
@@ -402,10 +466,14 @@ def regexes_of(fn):
     if _COMPILED_PATTERNS is None:
         _COMPILED_PATTERNS = _module_compiled_patterns()
     out = set()
+    helpers = _helper_patterns()
     for node in ast.walk(fn):
         if not isinstance(node, ast.Call):
             continue
         f = node.func
+        if isinstance(f, ast.Name) and f.id in helpers:
+            out.update(helpers[f.id])
+            continue
         if not (isinstance(f, ast.Attribute) and f.attr in
                 ("search", "match", "findall", "finditer", "fullmatch")):
             continue
