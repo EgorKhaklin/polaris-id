@@ -1,0 +1,784 @@
+/* ============================================================================
+   site/film.css: the page after the first screen, as a film in eight acts.
+
+   index.css is the cold open; this file is everything after it. The rules at the top are the finished
+   still: every act composed, every word in place, nothing waiting on a motion to be read. The motion is a
+   second layer at the end, inside one guard (a reader who has not asked for less motion, and a browser
+   with scroll-driven animations): there some acts hold the frame while the reader's scroll plays them.
+   Five moves only: a dissolve, a cut, an inscription, a push, and the frame opening from 2.39:1 to full
+   height (twice). Time is the scroll; nothing below runs on a clock.
+
+   01 Set  02 Slates and type  03 I The check  04 II Evidence  05 III How it works  06 IV The rules
+   07 V The hard cases  08 VI Why now  09 VII Mission  10 VIII Work with us  11 Reel  12 Footer
+   13 Modes  14 Motion
+   ============================================================================ */
+
+/* ----- 01 Set: the frame, the grid, the light -------------------------------------------------------
+   One frame for every act: 1280 px wide on a laptop, growing with a large screen (72% of its width) so a
+   2560 px monitor is filled the way a 1440 px one is. Twelve columns. The light is the coin's lamp, upper
+   left, 60 degrees up: a plate --z pixels above the page casts its shadow 0.41 --z right and down. */
+html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: oklch(0.45 0.03 80 / 0.55);
+       --plate: oklch(0.18 0.01 265); --stone: oklch(0.13 0.004 270);
+       --gutter: clamp(16px, 4vw, 48px); --col-gap: clamp(16px, 1.6vw, 40px);
+       --frame: min(100% - 2 * var(--gutter), max(1280px, 72vw)); --ease: cubic-bezier(.2, .7, .2, 1); }
+/* where the chapter reel shows, the frame leaves it the margin: its marks are 44 px wide and 14 px in from the edge;
+   print hides the reel, so the margin is the screen's only */
+@media screen and (min-width: 900px) { html { --gutter: 72px; } }
+@property --z  { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --az { syntax: "<angle>"; inherits: true; initial-value: 135deg; }
+@property --n  { syntax: "<integer>"; inherits: true; initial-value: 15; }
+@property --r  { syntax: "<integer>"; inherits: true; initial-value: 99; }
+@property --f  { syntax: "<number>"; inherits: true; initial-value: 11; }
+@property --sweep { syntax: "<angle>"; inherits: false; initial-value: 360deg; }
+.grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--col-gap); }
+.relief { box-shadow: calc(var(--z) * 0.41px) calc(var(--z) * 0.41px) calc(var(--z) * 0.9px) oklch(0 0 0 / 0.55),
+                      calc(var(--z) * 0.12px) calc(var(--z) * 0.12px) calc(var(--z) * 0.2px) oklch(0 0 0 / 0.5),
+                      inset 1px 1px 0 oklch(1 0 0 / 0.07), inset -1px -1px 0 oklch(0 0 0 / 0.45); }
+::selection { background: oklch(0.85 0.06 85 / 0.28); color: var(--ink); }
+.act :focus-visible, .reel :focus-visible { outline: 2px solid var(--gold); outline-offset: 3px;
+                                            box-shadow: 0 0 0 5px var(--ground); }
+
+/* ----- 02 Slates and type ------------------------------------------------------------------------------
+   Each act opens on a slate, as a reel opens on a chapter card: its numeral in Cinzel, the inscription
+   face, then its name in the machine's face. Inter is the narrator; Cinzel is reserved for what is
+   inscribed (numerals, the rules, the motto); JetBrains Mono for what a machine said. */
+.slate { display: flex; align-items: center; gap: 14px; margin: 0 0 clamp(20px, 2vw, 32px);
+         font: 500 12px/1 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+.slate b { display: flex; align-items: center; gap: 14px; font: 500 13px/1 var(--font-display); letter-spacing: 0.16em;
+           color: var(--gold-deep); font-feature-settings: "kern", "liga", "lnum"; }
+.slate b::after { content: ""; width: 40px; height: 1px; background: linear-gradient(90deg in oklab, var(--gold-deep), transparent); }
+.slate b:only-child::after { display: none; }
+.act h2 { font-size: clamp(2.75rem, 1.2rem + 4.4vw, 7.5rem); line-height: 0.98; letter-spacing: -0.035em; font-weight: 600;
+          text-wrap: balance; margin: 0 0 0.42em; text-box: trim-both cap alphabetic; }
+.dek { margin: 0 0 1em; font-size: clamp(1.125rem, 0.8rem + 0.62vw, 1.875rem); font-weight: 420; line-height: 1.5;
+       color: var(--ink-2); text-wrap: pretty; max-width: 34ch; }
+.act h3 { font: 500 12px/1 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold);
+          margin: 0 0 clamp(20px, 2.4vw, 36px); }
+.say { max-width: 46ch; font-size: clamp(1.0625rem, 0.95rem + 0.3vw, 1.375rem); line-height: 1.6; color: var(--ink-2);
+       text-wrap: pretty; }
+.v { font-feature-settings: "ss02", "tnum"; }
+
+/* ----- 03 I The check: the recorded run ----------------------------------------------------------------
+   The real transcript, line for line as it was recorded on 15 October 2026 and abridged as it says: one
+   line per span, selectable and copyable at every moment. No window chrome; a header strip says what it
+   is. Its climax, the RESULT line, stands below it at the size of a title. */
+.act-check { padding-block: clamp(120px, 12vw, 260px) clamp(96px, 8vw, 200px); }
+.act-check .stage { width: var(--frame); margin-inline: auto; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+                    column-gap: var(--col-gap); row-gap: clamp(28px, 3vw, 56px); align-items: start; }
+.act-check .card { grid-column: 1 / span 5; grid-row: 1; }
+.act-check .card h2 { font-size: clamp(2.5rem, 0.8rem + 3.6vw, 7rem); }
+.act-check .term { grid-column: 6 / -1; grid-row: 1 / span 2; margin: 0; min-width: 0; }
+.act-check .verdict { grid-column: 6 / -1; grid-row: 3; }
+.act-check .more { grid-column: 1 / span 5; grid-row: 2; align-self: end; display: flex; flex-wrap: wrap; gap: 10px 26px;
+                   margin: 0; font-size: 15px; }
+.more a::after { content: " \2192"; }
+.term-head { margin: 0 0 18px; padding-bottom: 14px; border-bottom: 1px solid var(--hair);
+             font: 400 12px/1 var(--font-mono); letter-spacing: 0.08em; color: var(--ink-3); }
+.term { container-type: inline-size; }
+.term pre { position: relative; margin: 0; }
+.term code, .playhead { font: 400 clamp(11px, 100cqi / 47, 22px)/1.7 var(--font-mono); }
+.term code { display: block; padding: 0; border: 0; border-radius: 0; background: none; color: var(--ink-2);
+             white-space: pre-wrap; overflow-wrap: anywhere; font-variant-ligatures: none; }
+/* the longest line fills the frame; one widened by a reader's text spacing or minimum font size wraps under its
+   own hanging indent instead of running past the frame */
+.term .l { display: inline-block; padding-left: 2ch; text-indent: -2ch; }
+.term .d { color: var(--ink-3); }
+.term .ok { color: var(--gold); }
+.playhead { display: none; }
+.result { margin: 0 0 18px; font: 400 clamp(1.5rem, 0.6rem + 2.6vw, 3.75rem)/1.18 var(--font-mono); letter-spacing: -0.02em;
+          color: var(--ink); text-wrap: balance; font-variant-ligatures: none; }
+.result b { font-weight: 400; color: var(--gold); }
+.cap { margin: 0; font-size: 14px; line-height: 1.55; color: var(--ink-3); }
+
+/* ----- 04 II Evidence: the ledger ---------------------------------------------------------------------
+   Fifteen projects nobody here wrote, read one at a time as they cross a gold line held at mid-screen; the
+   European Commission's three first. Each name opens its own repository. The count beside them is the
+   live index of the row on the line. Under the last row, the line that keeps a test from reading as an
+   endorsement, then the certification plate: the one OpenID mark after the first screen, beside the
+   sentence that scopes it. */
+.act-outside { padding-block: clamp(120px, 12vw, 260px) clamp(120px, 10vw, 240px); }
+.ledger-wrap { --row: max(16svh, 104px); width: var(--frame); margin-inline: auto; display: grid;
+               grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--col-gap); align-items: start; }
+.ledger-title { grid-column: 1 / span 4; position: sticky; top: clamp(72px, 9vh, 120px); }
+.ledger-title h2 { font-size: clamp(2.5rem, 0.6rem + 3.4vw, 6.5rem); }
+.tally { margin: clamp(24px, 3vh, 48px) 0 0; display: grid; container-type: inline-size; }
+/* the count, then the same no wider than its column (64cqi), so a reader's wider letter spacing (WCAG 1.4.12) keeps it
+   off the ledger's numbers; a browser without container units drops the second size and keeps the first */
+.tally b { font: 200 min(21vw, 30vh, 26rem)/0.85 var(--font-sans); font-size: min(21vw, 30vh, 26rem, 64cqi);
+           font-variation-settings: "opsz" 32; letter-spacing: -0.05em;
+           font-variant-numeric: tabular-nums lining-nums; text-box: trim-both cap alphabetic;
+           background: linear-gradient(180deg in oklab, var(--gilt-hi), var(--gold) 45%, var(--ink-3));
+           -webkit-background-clip: text; background-clip: text; color: transparent; }
+.tally span, .tally-at { font: 500 12px/1 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+.tally span { margin-top: 18px; }
+.tally-at { margin: 10px 0 0; color: var(--gold-deep); font-variant-numeric: tabular-nums slashed-zero; }
+.tally-at::before { counter-reset: g var(--n, 15); content: counter(g, decimal-leading-zero) " / 15"; }
+.ledger { grid-column: 5 / -1; list-style: none; margin: 0; padding: 0; counter-reset: row; }
+.ledger::before { content: ""; display: block; height: 5px; margin-bottom: -5px; position: relative; z-index: 2; pointer-events: none;
+                  background: linear-gradient(oklch(0.85 0.06 85 / 0.6), oklch(0.85 0.06 85 / 0.6)) 0 2px / 100% 1px no-repeat,
+                              linear-gradient(oklch(0.85 0.06 85 / 0.9), oklch(0.85 0.06 85 / 0.9)) 0 0 / 1px 100% no-repeat; }
+.ledger li { counter-increment: row; block-size: var(--row); display: grid; grid-template-columns: 5.5ch minmax(0, 1fr);
+             grid-template-rows: auto auto; align-content: center; column-gap: 12px; border-top: 1px solid var(--line); color: var(--ink); }
+.ledger li::before { content: counter(row, decimal-leading-zero); grid-row: 1 / span 2; align-self: center;
+                     font: 400 12px/1 var(--font-mono); letter-spacing: 0.08em; color: var(--ink-3); font-variant-numeric: tabular-nums slashed-zero; }
+.ledger a { justify-self: start; font-size: clamp(1.5rem, 0.6rem + 2.2vw, 4.25rem); font-weight: 600; line-height: 1.05; letter-spacing: -0.03em;
+            color: inherit; text-decoration: none; text-wrap: balance; }
+.ledger a:hover { color: var(--gold); }
+.ledger li > span { margin-top: 10px; font: 400 13px/1.45 var(--font-mono); color: var(--ink-3); }
+.after { grid-column: 5 / -1; padding-top: clamp(40px, 4vw, 72px); border-top: 1px solid var(--line); }
+.endorse { margin: 0 0 clamp(48px, 5vw, 88px); max-width: 60ch; font-size: 15px; color: var(--ink-3); }
+.plate { --z: 6; display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: clamp(20px, 2.4vw, 40px); align-items: center;
+         padding: clamp(20px, 2vw, 32px); border-radius: 10px; background: var(--plate); }
+.plate, .pane { box-shadow: calc(var(--z) * 0.41px) calc(var(--z) * 0.41px) calc(var(--z) * 0.9px) oklch(0 0 0 / 0.55),
+                            calc(var(--z) * 0.12px) calc(var(--z) * 0.12px) calc(var(--z) * 0.2px) oklch(0 0 0 / 0.5),
+                            inset 1px 1px 0 oklch(1 0 0 / 0.07), inset -1px -1px 0 oklch(0 0 0 / 0.45); }
+.chip { display: grid; place-items: center; width: 168px; height: 96px; border-radius: 6px; background: #fff; }
+.chip img { width: 140px; height: auto; }
+.plate p { margin: 0; font-size: clamp(15px, 0.85rem + 0.2vw, 18px); line-height: 1.6; color: var(--ink-2); }
+.lines { margin: clamp(40px, 4vw, 72px) 0 0; display: grid; }
+.lines div { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 8px 24px; padding: 18px 0; border-top: 1px solid var(--line); }
+.lines dt { font: 500 12px/1.6 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+.lines dd { margin: 0; color: var(--ink-2); }
+
+/* ----- 05 III How it works: three objects in a vitrine ------------------------------------------------
+   Issue, hold and verify, each beside an object that does what the step does, path-traced in Blender under
+   the coin's lamp: a steel die (an authority's signature is struck, and a die is cut in reverse); a Cardan
+   grille over a written page (only what lies under its windows can be read); a printed table of keys
+   under a loupe (anyone can check against what was published). Captions say what the objects are. */
+.act-how { padding-block: clamp(120px, 12vw, 260px) clamp(96px, 8vw, 200px); }
+.act-how .stage { width: var(--frame); margin-inline: auto; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+                  column-gap: var(--col-gap); row-gap: clamp(56px, 6vw, 120px); }
+.how-head { grid-column: 1 / -1; }
+.steps, .vitrine { grid-row: 2 / span 3; display: grid; grid-template-rows: subgrid; margin: 0; padding: 0; list-style: none; }
+.steps { grid-column: 1 / span 5; }
+.vitrine { grid-column: 7 / -1; }
+.steps li { align-self: center; }
+.verb { margin: 0 0 0.3em; font: 400 clamp(2.5rem, 0.8rem + 4.2vw, 7rem)/0.9 var(--font-display); letter-spacing: 0.12em; text-transform: uppercase;
+        font-feature-settings: "kern", "liga", "lnum";
+        background: linear-gradient(172deg in oklab, var(--gilt-hi), var(--gold) 46%, var(--gilt-lo));
+        -webkit-background-clip: text; background-clip: text; color: transparent; }
+.steps p:not(.verb) { max-width: 34ch; font-size: clamp(1.0625rem, 0.9rem + 0.4vw, 1.5rem); line-height: 1.55; color: var(--ink-2);
+                      text-wrap: pretty; }
+.obj { position: relative; margin: 0; width: min(100%, 720px, 44vw); justify-self: end; }
+.obj img { width: 100%; height: auto; aspect-ratio: 1; }
+.obj .over { position: absolute; inset: 0; }
+.obj figcaption { margin-top: 14px; font-size: 13.5px; line-height: 1.5; color: var(--ink-3); text-wrap: pretty; }
+.act-how .note { grid-column: 7 / -1; margin: 0; font: 400 12px/1.5 var(--font-mono); letter-spacing: 0.06em; color: var(--ink-3); }
+
+/* ----- 06 IV The rules: five laws cut in stone --------------------------------------------------------
+   The rules are not promised; the database enforces them. So they are cut, in gilt, into a polished black
+   marble wall path-traced under two lights: first a raking light from the right, low over the stone, the
+   way an inscription is read; then the coin's own lamp. The groove walls of every letter take their shade
+   from the lamp's angle (--az), so as the light comes round they turn with it. The fifth rule is a law of
+   absence, so under it the wall carries an empty cartouche. */
+.act-rules { position: relative; isolation: isolate; }
+.wall { position: sticky; top: 0; z-index: -1; height: 100svh; overflow: hidden; overflow: clip; background: var(--stone); }
+.wall img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.wall .rake { opacity: 0; }
+.wall::after { content: ""; position: absolute; inset: 0;
+               background: linear-gradient(180deg, var(--ground), transparent 14%, transparent 86%, var(--ground)); }
+.tablet { margin-top: -100svh; width: var(--frame); margin-inline: auto; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+          column-gap: var(--col-gap); padding-block: clamp(120px, 14vh, 200px) clamp(140px, 18vh, 260px); }
+.tablet > * { grid-column: 3 / span 8; }
+.laws { list-style: none; margin: clamp(48px, 6vh, 96px) 0 0; padding: 0; counter-reset: law; display: grid; gap: clamp(36px, 5vh, 72px); }
+.laws li { counter-increment: law; position: relative; max-width: 28ch;
+           font: 500 clamp(1.375rem, 0.6rem + 2.2vw, 4rem)/1.25 var(--font-display); letter-spacing: 0.04em; text-wrap: balance;
+           font-feature-settings: "kern", "liga", "lnum"; color: transparent; }
+.laws li span { display: block; }
+/* the gilt: gold leaf over the coin's gold, under the lamp */
+.laws li { background: linear-gradient(172deg in oklab, var(--gilt-hi), var(--gold) 46%, var(--gilt-lo));
+           -webkit-background-clip: text; background-clip: text; }
+/* the groove walls: a copy of the words under the gilt, its shadow toward the lamp and its catch-light away */
+.laws li::before { content: attr(data-rule) / ""; position: absolute; inset: 0; z-index: -1; color: transparent;
+                   text-shadow: calc(cos(var(--az)) * 1.6px) calc(sin(var(--az)) * -1.6px) 1px oklch(0 0 0 / 0.9),
+                                calc(cos(var(--az)) * -1px) calc(sin(var(--az)) * 1px) 0.5px oklch(0.95 0.03 85 / 0.16); }
+.laws li::after { content: counter(law, upper-roman); position: absolute; right: calc(100% + 1.4em); top: 0.42em;
+                  font: 500 13px/1 var(--font-display); letter-spacing: 0.16em; color: var(--gold-deep);
+                  -webkit-text-fill-color: var(--gold-deep); }
+.cartouche { position: relative; margin-top: clamp(28px, 4vh, 56px); height: 8rem; max-width: 28ch; border: 1px solid var(--gold-deep); }
+.cartouche::before { content: ""; position: absolute; inset: 5px; border: 1px solid var(--gold-deep); }
+.cartouche i { display: none; }
+.cartouche-cap { margin: 14px 0 0; font: 400 12px/1.5 var(--font-mono); letter-spacing: 0.06em; color: var(--ink-3); }
+
+/* ----- 07 V The hard cases: the worst day, in three beats ----------------------------------------------
+   Duress, as dramatic irony: the reader sees exactly what a coercer sees, two identical results, and then
+   the one line the coercer cannot see. Total loss: independent lines that must cross, never one. And
+   migration: two signatures, one active mark that by construction is only ever in one place. */
+.act-hard { padding-block: clamp(120px, 12vw, 260px) 0; }
+.beat { width: var(--frame); margin-inline: auto; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+        column-gap: var(--col-gap); align-content: center; min-block-size: 80svh; padding-block: clamp(48px, 6vh, 96px); }
+.beat > * { grid-column: 3 / span 8; }
+.duress { margin: 0 0 clamp(28px, 3vw, 48px); }
+.seen { margin: 0 0 18px; font: 500 12px/1 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+.panes { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(16px, 2.4vw, 40px); }
+.pane { --z: 8; aspect-ratio: 4 / 3; border-radius: 10px; background: var(--plate); display: grid; place-content: center; text-align: center;
+        gap: clamp(10px, 1.2vw, 18px); padding: 24px; min-width: 0; }
+.pane p { margin: 0; }
+.pane .code { font: 500 12px/1 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+.pane .dots { font: 400 14px/1 var(--font-mono); letter-spacing: 0.32em; color: var(--ink-2); }
+.pane .said { font: 600 clamp(2rem, 0.9rem + 2.6vw, 4.25rem)/1 var(--font-sans); letter-spacing: -0.03em; color: var(--ink); }
+.tell { width: calc(50% - clamp(16px, 2.4vw, 40px) / 2); margin: 18px 0 0 auto; font: 500 13px/1.4 var(--font-mono); letter-spacing: 0.12em;
+        color: var(--gold); }
+.duress figcaption { margin-top: 14px; font: 400 12px/1.5 var(--font-mono); letter-spacing: 0.06em; color: var(--ink-3); }
+.crossing, .seals { margin: 0 0 clamp(28px, 3vw, 48px); }
+.crossing svg, .seals svg { display: block; width: 100%; height: auto; overflow: visible; color: var(--ink-3); }
+.crossing text, .seals text { font-family: var(--font-mono); letter-spacing: 0.06em; fill: var(--ink-3); }
+.crossing .ch, .seals circle { stroke: var(--ink-2); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.seals { max-width: 560px; }
+.seals .hat { stroke-width: 0.75px; vector-effect: non-scaling-stroke; }
+/* the still shows the move made: both signatures were active through the window, then the outgoing one retired */
+.seals .s1 { opacity: 0.5; }
+.seals .retired path { stroke: var(--ink-3); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+/* each drawing in words, for a screen reader (the drawing is hidden from it); under forced colours, which remove the
+   drawings, the words take their place */
+.in-words { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ----- 08 VI Why now: the law, and the people it does not reach -----------------------------------------
+   First the regulation that makes the wallets certain. Then the people they do not reach, drawn to scale:
+   one hollow ring for every ten million people. The rings are never filled, because Polaris has not
+   reached these people and the page does not pretend it has; and the two fields stand apart, because the
+   figures are not one inside the other. Last, in gold, the one thing Polaris is built to do about it. */
+.act-world { padding-block: clamp(120px, 12vw, 260px) clamp(96px, 8vw, 200px); }
+.act-world .stage { width: var(--frame); margin-inline: auto; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+                    column-gap: var(--col-gap); row-gap: clamp(48px, 6vw, 112px); align-items: end; }
+.law { grid-column: 1 / span 8; }
+.law h2 { font-size: clamp(2.5rem, 0.4rem + 4.6vw, 7.5rem); font-weight: 600; margin-bottom: 0.36em; }
+.law h2 span { display: block; }
+.cite { margin: 0; font-size: 15px; color: var(--ink-3); }
+.cite a { color: var(--ink-2); }
+.states { grid-column: 9 / -1; min-width: 0; margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: end; text-align: right;
+          container-type: inline-size; }
+.states b, .count .figure { font-weight: 200; font-variation-settings: "opsz" 32; letter-spacing: -0.05em; font-variant-numeric: tabular-nums lining-nums; }
+/* as act II's count: no wider than its column, the first size kept where container units are not */
+.states b { font-size: min(21vw, 30vh, 26rem); font-size: min(21vw, 30vh, 26rem, 64cqi); line-height: 0.85; color: var(--ink); text-box: trim-both cap alphabetic; }
+.states span { margin-top: 18px; font: 500 12px/1 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+.count { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--col-gap);
+         padding-top: clamp(40px, 4vw, 72px); border-top: 1px solid var(--line); align-items: start; }
+.count .figure { grid-column: 1 / span 7; margin: 0; font-size: clamp(2.5rem, 0.4rem + 5.2vw, 7.5rem); line-height: 0.95; color: transparent;
+                 -webkit-text-stroke: 1px var(--ink-2); }
+.count .who { grid-column: 1 / span 6; margin: 18px 0 0; font-size: clamp(1.125rem, 0.9rem + 0.5vw, 1.625rem); color: var(--ink-2); }
+.field { --cell: clamp(12px, 1.2vw, 30px); grid-column: 8 / -1; grid-row: 1 / span 3; justify-self: end;
+         width: calc(var(--cols) * var(--cell)); height: calc(var(--rows) * var(--cell));
+         background: radial-gradient(circle closest-side, transparent 58%, var(--ink-3) 60% 76%, transparent 80%) 0 0 / var(--cell) var(--cell); }
+/* whole pixels where the browser can round, so no ring is shaved by a fraction; elsewhere the exact width */
+@supports (width: round(down, 1.5px, 1px)) { .field { width: round(down, calc(var(--cols) * var(--cell)), 1px); } }
+.field-a { --cols: 10; --rows: 8; }
+.field-b { --cols: 20; --rows: 14; }
+.key { grid-column: 1 / span 6; margin: 14px 0 0; font: 400 12px/1.5 var(--font-mono); letter-spacing: 0.06em; color: var(--ink-3); }
+.source { grid-column: 1 / -1; margin: 0; font-size: 14px; color: var(--ink-3); }
+.source a { color: var(--ink-2); }
+.answer { grid-column: 1 / span 8; margin: 0; padding-top: clamp(28px, 3vw, 48px); position: relative;
+          font: 500 clamp(1.375rem, 0.9rem + 1.2vw, 2.25rem)/1.35 var(--font-sans); letter-spacing: -0.015em; color: var(--gold);
+          text-wrap: balance; }
+.answer::before { content: ""; position: absolute; left: 0; top: 0; width: min(100%, 18rem); height: 1px; transform-origin: 0 50%;
+                  background: linear-gradient(90deg in oklab, var(--gold), transparent); }
+
+/* ----- 09 VII Mission: the goal as an object, then as a voyage ------------------------------------------
+   First the object: the stack it can take to prove who you are (blank cards and papers, nothing printed on
+   them) slides together and becomes one unstruck gold blank, a coin before it is struck: the goal shown as
+   not yet made. Then the voyage, under the night the film opened on: the northern sky as a long exposure,
+   computed from the same star catalogue as the first screen, every star drawn into an arc round the pole;
+   the one that barely moves is Polaris. The route, today to the world, reads over it. */
+.act-goal { padding-block: clamp(120px, 12vw, 260px) clamp(96px, 8vw, 160px); }
+.act-goal .stage { width: var(--frame); margin-inline: auto; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+                   column-gap: var(--col-gap); row-gap: clamp(32px, 3vw, 56px); justify-items: center; text-align: center; }
+.goal-head, .planchet, .act-goal .dek { grid-column: 1 / -1; }
+.goal-head .slate { justify-content: center; }
+.act-goal h2 { margin-bottom: 0; }
+.act-goal h2 span { display: block; color: var(--ink-2); }
+.planchet { margin: 0; width: min(800px, 86vw); }
+.sprite { position: relative; aspect-ratio: 16 / 10; overflow: hidden; overflow: clip; }
+.sprite picture { position: absolute; left: 0; top: 0; width: 300%; height: 400%; }
+.sprite img { width: 100%; height: 100%; }
+.sprite .fa { translate: -66.6667% -75%; }
+.sprite .fb { display: none; }
+.planchet figcaption { margin-top: 14px; font-size: 13.5px; color: var(--ink-3); }
+.act-goal .dek { max-width: 40ch; margin: 0 auto; }
+
+.night { position: relative; isolation: isolate; }
+.sky-stage { position: sticky; top: 0; z-index: -1; height: 100svh; overflow: hidden; overflow: clip; container-type: size; background: #000;
+             /* the plate's side, wide enough that its corners clear the frame at every turn; and Polaris's place on
+                it at the exposure's start, from the pole at its centre (computed with the plate) */
+             --S: calc(2 * hypot(50cqi, 62cqb));
+             --polaris-dx: calc(var(--S) * -0.005348); --polaris-dy: calc(var(--S) * 0.000300); }
+/* a browser without container units or hypot() takes the side from the viewport: hypot() itself where it has it,
+   else the sum of the two legs, which is never shorter */
+@supports not (width: hypot(1cqi, 1cqb)) { .sky-stage { --S: calc(100vw + 124vh); } }
+@supports (width: hypot(1vw, 1vh)) and (not (width: hypot(1cqi, 1cqb))) { .sky-stage { --S: calc(2 * hypot(50vw, 62vh)); } }
+/* up to 900 px wide the pole sits at 30% of the stage, not 38%, so the far corners lie 70% of its height below it */
+@media (max-width: 900px) {
+    .sky-stage { --S: calc(2 * hypot(50cqi, 70cqb)); }
+    @supports not (width: hypot(1cqi, 1cqb)) { .sky-stage { --S: calc(100vw + 140vh); } }
+    @supports (width: hypot(1vw, 1vh)) and (not (width: hypot(1cqi, 1cqb))) { .sky-stage { --S: calc(2 * hypot(50vw, 70vh)); } }
+}
+.aperture { position: absolute; inset: 0; }
+.exposure { position: absolute; left: 50%; top: 38%; width: var(--S); height: var(--S); translate: -50% -50%; }
+.exposure img { position: absolute; inset: 0; width: 100%; height: 100%; mix-blend-mode: lighten; }
+.exposure > :nth-child(2) img { rotate: 7.52deg; }
+.exposure > :nth-child(3) img { rotate: 15.04deg; }
+.exposure > :nth-child(4) img { rotate: 22.56deg; }
+/* the scrim the route is read over: the sky dims toward the left */
+.sky-stage::after { content: ""; position: absolute; inset: 0;
+                    background: linear-gradient(90deg in oklab, oklch(0.145 0.004 286 / 0.86), oklch(0.145 0.004 286 / 0.5) 30%, transparent 52%),
+                                linear-gradient(0deg in oklab, oklch(0.145 0.004 286 / 0.7), transparent 34%); }
+.star { position: absolute; z-index: 1; left: calc(50% + var(--polaris-dx, 0px) + 18px); top: calc(38% + var(--polaris-dy, 0px) - 9px);
+        margin: 0; white-space: nowrap; font: 400 11px/1.5 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.star b { display: block; font-weight: 500; letter-spacing: 0.22em; color: var(--gold); }
+.star::before { content: ""; position: absolute; right: calc(100% + 4px); top: 9px; width: 12px; height: 1px; background: var(--hair); }
+.sky-cap { position: absolute; z-index: 1; left: calc((100% - var(--frame)) / 2); bottom: clamp(18px, 3vh, 36px); margin: 0; max-width: 46ch;
+           font: 400 12px/1.5 var(--font-mono); letter-spacing: 0.04em; color: var(--ink-3); }
+.voyage { position: relative; margin-top: -100svh; }
+.voyage-frame { width: var(--frame); margin-inline: auto; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+                column-gap: var(--col-gap); padding-block: clamp(120px, 16vh, 220px) clamp(80px, 10vh, 160px); }
+.route, .purpose, .motto { grid-column: 1 / span 6; }
+.route { list-style: none; margin: 0; padding: 0; display: grid; gap: clamp(48px, 7vh, 96px); }
+.route li p { margin: 0; }
+.stop { font: 500 12px/1 var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); }
+.route h3 { margin: 16px 0 14px; font: 600 clamp(1.75rem, 0.8rem + 2.4vw, 4rem)/1.02 var(--font-sans); letter-spacing: -0.03em; color: var(--ink);
+            text-transform: none; }
+.route li p:last-child { max-width: 38ch; font-size: clamp(1.0625rem, 0.9rem + 0.4vw, 1.5rem); line-height: 1.55; color: var(--ink-2);
+                         text-wrap: pretty; }
+.purpose { margin: clamp(64px, 9vh, 120px) 0 0; display: grid; gap: 16px; max-width: 44ch; }
+.purpose b { font: 500 13px/1.6 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
+.motto { margin: clamp(40px, 6vh, 80px) 0 0; font: 500 13px/1 var(--font-display); letter-spacing: 0.3em; text-transform: uppercase;
+         color: var(--ink-3); font-feature-settings: "kern", "liga", "lnum"; }
+
+/* ----- 10 VIII Work with us: the end card ---------------------------------------------------------------
+   The last frame is the address, under the same night, the pole star still overhead. Then the night ends at
+   a horizon, as the first screen does. */
+.act-end { position: relative; z-index: 1; min-block-size: 100svh; width: var(--frame); margin-inline: auto;
+           display: grid; align-content: start; justify-items: center; text-align: center; padding-block: 50svh 12svh; }
+.act-end .slate { justify-content: center; }
+.act-end h2 { margin-bottom: 0.5em; }
+.act-end .dek { margin: 0 0 10px; max-width: none; }
+.address { margin: 0 0 clamp(36px, 4vw, 64px); }
+.address a { font: 300 clamp(1.75rem, 0.6rem + 4.4vw, 6rem)/1.1 var(--font-sans); letter-spacing: -0.02em; color: var(--ink);
+             text-decoration: none; white-space: nowrap; padding-bottom: 0.08em;
+             background: linear-gradient(var(--gold), var(--gold)) 0 100% / 0 1px no-repeat,
+                         linear-gradient(var(--gold-deep), var(--gold-deep)) 0 100% / 100% 1px no-repeat;
+             transition: background-size .16s var(--ease), color .16s var(--ease); }
+.address a:hover, .address a:focus-visible { color: var(--ink); background-size: 100% 1px, 100% 1px; }
+.act-end .cta { justify-content: center; }
+.night > .horizon { z-index: 0; }
+
+/* ----- 11 Reel: the chapters, at the edge of the frame --------------------------------------------------
+   A film reel's chapter marks: the pole star at the head (back to the first screen), then the eight acts.
+   The act on screen lights in gold. Wide screens only. */
+.reel { display: none; }
+@media (min-width: 900px) {
+    .reel { position: fixed; z-index: 30; top: 50%; translate: 0 -50%; display: grid; justify-items: end;
+            inset-inline-end: max(14px, calc((100vw - max(1280px, 72vw)) / 2 - 64px)); }
+    .reel::before { content: ""; position: absolute; top: 14px; bottom: 14px; right: 21px; width: 1px; background: var(--hair); }
+    .reel a { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 14px; height: 28px; min-width: 44px;
+              padding-right: 14px; text-decoration: none; color: var(--ink-3); transition: color .16s var(--ease); }
+    .reel b { min-width: 2.6em; text-align: right; font: 500 11px/1 var(--font-display); letter-spacing: 0.2em; color: inherit;
+              font-feature-settings: "kern", "liga", "lnum"; }
+    /* the names hang outside the marks, so only the marks take the pointer: the page beneath stays live */
+    .reel span { position: absolute; inset-block: 0; right: calc(28px + 2.6em); display: flex; align-items: center;
+                 font: 500 11px/1 var(--font-mono); letter-spacing: 0.16em; text-transform: uppercase; white-space: nowrap;
+                 color: var(--ink-2); opacity: 0; translate: 8px 0; transition: opacity .16s var(--ease), translate .16s var(--ease);
+                 pointer-events: none; }
+    .reel a:hover, .reel a:focus-visible { color: var(--gold); }
+    .reel a:hover span, .reel a:focus-visible span { opacity: 1; translate: 0 0; }
+    .reel .pole { height: 36px; }
+    .reel .pole::after { content: ""; position: absolute; right: 20px; top: 50%; width: 3px; height: 3px; margin-top: -1.5px; border-radius: 50%;
+                         background: oklch(0.97 0.02 90); box-shadow: 0 0 0 4px var(--ground); }
+    .reel .pole span { right: 32px; }
+    nav.reel { scroll-target-group: auto; }
+    .reel a:target-current { color: var(--gold); }
+}
+
+/* ----- 12 Footer ------------------------------------------------------------------------------------- */
+.foot { padding: 96px var(--gutter) 48px; text-align: center; }
+.foot p { margin: 0; font: 400 12px/1 var(--font-mono); letter-spacing: 0.08em; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+/* the line is also the way to the credits (NOTICE), and looks like nothing more than the line */
+.foot a { color: inherit; text-decoration: none; }
+.foot a:hover { color: var(--ink-2); }
+.foot a:focus-visible { outline: 1px solid var(--gold); outline-offset: 4px; }
+
+/* ----- 13 Modes: narrower screens, forced colours, print ---------------------------------------------- */
+@media (max-width: 1099px) {
+    .act-check .card, .act-check .more, .act-check .term, .act-check .verdict { grid-column: 1 / -1; grid-row: auto; }
+    .act-check .term code, .act-check .playhead { font-size: clamp(11px, 100cqi / 47, 15px); }
+}
+@media (max-width: 900px) {
+    .ledger-title, .ledger, .after { grid-column: 1 / -1; }
+    .ledger-title { position: static; margin-bottom: 40px; }
+    .ledger-wrap { --row: auto; }
+    .ledger li { padding-block: 22px; }
+    .tally b { font-size: min(38vw, 12rem); }
+    .steps, .vitrine { grid-column: 1 / -1; grid-row: auto; display: grid; grid-template-rows: none; gap: 56px; }
+    .vitrine { margin-top: 40px; }
+    .obj { width: min(100%, 540px); justify-self: start; }
+    .act-how .note { grid-column: 1 / -1; }
+    .tablet > *, .beat > * { grid-column: 1 / -1; }
+    .laws li { padding-top: 28px; }
+    .laws li::before { inset: 28px 0 0 0; }
+    .laws li::after { right: auto; left: 0; top: 0; }
+    .law, .states { grid-column: 1 / -1; justify-items: start; text-align: left; }
+    .count .figure, .count .who, .key { grid-column: 1 / -1; }
+    .field { --cell: 10px; grid-column: 1 / -1; grid-row: auto; justify-self: start; margin-top: 28px; }
+    .answer { grid-column: 1 / -1; }
+    .route, .purpose, .motto { grid-column: 1 / -1; }
+    .sky-stage::after { background: linear-gradient(0deg in oklab, oklch(0.145 0.004 286 / 0.9), oklch(0.145 0.004 286 / 0.55) 60%, transparent); }
+    .exposure { top: 30%; }
+    .star { top: calc(30% + var(--polaris-dy, 0px) - 9px); white-space: normal; max-width: calc(50% - 40px); text-wrap: balance; }
+    .voyage-frame { align-content: end; padding-bottom: 14svh; }
+    .route, .purpose { align-self: end; }
+}
+@media (max-width: 560px) {
+    .plate { grid-template-columns: 1fr; }
+    .panes { grid-template-columns: 1fr; }
+    .tell { width: auto; margin-left: 0; }
+    .lines div { grid-template-columns: 1fr; }
+    .address a { white-space: normal; overflow-wrap: anywhere; }
+    /* the channels' names at a size a phone can read (the drawing scales them down with it): larger in its own
+       units, and the long one moved to the top, above the start of its line, where it has room */
+    .crossing .lb text { font-size: 20px; }
+    .crossing .lb text:nth-child(1) { translate: 0 4px; }
+    .crossing .lb text:nth-child(3) { text-anchor: start; translate: -300px -314px; }
+}
+@media (forced-colors: active) {
+    .wall, .sky-stage, .field, .key, .sprite, .crossing svg, .seals svg, .cartouche, .reel::before, .ledger::before { display: none; }
+    .in-words { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip-path: none; white-space: normal;
+                font: 400 12px/1.5 var(--font-mono); letter-spacing: 0.06em; }
+    .tablet, .voyage { margin-top: 0; }   /* they rise a screen over the backdrops just removed */
+    .verb, .tally b, .laws li { color: CanvasText; background: none; -webkit-text-fill-color: CanvasText; }
+    .laws li::before { display: none; }
+    .count .figure { color: CanvasText; -webkit-text-stroke: 0; }
+    .address a { color: LinkText; background: none; text-decoration: underline; }
+}
+/* the sheet's own margins, whatever the print dialog's paper */
+@page { margin: 16mm 15mm; }
+@media print {
+    .reel, .wall, .sky-stage, .playhead { display: none; }
+    .tablet, .voyage { margin-top: 0; }
+    /* ink on paper: the greys made for the dark turn dark, and lettering painted with a background (the gilt,
+       the hollow counts) is set in plain ink, since a printer leaves backgrounds out */
+    body { --ink: #111; --ink-2: #333; --ink-3: #555; --gold: #6b5214; --hair: #bbb; }
+    .act, .night { color: #000; }
+    .verb, .tally b, .laws li, .address a { color: #111; background: none; -webkit-text-fill-color: currentColor; }
+    .laws li::before { display: none; }
+    .count .figure { color: #111; -webkit-text-stroke: 0; }
+    /* each act a chapter on its own page; a heading stays with what follows it; a figure, a count or a step
+       is never cut by the page */
+    .act, .night { break-before: page; }
+    .slate, h2, h3, .stop, .dek { break-after: avoid; }
+    h2, figure, li, .count, .states, .plate, .verdict, .purpose { break-inside: avoid; }
+    /* the blank's frame found by offsets, not a move: the page cuts a moved box before it moves it */
+    .sprite .fa { translate: none; left: -200%; top: -300%; }
+    /* the three objects as one plate; the rings, drawn as a background, printed; the voyage without the
+       screen's air, so it keeps one sheet; the last act a back page, the address a little above the middle */
+    .vitrine { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+    .obj { width: 100%; }
+    .field { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .voyage-frame { padding-block: 0; }
+    /* the sheet's margin is the frame: no act carries the screen's air across a page into a blank one */
+    .act, .tablet { padding-block: 0; }
+    /* between blocks, margins (a page break swallows them) rather than padding (it carries over); each hard
+       case whole; the five laws on one sheet, the empty cartouche and its caption kept under the fifth */
+    .beat { min-block-size: 0; padding-block: 0; margin-block-end: 48px; break-inside: avoid; }
+    .laws { margin-top: 32px; gap: 24px; }
+    .cartouche { height: 6rem; break-inside: avoid; break-before: avoid; }
+    .cartouche-cap { break-before: avoid; }
+    .act-end { min-block-size: 0; padding-block: 36vh 6vh; }
+}
+
+/* ----- 13b Off screen -----------------------------------------------------------------------------------
+   In the still, the evidence plate, the duress figure and the two counts are not rendered until the reader
+   nears them (content-visibility). Their placeholders follow the heights measured from 360 to 2560 px wide,
+   so the scrollbar moves little when they arrive. None hosts a timeline; the motion layer, whose frames hold
+   some of them, turns this off. */
+.after, .duress, .count { content-visibility: auto; }
+.after { contain-intrinsic-size: auto 645px; }
+.duress { contain-intrinsic-size: auto calc(202px + 12.65vw); }
+.count-a { contain-intrinsic-size: auto calc(74px + 12.34vw); }
+.count-b { contain-intrinsic-size: auto calc(34px + 18.36vw); }
+@media (max-width: 900px) {
+    .after { contain-intrinsic-size: auto calc(1064px - 60vw); }
+    .duress { contain-intrinsic-size: auto calc(95px + 34vw); }
+    .count-a { contain-intrinsic-size: auto 270px; }
+    .count-b { contain-intrinsic-size: auto 327px; }
+}
+@media (max-width: 560px) {
+    .duress { contain-intrinsic-size: auto calc(83px + 145.5vw); }   /* its two panes stacked */
+}
+
+/* ----- 13c Focus ---------------------------------------------------------------------------------------
+   A link the keyboard reaches shows at once, with whatever holds it, wherever the scroll has it: not yet
+   revealed, dimmed, or cut away. The motion is for the eye; it never hides where the reader is. */
+.reel:has(:focus-visible), :is(.act, .night) :has(:focus-visible), :is(.act, .night) :focus-visible { animation: none !important; }
+/* act I's links sit low in the frame, where the letterbox closes: brought forward, they stand above it */
+.act-check .more:has(:focus-visible) { z-index: 5; }
+
+/* ----- 14 Motion --------------------------------------------------------------------------------------
+   Everything below runs only on a screen (paper does not scroll: it gets the still), for a reader who has not
+   asked for less motion, in a browser that can tie an animation to the scroll, and not in forced colours (there
+   the frames lose the dark that keeps one scene from showing through the next, so the page stays the still).
+   Each held act is a tall section with a sticky frame (.stage) the height of the
+   screen; its named view timeline (--s1 ...) runs from the moment the frame locks (contain 0%, where its
+   link lands, heading in view) to the moment it lets go (contain 100%). The five moves are the keyframes
+   at the end. A cut changes in one frame (a step); a dissolve is opacity over at least 6% of the act; an
+   inscription reveals left to right; a push settles 4% of scale; the aperture opens the 2.39:1 frame. */
+@media screen and (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    @supports (animation-timeline: view()) {
+        body { timeline-scope: --s1, --s2, --s3, --s4, --s5, --s6, --s7, --s8; }
+        .after, .duress, .count { content-visibility: visible; }
+
+        /* I The check: the frame narrows to 2.39:1 as the act arrives, the run plays, and on the third
+           refusal everything goes but the RESULT, and the frame opens. */
+        @media (min-width: 1100px) and (min-height: 700px) {
+            .act-check { block-size: 240svh; padding-block: 0; view-timeline: --s1 block; }
+            .act-check .stage { position: sticky; top: 0; block-size: 100svh; width: auto; margin: 0; container-type: size;
+                                padding-inline: calc((100% - var(--frame)) / 2); align-content: center;
+                                padding-block: max(32px, calc((100svh - 100vw / 2.39) / 2 + 24px)); }
+            .act-check .card, .act-check .term, .act-check .more { animation: cut-out linear both; animation-timeline: --s1;
+                                                                  animation-range: contain 67.99% contain 68%; }
+            .act-check .dek { animation: inscribe linear both; animation-timeline: --s1; animation-range: contain 4% contain 12%; }
+            .playhead { display: block; position: absolute; left: -16px; top: 0; width: 2px; height: 1lh; background: var(--gold); }
+            .act-check .verdict { grid-area: auto; position: absolute; inset-inline: calc((100% - var(--frame)) / 2); top: 50%; translate: 0 -50%;
+                                  text-align: center; pointer-events: none; }
+            .act-check .result { margin-inline: auto; max-width: 18em; font-size: clamp(1.5rem, 0.4rem + 3.6vw, 5.25rem);
+                                 animation: cut linear both; animation-timeline: --s1; animation-range: contain 67.99% contain 68%; }
+            .act-check .cap { animation: dissolve linear both; animation-timeline: --s1; animation-range: contain 76% contain 82%; }
+            .act-check .more { grid-area: auto; position: absolute; left: 50%; translate: -50% 0; bottom: max(28px, 5svh); justify-content: center;
+                               animation: dissolve linear both; animation-timeline: --s1; animation-range: contain 80% contain 86%; }
+        }
+        @media (min-width: 1100px) and (min-aspect-ratio: 16/10) and (min-height: 761px) {
+            .act-check .stage::before, .act-check .stage::after {
+                content: ""; position: absolute; inset-inline: 0; z-index: 4; pointer-events: none; background: #000;
+                block-size: max(0px, (100svh - 100vw / 2.39) / 2);
+                animation: bar-in linear both, bar-out linear both; animation-timeline: --s1, --s1;
+                animation-range: entry 50% contain 0%, contain 68% contain 76%; }
+            .act-check .stage::before { top: 0; transform-origin: 50% 0; }
+            .act-check .stage::after { bottom: 0; transform-origin: 50% 100%; }
+        }
+        @media (max-width: 1099px), (max-height: 699px) {
+            .act-check .l, .act-check .verdict { animation: cut linear both; animation-timeline: view(); animation-range: entry 70% entry 71%; }
+        }
+
+        /* II Evidence: each row lights as it crosses the gold line at mid-screen and stays readable after;
+           the index beside the count names the row on the line. */
+        @media (min-width: 901px) {
+            .act-outside { timeline-scope: --roster; }
+            .ledger { view-timeline: --roster block; }
+            .ledger::before { position: sticky; top: 50svh; }
+            .ledger li { animation: row linear both; animation-timeline: view(); animation-range: cover 38% cover 62%; }
+            .tally-at { animation: index linear both; animation-timeline: --roster;
+                        animation-range: cover calc(50svh + 0.5 * var(--row)) cover calc(50svh + 14.5 * var(--row)); }
+        }
+
+        /* III How it works: the frame holds; the die settles, dissolves to the written page, the grille slides
+           over it, dissolves to the table of keys, the loupe comes down onto it. */
+        @media (min-width: 901px) and (min-height: 700px) {
+            .act-how { block-size: 300svh; padding-block: 0; view-timeline: --s3 block; overflow-x: clip; }  /* the grille waits off-frame */
+            .act-how .stage { position: sticky; top: 0; block-size: 100svh; width: auto; margin: 0; padding-inline: calc((100% - var(--frame)) / 2);
+                              grid-template-rows: auto 1fr auto; row-gap: clamp(20px, 3vh, 40px); align-content: center;
+                              padding-block: clamp(48px, 9vh, 120px) clamp(32px, 6vh, 80px); }
+            .steps, .vitrine { grid-row: 2; grid-template-rows: none; }
+            .steps li, .vitrine .obj { grid-area: 1 / 1; }
+            .steps { align-self: center; }
+            /* the objects take the height the row leaves them, so on a short, wide screen the heading and the note
+               stay in the frame while it holds */
+            .vitrine { align-self: stretch; align-content: center; justify-items: end; container-type: size; }
+            .obj { width: min(100%, 720px, 44vw, 58svh, 100cqh - 56px); }
+            .act-how .note { grid-row: 3; }
+            .step-issue  { animation: cut-out linear both; animation-timeline: --s3; animation-range: contain 28.99% contain 29%; }
+            .step-hold   { animation: cut linear both, cut-out linear forwards; animation-timeline: --s3, --s3;
+                           animation-range: contain 28.99% contain 29%, contain 62.99% contain 63%; }
+            .step-verify { animation: cut linear both; animation-timeline: --s3; animation-range: contain 62.99% contain 63%; }
+            .step-issue .verb { animation: inscribe linear both; animation-timeline: --s3; animation-range: entry 60% contain 4%; }
+            /* the line comes as the grille lands, and holds to the step's cut: a third of a screen of scroll */
+            .zk { animation: cut linear both; animation-timeline: --s3; animation-range: contain 45.99% contain 46%; }
+            .obj-die   { animation: push linear both, dissolve-out linear both; animation-timeline: --s3, --s3;
+                         animation-range: contain 0% contain 26%, contain 26% contain 32%; }
+            .obj-paper { animation: dissolve linear both, dissolve-out linear forwards; animation-timeline: --s3, --s3;
+                         animation-range: contain 26% contain 32%, contain 60% contain 66%; }
+            .obj-table { animation: dissolve linear both; animation-timeline: --s3; animation-range: contain 60% contain 66%; }
+            /* the objects dissolve into each other, their captions do not: the old line goes in the dissolve's
+               first half, the new one comes in its second, so two sentences never print over each other */
+            .obj-die figcaption   { animation: dissolve-out linear both; animation-timeline: --s3; animation-range: contain 26% contain 29%; }
+            .obj-paper figcaption { animation: dissolve linear both, dissolve-out linear forwards; animation-timeline: --s3, --s3;
+                                    animation-range: contain 29% contain 32%, contain 60% contain 63%; }
+            .obj-table figcaption { animation: dissolve linear both; animation-timeline: --s3; animation-range: contain 63% contain 66%; }
+            .grille { animation: grille linear both; animation-timeline: --s3; animation-range: contain 32% contain 46%; }
+            .loupe  { animation: loupe linear both; animation-timeline: --s3; animation-range: contain 66% contain 84%; }
+            .obj figcaption { min-height: 3em; }
+        }
+
+        /* IV The rules: the raking light gives way to the lamp; each rule is cut as it arrives, its groove
+           shadows turning from the raking light to the lamp; the cartouche is drawn round its emptiness. */
+        .wall .rake { opacity: 1; animation: dissolve-out linear both; animation-timeline: --s4; animation-range: contain 0% contain 60%; }
+        .act-rules { view-timeline: --s4 block; }
+        .laws { animation: light linear both; animation-timeline: --s4; animation-range: contain 0% contain 60%; }
+        .laws li { animation: inscribe-law linear both; animation-timeline: view(); animation-range: cover 15% cover 35%; }
+        .cartouche { -webkit-mask: conic-gradient(from 284deg, #000 var(--sweep), transparent 0);
+                     mask: conic-gradient(from 284deg, #000 var(--sweep), transparent 0);
+                     animation: draw-round linear both; animation-timeline: view(); animation-range: cover 20% cover 45%; }
+
+        /* V The hard cases: the two results arrive together; only later, outside the frame of the second, the
+           line the coercer cannot see. The channels cross; the second authority runs through the crossing,
+           which fills. The second seal is engraved beside the first; the one active mark moves, in one frame. */
+        .panes { animation: dissolve linear both; animation-timeline: view(); animation-range: entry 20% cover 30%; }
+        .tell { animation: inscribe linear both; animation-timeline: view(); animation-range: cover 50% cover 60%; }
+        .crossing { view-timeline: --cross block; }
+        .crossing .rv { stroke-dasharray: 1 1; animation: draw-line linear both; animation-timeline: --cross; }
+        .crossing mask:nth-of-type(1) .rv { animation-range: cover 18% cover 32%; }
+        .crossing mask:nth-of-type(2) .rv { animation-range: cover 24% cover 38%; }
+        .crossing mask:nth-of-type(3) .rv { animation-range: cover 30% cover 44%; }
+        .crossing .cut { animation: cut linear both; animation-timeline: --cross; animation-range: cover 47.99% cover 48%; }
+        .seals { view-timeline: --seals block; }
+        .seals .rv { stroke-dasharray: 1 1; animation: draw-line linear both; animation-timeline: --seals; animation-range: cover 22% cover 46%; }
+        .seals .retired { animation: cut linear both; animation-timeline: --seals; animation-range: cover 61.99% cover 62%; }
+        .seals .s1 { animation: retire linear both; animation-timeline: --seals; animation-range: cover 61.99% cover 62%; }
+
+        /* VI Why now: the law; the 27; then each count with its field, one at a time. */
+        @media (min-width: 901px) and (min-height: 700px) {
+            .act-world { block-size: 260svh; padding-block: 0; view-timeline: --s6 block; }
+            .act-world .stage { position: sticky; top: 0; block-size: 100svh; width: auto; margin: 0; padding-inline: calc((100% - var(--frame)) / 2);
+                                grid-template-rows: minmax(0, 1fr) auto auto; align-items: center; row-gap: 24px;
+                                padding-block: clamp(48px, 9vh, 120px) clamp(32px, 6vh, 72px); }
+            .law, .states, .count { grid-row: 1; }
+            .law { align-self: center; }
+            .states { align-self: center; }
+            .count { grid-column: 1 / -1; border-top: 0; padding-top: 0; align-self: center; }
+            .source { grid-row: 2; }
+            .answer { grid-row: 3; }
+            .law h2 span { animation: line-up linear both; animation-timeline: --s6; }
+            .law h2 span:nth-child(1) { animation-range: entry 45% entry 80%; }
+            .law h2 span:nth-child(2) { animation-range: entry 55% entry 90%; }
+            .law h2 span:nth-child(3) { animation-range: entry 65% entry 100%; }
+            .cite { animation: inscribe linear both; animation-timeline: --s6; animation-range: contain 0% contain 6%; }
+            .law, .states { animation: cut-out linear both; animation-timeline: --s6; animation-range: contain 31.99% contain 32%; }
+            .states { animation: dissolve linear both, cut-out linear forwards; animation-timeline: --s6, --s6;
+                      animation-range: contain 4% contain 12%, contain 31.99% contain 32%; }
+            .count-a { animation: cut linear both, cut-out linear forwards; animation-timeline: --s6, --s6;
+                       animation-range: contain 31.99% contain 32%, contain 53.99% contain 54%; }
+            .count-b { animation: cut linear both; animation-timeline: --s6; animation-range: contain 53.99% contain 54%; }
+            .field { clip-path: inset(0 0 calc(100% - var(--r) * var(--cell)) 0); }
+            .field-a { animation: rows-a linear both; animation-timeline: --s6; animation-range: contain 34% contain 48%; }
+            .field-b { animation: rows-b linear both; animation-timeline: --s6; animation-range: contain 56% contain 72%; }
+            .source { animation: dissolve linear both; animation-timeline: --s6; animation-range: contain 32% contain 38%; }
+            .answer::before { animation: draw linear both; animation-timeline: --s6; animation-range: contain 78% contain 84%; }
+            .answer { animation: dissolve linear both; animation-timeline: --s6; animation-range: contain 80% contain 86%; }
+            /* the source line belongs under the count it sources: brought forward, it brings that count (the law
+               only fades, so its link stays in the keyboard's path). Here only, where they share one frame. */
+            .act-world .stage:has(.source :focus-visible) :is(.law, .states, .count-b) { opacity: 0 !important; }
+            .act-world .stage:has(.source :focus-visible) .count-a { animation: none !important; }
+        }
+
+        /* VII Mission, the object: the cards and papers slide together and become the blank. Two copies of one
+           sheet of twelve path-traced frames show the frame under the scroll and the next, the second fading
+           in by the fraction between them, so it plays smoothly at any speed. */
+        @media (min-height: 600px) {
+            .act-goal { block-size: 200svh; padding-block: 0; view-timeline: --s7 block; }
+            .act-goal .stage { position: sticky; top: 0; block-size: 100svh; width: auto; margin: 0; padding-inline: calc((100% - var(--frame)) / 2);
+                               align-content: center; row-gap: clamp(20px, 3vh, 40px); padding-block: clamp(40px, 7vh, 96px);
+                               animation: frames linear both; animation-timeline: --s7; animation-range: contain 10% contain 70%; }
+            .planchet { width: min(800px, 86vw, calc((100svh - 22rem) * 1.6)); }
+            /* the sheet plays where the browser has round() and mod(); elsewhere it holds the still, the last frame */
+            @supports (scale: mod(5, 3)) and (scale: round(down, 1.5, 1)) {
+                .sprite .fa, .sprite .fb { --i: round(down, var(--f), 1); }
+                .sprite .fa { translate: calc(-100% / 3 * mod(var(--i), 3)) calc(-25% * round(down, var(--i) / 3, 1)); }
+                .sprite .fb { --j: min(var(--i) + 1, 11); display: block; opacity: calc(var(--f) - var(--i));
+                              translate: calc(-100% / 3 * mod(var(--j), 3)) calc(-25% * round(down, var(--j) / 3, 1)); }
+            }
+            .act-goal .dek { animation: dissolve linear both; animation-timeline: --s7; animation-range: contain 70% contain 78%; }
+        }
+
+        /* VII Mission, the voyage: the night returns and the frame opens; the exposure grows from half an
+           hour to two hours, each copy of the half-hour plate turning on at the same rate, so the arcs grow
+           without a gap; the route cuts from stop to stop. */
+        .night { view-timeline: --night block; }
+        .exposure > :nth-child(2) img { animation: turn-1 linear both; animation-timeline: --night; animation-range: cover 15% cover 35%; }
+        .exposure > :nth-child(3) img { animation: turn-2 linear both; animation-timeline: --night; animation-range: cover 15% cover 55%; }
+        .exposure > :nth-child(4) img { animation: turn-3 linear both; animation-timeline: --night; animation-range: cover 15% cover 75%; }
+        .aperture { animation: dissolve linear both; animation-timeline: --night; animation-range: cover 0% cover 12%; }
+        @media (min-width: 1100px) and (min-aspect-ratio: 16/10) {
+            .aperture { animation: aperture linear both; animation-timeline: --night; animation-range: cover 0% cover 12%; }
+        }
+        @media (min-height: 600px) {
+            .voyage { block-size: 320svh; view-timeline: --voy block; }
+            .voyage-frame { position: sticky; top: 0; block-size: 100svh; align-content: center; padding-block: 0; }
+            @media (max-width: 900px) { .voyage-frame { align-content: end; padding-bottom: 14svh; } }
+            .route, .purpose { grid-row: 1; align-self: center; }
+            .route li { grid-area: 1 / 1; }
+            .route li:nth-child(1) { animation: cut-out linear both; animation-timeline: --voy; animation-range: contain 25.99% contain 26%; }
+            .route li:nth-child(2) { animation: cut linear both, cut-out linear forwards; animation-timeline: --voy, --voy;
+                                     animation-range: contain 25.99% contain 26%, contain 51.99% contain 52%; }
+            .route li:nth-child(3) { animation: cut linear both, cut-out linear forwards; animation-timeline: --voy, --voy;
+                                     animation-range: contain 51.99% contain 52%, contain 77.99% contain 78%; }
+            .purpose { margin: 0; animation: cut linear both; animation-timeline: --voy; animation-range: contain 77.99% contain 78%; }
+            .motto { grid-row: 2; animation: cut linear both; animation-timeline: --voy; animation-range: contain 85.99% contain 86%; }
+        }
+        .act-end > * { animation: dissolve linear both; animation-timeline: view(); animation-range: entry 0% entry 40%; }
+
+        /* The reel arrives once the first screen has gone; where a browser cannot yet name the act on screen
+           by itself, each act's own timeline lights its numeral while the act holds the middle of the view. */
+        .reel { animation: dissolve linear both; animation-timeline: scroll(root); animation-range: 85vh 105vh; }
+        .act-outside { view-timeline: --s2 block; }
+        .act-hard { view-timeline: --s5 block; }
+        .act-end { view-timeline: --s8 block; }
+        @supports (timeline-scope: none) and (not selector(:target-current)) {
+            .reel a:not(.pole) { animation: lit linear none; animation-range: cover 35% cover 65%; }
+            .reel a:nth-child(2) { animation-timeline: --s1; }
+            .reel a:nth-child(3) { animation-timeline: --s2; }
+            .reel a:nth-child(4) { animation-timeline: --s3; }
+            .reel a:nth-child(5) { animation-timeline: --s4; }
+            .reel a:nth-child(6) { animation-timeline: --s5; }
+            .reel a:nth-child(7) { animation-timeline: --s6; }
+            .reel a:nth-child(8) { animation-timeline: --s7; }
+            .reel a:nth-child(9) { animation-timeline: --s8; }
+        }
+    }
+}
+/* (generated) film */
+@media screen and (prefers-reduced-motion: no-preference) and (forced-colors: none) and (min-width: 1100px) and (min-height: 700px) {
+    @supports (animation-timeline: view()) {
+        .act-check .l:nth-child(1) { animation: inscribe linear both; animation-timeline: --s1; animation-timing-function: steps(41, end); animation-range: contain 12.00% contain 15.38%; }
+        .act-check .l:nth-child(2) { animation: inscribe linear both; animation-timeline: --s1; animation-timing-function: steps(65, end); animation-range: contain 15.88% contain 21.23%; }
+        .act-check .l:nth-child(3) { animation: inscribe linear both; animation-timeline: --s1; animation-timing-function: steps(44, end); animation-range: contain 21.73% contain 25.36%; }
+        .act-check .l:nth-child(4) { animation: inscribe linear both; animation-timeline: --s1; animation-timing-function: steps(53, end); animation-range: contain 25.86% contain 30.22%; }
+        .act-check .l:nth-child(5) { animation: inscribe linear both; animation-timeline: --s1; animation-timing-function: steps(45, end); animation-range: contain 30.72% contain 34.43%; }
+        .act-check .l:nth-child(6) { animation: inscribe linear both; animation-timeline: --s1; animation-timing-function: steps(13, end); animation-range: contain 34.93% contain 36.00%; }
+        .act-check .o1 { animation: cut linear both; animation-timeline: --s1; animation-range: contain 37.19% contain 37.20%; }
+        .act-check .o2 { animation: cut linear both; animation-timeline: --s1; animation-range: contain 39.59% contain 39.60%; }
+        .act-check .o3 { animation: cut linear both; animation-timeline: --s1; animation-range: contain 41.99% contain 42.00%; }
+        .act-check .o4 { animation: cut linear both; animation-timeline: --s1; animation-range: contain 44.39% contain 44.40%; }
+        .act-check .o5 { animation: cut linear both; animation-timeline: --s1; animation-range: contain 46.79% contain 46.80%; }
+        .act-check .playhead { animation: playhead steps(1, jump-end) both, cut-out linear both; animation-timeline: --s1, --s1; animation-range: contain 12.00% contain 48.00%, contain 67.99% contain 68.00%; }
+    }
+}
+@keyframes playhead { 0.00% { translate: 0 calc(0 * 1lh); } 10.77% { translate: 0 calc(1 * 1lh); } 27.03% { translate: 0 calc(2 * 1lh); } 38.49% { translate: 0 calc(3 * 1lh); } 52.01% { translate: 0 calc(4 * 1lh); } 63.69% { translate: 0 calc(5 * 1lh); } 70.00% { translate: 0 calc(6 * 1lh); } 76.67% { translate: 0 calc(8 * 1lh); } 83.33% { translate: 0 calc(11 * 1lh); } 90.00% { translate: 0 calc(13 * 1lh); } 96.67% { translate: 0 calc(15 * 1lh); } 100.00% { translate: 0 calc(15 * 1lh); } }
+/* 17 lines: 6 typed (261 characters), 5 blocks printed */
+/* (end of the generated film rules) */
+
+/* The five moves, and the few curves built from them. Nothing takes a click before it can be seen: what
+   cuts or dissolves in ignores the pointer until it is there. */
+@keyframes cut       { from { opacity: 0; pointer-events: none; } to { opacity: 1; } }
+@keyframes cut-out   { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
+@keyframes dissolve  { from { opacity: 0; pointer-events: none; } to { opacity: 1; } }
+@keyframes dissolve-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes inscribe  { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes inscribe-law { from { clip-path: inset(-0.2em 100% -0.2em -4em); } to { clip-path: inset(-0.2em -0.2em -0.2em -4em); } }
+@keyframes push      { from { scale: 1.04; } to { scale: 1; } }
+@keyframes aperture  { from { clip-path: inset(max(0px, calc((100cqb - 100cqi / 2.39) / 2)) 0); } to { clip-path: inset(0 0); } }
+@keyframes bar-in    { from { scale: 1 0; } to { scale: 1 1; } }
+@keyframes bar-out   { from { transform: scaleY(1); } to { transform: scaleY(0); } }
+@keyframes light     { from { --az: 0deg; } to { --az: 135deg; } }
+@keyframes draw-round { from { --sweep: 0deg; } to { --sweep: 360deg; } }
+@keyframes draw      { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes line-up   { from { opacity: 0; translate: 0 0.6em; pointer-events: none; } to { opacity: 1; translate: 0 0; } }
+@keyframes row       { 0% { opacity: 0.4; color: var(--ink-3); } 50%, 100% { opacity: 1; color: var(--ink); } }
+@keyframes index     { from { --n: 1; } to { --n: 15; } }
+@keyframes rows-a    { from { --r: 0; } to { --r: 8; } }
+@keyframes rows-b    { from { --r: 0; } to { --r: 14; } }
+@keyframes frames    { from { --f: 0; } to { --f: 11; } }
+@keyframes grille    { from { translate: 38% 0; } to { translate: 0 0; } }
+@keyframes loupe     { from { translate: 0 0; } to { translate: 0 6%; } }
+@keyframes turn-1    { from { rotate: 0deg; } to { rotate: 7.52deg; } }
+@keyframes turn-2    { from { rotate: 0deg; } to { rotate: 15.04deg; } }
+@keyframes turn-3    { from { rotate: 0deg; } to { rotate: 22.56deg; } }
+@keyframes lit       { from, to { color: var(--gold); } }
+@keyframes draw-line { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes retire    { from { opacity: 1; } to { opacity: 0.5; } }
