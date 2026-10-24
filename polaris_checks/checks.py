@@ -14864,7 +14864,8 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
     Merkle-membership proof, and NOT a general selective-disclosure / anonymous-
     credential system. Since 2026-10-24 (owner: no limitation lists in public text) the
     boundary may be the positive definition instead, "zero knowledge here means two specific
-    things", which bounds the word as tightly without listing what Polaris is not. Detection:
+    things", naming both (no token identifier stored, a membership proof) in that sentence, which
+    bounds the word as tightly without listing what Polaris is not. Detection:
     test_checks restores the umbrella tagline and removes the boundary sentence in both forms."""
     readme = _read(root, "README.md")
     if not readme:
@@ -14879,7 +14880,8 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
                      "'zero-knowledge' reads as general anonymous credentials. Name the precise property "
                      "(unlinkable-by-default) in the tagline and keep the zero-knowledge detail in the body")
     if not re.search(r"not a general (selective.disclosure|anonymous.credential)"
-                     r"|zero.knowledge (here )?means two specific things", plain, re.I):
+                     r"|zero.knowledge (here )?means two specific things[^.]*token identifier[^.]*membership",
+                     plain, re.I):
         return _fail("zk_claim",
                      "the README must state the boundary: zero knowledge here means two specific things "
                      "(verification records with no token identifier + a Merkle-membership proof), not a "
@@ -15826,7 +15828,7 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     # deployed. The README carries none since 2026-10-24 (owner: limits live in the private
     # folder), and a comparison that comes back, in any table that gives Polaris a row, brings
     # the column with it.
-    compared = re.search(r"^\|\s*\**\s*Polaris\s*\**\s*\|", readme, re.M)
+    compared = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|", readme, re.M)
     if compared and "Deployed to a real population" not in readme:
         return _fail("public_claims",
                      "the README compares Polaris with other systems without the 'Deployed to a real population' "
@@ -15836,7 +15838,8 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     # that stored handles are now per-verifier would overclaim, because a full-credential
     # presentation still SHOWS a stable token_value. Either half alone misleads, so both are
     # required; a README that claims nothing about it needs neither (2026-10-24).
-    speaks = re.search(r"unlinkab|correlat|per-verifier|per-relying-party", readme, re.I)
+    speaks = re.search(r"unlinkab|correlat|per-verifier|per-relying-party|cannot link|can't link|unable to link",
+                       readme, re.I)
     if speaks and "Relying-party correlation" not in readme:
         return _fail("public_claims",
                      "the README speaks of unlinkability or correlation, so it must state relying-party "
@@ -15854,7 +15857,7 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     # The comparison must not award Polaris a deployment property it does not have:
     # its first two columns (deployed to a real population, national-scope issuance)
     # must both be a clear negative, so a skimmer is not told Polaris issues nationally.
-    prow = re.search(r"^\|\s*\**\s*Polaris\s*\**\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme, re.M)
+    prow = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme, re.M)
     if prow and ("✓" in prow.group(1) or "✓" in prow.group(2)):
         return _fail("public_claims",
                      "the comparison awards Polaris a deployment/national-scope tick; Polaris is not deployed and "

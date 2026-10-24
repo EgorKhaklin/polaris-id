@@ -10765,6 +10765,9 @@ def test_zk_claim_precise_check_discriminates(tmp_path):
     (tmp_path / "README.md").write_text(POSITIVE.replace("means two specific things", "means many things"))
     assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
         "must FAIL when the definition no longer bounds the word"
+    (tmp_path / "README.md").write_text(POSITIVE.split(": a verification")[0] + ".\n")
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition names neither of its two things"
 
 
 def test_no_scifi_schema_check_discriminates(tmp_path):
@@ -11051,6 +11054,15 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| Polaris | ✓ | ✗ | ✓ |"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
         "must FAIL when an unbolded Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| **Polaris ID** | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the comparison's row names Polaris by a longer name, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| **Polaris ID** | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a longer-named Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\nRelying parties cannot link two presentations.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed as 'cannot link' with no two-sided correlation statement"
 
 
 def test_detached_verifier_check_discriminates(tmp_path):

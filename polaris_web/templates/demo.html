@@ -132,9 +132,10 @@ UPDATE IdentityToken
                refuses a second, whichever path tries to create it and however many operators race.
                The index keys on the person record.</p>
             <p><strong>The duress code.</strong><span class="rule-where">Application</span>
-               A holder who gives their duress code at a verification sees it proceed exactly as it
-               otherwise would, while a <code>DuressEvent</code> is recorded off the request
-               thread, so the response time does not tell (<a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/duress/README.md">the duress assessment</a>).</p>
+               Built for a coercer who does not know it exists: a holder who gives their duress code
+               at a verification sees it proceed exactly as it otherwise would, while a
+               <code>DuressEvent</code> is recorded off the request thread, so the response time
+               does not tell, and the record it appends cannot be removed (<a href="https://github.com/EgorKhaklin/polaris-id/blob/main/lab/duress/README.md">the duress assessment</a>).</p>
             <p><strong>The holder's binding.</strong><span class="rule-where">Schema</span>
                Outside the issuance and recovery procedures, a trigger lets the application change
                a credential's status and nothing else: not its holder, issuer, value, expiry or

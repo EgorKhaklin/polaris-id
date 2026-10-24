@@ -46,8 +46,6 @@ An authority issues a credential signed with **ML-DSA-65**; the person holds it;
 - **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 388 machine-checked invariants and 37 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
 
-One outside project runs its verifier in CI (OID4VCgo, since 2026-10-11).
-
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Try it
@@ -113,7 +111,7 @@ The vocation above them: **no person can be compelled to renounce, transfer or s
 
 Zero knowledge here means two specific things: a verification that stores no token identifier (C2), and a Merkle-membership proof.
 
-The hard problems, and the mechanism for each: **coercion** (a second code yields a normal-looking verification and records a duress event: [assessment](lab/duress/README.md)), **total loss** (a witnessed, three-channel [recovery](docs/design/recovery-ceremony.md)), and **algorithm migration** (the algorithm is a row; credentials carry old and new signatures through an audited [migration](docs/design/multi-sig-migration.md)).
+The hard problems, and the mechanism for each: **coercion** (a second code, built for a coercer who does not know it exists, yields a normal-looking verification and records a duress event in the append-only audit trail: [assessment](lab/duress/README.md)), **total loss** (a witnessed, three-channel [recovery](docs/design/recovery-ceremony.md)), and **algorithm migration** (the algorithm is a row; credentials carry old and new signatures through an audited [migration](docs/design/multi-sig-migration.md)).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
