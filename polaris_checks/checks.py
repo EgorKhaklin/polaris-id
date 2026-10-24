@@ -35,6 +35,7 @@ import subprocess
 import sys
 import types
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Callable
 
 
@@ -5737,11 +5738,13 @@ _EARLY_GREP = re.compile(r"[ef]?grep((?:[ \t]+(?:-[A-Za-z0-9]+|--[a-z-]+(?:=\S+)
 _SED_QUIT = re.compile(r"(?:^|[;{}\n0-9$/])\s*[qQ]\s*\d*\s*(?:[;}]|$)")
 
 
-def _shell_code_mask(text: str) -> str:
+def _shell_code_mask(text: str, keep_literals: bool = False) -> str:
     """`text` with quoted literals, comments and heredoc bodies blanked, offsets unchanged.
 
     A `$(...)` inside double quotes stays code. A blanked character becomes a space and a newline
-    stays a newline, so an offset in the mask is the same offset in `text`.
+    stays a newline, so an offset in the mask is the same offset in `text`. With `keep_literals`,
+    only comments are blanked: quoted text and heredoc bodies stay as written, so a command inside
+    `sh -c "..."` can still be read.
     """
     out: list[str] = []
     stack = ["code"]
@@ -5752,10 +5755,10 @@ def _shell_code_mask(text: str) -> str:
         if top == "sq":
             if c == "'":
                 stack.pop()
-            out.append(c if c in "'\n" else " ")
+            out.append(c if keep_literals or c in "'\n" else " ")
         elif top == "dq":
             if c == "\\" and i + 1 < n:
-                out.append(" " + ("\n" if text[i + 1] == "\n" else " "))
+                out.append(text[i:i + 2] if keep_literals else " " + ("\n" if text[i + 1] == "\n" else " "))
                 i += 1
             elif c == '"':
                 stack.pop()
@@ -5765,7 +5768,7 @@ def _shell_code_mask(text: str) -> str:
                 out.append("$(")
                 i += 1
             else:
-                out.append(c if c == "\n" else " ")
+                out.append(c if keep_literals or c == "\n" else " ")
         elif c == "\\" and i + 1 < n:
             out.append(text[i:i + 2])
             i += 1
@@ -5802,7 +5805,7 @@ def _shell_code_mask(text: str) -> str:
                     j = text.find("\n", i)
                     j = n if j < 0 else j
                     line = text[i:j]
-                    out.append(" " * len(line) + ("\n" if j < n else ""))
+                    out.append((line if keep_literals else " " * len(line)) + ("\n" if j < n else ""))
                     i = j + 1
                     if (line.lstrip("\t") if strip_tabs else line) == word:
                         break
@@ -6839,6 +6842,22 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 # (each npm lockfile, each published Python package, each Dockerfile directory, the compose
 # files, and since 2026-10-11 each Go, Gradle and Swift manifest), since a pin nothing refreshes stops
 # receiving security updates.
+#
+# 2026-10-21: "every workflow image" is what the check reads, and no more. It reads each `image:`,
+# `container:` and `uses: docker://` value in a workflow; each image a `docker run`, `create` or
+# `pull` in a run step names, read by docker's own option grammar (the CLI 29.8.1 tables below)
+# after continuations are joined, a `$VAR` resolved from the file's env blocks (one it cannot
+# resolve fails), and an image the same workflow built excluded by the exact tag it built; and, by a
+# lexical rule, each docker run, create or pull image and each assignment to a variable named
+# *IMAGE*, or to one a docker command there runs, in the shell scripts those run steps call. A ref a
+# script builds at run time, from `$(...)` or `$1`, is beyond it, and the OK line counts those. A
+# workflow ref whose tag a Dockerfile or compose file that Dependabot reads also pins must carry
+# that pin's digest, so Dependabot's update turns this red until the workflow copy follows in the
+# same PR. A pin with no such twin is refreshed by hand: the six drills' python:3.12-alpine, one
+# digest in all six (read 2026-10-24), and curlimages/curl:8.11.1 in lab/strategy/006/alerts.sh
+# (2026-10-21). ci.yml's key-exchange probe runs alpine:3.24 at the Dockerfiles' pin and installs
+# curl and openssl at exact versions, pinned the same day: Alpine serves one build of each package
+# per branch, so the probe fails closed when either is replaced, and is moved by hand.
 _UNPINNED_BY_DESIGN = {"wallet-canary.yml"}
 _PUBLISHED_PY = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python", "polaris_cli")
 _WALK_PRUNE = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "dist", "build"}
@@ -6854,6 +6873,492 @@ def _dependabot_coverage(text: str) -> set[tuple[str, str]]:
             dirs += re.findall(r"- (\S+)", block.group(1))
         covered |= {(eco.group(1).strip('"'), d.strip('"').rstrip("/") or "/") for d in dirs} if eco else set()
     return covered
+
+
+# The options that take a value, as `docker run --help`, `docker create --help`, `docker pull --help`
+# and `docker --help` (the global options) print them for Docker CLI 29.8.1. The image is the first
+# word that is neither an option nor an option's value, so a value-taking option missing here would
+# make the parse read its value as the image; an option in no table stops the parse instead.
+_DOCKER_RUN_VALUE_OPTS = frozenset("""
+    --add-host --annotation -a --attach --blkio-weight --blkio-weight-device --cap-add --cap-drop
+    --cgroup-parent --cgroupns --cidfile --cpu-period --cpu-quota --cpu-rt-period --cpu-rt-runtime
+    -c --cpu-shares --cpus --cpuset-cpus --cpuset-mems --detach-keys --device --device-cgroup-rule
+    --device-read-bps --device-read-iops --device-write-bps --device-write-iops --dns --dns-option
+    --dns-search --domainname --entrypoint -e --env --env-file --expose --gpus --group-add
+    --health-cmd --health-interval --health-retries --health-start-interval --health-start-period
+    --health-timeout -h --hostname --ip --ip6 --ipc --isolation -l --label --label-file --link
+    --link-local-ip --log-driver --log-opt --mac-address -m --memory --memory-reservation
+    --memory-swap --memory-swappiness --mount --name --network --network-alias --oom-score-adj --pid
+    --pids-limit --platform -p --publish --pull --restart --runtime --security-opt --shm-size
+    --stop-signal --stop-timeout --storage-opt --sysctl --tmpfs --ulimit --umask -u --user --userns
+    --uts -v --volume --volume-driver --volumes-from -w --workdir""".split())
+_DOCKER_RUN_FLAGS = frozenset("""-d --detach --help --init -i --interactive --no-healthcheck
+    --oom-kill-disable --privileged -P --publish-all -q --quiet --read-only --rm --sig-proxy -t --tty
+    --use-api-socket""".split())
+_DOCKER_GRAMMAR = {
+    "": (frozenset("--config -c --context -H --host -l --log-level --tlscacert --tlscert --tlskey".split()),
+         frozenset("-D --debug --tls --tlsverify -v --version".split())),
+    "run": (_DOCKER_RUN_VALUE_OPTS, _DOCKER_RUN_FLAGS),
+    "create": (_DOCKER_RUN_VALUE_OPTS - {"--detach-keys"}, _DOCKER_RUN_FLAGS - {"-d", "--detach", "--sig-proxy"}),
+    "pull": (frozenset({"--platform"}), frozenset("-a --all-tags -q --quiet".split())),
+}
+_DOCKER_WORD = re.compile(r"(?:(?<=[\s;&|(`'\"{])|^)(?:[\w./${}-]*/)?docker(?=[ \t])", re.M)
+_DOCKER_RUNS = re.compile(r"(?<![\w-])docker[ \t]+(?:container[ \t]+|image[ \t]+)?(?:run|create|pull)(?![\w-])")
+_DOCKER_BUILDS = re.compile(r"(?<![\w-])docker[ \t]+(?:buildx[ \t]+|image[ \t]+|builder[ \t]+)?build(?![\w-])")
+_SHELL_OPERATOR = re.compile(r"[;&|()<>]+")
+_ARRAY_WORD = re.compile(r"\$(?:[@*]|\{[@*]\}|\{[A-Za-z_]\w*\[[@*]\])")
+
+
+@lru_cache(maxsize=512)
+def _shell_code(text: str) -> str:
+    """Shell `text` with its comments blanked and each backslash continuation joined, offsets unchanged.
+    Cached by text: a script many workflows call is scanned once."""
+    return re.sub(r"(?<!\\)((?:\\\\)*)\\\n", lambda m: m.group(1) + "  ",
+                  _shell_code_mask(text, keep_literals=True))
+
+
+def _shell_words(code: str, at: int):
+    """The words of `code` from `at` to the end of its line, read one at a time (posix quoting, with
+    `;&|()<>` words of their own), so quoting the lexer cannot follow past the word wanted is never read."""
+    import shlex
+    end = code.find("\n", at)
+    lex = shlex.shlex(code[at:] if end < 0 else code[at:end], posix=True, punctuation_chars=True)
+    lex.whitespace_split, lex.commenters = True, ""
+    return iter(lex.get_token, None)
+
+
+def _docker_option(word: str, words, values: frozenset, flags: frozenset) -> None:
+    """Read one option the way docker's flag parser does: `--name value`, `--name=value`, a cluster
+    of one-letter flags, and a one-letter option whose value is attached or is the next word."""
+    if word.startswith("--"):
+        name = word.split("=", 1)[0]
+        if name in values:
+            if "=" not in word:
+                next(words, None)
+        elif name not in flags:
+            raise ValueError(f"docker option {name} is in no table")
+        return
+    for j in range(1, len(word)):
+        if "-" + word[j] in values:
+            if j == len(word) - 1:
+                next(words, None)
+            return
+        if "-" + word[j] not in flags:
+            raise ValueError(f"docker option -{word[j]} is in no table")
+
+
+def _docker_image_at(code: str, at: int) -> tuple[str, str | None] | None:
+    """The docker command at `code[at]`: None unless it is run, create or pull, else (subcommand,
+    image), the image None when the command ends first. A word such as "$@" or "${ARGS[@]}" where an
+    option may stand is read as options. A ValueError names an option no table holds, or quoting the
+    lexer cannot follow."""
+    words = _shell_words(code, at)
+    next(words, None)
+    word = next(words, None)
+    while word is not None and word.startswith("-") and word != "-":
+        _docker_option(word, words, *_DOCKER_GRAMMAR[""])
+        word = next(words, None)
+    if word in ("container", "image"):
+        group, word = word, next(words, None)
+        if (group, word) not in (("container", "run"), ("container", "create"), ("image", "pull")):
+            return None
+    if word not in ("run", "create", "pull"):
+        return None
+    values, flags = _DOCKER_GRAMMAR[word]
+    for arg in words:
+        if arg == "--":
+            return word, next(words, None)
+        if _SHELL_OPERATOR.fullmatch(arg):
+            return word, None
+        if arg.startswith("-") and arg != "-":
+            _docker_option(arg, words, values, flags)
+        elif not _ARRAY_WORD.match(arg):
+            return word, arg
+    return word, None
+
+
+def _docker_commands(text: str, code: str) -> list[tuple[int, int, str, str | None, str]]:
+    """Each docker run, create or pull in shell `text`, read from `code` (its `_shell_code`):
+    (line of `docker`, line of the image, subcommand, image, why it could not be read)."""
+    found = []
+    for m in _DOCKER_WORD.finditer(code):
+        line = text.count("\n", 0, m.start()) + 1
+        try:
+            got = _docker_image_at(code, m.start())
+        except ValueError as e:
+            if _DOCKER_RUNS.match(code, m.end() - len("docker")):
+                found.append((line, line, "", None, str(e)))
+            continue
+        if got:
+            at = code.find(got[1], m.end()) if got[1] else -1
+            found.append((line, line if at < 0 else text.count("\n", 0, at) + 1, got[0], got[1], ""))
+    return found
+
+
+def _raw_word(code: str, at: int) -> str:
+    """The shell word at `code[at]` as written: its quotes, `$(...)` and `${...}` kept, nesting followed."""
+    stack, i = [], at
+    while i < len(code):
+        c, top = code[i], (stack[-1] if stack else "")
+        if top == "'":
+            if c == "'":
+                stack.pop()
+        elif c == "\\":
+            i += 1
+        elif top == '"' and c == '"':
+            stack.pop()
+        elif c in "'\"" and top != '"':
+            stack.append(c)
+        elif code.startswith(("$(", "${"), i):
+            stack.append(code[i + 1])
+            i += 1
+        elif c in ")}" and top in ("(", "{"):
+            stack.pop()
+        elif not stack and (c.isspace() or c in ";&|)<>"):
+            break
+        i += 1
+    return code[at:i]
+
+
+def _literal_part(word: str) -> str:
+    """The literal text of a shell word: its quotes dropped and every `$(...)`, `${...}`, backtick
+    command and `$NAME` removed, nesting followed. Empty means the word is built at run time."""
+    out, stack, i = [], [], 0
+    while i < len(word):
+        c, top = word[i], (stack[-1] if stack else "")
+        inside = any(s in stack for s in "({`")
+        if top == "'":
+            if c == "'":
+                stack.pop()
+            elif not inside:
+                out.append(c)
+        elif top == "`":
+            if c == "`":
+                stack.pop()
+        elif c == "\\":
+            i += 1
+            if not inside and i < len(word):
+                out.append(word[i])
+        elif top == '"' and c == '"':
+            stack.pop()
+        elif c in "'\"`" and top != '"' or c == "`":
+            stack.append(c)
+        elif word.startswith(("$(", "${"), i):
+            stack.append(word[i + 1])
+            i += 1
+        elif c in ")}" and top in ("(", "{"):
+            stack.pop()
+        elif c == "$" and re.match(r"[\w@*#?$!-]", word[i + 1:i + 2]):
+            i += len(re.match(r"[A-Za-z_]\w*|.", word[i + 1:]).group(0))
+        elif not inside:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _shell_builds(code: str, stack: tuple[str, ...]) -> tuple[set[str], set[str]]:
+    """The tags shell `code` builds, as (literals, variable names): each `docker build` -t/--tag, and
+    each call of scripts/polaris-image-build.sh, `<dockerfile> <tag>` or `--stack <suffix>` (`stack`
+    names the images that builds)."""
+    tags: set[str] = set()
+    names: set[str] = set()
+
+    def note(value: str | None) -> None:
+        var = re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", value or "")
+        if var:
+            names.add(var.group(1))
+        elif value and not _SHELL_OPERATOR.fullmatch(value):
+            tags.add(value)
+    for m in _DOCKER_BUILDS.finditer(code):
+        words = _shell_words(code, m.end())
+        try:
+            for w in words:
+                if _SHELL_OPERATOR.fullmatch(w):
+                    break
+                if w in ("-t", "--tag"):
+                    note(next(words, None))
+                elif w.startswith(("--tag=", "-t=")):
+                    note(w.split("=", 1)[1])
+        except ValueError:
+            continue
+    for m in re.finditer(r"polaris-image-build\.sh[\"']?(?=[ \t])", code):
+        words = _shell_words(code, m.end())
+        try:
+            first, second = next(words, None), next(words, None)
+        except ValueError:
+            continue
+        if first == "--stack" and second and not _SHELL_OPERATOR.fullmatch(second):
+            tags |= {f"{n}:{second}" for n in stack}
+        elif first and not _SHELL_OPERATOR.fullmatch(first):
+            note(second)
+    return tags, names
+
+
+def _called_scripts(root: pathlib.Path, code: str) -> set[str]:
+    """The shell scripts in the tree that a run step names: `bash x.sh`, `./x.sh`, `source x.sh`, or
+    a path through a mount (`/src/scripts/x.sh`), matched by its longest suffix that is a file."""
+    found = set()
+    for m in re.finditer(r"(?<![\w.-])[\w./${}-]*\.(?:sh|bash)(?![\w.-])", code):
+        path = re.sub(r"^(?:\$\{?\w+\}?|\$\{\{[^}]*\}\})/", "", m.group(0)).lstrip("./")
+        parts = path.split("/")
+        for k in range(len(parts)):
+            cand = "/".join(parts[k:])
+            if "$" not in cand and (root / cand).is_file():
+                found.add(cand)
+                break
+    return found
+
+
+def _workflow_run_blocks(text: str) -> list[tuple[int, str]]:
+    """Each `run:` value in a workflow, read lexically: (line of its first line, its text). A block
+    scalar (`|`, `>`) is every following line indented past the key, dedented; a value on the key's
+    line is that line, unquoted."""
+    lines = text.split("\n")
+    blocks, i = [], 0
+    while i < len(lines):
+        m = re.match(r"^(\s*(?:-\s+)?)run:(?:\s+(.*?))?\s*$", lines[i])
+        if not m:
+            i += 1
+            continue
+        col, value = len(m.group(1)), m.group(2) or ""
+        if value[:1] not in ("'", '"'):
+            value = re.sub(r"\s+#.*$", "", value)
+        if value and not re.fullmatch(r"[|>][-+0-9]*", value):
+            if len(value) > 1 and value[0] in "'\"" and value.endswith(value[0]):
+                value = value[1:-1]
+            blocks.append((i + 1, value))
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip(" ")) > col):
+            j += 1
+        body = lines[i + 1:j]
+        indent = min((len(l) - len(l.lstrip(" ")) for l in body if l.strip()), default=0)
+        blocks.append((i + 2, "\n".join(l[indent:] for l in body)))
+        i = j
+    return blocks
+
+
+def _workflow_env(text: str) -> dict[str, set[str]]:
+    """Every value each name takes in the workflow's `env:` blocks, at any level."""
+    env: dict[str, set[str]] = {}
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*)env:\s*(?:#.*)?$", line)
+        if not m:
+            continue
+        child = None
+        for nxt in lines[i + 1:]:
+            if not nxt.strip():
+                continue
+            indent = len(nxt) - len(nxt.lstrip(" "))
+            if indent <= len(m.group(1)):
+                break
+            child = indent if child is None else child
+            kv = re.match(r"\s*([A-Za-z_]\w*):\s*(.*?)\s*$", nxt)
+            if indent == child and kv:
+                v = kv.group(2) if kv.group(2)[:1] in ("'", '"') else re.sub(r"\s+#.*$", "", kv.group(2))
+                if len(v) > 1 and v[0] in "'\"" and v.endswith(v[0]):
+                    v = v[1:-1]
+                env.setdefault(kv.group(1), set()).add(v)
+    return env
+
+
+def _env_values(word: str, env: dict[str, set[str]]) -> tuple[set[str], str]:
+    """The values `word` takes once each `$NAME`, `${NAME}` and `${{ env.NAME }}` in it is replaced
+    from the workflow's env blocks, and the first expansion no env block names ("" when none)."""
+    values, todo = set(), [word]
+    for _ in range(256):
+        if not todo:
+            return values, ""
+        w = todo.pop()
+        m = re.search(r"\$\{\{\s*env\.(\w+)\s*\}\}|\$\{\{.*?\}\}|\$\{(\w+)\}|\$(\w+)|\$", w)
+        if not m:
+            values.add(w)
+            continue
+        name = m.group(1) or m.group(2) or m.group(3)
+        if not name or name not in env:
+            return set(), m.group(0)
+        todo += [w[:m.start()] + v + w[m.end():] for v in env[name]]
+    return set(), word
+
+
+def _build_push_tags(text: str) -> set[str]:
+    """The `tags:` of each docker/build-push-action step in a workflow."""
+    lines, tags = text.split("\n"), set()
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*(?:-\s+)?)uses:\s*[\"']?docker/build-push-action@", line)
+        if not m:
+            continue
+        col, start, end = len(m.group(1)), i, i + 1
+        while not m.group(1).rstrip().endswith("-") and start > 0:     # up to the step's `- ` line
+            prev = lines[start - 1]
+            indent = len(prev) - len(prev.lstrip())
+            if prev.strip() and indent < col - 2:
+                break
+            start -= 1
+            if prev.strip() and indent == col - 2:
+                break
+        while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) >= col):
+            end += 1
+        for k in range(start, end):
+            t = re.match(r"^(\s*)tags:\s*(.*?)\s*$", lines[k])
+            if not t:
+                continue
+            values = [t.group(2)]
+            if re.fullmatch(r"[|>][-+0-9]*", t.group(2)):
+                values = []
+                for nxt in lines[k + 1:end]:
+                    if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= len(t.group(1)):
+                        break
+                    values.append(nxt)
+            tags |= {v.strip("'\"[] ") for value in values for v in re.split(r"[,\s]+", value)
+                     if v.strip("'\"[] ")}
+    return tags
+
+
+def _image_ref(ref: str) -> tuple[str, str, str]:
+    """(repository, tag, digest) of an image reference, Docker Hub's `docker.io/` and `library/`
+    dropped, so postgres:16 and docker.io/library/postgres:16 are one repository."""
+    name, _, digest = ref.partition("@")
+    colon = name.rfind(":")
+    repo, tag = (name[:colon], name[colon + 1:]) if colon > name.rfind("/") else (name, "")
+    repo = re.sub(r"^(?:(?:index\.|registry-1\.)?docker\.io/)?(?:library/)?", "", repo)
+    return repo, tag, digest
+
+
+def _dependabot_pins(root: pathlib.Path, covered: set[tuple[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
+    """(repository, tag) -> {digest: file} for each image a Dockerfile or compose file that
+    Dependabot reads pins by digest under a tag."""
+    pins: dict[tuple[str, str], dict[str, str]] = {}
+    for eco, d in sorted(covered):
+        base = root / d.lstrip("/")
+        for f in sorted(base.iterdir()) if eco in ("docker", "docker-compose") and base.is_dir() else ():
+            if eco == "docker" and (f.name == "Dockerfile" or f.name.startswith("Dockerfile.")):
+                refs = re.findall(r"(?im)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", f.read_text())
+            elif eco == "docker-compose" and re.fullmatch(r"docker-compose(?:\.[\w-]+)?\.ya?ml", f.name):
+                refs = re.findall(r"(?m)^\s*image:\s*[\"']?([^\s\"'#]+)", f.read_text())
+            else:
+                continue
+            for repo, tag, digest in map(_image_ref, refs):
+                if tag and digest:
+                    pins.setdefault((repo, tag), {}).setdefault(digest, f.relative_to(root).as_posix())
+    return pins
+
+
+def _script_ref_problem(word: str, allowed: set[str]) -> tuple[str, str]:
+    """How the lexical rule reads one shell word naming an image: ("", "") when it carries a digest,
+    is a tag the workflows build, or is empty; ("tag", the ref) when it names an image by tag; ("run
+    time", word) when it is built at run time, which the rule does not read."""
+    bare = re.sub(r"['\"]", "", word)
+    if not bare or "@sha256:" in bare or bare in allowed:
+        return "", ""
+    defaults = [d.strip("'\"") for d in re.findall(r"\$\{[A-Za-z_0-9]+:?[-=]([^}]*)\}", word)]
+    if defaults:
+        bad = [d for d in defaults if d and "@sha256:" not in d and d not in allowed]
+        return ("tag", bad[0]) if bad else ("", "")
+    return ("tag", bare) if _literal_part(word).strip() else ("run time", word)
+
+
+def _workflow_images(root: pathlib.Path, pins: dict[tuple[str, str], dict[str, str]]) -> dict:
+    """Every image the workflows run, as check_supply_chain_pins reads them: "problems"; "refs",
+    each (workflow, line, how, image) outside the wallet canary; "scripts", each shell script a run
+    step calls, with the workflows that call it; and "run time", the script refs built at run time,
+    which the lexical rule does not read."""
+    wfdir = root / ".github" / "workflows"
+    stack = tuple(re.findall(r'build_one\s+\S+\s+"(polaris-[\w-]+):\$\{suffix\}"',
+                             _read(root, "scripts/polaris-image-build.sh")))
+    expr = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+    problems: list[str] = []
+    refs: list[tuple[str, int, str, str | None, str, dict[str, set[str]]]] = []
+    calls: dict[str, set[str]] = {}
+    built: dict[str, set[str]] = {}
+    for wf in sorted(wfdir.glob("*.yml")) if wfdir.is_dir() else ():
+        text = "\n".join("" if l.lstrip().startswith("#") else l for l in wf.read_text().split("\n"))
+        text = expr.sub(lambda m: "${{" + re.sub(r"\s+", "", m.group(1)) + "}}", text)
+        env, built[wf.name], read = _workflow_env(text), _build_push_tags(text), set()
+        mine = wf.name not in _UNPINNED_BY_DESIGN
+        for first, body in _workflow_run_blocks(text):
+            if "docker" not in body and ".sh" not in body and ".bash" not in body:
+                continue
+            code = _shell_code(body)
+            built[wf.name] |= _shell_builds(code, stack)[0]
+            for rel in _called_scripts(root, code):
+                calls.setdefault(rel, set()).add(wf.name)
+            for line, image_line, sub, image, why in _docker_commands(body, code):
+                read.add(first + line - 1)
+                if mine:
+                    refs.append((wf.name, first + image_line - 1, f"docker {sub}".strip(), image, why, env))
+        for i, line in enumerate(text.split("\n"), 1):
+            kv = re.match(r"^\s*(?:-\s+)?(image|container|uses):\s*(.*?)\s*$", line)
+            value = (kv.group(2) if kv.group(2)[:1] in ("'", '"') else re.sub(r"\s+#.*$", "", kv.group(2))) if kv else ""
+            if len(value) > 1 and value[0] in "'\"" and value.endswith(value[0]):
+                value = value[1:-1]
+            if kv and kv.group(1) == "uses":
+                value = value[len("docker://"):] if value.startswith("docker://") else ""
+            if mine and value and not re.fullmatch(r"[|>][-+0-9]*", value):
+                refs.append((wf.name, i, f"{kv.group(1)}:", value, "", env))
+            if mine and i not in read and _DOCKER_RUNS.search(re.sub(r"\s#.*", "", line)):
+                problems.append(f"{wf.name}:{i} has a docker run, create or pull that the check did not read")
+    scripts = {rel: (_read(root, rel), _shell_code(_read(root, rel))) for rel in sorted(calls)}
+    builds = {rel: _shell_builds(code, stack) for rel, (_, code) in scripts.items()}
+    for rel, workflows in calls.items():
+        for w in workflows:
+            built[w] |= builds[rel][0]
+    for wf, line, how, image, why, env in refs:
+        where = f"{wf}:{line}"
+        if why:
+            problems.append(f"{where} {how} could not be read: {why}")
+            continue
+        if image is None:
+            problems.append(f"{where} {how} names no image the check can read")
+            continue
+        values, unresolved = _env_values(image, env)
+        if unresolved:
+            problems.append(f"{where} runs {image}, and no env block in {wf} names {unresolved}")
+        for ref in sorted(values):
+            repo, tag, digest = _image_ref(ref)
+            twins = pins.get((repo, tag), {})
+            if "@sha256:" not in ref and ref not in built[wf]:
+                problems.append(f"{where} runs {ref} by tag ({how})")
+            elif digest and twins and digest not in twins:
+                pin, pinned_in = sorted(twins.items())[0]
+                problems.append(f"{where} runs {repo}:{tag} at {digest[7:19]}, but {pinned_in} pins it "
+                                f"at {pin[7:19]}, which Dependabot refreshes")
+    run_time: list[str] = []
+    for rel, (text, code) in scripts.items():
+        tags, names = builds[rel]
+        allowed = tags | set.intersection(*(built[w] for w in calls[rel]))
+        assigned = {m.group(1) for m in re.finditer(r"(?:^|(?<=[\s;&|({]))([A-Za-z_]\w*)=", code, re.M)}
+        ran: set[str] = set()  # variables a docker command here runs: their assignments are read below
+        for _, line, sub, image, why in _docker_commands(text, code):
+            where, var = f"{rel}:{line}", re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", image or "")
+            if why:
+                problems.append(f"{where} docker {sub} could not be read: {why}".replace("docker  ", "docker "))
+            elif image is None:
+                run_time.append(f"{where} docker {sub} names its image in words built at run time")
+            elif var and var.group(1) in names:
+                continue
+            elif var and var.group(1) in assigned:
+                ran.add(var.group(1))
+            elif var and "image" in var.group(1).lower():
+                run_time.append(f"{where} docker {sub} runs {image}, which {rel} never assigns")
+            else:
+                kind, ref = _script_ref_problem(image, allowed)
+                if kind == "tag":
+                    problems.append(f"{where} runs {ref} by tag (docker {sub})")
+                elif kind:
+                    run_time.append(f"{where} docker {sub} runs {ref}, built at run time")
+        for m in re.finditer(r"(?:^|(?<=[\s;&|({]))([A-Za-z_]\w*)=", code, re.M):
+            if ("image" not in m.group(1).lower() and m.group(1) not in ran) or m.group(1) in names:
+                continue
+            where = f"{rel}:{text.count(chr(10), 0, m.start()) + 1}"
+            kind, ref = _script_ref_problem(_raw_word(code, m.end()), allowed)
+            if kind == "tag":
+                problems.append(f"{where} assigns {ref} to {m.group(1)} by tag")
+            elif kind:
+                run_time.append(f"{where} assigns {m.group(1)}={ref}, built at run time")
+    return {"problems": problems, "refs": [r[:4] for r in refs], "scripts": calls, "run time": run_time}
 
 
 def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
@@ -6877,21 +7382,19 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
             and not re.search(r'kubectl apply -f "\$CALICO_MANIFEST"', drill)):
         problems.append("polaris-helm-drill.sh applies the Calico manifest without checking it "
                         "against a pinned SHA-256 first")
+    dep = _read(root, ".github/dependabot.yml")
+    covered = _dependabot_coverage(dep)
+    seen = _workflow_images(root, _dependabot_pins(root, covered))
+    problems += seen["problems"]
     wfdir = root / ".github" / "workflows"
     for wf in sorted(wfdir.glob("*.yml")) if wfdir.is_dir() else ():
         text = "\n".join(l for l in wf.read_text().splitlines() if not l.lstrip().startswith("#"))
-        if wf.name not in _UNPINNED_BY_DESIGN:
-            problems += [f"{wf.name} runs {img} by tag" for img in
-                         re.findall(r"(?m)^\s*image:\s*(\S+)\s*$", text)
-                         if "@sha256:" not in img and "${{" not in img]
         problems += [f"{wf.name} runs Trivy by tag ({ref})" for ref in
                      re.findall(r"aquasec/trivy:[^\s\"']+", text) if "@sha256:" not in ref]
     for compose in sorted((root / "polaris_web").glob("docker-compose*.yml")):
         problems += [f"{compose.name} runs {img} by tag" for img in
                      re.findall(r"(?m)^\s*image:\s*(\S+)", compose.read_text())
                      if not img.startswith("polaris-") and "@sha256:" not in img]
-    dep = _read(root, ".github/dependabot.yml")
-    covered = _dependabot_coverage(dep)
     required = set()
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _WALK_PRUNE]
@@ -6917,13 +7420,17 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
         problems.append("Dependabot reads no " + ", ".join(f"{e} manifest in {d}" for e, d in missing[:4])
                         + ("" if len(missing) <= 4 else f" (+{len(missing) - 4} more)"))
     if problems:
-        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
-                                                       f" (+{len(problems) - 4} more)"))
+        return _fail(name, "; ".join(problems))
+    commands = sum(1 for r in seen["refs"] if r[2].startswith("docker "))
     return _ok(name,
                f"the Caddy plugin is pinned to its release, etcd to the 3.6 series, the Calico "
                f"manifest to its SHA-256; every workflow and compose image and Trivy run by "
-               f"digest (the wallet canary excepted by design); Dependabot reads all {len(required)} "
-               f"manifests that pin something")
+               f"digest (the wallet canary excepted by design): {len(seen['refs'])} workflow image "
+               f"refs, {commands} of them docker run, create or pull in run steps, each equal to "
+               f"the pin of its tag in a manifest Dependabot reads where one pins it, and the docker "
+               f"refs and IMAGE assignments in the {len(seen['scripts'])} shell scripts run steps call, "
+               f"where {len(seen['run time'])} refs are built at run time and not read; "
+               f"Dependabot reads all {len(required)} manifests that pin something")
 
 
 # P0.6 — every release artifact carries a signed SLSA provenance attestation,

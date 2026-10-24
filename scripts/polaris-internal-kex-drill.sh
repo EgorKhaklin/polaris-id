@@ -67,7 +67,7 @@ PG_IMAGE=$(sed -n 's/^FROM \(postgres:[^ @]*\)@\(sha256:[0-9a-f]*\).*/\1@\2/p' p
 PSYCOPG=$(sed -n 's/^\(psycopg2-binary==[0-9.]*\).*/\1/p' polaris_web/requirements.txt | sed -n 1p)
 [ -n "$PSYCOPG" ] || { echo "polaris-internal-kex-drill: cannot read the pinned driver from requirements.txt" >&2; exit 1; }
 APP_BASE=$(sed -n 's/^FROM \(python:[^ @]*\)@\(sha256:[0-9a-f]*\) AS runtime.*/\1@\2/p' polaris_web/Dockerfile.prod | sed -n 1p)
-[ -n "$APP_BASE" ] || APP_BASE=python:3.12-slim-bookworm
+[ -n "$APP_BASE" ] || { echo "polaris-internal-kex-drill: cannot read the runtime base from Dockerfile.prod" >&2; exit 1; }
 
 echo "Polaris internal-hop key exchange, measured"
 echo "  postgres base : $PG_IMAGE"
