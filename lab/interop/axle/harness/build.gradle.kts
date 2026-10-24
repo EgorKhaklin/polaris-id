@@ -4,7 +4,7 @@
 plugins {
     // Axle's own build declares 2.2.21, which OSV lists an advisory against (fixed in 2.4.20);
     // lift.init.gradle.kts lifts both builds to this version.
-    kotlin("jvm") version "2.4.20"
+    kotlin("jvm") version "2.4.21"
     application
 }
 
