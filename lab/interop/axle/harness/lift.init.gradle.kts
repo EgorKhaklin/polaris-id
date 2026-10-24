@@ -6,10 +6,10 @@
 //
 // Kotlin Gradle Plugin 2.2.21, which both builds declare: fixed in 2.4.20. Bouncy Castle 1.78.1, in
 // Axle's test fixtures: fixed in 1.85, lifted to 1.86 as Axle's own pull request #93 does. With
-// the plugin at 2.4.20, the OpenTelemetry 1.41.0 and Bouncy Castle 1.80 (bcpg, bcpkix, and bcprov
+// the plugin at 2.4.21, the OpenTelemetry 1.41.0 and Bouncy Castle 1.80 (bcpg, bcpkix, and bcprov
 // and bcutil 1.80.2) components that 2.2.21's own classpaths brought no longer resolve, so
 // nothing here names them.
-val kotlinPlugin = "2.4.20"
+val kotlinPlugin = "2.4.21"
 val lifts = listOf(
     "org.bouncycastle:bcprov-jdk18on:1.86",
     "org.bouncycastle:bcpkix-jdk18on:1.86",
