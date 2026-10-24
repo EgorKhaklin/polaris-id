@@ -2061,6 +2061,62 @@ def check_cve_scanning(root: pathlib.Path) -> list[Finding]:
                "advisories")
 
 
+def _ci_and_called_workflows(root: pathlib.Path) -> list[tuple[str, str]]:
+    """ci.yml and each workflow of this repository that a ci.yml job calls (`uses:
+    ./.github/workflows/x.yml`, or the `$/` form), as (path, text): the places a gate that ci.yml
+    runs on a pull request can live."""
+    ci = _read(root, ".github/workflows/ci.yml")
+    if not ci:
+        return []
+    called = re.findall(r"""(?m)^\s+uses:\s*['"]?(?:\./|\$/)(\.github/workflows/[\w.-]+\.ya?ml)\b""", ci)
+    return [(".github/workflows/ci.yml", ci)] + [(rel, _read(root, rel)) for rel in sorted(set(called))]
+
+
+_TRIVY_GATE = (re.compile(r"\btrivy\b", re.I), re.compile(r"--severity[=\s]+(?:[A-Z]+,)*CRITICAL\b"),
+               re.compile(r"--ignore-unfixed\b"), re.compile(r"--exit-code[=\s]+1\b"))
+
+
+def _trivy_gate(text: str) -> int | None:
+    """The line of the first run-step command in a workflow that runs Trivy gating on fixable
+    CRITICAL (--severity CRITICAL, --ignore-unfixed and --exit-code 1 in one command), read with
+    comments blanked and continuations joined; None when no run step does."""
+    for first, body in _workflow_run_blocks(text):
+        at = 0
+        for line in _shell_code(body).split("\n"):
+            if all(p.search(line) for p in _TRIVY_GATE):
+                return first + body[:at].count("\n")
+            at += len(line) + 1
+    return None
+
+
+def _workflow_crons(text: str) -> list[str]:
+    """The cron expressions under a workflow's top-level `on:` > `schedule:`, read lexically."""
+    crons, in_on, child, in_schedule = [], False, None, False
+    for line in text.split("\n"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0:
+            in_on, child, in_schedule = bool(re.match(r"""(?:on|"on"|'on'):\s*(?:#.*)?$""", line)), None, False
+            continue
+        if not in_on:
+            continue
+        child = indent if child is None else child
+        if indent <= child:
+            in_schedule = indent == child and bool(re.match(r"\s*schedule:\s*(?:#.*)?$", line))
+            continue
+        m = re.match(r"""\s*(?:-\s+)?cron:\s*(["']?)([^"'#]*?)\1\s*(?:#.*)?$""", line)
+        if in_schedule and m:
+            crons.append(m.group(2).strip())
+    return crons
+
+
+def _fires_weekly(cron: str) -> bool:
+    """A cron that fires at least once a week: every day of every month, on any weekdays."""
+    fields = cron.split()
+    return len(fields) == 5 and fields[2] == "*" and fields[3] == "*"
+
+
 # ---------------------------------------------------------------------------
 # Container IMAGE CVE scanning (v9.138). pip-audit covers Python deps; bandit
 # covers our code; but the OS packages in the base images were unscanned and
@@ -2068,25 +2124,33 @@ def check_cve_scanning(root: pathlib.Path) -> list[Finding]:
 # Dockerfiles must patch their bases (apt-get upgrade / apk upgrade), CI must run
 # Trivy gating on fixable CRITICAL, and a documented .trivyignore carries the
 # justified exceptions. Without all three, image CVEs ship silently.
+# 2026-10-21: the gate also runs weekly, so a fixable CRITICAL published against
+# an image no change touches shows within a week. The check finds the gate where
+# CI runs it, in ci.yml or in a workflow a ci.yml job calls (image-cve-scan.yml
+# since that day), and requires a weekly schedule on the file that holds it; a
+# gate in neither place fails, whatever else names Trivy.
 # ---------------------------------------------------------------------------
 def check_image_cve_scanning(root: pathlib.Path) -> list[Finding]:
-    ci = _read(root, ".github/workflows/ci.yml")
-    if not ci:
+    places = _ci_and_called_workflows(root)
+    if not places:
         return _fail("image_cve_scan", ".github/workflows/ci.yml is missing")
-    if "trivy" not in ci.lower():
+    # The scan must GATE on fixable CRITICAL (--severity CRITICAL --exit-code 1 in one
+    # run step's command), not merely report, and --ignore-unfixed keeps it to ACTIONABLE
+    # CVEs rather than base-image ones with no upstream patch yet.
+    gate = next(((rel, line) for rel, text in places for line in [_trivy_gate(text)] if line), None)
+    if gate is None:
         return _fail("image_cve_scan",
-                     "CI must scan the built container images for OS-package CVEs (Trivy); "
-                     "pip-audit only covers Python dependencies")
-    # The scan must GATE on fixable CRITICAL (an --exit-code 1 + --severity CRITICAL
-    # run), not merely report. Require both tokens near the trivy usage.
-    if "--severity CRITICAL" not in ci or "--exit-code 1" not in ci:
+                     "no run step in ci.yml, or in a workflow a ci.yml job calls, runs Trivy gating on "
+                     "fixable CRITICAL (--severity CRITICAL --ignore-unfixed --exit-code 1 in one "
+                     "command); pip-audit only covers Python dependencies, and a scan that only "
+                     "reports, or that no pull request runs, gates nothing")
+    rel, line = gate
+    weekly = [c for c in _workflow_crons(_read(root, rel)) if _fires_weekly(c)]
+    if not weekly:
         return _fail("image_cve_scan",
-                     "the Trivy image scan must GATE on fixable CRITICAL "
-                     "(--severity CRITICAL --exit-code 1), not only report")
-    if "--ignore-unfixed" not in ci:
-        return _fail("image_cve_scan",
-                     "the Trivy gate should use --ignore-unfixed so it fails only on ACTIONABLE "
-                     "(fixable) CVEs, not on base-image CVEs with no upstream patch yet")
+                     f"{rel}, which holds the Trivy gate (line {line}), has no weekly schedule, so a "
+                     "fixable CRITICAL published against an image no change touches waits for the "
+                     "next change to show")
     # The fixable CVEs must be PATCHED in what ships, not just reported: the
     # self-built Dockerfiles upgrade their base packages.
     # The pattern tolerates apt-get options (the mirror-retry flags added at
@@ -2108,8 +2172,9 @@ def check_image_cve_scanning(root: pathlib.Path) -> list[Finding]:
         return _fail("image_cve_scan",
                      ".trivyignore is missing — Trivy exceptions must be documented + justified")
     return _ok("image_cve_scan",
-               "CI builds + Trivy-scans every prod image gating on fixable CRITICAL; the "
-               "Dockerfiles patch their bases; exceptions are documented in .trivyignore")
+               f"CI builds + Trivy-scans every prod image gating on fixable CRITICAL ({rel}:{line}), "
+               f"and that workflow also runs weekly ({weekly[0]}); the Dockerfiles patch their bases; "
+               "exceptions are documented in .trivyignore")
 
 
 # ---------------------------------------------------------------------------
@@ -2118,6 +2183,15 @@ def check_image_cve_scanning(root: pathlib.Path) -> list[Finding]:
 # crypto, world-writable files, shell=True, etc.). CI must run it and GATE on
 # high-severity findings so a real issue (e.g. the world-writable state dir
 # bandit caught at v9.112) fails the build rather than shipping.
+# 2026-10-21: at every confidence. SECURITY.md says bandit fails the build on a
+# high-severity finding, and the gate read medium confidence and above, so the
+# gating run must carry --confidence-level all (its last one: argparse keeps the
+# last). "low" is not every confidence: bandit 1.9.4 ranks UNDEFINED, the
+# confidence a finding gets when its test sets none, below LOW
+# (core/constants.py), and its help says such a finding is not listed in "low".
+# bandit 1.9.4 makes the count form (-i) and this flag mutually exclusive, and a
+# .bandit file's confidence applies only while the command line leaves the
+# default.
 # ---------------------------------------------------------------------------
 def check_sast_scanning(root: pathlib.Path) -> list[Finding]:
     ci = _read(root, ".github/workflows/ci.yml")
@@ -2125,11 +2199,21 @@ def check_sast_scanning(root: pathlib.Path) -> list[Finding]:
         return _fail("sast", ".github/workflows/ci.yml is missing")
     if "bandit" not in ci:
         return _fail("sast", "CI must run bandit (SAST) over polaris_web + polaris_cli")
-    if not re.search(r"bandit\b[^\n]*--severity-level\s+high", ci):
+    gating = [line for line in ci.splitlines() if re.search(r"bandit\b[^\n]*--severity-level\s+high", line)]
+    if not gating:
         return _fail("sast",
                      "the bandit run must GATE on high severity (--severity-level high), so a real "
                      "finding fails the build instead of shipping")
-    return _ok("sast", "CI runs bandit SAST gating on high-severity findings")
+    for line in gating:
+        # argparse also takes an unambiguous prefix of the flag (--confidence-l).
+        levels = re.findall(r"(?<![\w-])--confidence-l[\w-]*(?:=|\s+)(\w+)", line)
+        if not levels or levels[-1] != "all":
+            return _fail("sast",
+                         "the gating bandit run must report high-severity findings at every confidence "
+                         "(--confidence-level all), as SECURITY.md states it; it reads "
+                         + (f"--confidence-level {levels[-1]}" if levels else "no --confidence-level")
+                         + f": {line.strip()}")
+    return _ok("sast", "CI runs bandit SAST gating on high-severity findings at every confidence")
 
 
 # ---------------------------------------------------------------------------
@@ -6814,7 +6898,9 @@ def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
 # If they drift, the bill of materials describes a package set the gate never
 # scanned (or vice versa), and the two documents stop corroborating each other.
 def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
-    ci = _read(root, ".github/workflows/ci.yml")
+    # The scanner is read where CI runs it: ci.yml and the workflows a ci.yml job calls
+    # (image-cve-scan.yml since 2026-10-21), and it must name a version of its own.
+    scan = "\n".join(text for _, text in _ci_and_called_workflows(root))
     sbom = _read(root, ".github/workflows/sbom.yml")
     if not sbom:
         return _fail("sbom_trivy", ".github/workflows/sbom.yml is missing")
@@ -6822,9 +6908,10 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
     if not re.search(r"aquasec/trivy:[0-9]", sbom):
         return _fail("sbom_trivy", "the SBOM generator (sbom.yml, sbom-build.yml) names no Trivy version, "
                      "so nothing holds it to the scanner's")
-    versions = set(re.findall(r"aquasec/trivy:([0-9][0-9.]*)", ci + sbom))
-    if not versions:
-        return _fail("sbom_trivy", "no aquasec/trivy version found in the workflows")
+    if not re.search(r"aquasec/trivy:[0-9]", scan):
+        return _fail("sbom_trivy", "the image CVE scan (ci.yml and the workflows its jobs call) names no "
+                     "Trivy version, so nothing holds the SBOM generator to the scanner's")
+    versions = set(re.findall(r"aquasec/trivy:([0-9][0-9.]*)", scan + "\n" + sbom))
     if len(versions) > 1:
         return _fail("sbom_trivy",
                      f"the SBOM generator and the CVE scanner use different Trivy "
@@ -11214,8 +11301,10 @@ def check_ha_automation(root: pathlib.Path) -> list[Finding]:
                          "asserted present afterwards")
     if "docker-compose.ha.yml" not in ci or "polaris-failover-drill.sh" not in ci:
         return _fail("ha_automation", "ci.yml must boot the HA profile and run scripts/polaris-failover-drill.sh")
-    if "polaris-etcd:cve" not in ci:
-        return _fail("ha_automation", "the image CVE scan must include the self-built etcd image")
+    # The scan's steps live in a workflow a ci.yml job calls (image-cve-scan.yml since 2026-10-21).
+    if "polaris-etcd:cve" not in "\n".join(text for _rel, text in _ci_and_called_workflows(root)):
+        return _fail("ha_automation", "the image CVE scan (ci.yml, or a workflow a ci.yml job calls) must "
+                     "include the self-built etcd image")
     for needle in ("split-brain", "failsafe_mode", "patronictl switchover", "polaris-failover-drill.sh"):
         if needle not in doc:
             return _fail("ha_automation", f"FAILOVER.md lacks {needle!r}: the split-brain analysis, the failsafe decision, "

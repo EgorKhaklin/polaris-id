@@ -5,12 +5,12 @@ asking anyone a question.** If you cannot, that is the bug and we want to hear i
 [open a report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-10-11 against `polaris-oid4vp`
-1.0.0 installed from the registry, with the system Python 3.9.6 on macOS: the ten minutes' walt.id
-half from an empty directory, `200 authentic` in 23 seconds with the wallet's image already pulled. In the first minute,
-eudi-dev v2.3.7 (its image, then its own binary without Docker) presented a credential, the verifier
+package on PyPI rather than a working copy. Last walked 2026-10-24 against `polaris-oid4vp`
+1.0.0 installed from the registry, with the system Python 3.9.6 on macOS and both wallets' images
+already pulled. In the first minute, eudi-dev v2.3.7's image presented a credential, the verifier
 answered `200 authentic`, and all three controls were refused. In the ten minutes, walt.id's wallet
-presented and the verifier answered `200 authentic`. Nothing here is from memory.
+presented from an empty directory and the verifier answered `200 authentic`, 45 seconds after the
+wallet started. Nothing here is from memory.
 
 ## One minute first
 
@@ -36,10 +36,10 @@ the hashes in `requirements.txt`, lets the wallet generate its own
 key, mints one credential bound to it, has the wallet present it with HAIP enforced, then runs
 three controls that must each be refused ([what they are](../lab/interop/eudi-dev/README.md)). It
 does every step for you, so it shows THAT the path works; the ten minutes below show what each
-step is. Walked 2026-10-11 as written, from an empty directory outside the repository, with the
+step is. Walked 2026-10-24 as written, from an empty directory outside the repository, with the
 system Python 3.9.6 on macOS: it installed 1.0.0, the wallet presented and the verifier
-answered `200 authentic` with all three controls refused, with Docker running and without it
-(`EUDI_NATIVE=1`).
+answered `200 authentic` with all three controls refused, in 17 seconds with Docker running.
+Without Docker (`EUDI_NATIVE=1`) it was last walked 2026-10-11.
 
 ## 0. Prerequisites
 
@@ -105,7 +105,9 @@ It is usually live in under ten seconds once the image is local. The first run a
 
     polaris-oid4vp keygen --out ./pki --host host.docker.internal --port 9443
 
-Note the `client_id` it prints. These keys are for testing.
+Note the `client_id` it prints. These keys are for testing. Running it again replaces `./pki`
+with a new CA and TLS certificate; after step 4, start again from step 2
+(`docker rm -f polaris-waltid` first), then steps 4 and 5.
 
 ## 4. Give the wallet a credential, and the trust to check yours
 
@@ -150,7 +152,7 @@ In a second terminal, from `~/polaris-try`, with the venv activated
 
 From walt.id:
 
-    {"transmission_success":true,"verifier_response":{"redirect_uri":"..."}}
+    {"transmission_success":true,"verifier_response":{"redirect_uri":"..."},"redirect_to":"..."}
 
 From the verifier's terminal, which is the line that matters:
 

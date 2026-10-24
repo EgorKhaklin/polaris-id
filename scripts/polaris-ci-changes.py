@@ -453,15 +453,17 @@ def _has_shebang(root: pathlib.Path, path: str) -> bool:
 def skippable_code(files: list, root: pathlib.Path = ROOT) -> list:
     """The files a skippable job may execute or read as configuration: every code-like file,
     less the always-run-only and never-run ones, polaris_checks/ (the checks run only in
-    always-run jobs), the other workflows, and the allowlisted paths themselves (the audit
-    separately requires that no skippable code names one of those)."""
+    always-run jobs), the other workflows (but not one a skippable job calls, which runs as that
+    job), and the allowlisted paths themselves (the audit separately requires that no skippable
+    code names one of those)."""
+    called = set(called_workflows(root))
     out = []
     for p in files:
         if allowlisted(p) or p in ALWAYS_RUN_ONLY or p in NOT_RUN_IN_CI:
             continue
         if p.startswith("polaris_checks/"):
             continue
-        if p.startswith(".github/") and p != CI_YML and not p.startswith(".github/ci/"):
+        if p.startswith(".github/") and p != CI_YML and not p.startswith(".github/ci/") and p not in called:
             continue
         if _is_code(p) or _has_shebang(root, p):
             out.append(p)
@@ -723,6 +725,28 @@ def _skippable_ci_text(root: pathlib.Path, strict: bool = True) -> str:
     return "\n".join(b for j, b in jobs.items() if j not in ALWAYS_RUN_JOBS)
 
 
+#: A job that calls a workflow of this repository (`uses: ./.github/workflows/x.yml`).
+_CALLS = re.compile(r"(?m)^\s+uses:\s*['\"]?\./(\.github/workflows/[\w.-]+\.ya?ml)['\"]?(?=\s|$)")
+
+
+def called_workflows(root: pathlib.Path, strict: bool = True) -> list:
+    """The workflows the skippable jobs call, and the ones those call in turn. A called
+    workflow's jobs run as the job that calls it, so its whole text is skippable code
+    (2026-10-21: the image CVE scan's steps moved into one). One that is not there is listed
+    all the same: the audit reports it rather than measuring nothing."""
+    seen, todo = [], _CALLS.findall(_skippable_ci_text(root, strict))
+    while todo:
+        rel = todo.pop(0)
+        if rel in seen or rel == CI_YML:
+            continue
+        seen.append(rel)
+        try:
+            todo += _CALLS.findall((root / rel).read_text(encoding="utf-8"))
+        except OSError:
+            pass
+    return sorted(seen)
+
+
 def audit(root: pathlib.Path = ROOT, out=sys.stdout) -> list:
     """Problems with the allowlist as the tree stands; [] when it holds."""
     problems = []
@@ -740,6 +764,9 @@ def audit(root: pathlib.Path = ROOT, out=sys.stdout) -> list:
     code = skippable_code(files, root)
     if not code:
         problems.append("no skippable code was found to measure")
+    for rel in called_workflows(root):
+        if rel not in fset:
+            problems.append("a skippable job calls %s, which is not tracked, so what it runs is unmeasured" % rel)
     texts = {CI_YML: _skippable_ci_text(root)}
     for path, where in sorted(references(root, code, candidates, texts).items()):
         problems.append("%s is on the allowlist but %s names it" % (path, ", ".join(where[:3])))
@@ -790,9 +817,10 @@ def measure(root: pathlib.Path = ROOT, out=sys.stdout) -> int:
     files = _tracked(root)
     pool = [p for p in files if p.startswith(("docs/", "site/", "lab/", "DEVNOTES/", "meta/"))
             or ("/" not in p and p.endswith((".md", ".cff"))) or allowlisted(p)]
+    called = set(called_workflows(root, strict=False))
     code = [p for p in files if p not in pool and p not in ALWAYS_RUN_ONLY and p not in NOT_RUN_IN_CI
             and not p.startswith("polaris_checks/") and (_is_code(p) or _has_shebang(root, p))
-            and (not p.startswith(".github/") or p == CI_YML or p.startswith(".github/ci/"))]
+            and (not p.startswith(".github/") or p == CI_YML or p.startswith(".github/ci/") or p in called)]
     refs = references(root, code, pool, {CI_YML: _skippable_ci_text(root, strict=False)})
     for p in sorted(refs):
         print("named  %s  <- %s" % (p, ", ".join(refs[p][:4])), file=out)

@@ -3174,6 +3174,22 @@ def test_sbom_trivy_match_check_discriminates(tmp_path):
     assert found.level == "FAIL" and "names no Trivy version" in found.message, \
         "must FAIL when the generator names no version at all, rather than passing on the scanner's alone"
 
+    # The scanner moved into a workflow a ci.yml job calls (image-cve-scan.yml since 2026-10-21):
+    # its pin is read there, and the scanner must name a version of its own.
+    (wf / "sbom-build.yml").write_text("env:\n  TRIVY_IMAGE: aquasec/trivy:0.58.1\n")
+    ci.write_text("jobs:\n  image-cve-scan:\n    uses: ./.github/workflows/image-cve-scan.yml\n")
+    scan = wf / "image-cve-scan.yml"
+    scan.write_text("run: docker run aquasec/trivy:0.58.1 image x\n")
+    assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "OK", \
+        "must PASS when the scanner ci.yml calls uses the generator's version"
+    scan.write_text("run: docker run aquasec/trivy:0.59.0 image x\n")
+    assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the scanner ci.yml calls uses another version than the generator"
+    scan.write_text("run: echo the scanner went elsewhere\n")
+    found = checks.check_sbom_trivy_matches_scan(tmp_path)[0]
+    assert found.level == "FAIL" and "image CVE scan" in found.message and "names no" in found.message, \
+        f"must FAIL when the scanner names no version, rather than passing on the generator's alone: {found.message}"
+
 
 def _supply_chain_tree(tmp_path):
     """What check_supply_chain_pins reads, copied from the real tree: Dependabot's config, two of
@@ -5334,9 +5350,12 @@ def test_image_cve_scanning_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
 
-    GOOD_CI = ("jobs:\n  image-cve-scan:\n    steps:\n      run: |\n"
-               "        trivy image --severity CRITICAL --ignore-unfixed --ignorefile /.trivyignore "
-               "--exit-code 1 polaris-app:cve\n")
+    # Since 2026-10-21 the gate lives in a workflow that ci.yml's job calls and that runs weekly.
+    GOOD_CI = "jobs:\n  image-cve-scan:\n    uses: ./.github/workflows/image-cve-scan.yml\n"
+    GOOD_SCAN = ('on:\n  workflow_call:\n  schedule:\n    - cron: "53 5 * * 4"\n'
+                 "jobs:\n  scan:\n    steps:\n      - run: |\n"
+                 "          trivy image --severity CRITICAL --ignore-unfixed --ignorefile /.trivyignore "
+                 "--exit-code 1 polaris-app:cve\n")
     DOCKERFILES = {
         "Dockerfile.prod": "FROM python:3.12-slim-bookworm\nRUN apt-get update && apt-get -y upgrade\n",
         "Dockerfile.caddy": "FROM caddy:2-alpine\nRUN apk upgrade --no-cache\n",
@@ -5344,8 +5363,9 @@ def test_image_cve_scanning_check_discriminates(tmp_path):
         "Dockerfile.postgres": "FROM postgres:16-alpine\nRUN apk upgrade --no-cache\n",
     }
 
-    def write(ci=GOOD_CI, dockerfiles=None, trivyignore=True):
+    def write(ci=GOOD_CI, scan=GOOD_SCAN, dockerfiles=None, trivyignore=True):
         (gh / "ci.yml").write_text(ci)
+        (gh / "image-cve-scan.yml").write_text(scan)
         for name, body in (dockerfiles or DOCKERFILES).items():
             (web / name).write_text(body)
         ti = tmp_path / ".trivyignore"
@@ -5360,7 +5380,7 @@ def test_image_cve_scanning_check_discriminates(tmp_path):
         "must FAIL when CI does not run Trivy on the images"
 
     # 2. Trivy present but not gating (no --exit-code 1) -> FAIL.
-    write(ci="jobs:\n  s:\n    steps:\n      run: trivy image --severity CRITICAL --ignore-unfixed app\n")
+    write(scan=GOOD_SCAN.replace("--exit-code 1 ", ""))
     assert checks.check_image_cve_scanning(tmp_path)[0].level == "FAIL", \
         "must FAIL when the Trivy scan does not gate (--exit-code 1)"
 
@@ -5379,6 +5399,59 @@ def test_image_cve_scanning_check_discriminates(tmp_path):
     write()
     assert checks.check_image_cve_scanning(tmp_path)[0].level == "OK", \
         "must PASS with a gating image scan, base patching, and documented exceptions"
+
+
+def test_image_cve_scanning_requires_a_weekly_run_of_the_gate(tmp_path):
+    for rel in (".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml", ".trivyignore",
+                "polaris_web/Dockerfile.prod", "polaris_web/Dockerfile.caddy",
+                "polaris_web/Dockerfile.pgbouncer", "polaris_web/Dockerfile.postgres"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    wf = tmp_path / ".github" / "workflows"
+    ci, scan = (wf / "ci.yml").read_text(), (wf / "image-cve-scan.yml").read_text()
+    base = checks.check_image_cve_scanning(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    (wf / "ci.yml").write_text(ci.replace("uses: ./.github/workflows/", "uses: $/.github/workflows/"))
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when ci.yml calls the workflow in the $/ form: {found.message}"
+
+    # CI before 2026-10-21: the same steps inline in ci.yml's job, and no schedule there.
+    inline = re.sub(r"(?m)^    uses: \./\.github/workflows/image-cve-scan\.yml.*\n",
+                    lambda m: "    runs-on: ubuntu-latest\n" + scan[scan.index("    steps:\n"):], ci)
+    assert inline != ci
+    (wf / "ci.yml").write_text(inline)
+    (wf / "image-cve-scan.yml").unlink()
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "FAIL" and "ci.yml, which holds the Trivy gate" in found.message \
+        and "no weekly schedule" in found.message, found.message
+    (wf / "ci.yml").write_text(inline.replace("  workflow_dispatch:\n",
+                                              '  workflow_dispatch:\n  schedule:\n    - cron: "53 5 * * 4"\n', 1))
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when the file holding the gate, ci.yml here, runs weekly: {found.message}"
+
+    # The gate in neither place: the called workflow no longer gates, and ci.yml names the flags
+    # only in a comment. Red, whatever else names Trivy.
+    (wf / "ci.yml").write_text(ci + "# trivy image --severity CRITICAL --ignore-unfixed --exit-code 1\n")
+    (wf / "image-cve-scan.yml").write_text(scan.replace("--exit-code 1 ", "--exit-code 0 "))
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "FAIL" and "no run step" in found.message, found.message
+
+    # The gate in a workflow no ci.yml job calls, so no pull request runs it.
+    (wf / "ci.yml").write_text(ci.replace("uses: ./.github/workflows/image-cve-scan.yml",
+                                          "uses: ./.github/workflows/zz-other.yml"))
+    (wf / "image-cve-scan.yml").write_text(scan)
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "FAIL" and "no run step" in found.message, found.message
+
+    # The gate's workflow runs monthly, or on no schedule at all.
+    (wf / "ci.yml").write_text(ci)
+    for text in (re.sub(r'cron: "[^"]*"', 'cron: "53 5 1 * *"', scan),
+                 re.sub(r"(?m)^  schedule:\n(?:    .*\n)+", "", scan)):
+        assert text != scan
+        (wf / "image-cve-scan.yml").write_text(text)
+        found = checks.check_image_cve_scanning(tmp_path)[0]
+        assert found.level == "FAIL" and "image-cve-scan.yml, which holds the Trivy gate" in found.message \
+            and "no weekly schedule" in found.message, found.message
 
 
 def test_migration_timeouts_check_discriminates(tmp_path):
@@ -5965,10 +6038,26 @@ def test_sast_scanning_check_discriminates(tmp_path):
     assert checks.check_sast_scanning(tmp_path)[0].level == "FAIL", \
         "must FAIL when bandit does not gate on high severity"
 
-    # 3. bandit gating on high severity -> OK.
-    write_ci("jobs:\n  s:\n    steps:\n      run: bandit -r polaris_web polaris_cli --severity-level high -q\n")
+    # 3. bandit gating on high severity at every confidence -> OK.
+    write_ci("jobs:\n  s:\n    steps:\n      run: bandit -r polaris_web polaris_cli --severity-level high "
+             "--confidence-level all -q\n")
     assert checks.check_sast_scanning(tmp_path)[0].level == "OK", \
-        "must PASS when bandit gates on high severity"
+        "must PASS when bandit gates on high severity at every confidence"
+
+    # 4. The real gate passes; CI's gate before 2026-10-21 (medium confidence and above) fails, as
+    # do a gate that names no confidence, one at low (which leaves out a finding of undefined
+    # confidence) and one whose last flag, or its prefix, raises it again.
+    real = (REPO / ".github/workflows/ci.yml").read_text()
+    write_ci(real)
+    found = checks.check_sast_scanning(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on the real ci.yml: {found.message}"
+    assert real.count("--confidence-level all -q") == 1
+    for raised in ("--confidence-level medium -q", "-q", "--confidence-level low -q",
+                   "--confidence-level all --confidence-level high -q",
+                   "--confidence-l=high -q"):
+        write_ci(real.replace("--confidence-level all -q", raised))
+        found = checks.check_sast_scanning(tmp_path)[0]
+        assert found.level == "FAIL" and "--confidence-level all" in found.message, f"{raised}: {found.message}"
 
 
 def test_verify_enforced_check_discriminates(tmp_path):
@@ -8405,6 +8494,17 @@ def test_ha_automation_check_discriminates(tmp_path):
     assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when the lock pins another patroni than the .in chose"
     write({"polaris_web/requirements-patroni.txt": "patroni==4.1.5 \\\n    --hash=sha256:ab\n"})
     assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when the lock lacks the etcd3 extra's client"
+    # The scan's steps in a workflow a ci.yml job calls (image-cve-scan.yml since 2026-10-21): read there.
+    calls = CI.replace("for img in polaris-postgres:cve polaris-etcd:cve; do\n",
+                       "jobs:\n  image-cve-scan:\n    uses: ./.github/workflows/image-cve-scan.yml\n")
+    scan = "jobs:\n  scan:\n    steps:\n      - run: |\n          for img in polaris-postgres:cve polaris-etcd:cve; do\n"
+    write({".github/workflows/ci.yml": calls, ".github/workflows/image-cve-scan.yml": scan})
+    assert checks.check_ha_automation(tmp_path)[0].level == "OK", "must PASS when the scan lives in a workflow ci.yml calls"
+    write({".github/workflows/ci.yml": calls,
+           ".github/workflows/image-cve-scan.yml": scan.replace(" polaris-etcd:cve", "")})
+    assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when the called scan leaves out the etcd image"
+    write({".github/workflows/ci.yml": calls.replace("uses: ./", "uses: ./x/"), ".github/workflows/image-cve-scan.yml": scan})
+    assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when no ci.yml job calls the scan's workflow"
 
 
 def test_event_table_partitioning_check_discriminates(tmp_path):
@@ -25143,3 +25243,75 @@ def test_interop_page_count_check_discriminates(tmp_path):
         assert text != files[rel], "the mutation did not apply: %r" % (case,)
         write(**{rel: text})
         assert level() == "FAIL", "must FAIL when the counts or names disagree: %r" % (case,)
+
+
+def _check_mutation_drill(root=None):
+    """scripts/polaris-check-mutation-drill.py loaded as a module, a fresh copy each call (its
+    readers cache what they parse), reading the tree at `root` (the repository by default)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "check_mutation_drill", REPO / "scripts" / "polaris-check-mutation-drill.py")
+    drill = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(drill)
+    if root is not None:
+        drill.ROOT = root
+    return drill
+
+
+def _check_def(name):
+    tree = ast.parse((REPO / "polaris_checks" / "checks.py").read_text(encoding="utf-8"))
+    return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def test_check_mutation_drill_names_the_workflows_ci_calls(tmp_path):
+    # 2026-10-24: when the Trivy gate moved to image-cve-scan.yml, three checks came to read the scan
+    # through _ci_and_called_workflows, and the drill's reads_of had no door for it. It named no input
+    # for check_image_cve_scanning, so it reached 146 checks instead of 147, and it never deleted or
+    # commented out image-cve-scan.yml for any of the three.
+    drill = _check_mutation_drill()
+    want = {".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml"}
+    blind = [name for name in ("check_image_cve_scanning", "check_sbom_trivy_matches_scan",
+                               "check_ha_automation")
+             if not want <= set(drill.reads_of(_check_def(name)))]
+    assert not blind, ("the check-mutation drill must name ci.yml and the workflow ci.yml calls "
+                       "for: " + ", ".join(blind))
+
+    # The door follows ci.yml's calls rather than a file name: a tree whose ci.yml calls another
+    # workflow has that one named, and a workflow ci.yml does not call is not.
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+    (gh / "ci.yml").write_text("jobs:\n  scan:\n    uses: ./.github/workflows/scan.yml\n")
+    (gh / "scan.yml").write_text("on: workflow_call\n")
+    (gh / "image-cve-scan.yml").write_text("on: workflow_call\n")
+    named = set(_check_mutation_drill(tmp_path).reads_of(_check_def("check_image_cve_scanning")))
+    assert named == {".github/workflows/ci.yml", ".github/workflows/scan.yml"}, sorted(named)
+
+
+def test_check_mutation_drill_reaches_the_trivy_gate_of_check_image_cve_scanning(tmp_path):
+    # check_image_cve_scanning matches the gate through _trivy_gate, whose patterns are the module's
+    # _TRIVY_GATE tuple, and regexes_of took only patterns written in the check itself, so the drill
+    # had nothing to search for in it.
+    drill = _check_mutation_drill()
+    fn = _check_def("check_image_cve_scanning")
+    patterns = drill.regexes_of(fn)
+    assert {p.pattern for p in checks._TRIVY_GATE} <= patterns, \
+        "the drill must take the patterns _trivy_gate matches with: %s" % sorted(patterns)
+
+    # The effect: the drill's comment pass for this check, on a copy of the inputs it reads here,
+    # turns the check red; the same copy untouched is green.
+    for rel in (".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml", ".trivyignore",
+                "polaris_web/Dockerfile.prod", "polaris_web/Dockerfile.caddy",
+                "polaris_web/Dockerfile.pgbouncer", "polaris_web/Dockerfile.postgres"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    assert checks.check_image_cve_scanning(tmp_path)[0].level == "OK"
+    needles, hidden = drill.needles_of(fn), 0
+    for rel in sorted(set(drill.reads_of(fn))):
+        lines = (tmp_path / rel).read_text(encoding="utf-8").split("\n")
+        for i, line in enumerate(lines):
+            if drill._line_carries(line, needles, patterns) and not line.lstrip().startswith("#"):
+                lines[i], hidden = "# hidden: " + line.strip(), hidden + 1
+        (tmp_path / rel).write_text("\n".join(lines), encoding="utf-8")
+    assert hidden, "the comment pass must find lines carrying what the check matches"
+    assert checks.check_image_cve_scanning(tmp_path)[0].level == "FAIL", \
+        "with the gate's lines commented out, the check must fail"
