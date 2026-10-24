@@ -17,7 +17,7 @@
 # any other way still runs the verify job, which fails when the SBOMs are not
 # there, so a release without them is loud rather than quiet.
 #
-# SBOM tooling: Trivy, the SAME version the image-cve-scan job in ci.yml pins.
+# SBOM tooling: Trivy, the SAME version the image CVE scan pins (image-cve-scan.yml, which ci.yml calls).
 # One tool for the CVE gate and the SBOM keeps the bill of materials consistent
 # with what the scanner saw; check_sbom_trivy_matches_scan fails CI on drift.
 #
