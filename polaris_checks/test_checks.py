@@ -3355,6 +3355,37 @@ def test_supply_chain_pins_holds_a_service_image_to_the_dependabot_pin(tmp_path)
         in found.message, f"must FAIL on a service image the same way: {found.message}"
 
 
+def test_supply_chain_pins_holds_every_script_pin_to_the_dependabot_pin(tmp_path):
+    # 2026-10-21: scripts/polaris-deploy.sh re-owned the edge's volumes with alpine:3.24 at an older
+    # digest than the Dockerfiles' pin, which Dependabot refreshes, and nothing saw it. No workflow
+    # calls that script, and in the scripts a run step does call only a ref by tag was refused, not
+    # a digest that differs.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    deploy = tmp_path / "scripts/polaris-deploy.sh"
+    good = deploy.read_text()
+    pin = "alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+    assert good.count(pin) == 2, "the fixture drifted: polaris-deploy.sh no longer pins alpine:3.24 twice"
+    deploy.write_text(good.replace(pin, f"alpine:3.24@sha256:{'d' * 64}", 1))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and ("scripts/polaris-deploy.sh:289 pins alpine:3.24 at dddddddddddd, but "
+                                      "polaris_web/Dockerfile.etcd pins it at 294b683cb724") in found.message, \
+        f"must FAIL, naming both files, on a script no workflow calls: {found.message}"
+    deploy.write_text(good)
+    # As a ${VAR:-...} default the same; a comment is not a pin, and a tag no manifest Dependabot
+    # reads pins is refreshed by hand.
+    script = tmp_path / "lab/zz-fixture.sh"
+    script.write_text('#!/usr/bin/env bash\nIMG="${IMG:-docker.io/library/alpine:3.24@sha256:' + "e" * 64 + '}"\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "lab/zz-fixture.sh:2 pins alpine:3.24 at eeeeeeeeeeee" in found.message, \
+        f"must FAIL on a pinned default naming the same image another way: {found.message}"
+    script.write_text("#!/usr/bin/env bash\n# alpine:3.24@sha256:" + "e" * 64 + "\nIMG=alpine:3.99@sha256:"
+                      + "e" * 64 + "\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on a commented pin and an untwinned tag: {found.message}"
+
+
 def test_supply_chain_pins_fails_closed_on_an_unresolved_variable(tmp_path):
     _supply_chain_tree(tmp_path)
     base = checks.check_supply_chain_pins(tmp_path)[0]

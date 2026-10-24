@@ -7333,6 +7333,39 @@ def _dependabot_pins(root: pathlib.Path, covered: set[tuple[str, str]]) -> dict[
     return pins
 
 
+#: An image pinned by digest in a shell script, as a word of its own or a `${VAR:-...}` default.
+#: Each `:` or `/` inside the name starts a word, so `${VAR:-image}` yields the image, not `VAR:-image`.
+_SCRIPT_DIGEST_REF = re.compile(
+    r"(?:(?<=:-)|(?<![\w./:@-]))\w[\w.-]*(?:[:/]\w[\w.-]*)*@sha256:[0-9a-f]{64}(?![0-9a-f])")
+
+
+def _script_digests_off_pin(root: pathlib.Path, pins: dict[tuple[str, str], dict[str, str]]) -> tuple[list[str], int, int]:
+    """Every shell script in the tree, called by a workflow or not, read for images pinned by digest
+    under a tag: (problems, scripts read, refs whose tag a manifest Dependabot reads also pins). Such
+    a ref must carry that pin's digest, as a workflow ref must."""
+    problems: list[str] = []
+    files = twinned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _WALK_PRUNE)
+        for f in sorted(filenames):
+            if not f.endswith((".sh", ".bash")):
+                continue
+            path = pathlib.Path(dirpath) / f
+            rel, files = path.relative_to(root).as_posix(), files + 1
+            for i, line in enumerate(path.read_text(errors="replace").split("\n"), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                for m in _SCRIPT_DIGEST_REF.finditer(line):
+                    repo, tag, digest = _image_ref(m.group(0))
+                    twins = pins.get((repo, tag), {}) if tag else {}
+                    twinned += bool(twins)
+                    if twins and digest not in twins:
+                        pin, pinned_in = sorted(twins.items())[0]
+                        problems.append(f"{rel}:{i} pins {repo}:{tag} at {digest[7:19]}, but {pinned_in} "
+                                        f"pins it at {pin[7:19]}, which Dependabot refreshes")
+    return problems, files, twinned
+
+
 def _script_ref_problem(word: str, allowed: set[str]) -> tuple[str, str]:
     """How the lexical rule reads one shell word naming an image: ("", "") when it carries a digest,
     is a tag the workflows build, or is empty; ("tag", the ref) when it names an image by tag; ("run
@@ -7471,8 +7504,11 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
                         "against a pinned SHA-256 first")
     dep = _read(root, ".github/dependabot.yml")
     covered = _dependabot_coverage(dep)
-    seen = _workflow_images(root, _dependabot_pins(root, covered))
+    pins = _dependabot_pins(root, covered)
+    seen = _workflow_images(root, pins)
     problems += seen["problems"]
+    off_pin, shell_files, twinned = _script_digests_off_pin(root, pins)
+    problems += off_pin
     wfdir = root / ".github" / "workflows"
     for wf in sorted(wfdir.glob("*.yml")) if wfdir.is_dir() else ():
         text = "\n".join(l for l in wf.read_text().splitlines() if not l.lstrip().startswith("#"))
@@ -7516,8 +7552,10 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
                f"refs, {commands} of them docker run, create or pull in run steps, each equal to "
                f"the pin of its tag in a manifest Dependabot reads where one pins it, and the docker "
                f"refs and IMAGE assignments in the {len(seen['scripts'])} shell scripts run steps call, "
-               f"where {len(seen['run time'])} refs are built at run time and not read; "
-               f"Dependabot reads all {len(required)} manifests that pin something")
+               f"where {len(seen['run time'])} refs are built at run time and not read; the "
+               f"{twinned} digest pins, in {shell_files} shell scripts, of a tag such a manifest "
+               f"pins carry its digest; Dependabot reads all {len(required)} manifests that pin "
+               f"something")
 
 
 # P0.6 — every release artifact carries a signed SLSA provenance attestation,
