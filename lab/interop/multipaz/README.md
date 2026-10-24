@@ -86,8 +86,8 @@ verifier answered the wallet `200` with its `redirect_uri`. All three controls w
 same against the tree's `packages/polaris-oid4vp`.
 
 The wallet builds from an empty Gradle cache in 46 s, and a run takes about 30 s once the cache is
-warm. The verification metadata lists 107 components; OSV-Scanner 2.6.0 finds no advisory against
-any of them (2026-10-11), and the SHA-256 the metadata pins for the Multipaz jar is the one Maven Central
+warm. The verification metadata lists 106 components; OSV-Scanner 2.6.0 finds no advisory against
+any of them (2026-10-24), and the SHA-256 the metadata pins for the Multipaz jar is the one Maven Central
 publishes. Changing one digit of it fails the build.
 
 ## What this does not establish
