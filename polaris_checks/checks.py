@@ -6928,7 +6928,10 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 # wallets' latest builds by design). And Dependabot reads every manifest that pins something
 # (each npm lockfile, each published Python package, each Dockerfile directory, the compose
 # files, and since 2026-10-11 each Go, Gradle and Swift manifest), since a pin nothing refreshes stops
-# receiving security updates.
+# receiving security updates. 2026-10-24: and each directory with a .txt or .in file that pins a
+# version with `==` (requirements files and the CI tool lists alike). Dependabot raised a HIGH
+# alert on a pin in lab/strategy/013, a directory its version updates did not read, because pip
+# was required only for the published packages.
 #
 # 2026-10-21: "every workflow image" is what the check reads, and no more. It reads each `image:`,
 # `container:` and `uses: docker://` value in a workflow; each image a `docker run`, `create` or
@@ -6947,6 +6950,7 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 # per branch, so the probe fails closed when either is replaced, and is moved by hand.
 _UNPINNED_BY_DESIGN = {"wallet-canary.yml"}
 _PUBLISHED_PY = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python", "polaris_cli")
+_REQUIREMENT_PIN = re.compile(r"(?m)^[A-Za-z0-9][\w.-]*(?:\[[\w.,-]*\])?\s*==")
 _WALK_PRUNE = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "dist", "build"}
 
 
@@ -7518,12 +7522,17 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
         problems += [f"{compose.name} runs {img} by tag" for img in
                      re.findall(r"(?m)^\s*image:\s*(\S+)", compose.read_text())
                      if not img.startswith("polaris-") and "@sha256:" not in img]
-    required = set()
+    required, pinned_py = set(), set()
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _WALK_PRUNE]
         r = os.path.relpath(dirpath, root)
         rel = "/" if r == "." else "/" + r.replace(os.sep, "/")
-        if rel.startswith(("/polaris_checks", "/.github")):
+        if rel.startswith("/polaris_checks"):
+            continue
+        if any(f.endswith((".txt", ".in")) and _REQUIREMENT_PIN.search(
+                (pathlib.Path(dirpath) / f).read_text(errors="replace")) for f in filenames):
+            pinned_py.add(rel)
+        if rel.startswith("/.github"):
             continue
         if "package-lock.json" in filenames:
             required.add(("npm", rel))
@@ -7538,6 +7547,7 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
         if "Package.swift" in filenames:
             required.add(("swift", rel))
     required |= {("pip", "/" + d) for d in _PUBLISHED_PY if (root / d / "pyproject.toml").is_file()}
+    required |= {("pip", d) for d in pinned_py}
     missing = sorted(required - covered)
     if missing:
         problems.append("Dependabot reads no " + ", ".join(f"{e} manifest in {d}" for e, d in missing[:4])
@@ -7554,8 +7564,9 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
                f"refs and IMAGE assignments in the {len(seen['scripts'])} shell scripts run steps call, "
                f"where {len(seen['run time'])} refs are built at run time and not read; the "
                f"{twinned} digest pins, in {shell_files} shell scripts, of a tag such a manifest "
-               f"pins carry its digest; Dependabot reads all {len(required)} manifests that pin "
-               f"something")
+               f"pins carry its digest; Dependabot reads all {len(required)} manifest directories "
+               f"that pin something, {len(pinned_py)} of them holding a .txt or .in file with a "
+               f"requirement line pinning a version with == (name==version)")
 
 
 # P0.6 — every release artifact carries a signed SLSA provenance attestation,

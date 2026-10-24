@@ -3260,8 +3260,40 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
         assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
             f"must FAIL when {why} appears that Dependabot does not read"
         (d / manifest).unlink()
+    # 2026-10-24: a requirements file pinning a version is a manifest too. Dependabot raised a HIGH
+    # alert on a pin in lab/strategy/013, a directory its version updates did not read, as pip was
+    # required only for the published packages. A file that pins nothing (a bare name, an include)
+    # is not one.
+    d = tmp_path / "lab/harness-x"
+    (d / "requirements.txt").write_text("-r ../other.txt\nrequests\n")
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on a requirements file that pins no version"
+    for pinned in ("gitpython==3.2.0\n", "uvicorn[standard] == 0.32.0 \\\n    --hash=sha256:" + "a" * 64 + "\n"):
+        (d / "requirements.txt").write_text(pinned)
+        found = checks.check_supply_chain_pins(tmp_path)[0]
+        assert found.level == "FAIL" and "pip manifest in /lab/harness-x" in found.message, \
+            f"must FAIL when Dependabot does not read a requirements file that pins {pinned!r}: {found.message}"
+    (d / "requirements.txt").unlink()
+    # A .in alone counts: pip-compile's input pins too, and its directory need hold no .txt.
+    (d / "tools.in").write_text("gitpython==3.2.0\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "pip manifest in /lab/harness-x" in found.message, \
+        f"must FAIL when Dependabot does not read a directory whose only pinning file is a .in: {found.message}"
+    (d / "tools.in").unlink()
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
         "must PASS again once the unread manifests are gone"
+    # Under any name and in .github too: CI's audit tools are pinned in .github/ci/audit.txt.
+    (tmp_path / ".github/ci").mkdir()
+    (tmp_path / ".github/ci/audit.txt").write_text((REPO / ".github/ci/audit.txt").read_text())
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on .github/ci/audit.txt while Dependabot reads /.github/ci"
+    dep = tmp_path / ".github/dependabot.yml"
+    entry = "  - package-ecosystem: pip\n    directory: /.github/ci\n"
+    assert dep.read_text().count(entry) == 1, "the fixture drifted: dependabot.yml has no one /.github/ci pip entry"
+    dep.write_text(dep.read_text().replace(entry, "  - package-ecosystem: pip\n    directory: /.github/ci-gone\n"))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "pip manifest in /.github/ci" in found.message, \
+        f"must FAIL when Dependabot no longer reads .github/ci/audit.txt: {found.message}"
 
 
 # A docker run, create or pull in a run step is read by docker's own option grammar, so the image is
