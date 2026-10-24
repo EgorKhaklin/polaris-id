@@ -25036,3 +25036,75 @@ def test_interop_page_count_check_discriminates(tmp_path):
         assert text != files[rel], "the mutation did not apply: %r" % (case,)
         write(**{rel: text})
         assert level() == "FAIL", "must FAIL when the counts or names disagree: %r" % (case,)
+
+
+def _check_mutation_drill(root=None):
+    """scripts/polaris-check-mutation-drill.py loaded as a module, a fresh copy each call (its
+    readers cache what they parse), reading the tree at `root` (the repository by default)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "check_mutation_drill", REPO / "scripts" / "polaris-check-mutation-drill.py")
+    drill = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(drill)
+    if root is not None:
+        drill.ROOT = root
+    return drill
+
+
+def _check_def(name):
+    tree = ast.parse((REPO / "polaris_checks" / "checks.py").read_text(encoding="utf-8"))
+    return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def test_check_mutation_drill_names_the_workflows_ci_calls(tmp_path):
+    # 2026-10-24: when the Trivy gate moved to image-cve-scan.yml, three checks came to read the scan
+    # through _ci_and_called_workflows, and the drill's reads_of had no door for it. It named no input
+    # for check_image_cve_scanning, so it reached 146 checks instead of 147, and it never deleted or
+    # commented out image-cve-scan.yml for any of the three.
+    drill = _check_mutation_drill()
+    want = {".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml"}
+    blind = [name for name in ("check_image_cve_scanning", "check_sbom_trivy_matches_scan",
+                               "check_ha_automation")
+             if not want <= set(drill.reads_of(_check_def(name)))]
+    assert not blind, ("the check-mutation drill must name ci.yml and the workflow ci.yml calls "
+                       "for: " + ", ".join(blind))
+
+    # The door follows ci.yml's calls rather than a file name: a tree whose ci.yml calls another
+    # workflow has that one named, and a workflow ci.yml does not call is not.
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+    (gh / "ci.yml").write_text("jobs:\n  scan:\n    uses: ./.github/workflows/scan.yml\n")
+    (gh / "scan.yml").write_text("on: workflow_call\n")
+    (gh / "image-cve-scan.yml").write_text("on: workflow_call\n")
+    named = set(_check_mutation_drill(tmp_path).reads_of(_check_def("check_image_cve_scanning")))
+    assert named == {".github/workflows/ci.yml", ".github/workflows/scan.yml"}, sorted(named)
+
+
+def test_check_mutation_drill_reaches_the_trivy_gate_of_check_image_cve_scanning(tmp_path):
+    # check_image_cve_scanning matches the gate through _trivy_gate, whose patterns are the module's
+    # _TRIVY_GATE tuple, and regexes_of took only patterns written in the check itself, so the drill
+    # had nothing to search for in it.
+    drill = _check_mutation_drill()
+    fn = _check_def("check_image_cve_scanning")
+    patterns = drill.regexes_of(fn)
+    assert {p.pattern for p in checks._TRIVY_GATE} <= patterns, \
+        "the drill must take the patterns _trivy_gate matches with: %s" % sorted(patterns)
+
+    # The effect: the drill's comment pass for this check, on a copy of the inputs it reads here,
+    # turns the check red; the same copy untouched is green.
+    for rel in (".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml", ".trivyignore",
+                "polaris_web/Dockerfile.prod", "polaris_web/Dockerfile.caddy",
+                "polaris_web/Dockerfile.pgbouncer", "polaris_web/Dockerfile.postgres"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    assert checks.check_image_cve_scanning(tmp_path)[0].level == "OK"
+    needles, hidden = drill.needles_of(fn), 0
+    for rel in sorted(set(drill.reads_of(fn))):
+        lines = (tmp_path / rel).read_text(encoding="utf-8").split("\n")
+        for i, line in enumerate(lines):
+            if drill._line_carries(line, needles, patterns) and not line.lstrip().startswith("#"):
+                lines[i], hidden = "# hidden: " + line.strip(), hidden + 1
+        (tmp_path / rel).write_text("\n".join(lines), encoding="utf-8")
+    assert hidden, "the comment pass must find lines carrying what the check matches"
+    assert checks.check_image_cve_scanning(tmp_path)[0].level == "FAIL", \
+        "with the gate's lines commented out, the check must fail"
