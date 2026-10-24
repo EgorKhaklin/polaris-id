@@ -3260,8 +3260,40 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
         assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
             f"must FAIL when {why} appears that Dependabot does not read"
         (d / manifest).unlink()
+    # 2026-10-24: a requirements file pinning a version is a manifest too. Dependabot raised a HIGH
+    # alert on a pin in lab/strategy/013, a directory its version updates did not read, as pip was
+    # required only for the published packages. A file that pins nothing (a bare name, an include)
+    # is not one.
+    d = tmp_path / "lab/harness-x"
+    (d / "requirements.txt").write_text("-r ../other.txt\nrequests\n")
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on a requirements file that pins no version"
+    for pinned in ("gitpython==3.2.0\n", "uvicorn[standard] == 0.32.0 \\\n    --hash=sha256:" + "a" * 64 + "\n"):
+        (d / "requirements.txt").write_text(pinned)
+        found = checks.check_supply_chain_pins(tmp_path)[0]
+        assert found.level == "FAIL" and "pip manifest in /lab/harness-x" in found.message, \
+            f"must FAIL when Dependabot does not read a requirements file that pins {pinned!r}: {found.message}"
+    (d / "requirements.txt").unlink()
+    # A .in alone counts: pip-compile's input pins too, and its directory need hold no .txt.
+    (d / "tools.in").write_text("gitpython==3.2.0\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "pip manifest in /lab/harness-x" in found.message, \
+        f"must FAIL when Dependabot does not read a directory whose only pinning file is a .in: {found.message}"
+    (d / "tools.in").unlink()
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
         "must PASS again once the unread manifests are gone"
+    # Under any name and in .github too: CI's audit tools are pinned in .github/ci/audit.txt.
+    (tmp_path / ".github/ci").mkdir()
+    (tmp_path / ".github/ci/audit.txt").write_text((REPO / ".github/ci/audit.txt").read_text())
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on .github/ci/audit.txt while Dependabot reads /.github/ci"
+    dep = tmp_path / ".github/dependabot.yml"
+    entry = "  - package-ecosystem: pip\n    directory: /.github/ci\n"
+    assert dep.read_text().count(entry) == 1, "the fixture drifted: dependabot.yml has no one /.github/ci pip entry"
+    dep.write_text(dep.read_text().replace(entry, "  - package-ecosystem: pip\n    directory: /.github/ci-gone\n"))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "pip manifest in /.github/ci" in found.message, \
+        f"must FAIL when Dependabot no longer reads .github/ci/audit.txt: {found.message}"
 
 
 # A docker run, create or pull in a run step is read by docker's own option grammar, so the image is
@@ -3353,6 +3385,37 @@ def test_supply_chain_pins_holds_a_service_image_to_the_dependabot_pin(tmp_path)
     found = checks.check_supply_chain_pins(tmp_path)[0]
     assert found.level == "FAIL" and "runs postgres:16-alpine at bbbbbbbbbbbb, but polaris_web/Dockerfile.postgres" \
         in found.message, f"must FAIL on a service image the same way: {found.message}"
+
+
+def test_supply_chain_pins_holds_every_script_pin_to_the_dependabot_pin(tmp_path):
+    # 2026-10-21: scripts/polaris-deploy.sh re-owned the edge's volumes with alpine:3.24 at an older
+    # digest than the Dockerfiles' pin, which Dependabot refreshes, and nothing saw it. No workflow
+    # calls that script, and in the scripts a run step does call only a ref by tag was refused, not
+    # a digest that differs.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    deploy = tmp_path / "scripts/polaris-deploy.sh"
+    good = deploy.read_text()
+    pin = "alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+    assert good.count(pin) == 2, "the fixture drifted: polaris-deploy.sh no longer pins alpine:3.24 twice"
+    deploy.write_text(good.replace(pin, f"alpine:3.24@sha256:{'d' * 64}", 1))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and ("scripts/polaris-deploy.sh:289 pins alpine:3.24 at dddddddddddd, but "
+                                      "polaris_web/Dockerfile.etcd pins it at 294b683cb724") in found.message, \
+        f"must FAIL, naming both files, on a script no workflow calls: {found.message}"
+    deploy.write_text(good)
+    # As a ${VAR:-...} default the same; a comment is not a pin, and a tag no manifest Dependabot
+    # reads pins is refreshed by hand.
+    script = tmp_path / "lab/zz-fixture.sh"
+    script.write_text('#!/usr/bin/env bash\nIMG="${IMG:-docker.io/library/alpine:3.24@sha256:' + "e" * 64 + '}"\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "lab/zz-fixture.sh:2 pins alpine:3.24 at eeeeeeeeeeee" in found.message, \
+        f"must FAIL on a pinned default naming the same image another way: {found.message}"
+    script.write_text("#!/usr/bin/env bash\n# alpine:3.24@sha256:" + "e" * 64 + "\nIMG=alpine:3.99@sha256:"
+                      + "e" * 64 + "\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on a commented pin and an untwinned tag: {found.message}"
 
 
 def test_supply_chain_pins_fails_closed_on_an_unresolved_variable(tmp_path):
