@@ -7,7 +7,7 @@ toolchain go1.27.1
 require (
 	github.com/lestrrat-go/jwx/v4 v4.5.0
 	github.com/ncruces/go-sqlite3/gormlite v0.34.0
-	github.com/privacybydesign/irmago v1.4.1
+	github.com/privacybydesign/irmago v1.4.2
 	github.com/sirupsen/logrus v1.10.2
 )
 
