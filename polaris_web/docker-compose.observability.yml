@@ -116,7 +116,7 @@ services:
       options: { max-size: 10m, max-file: '3' }
 
   grafana:
-    image: grafana/grafana@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f  # 13.2.1
+    image: grafana/grafana@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f  # 13.2.4
     container_name: polaris-grafana
     restart: unless-stopped
     environment:
