@@ -11038,7 +11038,7 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     # the two-witness overclaim returns
     write(readme=README + "Two independent witnesses for every cryptographic verdict.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on the two-witness overclaim"
-    # 2026-10-24 (owner): no comparison and no limits section is honest, as long as nothing is claimed
+    # a README with no comparison is honest, as long as nothing is claimed
     write(readme="# POLARIS\n\nPre-pilot.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", \
         "must PASS a README with no comparison and nothing said about correlation"

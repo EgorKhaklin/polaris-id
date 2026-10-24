@@ -14862,10 +14862,9 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
     an umbrella (which reads as general anonymous credentials), and the README
     must state the boundary explicitly: unlinkable verification records + a
     Merkle-membership proof, and NOT a general selective-disclosure / anonymous-
-    credential system. Since 2026-10-24 (owner: no limitation lists in public text) the
-    boundary may be the positive definition instead, "zero knowledge here means two specific
-    things", naming both (no token identifier stored, a membership proof) in that sentence, which
-    bounds the word as tightly without listing what Polaris is not. Detection:
+    credential system. Since 2026-10-24 the boundary may be the positive definition instead,
+    "zero knowledge here means two specific things", naming both (no token identifier stored, a
+    membership proof) in that sentence, which bounds the word as tightly. Detection:
     test_checks restores the umbrella tagline and removes the boundary sentence in both forms."""
     readme = _read(root, "README.md")
     if not readme:
@@ -15760,12 +15759,12 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     never "certified"; no field of the card, descriptions and image text included,
     calls Polaris national, deployed, piloted or production-ready, or unlinkable
     without its issuer qualifier (each occurrence), in any tag of that field, however it is quoted or
-    cased; the README must not carry the retired overclaims; a README comparison that
-    has a Polaris row must keep the honest 'Deployed to a real population' column
+    cased; the README must not carry the retired overclaims; a README comparison with a
+    row whose first cell begins with Polaris must keep the honest 'Deployed to a real population' column
     that marks Polaris the one system NOT deployed, so its design ticks are not read
     as a deployment; and a README that speaks of unlinkability or correlation must give
-    both sides of it. Since 2026-10-24 (owner) the README carries neither the comparison
-    nor a limits section, and the two rules hold whatever comes back. Detection: test_checks restores each refused
+    both sides of it. Since 2026-10-24 the README carries no comparison, and the two rules
+    hold whatever comes back. Detection: test_checks restores each refused
     word in each kind of field, in a second tag, in single quotes, unquoted and in upper
     case, a longer name without "pre-pilot", a missing or empty name field, a bare
     'unlinkable' beside a qualified one, an overclaiming <title> beside an innocent one
@@ -15825,9 +15824,8 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
                          f"the README carries the overclaim {bad!r}; shrink the claim to what the code does now "
                          "(the hardware token is modeled; Polaris is pre-pilot)")
     # A comparison is honest only with the column that marks Polaris the one system not
-    # deployed. The README carries none since 2026-10-24 (owner: limits live in the private
-    # folder), and a comparison that comes back, in any table that gives Polaris a row, brings
-    # the column with it.
+    # deployed. The README carries none since 2026-10-24; one that comes back, in a table with a
+    # row whose first cell begins with Polaris, brings the column with it.
     compared = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|", readme, re.M)
     if compared and "Deployed to a real population" not in readme:
         return _fail("public_claims",
