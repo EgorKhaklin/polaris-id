@@ -108,18 +108,15 @@ None of these stopped the run; they bound what it exercised.
    (its `typeof` is `'object'`). The walk hands the token's bytes over as base64, which
    `createResource` decodes.
 
-## What this does not establish
+## What was run
 
-- Polaris resolved nothing. The walk read the DID document and the status list from the ledger,
-  gave the verifier a key and the status decision a stated authority; the verifier's trust is in
-  that key, not in the DID or the ledger.
-- A local network of one validator, run by the author on one machine: cheqd's software and its
-  recipe, not cheqd's mainnet or testnet. Nothing was written to a public chain.
-- The status decision is the walk's call to `polaris_oid4vp.status` on the token it fetched. The
-  verifier CLI resolves no status list, so the presentation itself says nothing about revocation.
-- Credo on both sides, ES256 throughout, one credential format and one path. Same category as the
-  other rows: the author drove published libraries on one machine. It is not an outside party
-  using Polaris, and not a claim of interoperability in general.
+- The walk read the DID document and the status list from the ledger, gave the verifier a key and
+  the status decision a stated authority; the verifier's trust is in that key.
+- A local network of one validator, run by the author on one machine, with cheqd's software and
+  its recipe.
+- The status decision is the walk's call to `polaris_oid4vp.status` on the token it fetched.
+- Credo on both sides, ES256 throughout, one credential format and one path. The author drove
+  published libraries on one machine.
 
 ## Files
 

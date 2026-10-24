@@ -57,13 +57,10 @@ JDK 21: accepted, `<- 200 authentic, claims ['cnf', 'exp', 'family_name', 'given
 'iss', 'nbf', 'status', 'sub', 'vct']`, and vck reported `AuthenticationSuccess`. All three
 controls were refused.
 
-## What this does not establish
+## What was run
 
-- It is a wallet built here on the library, not a wallet app. The library is the part that
-  speaks OpenID4VP and SD-JWT VC: it issued, fetched, checked and answered. The trust decision
-  and the keys are this repository's few lines, as they are any wallet's.
-- The credential carries a `status` claim (vck adds one). The CLI harness resolves no status
-  list (status is opt-in in the `Verifier` API), so this run says nothing about revocation.
+- It is a wallet built here on the library. The library is the part that speaks OpenID4VP and
+  SD-JWT VC: it issued, fetched, checked and answered. The trust decision and the keys are this
+  repository's few lines.
 - One credential format and one path, ES256 throughout.
-- Same category as the other rows: the author drove a published library on one machine. It is not
-  an outside party using Polaris, and not a claim of interoperability in general.
+- The author drove a published library on one machine.

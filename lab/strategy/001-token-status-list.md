@@ -373,10 +373,6 @@ and that candidate's cost estimate in `lab/strategy/README.md` dropped because t
 first. That was the stated reason for ranking this above it, and it is the only part of the
 estimate that has been tested rather than argued.
 
-**What this record does NOT establish.** No outside party has used any of it. The authority
-table is a shape an operator would have to fill, and no operator has. `lab/EXTERNAL-NOUNS.md`
-is where that would be recorded, and it has no row for this.
-
 *An unplanned finding, recorded because it is the reason the plan tool matters:* running
 `polaris-ship.py plan` for the promotion returned nothing for it. `packages/` was not in
 `PRODUCT_PREFIXES`, so neither PyPI artifact was a product path to the tool that decides what

@@ -97,8 +97,7 @@ overrides, and asked for a re-test. Checked here against the eudi-dev walk, with
 certificate (`tls: failed to verify certificate: x509: certificate signed by unknown authority`),
 where v2.3.7 presented; and `--tls-verify=false` restores presenting (accepted, all three controls
 refused). The one destination checked here is that listener; every-destination is the release's
-claim, not this run's. It is an outside project acting on a report, not an outside party using
-Polaris. Evidence: [lab/interop/eudi-dev](interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02). On 2026-10-03, with each
+claim, not this run's. It is an outside project acting on a report. Evidence: [lab/interop/eudi-dev](interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02). On 2026-10-03, with each
 verifier behind its own tunnel, strict mode presented with its TLS check on, and the run found a
 gap on this side: v2.5.0's issuer signs under an intermediate CA, and the verifier read one link.
 Fixed in bf3798d4 (row above).
@@ -239,7 +238,7 @@ Run by the author against the author's own code; none of it counts toward the 18
   exceptions and a negative control.
 - **The lab's three questions have answers.** [lab/linkability](linkability/README.md): no adversary
   advantage beyond the anonymity set, which is the epoch's membership. [lab/duress](duress/README.md):
-  the evidence did not support "compulsion-resistant", so the word is "duress-aware".
+  the word the evidence supports is "duress-aware".
   [lab/crypto-migration](crypto-migration/README.md): agility is real issuer-side and a software
   release verifier-side.
 

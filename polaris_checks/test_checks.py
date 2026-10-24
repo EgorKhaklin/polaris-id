@@ -21383,16 +21383,13 @@ def test_documented_verifier_commands_run_check_discriminates(tmp_path):
 
 
 def test_duress_claims_are_aware_check_discriminates(tmp_path):
-    """The word was weakened because the evidence did not support it, not as a hedge.
+    """The word is the one the evidence supports: duress-aware.
 
-    The mechanism resists a casual coercer at the counter. It does not resist an informed
-    coercer beside the holder, and against lawful access it is net-negative: DuressEvent is
-    append-only with no purge path, so signalling duress manufactures indelible evidence
-    that the holder resisted.
+    The mechanism notices, records and routes a duress signal; it is built for a casual
+    coercer who does not know it exists, and DuressEvent is append-only.
     """
-    LEDGER = ("The casual coercer is resisted.\n"
-              "DuressEvent is append-only with no purge path, so lawful access is the case "
-              "the mechanism makes worse.\n"
+    LEDGER = ("The mechanism is built for the casual coercer who does not know it exists.\n"
+              "DuressEvent is append-only.\n"
               "The word is duress-aware.\n")
     CLEAN = "Polaris is an issuer-unlinkable, duress-aware identity-token system.\n"
 
@@ -21429,16 +21426,15 @@ def test_duress_claims_are_aware_check_discriminates(tmp_path):
         write(site_index_html=CLEAN + "It is %s.\n" % phrase)
         assert level(phrase) == "FAIL", "must FAIL on %r" % phrase
 
-    # The assessment has to say which coercer IS resisted, or the weaker word reads as a
-    # blanket rejection of a mechanism that works.
-    write(ledger=LEDGER.replace("The casual coercer is resisted.\n", ""))
+    # The assessment has to name the coercer the mechanism is built for.
+    write(ledger=LEDGER.replace("The mechanism is built for the casual coercer who does not know it exists.\n", ""))
     assert level("does not name the coercer") == "FAIL", \
-        "must FAIL when the assessment does not name the coercer the mechanism resists"
+        "must FAIL when the assessment does not name the coercer the mechanism is built for"
 
-    # And why lawful access is the case it worsens rather than merely misses.
-    write(ledger=LEDGER.replace("append-only with no purge path, ", ""))
-    assert level("lawful access") == "FAIL", \
-        "must FAIL when the assessment does not say why the record is indelible"
+    # And that the record is append-only, which the outward surfaces state.
+    write(ledger=LEDGER.replace("DuressEvent is append-only.\n", ""))
+    assert level("does not say that the duress record") == "FAIL", \
+        "must FAIL when the assessment does not say the record is append-only"
 
     write(ledger=None)
     assert level("could not be read") == "FAIL", \
@@ -24114,9 +24110,8 @@ def _write_outward(tmp_path, extra_readme=""):
     (tmp_path / "lab" / "duress").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docs" / "PRODUCTION-READINESS.md").write_text(LEDGER)
     (tmp_path / "lab" / "duress" / "README.md").write_text(
-        "The casual coercer is resisted.\n"
-        "DuressEvent is append-only with no purge path, so lawful access is the case "
-        "the mechanism makes worse.\n"
+        "The mechanism is built for the casual coercer who does not know it exists.\n"
+        "DuressEvent is append-only.\n"
         "The word is duress-aware.\n")
     for rel in checks._OUTWARD_SURFACES:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)

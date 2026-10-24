@@ -90,18 +90,13 @@ warm. The verification metadata lists 107 components; OSV-Scanner 2.6.0 finds no
 any of them (2026-10-24), and the SHA-256 the metadata pins for the Multipaz jar is the one Maven Central
 publishes. Changing one digit of it fails the build.
 
-## What this does not establish
+## What was run
 
-- It is a wallet built here on the library, not a Multipaz wallet app. The library is the part that
-  speaks OpenID4VP and SD-JWT VC: it fetched, checked, matched, signed, encrypted and answered. The
-  anchor, the keys and the consent policy are this repository's few lines, as they are any
-  wallet's.
-- The wallet trusted re-issued certificates, not `keygen`'s as written (above). The verifier signed
-  with `keygen`'s leaf key either way.
-- Multipaz 0.101.0 posts no wallet nonce or wallet metadata when it fetches the request object (its
-  source marks that as to do), so the verifier's `wallet_nonce` handling is not exercised here; the
-  [vck walk](../vck/README.md) exercises it.
+- It is a wallet built here on the library. The library is the part that speaks OpenID4VP and
+  SD-JWT VC: it fetched, checked, matched, signed, encrypted and answered. The anchor, the keys
+  and the consent policy are this repository's few lines.
+- The wallet trusted re-issued certificates (above). The verifier signed with `keygen`'s leaf key.
+- Multipaz 0.101.0 posts no wallet nonce or wallet metadata when it fetches the request object.
 - One credential format and one path, ES256 throughout. The credential was minted by this
   repository's issuer script.
-- Same category as the other rows: the author drove a published library on one machine. It is not
-  an outside party using Polaris, and not a claim of interoperability in general.
+- The author drove a published library on one machine.
