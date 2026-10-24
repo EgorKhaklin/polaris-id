@@ -1,11 +1,12 @@
 {
- "ran_at": "2026-10-24T17:03:27Z",
+ "ran_at": "2026-10-24T17:08:11Z",
  "eu_image": "ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint@sha256:b56390f2078f9ce705f2b20db86fdd52297c0a587dd4110c82f173c223a3a07f",
  "eu_commit": "19537e72a633b25c94b7450bf582760f52ab2cc9",
  "jdk_image": "gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7",
  "node_image": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
  "kotlinc_sha256": "ba1b9e6eb6ddc3275079224f2e9ea4a2b02eef7d59ce2d38404f04b22613c20a",
  "owf_mdoc": "0.8.3",
+ "peculiar_x509": "2.2.0",
  "owf_context_commit": "0666f743e7fccab8ac97ce92191055e12d745ebb",
  "network": "none",
  "docker": "29.8.1",

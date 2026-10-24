@@ -114,7 +114,7 @@
    "/inputs/unrelated-root.pem"
   ],
   "roots_host": [
-   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/unrelated-root.pem"
+   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/unrelated-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:hYCOwiQt8Akv_CE2qZS6GVgh5kS9WyUVIbKa3TqGjXs",
@@ -138,7 +138,7 @@
   "case": "flipped MSO signature byte",
   "at": "2026-10-11T04:54:42Z",
   "response": "/inputs/capture-pid/flipped.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-pid/flipped.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-pid/flipped.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
@@ -167,7 +167,7 @@
   "case": "bad DER x5chain certificate",
   "at": "2026-10-11T04:54:42Z",
   "response": "/inputs/capture-pid/bad-der.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-pid/bad-der.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-pid/bad-der.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
@@ -196,7 +196,7 @@
   "case": "bad protected header",
   "at": "2026-10-11T04:54:42Z",
   "response": "/inputs/capture-pid/bad-header.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-pid/bad-header.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-pid/bad-header.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
@@ -225,7 +225,7 @@
   "case": "one element value changed",
   "at": "2026-10-11T04:54:42Z",
   "response": "/inputs/capture-pid/value.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-pid/value.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-pid/value.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
@@ -312,7 +312,7 @@
   "case": "docType relabeled",
   "at": "2026-10-11T04:54:42Z",
   "response": "/inputs/capture-pid/doctype.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-pid/doctype.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-pid/doctype.cbor",
   "roots": [
    "/captures/capture-pid/iaca-root.pem"
   ],
@@ -450,7 +450,7 @@
    "/inputs/unrelated-root.pem"
   ],
   "roots_host": [
-   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/unrelated-root.pem"
+   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/unrelated-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:JdEtfkXz37oqVInqrE-udxigQRNGL7eehkKbLwJgicE",
@@ -474,7 +474,7 @@
   "case": "flipped MSO signature byte",
   "at": "2026-10-11T04:52:32Z",
   "response": "/inputs/capture-mdl/flipped.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl/flipped.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl/flipped.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
@@ -503,7 +503,7 @@
   "case": "bad DER x5chain certificate",
   "at": "2026-10-11T04:52:32Z",
   "response": "/inputs/capture-mdl/bad-der.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl/bad-der.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl/bad-der.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
@@ -532,7 +532,7 @@
   "case": "bad protected header",
   "at": "2026-10-11T04:52:32Z",
   "response": "/inputs/capture-mdl/bad-header.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl/bad-header.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl/bad-header.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
@@ -561,7 +561,7 @@
   "case": "one element value changed",
   "at": "2026-10-11T04:52:32Z",
   "response": "/inputs/capture-mdl/value.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl/value.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl/value.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
@@ -648,7 +648,7 @@
   "case": "docType relabeled",
   "at": "2026-10-11T04:52:32Z",
   "response": "/inputs/capture-mdl/doctype.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl/doctype.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl/doctype.cbor",
   "roots": [
    "/captures/capture-mdl/iaca-root.pem"
   ],
@@ -741,7 +741,7 @@
    "/inputs/unrelated-root.pem"
   ],
   "roots_host": [
-   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/unrelated-root.pem"
+   "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/unrelated-root.pem"
   ],
   "handover": {
    "client_id": "x509_hash:nhxRnF0JmtkfJaG1YodH9vqu-zSpZ8zffhQ6DOfLJuE",
@@ -757,7 +757,7 @@
   "case": "flipped MSO signature byte",
   "at": "2026-10-11T04:56:57Z",
   "response": "/inputs/capture-mdl-direct-post/flipped.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl-direct-post/flipped.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl-direct-post/flipped.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
@@ -778,7 +778,7 @@
   "case": "bad DER x5chain certificate",
   "at": "2026-10-11T04:56:57Z",
   "response": "/inputs/capture-mdl-direct-post/bad-der.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl-direct-post/bad-der.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl-direct-post/bad-der.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
@@ -799,7 +799,7 @@
   "case": "bad protected header",
   "at": "2026-10-11T04:56:57Z",
   "response": "/inputs/capture-mdl-direct-post/bad-header.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl-direct-post/bad-header.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl-direct-post/bad-header.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
@@ -820,7 +820,7 @@
   "case": "one element value changed",
   "at": "2026-10-11T04:56:57Z",
   "response": "/inputs/capture-mdl-direct-post/value.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl-direct-post/value.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl-direct-post/value.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],
@@ -883,7 +883,7 @@
   "case": "docType relabeled",
   "at": "2026-10-11T04:56:57Z",
   "response": "/inputs/capture-mdl-direct-post/doctype.cbor",
-  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.cLzgl0RTlU/inputs/capture-mdl-direct-post/doctype.cbor",
+  "response_host": "/var/folders/12/mk5jgv9x59lf5svqmj_2byhc0000gn/T/tmp.woyLYMI2eF/inputs/capture-mdl-direct-post/doctype.cbor",
   "roots": [
    "/captures/capture-mdl-direct-post/iaca-root.pem"
   ],

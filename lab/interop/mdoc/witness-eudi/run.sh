@@ -96,11 +96,13 @@ COPYFILE_DISABLE=1 tar -C "$HERE" -cf - package.json package-lock.json | docker 
 grep -oE "https?://[^/ ]+" "$WORK/phase1-fetches.txt" | sort -u > "$WORK/phase1.hosts"
 [ -s "$WORK/phase1.hosts" ] || { echo "phase 1 logged no fetch" >&2; exit 1; }
 sed 's/^/        phase 1 contacted /' "$WORK/phase1.hosts"
-# The version run.json records is the installed package's own, never a literal.
-OWF_MDOC="$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 -v "$PHASE1_VOL":/deps:ro "$NODE_IMAGE" \
-  node -p "require('/deps/node_modules/@owf/mdoc/package.json').version")"
-[[ "$OWF_MDOC" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "@owf/mdoc's installed version unread: '$OWF_MDOC'" >&2; exit 1; }
-echo "        @owf/mdoc $OWF_MDOC installed"
+# The versions run.json records are the installed packages' own, never literals.
+VERSIONS="$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 -v "$PHASE1_VOL":/deps:ro "$NODE_IMAGE" \
+  node -p "['@owf/mdoc', '@peculiar/x509'].map((p) => require('/deps/node_modules/' + p + '/package.json').version).join(' ')")"
+read -r OWF_MDOC PECULIAR_X509 <<<"$VERSIONS"
+[[ "$OWF_MDOC $PECULIAR_X509" == "$VERSIONS" && "$OWF_MDOC" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$PECULIAR_X509" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || { echo "the installed versions unread: '$VERSIONS'" >&2; exit 1; }
+echo "        @owf/mdoc $OWF_MDOC and @peculiar/x509 $PECULIAR_X509 installed"
 # Phase 2: the volume read-only; the script beside a link to its node_modules, in a tmpfs.
 owf() {  # $1 the witness script, $2 its output
   docker run --rm --network none --read-only --tmpfs /w --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 -v "$PHASE1_VOL":/deps:ro -v "$1":/s/witness_owf.mjs:ro -v "$MDOC":/captures:ro -v "$WORK/inputs":/inputs:ro -v "$WORK/jobs.json":/in/jobs.json:ro "$NODE_IMAGE" \
@@ -123,13 +125,13 @@ done
 for w in eu owf; do sed -n 's/^WITNESS //p' "$WORK/$w.out" > "$RESULTS/$w.jsonl"; done
 cp "$WORK/jobs.json" "$WORK/inputs/unrelated-root.pem" "$WORK/phase1-fetches.txt" "$RESULTS/"
 write_run() {  # $1 the tests the witness mutation failed ("pending" before it ran)
-  "$PYTHON" -I - "$RESULTS/run.json" "$WORK/phase1.hosts" "$EU_IMAGE" "$EU_COMMIT" "$JDK_IMAGE" "$NODE_IMAGE" "$KOTLINC_SHA256" "$(docker version --format '{{.Server.Version}}')" "$1" "$OWF_MDOC" <<'EOF'
+  "$PYTHON" -I - "$RESULTS/run.json" "$WORK/phase1.hosts" "$EU_IMAGE" "$EU_COMMIT" "$JDK_IMAGE" "$NODE_IMAGE" "$KOTLINC_SHA256" "$(docker version --format '{{.Server.Version}}')" "$1" "$OWF_MDOC" "$PECULIAR_X509" <<'EOF'
 import datetime, json, sys
-out, hosts, eu_image, eu_commit, jdk, node, kotlinc, docker, mutation, owf_mdoc = sys.argv[1:]
+out, hosts, eu_image, eu_commit, jdk, node, kotlinc, docker, mutation, owf_mdoc, peculiar_x509 = sys.argv[1:]
 json.dump({
     "ran_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "eu_image": eu_image, "eu_commit": eu_commit, "jdk_image": jdk, "node_image": node,
-    "kotlinc_sha256": kotlinc, "owf_mdoc": owf_mdoc, "owf_context_commit": "0666f743e7fccab8ac97ce92191055e12d745ebb",
+    "kotlinc_sha256": kotlinc, "owf_mdoc": owf_mdoc, "peculiar_x509": peculiar_x509, "owf_context_commit": "0666f743e7fccab8ac97ce92191055e12d745ebb",
     "network": "none", "docker": docker,
     "phase1_hosts": sorted({h.split("://", 1)[1] for h in open(hosts).read().split()}),
     "owf_sign1_verify_true_fails": mutation.split(),
