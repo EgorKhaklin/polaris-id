@@ -69,12 +69,12 @@ the code did not. Stripping there fixed all 71, and the 58 detection-test fixtur
 their own property in a comment were repaired in the same ship -- a fixture that states its
 property in a comment is testing the thing the drill forbids.
 
-The drill gates on every push, across THREE mutations. The first comments out every
-line carrying a check's own search strings: 134 checks reached, none survive. The second deletes
-every file a check names and requires it to notice, which is what reaches the ones that compute
-rather than grep: 291 reached, none survive, and it found four passing vacuously when it was
-written, two of them constitutional. C10's money-table prohibition and the canonical-version
-rule were both perfectly true of a schema and an `app.py` that did not exist.
+The drill gates on every push, across THREE mutations. The first comments out every line carrying a
+check's own search strings: none survive. The second deletes every file a check names and requires
+it to notice, which is what reaches the ones that compute rather than grep: none survive, and it
+found four passing vacuously when it was written, two of them constitutional. C10's money-table
+prohibition and the canonical-version rule were both perfectly true of a schema and an `app.py` that
+did not exist.
 
 The third is aimed at the gap this paragraph used to send a reviewer to. A check that computes over
 a file which is PRESENT but wrong was caught by neither of the first two, since one only removes
