@@ -3175,18 +3175,31 @@ def test_sbom_trivy_match_check_discriminates(tmp_path):
         "must FAIL when the generator names no version at all, rather than passing on the scanner's alone"
 
 
-def test_supply_chain_pins_check_discriminates(tmp_path):
-    files = ["polaris_web/Dockerfile.caddy", "polaris_web/Dockerfile.etcd",
-             "polaris_web/docker-compose.prod.yml", "polaris_web/docker-compose.yml",
-             "scripts/polaris-helm-drill.sh",
-             ".github/dependabot.yml", "sdk/typescript/package-lock.json",
+def _supply_chain_tree(tmp_path):
+    """What check_supply_chain_pins reads, copied from the real tree: Dependabot's config, two of
+    the manifests it must read, the workflows, the Dockerfiles and compose files, and every shell
+    script, so each script a run step calls is there to be read."""
+    files = [".github/dependabot.yml", "sdk/typescript/package-lock.json",
              "packages/polaris-verify/pyproject.toml"]
-    files += [str(p.relative_to(REPO)) for p in sorted((REPO / ".github/workflows").glob("*.yml"))]
+    for pattern in (".github/workflows/*.yml", "polaris_web/Dockerfile*", "polaris_web/docker-compose*.yml",
+                    "scripts/**/*.sh", "lab/**/*.sh", "deploy/**/*.sh"):
+        files += [str(p.relative_to(REPO)) for p in sorted(REPO.glob(pattern)) if p.is_file()]
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
+
+
+def _supply_chain_workflow(root, steps, name="zz-fixture.yml", job=""):
+    """Write a workflow of one job, whose steps start on line 8, into the tree at `root`."""
+    (root / ".github/workflows" / name).write_text(
+        "name: fixture\non: workflow_dispatch\npermissions: {}\njobs:\n  one:\n    runs-on: ubuntu-latest\n"
+        + job + "    steps:\n" + steps)
+
+
+def test_supply_chain_pins_check_discriminates(tmp_path):
+    _supply_chain_tree(tmp_path)
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
-        "must PASS on the real Dockerfiles, drill, workflows and Dependabot config"
+        "must PASS on the real Dockerfiles, scripts, workflows and Dependabot config"
 
     def broken(rel, old, new, why):
         path = tmp_path / rel
@@ -3233,6 +3246,228 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
         (d / manifest).unlink()
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
         "must PASS again once the unread manifests are gone"
+
+
+# A docker run, create or pull in a run step is read by docker's own option grammar, so the image is
+# the first word that is neither an option nor an option's value. One test per way an image is named.
+def test_supply_chain_pins_reads_a_tagged_docker_run(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm redis:8-alpine redis-cli --version\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs redis:8-alpine by tag (docker run)" in found.message, \
+        f"must FAIL, naming the line, when a run step runs an image by tag: {found.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm redis:8-alpine@sha256:"
+                           "3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 redis-cli\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on the pinned form: {found.message}"
+
+
+def test_supply_chain_pins_reads_the_image_after_continued_options(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, (
+        "      - run: |\n"
+        "          docker run -d --name pg --network pgnet \\\n"
+        "            -e POSTGRES_PASSWORD=x -v /tmp/a:/b:ro \\\n"
+        "            postgres:16-alpine -c fsync=off\n"))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:11 runs postgres:16-alpine by tag (docker run)" in found.message, \
+        f"must FAIL on an image two continuation lines down, after options that take values: {found.message}"
+
+
+def test_supply_chain_pins_reads_a_tagged_docker_pull(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker pull --platform linux/arm64 -q alpine:3.24\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs alpine:3.24 by tag (docker pull)" in found.message, \
+        f"must FAIL when a run step pulls an image by tag: {found.message}"
+
+
+def test_supply_chain_pins_reads_a_tagged_docker_create(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker container create --name c -u 1000 -it busybox:1.37 sh\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs busybox:1.37 by tag (docker create)" in found.message, \
+        f"must FAIL when a run step creates a container from an image by tag: {found.message}"
+
+
+def test_supply_chain_pins_reads_container_and_docker_uses(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, "      - uses: docker://alpine:3.24\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs alpine:3.24 by tag (uses:)" in found.message, \
+        f"must FAIL on a docker:// action by tag: {found.message}"
+    _supply_chain_workflow(tmp_path, "      - run: true\n", job="    container: node:22-alpine\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:7 runs node:22-alpine by tag (container:)" in found.message, \
+        f"must FAIL on a job container by tag: {found.message}"
+
+
+# A workflow copy of an image a Dockerfile or compose file also pins must carry that pin's digest:
+# Dependabot refreshes the manifest and never the workflow, so a copy left behind turns this red.
+def test_supply_chain_pins_holds_a_run_step_to_the_dependabot_pin(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, f"      - run: docker run --rm postgres:16-alpine@sha256:{'a' * 64} true\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and ("zz-fixture.yml:8 runs postgres:16-alpine at aaaaaaaaaaaa, but "
+                                      "polaris_web/Dockerfile.postgres pins it at 721873c34ceb") in found.message, \
+        f"must FAIL, naming both files, when a run step's digest is not the one Dependabot refreshes: {found.message}"
+
+
+def test_supply_chain_pins_holds_a_service_image_to_the_dependabot_pin(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    ci = tmp_path / ".github/workflows/ci.yml"
+    good = ci.read_text()
+    pin = "image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+    assert pin in good, "the fixture drifted: ci.yml no longer names the Dockerfile's postgres pin in an image: line"
+    ci.write_text(good.replace(pin, f"image: postgres:16-alpine@sha256:{'b' * 64}", 1))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "runs postgres:16-alpine at bbbbbbbbbbbb, but polaris_web/Dockerfile.postgres" \
+        in found.message, f"must FAIL on a service image the same way: {found.message}"
+
+
+def test_supply_chain_pins_fails_closed_on_an_unresolved_variable(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, '      - run: docker run --rm "$PG_IMAGE" true\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs $PG_IMAGE, and no env block in zz-fixture.yml names " \
+        "$PG_IMAGE" in found.message, f"must FAIL on a variable no env block names: {found.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm ${{ matrix.image }} true\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "names ${{matrix.image}}" in found.message, \
+        f"must FAIL on an expression it cannot resolve: {found.message}"
+    step = ("      - name: env\n        env:\n          PG_IMAGE: postgres:16-alpine%s\n"
+            '        run: docker run --rm "$PG_IMAGE" true\n')
+    _supply_chain_workflow(tmp_path, step % "")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:11 runs postgres:16-alpine by tag (docker run)" in found.message, \
+        f"must FAIL on a tag an env block hands the run step: {found.message}"
+    _supply_chain_workflow(tmp_path, step % "@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when the env block names the pinned image: {found.message}"
+
+
+def test_supply_chain_pins_fails_when_a_docker_run_goes_unread(tmp_path):
+    # A parser that silently finds nothing must not pass: here the step's key is quoted, which the
+    # run-step reader does not take for `run:`, so the parse of this workflow comes back empty.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, '      - "run": docker run --rm redis:8-alpine true\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 has a docker run, create or pull that the check did not " \
+        "read" in found.message, f"must FAIL when a workflow names a docker run it did not parse: {found.message}"
+
+
+def test_supply_chain_pins_reads_a_docker_run_in_a_called_script(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    (tmp_path / "scripts/zz-fixture.sh").write_text("#!/usr/bin/env bash\ndocker run --rm python:3.12-alpine true\n")
+    _supply_chain_workflow(tmp_path, "      - run: bash scripts/zz-fixture.sh\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/zz-fixture.sh:2 runs python:3.12-alpine by tag (docker run)" \
+        in found.message, f"must FAIL on a tagged docker run in a script a run step calls: {found.message}"
+    (tmp_path / ".github/workflows/zz-fixture.yml").unlink()
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when no run step calls the script: {found.message}"
+
+
+def test_supply_chain_pins_reads_an_image_assignment_in_a_called_script(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    script = tmp_path / "scripts/zz-fixture.sh"
+    script.write_text('#!/usr/bin/env bash\nPY_IMAGE=python:3.12-alpine\ndocker run --rm "$PY_IMAGE" true\n')
+    _supply_chain_workflow(tmp_path, "      - run: bash scripts/zz-fixture.sh\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/zz-fixture.sh:2 assigns python:3.12-alpine to PY_IMAGE by tag" \
+        in found.message, f"must FAIL on a tagged PY_IMAGE= in a script a run step calls: {found.message}"
+    script.write_text('#!/usr/bin/env bash\nPY_IMAGE="${PY_IMAGE:-python:3.12-alpine@sha256:' + "c" * 64 + '}"\n'
+                      'docker run --rm "$PY_IMAGE" true\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when the script's default is pinned: {found.message}"
+
+
+def test_supply_chain_pins_reads_the_assignments_of_a_variable_docker_runs(tmp_path):
+    # A variable a docker command runs is read however it is named: a tag-only fallback for a base the
+    # script reads from a Dockerfile is the image CI pulls the day that read stops matching.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    kex = tmp_path / "scripts/polaris-internal-kex-drill.sh"
+    good = kex.read_text()
+    closed = '[ -n "$APP_BASE" ] || { echo "polaris-internal-kex-drill: cannot read the runtime base'
+    assert closed in good, "the fixture drifted: the kex drill no longer fails closed on an unread APP_BASE"
+    kex.write_text(re.sub(r"(?m)^\[ -n \"\$APP_BASE\" \] \|\| \{.*\}$",
+                          '[ -n "$APP_BASE" ] || APP_BASE=python:3.12-slim-bookworm', good, count=1))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/polaris-internal-kex-drill.sh:70 assigns python:3.12-slim-bookworm " \
+        "to APP_BASE by tag" in found.message, f"must FAIL on a tag-only fallback for a variable docker runs: {found.message}"
+    kex.write_text(good)
+    script = tmp_path / "scripts/zz-fixture.sh"
+    script.write_text('#!/usr/bin/env bash\nBASE=$(sed -n 1p base.txt)\n[ -n "$BASE" ] || BASE=python:3.12-alpine\n'
+                      'docker run --rm "$BASE" true\n')
+    _supply_chain_workflow(tmp_path, "      - run: bash scripts/zz-fixture.sh\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/zz-fixture.sh:3 assigns python:3.12-alpine to BASE by tag" \
+        in found.message, f"must FAIL whatever the variable is named: {found.message}"
+    script.write_text('#!/usr/bin/env bash\nBASE=$(sed -n 1p base.txt)\n[ -n "$BASE" ] || exit 1\n'
+                      'docker run --rm "$BASE" true\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when the script fails closed instead: {found.message}"
+
+
+def test_supply_chain_pins_counts_the_script_refs_built_at_run_time(tmp_path):
+    # A ref a script builds at run time is beyond the lexical rule; the OK line says how many there are,
+    # so the scope is read rather than assumed.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    counted = re.search(r"where (\d+) refs are built at run time and not read", base.message)
+    assert counted, f"must name how many script refs are built at run time: {base.message}"
+    (tmp_path / "scripts/zz-fixture.sh").write_text('#!/usr/bin/env bash\ndocker run --rm "$1" true\n')
+    _supply_chain_workflow(tmp_path, "      - run: bash scripts/zz-fixture.sh alpine:3.24\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK" and f"where {int(counted.group(1)) + 1} refs are built at run time" in found.message, \
+        f"must count one more when a called script runs an image built at run time: {found.message}"
+
+
+def test_supply_chain_pins_excepts_only_what_the_workflow_built_and_the_canary(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    steps = "      - run: |\n          docker build -t fixture-app:ci .\n          docker run --rm fixture-app:%s true\n"
+    _supply_chain_workflow(tmp_path, steps % "ci")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on an image the same workflow built: {found.message}"
+    _supply_chain_workflow(tmp_path, steps % "other")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:10 runs fixture-app:other by tag" in found.message, \
+        f"must FAIL on another tag of a name the workflow built: excluded by tag, never by prefix: {found.message}"
+    (tmp_path / ".github/workflows/zz-fixture.yml").unlink()
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm alpine:latest true\n", name="wallet-canary.yml")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on the wallet canary, which walks the latest builds by design: {found.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm alpine:latest true\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs alpine:latest by tag" in found.message, \
+        f"must FAIL on the same step in any other workflow: {found.message}"
 
 
 def test_release_provenance_check_discriminates(tmp_path):

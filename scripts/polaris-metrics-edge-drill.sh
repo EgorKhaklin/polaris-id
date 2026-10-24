@@ -28,7 +28,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${1:-polaris-caddy:prod}"
-PY_IMAGE=python:3.12-alpine
+PY_IMAGE="python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
 NET="polaris-metrics-drill-$$"
 WORK="$(mktemp -d)"
 cleanup() { docker rm -f "${NET}-up" "${NET}-edge" "${NET}-fwd" > /dev/null 2>&1 || true
