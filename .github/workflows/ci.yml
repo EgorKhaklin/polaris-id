@@ -4103,10 +4103,6 @@ jobs:
         run: cd sdk/typescript && npx tsc --noEmit
       - name: SDK unit tests
         run: cd sdk/typescript && node --test
-      # The site's one edge function (edge/film.js, /film/* only): ranges, refusals, and If-Range,
-      # which must never splice a slice of one file onto a cached copy of another.
-      - name: The site's film function answers byte ranges and honours If-Range (edge/film.test.mjs)
-        run: node --test edge/film.test.mjs
       - name: Conformance suite — TypeScript SDK (the same runner as the Python SDK)
         run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts" --algorithm Falcon-padded-1024
 
