@@ -1911,7 +1911,7 @@ class OqsIsImportedOnlyWhenItIsLiboqs(unittest.TestCase):
         git = os.path.join(d, "stub-bin", "git")
         with open(git, "w") as f:
             f.write("#!/bin/sh\necho \"$@\" >> \"$POLARIS_GIT_MARKER\"\nexit 128\n")
-        os.chmod(git, 0o755)
+        os.chmod(git, 0o700)
         return d
 
     def probe(self, site, find_library=None):
