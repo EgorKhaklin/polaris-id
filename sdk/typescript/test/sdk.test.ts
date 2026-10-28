@@ -733,6 +733,54 @@ test("held-out: a holder proof from the future is fresh only within the skew", (
     "a proof 61 seconds ahead of the verifier's clock is not fresh");
 });
 
+// 2026-10-21: verifySignedArtifact's `fresh` comes only from fields the format signs. Each vector
+// is a published, genuine one with only the window fields it does not carry added (a published
+// vector carries every field it signs). The controls are the windows that ARE signed. The
+// Python SDK carries the same tests (FreshnessComesFromSignedFieldsTests).
+const FR_NOW = "2026-10-21T00:00:00Z";
+const withUnsignedWindow = (n: string) => {
+  const o = conf(n);
+  const added = Object.entries({ issued_at: "2026-01-01T00:00:00Z", expires_at: "2099-01-01T00:00:00Z" })
+    .filter(([k]) => !(k in o));
+  assert.ok(added.length > 0, n + " signs both ends of its window: a control, not a case");
+  return { ...o, ...Object.fromEntries(added) };
+};
+
+test("a format signing no window reports no freshness with the window fields added", () => {
+  for (const n of ["transparency-sth-valid.json", "timestamp-valid.json", "exchange-request-valid.json",
+                   "signed-document-valid.json", "exchange-receipt-valid.json", "exchange-mint-valid.json",
+                   "grant-revocation-valid.json", "agent-proof-valid.json", "trust-attestation-valid.json"]) {
+    const v = verifySignedArtifact(withUnsignedWindow(n), FR_NOW);
+    assert.equal(v.authentic, true, n + ": the added fields are outside the signed statement");
+    assert.equal(v.fresh, null, n + ": fresh must not come from fields the format does not sign");
+  }
+});
+
+test("the ID token answers freshness from its signed iat and exp", () => {
+  const tok = conf("id-token-valid.json");   // iat 12:00:00Z, exp 12:05:00Z, 2026-05-01
+  assert.equal(verifySignedArtifact(tok, "2026-05-01T12:01:00Z").fresh, true);
+  assert.equal(verifySignedArtifact(tok, "2026-05-01T12:05:00Z").fresh, false,
+    "the window is half-open: exp itself is outside it");
+  const forged = withUnsignedWindow("id-token-valid.json");
+  const v = verifySignedArtifact(forged, FR_NOW);
+  assert.equal(v.authentic, true);
+  assert.equal(v.fresh, false, "an expired token stays expired with issued_at and expires_at added");
+  assert.equal(v.fresh, verifyIdToken(forged, null, null, FR_NOW).fresh);
+});
+
+test("controls: a window signed at both ends is unchanged", () => {
+  const cp = conf("epoch-checkpoint-valid.json");   // [2026-01-01, 2027-01-01)
+  assert.equal(verifySignedArtifact(cp, FR_NOW).fresh, true);
+  assert.equal(verifySignedArtifact(cp, "2027-01-01T00:00:00Z").fresh, false);
+});
+
+test("controls: the holder proof keeps its replay window", () => {
+  const p = { ...conf("holder-proof-valid.json"), expires_at: "2099-01-01T00:00:00Z" };   // issued 2026-05-01T00:00:00Z
+  assert.equal(verifySignedArtifact(p, "2026-05-01T00:05:00Z").fresh, true);
+  assert.equal(verifySignedArtifact(p, "2026-05-01T00:05:01Z").fresh, false,
+    "an unsigned expires_at does not stretch a replay window");
+});
+
 test("held-out: an index equal to the tree size does not verify", () => {
   // A one-leaf tree whose root is the leaf: at idx == treeSize an empty path walks nothing
   // and the comparison alone would say yes.

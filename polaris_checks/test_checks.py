@@ -20186,6 +20186,180 @@ def test_status_assertion_window_check_discriminates(tmp_path):
         "must FAIL rather than pass when what the signature covers cannot be read"
 
 
+def test_sdk_signed_window_check_discriminates(tmp_path):
+    """Each SDK's `fresh` reads, per format, only fields that format signs.
+
+    A field outside the signed statement is anyone's to add or change after signing, so a
+    `fresh` read from one says nothing about the artifact. The fixture is a small
+    SDK pair in the real shape: a per-format signed key list, a window function told which
+    fields to read, a chooser reading the format's own list, a replay window and the ID
+    token's own instants.
+    """
+    formats = (
+        '    "polaris-trust-list/1": ["format", "issued_at", "expires_at", "keys"],\n'
+        '    "polaris-registry/1": ["format", "issued_at", "expires_at", "contexts"],\n'
+        '    "polaris-revocation-feed/1": ["format", "issued_at", "expires_at", "revoked_root_hex"],\n'
+        '    "polaris-epoch-checkpoint/1": ["format", "issued_at", "expires_at", "epoch"],\n'
+        '    "polaris-holder-proof/1": ["format", "issued_at", "verifier_nonce"],\n'
+        '    "polaris-id-token/1": ["format", "iat", "exp", "aud", "nonce"],\n'
+        '    "polaris-timestamp/1": ["format", "issued_at", "digest_hex"],\n'
+        '    "polaris-exchange-request/1": ["format", "issued_at", "nonce"],\n'
+        '    "polaris-transparency-sth/1": ["format", "timestamp", "tree_size"],\n'
+        '    "polaris-signed-document/1": ["format", "signed_at", "document"],\n'
+        '    "polaris-exchange-mint/1": ["format", "occurred_at", "request_hash"],\n')
+    py_good = (
+        '_STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"]\n'
+        '_REPLAY_WINDOW_SECONDS = {"polaris-holder-proof/1": 300}\n'
+        '\n\n'
+        'def _iso_to_epoch(s):\n'
+        '    return s\n'
+        '\n\n'
+        'def _within_replay_window(obj, now=None):\n'
+        '    seconds = _REPLAY_WINDOW_SECONDS.get(obj.get("format"))\n'
+        '    return seconds, _iso_to_epoch(obj.get("issued_at"))\n'
+        '\n\n'
+        'def _within_window(obj, now=None, start="issued_at", end="expires_at"):\n'
+        '    return _iso_to_epoch(obj.get(start)), _iso_to_epoch(obj.get(end))\n'
+        '\n\n'
+        'def _signed_window(keys):\n'
+        '    if "iat" in keys and "exp" in keys:\n'
+        '        return "iat", "exp"\n'
+        '    if "issued_at" in keys and "expires_at" in keys:\n'
+        '        return "issued_at", "expires_at"\n'
+        '    return None\n'
+        '\n\n'
+        'def verify_status_assertion(assertion, now=None):\n'
+        '    return _within_window(assertion, now)\n'
+        '\n\n'
+        '_ARTIFACT_KEYS = {\n' + formats + '}\n'
+        '\n\n'
+        'def verify_id_token(tok, audience=None, nonce=None, now=None):\n'
+        '    return _iso_to_epoch(tok.get("iat")), _iso_to_epoch(tok.get("exp"))\n'
+        '\n\n'
+        'def verify_signed_artifact(obj, now=None):\n'
+        '    keys = _ARTIFACT_KEYS.get(obj.get("format"))\n'
+        '    fresh = _within_replay_window(obj, now)\n'
+        '    win = _signed_window(keys)\n'
+        '    if fresh is None and win is not None:\n'
+        '        fresh = _within_window(obj, now, *win)\n'
+        '    return fresh\n')
+    ts_good = (
+        'const STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"];\n'
+        'const REPLAY_WINDOW_SECONDS: Record<string, number> = { "polaris-holder-proof/1": 300 };\n'
+        '\n'
+        'function isoToEpoch(s: unknown): number | null {\n'
+        '  return typeof s === "string" ? 0 : null;\n'
+        '}\n'
+        '\n'
+        'function withinReplayWindow(obj: any, now?: string | null): boolean | null {\n'
+        '  const seconds = REPLAY_WINDOW_SECONDS[obj?.format];\n'
+        '  const issued = isoToEpoch(obj?.issued_at);\n'
+        '  return seconds === undefined || issued === null ? null : true;\n'
+        '}\n'
+        '\n'
+        'function withinWindow(obj: any, now?: string | null, start = "issued_at", end = "expires_at"): boolean | null {\n'
+        '  const ia = isoToEpoch(obj?.[start]);\n'
+        '  const ea = isoToEpoch(obj?.[end]);\n'
+        '  return ia === null || ea === null ? null : true;\n'
+        '}\n'
+        '\n'
+        'function signedWindow(keys: string[]): [string, string] | null {\n'
+        '  if (keys.includes("iat") && keys.includes("exp")) return ["iat", "exp"];\n'
+        '  if (keys.includes("issued_at") && keys.includes("expires_at")) return ["issued_at", "expires_at"];\n'
+        '  return null;\n'
+        '}\n'
+        '\n'
+        'export function verifyStatusAssertion(assertion: any, now?: string | null): boolean | null {\n'
+        '  return withinWindow(assertion, now);\n'
+        '}\n'
+        '\n'
+        'const ARTIFACT_KEYS: Record<string, string[]> = {\n' + formats + '};\n'
+        '\n'
+        'export function verifyIdToken(tok: any, now?: string | null): boolean | null {\n'
+        '  const t = tok ?? {};\n'
+        '  const ia = isoToEpoch(t.iat), ea = isoToEpoch(t.exp);\n'
+        '  return ia === null || ea === null ? null : true;\n'
+        '}\n'
+        '\n'
+        'export function verifySignedArtifact(obj: any, now?: string | null): boolean | null {\n'
+        '  const o = obj ?? {};\n'
+        '  const keys = ARTIFACT_KEYS[o.format];\n'
+        '  const replay = withinReplayWindow(o, now);\n'
+        '  const win = signedWindow(keys);\n'
+        '  return replay !== null ? replay : win !== null ? withinWindow(o, now, ...win) : null;\n'
+        '}\n')
+
+    def tree(label, py=py_good, ts=ts_good):
+        """A fresh root per fixture, so no read is served from another fixture's file."""
+        root = tmp_path / label
+        (root / "sdk" / "python" / "polaris_verify").mkdir(parents=True)
+        (root / "sdk" / "typescript" / "src").mkdir(parents=True)
+        (root / "sdk" / "python" / "polaris_verify" / "__init__.py").write_text(py)
+        (root / "sdk" / "typescript" / "src" / "index.ts").write_text(ts)
+        return root
+
+    def edit(text, old, new):
+        assert text.count(old) == 1, "the fixture edit must hit exactly one place: %r" % old
+        return text.replace(old, new)
+
+    out = checks.check_sdk_fresh_reads_only_signed_fields(tree("good"))
+    assert out[0].level == "OK", "must PASS when every field a format's fresh reads is signed: %s" % out[0].message
+    assert "12 formats in Python and 12 in TypeScript, 5 of them answering from no window" in out[0].message, \
+        "must have measured every format and status assertion: %s" % out[0].message
+
+    # Broken, in each SDK: the generic check reads the default window off every format.
+    py_bare = edit(py_good, "    win = _signed_window(keys)\n    if fresh is None and win is not None:\n"
+                            "        fresh = _within_window(obj, now, *win)\n",
+                   "    if fresh is None:\n        fresh = _within_window(obj, now)\n")
+    ts_bare = edit(ts_good, "win !== null ? withinWindow(o, now, ...win) : null", "withinWindow(o, now)")
+    for label, py, ts, sdk in (("py-bare", py_bare, ts_good, "python"), ("ts-bare", py_good, ts_bare, "typescript")):
+        out = checks.check_sdk_fresh_reads_only_signed_fields(tree(label, py, ts))
+        assert out[0].level == "FAIL" and "does not sign" in out[0].message, \
+            "must FAIL when %s's generic check reads a window the format does not sign" % sdk
+        for fmt in ("polaris-id-token/1 reads expires_at, issued_at", "polaris-timestamp/1 reads expires_at",
+                    "polaris-transparency-sth/1 reads expires_at, issued_at"):
+            assert "%s %s" % (sdk, fmt) in out[0].message, "must name %s %s: %s" % (sdk, fmt, out[0].message)
+        assert "polaris-trust-list/1" not in out[0].message, "a format signing both ends is not a finding"
+
+    # The chooser hands an unsigned window back: to a format signing none, or to the ID token.
+    for label, py, ts, named in (
+            ("py-fallback", edit(py_good, '    return None\n', '    return "issued_at", "expires_at"\n'), ts_good,
+             "python polaris-signed-document/1 reads expires_at, issued_at"),
+            ("ts-fallback", py_good, edit(ts_good, '  return null;\n}\n\nexport function verifyStatusAssertion',
+                                          '  return ["issued_at", "expires_at"];\n}\n\n'
+                                          'export function verifyStatusAssertion'),
+             "typescript polaris-signed-document/1 reads expires_at, issued_at"),
+            ("py-id-branch", edit(py_good, '        return "iat", "exp"\n', '        return "issued_at", "expires_at"\n'),
+             ts_good, "python polaris-id-token/1 reads expires_at, issued_at"),
+            ("ts-id-branch", py_good, edit(ts_good, 'return ["iat", "exp"];', 'return ["issued_at", "expires_at"];'),
+             "typescript polaris-id-token/1 reads expires_at, issued_at"),
+            ("py-replay", edit(py_good, '_iso_to_epoch(obj.get("issued_at"))\n',
+                               '_iso_to_epoch(obj.get("issued_at")), obj.get("expires_at")\n'), ts_good,
+             "python polaris-holder-proof/1 reads expires_at"),
+            ("ts-replay", py_good, edit(ts_good, '  const issued = isoToEpoch(obj?.issued_at);\n',
+                                        '  const issued = isoToEpoch(obj?.issued_at) ?? isoToEpoch(obj?.expires_at);\n'),
+             "typescript polaris-holder-proof/1 reads expires_at")):
+        out = checks.check_sdk_fresh_reads_only_signed_fields(tree(label, py, ts))
+        assert out[0].level == "FAIL" and named in out[0].message, \
+            "must FAIL naming %s (%s): %s" % (named, label, out[0].message)
+
+    # Anti-vacuity: what it cannot read is a failure to measure, in either SDK.
+    for label, py, ts in (
+            ("empty", "", ""),
+            ("py-no-list", edit(py_good, "_ARTIFACT_KEYS = {", "_KEYS = {"), ts_good),
+            ("ts-no-list", py_good, edit(ts_good, "const ARTIFACT_KEYS:", "const KEYS:")),
+            ("py-dynamic-read", edit(py_good, "_iso_to_epoch(obj.get(start))", "_iso_to_epoch(obj[start])"), ts_good),
+            ("ts-dynamic-read", py_good, edit(ts_good, "isoToEpoch(obj?.[start])", 'isoToEpoch(obj?.[start + ""])')),
+            ("py-unplaced-window", py_good + "\n\ndef verify_elsewhere(obj, now=None):\n"
+                                             "    return _within_window(obj, now)\n", ts_good),
+            ("ts-unplaced-window", py_good, ts_good + "\nexport function verifyElsewhere(obj: any): boolean | null {\n"
+                                                      "  return withinWindow(obj);\n}\n"),
+            ("py-no-id-instants", edit(py_good, 'tok.get("exp")', 'tok["exp"]'), ts_good)):
+        out = checks.check_sdk_fresh_reads_only_signed_fields(tree(label, py, ts))
+        assert out[0].level == "FAIL" and "cannot measure" in out[0].message, \
+            "must FAIL as unmeasurable rather than pass (%s): %s" % (label, out[0].message)
+
+
 def test_conformance_spec_count_check_discriminates(tmp_path):
     """The contract's own statement of its scope, held to the manifest.
 

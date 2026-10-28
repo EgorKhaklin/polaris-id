@@ -546,16 +546,30 @@ def _within_replay_window(obj: dict, now=None):
     return (issued <= n + _CLOCK_SKEW_SECONDS) and ((n - issued) <= seconds)
 
 
-def _within_window(obj: dict, now=None):
-    """True iff now is within [issued_at, expires_at). `now` is an ISO-8601 string, or None
-    for the current time. None if the window is unparseable."""
-    ia, ea = _iso_to_epoch(obj.get("issued_at")), _iso_to_epoch(obj.get("expires_at"))
+def _within_window(obj: dict, now=None, start="issued_at", end="expires_at"):
+    """True iff now is within [obj[start], obj[end]), by default [issued_at, expires_at).
+    `now` is an ISO-8601 string, or None for the current time. None if the window is
+    unparseable."""
+    ia, ea = _iso_to_epoch(obj.get(start)), _iso_to_epoch(obj.get(end))
     if ia is None or ea is None:
         return None
     n = _iso_to_epoch(now) if now is not None else time.time()
     if n is None:
         return None
     return ia <= n < ea
+
+
+def _signed_window(keys):
+    """The (start, end) fields of the validity window a format SIGNS, read from its own signed
+    key list, or None when it signs no window. The ID token signs its window as `iat` and
+    `exp`. A field outside the signed statement is anyone's to add or change, so a format that
+    signs only one end of a window, or neither, has no window to answer `fresh` from
+    (2026-10-21)."""
+    if "iat" in keys and "exp" in keys:
+        return "iat", "exp"
+    if "issued_at" in keys and "expires_at" in keys:
+        return "issued_at", "expires_at"
+    return None
 
 
 @dataclasses.dataclass
@@ -715,8 +729,10 @@ class IdTokenVerdict:
 def verify_id_token(tok: dict, audience=None, nonce=None, now=None,
                     anchors=None) -> IdTokenVerdict:
     """Verify a polaris-id-token/1 (P8.4) as a relying party, offline: the issuing agency's
-    signature, that it was issued to THIS audience, that it carries the login's nonce, and
-    freshness (iat <= now < exp). The subject is a credential hash, never a person."""
+    signature, and whether that agency is one you trust (`issuer_trusted`, answered only
+    against the agency keys you pass as `anchors`; None without them), that it was issued to
+    THIS audience, that it carries the login's nonce, and freshness (iat <= now < exp). The
+    subject is a credential hash, never a person."""
     tok = tok if isinstance(tok, dict) else {}
     if tok.get("format") != "polaris-id-token/1":
         return IdTokenVerdict(False, None, None, None, tok.get("sub"), tok.get("acr"), "not a polaris-id-token/1")
@@ -748,8 +764,9 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     """Verify a Polaris signed artifact's AUTHENTICITY offline (P8.1, wire spec section 3): for
     the epoch checkpoint, revocation feed, federation manifest, status bundle, or transparency
     STH, recompute the canonical statement for its `format`, verify the ML-DSA-65 signature over
-    its SHA3-256, check freshness for a windowed artifact, and check the artifact's commitment
-    (feed/bundle) or self-consistency (manifest). Standalone. Reports authentic + fresh. The
+    its SHA3-256, check freshness against the window the format signs (None when it signs
+    none), and check the artifact's commitment (feed/bundle) or self-consistency (manifest).
+    Standalone. Reports authentic + fresh. The
     federation TRUST decision (accepting a foreign credential across authorities) is a separate,
     composite check, not this per-artifact authenticity."""
     obj = obj if isinstance(obj, dict) else {}
@@ -835,10 +852,12 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         ok = _hex_in(obj.get("public_key_hex"), active)
         note = None if ok else "the trust list is not signed by a key it lists as active for its own publisher"
     # A replay-windowed format answers freshness the other way round; _within_window
-    # needs both ends of an interval and such an artifact has only its issuance.
+    # needs both ends of an interval and such an artifact has only its issuance. Any other
+    # format answers from the window it signs, and None when it signs none.
     fresh = _within_replay_window(obj, now)
-    if fresh is None:
-        fresh = _within_window(obj, now)
+    win = _signed_window(keys)
+    if fresh is None and win is not None:
+        fresh = _within_window(obj, now, *win)
     # Same rule as the detached verifier: the key that signed it, lowercased, is in the
     # anchor set. None when the caller supplied none.
     trusted = None

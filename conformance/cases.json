@@ -3687,6 +3687,94 @@
       },
       "note": "A GENUINE Falcon-padded-512 signature MUST be refused: category 1 is below the floor (wire spec section 6).",
       "since": "1.0.0-rc.71"
+    },
+    {
+      "name": "transparency-sth-unsigned-window",
+      "artifact": "transparency-sth",
+      "object_file": "conformance/vectors/transparency-sth-unsigned-window.json",
+      "expect": {
+        "authentic": true,
+        "fresh": null
+      },
+      "since": "1.1.0",
+      "note": "The published transparency-sth-valid vector with `issued_at` and `expires_at` added after signing, outside the signed statement. It is as authentic as before and still signs no window, so `fresh` is null."
+    },
+    {
+      "name": "timestamp-unsigned-window",
+      "artifact": "timestamp",
+      "object_file": "conformance/vectors/timestamp-unsigned-window.json",
+      "expect": {
+        "authentic": true,
+        "fresh": null
+      },
+      "since": "1.1.0",
+      "note": "The published timestamp-valid vector with `expires_at` added after signing, outside the signed statement. Its signed `issued_at` is unchanged. It is as authentic as before and still signs no window, so `fresh` is null."
+    },
+    {
+      "name": "exchange-request-unsigned-window",
+      "artifact": "exchange-request",
+      "object_file": "conformance/vectors/exchange-request-unsigned-window.json",
+      "expect": {
+        "authentic": true,
+        "fresh": null
+      },
+      "since": "1.1.0",
+      "note": "The published exchange-request-valid vector with `expires_at` added after signing, outside the signed statement. Its signed `issued_at` is unchanged. It is as authentic as before and still signs no window, so `fresh` is null."
+    },
+    {
+      "name": "signed-document-unsigned-window",
+      "artifact": "signed-document",
+      "object_file": "conformance/vectors/signed-document-unsigned-window.json",
+      "expect": {
+        "authentic": true,
+        "fresh": null
+      },
+      "since": "1.1.0",
+      "note": "The published signed-document-valid vector with `issued_at` and `expires_at` added after signing, outside the signed statement. It is as authentic as before and still signs no window, so `fresh` is null."
+    },
+    {
+      "name": "exchange-receipt-unsigned-window",
+      "artifact": "exchange-receipt",
+      "object_file": "conformance/vectors/exchange-receipt-unsigned-window.json",
+      "expect": {
+        "authentic": true,
+        "fresh": null
+      },
+      "since": "1.1.0",
+      "note": "The published exchange-receipt-valid vector with `issued_at` and `expires_at` added after signing, outside the signed statement. It is as authentic as before and still signs no window, so `fresh` is null."
+    },
+    {
+      "name": "exchange-mint-unsigned-window",
+      "artifact": "exchange-mint",
+      "object_file": "conformance/vectors/exchange-mint-unsigned-window.json",
+      "expect": {
+        "authentic": true,
+        "fresh": null
+      },
+      "since": "1.1.0",
+      "note": "The published exchange-mint-valid vector with `issued_at` and `expires_at` added after signing, outside the signed statement. It is as authentic as before and still signs no window, so `fresh` is null."
+    },
+    {
+      "name": "grant-revocation-unsigned-window",
+      "artifact": "grant-revocation",
+      "object_file": "conformance/vectors/grant-revocation-unsigned-window.json",
+      "expect": {
+        "authentic": true,
+        "fresh": null
+      },
+      "since": "1.1.0",
+      "note": "The published grant-revocation-valid vector with `issued_at` and `expires_at` added after signing, outside the signed statement. It is as authentic as before and still signs no window, so `fresh` is null."
+    },
+    {
+      "name": "agent-proof-unsigned-window",
+      "artifact": "agent-proof",
+      "object_file": "conformance/vectors/agent-proof-unsigned-window.json",
+      "expect": {
+        "authentic": true,
+        "fresh": null
+      },
+      "since": "1.1.0",
+      "note": "The published agent-proof-valid vector with `expires_at` added after signing, outside the signed statement. Its signed `issued_at` is unchanged. It is as authentic as before and still signs no window, so `fresh` is null."
     }
   ]
 }

@@ -1627,6 +1627,61 @@ class HeldOutSemanticMutationsTests(unittest.TestCase):
                 self.assertIn("DISAGREE", a.note or "")
 
 
+@unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
+class FreshnessComesFromSignedFieldsTests(unittest.TestCase):
+    """verify_signed_artifact's `fresh` comes only from fields the format signs (2026-10-21).
+
+    Each vector below is a published, genuine one with only the window fields it does not sign
+    added: the signature still verifies, and `fresh` must not follow them. The controls are the
+    windows that ARE signed: the ID token's `iat` and `exp`, a format signing both ends, and the
+    holder proof's replay window. The TypeScript SDK carries the same tests."""
+
+    NOW = "2026-10-21T00:00:00Z"
+    ADDED = {"issued_at": "2026-01-01T00:00:00Z", "expires_at": "2099-01-01T00:00:00Z"}
+    NO_WINDOW = ("transparency-sth-valid.json", "timestamp-valid.json",
+                 "exchange-request-valid.json", "signed-document-valid.json",
+                 "exchange-receipt-valid.json", "exchange-mint-valid.json",
+                 "grant-revocation-valid.json", "agent-proof-valid.json",
+                 "trust-attestation-valid.json")
+
+    def _with_unsigned_window(self, name):
+        obj = _conformance_vector(name)
+        signed = pv._ARTIFACT_KEYS[obj["format"]]
+        added = {k: v for k, v in self.ADDED.items() if k not in obj and k not in signed}
+        self.assertTrue(added, "%s signs both ends of its window: a control, not a case" % name)
+        return dict(obj, **added)
+
+    def test_a_format_signing_no_window_reports_no_freshness_with_the_fields_added(self):
+        for name in self.NO_WINDOW:
+            with self.subTest(vector=name):
+                v = pv.verify_signed_artifact(self._with_unsigned_window(name), self.NOW)
+                self.assertTrue(v.authentic, "the added fields are outside the signed statement")
+                self.assertIsNone(v.fresh, "fresh must not come from fields the format does not sign")
+
+    def test_the_id_token_answers_from_its_signed_iat_and_exp(self):
+        tok = _conformance_vector("id-token-valid.json")   # iat 12:00:00Z, exp 12:05:00Z, 2026-05-01
+        self.assertIs(pv.verify_signed_artifact(tok, "2026-05-01T12:01:00Z").fresh, True)
+        self.assertIs(pv.verify_signed_artifact(tok, "2026-05-01T12:05:00Z").fresh, False,
+                      "the window is half-open: exp itself is outside it")
+        forged = self._with_unsigned_window("id-token-valid.json")
+        v = pv.verify_signed_artifact(forged, self.NOW)
+        self.assertTrue(v.authentic)
+        self.assertIs(v.fresh, False, "an expired token stays expired with issued_at and expires_at added")
+        self.assertIs(v.fresh, pv.verify_id_token(forged, now=self.NOW).fresh)
+
+    def test_controls_a_window_signed_at_both_ends_is_unchanged(self):
+        cp = _conformance_vector("epoch-checkpoint-valid.json")   # [2026-01-01, 2027-01-01)
+        self.assertIs(pv.verify_signed_artifact(cp, self.NOW).fresh, True)
+        self.assertIs(pv.verify_signed_artifact(cp, "2027-01-01T00:00:00Z").fresh, False)
+
+    def test_controls_the_holder_proof_keeps_its_replay_window(self):
+        p = dict(_conformance_vector("holder-proof-valid.json"),   # issued 2026-05-01T00:00:00Z
+                 expires_at=self.ADDED["expires_at"])
+        self.assertIs(pv.verify_signed_artifact(p, "2026-05-01T00:05:00Z").fresh, True)
+        self.assertIs(pv.verify_signed_artifact(p, "2026-05-01T00:05:01Z").fresh, False,
+                      "an unsigned expires_at does not stretch a replay window")
+
+
 class IsoInstantGrammarTests(unittest.TestCase):
     """sdk/testdata/iso-instants.json: the grammar both reference SDKs share. Until 2026-09-24
     this kit used datetime.fromisoformat, whose grammar depends on the interpreter."""
