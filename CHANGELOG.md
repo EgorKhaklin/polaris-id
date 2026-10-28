@@ -36,6 +36,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- docs/paper/ no longer carries the Russian editions of the Version 3 report and evidence record.
 - `check_supply_chain_pins` reads every shell script in the tree, not only those a workflow's run step calls, and holds each image a script pins by digest under a tag that a Dockerfile or compose file Dependabot reads also pins to that file's digest, as it already held the workflows. `scripts/polaris-deploy.sh`, which no workflow calls, re-owned the edge's volumes with alpine:3.24 at an older digest than the Dockerfiles' until 2026-10-24, and nothing saw it.
 - `check_supply_chain_pins` requires Dependabot to read every directory holding a `.txt` or `.in` file that pins a version with `==`, `.github` included, not only the published Python packages. Dependabot raised a high-severity alert on a pin in `lab/strategy/013`, a directory its version updates did not read.
 - The README, project site, package pages, NOTICE and SECURITY.md are shorter and lead with what Polaris does; the README states the zero-knowledge property as a definition, and `check_public_claims_honest` holds a comparison or a correlation claim to its counterweight whenever one appears.
