@@ -72,7 +72,8 @@ RUN case "$GOLANG_VERSION" in 1.26.[0-9]) ;; *) echo "builder ships Go $GOLANG_V
 # this case. Remove the floors at the first Caddy release that carries
 # caddyserver/caddy#8178 (c31d9a71) and passes scripts/polaris-edge-limits-drill.sh;
 # the caddy entry in .github/dependabot.yml's ignore list says why the edge stays on
-# 2.11.4 until then.
+# 2.11.4 until then. A floor moves by hand to each module release that fixes an advisory
+# against it; the weekly image scan fails on a fixable critical CVE in the binary.
 # The binary keeps its symbol table, so govulncheck reads it at symbol level: xcaddy's
 # default go build flags strip it (-ldflags "-w -s"), and XCADDY_GO_BUILD_FLAGS replaces
 # all of them, so it restates the rest of xcaddy v0.4.5's defaults (-trimpath and its

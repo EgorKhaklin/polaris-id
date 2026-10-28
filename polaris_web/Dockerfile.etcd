@@ -17,6 +17,8 @@
 # both (lab record 017). etcd's own scripts/build.sh compiles it, with the Go
 # release its go.mod names (the toolchain line) and the module versions it
 # pins, verified against its go.sum.
+# The pin moves by hand to each v3.6 patch release etcd publishes; the weekly
+# image scan fails on a fixable critical CVE in the pinned release.
 # ============================================================================
 FROM golang:1.26.10-alpine3.24@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS compile
 ARG ETCD_VERSION=v3.6.16

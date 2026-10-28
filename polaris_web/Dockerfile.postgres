@@ -30,7 +30,8 @@
 # by its release tag and checked against that tag's commit; the build flags are gosu's own
 # (its Dockerfile's BUILD_FLAGS), and the module versions come from its go.mod, verified against
 # its go.sum. gosu's release tags are not semver, so a local v<tag>.0 tag stamps the version into
-# the binary the way gosu's own build does.
+# the binary the way gosu's own build does. The pin moves by hand to each 1.x release gosu
+# publishes; the weekly image scan fails on a fixable critical CVE in the pinned release.
 FROM golang:1.26.10-alpine3.24@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS compile
 ARG GOSU_VERSION=1.20
 ARG GOSU_COMMIT=29b939aa5bd4dc588af765b8248f6e39150d2565
