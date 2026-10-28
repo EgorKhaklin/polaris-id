@@ -1314,6 +1314,7 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.signer, cls.stamper, cls.second, cls.publisher = (_mldsa_signer() for _ in range(4))
+        cls.log, cls.witness, cls.stranger = (_mldsa_signer() for _ in range(3))
         cls.body = b"%PDF-1.7 a notional report\n"
 
     @staticmethod
@@ -1376,6 +1377,29 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
         kw.setdefault("timestamp_anchors", [self.stamper[1].hex(), self.second[1].hex()])
         return V.verify_signed_document(container, now=self.NOW, **kw)
 
+    def anchored(self, doc, head_key, witnessed=True):
+        """A container whose timestamp (the stamper's) carries an anchor: its inclusion proof in a
+        timestamp log whose head `head_key` signed, cosigned by the witness when `witnessed`."""
+        ts = self.timestamp(doc)
+        h = V.timestamp_hash(ts)
+        entries = [hashlib.sha3_256(b"other-%d" % i).hexdigest() for i in range(5)] + [h]
+        idx = len(entries) - 1
+        sth = self.seal({"format": "polaris-transparency-sth/1", "log_id": V._TIMESTAMP_LOG_ID,
+                         "tree_size": len(entries), "root_hash_hex": V.merkle_tree_head(entries).hex(),
+                         "timestamp": self.STAMPED}, V._sth_canonical, head_key)
+        cosignatures = [self.seal({"format": "polaris-transparency-cosignature/1", "log_id": sth["log_id"],
+                                   "tree_size": sth["tree_size"], "root_hash_hex": sth["root_hash_hex"]},
+                                  V._cosignature_canonical, self.witness)] if witnessed else []
+        ts["anchor"] = {"log_id": V._TIMESTAMP_LOG_ID, "timestamp_hash": h,
+                        "proof": {"log_id": V._TIMESTAMP_LOG_ID, "index": idx, "tree_size": len(entries),
+                                  "entry_hex": h, "proof_hex": [p.hex() for p in V.inclusion_proof(idx, entries)],
+                                  "root_hash_hex": sth["root_hash_hex"]},
+                        "sth": sth, "cosignatures": cosignatures}
+        return self.container(doc, timestamp=ts)
+
+    #: The clause an anchored policy adds to the note when the relying party named no log key.
+    NO_LOG_KEY = "no anchored timestamp under an anchored policy (no timestamp log key was named)"
+
     def test_the_signature_alone_is_authentic_binds_its_bytes_and_claims_nothing_long_term(self):
         doc = self.document()
         v = V.verify_signed_document(doc, trusted_anchors=[self.signer[1].hex()], document_bytes=self.body)
@@ -1418,6 +1442,47 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
         v = self.decide(both, timestamp_quorum=2)
         self.assertIs(v["valid_long_term"], True, v["note"])
         self.assertEqual(v["ltv"]["independent_timestamps"], 2)
+
+    def test_an_anchor_counts_under_the_log_key_the_relying_party_names(self):
+        """The product signs a timestamp with the agency key and the timestamp log's head with the
+        instance key."""
+        doc = self.document()
+        log_key, witnesses = self.log[1].hex(), [self.witness[1].hex()]
+        genuine = self.anchored(doc, self.log)
+        v = self.decide(genuine, require_anchored=True, trusted_witnesses=witnesses, timestamp_log_key=log_key)
+        self.assertIs(v["valid_long_term"], True, v["note"])
+        self.assertEqual((v["ltv"]["timestamp_anchored"], v["ltv"]["timestamp_witnessed"]), (True, True))
+        unwitnessed = self.decide(self.anchored(doc, self.log, witnessed=False), require_anchored=True,
+                                  timestamp_log_key=log_key)
+        self.assertIs(unwitnessed["valid_long_term"], True, unwitnessed["note"])
+        without = self.decide(genuine, require_anchored=True, trusted_witnesses=witnesses)
+        self.assertIs(without["valid_long_term"], False)
+        self.assertIn(self.NO_LOG_KEY, without["note"])
+
+    def test_the_timestamp_authority_s_key_is_no_default_log_key(self):
+        """A head signed by the timestamp authority's own key anchors nothing until the relying
+        party names that key as the log key."""
+        doc = self.document()
+        own = self.anchored(doc, self.stamper)
+        witnesses = [self.witness[1].hex()]
+        v = self.decide(own, require_anchored=True, trusted_witnesses=witnesses)
+        self.assertIs(v["valid_long_term"], False)
+        self.assertIs(v["ltv"]["timestamp_anchored"], False)
+        self.assertIn(self.NO_LOG_KEY, v["note"])
+        named = self.decide(own, require_anchored=True, trusted_witnesses=witnesses,
+                            timestamp_log_key=self.stamper[1].hex())
+        self.assertIs(named["valid_long_term"], True, named["note"])
+
+    def test_a_stranger_s_head_anchors_nothing_under_the_named_log_key(self):
+        doc = self.document()
+        for witnessed in (False, True):
+            with self.subTest(witnessed=witnessed):
+                v = self.decide(self.anchored(doc, self.stranger, witnessed=witnessed), require_anchored=True,
+                                trusted_witnesses=[self.witness[1].hex()], timestamp_log_key=self.log[1].hex())
+                self.assertIs(v["valid_long_term"], False)
+                self.assertIs(v["ltv"]["timestamp_anchored"], False)
+                self.assertIn("no anchored timestamp under an anchored policy", v["note"])
+                self.assertNotIn("no timestamp log key was named", v["note"])
 
     def test_a_credential_revoked_at_the_instant_ends_long_term_validity(self):
         leaf = hashlib.sha3_256(b"TKN-NOTIONAL-1").hexdigest()
