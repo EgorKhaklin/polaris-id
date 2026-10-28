@@ -1031,6 +1031,155 @@ test("a witness threshold is a whole number of at least one", () => {
   }
 });
 
+// 2026-10-21, WIRE-SPEC section 1: a signed integer (a head's or a cosignature's tree_size, a
+// revoked_count, member_count or leaf_count) is an integer from 0 to 2**53 - 1, read one way in every
+// language. Each artifact is signed for real. Two cases are signed over the bytes a Python signer
+// writes and read back as JSON.parse reads them: 1.0, which JavaScript cannot hold apart from 1, and
+// 2**53 + 1, which JSON.parse reads as 2**53. A count must equal a list's length, so the bound shows
+// only at the two sizes.
+const SIGNED_INTS: [string, unknown][] = [["true", true], ["1.0", 1], ['"1"', "1"], ["null", null], ["-1", -1]];
+const HEAD_RULE = "tree_size is not an integer from 0 to 2**53 - 1";
+const COSIGNATURE_RULE = "the cosignature's tree_size is not an integer from 0 to 2**53 - 1";
+const STH_KEYS = ["format", "log_id", "tree_size", "root_hash_hex", "timestamp"];
+const COSIGNATURE_KEYS = ["format", "log_id", "tree_size", "root_hash_hex"];
+// The sizes refused by the rule: [label, the value JavaScript holds, the JSON text signed when it differs].
+const PAST_THE_RULE: [string, unknown, string?][] = [["true", true], ['"1"', "1"], ["null", null], ["-1", -1],
+  ["1.5", 1.5], ["2**53", 2 ** 53], ["2**53 + 1", 2 ** 53, "9007199254740993"], ["2**53 + 2", 2 ** 53 + 2],
+  ["10**20", 1e20]];
+async function intSigner(seed: number) {
+  const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+  const key = ml_dsa65.keygen(new Uint8Array(32).fill(seed));
+  const pk = Buffer.from(key.publicKey).toString("hex");
+  // `obj` under this key, signed over `keys`. With `spell` = [field, text], that field is written as
+  // `text` in the signed bytes and in the artifact's JSON, and the artifact is read back by JSON.parse.
+  const sign = (obj: any, keys: string[], spell?: [string, string]) => {
+    const o = { ...obj, algorithm: "ML-DSA-65", public_key_hex: pk };
+    const respell = (s: string) => {
+      const from = `"${spell![0]}":${JSON.stringify(o[spell![0]])}`;
+      assert.equal(s.split(from).length, 2, from);
+      return s.replace(from, `"${spell![0]}":${spell![1]}`);
+    };
+    let text = __canonicalJsonForTest(Object.fromEntries(keys.map((k) => [k, o[k] ?? null])));
+    if (spell) text = respell(text);
+    o.signature_hex = Buffer.from(ml_dsa65.sign(sha3_256(new TextEncoder().encode(text)), key.secretKey)).toString("hex");
+    return spell ? JSON.parse(respell(JSON.stringify(o))) : o;
+  };
+  return { pk, sign };
+}
+const sha3Text = (s: string) => Buffer.from(sha3_256(new TextEncoder().encode(s))).toString("hex");
+const spelled = (field: string, text?: string): [string, string] | undefined => text === undefined ? undefined : [field, text];
+
+test("a tree head checked alone is held to its size, an integer from 0 to 2**53 - 1", async () => {
+  const log = await intSigner(21);
+  const head = (size: unknown, text?: string) => verifySignedArtifact(log.sign(
+    { format: "polaris-transparency-sth/1", log_id: "polaris-timestamp-log", tree_size: size,
+      root_hash_hex: "cd".repeat(32), timestamp: "2026-05-01T00:00:10Z" }, STH_KEYS, spelled("tree_size", text)));
+  for (const size of [1, 0, 2 ** 53 - 1]) {
+    const v = head(size);
+    assert.equal(v.authentic, true, "control: a head of size " + size + ": " + v.note);
+  }
+  assert.equal(JSON.parse("9007199254740993"), 2 ** 53, "JSON.parse reads 2**53 + 1 as 2**53");
+  for (const [label, size, text] of PAST_THE_RULE) {
+    const v = head(size, text);
+    assert.deepEqual([v.authentic, v.note], [false, HEAD_RULE], label);
+  }
+  // 1.0 is read as 1, which the rule admits; the signature, over "1.0", refuses it, and says why.
+  const one = head(1, "1.0");
+  assert.equal(one.authentic, false, "1.0");
+  assert.match(one.note ?? "", /^the signature does not verify, AND this statement carries a whole number/);
+});
+
+test("a cosignature checked alone is held to its size, an integer from 0 to 2**53 - 1", async () => {
+  const witness = await intSigner(27);
+  const cosignature = (size: unknown, text?: string) => verifyCosignature(witness.sign(
+    { format: "polaris-transparency-cosignature/1", log_id: "polaris-timestamp-log", tree_size: size,
+      root_hash_hex: "cd".repeat(32) }, COSIGNATURE_KEYS, spelled("tree_size", text)), witness.pk);
+  for (const size of [1, 0, 2 ** 53 - 1]) {
+    const v = cosignature(size);
+    assert.equal(v.authentic, true, "control: a cosignature at size " + size + ": " + v.note);
+  }
+  for (const [label, size, text] of PAST_THE_RULE) {
+    const v = cosignature(size, text);
+    assert.deepEqual([v.authentic, v.note], [false, COSIGNATURE_RULE], label);
+  }
+  assert.equal(cosignature(1, "1.0").authentic, false, "1.0");
+  // Controls: the rule is read after the placeholder and the algorithm, so a cosignature with
+  // no size at all still gets each of those refusals by its own note.
+  for (const [algorithm, note] of [[PLACEHOLDER, /placeholder cosignature/],
+                                   ["ML-DSA-44", /unaccepted signature algorithm/]] as const) {
+    const v = verifyCosignature({ format: "polaris-transparency-cosignature/1", algorithm,
+                                  public_key_hex: KEY, signature_hex: SIG });
+    assert.match(v.note ?? "", note, algorithm);
+  }
+});
+
+test("an anchor refuses a head past 2**53 - 1 by the rule", async () => {
+  const log = await intSigner(28);
+  const anchor = (text?: string) => {
+    const ts = conf("timestamp-anchor-variants-base.json");
+    ts.anchor.proof.tree_size = 2 ** 53;
+    ts.anchor.sth = log.sign({ ...ts.anchor.sth, tree_size: 2 ** 53 }, STH_KEYS, spelled("tree_size", text));
+    return verifyTimestampAnchor(ts, log.pk);
+  };
+  for (const [label, text] of [["2**53", undefined], ["2**53 + 1", "9007199254740993"]] as const) {
+    const v = anchor(text);
+    assert.deepEqual([v.anchored, v.sthAuthentic, v.note], [false, false, HEAD_RULE], label);
+  }
+});
+
+test("a cosignature counts only at its head's integer size", async () => {
+  const log = await intSigner(22), witness = await intSigner(23);
+  const base = conf("timestamp-anchor-variants-base.json");
+  const sth = base.anchor.sth = log.sign(base.anchor.sth, STH_KEYS);
+  const anchor = (size: unknown, label?: string) => {
+    const ts = JSON.parse(JSON.stringify(base));
+    ts.anchor.cosignatures = [witness.sign(
+      { format: "polaris-transparency-cosignature/1", log_id: sth.log_id, tree_size: size, root_hash_hex: sth.root_hash_hex },
+      COSIGNATURE_KEYS, label === "1.0" ? ["tree_size", "1.0"] : undefined)];
+    return verifyTimestampAnchor(ts, log.pk, [witness.pk], 1);
+  };
+  const ok = anchor(sth.tree_size);
+  assert.deepEqual([ok.anchored, ok.witnessed, ok.cosignerCount], [true, true, 1], String(ok.note));
+  for (const [label, size] of SIGNED_INTS) {
+    const v = anchor(size, label);
+    assert.deepEqual([v.anchored, v.witnessed, v.cosignerCount], [true, false, 0], label);
+  }
+});
+
+const LEAF = "ab".repeat(32);
+const WINDOW = { issued_at: "2026-10-20T00:00:00Z", expires_at: "2026-10-21T00:00:00Z" };
+async function countIsAnInteger(seed: number, field: string, body: any, keys: string[]) {
+  const signer = await intSigner(seed);
+  const authentic = (count: unknown, label?: string) =>
+    verifySignedArtifact(signer.sign({ ...body, [field]: count }, keys, label === "1.0" ? [field, "1.0"] : undefined)).authentic;
+  assert.equal(authentic(1), true, "control: one, counted as one");
+  for (const [label, count] of SIGNED_INTS) assert.equal(authentic(count, label), false, label);
+}
+
+test("a revocation feed is held to an integer count", async () => {
+  await countIsAnInteger(24, "revoked_count",
+    { format: "polaris-revocation-feed/1", authority: { agency_id: 1, name: "A" }, epoch_number: 1,
+      as_of: "2026-10-20T00:00:00Z", revoked_root_hex: sha3Text(LEAF), revoked_leaves: [LEAF], ...WINDOW },
+    ["format", "authority", "epoch_number", "as_of", "revoked_root_hex", "revoked_count", "revoked_leaves",
+     "issued_at", "expires_at", "algorithm"]);
+});
+
+test("a status bundle is held to an integer count", async () => {
+  const member = { authority: { agency_id: 2 }, label: "member" };
+  await countIsAnInteger(25, "member_count",
+    { format: "polaris-federation-status-bundle/1", publisher: { agency_id: 9, name: "P" },
+      members_root_hex: sha3Text(sha3Text(__canonicalJsonForTest(member))), members: [member], ...WINDOW },
+    ["format", "publisher", "members_root_hex", "member_count", "issued_at", "expires_at", "algorithm"]);
+});
+
+test("an epoch leaves bundle is held to an integer count", async () => {
+  await countIsAnInteger(26, "leaf_count",
+    { format: "polaris-epoch-leaves/1", authority: { agency_id: 1 }, epoch_id: 1, context_id: 1,
+      merkle_root: "cd".repeat(32), leaves_root_hex: sha3Text(LEAF), all_leaves_hex: [LEAF], ...WINDOW },
+    ["format", "authority", "epoch_id", "context_id", "merkle_root", "leaf_count", "leaves_root_hex",
+     "issued_at", "expires_at", "algorithm"]);
+});
+
 // 2026-09-30: trust comes from the relying party. With no anchors a cross-authority decision
 // trusts nothing (the detached verifier takes its manifests by name, `trusted_manifests`), and
 // a holder chain is held to the anchors it is given.
@@ -1442,6 +1591,32 @@ test("the right-most leaf of an unbalanced tree is proved by its one-node path",
   assert.equal(verifyInclusion(4, 5, l[4], root, [left]), true);
   assert.equal(verifyInclusion(4, 5, l[4], node(l[4], left), [left]), false, "the order of a node's children matters");
   assert.equal(verifyInclusion(3, 5, l[4], root, [left]), false, "the same path does not prove another index");
+});
+
+// 2026-10-21: the walk read the index and the size with 32-bit operators. Past 2**31 `sn >>= 1`
+// went negative and never reached 0, so index 0 of a tree of 2**31 + 1 leaves was false here and
+// true in polaris-verify and the Python SDK; and at 2**32 + 1 leaves the size wrapped to 0 after
+// one step, so a two-leaf tree's one-node path proved index 0 here alone. Index 0's siblings all
+// sit to its right and the last leaf's to its left, so each root below is folded by RFC 6962 alone.
+test("an index or a size past 2**31 is walked exactly, to 2**53 - 1", () => {
+  const node = (a: Uint8Array, b: Uint8Array) => sha3_256(Uint8Array.of(1, ...a, ...b));
+  const leaf = new Uint8Array(32).fill(0x11);
+  const path = (k: number) => Array.from({ length: k }, (_, i) => new Uint8Array(32).fill(0x20 + i));
+  const first = (k: number) => path(k).reduce((r, p) => node(r, p), leaf);
+  const last = (k: number) => path(k).reduce((r, p) => node(p, r), leaf);
+  for (const [n, k] of [[2 ** 31 - 1, 31], [2 ** 31, 31], [2 ** 31 + 1, 32], [2 ** 32, 32], [2 ** 53 - 1, 53]]) {
+    assert.equal(verifyInclusion(0, n, leaf, first(k), path(k)), true, `index 0 of ${n}`);
+    assert.equal(verifyInclusion(0, n, leaf, first(k + 1), path(k + 1)), false, `a path one node too long for ${n}`);
+    assert.equal(verifyInclusion(0, n, leaf, first(k - 1), path(k - 1)), false, `a path one node short for ${n}`);
+  }
+  assert.equal(verifyInclusion(0, 2 ** 32 + 1, leaf, first(1), path(1)), false,
+               "a two-leaf tree's one-node path does not prove index 0 of 2**32 + 1 leaves");
+  // The last leaf of 2**31 + 1 has one sibling, the subtree of the first 2**31; that of 2**53 - 1
+  // has 52, one for each full subtree to its left.
+  assert.equal(verifyInclusion(2 ** 31, 2 ** 31 + 1, leaf, last(1), path(1)), true, "the last leaf of 2**31 + 1");
+  assert.equal(verifyInclusion(2 ** 53 - 2, 2 ** 53 - 1, leaf, last(52), path(52)), true, "the last leaf of 2**53 - 1");
+  assert.equal(verifyInclusion(2 ** 31 - 1, 2 ** 31 + 1, leaf, last(1), path(1)), false,
+               "the same path does not prove another index");
 });
 
 test("an OK status answer decides the presentation: active accepts, anything else rejects", async () => {

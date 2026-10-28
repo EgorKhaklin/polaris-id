@@ -529,6 +529,17 @@ function wireInt(x: unknown): number | null {
   return typeof x === "number" && Number.isInteger(x) ? x : null;
 }
 
+/** A size a signature covers (a tree head's or a cosignature's `tree_size`): an integer from 0 to
+ * 2**53 - 1, the rule polaris-verify and the Python SDK read it by (`_signed_count`). A signed count
+ * (`member_count`, `leaf_count`, `revoked_count`) is held to its list's length by `===`, which only
+ * such an integer equals. JSON.parse reads a `1.0` the signer wrote as 1, which the rule admits; the
+ * signature over `1.0` then fails, the canonical bytes saying `1`. It reads 2**53 + 1 as 2**53, which
+ * the rule refuses. A head signed with 2**53, 10**20, -1, 1.5, "1" or null was authentic here until
+ * 2026-10-21. */
+function signedCount(x: unknown): boolean {
+  return typeof x === "number" && Number.isSafeInteger(x) && x >= 0;
+}
+
 function membersRoot(members: any): string {
   const arr = Array.isArray(members) ? members : [];
   const digs = arr.map((m) => bytesToHex(sha3_256(new TextEncoder().encode(canonicalJson(m))))).sort();
@@ -583,6 +594,12 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   const o = obj ?? {};
   const keys = ownEntry(ARTIFACT_KEYS, o.format);
   if (!keys) return { authentic: false, fresh: null, note: "unknown or unsupported artifact: " + o.format };
+  // WIRE-SPEC section 1: a head's size is a count its signature covers, read first, as
+  // polaris-verify's verify_sth reads it. A head signed with 2**53, 10**20, -1, 1.5, "1" or null
+  // was authentic here and in the Python SDK and refused there.
+  if (o.format === STH_FORMAT && !signedCount(o.tree_size)) {
+    return { authentic: false, fresh: null, note: "tree_size is not an integer from 0 to 2**53 - 1" };
+  }
   if (o.algorithm === PLACEHOLDER_LABEL || !o.public_key_hex) {
     return { authentic: false, fresh: null, note: "placeholder -- not authenticatable offline" };
   }
@@ -759,21 +776,27 @@ export function verifyInclusion(idx: number, treeSize: number, leaf: Uint8Array,
   // inside the loop could run. Both are verdicts now, as the Python reference gives.
   if (!(leaf instanceof Uint8Array) || !(root instanceof Uint8Array)) return false;
   if (!Array.isArray(proof)) return false;
-  let fn = idx, sn = treeSize - 1, r = leaf;
+  // The index and the size are walked as BigInt, exact for every integer a number holds, as
+  // Python walks them. JavaScript's bitwise operators read a number as a 32-bit signed integer:
+  // past 2**31 `sn >>= 1` went negative and never reached 0, so index 0 of a tree of 2**31 + 1,
+  // 2**32 or 2**53 - 1 leaves was false here and true in polaris-verify and the Python SDK; and
+  // the size of 2**32 + 1 leaves wrapped to 0 after one step, so a two-leaf tree's one-node path
+  // proved index 0 of that tree here alone.
+  let fn = BigInt(idx), sn = BigInt(treeSize) - 1n, r = leaf;
   for (const p of proof) {
-    if (sn === 0 || !(p instanceof Uint8Array)) return false;
-    if ((fn & 1) !== 0 || fn === sn) {
+    if (sn === 0n || !(p instanceof Uint8Array)) return false;
+    if (fn % 2n === 1n || fn === sn) {
       r = nodeHash(p, r);
-      if ((fn & 1) === 0) {
-        while (fn !== 0 && (fn & 1) === 0) { fn >>= 1; sn >>= 1; }
+      if (fn % 2n === 0n) {
+        while (fn !== 0n && fn % 2n === 0n) { fn /= 2n; sn /= 2n; }
       }
     } else {
       r = nodeHash(r, p);
     }
-    fn >>= 1;
-    sn >>= 1;
+    fn /= 2n;
+    sn /= 2n;
   }
-  return sn === 0 && sameBytes(r, root);
+  return sn === 0n && sameBytes(r, root);
 }
 
 /** Verify a witness cosignature over a log head: the ML-DSA signature over the SHA3-256 of
@@ -787,6 +810,13 @@ export function verifyCosignature(cosig: any, witnessKey?: string | null): Artif
   }
   const impl = verifierFor(c.algorithm);
   if (!impl) return { authentic: false, fresh: null, note: "unknown or unaccepted signature algorithm: " + String(c.algorithm) };
+  // The size a witness signs is a signed integer from 0 to 2**53 - 1, read as a head's is
+  // (signedCount: past the bound JSON.parse has already moved the number, so the signature would
+  // be checked over other bytes). Until 2026-10-21 none was read here. It is read after the
+  // placeholder and the algorithm, so each of those keeps its own refusal.
+  if (!signedCount(c.tree_size)) {
+    return { authentic: false, fresh: null, note: "the cosignature's tree_size is not an integer from 0 to 2**53 - 1" };
+  }
   let ok: boolean;
   try {
     ok = impl.verify(hexToBytes(c.signature_hex), sha3_256(canonicalBytes(c, COSIGNATURE_KEYS)), hexToBytes(c.public_key_hex));

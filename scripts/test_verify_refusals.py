@@ -3499,6 +3499,15 @@ class SignedTreeHeadDecisions(unittest.TestCase):
                 self.assertFalse(V.verify_sth(dict(head, **over))["sth_authentic"])
         self.assertFalse(V.verify_sth("not a head")["sth_authentic"])
 
+    def test_a_size_that_is_not_a_whole_number_is_not_authentic(self):
+        # Each head is signed, so only its size can refuse it.
+        self.assertTrue(V.verify_sth(self.sth(1))["sth_authentic"], "control: the size 1")
+        for bad in (True, False, None, -1, "1", 1.0, 1.5, float("inf")):
+            with self.subTest(tree_size=repr(bad)):
+                v = V.verify_sth(self.sth(1, tree_size=bad))
+                self.assertFalse(v["sth_authentic"])
+                self.assertEqual(v["note"], "tree_size is not an integer from 0 to 2**53 - 1")
+
 
 
 @unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
@@ -3570,6 +3579,24 @@ class ReceiptInclusionDecisions(unittest.TestCase):
                 self.assertFalse(v["included"])
                 self.assertEqual(v["note"], "malformed proof")
 
+    def test_a_head_signed_with_a_size_of_true_or_a_float_includes_nothing(self):
+        # Read by `!=`, a signed `true` was the size 1, and `7.0` was 7. Each proof is first
+        # included under the same head with its genuine size, so only the size refuses it.
+        one = V.merkle_tree_head(self.hashes[:1]).hex()
+        for idx, size, root, bad in ((0, 1, one, True), (0, 1, one, 1.0), (3, 7, self.root, 7.0)):
+            proof = self.proof(idx, tree_size=size, root_hash_hex=root,
+                               proof_hex=[x.hex() for x in V.inclusion_proof(idx, self.hashes[:size])])
+            with self.subTest(tree_size=repr(bad)):
+                genuine = V.verify_receipt_inclusion(self.RECEIPTS[idx], proof,
+                                                     self.head(tree_size=size, root_hash_hex=root),
+                                                     log_key=self.pk.hex())
+                self.assertTrue(genuine["included"], genuine["note"])
+                v = V.verify_receipt_inclusion(self.RECEIPTS[idx], proof,
+                                               self.head(tree_size=bad, root_hash_hex=root),
+                                               log_key=self.pk.hex())
+                self.assertFalse(v["included"])
+                self.assertEqual(v["note"], "tree_size is not an integer from 0 to 2**53 - 1")
+
     def test_a_proof_and_head_of_different_trees_are_refused(self):
         v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, tree_size=6), self.head(),
                                        log_key=self.pk.hex())
@@ -3610,6 +3637,318 @@ class ReceiptInclusionDecisions(unittest.TestCase):
         v = V.verify_receipt_inclusion("receipt", self.proof(3), self.head(), log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("must be objects", v["note"])
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class SectionOneIntegersAreReadByTheirRule(unittest.TestCase):
+    """Each WIRE-SPEC section 1 count, size and proof index at every reader, under `true`, `1.0`,
+    `"1"`, null and -1, each beside the integer it stands for (2026-10-21).
+
+    Two kinds, two rules. A count or size a signature covers (a tree head's or a cosignature's
+    `tree_size`, `revoked_count`, `member_count`, `leaf_count`) refuses all five. An inclusion
+    proof's `index` and `tree_size`, and a publication receipt's `leaf_index` and `tree_size`, are
+    not signed, and `1.0` there is 1: JavaScript's JSON.parse reads it so, a TypeScript verifier
+    cannot see it, and refusing it here alone would give one proof two verdicts. Every artifact is
+    signed for real, so only the value under test can refuse it, and a refusal is a verdict with
+    its note, never an exception.
+    """
+
+    FIVE = (True, 1.0, "1", None, -1)
+    NOW = "2026-10-20T12:00:00Z"
+    WINDOW = {"issued_at": "2026-10-20T00:00:00Z", "expires_at": "2026-10-21T00:00:00Z"}
+    LEAF = "ab" * 32
+    MEMBER = {"authority": {"agency_id": 2}, "label": "member"}
+    OTHER_HEAD = "polaris-published-head/1|another-log|1|" + "aa" * 32
+    RECEIPTS = [{"format": "polaris-exchange-receipt/1", "requester": "agency-a", "responder": "agency-b",
+                 "context_id": 1, "request_hash": "%064x" % i, "response_hash": "%064x" % (100 + i),
+                 "authorized_via": "trust-edge", "occurred_at": "2026-09-30T00:00:%02dZ" % i,
+                 "algorithm": "ML-DSA-65"} for i in range(2)]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.log, cls.witness, cls.ledger, cls.authority = (_mldsa_signer() for _ in range(4))
+        cls.ts = json.loads((ROOT / "conformance" / "vectors" / "timestamp-anchor-variants-base.json").read_text())
+        cls.ts_hash = V.timestamp_hash(cls.ts)
+        cls.receipt_hashes = [V.receipt_hash(r) for r in cls.RECEIPTS]
+
+    @staticmethod
+    def signed(obj, canonical, signer):
+        sign, pk = signer
+        obj = dict(obj, algorithm=V._ALG, public_key_hex=pk.hex())
+        obj["signature_hex"] = sign(hashlib.sha3_256(canonical(obj)).digest()).hex()
+        return obj
+
+    def head(self, size, entries, log_id, signer=None):
+        return self.signed({"format": V._STH_FORMAT, "log_id": log_id, "tree_size": size,
+                            "root_hash_hex": V.merkle_tree_head(entries).hex(),
+                            "timestamp": "2026-10-20T00:00:00Z"}, V._sth_canonical, signer or self.log)
+
+    def decide(self, v, key, want):
+        """`want` is True (accepted) or the note the refusal carries."""
+        if want is True:
+            self.assertIs(v[key], True, v["note"])
+        else:
+            self.assertIs(v[key], False)
+            self.assertEqual(v["note"], want)
+
+    # -- signed: all five refused --------------------------------------------------------
+
+    def test_a_cosignature_whose_size_is_not_an_integer_witnesses_nothing(self):
+        # One reader serves the witnessed checkpoint and the timestamp anchor's witnesses. By `==`
+        # alone a witness's signed `true` was the size 1 and `1.0` was 1, and each one counted.
+        entries, trusted = [self.ts_hash], [self.witness[1].hex()]
+        head = self.head(1, entries, V._TIMESTAMP_LOG_ID)
+
+        def both(size):
+            cos = [self.signed({"format": V._COSIGNATURE_FORMAT, "log_id": V._TIMESTAMP_LOG_ID, "tree_size": size,
+                                "root_hash_hex": V.merkle_tree_head(entries).hex()},
+                               V._cosignature_canonical, self.witness)]
+            wc = V.verify_witnessed_checkpoint(head, cos, trusted, threshold=1, issuer_key=self.log[1].hex())
+            ta = V.verify_timestamp_anchor(self.anchored(0, 1, 1, entries, cos), log_key=self.log[1].hex(),
+                                           trusted_witnesses=trusted, threshold=1)
+            self.assertIs(ta["anchored"], True, ta["note"])
+            return wc, ta
+
+        wc, ta = both(1)
+        self.assertEqual((wc["witnessed"], wc["cosigner_count"], ta["witnessed"]), (True, 1, True), "control: 1")
+        for size in self.FIVE:
+            with self.subTest(tree_size=repr(size)):
+                for v in both(size):
+                    self.assertEqual((v["witnessed"], v["cosigner_count"]), (False, 0))
+                    self.assertEqual(v["note"], "only 0 trusted witness cosignature(s), need 1")
+
+    def test_a_cosignature_checked_alone_is_held_to_its_size(self):
+        # verify_cosignature read no size and left it to verify_witnessed_checkpoint, so a
+        # witness's cosignature checked alone was authentic at each size below. Each is signed for
+        # real, so only the size refuses it.
+        top, root = V._MAX_SAFE_INTEGER, V.merkle_tree_head([self.ts_hash]).hex()
+
+        def alone(size):
+            return V.verify_cosignature(self.signed({"format": V._COSIGNATURE_FORMAT, "log_id": V._TIMESTAMP_LOG_ID,
+                                                     "tree_size": size, "root_hash_hex": root},
+                                                    V._cosignature_canonical, self.witness))
+        for size in (1, top):
+            with self.subTest(tree_size=size):
+                self.decide(alone(size), "cosignature_authentic", True)
+        for size in self.FIVE + (1.5, top + 1, top + 2, top + 3, 10 ** 20):
+            with self.subTest(tree_size=repr(size)):
+                self.decide(alone(size), "cosignature_authentic",
+                            "the cosignature's tree_size is not an integer from 0 to 2**53 - 1")
+
+    def test_a_revoked_count_that_is_not_an_integer_is_refused(self):
+        def feed(count):
+            return self.signed(dict(self.WINDOW, format="polaris-revocation-feed/1",
+                                    authority={"agency_id": 1, "name": "A"}, epoch_number=1,
+                                    as_of="2026-10-20T00:00:00Z", revoked_root_hex=V.revoked_root([self.LEAF]),
+                                    revoked_count=count, revoked_leaves=[self.LEAF]),
+                               V._revocation_feed_canonical, self.authority)
+        self.decide(V.verify_revocation_feed(feed(1), now=self.NOW), "feed_authentic", True)
+        for count in self.FIVE:
+            with self.subTest(revoked_count=repr(count)):
+                self.decide(V.verify_revocation_feed(feed(count), now=self.NOW), "feed_authentic",
+                            "the revoked-set commitment does not match the listed leaves")
+
+    def test_a_member_count_that_is_not_an_integer_is_refused(self):
+        def bundle(count):
+            return self.signed(dict(self.WINDOW, format="polaris-federation-status-bundle/1",
+                                    publisher={"agency_id": 9, "name": "P"}, members=[self.MEMBER],
+                                    members_root_hex=V.bundle_members_root([self.MEMBER]), member_count=count),
+                               V._status_bundle_canonical, self.authority)
+        self.decide(V.verify_status_bundle(bundle(1), now=self.NOW), "bundle_authentic", True)
+        for count in self.FIVE:
+            with self.subTest(member_count=repr(count)):
+                self.decide(V.verify_status_bundle(bundle(count), now=self.NOW), "bundle_authentic",
+                            "the members_root does not match the embedded members (the set was tampered)")
+
+    def test_a_leaf_count_that_is_not_an_integer_is_refused(self):
+        def leaves(count):
+            return self.signed(dict(self.WINDOW, format="polaris-epoch-leaves/1", authority={"agency_id": 1},
+                                    epoch_id=1, context_id=1, merkle_root="cd" * 32, leaf_count=count,
+                                    all_leaves_hex=[self.LEAF], leaves_root_hex=V._leaves_root([self.LEAF])),
+                               V._epoch_leaves_canonical, self.authority)
+        self.decide(V.verify_epoch_leaves(leaves(1), now=self.NOW), "leaves_authentic", True)
+        for count in self.FIVE:
+            with self.subTest(leaf_count=repr(count)):
+                self.decide(V.verify_epoch_leaves(leaves(count), now=self.NOW), "leaves_authentic",
+                            "the published leaf count does not match the signed one")
+
+    def test_a_log_head_whose_size_is_not_an_integer_is_not_published(self):
+        # verify_publication runs verify_sth on the ledger's head only, and writes the log head's
+        # size into the ledger entry with "%s": a size of "1" wrote the integer head's entry, and
+        # a ledger holding a head's own spelling ("True", "1.0", "None", "-1") published all five.
+        self.decide(self.publication(1, 1, 1, recorded=1), "published", True)
+        for size in self.FIVE:
+            for recorded in (size, 1):
+                with self.subTest(tree_size=repr(size), ledger_holds=repr(recorded)):
+                    self.decide(self.publication(size, size, 1, recorded=recorded), "published",
+                                "the log head's tree_size is not an integer from 0 to 2**53 - 1")
+
+    # -- signed: the bound, 0 to 2**53 - 1 ------------------------------------------------
+
+    def test_a_signed_size_past_2_53_minus_1_is_refused_by_the_rule(self):
+        # JSON.parse reads 2**53 + 1 as 2**53, so the TypeScript SDK computed other canonical
+        # bytes for a head of that size, and one head had two verdicts. Every head here is signed
+        # for real, so only the rule refuses it. A cosignature's own size is held to the bound in
+        # test_a_cosignature_checked_alone_is_held_to_its_size, and a signed count must equal a
+        # list's length, which no list reaches; the rule they share is held at its bound below.
+        top = V._MAX_SAFE_INTEGER
+        self.assertEqual(top, 2 ** 53 - 1)
+        for size in (1, top, top + 1, top + 2):
+            self.assertIs(V._signed_count(size), size <= top, size)
+        entries, trusted = [self.ts_hash], [self.witness[1].hex()]
+        for size in (1, top):
+            with self.subTest(size=size):
+                head = self.head(size, entries, V._TIMESTAMP_LOG_ID)
+                self.decide(V.verify_sth(head, self.log[1].hex()), "sth_authentic", True)
+                cos = [self.signed({"format": V._COSIGNATURE_FORMAT, "log_id": V._TIMESTAMP_LOG_ID,
+                                    "tree_size": size, "root_hash_hex": V.merkle_tree_head(entries).hex()},
+                                   V._cosignature_canonical, self.witness)]
+                wc = V.verify_witnessed_checkpoint(head, cos, trusted, threshold=1, issuer_key=self.log[1].hex())
+                self.assertEqual((wc["witnessed"], wc["cosigner_count"]), (True, 1), wc["note"])
+                self.assertIs(V.verify_log_consistency(head, head, [], self.log[1].hex())["consistent"], True)
+                self.decide(self.publication(size, size, 1, recorded=size), "published", True)
+        for size in (top + 1, top + 2):
+            with self.subTest(size=size):
+                head = self.head(size, entries, V._TIMESTAMP_LOG_ID)
+                self.decide(V.verify_sth(head, self.log[1].hex()), "sth_authentic",
+                            "tree_size is not an integer from 0 to 2**53 - 1")
+                self.assertEqual(V.verify_log_consistency(head, head, [], self.log[1].hex())["note"],
+                                 "an STH is not authentic (tree_size is not an integer from 0 to 2**53 - 1)")
+                self.decide(self.publication(size, size, 1, recorded=size), "published",
+                            "the log head's tree_size is not an integer from 0 to 2**53 - 1")
+
+    # -- unsigned: read by _wire_int, so 1.0 is 1 ------------------------------------------
+
+    def test_inclusion_reads_its_index_and_size_by_one_rule_and_never_raises(self):
+        # Called as a library, `true` was 1, and "1", null and an index of 1.0 or 1.5 raised.
+        two, one = ["e0", "e1"], ["e0"]
+        root2, path, leaf1 = V.merkle_tree_head(two), V.inclusion_proof(1, two), V._lh("e1")
+        root1, leaf0 = V.merkle_tree_head(one), V._lh("e0")
+        self.assertIs(V.verify_inclusion(1, 2, leaf1, root2, path), True, "control: the index 1")
+        self.assertIs(V.verify_inclusion(0, 1, leaf0, root1, []), True, "control: the size 1")
+        for value, accepted in ((True, False),
+                                (1.0, True),  # 1.0 is 1: JSON.parse reads it so, and TypeScript cannot refuse it
+                                ("1", False), (None, False), (-1, False), (1.5, False), (10 ** 400, False)):
+            with self.subTest(index=repr(value)[:12]):
+                self.assertIs(V.verify_inclusion(value, 2, leaf1, root2, path), accepted)
+            with self.subTest(tree_size=repr(value)[:12]):
+                self.assertIs(V.verify_inclusion(0, value, leaf0, root1, []), accepted)
+
+    def test_consistency_reads_its_sizes_by_one_rule_and_never_raises(self):
+        # Called as a library, `true` was 1, and "1", null and 1.0 raised.
+        three = ["e0", "e1", "e2"]
+        root1, root3, proof = V.merkle_tree_head(three[:1]), V.merkle_tree_head(three), V.consistency_proof(1, three)
+        self.assertIs(V.verify_consistency(1, 3, root1, root3, proof), True, "control: the old size 1")
+        self.assertIs(V.verify_consistency(0, 1, root1, root1, []), True, "control: the new size 1")
+        for value, accepted in ((True, False),
+                                (1.0, True),  # 1.0 is 1, as verify_inclusion reads it
+                                ("1", False), (None, False), (-1, False), (1.5, False), (10 ** 400, False)):
+            with self.subTest(old_size=repr(value)[:12]):
+                self.assertIs(V.verify_consistency(value, 3, root1, root3, proof), accepted)
+            with self.subTest(new_size=repr(value)[:12]):
+                self.assertIs(V.verify_consistency(0, value, root1, root1, []), accepted)
+
+    def publication(self, log_size, receipt_size, leaf_index, recorded):
+        """verify_publication of a log head of `log_size`, under a ledger that holds another head's
+        entry and then the entry of a head of size `recorded`."""
+        root = V.merkle_tree_head([self.ts_hash]).hex()
+        entries = [self.OTHER_HEAD, V._publication_entry(V._TIMESTAMP_LOG_ID, recorded, root)]
+        receipt = {"format": V._PUBLICATION_FORMAT, "log_id": V._TIMESTAMP_LOG_ID, "tree_size": receipt_size,
+                   "root_hash_hex": root, "ledger_sth": self.head(2, entries, "polaris-ledger", self.ledger),
+                   "leaf_index": leaf_index, "inclusion_proof_hex": [x.hex() for x in V.inclusion_proof(1, entries)]}
+        return V.verify_publication(self.head(log_size, [self.ts_hash], V._TIMESTAMP_LOG_ID), receipt,
+                                    self.ledger[1].hex())
+
+    def test_a_publication_receipt_size_that_is_not_an_integer_binds_no_head(self):
+        # The receipt is unsigned. By `!=` alone its `true` was the size 1 and bound the head.
+        unbound = "the receipt does not bind to this log head"
+        self.decide(self.publication(1, 1, 1, recorded=1), "published", True)
+        for size, want in ((True, unbound),
+                           (1.0, True),  # 1.0 is 1: JSON.parse reads it so, and TypeScript cannot refuse it
+                           ("1", unbound), (None, unbound), (-1, unbound), (10 ** 400, unbound)):
+            with self.subTest(tree_size=repr(size)[:12]):
+                self.decide(self.publication(1, size, 1, recorded=1), "published", want)
+
+    def test_a_publication_receipt_leaf_index_that_is_not_an_integer_places_nothing(self):
+        malformed = "the receipt's leaf_index, proof, or ledger root is malformed"
+        self.decide(self.publication(1, 1, 1, recorded=1), "published", True)
+        for index, want in ((True, malformed),
+                            (1.0, True),  # 1.0 is 1: JSON.parse reads it so, and TypeScript cannot refuse it
+                            ("1", malformed), (None, malformed),
+                            (-1, "the inclusion proof does not place this head in the ledger")):
+            with self.subTest(leaf_index=repr(index)):
+                self.decide(self.publication(1, 1, index, recorded=1), "published", want)
+
+    def receipt_inclusion(self, index, proof_size, head_size, n):
+        """verify_receipt_inclusion of the last of `n` receipts in a log of `n`."""
+        hashes, at = self.receipt_hashes[:n], n - 1
+        proof = {"entry_hex": hashes[at], "index": index, "tree_size": proof_size,
+                 "root_hash_hex": V.merkle_tree_head(hashes).hex(),
+                 "proof_hex": [x.hex() for x in V.inclusion_proof(at, hashes)]}
+        return V.verify_receipt_inclusion(self.RECEIPTS[at], proof, self.head(head_size, hashes, V._RECEIPT_LOG_ID),
+                                          log_key=self.log[1].hex())
+
+    def test_a_receipt_inclusion_proof_or_head_size_that_is_not_an_integer_includes_nothing(self):
+        # The head is signed (verify_sth refuses all five); the proof is not (1.0 is 1).
+        malformed, apart = "malformed proof", "the proof and the head describe different trees"
+        self.decide(self.receipt_inclusion(1, 2, 2, n=2), "included", True)
+        self.decide(self.receipt_inclusion(0, 1, 1, n=1), "included", True)
+        for index, want in ((True, malformed),
+                            (1.0, True),  # 1.0 is 1: JSON.parse reads it so, and TypeScript cannot refuse it
+                            ("1", malformed), (None, malformed),
+                            (-1, "the inclusion proof does not reconstruct the head")):
+            with self.subTest(index=repr(index)):
+                self.decide(self.receipt_inclusion(index, 2, 2, n=2), "included", want)
+        for size, want in ((True, malformed),
+                           (1.0, True),  # 1.0 is 1: JSON.parse reads it so, and TypeScript cannot refuse it
+                           ("1", malformed), (None, malformed), (-1, apart)):
+            with self.subTest(proof_tree_size=repr(size)):
+                self.decide(self.receipt_inclusion(0, size, 1, n=1), "included", want)
+        for size, want in ((True, "tree_size is not an integer from 0 to 2**53 - 1"),
+                           (1.0, "tree_size is not an integer from 0 to 2**53 - 1"), ("1", apart), (None, apart), (-1, apart)):
+            with self.subTest(head_tree_size=repr(size)):
+                v = self.receipt_inclusion(0, 1, size, n=1)
+                self.decide(v, "included", want)
+                self.assertIs(v["sth_authentic"], False)
+
+    def anchored(self, index, proof_size, head_size, entries, cosignatures=None):
+        """The published timestamp, anchored in a log of `entries` under a head of `head_size`."""
+        t = json.loads(json.dumps(self.ts))
+        root, at = V.merkle_tree_head(entries).hex(), entries.index(self.ts_hash)
+        t["anchor"] = {"log_id": V._TIMESTAMP_LOG_ID, "timestamp_hash": self.ts_hash,
+                       "sth": self.head(head_size, entries, V._TIMESTAMP_LOG_ID),
+                       "proof": {"entry_hex": self.ts_hash, "index": index, "log_id": V._TIMESTAMP_LOG_ID,
+                                 "tree_size": proof_size, "root_hash_hex": root,
+                                 "proof_hex": [x.hex() for x in V.inclusion_proof(at, entries)]}}
+        if cosignatures is not None:
+            t["anchor"]["cosignatures"] = cosignatures
+        return t
+
+    def test_a_timestamp_anchor_proof_or_head_size_that_is_not_an_integer_anchors_nothing(self):
+        malformed, apart = "malformed proof", "the proof and the head describe different trees"
+        two, one, key = ["00" * 32, self.ts_hash], [self.ts_hash], self.log[1].hex()
+
+        def anchor(index, proof_size, head_size, entries):
+            return V.verify_timestamp_anchor(self.anchored(index, proof_size, head_size, entries), log_key=key)
+        self.decide(anchor(1, 2, 2, two), "anchored", True)
+        self.decide(anchor(0, 1, 1, one), "anchored", True)
+        for index, want in ((True, malformed),
+                            (1.0, True),  # 1.0 is 1: JSON.parse reads it so, and TypeScript cannot refuse it
+                            ("1", malformed), (None, malformed),
+                            (-1, "the inclusion proof does not reconstruct the head")):
+            with self.subTest(index=repr(index)):
+                self.decide(anchor(index, 2, 2, two), "anchored", want)
+        for size, want in ((True, malformed),
+                           (1.0, True),  # 1.0 is 1: JSON.parse reads it so, and TypeScript cannot refuse it
+                           ("1", malformed), (None, malformed), (-1, apart)):
+            with self.subTest(proof_tree_size=repr(size)):
+                self.decide(anchor(0, size, 1, one), "anchored", want)
+        for size, want in ((True, "tree_size is not an integer from 0 to 2**53 - 1"),
+                           (1.0, "tree_size is not an integer from 0 to 2**53 - 1"), ("1", apart), (None, apart), (-1, apart)):
+            with self.subTest(head_tree_size=repr(size)):
+                v = anchor(0, 1, size, one)
+                self.decide(v, "anchored", want)
+                self.assertIs(v["sth_authentic"], False)
 
 
 # --------------------------------------------------------------------------- the chain anchor

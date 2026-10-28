@@ -163,7 +163,6 @@ services:
       POLARIS_CUSTODY_AWSKMS_REGION: "${POLARIS_CUSTODY_AWSKMS_REGION:-}"
       POLARIS_CUSTODY_PKCS11_TOKEN_LABEL: "${POLARIS_CUSTODY_PKCS11_TOKEN_LABEL:-polaris}"
       POLARIS_CUSTODY_PKCS11_KEY_LABEL: "${POLARIS_CUSTODY_PKCS11_KEY_LABEL:-polaris-issuer}"
-      POLARIS_PQC_TRUST_ANCHORS_FILE: "${POLARIS_PQC_TRUST_ANCHORS_FILE:-}"
       # Non-sensitive runtime config (G28: nothing here is sensitive)
       # v8.83: app talks to pgbouncer:6432, which multiplexes onto
       # postgres:5432. Connection-pooling foundations for Arc B Phase 2.
@@ -246,10 +245,9 @@ services:
       # mode, so idle pooled connections hold backends: colours x workers x this <= its pool size.
       POLARIS_DB_POOL_SIZE: "${POLARIS_DB_POOL_SIZE:-1}"
       # v9.116: real ML-DSA-65 signing is the production default (liboqs ships in
-      # the prod image). The signing keypair is the file-mounted secret below; its
-      # public key is the stable trust anchor verify_token_signature checks
-      # against. Operators custodying key material in an HSM/KMS replace the
-      # generated secret with their loader (that custody is operator-gated).
+      # the prod image). The signing keypair is the file-mounted secret below,
+      # unless POLARIS_CUSTODY_DRIVER selects PKCS#11 or AWS KMS; its public key is
+      # the one to register in the key register (docs/operator/KEY-CEREMONY.md).
       POLARIS_USE_REAL_PQC: '1'
       POLARIS_PQC_SIGNING_KEY_FILE: /run/secrets/polaris_signing_key
     secrets:

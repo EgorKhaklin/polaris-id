@@ -388,7 +388,8 @@ def availability_report() -> dict:
 # material. When set, every signature uses the SAME key, so its public key is a
 # stable, publishable trust anchor that verifiers check against. When unset
 # (dev/test), sign() falls back to an ephemeral per-call keypair, which is NOT
-# verifiable against any known anchor and must never be the production path.
+# verifiable against any known anchor and is never the production path: under
+# POLARIS_ENV=production it refuses (_ephemeral_signature), and app.py refuses to boot.
 _PERSISTENT_KEY_ENV = "POLARIS_PQC_SIGNING_KEY_FILE"
 _PERSISTENT_KEYPAIR: Optional[tuple] = None
 _PERSISTENT_LOADED = False
@@ -436,21 +437,38 @@ def generate_keypair(algorithm=None) -> dict:
     }
 
 
+def _ephemeral_signature(algorithm, data: bytes) -> tuple:
+    """(public key, signature) over `data` under a keypair made for this one call: what
+    development and test sign with when no custody is configured. No key register, trust list
+    or anchor file names that key, so its signatures prove nothing about who made them. Under
+    POLARIS_ENV=production it refuses (custody.CustodyError) instead; app.py refuses to boot
+    there without a key as well."""
+    if os.environ.get("POLARIS_ENV", "").strip().lower() == "production":
+        raise custody.CustodyError(
+            "POLARIS_ENV=production and no signing key is configured: refusing to sign under a "
+            "per-call key no trust anchor names. Set POLARIS_PQC_SIGNING_KEY_FILE, or "
+            "POLARIS_CUSTODY_DRIVER for a PKCS#11 token or AWS KMS (docs/operator/KEY-CEREMONY.md)")
+    import oqs as _oqs  # type: ignore
+    with _oqs.Signature(algorithm) as signer:
+        return signer.generate_keypair(), signer.sign(data)
+
+
 def sign(message: bytes, agency_id=None) -> SigningResult:
     """Sign `message` with ML-DSA-65.
 
     Uses the custodied long-lived key when one is configured (the file driver via
     POLARIS_PQC_SIGNING_KEY_FILE, or a PKCS#11 / AWS KMS driver via
     POLARIS_CUSTODY_DRIVER; see custody.py), so the public key is a stable trust
-    anchor; otherwise generates an ephemeral per-call keypair (the dev/test
-    fallback — not verifiable against a known anchor).
+    anchor; otherwise, in development and test only, an ephemeral per-call keypair
+    that no anchor names (_ephemeral_signature, which refuses under production).
 
     PE.3b: when `agency_id` is given, the ISSUING AGENCY's own key is used if one is
     configured (POLARIS_AGENCY_KEYS_DIR/<agency_id>.json), else the global key — so a
     token is signed by the agency it is issued for, and single-key deployments are
     unchanged.
 
-    Raises PQCUnavailableError if oqs is not importable.
+    Raises PQCUnavailableError if oqs is not importable, and custody.CustodyError under
+    POLARIS_ENV=production when no custody is configured.
     Returns SigningResult with public_key, signature, message hash.
     """
     if not _OQS_AVAILABLE:
@@ -458,9 +476,6 @@ def sign(message: bytes, agency_id=None) -> SigningResult:
             f"liboqs-python is not importable: {_OQS_IMPORT_ERROR}. "
             "Install per polaris_web/pqc_signing.py module docstring."
         )
-
-    # Deferred import (mypy/IDE don't see it pre-import)
-    import oqs as _oqs  # type: ignore
 
     # SHA3-256 the message for binding to a fixed-size digest
     digest = hashlib.sha3_256(message).digest()
@@ -475,11 +490,9 @@ def sign(message: bytes, agency_id=None) -> SigningResult:
         public_key = cust.public_key()
         signature = cust.sign(digest)
     else:
-        # No persistent key configured — ephemeral keypair (dev/test only).
+        # No persistent key configured: an ephemeral keypair (development and test only).
         alg = custody.configured_algorithm()
-        with _oqs.Signature(alg) as signer:
-            public_key = signer.generate_keypair()
-            signature = signer.sign(digest)
+        public_key, signature = _ephemeral_signature(alg, digest)
 
     return SigningResult(
         algorithm_name=alg,
@@ -782,10 +795,7 @@ def signature_over_cose_sig_structure(to_be_signed: bytes, agency_id=None) -> tu
         public_key, signature = cust.public_key(), cust.sign_message(message)
     else:
         # No persistent key configured: an ephemeral keypair, development and test only (sign()).
-        import oqs as _oqs  # type: ignore
-        with _oqs.Signature(alg) as signer:
-            public_key = signer.generate_keypair()
-            signature = signer.sign(message)
+        public_key, signature = _ephemeral_signature(alg, message)
     public_key_hex, signature_hex = bytes(public_key).hex(), bytes(signature).hex()
     _refuse_a_wrong_size(alg, public_key_hex, signature_hex,
                          "the produced %s COSE signature" % alg, "refusing to sign")
@@ -839,15 +849,13 @@ def signature_for_migration(token_value: str, algorithm: str, agency_id=None) ->
         raise SigningError(
             "a migration signature requires the independent second witness; refusing to "
             f"re-sign a population on one implementation ({_WITNESS_IMPORT_ERROR or 'none'})")
-    import oqs as _oqs  # type: ignore
     digest = hashlib.sha3_256(token_value.encode("utf-8")).digest()
     cust = custody.get_custody_for_algorithm(algorithm)
     if cust is not None:
         public_key, signature = cust.public_key(), cust.sign(digest)
     else:
-        with _oqs.Signature(algorithm) as signer:
-            public_key = signer.generate_keypair()
-            signature = signer.sign(digest)
+        # No custody at all: an ephemeral keypair, development and test only (sign()).
+        public_key, signature = _ephemeral_signature(algorithm, digest)
     public_key_hex, signature_hex = public_key.hex(), signature.hex()
     # Self-verify under BOTH witnesses before the row is written. A migration writes once
     # across a whole population; a signature nobody checked at the moment it was made is a
@@ -867,6 +875,7 @@ def verify_stored_signature(
     signature_bytes: bytes,
     signing_public_key_hex: Optional[str],
     witnesses: str = "both",
+    algorithm: Optional[str] = None,
 ) -> bool:
     """Verify a stored TokenSignature against its token using the public key
     stored WITH the signature — self-contained, no live trust-anchor lookup.
@@ -888,6 +897,11 @@ def verify_stored_signature(
       witness at use re-confirms authenticity at the throughput a national
       deployment needs. See docs/design/verification-scaling.md.
     The placeholder path is unaffected (it does no crypto).
+
+    ``algorithm`` is the parameter set the signature's row records
+    (TokenSignature.algorithm_id). Given, the signature is checked under it, so a
+    key or signature of another set's length is refused; None reads the set from
+    the key's length, for a caller with no row.
     """
     if signing_public_key_hex:
         if not _OQS_AVAILABLE:
@@ -895,8 +909,8 @@ def verify_stored_signature(
         message = token_value.encode("utf-8")
         signature_hex = signature_bytes.hex()
         if witnesses == "single":
-            return verify(message, signature_hex, signing_public_key_hex)
-        return verify_both(message, signature_hex, signing_public_key_hex)
+            return verify(message, signature_hex, signing_public_key_hex, algorithm=algorithm)
+        return verify_both(message, signature_hex, signing_public_key_hex, algorithm=algorithm)
     import hmac
     expected = hashlib.sha3_256(token_value.encode("utf-8")).digest()
     return hmac.compare_digest(signature_bytes, expected)
@@ -1093,66 +1107,34 @@ def trust_anchor_public_key_hex() -> Optional[str]:
     return cust.public_key().hex()
 
 
-_TRUST_ANCHORS_ENV = "POLARIS_PQC_TRUST_ANCHORS_FILE"
-
-
-def trust_anchor_public_keys() -> list:
-    """All acceptable anchors, hex: the CURRENT custodied key first, then the
-    previous keys listed in POLARIS_PQC_TRUST_ANCHORS_FILE (a JSON document
-    {"anchors": [{"public_key_hex": ..., "label": ..., "retired": ...}]}). This is
-    what makes key rotation possible: tokens signed under a previous key keep
-    verifying until the operator removes that anchor (KEY-CEREMONY.md).
-    A malformed anchors file fails loud rather than silently shrinking trust."""
-    anchors = []
-    current = trust_anchor_public_key_hex()
-    if current:
-        anchors.append(current)
-    path = os.environ.get(_TRUST_ANCHORS_ENV)
-    if path:
-        try:
-            with open(path) as fh:
-                doc = json.load(fh)
-            for entry in doc.get("anchors", []):
-                pk = entry["public_key_hex"]
-                # A key of no accepted parameter set's length verifies nothing, so loading it
-                # would shrink trust silently: refused like any other malformed anchor.
-                if custody.algorithm_for_public_key(unhex(pk)) is None:
-                    raise ValueError("an anchor is not a public key of an accepted parameter set "
-                                     "(%s)" % ", ".join(ACCEPTED_ALGORITHMS))
-                if pk not in anchors:
-                    anchors.append(pk)
-        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-            raise RuntimeError(f"{_TRUST_ANCHORS_ENV}={path} is unreadable/malformed: {exc}") from exc
-    return anchors
-
-
 def verify_token_signature(
     token_value: str,
     signature_bytes: bytes,
     algorithm_label: str,
 ) -> bool:
-    """Verify a stored `TokenSignature` against its token — the use-path check.
+    """Verify a signature over `token_value` under the CURRENT custody key.
 
-    Dispatch on the algorithm recorded WITH the signature (not the current
-    process mode), so a token signed under one mode verifies correctly later:
+    No route calls this. The relying-party door and the operator's verify route
+    check a stored signature under the public key stored with it
+    (`verify_stored_signature`), which is what keeps a credential signed under a
+    retired key verifying; the key register says whether that key was authorized
+    when it signed (KEY-CEREMONY.md). This answers only whether the configured key
+    made the signature: CI (the pqc-real job, and a check inside the prod image)
+    and the tests use it. Dispatch on the algorithm recorded with the signature:
 
-    - ``"ML-DSA-65"`` — a real signature. Verified against the trust-anchor
-      public key (`trust_anchor_public_key_hex`). Returns False when no trust
-      anchor is configured (cannot prove authenticity without it) or the
-      signature does not check out. This is a genuine authenticity proof: only
-      the holder of the anchor's private key could have produced it.
-    - ``PLACEHOLDER_LABEL`` — the deterministic SHA3-256 binding. Verification is
-      an integrity recompute + constant-time compare. This is NOT an authenticity
-      proof (there is no key); it only confirms the bytes match `token_value`.
-    - anything else — False (unknown signature scheme).
+    - an accepted ML-DSA parameter set: verified by both witnesses against
+      `trust_anchor_public_key_hex`. False when no custody is configured or the
+      signature does not check out, which includes one an earlier key made.
+    - ``PLACEHOLDER_LABEL``: the deterministic SHA3-256 binding, recomputed and
+      compared in constant time. An integrity check, not authenticity (there is
+      no key): it only confirms the bytes match `token_value`.
+    - anything else: False (unknown signature scheme).
     """
     if _verifies_under(algorithm_label):
-        anchors = trust_anchor_public_keys()
-        if not anchors:
+        current = trust_anchor_public_key_hex()
+        if not current:
             return False
-        # The current key first, then any previous keys still trusted (rotation).
-        return any(verify_both(token_value.encode("utf-8"), signature_bytes.hex(), a, algorithm=algorithm_label)
-                   for a in anchors)
+        return verify_both(token_value.encode("utf-8"), signature_bytes.hex(), current, algorithm=algorithm_label)
     if algorithm_label == PLACEHOLDER_LABEL:
         import hmac
         expected = hashlib.sha3_256(token_value.encode("utf-8")).digest()

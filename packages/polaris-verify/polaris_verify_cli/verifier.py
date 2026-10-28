@@ -138,6 +138,21 @@ def _wire_int(x):
     return int(x)
 
 
+def _signed_count(x):
+    """A count or size a signature covers (a tree head's or a cosignature's `tree_size`, a
+    `member_count`, `leaf_count` or `revoked_count`): a JSON integer from 0 to 2**53 - 1
+    (`_MAX_SAFE_INTEGER`), never a boolean, a string, null or `1.0`.
+
+    `_wire_int` reads `1.0` as 1, and a signed field cannot. JavaScript's JSON.parse reads
+    `1.0` as 1 too, so the TypeScript SDK writes `1` in the canonical bytes where Python writes
+    `1.0`, and one signature verifies in one language and fails in the other: until 2026-10-21
+    a count signed as `1.0` was authentic here and refused there. Past 2**53 - 1 JSON.parse
+    reads the nearest double (2**53 + 1 as 2**53), so a head signed with that size was authentic
+    here and not there; the bound keeps one reading. An inclusion proof's integers are not
+    signed, every verifier reads `1.0` in them as 1, and they agree."""
+    return type(x) is int and 0 <= x <= _MAX_SAFE_INTEGER
+
+
 def _wire_path(p):
     """An inclusion proof's audit path: absent or null is the empty path, a list is read
     element by element, and anything else is malformed rather than read as empty (`0`, `""`
@@ -1606,7 +1621,7 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
         leaves = []
     uniq = {str(x).lower() for x in leaves}
     v["commitment_ok"] = (hex_ok and revoked_root(leaves) == _hex_text(feed.get("revoked_root_hex"))
-                          and _finite(feed.get("revoked_count")) and len(uniq) == feed.get("revoked_count"))
+                          and _signed_count(feed.get("revoked_count")) and len(uniq) == feed.get("revoked_count"))
     try:
         sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
@@ -1767,11 +1782,11 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     if not isinstance(members, list):
         members = []
     v["members"] = members  # a coerced list, so a downstream member iteration is total
-    # member_count is a number, not a boolean, and not absent: `(x or 0)` read an absent
+    # member_count is an integer, not a boolean, and not absent: `(x or 0)` read an absent
     # count as 0 and Python's `True == 1` read `true` as one member (WIRE-SPEC 3.4).
     member_count = bundle.get("member_count")
     v["commitment_ok"] = (bundle_members_root(members) == _hex_text(bundle.get("members_root_hex"))
-                          and _finite(member_count) and member_count == len(members))
+                          and _signed_count(member_count) and member_count == len(members))
     try:
         sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
@@ -3444,7 +3459,14 @@ def consistency_proof(m, entries):
 def verify_consistency(m, n, root1, root2, proof):
     """Verify a consistency proof (RFC 6962 §2.1.4): the size-`m` tree with head `root1`
     is a prefix of the size-`n` tree with head `root2`. root1/root2/proof are digests.
-    True iff the log only appended between the two heads."""
+    True iff the log only appended between the two heads. The sizes are read by `_wire_int`, as
+    verify_inclusion reads its index and size: `true`, `"1"`, null, `1.5` and a negative number
+    are refused (False), and `1.0` is 1. Until 2026-10-21 a direct call read `true` as 1 and
+    raised TypeError on `"1"`, null and `1.0`."""
+    try:
+        m, n = _wire_int(m), _wire_int(n)
+    except (ValueError, OverflowError):  # OverflowError: past a float's range, as in verify_inclusion
+        return False
     if m < 0 or n < m:
         return False
     if m == n:
@@ -3503,7 +3525,15 @@ def inclusion_proof(idx, entries):
 
 def verify_inclusion(idx, tree_size, leaf, root, proof):
     """Verify (RFC 6962 §2.1.1) that `leaf` (a leaf digest) is the entry at `idx` in a
-    tree of `tree_size` with head `root`."""
+    tree of `tree_size` with head `root`. The index and the size are read by `_wire_int`, as
+    the anchor and receipt callers read a proof's: `true`, `"1"`, null, `1.5` and a negative
+    number are refused (False), and `1.0` is 1. Until 2026-10-21 a direct call read `true`
+    as 1 and raised TypeError on `"1"`, null and, as an index, `1.0` and `1.5`."""
+    try:
+        idx, tree_size = _wire_int(idx), _wire_int(tree_size)
+    except (ValueError, OverflowError):
+        # OverflowError: `_finite` takes an integer past a float's range (10**400) as a float.
+        return False
     if idx < 0 or idx >= tree_size:
         return False
     fn, sn = idx, tree_size - 1
@@ -3545,6 +3575,14 @@ def verify_sth(sth, issuer_key=None):
     if sth.get("format") != _STH_FORMAT:
         v["note"] = "not a %s" % _STH_FORMAT
         return v
+    # A log can sign any value here. verify_receipt_inclusion and verify_timestamp_anchor
+    # compare a proof's size with this one by `!=`, under which a signed `true` is 1 and
+    # `7.0` is 7, so until 2026-10-15 a proof was included under either head. The rule is
+    # verify_log_consistency's, and it now holds for every caller.
+    size = sth.get("tree_size")
+    if not _signed_count(size):
+        v["note"] = "tree_size is not an integer from 0 to 2**53 - 1"
+        return v
     alg, pk_hex, sig_hex = sth.get("algorithm"), sth.get("public_key_hex"), sth.get("signature_hex")
     if alg == _PLACEHOLDER or not pk_hex:
         v["note"] = "placeholder STH -- not authenticatable offline"
@@ -3578,7 +3616,8 @@ def verify_log_consistency(old_sth, new_sth, proof, issuer_key=None):
     ov = verify_sth(old_sth, issuer_key=issuer_key)
     nv = verify_sth(new_sth, issuer_key=issuer_key)
     if not (ov["sth_authentic"] and nv["sth_authentic"]):
-        return {"consistent": False, "fork": False, "note": "an STH is not authentic"}
+        return {"consistent": False, "fork": False,
+                "note": "an STH is not authentic (%s)" % (nv if ov["sth_authentic"] else ov)["note"]}
     if issuer_key is None:
         return {"consistent": False, "fork": False,
                 "note": "no log key was named: both heads must be signed by a log key the caller names"}
@@ -3593,8 +3632,7 @@ def verify_log_consistency(old_sth, new_sth, proof, issuer_key=None):
     # sign. A head carrying `"tree_size": true`, offered with a real 1->5 consistency proof
     # and the real one-entry root, satisfied every other part of this verdict and was
     # reported as an append-only extension. This is the same reason `_finite` refuses bools.
-    if isinstance(m, bool) or isinstance(n, bool) \
-            or not isinstance(m, int) or not isinstance(n, int) or m < 0 or n < 0:
+    if not _signed_count(m) or not _signed_count(n):
         return {"consistent": False, "fork": False, "note": "a tree_size is missing or invalid"}
     if n < m:
         return {"consistent": False, "fork": True,
@@ -3658,6 +3696,12 @@ def verify_cosignature(cosig, witness_key=None):
     if cosig.get("format") != _COSIGNATURE_FORMAT:
         v["note"] = "not a %s" % _COSIGNATURE_FORMAT
         return v
+    # The size is a signed count, read as verify_sth reads a head's. Read only where a
+    # cosignature was counted over a head, a cosignature checked here alone was authentic at
+    # `true`, `1.0` or 2**53 (until 2026-10-21).
+    if not _signed_count(cosig.get("tree_size")):
+        v["note"] = "the cosignature's tree_size is not an integer from 0 to 2**53 - 1"
+        return v
     alg, pk_hex, sig_hex = cosig.get("algorithm"), cosig.get("public_key_hex"), cosig.get("signature_hex")
     if alg == _PLACEHOLDER or not pk_hex:
         v["note"] = "placeholder cosignature -- not authenticatable offline"
@@ -3704,6 +3748,9 @@ def verify_witnessed_checkpoint(sth, cosignatures, trusted_witnesses, threshold=
         cv = verify_cosignature(c)
         if not cv["cosignature_authentic"]:
             continue
+        # verify_cosignature has read the size as a signed count: by `==` alone a witness's
+        # signed `true` was the size 1, and `1.0` was 1, so either counted toward the threshold
+        # where the TypeScript SDK counts neither (until 2026-10-21).
         if (c.get("log_id") == sth.get("log_id") and c.get("tree_size") == sth.get("tree_size")
                 and _same_hex(c.get("root_hash_hex"), sth.get("root_hash_hex"))):
             w = _hex_text(c.get("public_key_hex"))
@@ -3775,8 +3822,21 @@ def verify_publication(log_sth, receipt, ledger_key):
     if receipt.get("format") != _PUBLICATION_FORMAT:
         v["note"] = "not a %s" % _PUBLICATION_FORMAT
         return v
+    # Only the ledger's head goes through verify_sth here, so its size rule never reached the
+    # log head's, and the entry below writes that size with "%s": a head of size `"1"` wrote the
+    # integer head's entry and was published, and under a ledger that recorded the head's own
+    # spelling, `true`, `1.0`, null and -1 were published too (until 2026-10-21).
+    if not _signed_count(log_sth.get("tree_size")):
+        v["note"] = "the log head's tree_size is not an integer from 0 to 2**53 - 1"
+        return v
+    # The receipt is unsigned, so its size is read as an inclusion proof's is: by `!=` alone,
+    # `true` was the size 1. A size `_wire_int` refuses binds no head.
+    try:
+        receipt_size = _wire_int(receipt.get("tree_size"))
+    except (ValueError, OverflowError):  # OverflowError: past a float's range, as in verify_inclusion
+        receipt_size = None
     if (receipt.get("log_id") != log_sth.get("log_id")
-            or receipt.get("tree_size") != log_sth.get("tree_size")
+            or receipt_size != log_sth.get("tree_size")
             or not _same_hex(receipt.get("root_hash_hex"), log_sth.get("root_hash_hex"))):
         v["note"] = "the receipt does not bind to this log head"
         return v
@@ -3804,8 +3864,8 @@ def verify_publication(log_sth, receipt, ledger_key):
     # sibling call in verify_timestamp_anchor wraps this in try/except with the comment "a
     # hostile proof shape is a refusal, never a crash"; this one did not.
     ledger_size = ledger_sth.get("tree_size")
-    if not isinstance(ledger_size, int) or isinstance(ledger_size, bool) or ledger_size < 0:
-        v["note"] = "the ledger head's tree_size is not a non-negative integer"
+    if not _signed_count(ledger_size):
+        v["note"] = "the ledger head's tree_size is not an integer from 0 to 2**53 - 1"
         return v
     if verify_inclusion(idx, ledger_size, _lh(entry), root, proof):
         v["published"] = True
@@ -4377,9 +4437,9 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
     leaves = leaves if isinstance(leaves, list) else []
     v["leaf_count"] = len(leaves)
     v["commitment_matches"] = (hex_ok and _leaves_root(leaves) == _hex_text(bundle.get("leaves_root_hex")))
-    # A number, not a boolean: `True == 1` read `"leaf_count": true` as one leaf, which the
+    # An integer, not a boolean: `True == 1` read `"leaf_count": true` as one leaf, which the
     # TypeScript SDK's `===` refuses (2026-09-30).
-    v["count_matches"] = (_finite(bundle.get("leaf_count")) and len(leaves) == bundle.get("leaf_count"))
+    v["count_matches"] = (_signed_count(bundle.get("leaf_count")) and len(leaves) == bundle.get("leaf_count"))
     if not v["commitment_matches"]:
         v["note"] = "the published leaves do not match the committed leaves_root_hex"
         return v

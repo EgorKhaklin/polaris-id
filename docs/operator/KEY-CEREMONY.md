@@ -31,9 +31,11 @@ FIPS 204 mu (`EXTERNAL_MU`).
 | awskms | `awskms` | inside AWS KMS (`KeySpec ML_DSA_65`); signing is `Sign` with `ML_DSA_SHAKE_256` | AWS-hosted authorities |
 
 With no driver configured, real ML-DSA signing falls back to a fresh key for every signature, for
-development only. Nothing such an instance signs verifies against an anchor, and every verifier
-refuses its stapled status assertions, because each is signed by a different key from the
-credential's. That is the fallback working, not a fault: configure a driver to sign under one key.
+development only: under `POLARIS_ENV=production` the application refuses to start without a key
+that loads, and the signer refuses to sign. Nothing such an instance signs verifies against an
+anchor, and every verifier refuses its stapled status assertions, because each is signed by a
+different key from the credential's. That is the fallback working, not a fault: configure a driver
+to sign under one key.
 
 Secrets never travel through environment: the PKCS#11 PIN is read from
 `POLARIS_CUSTODY_PKCS11_PIN_FILE` and the app refuses to start if
@@ -73,8 +75,10 @@ register only a key the ceremony minted, and never one retired or declared compr
 Under real signing this is not optional. Every possession route (`/api/v1/verify`, the status
 assertion, holder signing, the verifiable credential, the mdoc, sign-in) accepts a signature only
 under a key its authority had registered at the instant the signature was made, and refuses one
-whose key has no recorded history. The application role can write a signature row but cannot
-register a key, so this is what keeps a planted row from being vouched for. A credential issued
+whose key has no recorded history. The application role cannot add to the authority key register
+(since 2026-09-27) or write a signature row directly (since 2026-10-04; `uc6_migrate_algorithm`,
+a definer routine it may call, still inserts one from the bytes it is given); this refusal stays
+so that a row that reaches the table another way is still not vouched for. A credential issued
 before its key was registered is refused until the registration's `--effective-at` covers its
 signing instant.
 
@@ -91,16 +95,27 @@ file that another host user owns (measured on a Linux Docker Engine, 2026-10-14)
 the private key's confidentiality therefore rests on that directory against other unprivileged
 users on the host. Root and members of the `docker` group, which
 [HARDENING.md](HARDENING.md#5-the-docker-daemon) calls root-equivalent, can read it, and the app,
-which must read the key, reads it through the mount. Back it up sealed (an encrypted
-copy in two locations, under dual control) before the first token is issued; a lost file means every
-future token needs a new key and the old public key stays in the trust anchors
-forever. Restrict the host per [`HARDENING.md`](HARDENING.md) (auditd watches
+which must read the key, reads it through the mount. The file driver refuses a key file that is
+not a regular file or that group or others can write, and a key in a directory that group or
+others can write without the sticky bit, where they could replace it. In a sticky directory such
+as `/tmp` the entry must belong to root or to the app's user: anyone who can write there can
+create the name before the key exists and keep what they planted. It checks the directory holding
+the name and the one holding the file, which differ when the name is a symlink, as in a
+Kubernetes secret mount, whose names the kubelet creates as root. The directories above these two
+are not checked, so keep the key under a path only the deploy's owner and root can write. Read
+bits are accepted: who can read the key is bounded by the 0700 secrets directory under Compose and
+the pod's secret mount under Helm, not by the file's mode.
+Back it up sealed (an encrypted
+copy in two locations, under dual control) before the first token is issued; a lost file means a
+rotation to a new key, and the old public key stays published until every credential it signed
+has expired ([Rotation](#rotation)). Restrict the host per [`HARDENING.md`](HARDENING.md) (auditd watches
 `polaris_web/secrets`).
 
 ### pkcs11
 
 1. Initialise the token per the vendor's runbook (security-officer PIN, user
-   PIN). Put the user PIN in `polaris_web/secrets/pkcs11_pin` (one line, 0600).
+   PIN). Put the user PIN in `polaris_web/secrets/pkcs11_pin` (one line, 0600; the app
+   reads it under the key file's checks above).
 2. Generate the key INSIDE the token with the ceremony helper. It refuses to
    overwrite an existing label:
    ```bash
@@ -176,16 +191,16 @@ cryptographically its own (roadmap PE.3b), give each agency its own key:
    `polaris key-register <id> <hex>`, run as the schema owner, which appends the key to
    the authority's register and makes it current in one transaction. The application role
    cannot append key events (2026-09-27), so `key-register`, `key-retire` and
-   `key-compromise` exit 3 under it. Since 1.0.0-rc.57 the
-   application role cannot set a key the register does not hold (or holds as retired or
+   `key-compromise` exit 3 under it. Since 1.0.0-rc.57 an `UPDATE` by the application role
+   cannot change an authority's key to one the register does not hold (or holds as retired or
    compromised); a plain `UPDATE Agency` works only as the schema owner, and leaves no register
    entry, so the trust list would serve a key with no history.
 3. Once registered, `/uc1/issue` REFUSES to issue a token for that agency whose real
    signature was produced by any other key, and `GET /api/tokens/<id>/verify`
    reports `issuer_authentic` — whether the token was signed by its issuing agency's
-   registered key. Rotate an agency's key the same way as the global key (below),
-   updating its registered `signing_public_key_hex` and keeping the old key as a
-   trust anchor until its tokens expire.
+   registered key. Rotate an agency's key the same way as the global key (below):
+   register the new key and retire the old one, which stays published until its
+   tokens expire.
 
 ## Wallet-copy keys (ES256)
 
@@ -255,10 +270,6 @@ published, the other credential is refused; the signed trust list says retired a
 after the old key is declared compromised from before the first credential, that credential is
 no longer authorized at signing while the second is untouched.
 
-`POLARIS_PQC_TRUST_ANCHORS_FILE` lists earlier public keys that
-`pqc_signing.verify_token_signature` accepts, which the custody tests below use. No route of
-the running application reads it, so it plays no part in a rotation; the register does.
-
 ## How this is tested
 
 `polaris_web/test_custody.py`: the file driver signs and both witnesses verify;
@@ -267,12 +278,12 @@ implements KMS's `DescribeKey` / `GetPublicKey` / `Sign` and signs with OpenSSL'
 ML-DSA-65 (wrong key spec and a disabled key are refused at load); the PKCS#11
 driver runs against a real PKCS#11 v3.2 token in CI (Kryoptic, Fedora 43, job
 `custody-pkcs11`): key generated in-token, `CKM_ML_DSA` signatures verified by
-liboqs and OpenSSL, duplicate labels refused. Rotation is tested end to end:
-a token signed under the old key stops verifying after the switch and verifies
-again once the old key is an anchor. In-token rotation is drilled too (PE.4): a
-second key is generated INSIDE the token under a new label, a token signed under
-the old in-token key still verifies after the switch while the new key signs, and
-dropping the old anchor completes retirement
+liboqs and OpenSSL, duplicate labels refused. Rotation is tested for the file
+driver and drilled in-token (PE.4): a second key is generated INSIDE the token
+under a new label; after the switch the new key signs, and a token signed under
+the old key still verifies under the public key stored with its signature, as
+the relying-party door and `GET /api/tokens/<id>/verify` check it, while the
+custody key alone no longer verifies it
 (`test_in_token_rotation_old_token_still_verifies_new_key_signs`, run against the
 real Kryoptic token by the `custody-pkcs11` job; pinned by
 `check_key_rotation_drilled`). An opt-in live test runs against a real

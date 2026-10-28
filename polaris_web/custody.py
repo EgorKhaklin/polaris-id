@@ -56,6 +56,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 from typing import Optional
 
@@ -210,6 +211,55 @@ class KeyCustody:
 # ---------------------------------------------------------------------------
 # file
 # ---------------------------------------------------------------------------
+def _read_key_file(path: str, what: str = "file") -> bytes:
+    """The key file's bytes, checked on the descriptor that reads them, so the file checked is
+    the file read. Refused: anything but a regular file (the open does not block, so a FIFO
+    cannot hang the load); a file group or others can write, as they could rewrite the key; and
+    a file in a directory group or others can write, as they could replace it. A sticky
+    directory is admitted when root or this process owns the entry in it: the sticky bit lets
+    only an entry's owner, the directory's owner or root rename or remove it, but anyone can
+    create the name first and then owns what they planted. Two directories are checked, the
+    one holding the name and the one holding the file: they differ when the name is a symlink,
+    as in a Kubernetes secret mount, whose own directory is world-writable and sticky with
+    root's symlinks in it, and whose files sit in a 0755 directory below. A directory others
+    cannot write needs no owner check, and under Compose the key carries the host operator's
+    uid. Directories above these two are not checked. Read bits are not refused: the shipped
+    Compose secret is 0644 inside the 0700 host secrets directory and Helm mounts it 0440, so
+    the deploy, not the mode, bounds who can read the key (KEY-CEREMONY.md). `what` names the
+    secret in a refusal."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise CustodyError(f"{what}: {path} is not a regular file")
+        mode = stat.S_IMODE(st.st_mode)
+        if mode & 0o022:
+            raise CustodyError(f"{what}: {path} is writable by group or others (mode {mode:04o}); "
+                               "remove those bits (chmod go-w)")
+        name = os.path.abspath(path)
+        # Each directory with the owner of its entry: the name (a symlink under Kubernetes) and
+        # the file opened.
+        for directory, owner in ((os.path.dirname(name), os.lstat(name).st_uid),
+                                 (os.path.dirname(os.path.realpath(path)), st.st_uid)):
+            dmode = os.stat(directory).st_mode
+            if not dmode & 0o022:
+                continue
+            if not dmode & stat.S_ISVTX:
+                raise CustodyError(f"{what}: {path} is in {directory}, which group or others can "
+                                   f"write (mode {stat.S_IMODE(dmode):04o}), so they could "
+                                   "replace it; remove those bits (chmod go-w)")
+            if owner not in (0, os.geteuid()):
+                raise CustodyError(f"{what}: {path} is in {directory}, a sticky directory others "
+                                   f"can write (mode {stat.S_IMODE(dmode):04o}), and uid {owner} "
+                                   "owns it there, neither root nor this process: whoever creates "
+                                   "the name first owns it and can rewrite it")
+    except BaseException:
+        os.close(fd)
+        raise
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read()
+
+
 class FileCustody(KeyCustody):
     """The JSON key file (development and small deployments). The secret key is
     in process memory; that is the trade-off this driver makes explicit."""
@@ -219,8 +269,7 @@ class FileCustody(KeyCustody):
     def __init__(self, path: str):
         self._path = path
         try:
-            with open(path) as fh:
-                data = json.load(fh)
+            data = json.loads(_read_key_file(path))
             if signing_sizes(data.get("algorithm")) is None:
                 raise CustodyError(f"file: {path}: {_refusal(data.get('algorithm'))}")
             self.algorithm = data["algorithm"]
@@ -463,9 +512,9 @@ class AwsKmsCustody(KeyCustody):
 # selection from env, cached per configuration
 # ---------------------------------------------------------------------------
 def _read_secret_file(path: str, what: str) -> str:
+    """A secret's file (the PKCS#11 PIN), read under the key file's checks."""
     try:
-        with open(path) as fh:
-            return fh.read().strip()
+        return _read_key_file(path, what).decode("utf-8").strip()
     except OSError as exc:
         raise CustodyError(f"{what}: cannot read {path}: {exc}") from exc
 

@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -191,6 +192,37 @@ class RefusalTests(_Dir):
         with self.assertRaises(cck.CopyKeyError) as caught:
             cck.load_from_files(7, str(key_path), str(chain_path))
         self.assertIn("not a regular file", str(caught.exception))
+
+    def test_a_fifo_is_refused_without_waiting_for_a_writer(self):
+        """Opened for reading, a FIFO blocks until a writer comes. A load still blocked after
+        five seconds reads red, and the test then releases it, so a failure never leaves the
+        suite stuck."""
+        key_path = self.dir / "7.key.pem"
+        os.mkfifo(key_path, 0o600)
+        chain_path = self.dir / "7.chain.pem"
+        chain_path.write_bytes(_pem(self.pki.leaf))
+        outcome = []
+
+        def load():
+            try:
+                cck.load_from_files(7, str(key_path), str(chain_path))
+                outcome.append("loaded")
+            except Exception as exc:  # noqa: BLE001  the assertion below names what it was
+                outcome.append("%s: %s" % (type(exc).__name__, exc))
+
+        t = threading.Thread(target=load, daemon=True)
+        t.start()
+        t.join(5)
+        if t.is_alive():
+            try:  # a writer that opens and closes gives the blocked reader end-of-file
+                os.close(os.open(key_path, os.O_WRONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+            t.join(5)
+            self.fail("load_from_files blocked opening a FIFO instead of refusing it")
+        self.assertEqual(len(outcome), 1, outcome)
+        self.assertTrue(outcome[0].startswith("CopyKeyError: "), outcome)
+        self.assertIn("not a regular file", outcome[0])
 
     def test_a_key_that_is_not_p256_is_refused(self):
         other = ec.generate_private_key(ec.SECP384R1())

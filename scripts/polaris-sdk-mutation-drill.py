@@ -102,7 +102,10 @@ SDKS = {
 #: site it was never about. Content cannot drift.
 DECLARED_SURVIVORS: dict[str, str] = {
     # --- The detached verifier (polaris-verify), 2026-09-23 ------------------------------
-    "verify:verify_consistency:e706fa#3":
+    # #4 since 2026-10-21, #3 before: reading the two sizes by _wire_int put one more
+    # `return False`, its except branch, above this one, so #3 became the `if not proof`
+    # refusal, which the suite kills.
+    "verify:verify_consistency:e706fa#4":
         "unreachable: the `if not proof` guard above means the first next() always yields a node",
     "verify:_cbor_load:7dde06":
         "belt and braces: a truncated string ends past the buffer, and the trailing-bytes or "
@@ -362,8 +365,8 @@ def _suites_pass(work: pathlib.Path, sdk: dict) -> bool:
         a = subprocess.run(cmd, cwd=work / cwd, capture_output=True, timeout=300)
         # Short-circuit. The verdict is `a and b`, so once the SDK's own tests have caught
         # the mutation the conformance run cannot change the answer, and it is the
-        # expensive half: 118 cases, each a subprocess. Running it anyway cost most of the
-        # drill's wall clock for no information. Same semantics, less work.
+        # expensive half: every published case, each a subprocess. Running it anyway cost
+        # most of the drill's wall clock for no information. Same semantics, less work.
         if a.returncode != 0:
             return False
         b = subprocess.run(conf, cwd=work, capture_output=True, timeout=900)

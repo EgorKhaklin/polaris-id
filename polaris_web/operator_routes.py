@@ -919,8 +919,10 @@ def api_token_verify(tok_id):
     for r in rows:
         raw = r['signature_bytes']
         sig = bytes(raw) if raw is not None else b''
+        # Under the parameter set the row records, not one read from the key's length.
         ok = pqc_signing.verify_stored_signature(
-            token_value, sig, r['signing_public_key_hex'], witnesses='single')
+            token_value, sig, r['signing_public_key_hex'], witnesses='single',
+            algorithm=r['algorithm'])
         authorized, current = _issuer_key_facts(
             tok_id, r['issuing_agency_id'], r['signing_public_key_hex'], r['signed_at'])
         signatures.append({
@@ -952,7 +954,8 @@ def api_token_verify(tok_id):
                 raw = r['signature_bytes']
                 sig = bytes(raw) if raw is not None else b''
                 both_valid = both_valid and pqc_signing.verify_stored_signature(
-                    token_value, sig, r['signing_public_key_hex'], witnesses='both')
+                    token_value, sig, r['signing_public_key_hex'], witnesses='both',
+                    algorithm=r['algorithm'])
             if both_valid != all_valid:
                 observability.record_witness_disagreement(
                     token_id=tok_id, single_ok=all_valid, both_ok=both_valid)

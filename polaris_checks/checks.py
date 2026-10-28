@@ -1509,20 +1509,25 @@ def check_pqc_real_signing(root: pathlib.Path) -> list[Finding]:
 
 # ---------------------------------------------------------------------------
 # Verification must be ENFORCED, not just possible. A signing core where
-# verify() is never called is theater. Two live obligations: (1) issuance
-# self-verifies the signature it produces (signature_bytes_for_token calls
-# verify) and refuses to persist one that does not check out; (2) a use-path
-# primitive (verify_token_signature) checks a stored signature against the
-# published trust anchor, exercised in the pqc-real CI job.
+# verify() is never called is theater. Three live obligations: (1) issuance
+# self-verifies the signature it produces (signature_with_key_for_token calls
+# verify) and refuses to persist one that does not check out; (2) where the
+# product relies on a stored signature, it checks it under the public key stored
+# with it: the relying-party door (rp_api.py) and the operator's verify route
+# (operator_routes.py) call verify_stored_signature; (3) CI verifies a real
+# signature under the configured key (verify_token_signature) in the pqc-real
+# job and inside the prod image.
 # ---------------------------------------------------------------------------
 def check_verify_enforced(root: pathlib.Path) -> list[Finding]:
     p = _read(root, "polaris_web/pqc_signing.py")
     if not p:
         return _fail("verify_enforced", "polaris_web/pqc_signing.py is missing")
-    if "def verify_token_signature" not in p or "def trust_anchor_public_key_hex" not in p:
+    if "def verify_stored_signature" not in p or "def verify_token_signature" not in p \
+            or "def trust_anchor_public_key_hex" not in p:
         return _fail("verify_enforced",
-                     "pqc_signing.py must expose verify_token_signature + "
-                     "trust_anchor_public_key_hex (the use-path check + the published anchor)")
+                     "pqc_signing.py must expose verify_stored_signature (a stored signature under "
+                     "its stored key), verify_token_signature and trust_anchor_public_key_hex (the "
+                     "configured key)")
     # The self-verify lives in signature_with_key_for_token (v9.117); the older
     # signature_bytes_for_token is now a thin wrapper around it.
     m = re.search(r"def signature_with_key_for_token\(.*?\n(?=def [a-z])", p, re.S)
@@ -1533,13 +1538,21 @@ def check_verify_enforced(root: pathlib.Path) -> list[Finding]:
         return _fail("verify_enforced",
                      "signature_bytes_for_token must self-verify the signature it produces (call "
                      "verify / verify_both) so an unverifiable signature is never persisted")
+    for rel, door in (("polaris_web/rp_api.py", "the relying-party door"),
+                      ("polaris_web/operator_routes.py", "the operator's verify route")):
+        if "pqc_signing.verify_stored_signature(" not in _read(root, rel):
+            return _fail("verify_enforced",
+                         f"{rel} ({door}) must check each stored signature it relies on "
+                         "(pqc_signing.verify_stored_signature)")
     ci = _read(root, ".github/workflows/ci.yml")
     if not ci or "verify_token_signature" not in ci:
         return _fail("verify_enforced",
-                     "the pqc-real CI job must exercise verify_token_signature (verify-at-use)")
+                     "CI must verify a real signature under the configured key "
+                     "(verify_token_signature, in the pqc-real job)")
     return _ok("verify_enforced",
-               "verification is enforced: issuance self-verifies, verify_token_signature checks "
-               "stored signatures against the trust anchor, exercised in CI")
+               "verification is enforced: issuance self-verifies, the relying-party door and the "
+               "operator's verify route check each stored signature under its stored key, and CI "
+               "verifies a real signature under the configured key")
 
 
 # ---------------------------------------------------------------------------
@@ -1719,16 +1732,17 @@ def check_signature_self_contained_verify(root: pathlib.Path) -> list[Finding]:
 
 
 def check_possession_requires_registered_key(root: pathlib.Path) -> list[Finding]:
-    """THREAT-MODEL (2026-10-04): the application role may INSERT a TokenSignature row, so a
-    possession proof that trusts the row vouches for a forgery: a keyless row (SHA3-256 of the
-    token value, which anyone computes) or a row under an attacker's own key. Under real signing
+    """THREAT-MODEL (2026-10-04): a possession proof that trusts a TokenSignature row vouches for
+    a planted one: a keyless row (SHA3-256 of the token value, which anyone computes) or a row
+    under an attacker's own key. The application role could INSERT such a row until migration
+    2026-10-04-002 revoked the write; this refusal stays as defense in depth. Under real signing
     `_possession_authenticated`, the one function every possession route calls, must refuse a
     match unless `_issuer_key_facts(...)` says the issuing authority had registered that key at
     the signature's instant, and must treat None (unknown) as a refusal: the shape is an
     `if pqc_signing.is_enabled():` holding the `_issuer_key_facts` call and an
     `if <fact> is not True: return None`, ahead of the function's final `return`. Read from the
     syntax tree, so a comment naming the gate does not satisfy it. The effect is tested in
-    RelyingPartyApiTests (both plants, made as polaris_app)."""
+    RelyingPartyApiTests (both plants, written as the schema owner since the revoke)."""
     name = "possession_requires_registered_key"
     src = _read_raw(root, "polaris_web/rp_api.py")
     try:
@@ -1778,7 +1792,7 @@ def check_possession_requires_registered_key(root: pathlib.Path) -> list[Finding
 # Real PQC must be the PRODUCTION DEFAULT, not merely testable. That needs three
 # things together: liboqs in the prod image (so oqs imports at runtime), the
 # flag on in the prod compose (POLARIS_USE_REAL_PQC=1), and the signing-key
-# secret mounted (the stable trust anchor verify-at-use checks against). CI
+# secret mounted (the key the instance signs with). CI
 # verifies real ML-DSA-65 actually works inside the prod image. The real key
 # CUSTODY (HSM/KMS) stays operator-gated; the compose ships a generated key.
 # ---------------------------------------------------------------------------
@@ -9951,15 +9965,11 @@ def check_key_custody_abstraction(root: pathlib.Path) -> list[Finding]:
     if "custody.get_custody()" not in pq or re.search(r"Signature\(_ALG_NAME,\s*secret_key=", pq):
         return _fail("key_custody", "pqc_signing.sign() must obtain signatures from custody.get_custody(); no direct "
                      "secret-key signing outside the custody layer")
-    if "def trust_anchor_public_keys" not in pq or "POLARIS_PQC_TRUST_ANCHORS_FILE" not in pq:
-        return _fail("key_custody", "pqc_signing must expose rotation trust anchors "
-                     "(trust_anchor_public_keys + POLARIS_PQC_TRUST_ANCHORS_FILE)")
     if "def verify_both" not in pq or "verify_both(" not in pq.split("def signature_with_key_for_token")[1].split("\ndef ")[0]:
         return _fail("key_custody", "the two-witness verify (verify_both) must still gate every stored signature")
-    for cls in ("class FileCustodyTests", "class AwsKmsCustodyTests", "class Pkcs11CustodyTests", "_KmsStandIn",
-                "TRUST_ANCHORS_FILE"):
+    for cls in ("class FileCustodyTests", "class AwsKmsCustodyTests", "class Pkcs11CustodyTests", "_KmsStandIn"):
         if cls not in tests:
-            return _fail("key_custody", f"test_custody.py must contain {cls} (each driver exercised, rotation tested)")
+            return _fail("key_custody", f"test_custody.py must contain {cls} (each driver exercised)")
     if "python-pkcs11==" not in req or "boto3==" not in req:
         return _fail("key_custody", "requirements-custody.txt must pin python-pkcs11 and boto3")
     if "kryoptic" not in ci or "test_custody" not in ci or "POLARIS_CUSTODY_PKCS11_REQUIRE" not in ci \
@@ -9972,7 +9982,7 @@ def check_key_custody_abstraction(root: pathlib.Path) -> list[Finding]:
         return _fail("key_custody", "/api/health must report the custody component (driver, public-key fingerprint)")
     return _ok("key_custody", "issuer-key custody: file / PKCS#11 (CKM_ML_DSA, in-token, non-extractable) / "
                "AWS KMS (ML_DSA_65, RAW ML_DSA_SHAKE_256) behind one interface, PIN never from env, "
-               "pqc_signing routed through it with the two-witness verify unchanged, rotation anchors, "
+               "pqc_signing routed through it with the two-witness verify unchanged, "
                "each driver exercised (PKCS#11 against Kryoptic in CI), ceremony + rotation runbook, health")
 
 
@@ -16652,15 +16662,16 @@ def check_federation_real(root: pathlib.Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
-# HSM key rotation is drilled IN-TOKEN, not just designed (roadmap PE.4). The
-# trust-anchor set (current key + previous keys) that makes rotation possible was
-# tested for the file driver, but the sole-HSM profile signs inside a PKCS#11
-# token with non-extractable keys, and rotation there means minting a NEW in-token
-# key under a new label while the OLD token keeps verifying against its retired
-# anchor. This check pins that the in-token rotation is actually EXERCISED: a test
-# mints two distinct in-token keys, proves a token signed under the old key still
-# verifies after rotation and that the new key signs, and the PKCS#11 drill (run
-# by CI's custody job) executes it against a real Kryoptic token.
+# HSM key rotation is drilled IN-TOKEN, not just designed (roadmap PE.4). A
+# rotated key's tokens keep verifying because every stored signature carries its
+# public key, and the key register says whether that key was authorized when it
+# signed. The sole-HSM profile signs inside a PKCS#11 token with non-extractable
+# keys, and rotation there means minting a NEW in-token key under a new label.
+# This check pins that the in-token rotation is actually EXERCISED: a test mints
+# two distinct in-token keys, proves the new key signs, that a token signed under
+# the old key still verifies under its stored key and that the custody key no
+# longer verifies it, and the PKCS#11 drill (run by CI's custody job) executes it
+# against a real Kryoptic token.
 # Detection: test_checks removes the rotation test, the drill's suite run, and the
 # CI invocation.
 # ---------------------------------------------------------------------------
@@ -16680,15 +16691,18 @@ def check_key_rotation_drilled(root: pathlib.Path) -> list[Finding]:
         return _fail("key_rotation_drilled",
                      "the rotation test must mint a SECOND distinct key IN the token (pkcs11_generate_key with a "
                      "new label) and assert it differs from the first")
-    # The OLD token must STILL verify after rotation, and the NEW key must sign.
-    if body.count("verify_token_signature") < 2 or "token-ROT-1" not in body:
+    # After rotation the NEW key signs, the OLD token still verifies under the key stored with its
+    # signature (as the relying-party door checks it), and the custody key no longer verifies it.
+    if not re.search(r"assertTrue\(pqc_signing\.verify_token_signature\(\s*['\"]token-ROT-2", body):
         return _fail("key_rotation_drilled",
-                     "the rotation test must prove the OLD token still verifies after rotation (via its retired "
-                     "anchor) AND that the new key signs")
-    if "assertFalse(pqc_signing.verify_token_signature" not in body:
+                     "the rotation test must prove the new key signs (token-ROT-2 verifies under the custody key)")
+    if not re.search(r"assertTrue\(pqc_signing\.verify_stored_signature\(\s*['\"]token-ROT-1", body):
         return _fail("key_rotation_drilled",
-                     "the rotation test must prove retirement completes — once the old anchor is dropped, the old "
-                     "token no longer verifies")
+                     "the rotation test must prove the OLD token still verifies after rotation, under the key "
+                     "stored with its signature (verify_stored_signature)")
+    if not re.search(r"assertFalse\(pqc_signing\.verify_token_signature\(\s*['\"]token-ROT-1", body):
+        return _fail("key_rotation_drilled",
+                     "the rotation test must prove the custody key no longer verifies the OLD token")
     # The PKCS#11 drill runs the in-token suite, and CI runs the drill.
     drill = _read(root, "scripts/polaris-custody-pkcs11-drill.sh")
     if "Pkcs11CustodyTests" not in drill:
