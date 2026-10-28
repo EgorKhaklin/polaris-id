@@ -18319,9 +18319,23 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
         if sym not in app:
             return _fail("exchange_gateway", "polaris_web/app.py lacks %s (%s)" % (why, sym))
     # AUTHORIZE before FORWARD: the attestation check must precede the upstream call.
-    i_auth, i_fwd = app.find("_exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("urllib.request.urlopen(up")
+    i_auth, i_fwd = app.find("_exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("_EXCHANGE_OPENER.open(up")
     if i_auth < 0 or i_fwd < 0 or i_auth > i_fwd:
         return _fail("exchange_gateway", "the gateway must authorize the requester (trust graph, in-context) BEFORE forwarding to the upstream")
+    # The forward follows no redirect: the default opener turns a 3xx into a GET to the host its
+    # Location names and reflects that host's answer. The opener is built with a handler whose
+    # redirect_request returns None, and the gateway's body never calls the default opener.
+    gw_at = app.find("def api_v1_exchange(")
+    gw_end = re.search(r"\n(?=def |class |@|[A-Za-z_]\w* *=)", app[gw_at:]) if gw_at >= 0 else None
+    if gw_end is None:
+        return _fail("exchange_gateway", "cannot find the gateway's body (def api_v1_exchange( ... up to the next top-level statement), so its forward cannot be read")
+    gateway = app[gw_at:gw_at + gw_end.start()]
+    if "urllib.request.urlopen(" in gateway:
+        return _fail("exchange_gateway", "the gateway forwards through urllib.request.urlopen, which follows an upstream redirect to another host; use _EXCHANGE_OPENER")
+    refusers = [m.group(1) for m in re.finditer(r"^class (\w+)\(urllib\.request\.HTTPRedirectHandler\):\n((?:[ \t]+.*\n|[ \t]*\n)*)", app, re.M)
+                if re.search(r"def redirect_request\(self[^)]*\):[ \t]*\n[ \t]+return None\b", m.group(2))]
+    if not any(re.search(r"^_EXCHANGE_OPENER = urllib\.request\.build_opener\(%s\)" % re.escape(n), app, re.M) for n in refusers):
+        return _fail("exchange_gateway", "_EXCHANGE_OPENER must be built with a redirect handler whose redirect_request returns None (the forward follows no upstream redirect)")
     if re.search(r"INSERT INTO \w+ \([^)]*\bbody\b", app, re.I):
         return _fail("exchange_gateway", "no persistence path may take a request or response body (evidence without retention)")
     if "CREATE TABLE ExchangeNonce" not in _read(root, "polaris_sql/01_schema.sql") or not _trigger_created(_read(root, "polaris_sql/06_triggers.sql"), "trg_exchange_nonce_append_only"):

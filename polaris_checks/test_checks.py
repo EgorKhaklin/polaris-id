@@ -12360,6 +12360,9 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     # v9.324 (P8.2d): the gateway's order of operations IS the security argument; each
     # perturbation removes one leg.
     APP = (
+        "class _NoRedirect(urllib.request.HTTPRedirectHandler):\n"
+        "    def redirect_request(self, req, fp, code, msg, headers, newurl):\n        return None\n"
+        "_EXCHANGE_OPENER = urllib.request.build_opener(_NoRedirect)\n"
         "@app.route('/api/v1/exchange/<int:target_agency_id>', methods=['POST'])\n"
         "def api_v1_exchange(target_agency_id):\n"
         "    polaris-exchange-request/1 ; placeholder signature is not authentication\n"
@@ -12368,7 +12371,7 @@ def test_exchange_gateway_check_discriminates(tmp_path):
         "    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n"
         "    _consume_exchange_nonce(k, n)  INSERT INTO ExchangeNonce\n"
         "    up = _exchange_upstreams()[kind]  POLARIS_EXCHANGE_UPSTREAMS; A URL never comes from a request\n"
-        "    urllib.request.urlopen(up)\n"
+        "    _EXCHANGE_OPENER.open(up)\n"
         "    _build_exchange_receipt(target, target_agency_id, f, occurred_at=str(env.get('issued_at')))\n"
         "_REGISTRY_SERVICES = [{'kind': 'exchange'}]\n'exchange_kinds'\n"
     )
@@ -12401,9 +12404,25 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the gateway route"
     # forward BEFORE authorize -> FAIL (swap the two lines)
     swapped = APP.replace("    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n", "").replace(
-        "    urllib.request.urlopen(up)\n", "    urllib.request.urlopen(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
+        "    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
     write({'polaris_web/app.py': swapped})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the upstream is called before authorization"
+    # the forward through the default opener (which follows a 3xx to another host) -> FAIL
+    write({'polaris_web/app.py': APP.replace("    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    urllib.request.urlopen(up)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the gateway forwards through urllib.request.urlopen"
+    # a one-token signature edit must not hide the gateway's body from that scan
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def api_v1_exchange(target_agency_id: int):")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "OK", "control: an annotated signature is still the gateway"
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def api_v1_exchange(target_agency_id: int):").replace(
+        "    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    urllib.request.urlopen(up, timeout=10)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if urlopen is added under an edited signature"
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def exchange_view(target_agency_id):")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL when the gateway's body cannot be found"
+    # the opener built without the redirect refusal -> FAIL, both ways it can be lost
+    write({'polaris_web/app.py': APP.replace("build_opener(_NoRedirect)", "build_opener()")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the opener is built without the redirect refusal"
+    write({'polaris_web/app.py': APP.replace("        return None\n", "        return super().redirect_request(req, fp, code, msg, headers, newurl)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the handler's redirect_request follows the redirect"
     write({'polaris_web/app.py': APP.replace("A URL never comes from a request", "url = payload['url']")})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if a forwarding URL could come from the request"
     write({'polaris_web/app.py': APP + "    query('INSERT INTO ExchangeLog (body) VALUES (%s)', (body,))\n"})
