@@ -75,16 +75,18 @@ language.
 - `verify_presentation(presentation, ...)`: a wallet presentation, or a bare pack.
 - `verify_signed_artifact(obj, now)`: every other signed artifact of the wire spec: the epoch
   checkpoint, revocation feed, federation manifest, status bundle, transparency STH,
-  timestamp, registry, exchange request, exchange receipt, mint statement, signed document,
-  ID token and trust list (authenticity, freshness where windowed, and the artifact's
-  commitment or self-consistency).
+  timestamp, registry, exchange request, exchange receipt, mint statement, signed document
+  and trust list (authenticity, freshness where windowed, and the artifact's commitment or
+  self-consistency).
+- `verify_id_token(tok, audience, nonce, now, anchors)`: the ID token, checked against the
+  audience, the nonce and the agency keys you pass.
 - `verify_cross_authority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted. By default it accepts a trust edge the attesting agency did not sign, as version 1 manifests carry; a relying party should pass `require_signed_attestation=True` to require that agency's signature.
 - `verify_exchange_request(...)`, `verify_exchange_receipt(...)`, `verify_exchange_mint(...)`: an
   exchange artifact in use: whether it is by the party expected, whether the requester was
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (281 cases, measured against the repository on 2026-10-01) and every case of the frozen
+The SDK passes every case of the conformance suite (294 cases, measured against the repository on 2026-10-28) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py`, which runs on every CI push.
 
 ## Conformance
