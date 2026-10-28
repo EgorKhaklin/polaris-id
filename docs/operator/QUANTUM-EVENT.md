@@ -150,7 +150,7 @@ Verify:
 polaris migrate-population --to ML-DSA-87 --dry-run     # unverifiable must be 0
 ```
 
-## 7. What this procedure does not cover
+## 7. Scope
 
 - **Credentials that can no longer be live.** A REVOKED, LOST or EXPIRED credential keeps
   its historical signatures exactly as they were. Re-signing one would edit the
@@ -158,10 +158,9 @@ polaris migrate-population --to ML-DSA-87 --dry-run     # unverifiable must be 0
   the credential a holder is moved onto when theirs is lost, and until 1.0.0-rc.21 it was
   left on the fallen algorithm, so activating one after the window closed issued a credential
   on that algorithm alone.
-- **The physical token.** A card holding a private key under the fallen algorithm
-  is not fixed by re-signing the database record. That is the UC-6 dual-signature
-  migration on silicon (roadmap P4), and it is the reason the card profile
-  carries two signature slots.
+- **The physical token.** This procedure re-signs the database record, not a card: a card
+  holding a private key under the fallen algorithm moves by the UC-6 dual-signature migration
+  (roadmap P4), which is why the card profile carries two signature slots.
 - **Other authorities.** Each instance migrates its own population. The
   federation trust list is where a relying party learns which algorithms an
   authority's keys now use.

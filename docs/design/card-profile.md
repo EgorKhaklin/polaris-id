@@ -28,7 +28,7 @@ can produce and verify, and a post-quantum one for the day it can. That is the
 schema's own UC-6 model on the card, and it is why `TokenSignature` was a set of
 rows per credential from the first version rather than a column.
 
-## 2. What is on the card, and what is not
+## 2. What is on the card
 
 A card is **a key and a signed reference**. It is not a copy of the record.
 
@@ -121,7 +121,7 @@ signed by the duress slot verifies against the authority's record and raises a
 online path. The verifier's screen shows success. The difference is a row in a
 table the operator's screens do not show.
 
-**The limit, stated plainly: an offline verifier cannot raise a duress alarm.**
+**An offline verifier cannot raise a duress alarm.**
 There is nobody to raise it to. A card must therefore behave identically offline
 whether the normal or the duress PIN was used, and must not, for instance, decline
 to respond. A card that behaved differently offline would be a card that tells the
@@ -137,7 +137,7 @@ one supersedes: the same shape as `IdentityToken.predecessor_token_id` and
 A **reserve card** is issued in advance and activated on loss (UC-4). It carries
 the higher sequence from personalization.
 
-**The limit: a card cannot prove offline that it is the current one.** Nothing in
+**A card cannot prove offline that it is the current one.** Nothing in
 the object says whether the authority has since activated a successor, because
 activation is an event, not a date. Offline, a lost card and its replacement both
 verify. That is resolved by the status layer and not by the card: a short-lived
@@ -203,21 +203,10 @@ challenge under 16 bytes**, so it is never an oracle. The **retry counter surviv
 cycle**, or a wrong PIN would be free to retry forever. And a **blocked card refuses the
 correct PIN**, both of them, identically.
 
-An emulator cannot tell you a real secure element is constant-time, resists fault injection,
-or keeps a key non-extractable. Those are properties of a part and its certification (P4.6).
-What it can do is fix the protocol so that when such a part exists, the readers and the
-personalization service already work.
-
-## 8. What v0 does not settle
-
-- **File structure and secure messaging.** The command set above is the working subset; a
-  production applet needs an AID, file selection and an encrypted channel.
-- **Personalization.** Key injection bound to the audit-of-record is P4.3.
-- **Which silicon.** The vendor matrix and eval-kit results are P4.6, and
-  external: they depend on what is certified and purchasable, not on this
-  profile.
-- **Biometric capture.** The card carries a binding *type*, never a template.
-  Capture is the enrollment station's problem (P4.4).
+The emulator fixes the protocol so that when a certified part exists, the readers and the
+personalization service already work. A production applet adds an AID, file selection and
+secure messaging around this command set. Constant-time execution, fault resistance and key
+non-extractability are properties of a certified part (P4.6).
 
 ## Proven by
 

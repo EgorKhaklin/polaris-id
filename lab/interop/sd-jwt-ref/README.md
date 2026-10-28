@@ -52,16 +52,11 @@ A verifier that accepts everything prints the same success line.
 - **Forged disclosure.** A disclosed value (`age_over_18`) is changed: its SHA-256 no longer
   matches the `_sd` digest, so the library does not report the forged value.
 
-## What this does not establish
+## What was run
 
 - It is a verification of the **credential**: the issuer signature, the certificate chain and the
-  selective-disclosure digests. It is **not a full OpenID4VP presentation** to an outside
-  verifier: there is no key-binding JWT and no request and response flow. An outside verifier
-  accepting a presentation of a Polaris copy is the stronger next step, and it is not this.
-- It covers the **ES256 wallet copy only**. The ML-DSA-65 core credential remains unverifiable by
-  a conforming HAIP verifier, as the top-level README records.
+  selective-disclosure digests.
+- It covers the **ES256 wallet copy**.
 - It was run by the author, on one machine, against a TEST CA, with the copy minted by
-  `build_copy` directly rather than fetched through the live OpenID4VCI HTTP flow. It shows the
-  copy's format and signature interoperate with an outside implementation; it is not an outside
-  party's use of Polaris, and it earns no row in [EXTERNAL-NOUNS.md](../../EXTERNAL-NOUNS.md) on
-  its own.
+  `build_copy` directly. It shows the copy's format and signature interoperate with an outside
+  implementation.

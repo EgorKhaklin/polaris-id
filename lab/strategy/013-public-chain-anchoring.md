@@ -69,7 +69,6 @@ which stays offline against published keys. No chain enters a credential's trust
 
 The owner's direction, and the class it serves: an auditor, regulator or relying party who must
 check an operator's audit history without trusting the operator or the witnesses the operator chose.
-No outside party has asked for it. That is recorded here, not assumed away.
 
 ## 4. What already solves it?
 

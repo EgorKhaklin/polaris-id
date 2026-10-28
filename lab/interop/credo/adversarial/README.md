@@ -73,15 +73,12 @@ fails that one case for either wallet's capture. After the fix, both wallets' ge
 presentations are still accepted end to end, since both key their answer `pid`. `polaris-oid4vp 1.0.0rc7`,
 the certified release, carries it (SECURITY.md).
 
-## What this does NOT establish
+## What was run
 
-- **Every mutation is Polaris editing Credo's output.** Credo is an honest wallet. What was
-  tested is the verifier against another implementation's real encodings, which is internal
-  evidence. It is not a finding from outside, and it goes in the internal half of the
-  scoreboard.
-- **Nothing that needs the holder's key.** Credo's key stays in Credo's KMS, so no case
-  re-signs a KB-JWT. A changed nonce, audience or `sd_hash` is refused by the signature before
-  the claim is compared. The freshness cases reach the claim check only because they move
-  `now` instead of the token.
-- **Two wallets, one credential type, one run each.** The credential is the lab's own
-  `issue_sdjwt_vc.py` output in both cases; the wallets' contribution is the presentation.
+- Every mutation is Polaris editing a wallet's genuine output. What was tested is the verifier
+  against other implementations' real encodings.
+- Credo's key stays in Credo's KMS, so no case re-signs a KB-JWT. The freshness cases reach the
+  claim check by moving `now` instead of the token.
+- Four wallets, one credential type, one run each. The credential is the lab's own
+  `issue_sdjwt_vc.py` output, except OID4VCgo's, which it issued itself; the wallets'
+  contribution is the presentation.

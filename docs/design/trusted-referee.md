@@ -77,7 +77,7 @@ for a signature rather than closing the door.
 
 ---
 
-## 4. What the credential does not say
+## 4. The credential carries no vouching
 
 `IdentityToken` gains no column, no flag and no reference to a vouching. The check and the drill
 both verify this as an **absence** -- the drill asks the live catalog, because absences are the

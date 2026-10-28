@@ -2,9 +2,9 @@
 
 **Reader:** the operator provisioning the host that holds the Polaris database,
 and the reviewer asking what sits in plaintext on that disk.
-**Job:** name what is sensitive at rest, what is already protected, the gap that
-remains, why the control is the volume rather than the column, and the operator
-path (LUKS, managed TDE, fscrypt) with its verification step.
+**Job:** name what is sensitive at rest, what is already protected, what protects
+the live database, why the control is the volume rather than the column, and the
+operator path (LUKS, managed TDE, fscrypt) with its verification step.
 
 At rest means data sitting on disk: the live database files, the write-ahead log
 (WAL), and backups. Data in transit (the app-to-pgbouncer and pgbouncer-to-Postgres
@@ -30,7 +30,7 @@ database is encrypted at rest by Polaris.
 1. [What is sensitive at rest](#1-what-is-sensitive-at-rest)
 2. [What is deliberately NOT stored](#2-what-is-deliberately-not-stored)
 3. [What is already protected](#3-what-is-already-protected)
-4. [The gap: the live database](#4-the-gap-the-live-database)
+4. [The live database](#4-the-live-database)
 5. [Why host-level encryption, not field-level](#5-why-host-level-encryption-not-field-level)
 6. [The operator path](#6-the-operator-path)
 7. [Cross-references](#7-cross-references)
@@ -113,17 +113,13 @@ of the posture, not a footnote.
 
 ---
 
-## 4. The gap: the live database
+## 4. The live database
 
-The live PostgreSQL data directory and WAL are not encrypted by Polaris. An
-attacker who reads the raw data files (a stolen disk, a snapshot of an
-unencrypted volume, host-level filesystem access) reads `legal_name`,
-`date_of_birth`, and the `proof_path` leaves directly. PostgreSQL has no
-transparent built-in data-file encryption; at-rest protection of the live
-cluster is a property of the storage layer beneath it.
-
-Closing the gap is host-level work the operator owns ([section 6](#6-the-operator-path)),
-not application code.
+The live PostgreSQL data directory and WAL are not encrypted by Polaris.
+PostgreSQL has no transparent built-in data-file encryption; at-rest protection of
+the live cluster is a property of the storage layer beneath it, so provision
+volume encryption on the host that holds `pg_data` ([section 6](#6-the-operator-path)).
+That is host-level work the operator owns, not application code.
 
 ---
 
@@ -310,7 +306,7 @@ only as well as the host it runs on.
   permissions and backups off the host.
 - [OPERATIONS.md](OPERATIONS.md#encryption-at-rest): the day-2 runbook's
   pointer to this document.
-- [../PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md): the gap ledger;
+- [../PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md): the readiness ledger;
   this document closes the at-rest posture item and leaves host encryption and
   its key custodian as the operator-gated remainder.
 - `polaris_sql/01_schema.sql`: the `Individual` and `TokenStateEpochLeaf`

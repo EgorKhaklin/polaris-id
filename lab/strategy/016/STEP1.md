@@ -23,11 +23,7 @@ with the same answer shares.
 timestamp is finer than the day. **Mutation:** with one holder key reused across the batch, the
 run reports falsifier 1 FAILED.
 
-## What this does not establish
+## What was run
 
-- **Only what the copy carries.** A verifier that also logs IP addresses, times or device
-  fingerprints links by those; that is outside the credential.
-- **The crowd's size.** A day-rounded `iat` hides a holder among the copies issued that day, so the
-  privacy depends on how many there are. That is measured when there is a population, not here.
-- **Revocation across a batch (falsifier 2) and the mapping's confinement (falsifier 3)** need the
-  product path; they are step 2.
+Eight verifiers, one presentation each (`linkage.py`, 2026-10-05); the observables compared are
+the ones each copy carries.

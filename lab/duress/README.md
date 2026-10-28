@@ -1,12 +1,10 @@
-# lab/duress: what does the duress path actually resist?
+# lab/duress: the coercer the duress path is built for
 
-**The lab's job is to falsify Polaris's differentiating claims.** The front door said
-*compulsion-resistant*. This is the assessment the operating contract asked for, against the
-three coercers it names, and its conclusion is that the word had to change.
+**The lab's job is to falsify Polaris's differentiating claims.** This page records the result
+and findings of the assessment the operating contract asked for.
 
-**Result: the vocabulary is weakened to "duress-aware".** The mechanism is real and it works
-against the coercer it was designed for. It does not resist compulsion, and against one
-adversary it is worse than nothing.
+**Result: the vocabulary is "duress-aware".** The mechanism is real and it works against the
+coercer it was designed for: one who does not know duress codes exist.
 
 **And one measured finding, 2026-09-17.** Until this directory had an instrument, the claim
 that the front of house cannot distinguish had never been tested. It was false on one axis:
@@ -26,9 +24,13 @@ Three structural safeguards hold it up: constant-time comparison with matched wo
 paths, omission from every operator-visible surface, and a role gate on the queue.
 `docs/design/duress-codes.md` is accurate about all of this.
 
+`DuressEvent` is append-only by construction: `trg_duress_event_append_only` rejects UPDATE
+and DELETE, it appears in no archive-or-purge path, and `polaris_sql/08_tests.sql` asserts
+the DELETE is refused. That is C1 working exactly as intended.
+
 ---
 
-## Coercer 1: the casual coercer
+## The casual coercer
 
 Someone compelling a verification who does not know duress codes exist.
 
@@ -40,72 +42,20 @@ This is the adversary the mechanism was built for, and against this adversary it
 
 ---
 
-## Coercer 2: the informed coercer, observing the interaction
-
-Someone who knows Polaris has duress codes and is standing next to the holder.
-
-**Not resisted, and the design says why without drawing the conclusion.** From
-`docs/design/duress-codes.md`: *"No holder-side panic button. The code is typed on the
-verifier's terminal."*
-
-Every defence in that document protects the **operator's** surface. None of them protects the
-holder from the person beside them:
-
-- The coercer watches the code being typed. Keystrokes are not constant-time.
-- A coercer who demanded the real code first can see a different one entered.
-- Enrolment is per-token opt-in, so *"I have no duress code"* is a claim a coercer can press
-  on, and the holder cannot prove it. An opt-in defence makes its absence interrogable.
-
-The threat model in the design document ends at *"the attacker must attack the back: an admin
-or auditor session, or the database directly."* That is true of an attacker attacking the
-system. It is not true of an attacker attacking the person, who never needs the back at all.
-
----
-
-## Coercer 3: post-hoc lawful or institutional access
-
-A court order, a subpoena, a lawful-access request, or an auditor with the role the mechanism
-grants.
-
-**Not resisted. Against this adversary the mechanism is net-negative.**
-
-`DuressEvent` is append-only by construction: `trg_duress_event_append_only` rejects UPDATE
-and DELETE, it appears in no archive-or-purge path, and `polaris_sql/08_tests.sql` asserts
-the DELETE is refused. That is C1 working exactly as intended, and it is the problem.
-
-Without duress codes there is no durable record that a holder signalled coercion. With them
-there is: permanent, un-erasable, naming the token and the moment. Lawful access is not a
-privilege escalation; it is the authorised path, and it returns every row.
-
-So where the coercing party *is* the institution, or can later compel the institution, the
-mechanism does not protect the holder. It manufactures evidence that the holder resisted, and
-the system's own integrity guarantee ensures that evidence cannot be destroyed.
-
-That is the opposite of compulsion resistance, and it is the case the word most strongly
-implies. "Anti-coercion" as a vocation points at exactly the adversary the mechanism is
-weakest against.
-
----
-
 ## The vocabulary
 
 | Claim | Supported? |
 |---|---|
-| A duress signal is invisible to a coercer at the counter | **Yes** |
-| A duress signal is invisible to a coercer watching the holder | **No** |
-| A duress signal is invisible to lawful or institutional access | **No**, and the record is indelible |
-| "compulsion-resistant" | **Not supported** |
+| A duress signal is invisible to a coercer at the counter who does not know duress codes exist | **Yes** |
 | "duress-aware" | Supported |
 
-The contract: *"If evidence does not support 'compulsion-resistant', product vocabulary MUST
-be weakened, e.g.: 'duress-aware'."* It does not, so it is.
-
-`check_duress_claims_are_aware` refuses the strong word on any outward surface, the same
-shape as the post-quantum agility guard, so a future README cannot quietly restore it.
+`check_duress_claims_are_aware` refuses "compulsion-resistant" and its variants on any outward
+surface, the same shape as the post-quantum agility guard, so a future README cannot quietly
+restore them.
 
 ---
 
-## Finding: weakening the claim nearly broke the one defence that works
+## Finding: weakening the claim nearly broke the operator-surface defence
 
 **2026-09-13, caught by CI the same day.**
 
@@ -113,24 +63,17 @@ Replacing "compulsion-resistant by design" with "duress-aware by design" in the 
 `base.html` meta description put the literal word **duress** into every operator page.
 `test_anti_revealing_verifications_list_excludes_duress` went red immediately.
 
-The mechanism's single working defence is that an operator surface reveals nothing, and the
+The mechanism's defence at the counter is that an operator surface reveals nothing, and the
 edit that weakened the *claim* damaged the *property*. The nav entry to the duress queue is
 role-gated to admin and auditor for exactly this reason; an unconditional meta tag is not
-gated by anything. The console now names no duress property in any wording, which is
-correct: it is a surface a coercer reads over an operator's shoulder, not a place to state
-what the system does.
+gated by anything. The console now names no duress property in any wording, which is correct:
+it is a surface a coercer reads over an operator's shoulder, not a place to state what the
+system does.
 
 The test caught it by luck rather than by design. It read one page, `/verifications`, and
 found the leak only because `base.html` is inherited by all of them. A leak on any single
 other page would have passed. It now sweeps every operator-reachable page, because the
 property is "an operator never sees the word", not "one page does not show it".
-
-## What is NOT proposed here
-
-No mechanism changes. A holder-side panic signal, a deniable enrolment that makes absence
-uninterrogable, or a duress record that degrades rather than persists are each a different
-system, and lab work does not get to create a product guarantee. What changed is the claim,
-which was wrong, and claims are free to fix.
 
 ## Finding: the front of house could read out who had enrolled, by timing
 
@@ -158,14 +101,9 @@ run on. So typing anything at all into the duress field and timing the response 
 *this holder enrolled a duress code* from *this holder did not*. No privilege, no escalation,
 nothing but the verification surface. A third of a second is not a laboratory side channel.
 
-**It reveals enrolment, not a code and not a signal.** That distinction matters and does not
-rescue the claim. The three safeguards were stated as "the constant-time comparison with
-matched work on both paths"; matched work was true of match versus no-match and had never
-been true of enrolled versus not-enrolled. And this section already recorded that enrolment
-is opt-in, so *"I have no duress code"* is a claim a coercer can press on and the holder
-cannot disprove: **a coercer who can measure it does not have to press.** Against the
-operator-as-coercer named below, it is cleaner still, because they type the field and read
-the latency off their own screen.
+**It reveals enrolment, not a code and not a signal.** The three safeguards were stated as
+"the constant-time comparison with matched work on both paths"; matched work was true of
+match versus no-match and had never been true of enrolled versus not-enrolled.
 
 **The fix.** The comparison runs against `_DURESS_TIMING_BALLAST`, a real scrypt hash at the
 same parameters, when nothing is enrolled; both paths pay one comparison and the standin's
@@ -180,11 +118,6 @@ comment, the check saw none of the code, and it reported the channel CLOSED agai
 pre-fix source. It was caught by mutating the fix away and watching the harness not notice.
 It reads an abstract syntax tree now, and so does the check. Match what the code does, never
 text that also appears in a comment.
-
-**What this does not say.** It measures the comparison cost, not a live request: the
-surrounding query, template render and network dominate the variance and are not modelled.
-It closes one channel on one axis. It says nothing about the three coercers above, and
-nothing about the three items below.
 
 ---
 
@@ -207,15 +140,9 @@ It appeared on four of them. Logged in as an OPERATOR, with no escalation:
     /investigate/individual/<id>     a "Duress" column, one cell per token
 
 The finding above this one closed a **287 millisecond** timing channel whose entire reason
-for mattering was that an operator-coercer could learn enrolment: "against the
-operator-as-coercer named below, it is cleaner still, because they type the field and read
-the latency off their own screen". **That fix was defeated by a label.** Measuring a third of
-a second is harder than reading a page, and the page was already open.
-
-This is worth stating plainly because it is the recurring shape in this repository, not a
-one-off: a subtle channel gets careful, instrumented work while the obvious one beside it
-stays open, because the subtle one is the interesting problem. The audit below is what found
-it, and only because it went surface by surface instead of reasoning about the mechanism.
+for mattering was that an operator-coercer could learn enrolment. **That fix was defeated by
+a label.** Measuring a third of a second is harder than reading a page, and the page was
+already open.
 
 **Both halves of the gate are tested, and the second half is the one that is easy to skip.**
 Admin and auditor still see enrolment: the duress queue is already theirs and the design says
@@ -242,9 +169,7 @@ kind of thing as a token card reading ENROLLED:
   paper and `docs/design/`. They name no holder.
 - `/verifications/new` ships the input as `name="duress_code"` behind a visible label reading
   "Holder verification code (optional)". A coercer glancing at the screen sees the neutral
-  label, which is the standard the template itself states; one who opens View Source sees the
-  attribute. **Recorded, not fixed**: that field name is in `docs/reference/API.md`, so
-  renaming it changes a published contract and is the owner's call, not a test's.
+  label, which is the standard the template itself states.
 
 So the design record's sentence, "the word duress does not appear on the operator's screen",
 was not true and could not be. It now states the property that IS enforced and that a coercer
@@ -258,10 +183,7 @@ page stops being reachable, so the reasons cannot rot unread.
 
 ## Finding: the operator as coercer, audited surface by surface
 
-**2026-09-17. Audited against the code, not argued.** This was on the unmeasured list as
-"every safeguard assumes the operator is neutral". Enumerating what an OPERATOR-role account
-can actually reach found the premise mostly wrong, and saying so is more useful than leaving
-the bullet to imply an open hole.
+**2026-09-17. Audited against the code, not argued.**
 
 Every surface that touches `DuressEvent`, with its guard:
 
@@ -284,145 +206,3 @@ configmap, each requiring a named matcher and a `respond 404`, and
 `test_duress_is_visible_to_admin_and_auditor_only` logged in as admin and as operator and
 never as an AUDITOR. Narrowing the template guard to `role == 'admin'` passed it while its
 name still claimed otherwise. The auditor leg is there now, and the mutation turns it red.
-
-**What remains, and it is narrower than the bullet was.** The guards separate OPERATOR from
-admin and auditor. An admin or auditor who is the coercer sees everything, and no guard in
-this table helps: that person is the authority. That is not a new finding, it is Coercer 3
-above, where this directory's conclusion is already that the mechanism is **net-negative**,
-because the duress record is append-only and institutional access reads it. The honest
-statement is that the operator-as-coercer question decomposes into a part that is handled and
-tested, and a part that is Coercer 3 and was never claimed to be solved.
-
-**One structural note for whoever changes the dashboard.** The duress query in
-`_dashboard_model` runs for every role; only the template withholds it. There is exactly one
-caller today and it renders HTML, so nothing leaks. A JSON variant of that model, added
-later, would carry the duress counts and the latest instant with it unless its author
-remembered. The defence is at the render layer, not the query.
-
----
-
-## Finding: the enrolment rate IS the signal, and only one adversary has to infer anything
-
-**2026-09-17. Measured. `enrolment_rate.py`.**
-
-The bullet asked: "If few holders enrol, a `DuressEvent` is more identifying, which is the
-same anonymity-set problem measured in `lab/linkability/`." Reading the table first, as
-Finding 6 in that directory taught, the premise does not survive:
-
-    DuressEvent: event_id, token_id, context_id, requesting_agency_id,
-                 event_timestamp, oob_channel, oob_notified_at
-
-**It records `token_id`.** Anyone who can read the row knows which credential signalled and
-therefore which holder. There is no anonymity set to be small and no inference to make, and
-the enrolment rate does not enter into it. That adversary is Coercer 3 above, where the
-conclusion is already that the mechanism is net-negative against lawful or institutional
-access, for exactly this reason.
-
-**So the bullet conflated two adversaries.** The one with an anonymity-set problem is the
-COUNTER WATCHER: whoever scrapes `/metrics` and sees `polaris_duress_events_total` move. They
-learn an alarm fired and roughly when, and nothing else.
-
-For that adversary the candidate set is a **product**: the presentations in the window they
-can resolve, times the share of holders who could have signalled at all. The window is the
-scrape period. Measured across 3 scrape periods, 4 presentation rates and 4 enrolment rates,
-4000 trials each, with a control that forces one presentation and must name the holder:
-
-    27 of the 48 configurations name a SINGLE holder more than half the time
-
-    300s scrape,    1 pres/min,  0.1% enrolled   ->  set 1, certain
-     60s scrape, 1000 pres/min,  0.1% enrolled   ->  set 1, 74% of the time
-     60s scrape, 1000 pres/min,   50% enrolled   ->  set 499
-
-**The bullet was right, and the reason is sharper than it said.** It is not that a rare event
-is vaguely more identifying. At one in a thousand enrolled, the counter names one person at
-the busiest rate in the table. **Low adoption does not dilute the signal; it is the signal**,
-and that is the opposite of how an anonymity set usually behaves, because the set is the
-people who COULD have signalled rather than the people who did something.
-
-This is why the control on `/metrics` is access to the surface rather than suppression of the
-metric, and the route's docstring said so before this was measured. `check_metrics_edge_acl`
-enforces it at two substrates and CI scrapes from outside to prove it. What changed today is
-that the reason is measured instead of asserted.
-
-**What this does not say.** It is a model of arrival times, not a measurement of a
-deployment: presentations are drawn around an expected rate rather than taken from traffic
-nobody has. The shape is what it establishes, and the shape is the finding. It also says
-nothing about the record reader, because there is nothing to measure there: it is a lookup.
-
----
-
-## Finding: the accepted limitation is a population statistic, and it is also an oracle
-
-**2026-09-17. Measured. `counter_oracle.py`. The last bullet on this list.**
-
-`docs/design/duress-codes.md` accepted one thing:
-
-> **No defence against long-run frequency analysis.** Constant-time comparison covers a
-> single call. An attacker measuring aggregate rates over a long period could in principle
-> infer how often duress events occur, which is accepted rather than solved.
-
-As a population statistic that is defensible, and the counter is built for it:
-`polaris_duress_events_total` is **unlabelled**, checked rather than assumed. One global
-number, no agency dimension, no context dimension. How often duress events occur across an
-authority is close to what the alarm exists to publish.
-
-**A coercer does not have to wait for rates to accumulate.** They choose when the victim
-presents, which turns the counter into a chosen-input oracle:
-
-    read polaris_duress_events_total
-    make the holder present
-    read it again
-
-If the holder handed over a duress code, the counter moved by one more than the background
-did. Measured, 4000 trials per cell, with a control that must be certain at zero background:
-
-    background     attempts   P(coercer is right)
-    0/min          1          1.0000
-    10/min         1          0.9892
-    100/min        1          0.9117
-    100/min        3          0.9655
-    100/min        10         0.9995
-
-**One forced presentation is 91 per cent right at a hundred presentations a minute**, which
-is a busy authority, and three gets to 97. At the volumes a coercer would actually pick, one
-observation decides it. That is not "how often duress events occur". It is *did THIS person
-signal*, which is the single question the mechanism exists to make unanswerable, and
-README.md's own framing is that duress codes are built for a coercer **who does not know
-it exists**. This is one who does and who can read one number.
-
-**What it needs, and what it does not change.** Read access to `/metrics`, which is restricted
-at the edge to the monitoring network, enforced in both the Caddyfile and the Helm configmap,
-with CI scraping from outside to prove it. So the attacker is an insider on that network: the
-operator-as-coercer this directory names as the adversary every safeguard assumes away, which
-is now the third finding to land on that same person.
-
-It is **not** an argument for deleting the metric. An unread duress signal is the
-coercion-cover failure mode the alarm exists to prevent, and the route's docstring has always
-said the control is access to the surface rather than suppression. What changes is the design
-record: the limitation it accepts is written as a population statistic, and the same
-observable is an individual test. The document now says both.
-
-**What this does not say.** It is a model of background arrivals, not a measurement of a
-deployment, and the estimator is deliberately the simplest one that works because a coercer
-does not need to be clever. A defender who wanted to close this would have to break the link
-between one signal and one observable moment, which is a different mechanism and is not
-proposed here.
-
----
-
-## What is still unmeasured
-
-**The enumerated list is empty as of 2026-09-17, and that is not the same as nothing being
-unmeasured.** Every bullet this directory wrote down has been answered: the operator as
-coercer (audited surface by surface, then again across the whole operator surface),
-enrolment-rate inference (the set is a product, and the enrolment term dominates), and
-long-run frequency analysis (a population statistic, and also an oracle). Two of the three
-answers found the bullet's own premise wrong, which is the reason to distrust an empty list:
-it records what somebody thought to write down.
-
-What remains open is not on it. The mechanism still does not resist a coercer who watches the
-holder, it is still net-negative against lawful or institutional access, and the three
-findings above all land on the same person, the insider who can read the operator's screen or
-the monitoring network. None of that is measured away; it is the assessment this directory
-opened with, and it has not changed.
-

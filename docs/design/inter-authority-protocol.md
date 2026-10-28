@@ -142,14 +142,6 @@ the authority issued that are now revoked, plus a commitment over them.
   `SHA3-256(token_value)`, derivable only by a holder of the credential, and the feed
   carries no `token_value` and no personal data.
 
-### Still deferred (P3.2c and beyond)
-
-- An **aggregate** cross-authority status distribution (a shared, mirrored feed rather
-  than per-authority endpoints) is the P2.6 backbone and is not built here.
-- **Epoch-bound ZK presentation** across authorities (checking a foreign membership
-  proof against a checkpoint's root) reuses these checkpoints but is scoped with the ZK
-  presentation work, not here.
-
 ## How this is tested
 
 `scripts/polaris-federation-manifest-drill.py` stands up two authorities with distinct

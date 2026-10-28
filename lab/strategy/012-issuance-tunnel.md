@@ -67,8 +67,8 @@ not. This closes that gap for a demo or an evaluation, without exposing anything
 Wallet implementers running the OID4VCI pre-authorized-code flow against Polaris (the interop thread
 with an outside wallet project); evaluators who want to see a credential arrive in a real wallet,
 not only a verdict; the conformance and interop story, where "a wallet was issued by Polaris" is a
-stronger, more external sentence than "a wallet verified a fixture". No one has asked for it by
-name: this is a bet, which is why it is recorded here.
+stronger, more external sentence than "a wallet verified a fixture". It is a bet, which is why
+it is recorded here.
 
 ## 4. What existing systems already solve it?
 

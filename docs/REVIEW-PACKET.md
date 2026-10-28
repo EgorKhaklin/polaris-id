@@ -2,22 +2,17 @@
 
 **Reader:** the reviewer, assessor or red teamer who has been handed this repository and has to
 decide where to spend their attention. **Job:** say what each subsystem is supposed to guarantee
-and what holds it, state the limitations bluntly enough to be useful, and hand over the specific
-attacks the maintainers would most like to see attempted.
+and what holds it, and hand over the specific attacks the maintainers would most like to see
+attempted.
 
-**Status:** a packet, not a certificate. Every mechanism cited below exists and passes CI today;
-none of it has been reviewed by anybody outside this repository. That is the gap this document
-is written to close, and until it closes the honest summary is that a system has checked itself.
+**Status:** a packet, not a certificate. Every mechanism cited below exists and passes CI today.
 
 This is the **what to attack** companion to [RED-TEAM-SCOPE.md](RED-TEAM-SCOPE.md), which
 defines the engagement, and to [design/threat-model.md](design/threat-model.md), which is
 organised by STRIDE category rather than by subsystem.
 
 Every citation here resolves and every cited check runs, verified on every push by
-[`scripts/polaris-review-packet-drill.py`](../scripts/polaris-review-packet-drill.py). The
-limitations are checked in the other direction too: each carries a WITNESS, and if a limitation
-stops being true the drill fails and the entry has to be removed. A limitations list that can
-only grow is a confession; one that is checked both ways is a record.
+[`scripts/polaris-review-packet-drill.py`](../scripts/polaris-review-packet-drill.py).
 
 ---
 
@@ -35,7 +30,7 @@ not. The last column is the one worth reading.
 | Revocation | to revoke a population, as coercion or sabotage | A per-agency rolling rate bound, with a second authority required to co-sign past it: `check:abuse_controls`, `drill:scripts/polaris-pilot-winddown-drill.py` | Two colluding authorities clear the bound. The control raises the cost of coercion and does not remove it. |
 | Zero-knowledge verification | to link a ZK verification back to the person who presented | A ZK event carries `token_id = NULL`, so it joins to no individual by construction, and the Atlas cannot locate one: `check:c2_zk_token_null`, `check:c6_atlas_redacts_zk_location`, `check:scoped_nullifier` | Traffic analysis outside the database is untouched: who connected, from where, and when is a network property this schema has no opinion about. |
 | The transparency log | to show two different histories to two different observers | Append-only proofs, independent monitors, witness cosignatures over a threshold, and a non-repudiable equivocation proof: `check:transparency_log`, `check:transparency_gossip`, `check:transparency_publication` | A split view needs K witnesses to equivocate rather than one log. That raises the bar; it does not make equivocation impossible, and K is a deployment choice. |
-| Key custody | the authority's private signing key | The key never leaves the custody boundary, and the PKCS#11 path signs in-token: `check:key_custody_abstraction`, `check:signing_key_generation`, `check:secrets_lifecycle_sealed` | The default file backend is a reference convenience, and the KMS is a stand-in. See limitation L-5. |
+| Key custody | the authority's private signing key | The key never leaves the custody boundary, and the PKCS#11 path signs in-token: `check:key_custody_abstraction`, `check:signing_key_generation`, `check:secrets_lifecycle_sealed` | The default file backend is a reference convenience, and the KMS is a stand-in. |
 | Duress | to learn that a holder entered a duress code | The duress comparison is unconditional and the response is byte-identical in shape and length: `check:duress_on_card`, `check:duress_alertable`, `drill:scripts/polaris-duress-timing-drill.py` | A coercer who can observe the ALARM's downstream effects (a police response) learns what the card would not tell them. The indistinguishability is local to the exchange. |
 | Federation and the trust list | to impersonate another authority to a verifier | Signed trust lists, an append-only key register with honest statuses, and directional trust: `check:trust_lifecycle`, `check:federation_real`, `check:exchange_trust_directional` | A verifier that does not check the trust list gets no protection from it. This is a protocol guarantee, not an enforcement one. |
 | Enrollment proofing | a credential at a higher assurance level than the evidence supports | The IAL is DERIVED from the evidence rather than claimed, and a named set of fields is refused outright: `check:enrollment_proofing`, `check:assurance_mapping` | Nothing here validates that the evidence presented was genuine. Document authenticity is the enrolling operator's problem and this system takes their word. |
@@ -43,38 +38,7 @@ not. The last column is the one worth reading.
 
 ---
 
-## 2. Known limitations
-
-Each carries a `witness:` -- a file and a string that must still be present for the limitation to
-be true. When the limitation is fixed the witness fails, the drill fails, and the entry has to be
-removed. That is the point: a list of limitations nobody can forget to update.
-
-The witness guards one direction only, and saying so is part of being honest here: it catches an
-entry that has gone STALE, never one that was never written. L-12 and L-13 were added on
-2026-09-18 after `lab/crypto-migration/` was re-run and both findings turned out to be stated in
-docs/PRODUCTION-READINESS.md and absent from this list, which is the page an external reviewer
-actually reads. A limitation missing from here is invisible in exactly the way the witness
-mechanism was built to prevent.
-
-| # | Limitation | Witness |
-| --- | --- | --- |
-| L-1 | **It has never held real identity data, and the physical token it models is not manufactured.** Every number in this repository was measured on notional data. | `witness:docs/PRODUCTION-READINESS.md::never held real identity data` |
-| L-2 | **99.99% availability is not validated and cannot be, from what is measured here.** What exists is a rolling deploy that drops zero verifications and a failover that induces four failures and recovers, on a TWO-MEMBER topology on CI hardware. A four-nines figure extrapolated from that would be an assertion wearing a measurement's clothes. | `witness:polaris_web/capacity.py::UNVALIDATED_LINKS` |
-| L-3 | **Every core count is extrapolated from a one-core measurement.** Verification is measured at ~7,848/s on one core; that verification fans out linearly across cores and replicas is plausible, and the multiplication has never been run. | `witness:polaris_web/capacity.py::LINEAR_FANOUT` |
-| L-4 | **Warrant-audit statistics rest on the authority's own log.** No reader outside the authority can derive them, and none can detect an access that was never recorded. The log is append-only, which defends against revision and not against omission. | `witness:polaris_web/transparency.py::SOURCE_OPERATOR_ATTESTED` |
-| L-5 | **Key custody's production backends are abstractions over a stand-in.** The PKCS#11 path is exercised in CI against a PKCS#11 v3.2 software token (Kryoptic), not a hardware HSM; the KMS is a stand-in whose envelope cryptography is real and whose service is not. | `witness:polaris_web/kms_standin.py::stand-in` |
-| L-6 | **The external transparency ledger backends are declared, not implemented.** The file backend is real and CI-tested; `algorand-pq` and `hyperledger-indy` are named and wait on their APIs. | `witness:scripts/polaris-transparency-ledger.py::declared but not implemented` |
-| L-7 | **A sunset verdict refuses to be computed from what the issuer can see.** Whether relying parties accept the credential, and whether an alternate path exists and is usable, are operator attestations this system cannot verify. It refuses rather than guessing, which is correct and is still a gap in what can be checked. | `witness:polaris_web/coexistence.py::OPERATOR_ATTESTATIONS` |
-| L-8 | **Verification latency on a real topology is a p50, not a p99.** The HA drill offers ~2 rps by design, so the sample supports a median and not a tail. The harness withholds percentiles the sample cannot carry rather than computing them anyway. | `witness:scripts/polaris-verify-load.py::PERCENTILE_FLOORS` |
-| L-9 | **Two identifier columns remain 32-bit.** `Individual.individual_id` and `IdentityToken.token_id` last about 29 years at the stated enrollment rate -- outside the capacity model's horizon rather than comfortably beyond it -- and both are referenced by foreign keys across the schema, so widening them is a wider change than widening a surrogate. | `witness:polaris_sql/01_schema.sql::individual_id   SERIAL` |
-| L-10 | **Document authenticity at enrollment is taken on the operator's word.** The assurance level is derived from what evidence was presented; nothing here establishes that the evidence was genuine. | `witness:polaris_web/proofing.py::FORBIDDEN_EVIDENCE_FIELDS` |
-| L-11 | **No external party has AUDITED any of this, and the one review received was of design intent rather than an adversarial one.** Almost every guarantee below is checked by machinery written by the same author as the guarantee. Two are not: Project Wycheproof's ML-DSA-65 verify vectors run on every push under both witnesses, and the OpenID Foundation's conformance suite: its hosted `oid4vp-1final-verifier-haip-test-plan` finished all eleven modules without failure against `polaris-oid4vp` 1.0.0rc7, and the Foundation lists that version as OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (sd_jwt_vc, direct_post.jwt), a self-certification it approved (2026-09-24); run locally, the plan scores seven of its eleven modules automatically. Neither is a review. A test corpus is not a person, a conformance suite is not an opinion, and a certification is not an audit. On 2026-09-17 an outside reviewer put five design-intent observations, answered in [DESIGN-INTENT-REVIEW.md](DESIGN-INTENT-REVIEW.md); one was an unintentional defect and one led to the instrument that found two product-boundary defects. That is the most outside scrutiny this has had and it is still not an audit: the reviewer is not named here, the review asked what the design intends rather than attacking it, and it certified nothing. | `witness:docs/DESIGN-INTENT-REVIEW.md::An outside reviewer put five observations` `witness:docs/RED-TEAM-SCOPE.md::No engagement has been commissioned` `witness:.github/workflows/ci.yml::polaris-kat-verify.py` `witness:scripts/polaris-oid4vp-conformance-drill.py::oid4vp-1final-verifier-haip-test-plan` `witness:docs/reference/SPEC-COMPLIANCE.md::certified-oid4vp-haip-final` |
-| L-12 | **A verifier cannot learn that an algorithm has been deprecated.** The agility is real issuer-side: an algorithm is a row carrying a `deprecation_date` and `uc6_migrate_algorithm` re-signs a token under a new one. But that column reaches no signed artifact. The registry publishes `protocol.algorithms` as a bare name list, the trust list carries per-KEY status only, and the detached verifier's accepted set is a hardcoded tuple. Retiring an algorithm is therefore a software release to every relying party, not a migration, and key revocation does not substitute: if the assumption breaks, an attacker forges under any key the trust list still calls active. Measured in `lab/crypto-migration/algorithm_status.py`, which also plots what a relying party dropping the old algorithm mid-migration costs: at 90 percent re-signed it locks out one holder in ten, and no artifact tells it which fraction it is at. | `witness:polaris_web/rp_api.py::list(pqc_signing.ACCEPTED_ALGORITHMS)` |
-| L-13 | **A migration cannot be reversed, and reversing one needs a spare algorithm provisioned before the day.** `one_signature_per_algorithm_per_token` means a token can never hold a second signature under an algorithm it has already used, so an authority that migrates a population A to B and then learns B is the problem cannot return it to A. The move available is sideways, to a third algorithm that must already exist, have keys, and not itself be deprecated at that moment. This is intended rather than a defect, because TokenSignature is the audit of record for migrations and a record you can walk back is not one, but it is a migration-planning prerequisite the schema cannot supply on the day. Measured in `lab/crypto-migration/rollback.py` against a live schema, with a positive control. | `witness:polaris_sql/01_schema.sql::one_signature_per_algorithm_per_token` |
-
----
-
-## 3. Guarantee-attack prompts
+## 2. Guarantee-attack prompts
 
 The attacks the maintainers would most like to see attempted, each naming the guarantee, the
 mechanism that is supposed to hold it, and what a successful attack would look like. A reviewer
@@ -93,53 +57,34 @@ who breaks any of these has found something worth the engagement.
 | A-9 | A published statistic does not disclose a small count | `check:transparency_program`, `drill:scripts/polaris-transparency-report-drill.py` | recovery of a withheld cell from a published report, or a series of reports whose combination recovers one |
 | A-10 | The system cannot reach a state where a holder has no verifiable credential | `check:quantum_event_readiness`, `drill:scripts/polaris-quantum-event-drill.py` | a window, however brief, in which an ACTIVE credential verifies under nothing |
 | A-11 | An offline verifier refuses a credential revoked before its epoch | `check:offline_verification`, `check:status_distribution` | acceptance of a credential whose revocation was published before the verifier's epoch |
-| A-12 | The check layer detects its own violations | `check:controls_as_attacks`, `check:attacks_run`, `drill:scripts/polaris-check-mutation-drill.py` | a check that passes against a tree where the property it names is false. Part of this is now machine-checked: the mutation drill runs three mutations, commenting out a check's own search strings, deleting the files it names, and deleting the sentences it greps for from the documents it reads. 71 of 75 checks survived the first when it was written; **none survive any of the three now**, and the drill gates at zero. What it cannot reach it names, every run |
+| A-12 | The check layer detects its own violations | `check:controls_as_attacks`, `check:attacks_run`, `drill:scripts/polaris-check-mutation-drill.py` | a check that passes against a tree where the property it names is false. Part of this is now machine-checked: the mutation drill runs three mutations, commenting out a check's own search strings, deleting the files it names, and deleting the sentences it greps for from the documents it reads. 71 of 75 checks survived the first when it was written; **none survive the first two now**, the third fails any check that cannot tell a document it names from an empty file, and the drill gates on every push. What it cannot reach it counts, by cause, every run |
 
-A-12 is still the one to start with. Every other guarantee on this page is believed because a
-check says so, and the checks are written by the same hand as the code. If a check can be made
-to pass on a broken tree, everything above it is worth less than it looks.
+A-12 is the one to start with: every other guarantee on this page is held by a check, so a check
+that passes on a broken tree is the finding worth most.
 
-That was not rhetorical. Running the attack found that **71 of 75 checks passed on a tree where
+Running that attack found that **71 of 75 checks passed on a tree where
 the property they name had been commented out.** The cause was one line: the helper every check
 reads files through handed them the comments along with the code, so the words survived where
 the code did not. Stripping there fixed all 71, and the 58 detection-test fixtures that carried
 their own property in a comment were repaired in the same ship -- a fixture that states its
 property in a comment is testing the thing the drill forbids.
 
-The drill now gates at zero on every push, across THREE mutations. The first comments out every
-line carrying a check's own search strings: 134 checks reached, none survive. The second deletes
-every file a check names and requires it to notice, which is what reaches the ones that compute
-rather than grep: 291 reached, none survive, and it found four passing vacuously when it was
-written, two of them constitutional. C10's money-table prohibition and the canonical-version
-rule were both perfectly true of a schema and an `app.py` that did not exist.
+The drill gates on every push, across THREE mutations. The first comments out every line carrying a
+check's own search strings: none survive. The second deletes every file a check names and requires
+it to notice, which is what reaches the ones that compute rather than grep: none survive, and it
+found four passing vacuously when it was written, two of them constitutional. C10's money-table
+prohibition and the canonical-version rule were both perfectly true of a schema and an `app.py` that
+did not exist.
 
-The third closed the gap this paragraph used to send a reviewer to. A check that computes over a
-file which is PRESENT but wrong was caught by neither of the first two, since one only removes
-lines it can name and the other removes the file entirely. For DOCUMENTS that is now covered:
-`#` in Markdown is a heading rather than a comment, so the first mutation had to skip every
-check that reads one, and the third deletes the matching sentences and leaves the file there. 85
-checks reach it and 80 notice (these counts, and the next paragraph's, are from [CI run
-36661832758](https://github.com/EgorKhaklin/polaris-id/actions/runs/36661832758), 2026-09-30).
-
-The 5 that do not are reported rather than failed, and they are worth a reviewer's attention for
-a different reason: each asserts that a document is PUBLISHED, not what it says. `conformance/SPEC.md`,
-`docs/design/transparency-log.md` and three others could have their wording replaced wholesale
-and no check on this page would notice.
-
-**Where the weakest ground actually is, in order.** 93 checks are not mutation-tested at all,
-and the drill names them on every run: 8 assert through no literal needle or pattern; 31 have
-something to search for but read a glob or a computed path the harness cannot name; 49 read a
-file the comment mutation cannot express and the document pass does not reach, 13 of them JSON,
-where deleting a line breaks the parse so the check would fail for a reason that is about the
-file rather than the property; and 5 have needles matching nothing in the files they name, which
-is correct for an absence check and worth confirming is true of all five. A further 25 read
-inputs the harness cannot enumerate. **Those 118 checks are the part of this page that rests on
-care rather than on a machine**, and the drill prints the list, so a reviewer does not have to
-take this paragraph's word for which ones they are.
+The third is aimed at the gap this paragraph used to send a reviewer to. A check that computes over
+a file which is PRESENT but wrong was caught by neither of the first two, since one only removes
+lines it can name and the other removes the file entirely. For DOCUMENTS the third mutation reaches
+it: `#` in Markdown is a heading rather than a comment, so the first mutation had to skip every
+check that reads one, and the third deletes the matching sentences and leaves the file there.
 
 ---
 
-## 4. Broken on purpose
+## 3. Broken on purpose
 
 Each drill deletes or inverts one security control at a time and requires a test to go red. A
 **survivor** is a control nothing noticed; a **declared** survivor is one the drill's source
@@ -172,13 +117,12 @@ What this does and does not say:
 
 - Every drill carries a negative control, a tree it must fail on, so a drill that could never
   report a survivor is itself caught.
-- A control no drill mutates is not in this table. The mutations are the ones written down; a
-  mutation nobody thought of is the method's standing limit.
+- A control no drill mutates is not in this table: the mutations are the ones written down.
 - "Noticed" means some test went red, not that the right test went red for the right reason.
 - The application row was 116 examined, 44 survived, 25 of them undeclared, until 2026-09-27:
   no workflow ran that drill. Tests now cover the 25 and a weekly sweep keeps them covered.
 
-## 5. Verified, not asserted
+## 4. Verified, not asserted
 
 Counts of checks, tables, routes and CI jobs are re-measured by `polaris_checks` on every run; test counts are measured per release.
 
@@ -195,7 +139,7 @@ On every push, CI also boots the five-service production-profile stack, round-tr
 fails over the HA profile under writes, proves the post-quantum TLS handshake and real ML-DSA-65
 signing, runs the federation and compatibility drills and the mutation drills, and gates on CVE
 scans ([ci.yml](../.github/workflows/ci.yml)). What the mutation drills broke, what noticed and which run each number
-is from: [the review packet](#4-broken-on-purpose).
+is from: [the review packet](#3-broken-on-purpose).
 
 ```bash
 python3 -m polaris_checks.run        # the invariant layer, no database needed

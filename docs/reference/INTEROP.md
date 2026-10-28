@@ -53,13 +53,5 @@ Defects found in a row's implementation and reported in public, with their state
 | EU reference PID issuer | [issue 662](https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer/issues/662): its docker-compose test keystore's `mso_mdoc` signing certificate lacks the ISO 18013-5 Annex B extensions | open |
 | Axle | [pull request 93](https://github.com/openwallet-foundation-labs/axle/pull/93): Bouncy Castle in its Kotlin test dependencies to 1.86, as the walk lifts it | open |
 
-## What no row establishes
-
-- The author drove every run, on one machine, with a phone for the Yivi app. No row is an outside
-  party using Polaris; the one exception, OID4VCgo's CI running its own walk, is in [the scoreboard's Use section](../../lab/EXTERNAL-NOUNS.md#use).
-- One credential format (SD-JWT VC), one response mode (`direct_post.jwt`), ES256. Nothing about
-  mdoc, the Digital Credentials API or the post-quantum path.
-- A row is dated: a newer release of its implementation is unmeasured until a row says otherwise.
-
 Dated runs, earlier versions included, are kept in the
 [scoreboard](../../lab/EXTERNAL-NOUNS.md#wallets).

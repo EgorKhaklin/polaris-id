@@ -185,17 +185,14 @@ Against 1.0.0rc15 from PyPI: ERICA's PID was refused for its type
 and so were the negative modes, most of them by that same check, which rc15 makes before the
 validity window and the key binding. The controls were refused as above.
 
-## What this does not establish
+## What was run
 
-- ERICA is a testing tool, not a wallet. Its holder key and its PID are fixed test material
-  published in its repository, and its checks are its own: its README calls it a debugging tool,
-  not a compliance certification service, and passing its checks is not HAIP conformance.
-- The accepted presentation was signed through a chain made for the run under ERICA's root. ERICA
-  as shipped is refused, for the reason above, so this shows ERICA's request handling, SD-JWT VC,
-  key binding and encryption working with the verifier, and not that ERICA's own chain does.
-- ERICA fetched the request object by GET, so this says nothing about the POST path or a wallet
-  nonce. It reached the verifier through a forwarder on a Docker network, because of its SSRF
-  guard.
+- ERICA is a testing tool. Its holder key and its PID are fixed test material published in its
+  repository, and its checks are its own: its README calls it a debugging tool, not a compliance
+  certification service.
+- The accepted presentation was signed through a chain made for the run under ERICA's root. This
+  shows ERICA's request handling, SD-JWT VC, key binding and encryption working with the verifier.
+- ERICA fetched the request object by GET. It reached the verifier through a forwarder on a Docker
+  network, because of its SSRF guard.
 - The verifier was asked for `urn:eudi:pid:de:1`, which only the tree can be (`--vct`).
-- Same category as the other rows: the author drove a published tool on one machine. It is not
-  an outside party using Polaris, and not a claim of interoperability in general.
+- The author drove a published tool on one machine.

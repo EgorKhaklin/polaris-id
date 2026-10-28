@@ -5,9 +5,8 @@
 A zero-knowledge verification has to answer one question, that a valid token
 exists, without revealing which one. The proof object that does it, and the
 choices behind that object, are what this record covers.
-[zk-soundness.md](zk-soundness.md) is the companion: it states which of the
-claims here are rigorous and which are limited, and it should be read with
-this one.
+[zk-soundness.md](zk-soundness.md) is the companion: it states what the words
+proof and zero-knowledge mean here, and it should be read with this one.
 
 ## The three choices
 
@@ -197,15 +196,9 @@ without amending the schema. Keeping the circuit to membership alone, with the
 validity predicates checked when the epoch is composed, is what keeps it small
 enough to be fast.
 
-## What is not built
+## Design choices
 
-- **No independent cryptographic audit.** The crate is used as published; the
-  circuit over it has had no external review.
-- **No prover on the holder's device.** Proof generation runs on the Polaris
-  host. Moving it to the holder is the architecture a production deployment
-  would want, and it is a different system.
-- **No witness encryption.** The stored leaf paths are plaintext.
-- **No scheduled epochs.** Closure is a deliberate operator action.
+- **Epoch closure is a deliberate operator action.** Epochs are not scheduled.
 - **No validity predicates in the circuit.** Whether a token is active,
   permitted for a context and unrevoked is decided when the epoch is
   composed, not proved inside it.

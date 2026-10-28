@@ -13,16 +13,15 @@ chart, its images pinned to those signed digests, is pushed to
 `oci://ghcr.io/egorkhaklin/charts/polaris` and signed the same way.
 
 **Status:** v1.0.0 is published (2026-10-11): the five images and the chart, public, signed, with
-their provenance and SBOMs at the registry. The [deployment guide](DEPLOYMENT.md) still builds the
+their provenance and SBOMs at the registry. The [deployment guide](DEPLOYMENT.md) builds the
 images from source.
 
-## What a signature proves, and what it does not
+## What a signature proves
 
 A valid signature and provenance prove that the digest was produced by `release-images.yml` in
 `EgorKhaklin/polaris-id`, run on the release tag the certificate names, from the commit the
-provenance names. They do not prove the code is free of defects, that anyone outside the project
-reviewed it, or that it is fit to hold real identity data
-([PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md)).
+provenance names. Before holding real identity data, also check what
+[PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md) lists.
 
 ## Verify an image
 

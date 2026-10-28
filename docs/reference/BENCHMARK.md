@@ -22,7 +22,7 @@ never implies full national scale.
 ## Three numbers that must not be conflated
 
 A benchmark of an identity system has to separate what it is actually measuring,
-because the honest numbers are an order of magnitude apart:
+because the numbers are an order of magnitude apart:
 
 1. **Verification-EVENT ingestion** is how fast the system records verification
    audit rows. It is a database write. It does NOT verify a signature.
@@ -63,8 +63,7 @@ numbers.
 
 Scale 1:10000, 200,000 verification events, 2,000 signatures verified, seed 42,
 `POLARIS_USE_REAL_PQC=1` with a file-custody ML-DSA-65 authority key, on a
-development host (single node, notional data). Single-node numbers; a
-measurement instrument, not a production SLO.
+development host (single node, notional data). Single-node numbers.
 
 | Dimension | Result |
 |---|---|

@@ -37,16 +37,16 @@ So the sunset is treated here as a decision with a floor under it, not as a phas
 never entered from anywhere but `PREFERRED`. Skipping a phase is the flag-day, whatever the
 announcement calls it, and `sunset_readiness` refuses a verdict for any other phase.
 
-## 3. What the issuer can measure, and what it cannot
+## 3. What the issuer measures, and what the operator attests
 
 This is the whole shape of the module.
 
-**Measurable here** (`supply_side`): how many enrolled people hold an active credential, the
+**Measured here** (`supply_side`): how many enrolled people hold an active credential, the
 health of those credentials by status, how far the trust list reaches, whether epochs are
 actually being published so offline verification has something to check against. All of it is
 about the *authority's own* readiness.
 
-**Not measurable here, at all:**
+**Attested by the operator, because no table holds it:**
 
 - what share of relying parties that accept the legacy credential also accept this one;
 - whether a person without one can still obtain every service the old credential opened;
@@ -84,7 +84,7 @@ Then: every relying party accepting the legacy credential must accept this one, 
 must be in `PREFERRED`, and an epoch must have been published, because a credential that only
 works online is not a replacement for one that works in a power cut.
 
-## 5. What a clear verdict is not
+## 5. What a clear verdict means
 
 `may_sunset: true` means the engineering facts raise no objection. It is **not** permission
 from the people affected, and the verdict says so in its own text. Sunset remains a decision
@@ -96,4 +96,5 @@ second half of the picture in front of them.
 `polaris_web/test_app.py::CoexistenceSunsetTests` on every push: the refusal without
 attestations, the two floor blockers, partial relying-party acceptance, every skipped phase,
 an unknown phase, the denominator warning, and that a clear verdict still disclaims itself.
-`check_coexistence_plan` pins them and this document's statement of the limits.
+`check_coexistence_plan` pins them and this document's statement that a clear verdict is not
+permission.

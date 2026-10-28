@@ -1,7 +1,7 @@
 # KUBERNETES.md: the Helm reference profile
 
 **Reader:** a platform team deploying Polaris on a cluster. **Job:** the
-chart, what it enforces, how CI proves it boots, and its stated limits.
+chart, what it enforces, how CI proves it boots.
 
 The production topology on a Kubernetes cluster:
 [`deploy/helm/polaris`](../../deploy/helm/polaris). Docker Compose on one Linux
@@ -223,8 +223,7 @@ role, a restart in place: 3.2 s of write outage), the leader's container
 frozen through the node's runtime (a hung node: the other member held the
 lease after 21 s, the pool's query cancelled at the 15 s `query_timeout` so a
 15.8 s write outage, the thawed leader demoted and streaming again 6 s
-later), a planned switchover (3.5 s), and every
-acknowledged insert present on the leader afterwards; local reference run
-at v9.244, the ceilings 60 s, 60 s and 30 s. Stated limits:
-single-node kind and `tls: internal`; multi-node placement and ACME are
-operator-environment concerns.
+later), a planned switchover (3.5 s), and every acknowledged insert present
+on the leader afterwards; local reference run at v9.244, the ceilings 60 s,
+60 s and 30 s. Measured on single-node kind with `tls: internal`; multi-node
+placement and ACME are operator-environment concerns.

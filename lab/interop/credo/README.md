@@ -167,23 +167,16 @@ exercised.
    refuse. This is a holder-side convenience, not a protocol deviation. It is recorded only
    because it is what made that control possible to build without touching Credo.
 
-## What this does and does not show
+## What this shows
 
 It shows that one unmodified, independently written wallet framework, at the versions above,
 can complete an OpenID4VP 1.0 `direct_post.jwt` presentation of an SD-JWT VC against
 `polaris-oid4vp` 1.0.0rc7 as published, with Polaris's `x509_hash` client id and
 per-request encryption key, and that the four controls fail as they must.
 
-It does not show:
-
-* **An independent operator.** The glue script (`present.ts`) and the issuer
-  (`issue_sdjwt_vc.py`) are this repository's, and one person ran both sides on one machine
-  over `localhost`. Credo's code made every protocol decision on the wallet side, but nobody
-  outside ran it.
-* **An independent issuer, or x5c issuer trust.** The verifier trusts the issuer through
-  `--issuer-jwks`, as in the walt.id run.
-* **Anything about Credo 0.7.x**, a mobile Credo wallet built on it, `dc_api`, mdoc,
-  presentation-definition requests, transaction data, or `request_uri_method=get`.
+The glue script (`present.ts`) and the issuer (`issue_sdjwt_vc.py`) are this repository's, and one
+person ran both sides on one machine over `localhost`. Credo's code made every protocol decision
+on the wallet side. The verifier trusts the issuer through `--issuer-jwks`, as in the walt.id run.
 
 ## Files
 

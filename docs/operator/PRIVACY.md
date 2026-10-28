@@ -197,7 +197,7 @@ write a `TokenLifecycleEvent` if a token state is affected;
 updates to non-token fields are not currently audited (BACKLOG:
 audit non-token Individual changes).
 
-### Right to erasure (limited)
+### Right to erasure
 
 Polaris does NOT support deleting holder data. The audit invariant
 (C1) is non-negotiable. What CAN happen:
@@ -225,14 +225,6 @@ A jurisdiction with a "right to be forgotten" law that requires
 hard deletion is structurally incompatible with Polaris's audit
 invariant. Such a deployment would need a MISSION amendment
 (weakening C1) and the corresponding loss of non-repudiation.
-
-### Right to portability
-
-Holder data can be exported as a JSON document via a (future)
-`/api/individuals/<id>/export` endpoint (BACKLOG). The audit log
-fragments referencing the holder are included; the holder cannot
-take with them an audit trail that references actions by other
-agencies.
 
 ---
 
@@ -482,14 +474,10 @@ mechanism-design rationale.
 
 ---
 
-## What this document does NOT cover
-
-- Compliance frameworks (GDPR, CCPA, etc.): those are deployment-
-  specific and depend on your jurisdiction
-- Subprocessors / hosting providers: depends on your deployment
-- Children's data: Polaris has no special handling for minors;
-  the deployment is responsible for any age-related restrictions
+## Scope
 
 This file describes Polaris's architectural posture, not a legal
-privacy notice. A real privacy notice would be drafted by counsel
-with knowledge of the deployment context.
+privacy notice. A privacy notice is drafted by counsel with knowledge
+of the deployment context. Compliance frameworks, subprocessors and
+any age-related restrictions are set by the deployment for its
+jurisdiction.
