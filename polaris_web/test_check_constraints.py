@@ -4611,9 +4611,9 @@ class TestRelyingPartyDecisionsAreRecorded(_CheckBase):
 class TestDiscretionPolicyIsAppendOnly(_CheckBase):
     """A revocation bound is a decision that is kept, not edited (v9.426).
 
-    IssuerDiscretionPolicy bounds the share of its own tokens one issuing agency may
-    revoke in a rolling window: it is what stands between one authority and mass
-    revocation of the credentials it issued. agency_id was the primary key, so raising
+    IssuerDiscretionPolicy bounds the share of an issuing agency's tokens that may be
+    revoked in a rolling window: it is what stands between one authority and mass
+    revocation of an agency's credentials. agency_id was the primary key, so raising
     an agency's bound from 5% to 80% overwrote the baseline, who set it, when, and the
     reason given, while docs/operator/SECURITY-CONTROLS.md said the justification
     existed "so any loosening is auditable". Verified against a loaded database before

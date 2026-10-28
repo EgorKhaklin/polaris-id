@@ -5,7 +5,7 @@
 An identity system's worst failure is not a forged token. It is the authority
 that issued a population's tokens revoking them at scale, which is
 denaturalisation carried out with a database. This is the schema-level bound on
-that: a ceiling on how fast one agency can revoke its own tokens, above which a
+that: a ceiling on how fast one agency's tokens can be revoked, above which a
 co-signer from a different agency is required.
 
 It is one of three answers to issuer trust concentration. The other two are
@@ -13,7 +13,7 @@ cryptographic diversity, covered in
 [multi-sig-migration.md](multi-sig-migration.md), and federation without
 transitive trust, covered in [federation.md](federation.md).
 
-The bound does not make Polaris an authority over the holder. The agency still
+The bound does not make Polaris an authority over the holder. An agency still
 makes every revocation decision. What is constrained is the shape of agency
 behaviour at volume, the same category as C3, which constrains issuance, and
 C7, which constrains what an agency may sign with.
@@ -115,17 +115,10 @@ application code that skipped the procedure is refused with
 
 ## Where an adversary ends up
 
-- **The claim.** No agency can revoke more than the configured share of its
-  issued base in a window without a co-signer from another agency. The base is every credential
-  the agency has issued, whatever its status now (`uc8_revoke_token` counts `IdentityToken` rows
-  for the agency with no status filter). It does not shrink as credentials are revoked, so
-  against the credentials still LIVE the share is larger: an agency with 1,000 issued and 100
-  live may revoke 50 a window at 5%, half of what is left. Until 2026-09-24 this line said
-  "outstanding tokens", which the code never measured; measuring against live credentials would
-  be the stricter bound, and is recorded as an open decision rather than changed here.
-- **The strongest attack.** Stay just under the ceiling indefinitely. At the
-  default that is still most of a population inside a year, so the bound
-  converts a surprise into a trend.
+- **The claim.** No more than the configured share of an agency's issued base can be
+  revoked in a window without a co-signer from an agency other than the one revoking. The base
+  is every credential the agency has issued, whatever its status now (`uc8_revoke_token` counts
+  `IdentityToken` rows for the agency with no status filter).
 - **Where it settles.** Mass revocation needs either a co-signature, which
   names two agencies in the audit trail instead of one, or a slow burn that
   downstream reporting can see before it completes.

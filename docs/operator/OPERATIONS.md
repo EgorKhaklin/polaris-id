@@ -1236,8 +1236,8 @@ increment. The percentage bound on revocation velocity
 (`trg_enforce_revocation_velocity`) still applies; whichever trips first
 refuses. An uncapped agency pays one primary-key lookup per write.
 
-**Revocation bounds.** `uc8_revoke_token` caps the share of its own tokens one
-issuing agency may revoke in a rolling window: 5.00% over 30 days by default,
+**Revocation bounds.** `uc8_revoke_token` caps the share of an issuing agency's
+tokens that may be revoked in a rolling window: 5.00% over 30 days by default,
 overridable per agency. Raising an agency's ceiling is the single most consequential
 per-agency setting in the schema, so it is kept, not edited, and it is set as
 the schema owner (the application's role is refused, so a compromised application

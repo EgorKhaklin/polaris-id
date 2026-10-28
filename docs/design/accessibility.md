@@ -43,8 +43,8 @@ and `check_accessibility` refuses the claim in the README, [ROADMAP.md](../../RO
 site/index.html and site/llms.txt. What changed is that the mechanical third is now
 enforced rather than assumed, and cannot regress unnoticed.
 
-Conformance requires manual testing with assistive technology, by people who use it. That has
-not been done and is not something this repository can do to itself.
+WCAG 2.2 AA conformance needs manual testing with assistive technology, a step for the deploying
+organisation.
 
 ## 3. What the first audit found
 
