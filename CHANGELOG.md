@@ -34,6 +34,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `PolarisAppInfoAbsent` carries `job="polaris"`, so Alertmanager's inhibit rule (`equal: ['job']`) mutes it while `PolarisAppDown` fires for the same job. A promtool test asserts the label (deploy/observability/polaris-alerts.test.yml), and the page drill posts both alerts to the shipped Alertmanager and checks that the info alert is inhibited and that one without the label is not (scripts/polaris-page-drill.sh).
 - polaris-verify `verify_mdoc` digests each IssuerSignedItemBytes as received, tag and length headers included. Its CBOR decoder refuses a float, a simple value other than false, true, null and undefined, any tag but 24, a tag 24 over anything but a byte string, and, as RFC 9052 section 3 requires for header labels ("MUST be rejected"), a map that repeats a key. `verify_mdoc` returns a verdict, not authentic, for a `nameSpaces` or `valueDigests` that is not a map, a COSE signature that is not a byte string, and an algorithm name given as tag 24.
 - Signed-artifact issuer trust in polaris-sdk-python and polaris-sdk-ts.
+- The container image CVE gate (`.github/workflows/image-cve-scan.yml`) scans all five prod images in every run and fails once, at the end, naming each image with a fixable CRITICAL that `.trivyignore` does not cover; it stopped at the first such image.
 
 ### Added
 

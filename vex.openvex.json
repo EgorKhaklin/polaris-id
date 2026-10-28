@@ -2,14 +2,15 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://github.com/EgorKhaklin/polaris-id/blob/main/vex.openvex.json",
   "author": "Egor Khaklin",
-  "timestamp": "2026-09-28T21:45:00Z",
-  "version": 1,
+  "timestamp": "2026-10-28T21:55:24Z",
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
         "name": "CVE-2025-68121",
         "description": "Go crypto/tls: incorrect certificate validation during TLS session resumption"
       },
+      "timestamp": "2026-09-28T21:45:00Z",
       "products": [
         {
           "@id": "pkg:docker/library/postgres@16-alpine",
@@ -23,6 +24,25 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "gosu, the postgres image's privilege-drop helper, opens no TLS connection, so the vulnerable session-resumption path is never reached. It cannot be patched by apk or a base bump; re-evaluate when the postgres base ships gosu built with Go 1.24.13 or later. The image scan's matching exception is in .trivyignore."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-56857",
+        "description": "Go os: Root.Mkdir and Root.MkdirAll can follow junctions out of the root on Windows (GO-2026-6604)"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/library/postgres@16-alpine",
+          "subcomponents": [
+            {
+              "@id": "pkg:golang/github.com/tianon/gosu"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The Go vulnerability database (GO-2026-6604) limits every vulnerable symbol, in os and internal/syscall/windows, to GOOS windows, and gosu in the postgres image is built for linux and links no os.Root symbol, so the vulnerable code is not in it. gosu cannot be patched by apk; re-evaluate when the postgres base ships gosu built with Go 1.26.9 or later. The image scan's matching exception is in .trivyignore."
     }
   ]
 }

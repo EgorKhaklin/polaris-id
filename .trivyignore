@@ -13,3 +13,17 @@
 # addressable by apk upgrade (gosu is not an apk package) or a base bump.
 # Re-evaluate when the postgres base ships a gosu rebuilt with Go >= 1.24.13.
 CVE-2025-68121
+
+# CVE-2026-56857 (GO-2026-6604): Go os, Root.Mkdir and Root.MkdirAll can follow
+# junctions out of the root on Windows. Present in /usr/local/bin/gosu (the Go 1.24.6
+# stdlib it was compiled with) inside the postgres:16-alpine base image. The Go
+# vulnerability database limits every vulnerable symbol (in os and
+# internal/syscall/windows) to GOOS windows, and this gosu is built for linux and links
+# no os.Root symbol (go tool nm), so the vulnerable code is not in it. gosu is not an
+# apk package, so apk upgrade cannot
+# replace it. The Caddy edge, which this repository compiles, is built with Go
+# 1.26.10 instead (polaris_web/Dockerfile.caddy).
+# An ID here is global: it also covers this CVE in every other image the gate scans,
+# and the Windows-only limit holds for each of them, since every image we scan is linux.
+# Re-evaluate when the postgres base ships a gosu rebuilt with Go >= 1.26.9.
+CVE-2026-56857
