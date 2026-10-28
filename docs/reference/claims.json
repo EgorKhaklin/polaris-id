@@ -423,7 +423,7 @@
       "file:docs/reference/INTEROP.md",
       "file:lab/EXTERNAL-NOUNS.md"
      ],
-     "reproduce": "Count the fifteen projects in the list under section I of site/index.html; each has a dated row in docs/reference/INTEROP.md."
+     "reproduce": "Count the fifteen projects in the Evidence list (act II) of site/index.html; each has a dated row in docs/reference/INTEROP.md."
     },
     {
       "id": "site-six-wallets-description",
@@ -456,6 +456,32 @@
       "count_of": [
         "readme-six-wallets"
       ]
+    },
+    {
+      "id": "site-world-without-official-id",
+      "kind": "statement",
+      "claim": "More than 800 million people have no official ID.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "url:https://blogs.worldbank.org/en/digital-development/global-progress-in-identification--3-findings-from-the-latest-da",
+        "url:https://id4d.worldbank.org/global-dataset"
+      ],
+      "reproduce": "Open the World Bank post 'Global progress in identification: 3 findings from the latest data' (the first url): ID4D's latest estimates indicate that more than 800 million people worldwide are still without official proof of their identity."
+    },
+    {
+      "id": "site-world-without-online-id",
+      "kind": "statement",
+      "claim": "2.8 billion have no digital ID they can use online.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "url:https://blogs.worldbank.org/en/digital-development/global-progress-in-identification--3-findings-from-the-latest-da",
+        "url:https://id4d.worldbank.org/global-dataset"
+      ],
+      "reproduce": "The same post: in 2025, 2.8 billion people still lacked access to digital ID systems that facilitate online transactions."
     },
     {
       "id": "authors-took-no-part",

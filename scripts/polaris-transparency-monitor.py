@@ -39,6 +39,10 @@ def _load_verifier():
     return m
 
 
+# --log: the log's routes under /api/v1/transparency (the app's rp_api.py serves all three).
+LOGS = {"anchors": "", "receipts": "/receipts", "timestamps": "/timestamps"}
+
+
 def _get(base, path):
     with urllib.request.urlopen(base.rstrip("/") + path, timeout=15) as r:
         return json.loads(r.read().decode("utf-8"))
@@ -68,8 +72,9 @@ def _alert(msg):
 
 
 def poll(base, anchor, state_dir, verifier, log="anchors"):
-    """One monitor cycle over the chosen log (anchors, or the P8.2c receipt log). Returns an exit code."""
-    prefix = "/api/v1/transparency" + ("/receipts" if log == "receipts" else "")
+    """One monitor cycle over the chosen log (anchors, the P8.2c receipt log or the P8.5b timestamp log).
+    Returns an exit code."""
+    prefix = "/api/v1/transparency" + LOGS[log]
     """One monitor cycle. Returns an exit code."""
     try:
         sth = _get(base, prefix + "/sth")
@@ -130,8 +135,9 @@ def main(argv=None):
     ap.add_argument("--anchor", required=True, help="the log's trusted public key (hex, or a file)")
     ap.add_argument("--state", required=True, help="directory for the monitor's cached STH and mirror")
     ap.add_argument("--once", action="store_true", help="poll once and exit (the default and only mode in v1)")
-    ap.add_argument("--log", choices=("anchors", "receipts"), default="anchors",
-                    help="which log to monitor: the audit-anchor log (default) or the P8.2c receipt log")
+    ap.add_argument("--log", choices=tuple(LOGS), default="anchors",
+                    help="which log to monitor: the audit-anchor log (default), the P8.2c receipt log or the "
+                         "P8.5b timestamp log")
     args = ap.parse_args(argv)
     try:
         anchor = _read_anchor(args.anchor)
