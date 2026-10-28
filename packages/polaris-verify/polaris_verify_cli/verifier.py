@@ -261,7 +261,29 @@ def _liboqs_library():
     return None, places
 
 
+#: What the first `_import_oqs` in this process found: (the module, None, None), or (None, the
+#: class of the ImportError it raised, its message). Finding the library runs
+#: ctypes.util.find_library, which on Linux starts ldconfig, gcc and ld for each name it is
+#: given: once per process, not once per signature.
+_OQS_FOUND = None
+
+
 def _import_oqs():
+    """Import liboqs once per process (`_find_oqs` says how): every later call returns the same
+    module, or raises the same ImportError again, without looking a second time."""
+    global _OQS_FOUND
+    if _OQS_FOUND is None:
+        try:
+            _OQS_FOUND = (_find_oqs(), None, None)
+        except ImportError as e:   # _OqsUnusable included
+            _OQS_FOUND = (None, type(e), str(e))
+    module, error, reason = _OQS_FOUND
+    if error is not None:
+        raise error(reason)
+    return module
+
+
+def _find_oqs():
     """Import liboqs with its startup chatter kept off stdout.
 
     `import oqs` prints "liboqs-python faulthandler is disabled" to STDOUT, and a version
@@ -274,7 +296,8 @@ def _import_oqs():
 
     Importing a module runs its code, so nothing named `oqs` is imported while a distribution
     named `oqs` is installed, or while no liboqs shared library loads from where liboqs-python
-    would load it: liboqs counts as absent, never as a witness or a backend `auto` picks.
+    would load it, and an import that exits or raises is an ImportError: liboqs counts as
+    absent, never as a witness or a backend `auto` picks.
     """
     if _unrelated_oqs_installed():
         raise _OqsUnusable("a distribution named `oqs` is installed, and it is not "
@@ -294,6 +317,8 @@ def _import_oqs():
             import oqs  # type: ignore
         except SystemExit as e:
             raise _OqsUnusable("importing `oqs` exited (%s)." % (e,)) from None
+        except Exception as e:  # noqa: BLE001 (a library that loads but is not liboqs: AttributeError)
+            raise _OqsUnusable("importing `oqs` failed (%s: %s)." % (type(e).__name__, e)) from None
     if not hasattr(oqs, "Signature"):
         raise _OqsUnusable("the importable `oqs` is not liboqs-python: it has no "
                            "Signature. " + _OQS_REPAIR)

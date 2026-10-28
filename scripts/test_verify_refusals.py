@@ -488,11 +488,69 @@ class OqsIsImportedOnlyWhenItIsLiboqs(unittest.TestCase):
         self.assertIsNone(got["mode"][0])
         self.assertIn("importing `oqs` exited (1)", got["mode"][1])
 
+    NOT_LIBOQS = "raise AttributeError('undefined symbol: OQS_init')\n"
+
+    def test_an_import_that_raises_is_no_backend(self):
+        # A library that loads but is not liboqs: liboqs-python's import raises AttributeError.
+        got, _ = self.probe(self.site("liboqs-python", code=self.NOT_LIBOQS), "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("importing `oqs` failed (AttributeError: undefined symbol: OQS_init)",
+                      got["mode"][1])
+
     def test_with_no_oqs_module_the_refusal_names_the_library_once(self):
         got, _ = self.probe(self.site("liboqs-python", code=None, library=None), "auto")
         self.assertIsNone(got["mode"][0])
         self.assertIn("Install one (liboqs-python with the liboqs shared library", got["mode"][1])
         self.assertNotIn("liboqs-python needs", got["mode"][1])
+
+    REPEAT = (
+        "import ctypes.util, importlib.util, json, os, subprocess, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "spec = importlib.util.spec_from_file_location('v', sys.argv[1])\n"
+        "V = importlib.util.module_from_spec(spec); spec.loader.exec_module(V)\n"
+        "args = (b'd' * 32, b'\\x02' * 3309, b'\\x01' * 1952)\n"
+        "first = V._verify_liboqs(*args)\n"
+        "calls = []\n"
+        "def counted(name, f):\n"
+        "    def g(*a, **k):\n"
+        "        calls.append(name)\n"
+        "        return f(*a, **k)\n"
+        "    return g\n"
+        "V._liboqs_library = counted('_liboqs_library', V._liboqs_library)\n"
+        "V._unrelated_oqs_installed = counted('_unrelated_oqs_installed', V._unrelated_oqs_installed)\n"
+        "ctypes.util.find_library = counted('find_library', ctypes.util.find_library)\n"
+        "subprocess.Popen.__init__ = counted('Popen', subprocess.Popen.__init__)\n"
+        "later = [V._verify_liboqs(*args) for _ in range(3)] + [V._provider_available('oqs')]\n"
+        "print(json.dumps({'first': first, 'later': later, 'calls': calls}))\n")
+
+    def repeat(self, site):
+        env = dict(os.environ, PYTHONPATH=str(site), POLARIS_OQS_CANARY=str(site / "imported"),
+                   POLARIS_GIT_MARKER=str(site / "git-called"), OQS_INSTALL_PATH=str(site / "_oqs"),
+                   PATH=str(site / "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+        env.pop("POLARIS_FIND_LIBRARY", None)
+        r = subprocess.run([sys.executable, "-S", "-c", self.REPEAT, str(HERE / "polaris-verify.py")],
+                           env=env, cwd=str(site), capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((site / "git-called").exists(), "git ran: %s" % r.stderr[-400:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_liboqs_is_looked_for_once_per_process(self):
+        # Finding the library runs ctypes.util.find_library, which on Linux starts ldconfig, gcc
+        # and ld: a later signature, liboqs found, absent or failing to import, looks nowhere and
+        # starts nothing.
+        for label, site, first, later in (
+                ("found", self.site("liboqs-python"), False, [False, False, False, True]),
+                ("no library", self.site("liboqs-python", code=self.CLONE, library=None),
+                 None, [None, None, None, False]),
+                ("a library that is not liboqs", self.site("liboqs-python", code=self.NOT_LIBOQS),
+                 None, [None, None, None, False])):
+            with self.subTest(label):
+                got = self.repeat(site)
+                # The stub's Signature takes no algorithm: the witness ran and refused.
+                self.assertIs(got["first"], first)
+                self.assertEqual(got["later"], later)
+                self.assertEqual(got["calls"], [])
 
 
 class ExactSizeIsCheckedBeforeEitherWitness(unittest.TestCase):
