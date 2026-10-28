@@ -186,10 +186,14 @@ def _cases(cbor2, oqs, mdoc, pqc_signing, mldsa, V, pk, key):
     ok &= _row("the signature covers the protected header, not just the payload",
                protected_only, True)
 
-    # 11. Totality: a verifier fed hostile bytes returns a verdict.
+    # 11. Totality: a verifier fed hostile bytes returns a verdict. The last input is this
+    #     document with its MSO payload replaced by tag 24 over a map (2026-10-28: KeyError).
+    tag24_map = cbor2.loads(doc)
+    tag24_map["issuerSigned"]["issuerAuth"][2] = bytes.fromhex("d818a10102")
     ok &= _row("hostile input returns a verdict, never an exception",
                all(isinstance(V.verify_mdoc(x), dict)
-                   for x in (None, b"", b"\\xff\\xff", "zz", [], {}, b"\\x9f\\x00")), True)
+                   for x in (None, b"", b"\\xff\\xff", "zz", [], {}, b"\\x9f\\x00",
+                             cbor2.dumps(tag24_map))), True)
 
     # 12. RFC 9964: -49 is pure ML-DSA-65 over the Sig_structure itself. An implementation
     #     that is not the app's (cryptography's MLDSA65, handed the key from the document)

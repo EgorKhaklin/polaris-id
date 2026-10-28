@@ -525,7 +525,11 @@ class CborRefusals(unittest.TestCase):
                            ("tag 0, a date-time string", b"\xc0" + _cbor("2026-01-01T00:00:00Z")),
                            ("tag 1, epoch seconds", b"\xc1\x1a" + (1767225600).to_bytes(4, "big")),
                            ("tag 18, a COSE_Sign1", b"\xd2" + _cbor([b"", {}, b"", b""])),
-                           ("tag 1004, a full-date", b"\xd9\x03\xec" + _cbor("2000-01-01"))):
+                           ("tag 1004, a full-date", b"\xd9\x03\xec" + _cbor("2000-01-01")),
+                           ("tag 24 over a map", b"\xd8\x18" + _cbor({1: 2})),
+                           ("tag 24 over an array", b"\xd8\x18" + _cbor([1, 2])),
+                           ("tag 24 over an integer", b"\xd8\x18" + _cbor(5)),
+                           ("tag 24 over a text string", b"\xd8\x18" + _cbor("ab"))):
             with self.subTest(label), self.assertRaises(ValueError):
                 V._cbor_decode(buf)
 
@@ -553,6 +557,23 @@ class MdocTag24Refusals(unittest.TestCase):
         self.assertIs(v["issuer_authentic"], False)
         self.assertIsNot(v["digests_match"], True)
         self.assertIn("tag 24", json.dumps(v))
+
+    def test_tag_24_over_anything_but_bytes_is_a_refusal(self):
+        # 2026-10-28. An MSO payload of tag 24 over the map {1: 2} raised KeyError out of
+        # verify_mdoc (the MSO path read the map as if it were bytes); a list of small integers
+        # under tag 24 was read as bytes outright. Each is a verdict now, for the MSO and for an
+        # element alike.
+        for label, inner in (("a map", {1: 2}), ("an array", [1, 2]), ("an integer", 5), ("a text string", "ab")):
+            wrapped = b"\xd8\x18" + _cbor(inner)
+            with self.subTest("the MSO, " + label):
+                v = V.verify_mdoc(self.document(wrapped, []))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("must wrap a byte string", v["note"] or "")
+            with self.subTest("an element, " + label):
+                v = V.verify_mdoc(self.document(self.mso(), [("raw", wrapped)]))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNot(v["digests_match"], True)
+                self.assertIn("must wrap a byte string", json.dumps(v))
 
 
 

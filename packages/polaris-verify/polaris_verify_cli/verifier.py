@@ -4667,10 +4667,10 @@ def _cbor_load(buf, i=0, depth=0):
     """Decode one CBOR item at offset i. Returns (value, next_offset).
 
     Handles the subset an mdoc uses: unsigned and negative integers, byte and text strings,
-    arrays, maps, tag 24, and the simple values false, true, null and undefined. Anything else,
-    a float or another tag included, raises ValueError, which the callers turn into a refusal: a
-    verifier that guessed at an encoding it did not implement would be deciding on bytes it had
-    not read. So does a map that repeats a key.
+    arrays, maps, tag 24 over a byte string, and the simple values false, true, null and
+    undefined. Anything else, a float or another tag included, raises ValueError, which the
+    callers turn into a refusal: a verifier that guessed at an encoding it did not implement
+    would be deciding on bytes it had not read. So does a map that repeats a key.
 
     A tag-24 item comes back as ("tag", 24, inner, raw), `raw` being the item exactly as it sat
     in `buf`, tag and length headers included: an element's digest is over the bytes received,
@@ -4741,6 +4741,11 @@ def _cbor_load(buf, i=0, depth=0):
         if val != 24:
             raise ValueError("CBOR tag %d is outside the mdoc subset (tag 24 only)" % val)
         inner, i = _cbor_load(buf, i, depth + 1)
+        # RFC 8949 s3.4.5.1: tag 24 wraps a byte string holding the encoded item. Until
+        # 2026-10-28 it wrapped anything, and the MSO path read a map under it as if it were
+        # bytes, which raised KeyError out of verify_mdoc instead of returning a verdict.
+        if not isinstance(inner, (bytes, bytearray)):
+            raise ValueError("CBOR tag 24 must wrap a byte string, got %s" % type(inner).__name__)
         return ("tag", val, inner, bytes(buf[start:i])), i
     if major == 7:
         # Until 2026-10-28 every other value came back as its raw integer: a float16 1.0 was
