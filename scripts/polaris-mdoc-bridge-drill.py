@@ -186,10 +186,33 @@ def _cases(cbor2, oqs, mdoc, pqc_signing, mldsa, V, pk, key):
     ok &= _row("the signature covers the protected header, not just the payload",
                protected_only, True)
 
-    # 11. Totality: a verifier fed hostile bytes returns a verdict.
+    # 11. Totality: a verifier fed hostile bytes returns a verdict. The inputs after the first
+    #     seven are this document with one field the sender writes replaced, none needing a key
+    #     (2026-10-28: tag 24 over a map as the MSO payload raised KeyError; a non-map nameSpaces
+    #     or valueDigests AttributeError; an integer signature OverflowError; tag 24 as an
+    #     algorithm name TypeError).
+    def altered(field, value):
+        d = cbor2.loads(doc)
+        signed, auth = d["issuerSigned"], d["issuerSigned"]["issuerAuth"]
+        if field in ("valueDigests", "digestAlgorithm"):
+            mso = cbor2.loads(cbor2.loads(auth[2]).value)
+            mso[field] = value
+            auth[2] = cbor2.dumps(cbor2.CBORTag(24, cbor2.dumps(mso)))
+        elif field == "polaris_algorithm":
+            auth[1][field] = value
+        elif field == "nameSpaces":
+            signed[field] = value
+        else:
+            auth[{"payload": 2, "signature": 3}[field]] = value
+        return cbor2.dumps(d)
+    tag24 = cbor2.CBORTag(24, b"\x01")
     ok &= _row("hostile input returns a verdict, never an exception",
                all(isinstance(V.verify_mdoc(x), dict)
-                   for x in (None, b"", b"\\xff\\xff", "zz", [], {}, b"\\x9f\\x00")), True)
+                   for x in (None, b"", b"\xff\xff", "zz", [], {}, b"\x9f\x00",
+                             altered("payload", bytes.fromhex("d818a10102")),
+                             altered("nameSpaces", [1]), altered("valueDigests", "x"),
+                             altered("signature", 2 ** 64 - 1),
+                             altered("digestAlgorithm", tag24), altered("polaris_algorithm", tag24))), True)
 
     # 12. RFC 9964: -49 is pure ML-DSA-65 over the Sig_structure itself. An implementation
     #     that is not the app's (cryptography's MLDSA65, handed the key from the document)

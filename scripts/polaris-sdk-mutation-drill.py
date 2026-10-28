@@ -117,8 +117,10 @@ DECLARED_SURVIVORS: dict[str, str] = {
     # 2026-10-15 as dead on a machine that has liboqs. A module named `oqs` that is not
     # liboqs-python (PyPI's `oqs` is another project) now makes `_import_oqs` raise there, and
     # test_verify_refusals.AnotherProjectsOqsModule asserts `auto` then picks cryptography.
-    "verify:_provider_available:e706fa#2":
-        "the cryptography import failing: dead on any machine that can run the verifier's tests",
+    # verify:_provider_available:e706fa#2, the cryptography import failing, was declared here
+    # until 2026-10-28 as dead on any machine that can run the verifier's tests.
+    # test_verify_refusals.OqsIsImportedOnlyWhenItIsLiboqs runs the verifier under -S, where
+    # cryptography does not import, and asserts what `auto` and `oqs` then answer.
 
     # typescript:hexToBytes:56b25d, the decoder's first throw, was declared here until
     # 2026-09-29 as "garbage bytes and the same not-authentic verdict". Since the decoder
