@@ -26,7 +26,7 @@ groups:
 
       # The job matcher is what gives the alert its job label (absent() copies equality
       # matchers), and Alertmanager's inhibit rule mutes it under PolarisAppDown only for an
-      # equal job. Without it a full outage with a static target paged twice.
+      # equal job. Without it, a full outage with a static target pages twice.
       - alert: PolarisAppInfoAbsent
         expr: absent(polaris_app_info{job="polaris"})
         for: 5m

@@ -408,7 +408,7 @@ tests:
   # is gone. Both SEV-1 alerts fire, and both carry job="polaris", the label Alertmanager's
   # inhibit rule matches on (equal: ['job']), so PolarisAppInfoAbsent is muted while
   # PolarisAppDown fires (scripts/polaris-page-drill.sh posts these label sets to the shipped
-  # Alertmanager). Until 2026-10-28 PolarisAppInfoAbsent had no job label and paged as well.
+  # Alertmanager).
   - interval: 5m
     input_series:
       - series: 'up{job="polaris",instance="app:8000"}'
