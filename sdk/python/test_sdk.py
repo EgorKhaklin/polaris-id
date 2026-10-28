@@ -8,6 +8,7 @@ injected online status (no server); and the conformance runner is driven against
 the bundled SDK. Skips where cryptography lacks ML-DSA-65."""
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,19 @@ _ROOT = os.path.dirname(os.path.dirname(_HERE))
 sys.path.insert(0, _HERE)
 
 import polaris_verify as pv
+
+# The `oqs` stubs below run `git clone`, as liboqs-python's import does, against a stub git on
+# PATH; a hook's GIT_* (the pre-commit index above all) would still reach any git a test starts,
+# so it is dropped for the module and restored after.
+_HOOK_GIT_ENV = {}
+
+
+def setUpModule():
+    _HOOK_GIT_ENV.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")})
+
+
+def tearDownModule():
+    os.environ.update(_HOOK_GIT_ENV)
 
 
 def _mldsa_available():
@@ -1808,3 +1822,221 @@ class AnotherProjectsOqsModule(unittest.TestCase):
         self.assertIs(got[tampered][0], False, got[tampered])
         for path in (valid, tampered):
             self.assertFalse([w for w in got[path][1] or [] if "liboqs" in w], got[path])
+
+
+def _loadable_library():
+    """A shared library this interpreter can load: a copy stands in for liboqs."""
+    import importlib
+    import importlib.machinery
+    for name in ("_json", "_ctypes", "select", "_socket", "math", "_struct"):
+        try:
+            path = getattr(importlib.import_module(name), "__file__", None)
+        except ImportError:
+            continue
+        if path and path.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
+            return path
+    return None
+
+
+class OqsIsImportedOnlyWhenItIsLiboqs(unittest.TestCase):
+    """Nothing named `oqs` is imported unless it is liboqs-python with its library in place,
+    and a verify call never exits the process. The SDK's copy of the detached verifier's
+    OqsIsImportedOnlyWhenItIsLiboqs (scripts/test_verify_refusals.py), with the same stubs:
+    - named `oqs` (PyPI's unrelated project), with a `Signature` and an import that writes a
+      marker file: never imported, the liboqs witness abstains, and the reason names the repair;
+    - named `liboqs-python`, with the liboqs library where liboqs-python looks: imported, and
+      the witness runs (the control), whether the library is under lib, lib64 or where
+      ctypes.util.find_library finds it (a copy of one of this interpreter's extension modules);
+    - the same without its __init__.py (what `pip uninstall oqs` leaves): the same repair;
+    - `liboqs-python` without the library, whose import runs `git clone` (a stub git on PATH
+      records it) and raises SystemExit, as liboqs-python 0.16.0 does: not imported, nothing
+      fetched, the witness abstains;
+    - the same with a library file that does not load (an empty one): the same as none;
+    - `liboqs-python` whose import raises SystemExit with the library in place: no witness.
+    - no `oqs` at all, and no library: the reason is the missing module, not the library.
+    - liboqs-python whose import raises (a library that loads but is not liboqs): no witness;
+    - and in each, a later verify looks for nothing again.
+    A fresh interpreter under -S each time, so an installed liboqs-python cannot stand in for a
+    stub, with ctypes.util.find_library answering only what the test names."""
+
+    CODE = ("import os\n"
+            "open(os.environ['POLARIS_OQS_CANARY'], 'w').write('imported')\n"
+            "class Signature:\n"
+            "    pass\n")
+    CLONE = ("import subprocess\n"
+             "subprocess.call('git clone https://github.com/open-quantum-safe/liboqs --depth 1',\n"
+             "                shell=True)\n"
+             "raise SystemExit(1)\n")
+    PROBE = (
+        "import ctypes.util, json, os, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import polaris_verify as pv\n"
+        "out = {'sdk': pv.__file__}\n"
+        "try:\n"
+        "    pv._import_oqs(); out['import'] = None\n"
+        "except ImportError as e:\n"
+        "    out['import'] = str(e)\n"
+        "out['witness'] = pv._verify_liboqs(b'd' * 32, b'\\x02' * 3309, b'\\x01' * 1952)\n"
+        "print(json.dumps(out))\n")
+    REPAIR = "`pip install --force-reinstall --no-deps liboqs-python`"
+    LIBRARY = {"Darwin": "liboqs.dylib", "Windows": "oqs.dll"}.get(platform.system(), "liboqs.so")
+    LOADABLE = _loadable_library()
+
+    def setUp(self):
+        if self.LOADABLE is None:
+            self.skipTest("this interpreter has no extension module to stand in for liboqs")
+
+    def site(self, distribution, code=CODE, init=True, library="loads", where="lib"):
+        d = tempfile.mkdtemp(prefix="polaris-oqs-dist-")
+        self.addCleanup(shutil.rmtree, d, True)
+        if code is not None:
+            os.mkdir(os.path.join(d, "oqs"))
+            with open(os.path.join(d, "oqs", "oqs.py"), "w") as f:
+                f.write(code)
+            if init:
+                with open(os.path.join(d, "oqs", "__init__.py"), "w") as f:
+                    f.write("from .oqs import *  # noqa: F401,F403\n")
+            info = os.path.join(d, "%s-0.0.0.dist-info" % distribution.replace("-", "_"))
+            os.mkdir(info)
+            with open(os.path.join(info, "METADATA"), "w") as f:
+                f.write("Metadata-Version: 2.1\nName: %s\nVersion: 0.0.0\n" % distribution)
+        lib = os.path.join(d, "_oqs", "bin" if platform.system() == "Windows" else where)
+        os.makedirs(lib)
+        if library == "loads":
+            shutil.copyfile(self.LOADABLE, os.path.join(lib, self.LIBRARY))
+        elif library == "empty":
+            open(os.path.join(lib, self.LIBRARY), "wb").close()
+        os.mkdir(os.path.join(d, "stub-bin"))
+        git = os.path.join(d, "stub-bin", "git")
+        with open(git, "w") as f:
+            f.write("#!/bin/sh\necho \"$@\" >> \"$POLARIS_GIT_MARKER\"\nexit 128\n")
+        os.chmod(git, 0o700)
+        return d
+
+    def probe(self, site, find_library=None):
+        env = dict(os.environ, PYTHONPATH=site,
+                   POLARIS_OQS_CANARY=os.path.join(site, "imported"),
+                   POLARIS_GIT_MARKER=os.path.join(site, "git-called"),
+                   OQS_INSTALL_PATH=os.path.join(site, "_oqs"),
+                   PATH=os.path.join(site, "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+        env.pop("POLARIS_FIND_LIBRARY", None)
+        if find_library:
+            env["POLARIS_FIND_LIBRARY"] = find_library
+        r = subprocess.run([sys.executable, "-S", "-c", self.PROBE, _HERE], env=env, cwd=site,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(site, "git-called")),
+                         "git ran: %s" % r.stderr[-400:])
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertTrue(got["sdk"].startswith(_HERE), got["sdk"])
+        return got, os.path.exists(os.path.join(site, "imported"))
+
+    def test_a_distribution_named_oqs_is_never_imported(self):
+        got, imported = self.probe(self.site("oqs"))
+        self.assertIs(imported, False, "the package's code ran")
+        self.assertIn("a distribution named `oqs` is installed", got["import"])
+        self.assertIn(self.REPAIR, got["import"])
+        self.assertIsNone(got["witness"])
+
+    def test_liboqs_python_with_its_library_is_imported(self):
+        got, imported = self.probe(self.site("liboqs-python"))
+        self.assertIs(imported, True, "positive control: liboqs-python's oqs must load")
+        self.assertIsNone(got["import"])
+        # The stub's Signature takes no algorithm, so the witness ran and refused.
+        self.assertIs(got["witness"], False)
+
+    @unittest.skipIf(platform.system() == "Windows", "liboqs-python looks only in bin there")
+    def test_the_library_under_lib64_is_found(self):
+        got, imported = self.probe(self.site("liboqs-python", where="lib64"))
+        self.assertIs(imported, True)
+        self.assertIsNone(got["import"])
+
+    def test_the_library_ctypes_finds_on_the_system_path_is_found(self):
+        got, imported = self.probe(self.site("liboqs-python", library=None),
+                                   find_library=self.LOADABLE)
+        self.assertIs(imported, True)
+        self.assertIsNone(got["import"])
+
+    def test_what_uninstalling_oqs_leaves_gets_the_same_repair(self):
+        got, _ = self.probe(self.site("liboqs-python", init=False))
+        self.assertIn("it has no Signature", got["import"])
+        self.assertIn(self.REPAIR, got["import"])
+        self.assertIsNone(got["witness"])
+
+    def test_without_the_library_nothing_is_fetched_or_imported(self):
+        site = self.site("liboqs-python", code=self.CLONE, library=None)
+        got, _ = self.probe(site)
+        self.assertIn("liboqs-python needs the liboqs shared library", got["import"])
+        self.assertIn(os.path.join(site, "_oqs"), got["import"])
+        self.assertIsNone(got["witness"])
+
+    def test_a_library_file_that_does_not_load_counts_as_none(self):
+        got, _ = self.probe(self.site("liboqs-python", code=self.CLONE, library="empty"))
+        self.assertIn("liboqs-python needs the liboqs shared library", got["import"])
+        self.assertIsNone(got["witness"])
+
+    def test_an_import_that_exits_is_no_witness(self):
+        got, _ = self.probe(self.site("liboqs-python", code="raise SystemExit(1)\n"))
+        self.assertIn("importing `oqs` exited (1)", got["import"])
+        self.assertIsNone(got["witness"])
+
+    NOT_LIBOQS = "raise AttributeError('undefined symbol: OQS_init')\n"
+
+    def test_an_import_that_raises_is_no_witness(self):
+        # A library that loads but is not liboqs: liboqs-python's import raises AttributeError.
+        got, _ = self.probe(self.site("liboqs-python", code=self.NOT_LIBOQS))
+        self.assertIn("importing `oqs` failed (AttributeError: undefined symbol: OQS_init)",
+                      got["import"])
+        self.assertIsNone(got["witness"])
+
+    REPEAT = (
+        "import ctypes.util, json, os, subprocess, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import polaris_verify as pv\n"
+        "args = (b'd' * 32, b'\\x02' * 3309, b'\\x01' * 1952)\n"
+        "first = pv._verify_liboqs(*args)\n"
+        "calls = []\n"
+        "def counted(name, f):\n"
+        "    def g(*a, **k):\n"
+        "        calls.append(name)\n"
+        "        return f(*a, **k)\n"
+        "    return g\n"
+        "pv._liboqs_library = counted('_liboqs_library', pv._liboqs_library)\n"
+        "pv._unrelated_oqs_installed = counted('_unrelated_oqs_installed', pv._unrelated_oqs_installed)\n"
+        "ctypes.util.find_library = counted('find_library', ctypes.util.find_library)\n"
+        "subprocess.Popen.__init__ = counted('Popen', subprocess.Popen.__init__)\n"
+        "later = [pv._verify_liboqs(*args) for _ in range(3)]\n"
+        "print(json.dumps({'first': first, 'later': later, 'calls': calls}))\n")
+
+    def test_liboqs_is_looked_for_once_per_process(self):
+        # Finding the library runs ctypes.util.find_library, which on Linux starts ldconfig, then
+        # gcc and then ld if the one before found nothing: a later signature, liboqs found, absent
+        # or failing to import, looks nowhere and starts nothing.
+        for label, site, witness in (
+                ("found", self.site("liboqs-python"), False),
+                ("no library", self.site("liboqs-python", code=self.CLONE, library=None), None),
+                ("a library that is not liboqs", self.site("liboqs-python", code=self.NOT_LIBOQS), None)):
+            with self.subTest(label):
+                env = dict(os.environ, PYTHONPATH=site,
+                           POLARIS_OQS_CANARY=os.path.join(site, "imported"),
+                           POLARIS_GIT_MARKER=os.path.join(site, "git-called"),
+                           OQS_INSTALL_PATH=os.path.join(site, "_oqs"),
+                           PATH=os.path.join(site, "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+                env.pop("POLARIS_FIND_LIBRARY", None)
+                r = subprocess.run([sys.executable, "-S", "-c", self.REPEAT, _HERE], env=env, cwd=site,
+                                   capture_output=True, text=True, timeout=120)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertFalse(os.path.exists(os.path.join(site, "git-called")), r.stderr[-400:])
+                got = json.loads(r.stdout.strip().splitlines()[-1])
+                # The stub's Signature takes no algorithm: found, the witness ran and refused.
+                self.assertIs(got["first"], witness)
+                self.assertEqual(got["later"], [witness] * 3)
+                self.assertEqual(got["calls"], [])
+
+    def test_with_no_oqs_module_the_reason_names_no_library(self):
+        # `oqs` is located without importing it, before any library is looked for.
+        got, _ = self.probe(self.site("liboqs-python", code=None, library=None))
+        self.assertEqual(got["import"], "No module named 'oqs'")
+        self.assertIsNone(got["witness"])

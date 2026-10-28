@@ -536,9 +536,9 @@ class OqsIsImportedOnlyWhenItIsLiboqs(unittest.TestCase):
         return json.loads(r.stdout.strip().splitlines()[-1])
 
     def test_liboqs_is_looked_for_once_per_process(self):
-        # Finding the library runs ctypes.util.find_library, which on Linux starts ldconfig, gcc
-        # and ld: a later signature, liboqs found, absent or failing to import, looks nowhere and
-        # starts nothing.
+        # Finding the library runs ctypes.util.find_library, which on Linux starts ldconfig, then
+        # gcc and then ld if the one before found nothing: a later signature, liboqs found, absent
+        # or failing to import, looks nowhere and starts nothing.
         for label, site, first, later in (
                 ("found", self.site("liboqs-python"), False, [False, False, False, True]),
                 ("no library", self.site("liboqs-python", code=self.CLONE, library=None),

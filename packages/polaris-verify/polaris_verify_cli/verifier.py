@@ -263,8 +263,8 @@ def _liboqs_library():
 
 #: What the first `_import_oqs` in this process found: (the module, None, None), or (None, the
 #: class of the ImportError it raised, its message). Finding the library runs
-#: ctypes.util.find_library, which on Linux starts ldconfig, gcc and ld for each name it is
-#: given: once per process, not once per signature.
+#: ctypes.util.find_library, which on Linux starts ldconfig for each name it is given, then gcc
+#: and then ld if the one before found nothing: once per process, not once per signature.
 _OQS_FOUND = None
 
 
