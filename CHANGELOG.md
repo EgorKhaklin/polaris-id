@@ -114,6 +114,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Offline presentation defaults in polaris-verify.
 - Anonymity-set verification in polaris-verify and the holder wallet.
 - polaris-sdk-python and polaris-sdk-ts: a fix to the generic signed-artifact check.
+- polaris-verify's `oqs` extra requires liboqs-python 0.16.0.2 or later, and the server's lock (`polaris_web/requirements-pqc.txt`) pins 0.16.0.2: the release that fixes GHSA-w696-4vrr-x6x3.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 

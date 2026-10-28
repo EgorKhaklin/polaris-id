@@ -28,7 +28,7 @@ dependencies = []
 
 [project.optional-dependencies]
 cryptography = ["cryptography>=50.0.0"]
-oqs = ["liboqs-python>=0.16"]
+oqs = ["liboqs-python>=0.16.0.2"]
 
 [project.scripts]
 polaris-verify = "polaris_verify_cli.verifier:main"
