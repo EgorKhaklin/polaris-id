@@ -436,7 +436,7 @@ function withinWindow(obj: any, now?: string | null, start = "issued_at", end = 
 /** The [start, end] fields of the validity window a format SIGNS, read from its own signed key
  * list, or null when it signs no window. The ID token signs its window as `iat` and `exp`. A
  * field outside the signed statement is anyone's to add or change, so a format that signs only
- * one end of a window, or neither, has no window to answer `fresh` from (2026-10-21). Matches
+ * one end of a window, or neither, has no window to answer `fresh` from. Matches
  * `_signed_window` in the Python SDK. */
 function signedWindow(keys: string[]): [string, string] | null {
   if (keys.includes("iat") && keys.includes("exp")) return ["iat", "exp"];
@@ -596,7 +596,7 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   if (!keys) return { authentic: false, fresh: null, note: "unknown or unsupported artifact: " + o.format };
   // WIRE-SPEC section 1: a head's size is a count its signature covers, read first, as
   // polaris-verify's verify_sth reads it. A head signed with 2**53, 10**20, -1, 1.5, "1" or null
-  // was authentic here and in the Python SDK and refused there (2026-10-21).
+  // was authentic here and in the Python SDK and refused there.
   if (o.format === STH_FORMAT && !signedCount(o.tree_size)) {
     return { authentic: false, fresh: null, note: "tree_size is not an integer from 0 to 2**53 - 1" };
   }
@@ -781,7 +781,7 @@ export function verifyInclusion(idx: number, treeSize: number, leaf: Uint8Array,
   // past 2**31 `sn >>= 1` went negative and never reached 0, so index 0 of a tree of 2**31 + 1,
   // 2**32 or 2**53 - 1 leaves was false here and true in polaris-verify and the Python SDK; and
   // the size of 2**32 + 1 leaves wrapped to 0 after one step, so a two-leaf tree's one-node path
-  // proved index 0 of that tree here alone (2026-10-21).
+  // proved index 0 of that tree here alone.
   let fn = BigInt(idx), sn = BigInt(treeSize) - 1n, r = leaf;
   for (const p of proof) {
     if (sn === 0n || !(p instanceof Uint8Array)) return false;

@@ -563,8 +563,7 @@ def _signed_window(keys):
     """The (start, end) fields of the validity window a format SIGNS, read from its own signed
     key list, or None when it signs no window. The ID token signs its window as `iat` and
     `exp`. A field outside the signed statement is anyone's to add or change, so a format that
-    signs only one end of a window, or neither, has no window to answer `fresh` from
-    (2026-10-21)."""
+    signs only one end of a window, or neither, has no window to answer `fresh` from."""
     if "iat" in keys and "exp" in keys:
         return "iat", "exp"
     if "issued_at" in keys and "expires_at" in keys:
@@ -791,7 +790,7 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         return ArtifactVerdict(False, None, "unknown or unsupported artifact: %s" % fmt)
     # WIRE-SPEC section 1: a head's size is a count its signature covers, read first, as
     # polaris-verify's verify_sth reads it. A head signed with 2**53, 10**20, -1, 1.5, "1" or null
-    # was authentic here and in the TypeScript SDK and refused there (2026-10-21).
+    # was authentic here and in the TypeScript SDK and refused there.
     if fmt == _STH_FORMAT and not _signed_count(obj.get("tree_size")):
         return ArtifactVerdict(False, None, "tree_size is not an integer from 0 to 2**53 - 1")
     if obj.get("algorithm") == PLACEHOLDER_LABEL or not obj.get("public_key_hex"):

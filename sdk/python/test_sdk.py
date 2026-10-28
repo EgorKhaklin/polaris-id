@@ -1529,7 +1529,7 @@ class SignedCountsAreNumbersTests(unittest.TestCase):
         self.assertFalse(self._authentic(dict(e, leaf_count=True)))
 
     def test_a_count_the_signer_wrote_as_1_0_is_not_one(self):
-        """WIRE-SPEC section 1 (2026-10-21): a signed count is an integer, as polaris-verify reads it.
+        """WIRE-SPEC section 1: a signed count is an integer, as polaris-verify reads it.
         By `1.0 == 1` this SDK took a count written `1.0` as one; the TypeScript SDK refuses it at the
         signature, because JSON.parse reads `1.0` as 1 and its canonical bytes say `1`."""
         one = ["aa" * 32]
@@ -1545,7 +1545,7 @@ class SignedCountsAreNumbersTests(unittest.TestCase):
                 self.assertFalse(self._authentic(dict(obj, **{field: 1.0})))
 
     def test_a_head_size_is_an_integer_from_0_to_2_53_minus_1(self):
-        """WIRE-SPEC section 1 (2026-10-21): a head's size is a count its signature covers. polaris-verify
+        """WIRE-SPEC section 1: a head's size is a count its signature covers. polaris-verify
         refused a head signed with 2**53, 10**20, `true`, -1, "1" or null, and this SDK accepted it, as
         the TypeScript SDK did; 2**53 + 1 and `1.0` were accepted here alone."""
         sth = _conformance_vector("timestamp-anchor-variants-base.json")["anchor"]["sth"]
@@ -1559,7 +1559,7 @@ class SignedCountsAreNumbersTests(unittest.TestCase):
                 self.assertEqual(v.note, "tree_size is not an integer from 0 to 2**53 - 1")
 
     def test_a_cosignature_size_of_true_or_1_0_counts_no_witness(self):
-        """A cosignature's size is a signed count too (2026-10-21). By `==` alone a witness's signed `true`
+        """A cosignature's size is a signed count too. By `==` alone a witness's signed `true`
         or `1.0` was the size 1 and counted toward the threshold; polaris-verify counts neither, nor does
         the TypeScript SDK (`true === 1` is false, and a signed `1.0` fails its signature there)."""
         import copy
@@ -1620,8 +1620,8 @@ process.stdout.write(JSON.stringify(out));
                      "needs ML-DSA-65 in cryptography, node, and the TypeScript SDK's dependencies "
                      "(npm ci in sdk/typescript)")
 class ThreeVerifiersGiveOneVerdictTests(unittest.TestCase):
-    """polaris-verify, this SDK and the TypeScript SDK on the same wire text: one verdict per artifact
-    (2026-10-21). Each artifact is signed for real and written once by json.dumps, and each verifier
+    """polaris-verify, this SDK and the TypeScript SDK on the same wire text: one verdict per artifact.
+    Each artifact is signed for real and written once by json.dumps, and each verifier
     reads that text as its language reads JSON, the TypeScript SDK by JSON.parse in one node process.
 
     A count or size a signature covers is an integer from 0 to 2**53 - 1 (WIRE-SPEC section 1). Before
@@ -2277,7 +2277,7 @@ class HeldOutSemanticMutationsTests(unittest.TestCase):
 
 @unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
 class FreshnessComesFromSignedFieldsTests(unittest.TestCase):
-    """verify_signed_artifact's `fresh` comes only from fields the format signs (2026-10-21).
+    """verify_signed_artifact's `fresh` comes only from fields the format signs.
 
     Each vector below is a published, genuine one with only the window fields it does not sign
     added: the signature still verifies, and `fresh` must not follow them. The controls are the
@@ -2428,7 +2428,7 @@ class RefusalsNoTestTookTests(unittest.TestCase):
 
     @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
     def test_anchors_that_are_not_a_collection_trust_nothing(self):
-        # Trust is answered for an authentic signature only (2026-10-21), so this one is genuine.
+        # Trust is answered for an authentic signature only, so this one is genuine.
         import hashlib
         from cryptography.hazmat.primitives.asymmetric import mldsa
         sk = mldsa.MLDSA65PrivateKey.generate()

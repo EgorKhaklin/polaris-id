@@ -25,11 +25,12 @@ choice.
   consistency and inclusion proofs and the entries; the registry lists `polaris-timestamp-log`;
   the same monitor and witness daemons watch it.
 - **The verifier decides the anchor offline.** `verify_timestamp_anchor` checks the proof is for
-  this timestamp, the head is the authority's, the proof reconstructs it, and, when the relying
-  party names witnesses, that the head is cosigned by its threshold of them. That last step is
-  the substance: a thief with the authority's key can sign a fresh head over a fabricated log,
-  but cannot make an independent witness have cosigned that head at the claimed time, and the
-  fabricated head against the witnessed one of the same size is a caught split view.
+  this timestamp, the head is signed by the log key the relying party names (with none, nothing
+  is anchored), the proof reconstructs it, and, when the relying party names witnesses, that the
+  head is cosigned by its threshold of them. That last step is the substance: a thief with the
+  authority's key can sign a fresh head over a fabricated log, but cannot make an independent
+  witness have cosigned that head at the claimed time, and the fabricated head against the
+  witnessed one of the same size is a caught split view.
 - **Long-term validation gains three inputs.** `require_anchored` (with `trusted_witnesses` and
   `witness_threshold`), `timestamp_quorum` (distinct trusted, independent authorities among
   `ltv.timestamp` and `ltv.timestamps`; the no-retention alternative), and, with a trust list,

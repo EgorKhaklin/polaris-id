@@ -13,11 +13,11 @@ when something externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc9, 2026-10-28 | 1.0.0rc8, 2026-10-11 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc10, 2026-10-28 | 1.0.0rc9, 2026-10-28 |
 | `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0, 2026-10-11 | 1.0.0rc20, 2026-10-11 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc9, 2026-10-28 | 1.0.0rc8, 2026-10-11 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc10, 2026-10-28 | 1.0.0rc9, 2026-10-28 |
 | `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.10, 2026-10-28 | 1.0.0-rc.9, 2026-10-03 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.11, 2026-10-28 | 1.0.0-rc.10, 2026-10-28 |
 
 > **2026-10-04:** `polaris-oid4vp` 1.0.0rc16, approved at the environment gate and read back from PyPI:
 > a clean virtual environment installed it and ran the package's 422 tests, all passing. The EU
@@ -373,6 +373,10 @@ worse state to be in than three runs.
 | 40676854791 | 2026-10-28 | `polaris-sdk-python` 1.0.0rc9 | approved by the maintainer at the environment gate, published by trusted publishing from main (b13ed828); read back from the live registry and installed into a clean environment outside the tree |
 | 40688905626 | 2026-10-28 | `polaris-sdk-ts` 1.0.0-rc.10 | staged (id 1338492c-1577-486e-ab05-b8477c234b80); not published by the job; npm requires a maintainer's second factor |
 | (by hand) | 2026-10-28 | `polaris-sdk-ts` 1.0.0-rc.10 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum 824c5ad11f8961d8e61001f584801e4ed207b16c |
+| 40750718846 | 2026-10-28 | `polaris-verify` 1.0.0rc10 | approved by the maintainer at the environment gate, published by trusted publishing from main (5336bde7); read back from the live registry and installed into a clean environment outside the tree |
+| 40750723101 | 2026-10-28 | `polaris-sdk-python` 1.0.0rc10 | approved by the maintainer at the environment gate, published by trusted publishing from main (5336bde7); read back from the live registry and installed into a clean environment outside the tree |
+| 40751319961 | 2026-10-28 | `polaris-sdk-ts` 1.0.0-rc.11 | staged (id cc678fcb-9905-439a-bd02-a0984221a7ef) from main (5336bde7); not published by the job; npm requires a maintainer's second factor |
+| (by hand) | 2026-10-28 | `polaris-sdk-ts` 1.0.0-rc.11 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum c28a0aac7ac87795fc00dbe5015af3f4a7b8cef3 |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
