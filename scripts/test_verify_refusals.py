@@ -467,9 +467,12 @@ def _hdr(major, n):
 
 
 def _cbor(x):
-    """The smallest encoder these fixtures need: ints, bytes, text, lists, maps, tag 24."""
+    """The smallest encoder these fixtures need: ints, bytes, text, lists, maps, tag 24, and
+    ("raw", bytes) spliced in as given, for an encoding the encoder does not write."""
     if isinstance(x, tuple) and x[0] == "tag24":
         return b"\xd8\x18" + _cbor(x[1])
+    if isinstance(x, tuple) and x[0] == "raw":
+        return bytes(x[1])
     if isinstance(x, bool) or x is None:
         return {False: b"\xf4", True: b"\xf5", None: b"\xf6"}[x]
     if isinstance(x, int):
@@ -498,8 +501,32 @@ class CborRefusals(unittest.TestCase):
                            ("reserved additional information", b"\x1c"),
                            ("truncated string", _hdr(2, 5) + b"ab"),
                            ("a list as a map key", _hdr(5, 1) + _cbor([1]) + _cbor(1)),
+                           ("a map that repeats a key", _hdr(5, 2) + _cbor(1) + _cbor(-7) + _cbor(1) + _cbor(-49)),
+                           ("1 and true, keys this decoder reads as one", _hdr(5, 2) + _cbor(1) + _cbor(0) + _cbor(True) + _cbor(0)),
                            ("trailing bytes", _cbor(1) + _cbor(2))):
-            with self.assertRaises(ValueError, msg=label):
+            with self.subTest(label), self.assertRaises(ValueError):
+                V._cbor_decode(buf)
+
+    def test_only_tag_24_and_four_simple_values_decode(self):
+        # The decoder's docstring names the subset and promises a ValueError for anything else.
+        # Until 2026-10-28 major type 7 handed any other value back as its raw integer (a
+        # float16 1.0 came back as 15360) and major type 6 handed back any tag at all.
+        for buf, want in ((b"\xf4", False), (b"\xf5", True), (b"\xf6", None), (b"\xf7", None)):
+            self.assertIs(V._cbor_decode(buf), want, buf.hex())
+        # A tag-24 item also carries its own bytes as they sat in the input: an element's
+        # digest is over those, never over a re-encoding of them.
+        self.assertEqual(V._cbor_decode(_cbor(("tag24", b"ab"))), ("tag", 24, b"ab", b"\xd8\x18\x42ab"))
+        for label, buf in (("float16 1.0", b"\xf9\x3c\x00"),
+                           ("float32 1.0", b"\xfa\x3f\x80\x00\x00"),
+                           ("float64 1.0", b"\xfb\x3f\xf0" + bytes(6)),
+                           ("simple value 32", b"\xf8\x20"),
+                           ("simple value 0", b"\xe0"),
+                           ("simple value 19", b"\xf3"),
+                           ("tag 0, a date-time string", b"\xc0" + _cbor("2026-01-01T00:00:00Z")),
+                           ("tag 1, epoch seconds", b"\xc1\x1a" + (1767225600).to_bytes(4, "big")),
+                           ("tag 18, a COSE_Sign1", b"\xd2" + _cbor([b"", {}, b"", b""])),
+                           ("tag 1004, a full-date", b"\xd9\x03\xec" + _cbor("2000-01-01"))):
+            with self.subTest(label), self.assertRaises(ValueError):
                 V._cbor_decode(buf)
 
 
@@ -717,7 +744,7 @@ class MdocDecisions(unittest.TestCase):
         cls.other_sign, cls.other_pk = _mldsa_signer()
 
     def document(self, elements=None, mso_changes=None, unprotected=None, after=None,
-                 protected=None, prehash=False):
+                 protected=None, prehash=False, repeat=None):
         elements = elements if elements is not None else {"status": "ACTIVE", "checked_at": "2026-05-01T00:00:00Z"}
         items, digests = [], {}
         for i, (name, value) in enumerate(elements.items()):
@@ -740,9 +767,12 @@ class MdocDecisions(unittest.TestCase):
         header.update(unprotected or {})
         if after:
             after(items)
-        return _cbor({"docType": V._MDOC_DOC_TYPE,
-                      "issuerSigned": {"nameSpaces": {V._MDOC_NAMESPACE: items},
-                                       "issuerAuth": [protected, header, payload, signature]}})
+        issuer_signed = {"nameSpaces": {V._MDOC_NAMESPACE: items},
+                         "issuerAuth": [protected, header, payload, signature]}
+        if repeat:  # (key, value): that key once more, ahead of the genuine entries
+            body = _cbor(repeat[0]) + _cbor(repeat[1]) + b"".join(_cbor(k) + _cbor(v) for k, v in issuer_signed.items())
+            issuer_signed = ("raw", _hdr(5, len(issuer_signed) + 1) + body)
+        return _cbor({"docType": V._MDOC_DOC_TYPE, "issuerSigned": issuer_signed})
 
     def test_a_genuine_document_verifies_digests_and_signature(self):
         doc = self.document()
@@ -816,6 +846,81 @@ class MdocDecisions(unittest.TestCase):
         v = V.verify_mdoc(self.document(protected={1: -49, 4: b"kid"}), now=self.NOW)
         self.assertIs(v["issuer_authentic"], True, v["note"])
 
+    def test_a_map_that_repeats_a_key_is_refused(self):
+        # 2026-10-28. RFC 9052 s3: header labels MUST be unique, and a repeated one MUST be
+        # rejected. The decoder kept the last value of a repeated key, so each document below,
+        # genuinely signed, verified: alg -7 then -49 in the protected header was read as -49,
+        # and an issuerAuth nobody signed ahead of the genuine one was read as the genuine one.
+        decoy = [_cbor({1: -49}), {}, _cbor(("tag24", _cbor({}))), b"\x00" * 16]
+        for doc, why in ((self.document(protected=_hdr(5, 2) + _cbor(1) + _cbor(-7) + _cbor(1) + _cbor(-49)),
+                          "protected header does not decode"),
+                         (self.document(repeat=("issuerAuth", decoy)), "not decodable CBOR")):
+            with self.subTest(why):
+                v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNot(v["issuer_trusted"], True)
+                self.assertIn(why, v["note"] or "")
+                self.assertIn("repeats the key", v["note"] or "")
+
+    def test_an_element_value_outside_the_subset_is_refused(self):
+        # 2026-10-28. A genuinely signed document whose element value was a float16 1.0
+        # verified, with the value reported as 15360; a tagged value came back as a tuple. Each
+        # is now an element that does not decode, and no value is reported for it.
+        for raw, why in ((b"\xf9\x3c\x00", "float16 1.0"),
+                         (b"\xfa\x3f\x80\x00\x00", "float32 1.0"),
+                         (b"\xc0" + _cbor("2026-01-01T00:00:00Z"), "tag 0")):
+            with self.subTest(why):
+                doc = self.document(elements={"status": "ACTIVE", "credential_status": ("raw", raw)})
+                v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["digests_match"], False)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNone(v["elements"])
+                self.assertIn("an element does not decode", v["note"] or "")
+
+    def test_an_item_reframed_after_signing_is_refused(self):
+        # 2026-10-28. An element's digest is over the IssuerSignedItemBytes as received. It was
+        # recomputed over a minimal re-encoding of them, so the same item under a longer header,
+        # which anyone holding the document can write without a key, still matched: one signed
+        # credential, many accepted byte strings, and a reader that hashes the bytes it received
+        # refuses what this one accepted.
+        def reframe(head):
+            def after(items):
+                inner = items[0][1]
+                items[0] = ("raw", head(len(inner)) + inner)
+            return after
+        for head, why in ((lambda n: b"\xd8\x18\x59" + n.to_bytes(2, "big"), "a two-byte length"),
+                          (lambda n: b"\xd8\x18\x5a" + n.to_bytes(4, "big"), "a four-byte length"),
+                          (lambda n: b"\xd9\x00\x18\x58" + bytes([n]), "a two-byte tag number"),
+                          (lambda n: b"\xd9\x00\x18\x59" + n.to_bytes(2, "big"), "both")):
+            with self.subTest(why):
+                v = V.verify_mdoc(self.document(after=reframe(head)), anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["digests_match"], False)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("digest does not match", v["note"] or "")
+        # The same item rebuilt by hand in the framing it was signed in still verifies: what is
+        # refused is the re-framing, not the splice.
+        v = V.verify_mdoc(self.document(after=reframe(lambda n: b"\xd8\x18\x58" + bytes([n]))),
+                          anchor_keys=[self.pk.hex()], now=self.NOW)
+        self.assertIs(v["issuer_authentic"], True, v["note"])
+
+    def test_disagreeing_witnesses_are_a_refusal(self):
+        # The two-witness DISAGREE guard had no test on this path: without it every mdoc test
+        # stayed green. Either direction is a refusal, and the note says which.
+        doc = self.document()
+        saved = (V._verify_liboqs, V._verify_cryptography)
+        try:
+            for lib, crypto in ((True, False), (False, True)):
+                V._verify_liboqs = lambda *a, _r=lib, **k: _r
+                V._verify_cryptography = lambda *a, _r=crypto, **k: _r
+                with self.subTest(liboqs=lib, cryptography=crypto):
+                    v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                    self.assertIs(v["digests_match"], True)
+                    self.assertIs(v["issuer_authentic"], False)
+                    self.assertIsNot(v["issuer_trusted"], True)
+                    self.assertIn("DISAGREE", v["note"] or "")
+        finally:
+            V._verify_liboqs, V._verify_cryptography = saved
+
     def test_an_unreadable_window_is_not_fresh(self):
         v = V.verify_mdoc(self.document(mso_changes={"validityInfo": {}}), now=self.NOW)
         self.assertIs(v["fresh"], False)
@@ -847,9 +952,12 @@ class CoseRfc9964KnownAnswer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.vector = json.loads(_RFC9964_COSE.read_text(encoding="utf-8"))
-        tag = V._cbor_decode(bytes.fromhex(cls.vector["sign1"]))
-        assert tag[0] == "tag" and tag[1] == 18, "Figure 7's sign1 is a tagged COSE_Sign1"
-        cls.protected, cls.unprotected, cls.payload, cls.signature = tag[2]
+        sign1 = bytes.fromhex(cls.vector["sign1"])
+        # Figure 7's sign1 is COSE_Sign1_Tagged: tag 18, the one byte 0xd2. The verifier's decoder
+        # reads tag 24 only (verify_mdoc takes issuerAuth's COSE_Sign1 untagged), so the tag byte
+        # is checked here and the quadruple after it is decoded on its own.
+        assert sign1[0] == 0xD2, "Figure 7's sign1 is a tagged COSE_Sign1"
+        cls.protected, cls.unprotected, cls.payload, cls.signature = V._cbor_decode(sign1[1:])
         cls.pk = bytes.fromhex(cls.vector["raw_public_key"])
 
     def test_the_sig_structure_is_the_rfcs_to_be_signed(self):

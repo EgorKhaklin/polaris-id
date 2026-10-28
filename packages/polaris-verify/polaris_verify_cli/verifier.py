@@ -4667,9 +4667,14 @@ def _cbor_load(buf, i=0, depth=0):
     """Decode one CBOR item at offset i. Returns (value, next_offset).
 
     Handles the subset an mdoc uses: unsigned and negative integers, byte and text strings,
-    arrays, maps, tag 24, and the simple values. Anything else raises ValueError, which the
-    callers turn into a refusal: a verifier that guessed at an encoding it did not implement
-    would be deciding on bytes it had not read.
+    arrays, maps, tag 24, and the simple values false, true, null and undefined. Anything else,
+    a float or another tag included, raises ValueError, which the callers turn into a refusal: a
+    verifier that guessed at an encoding it did not implement would be deciding on bytes it had
+    not read. So does a map that repeats a key.
+
+    A tag-24 item comes back as ("tag", 24, inner, raw), `raw` being the item exactly as it sat
+    in `buf`, tag and length headers included: an element's digest is over the bytes received,
+    never over a re-encoding of them.
 
     `depth` is the nesting counter. It raises ValueError like every other refusal here, so
     the existing handlers catch it without being widened to RecursionError, which fires at a
@@ -4679,6 +4684,7 @@ def _cbor_load(buf, i=0, depth=0):
         raise ValueError("CBOR nests deeper than %d levels" % _CBOR_MAX_DEPTH)
     if i >= len(buf):
         raise ValueError("truncated CBOR")
+    start = i
     ib = buf[i]; major, info = ib >> 5, ib & 0x1F
     i += 1
     if info < 24:
@@ -4720,13 +4726,29 @@ def _cbor_load(buf, i=0, depth=0):
             # here, which the mdoc handler does not catch. A non-scalar key is not a key.
             if isinstance(k, (list, dict, tuple)):
                 raise ValueError("a CBOR map key must be a scalar, got %s" % type(k).__name__)
+            # RFC 9052 s3: header labels MUST be unique, and a message that repeats one MUST be
+            # rejected as malformed. Until 2026-10-28 every map here kept the last value, so a
+            # protected header or an issuerSigned map could carry a key twice and be read by its
+            # second value. Keys compare as decoded: 1 and true, 0 and false, or null and
+            # undefined, which this decoder cannot tell apart, are a repeat too.
+            if k in out:
+                raise ValueError("a CBOR map repeats the key %r" % (k,))
             out[k] = v
         return out, i
     if major == 6:
+        # Until 2026-10-28 any tag came back as ("tag", n, inner), a value the docstring above
+        # says is refused.
+        if val != 24:
+            raise ValueError("CBOR tag %d is outside the mdoc subset (tag 24 only)" % val)
         inner, i = _cbor_load(buf, i, depth + 1)
-        return ("tag", val, inner), i
+        return ("tag", val, inner, bytes(buf[start:i])), i
     if major == 7:
-        return {20: False, 21: True, 22: None, 23: None}.get(val, val), i
+        # Until 2026-10-28 every other value came back as its raw integer: a float16 1.0 was
+        # read as 15360.
+        if info not in (20, 21, 22, 23):
+            # One line, so the SDK mutation drill's inversion of it is a real one.
+            raise ValueError("CBOR major type 7 with additional information %d (a float, or another simple value) is outside the mdoc subset" % info)
+        return {20: False, 21: True, 22: None, 23: None}[info], i
     raise ValueError("unsupported CBOR major type %d" % major)
 
 
@@ -4825,10 +4847,12 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
             if not (isinstance(tagged_item, tuple) and tagged_item[0] == "tag" and tagged_item[1] == 24):
                 raise ValueError("an element is not wrapped in tag 24")
             item = _cbor_decode(tagged_item[2])
-            # The digest is over the TAGGED, encoded item, not the inner map. Digesting the
-            # inner map is the classic way an mdoc fails to interoperate with itself.
-            encoded = b"\xd8\x18" + _cbor_bstr_header(len(tagged_item[2])) + tagged_item[2]
-            digest = hashlib.sha256(encoded).digest()
+            # The digest is over the TAGGED, encoded item exactly as received, not the inner
+            # map: digesting the inner map is the classic way an mdoc fails to interoperate
+            # with itself. Until 2026-10-28 it was over a minimal re-encoding of the received
+            # item, so the same item under a longer tag or length header, which needs no key,
+            # matched here and not at a reader that hashes the bytes it received.
+            digest = hashlib.sha256(tagged_item[3]).digest()
             did = item["digestID"]
             if committed.get(did) != digest:
                 ok = False

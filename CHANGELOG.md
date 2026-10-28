@@ -26,6 +26,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The transparency monitor and witness take `--log timestamps` and follow the timestamp log (`polaris-timestamp-log`), as docs/design/timestamp-transparency.md and docs/reference/API.md say they do; before, each stopped at its options with exit 2 (scripts/polaris-transparency-monitor.py, scripts/polaris-transparency-witness.py).
 
+- polaris-verify `verify_mdoc` digests each IssuerSignedItemBytes as received, tag and length headers included. It digested a minimal re-encoding of the item, so the same signed item under a longer tag or length header, which needs no key, still matched, where a reader that hashes the bytes it received refuses it. Its CBOR decoder now refuses what its docstring says it refuses: a float or a simple value other than false, true, null and undefined (a float16 1.0 element value was reported as 15360), and any tag but 24. It also refuses a map that repeats a key, as RFC 9052 section 3 requires for header labels ("MUST be rejected"): it kept the last value, so a genuinely signed document whose protected header or issuerSigned map carried a key twice verified, read by the second value.
+
 ### Added
 
 - polaris-oid4vp `serve --once --result FILE` keeps FILE a JSON object, apart from the log on stdout, saying what became of the request: `nothing_received` until a response arrives, then `accepted` with the claim names, `refused` with the check and reason its `<-` line prints, or `wallet_error`; the HTTP status the wallet was answered; and the request object fetches served and refused. It is rewritten whole before each answer goes out.
