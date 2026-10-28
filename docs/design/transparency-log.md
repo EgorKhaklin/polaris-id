@@ -5,12 +5,12 @@
 verifiable log, and what a monitor proves by watching it.
 
 [anchoring.md](anchoring.md) explains the audit anchor: a periodic Merkle commitment
-over audit rows, recorded in the append-only `AnchorBatch` table, so an outside verifier
-can prove the history at that point has not been revised. That leaves one question. A single
-`AnchorBatch` root proves the audit rows under *it*; it does not, on its own, prove that
-the operator did not later throw away a root and publish a different one in its place. An
-append-only transparency log answers it: it commits to the whole *sequence* of
-anchor roots, and lets anyone prove that the sequence only ever grew.
+over audit rows, recorded in the append-only `AnchorBatch` table. Its batch proofs are
+checked by the application's verify route, and anchoring.md says what they bind. A
+single `AnchorBatch` root does not, on its own, prove that the operator did not later
+throw away a root and publish a different one in its place. An append-only transparency
+log answers that: it commits to the whole *sequence* of anchor roots, and lets anyone
+prove that the sequence only ever grew.
 
 ## The log is a signed view over AnchorBatch
 

@@ -1960,7 +1960,8 @@ jobs:
           os.environ["POLARIS_PQC_SIGNING_KEY_FILE"] = f.name
           sig, alg = p.signature_bytes_for_token("TKN-PROD-IMAGE")
           assert alg == "ML-DSA-65" and len(sig) == 3309, f"bad signature: {alg} {len(sig)}"
-          assert p.verify_token_signature("TKN-PROD-IMAGE", sig, alg), "verify-at-use failed in the prod image"
+          assert p.verify_token_signature("TKN-PROD-IMAGE", sig, alg), "verify under the configured key failed in the prod image"
+          assert p.verify_stored_signature("TKN-PROD-IMAGE", sig, p.trust_anchor_public_key_hex(), witnesses="single", algorithm=alg), "verify under the stored key failed in the prod image"
           print("prod image real ML-DSA-65 OK")
           PY
           )
@@ -3213,8 +3214,9 @@ jobs:
           assert p.smoke_test(), "smoke_test failed"
           sig, alg = p.signature_bytes_for_token("token-ABC")
           assert alg == "ML-DSA-65" and len(sig) == 3309, f"bad real signature: {alg} {len(sig)}"
-          # Verify-at-use (v9.113): the trust anchor is the persistent pk, a
-          # real signature verifies against it, and tamper/forgery is rejected.
+          # verify_token_signature (v9.113): the configured key is the persistent
+          # pk, a real ML-DSA-65 signature verifies under the configured key, and
+          # a forged token and a tampered signature are refused.
           assert p.trust_anchor_public_key_hex() == kp["public_key_hex"], "trust anchor mismatch"
           assert p.verify_token_signature("token-ABC", sig, alg), "verify_token_signature rejected a valid signature"
           assert not p.verify_token_signature("token-XYZ", sig, alg), "verify_token_signature accepted a forged token"
@@ -3238,7 +3240,7 @@ jobs:
               "cryptography witness rejected a genuine liboqs ML-DSA-65 signature (interop broken)"
           assert p.verify_both(b"token-ABC", r1.signature_hex, r1.public_key_hex), "verify_both rejected a valid signature"
           assert not p.verify_both(b"token-XYZ", r1.signature_hex, r1.public_key_hex), "verify_both accepted a forged message"
-          print("Real ML-DSA-65 sign + verify-at-use + issuance self-check + two-witness agreement OK")
+          print("Real ML-DSA-65 sign + verify under the configured key + issuance self-check + two-witness agreement OK")
           PY
 
       - name: Two-witness agreement tests (liboqs + cryptography must agree)
@@ -3588,13 +3590,13 @@ jobs:
       # party can implement wrongly and still be told they conform, and it is invisible from
       # inside the suite because every case passes either way. SPEC.md states the number;
       # this fails the build if it changes without SPEC.md and the drill being updated.
-      - name: Contract reach — what the 118 published cases do not constrain
+      - name: "Contract reach: what the published cases do not constrain"
         run: |
           python -m pip install --quiet --require-hashes -r polaris_web/requirements-test.txt
           python scripts/polaris-contract-reach-drill.py
           python scripts/polaris-contract-reach-drill.py --prove-control
 
-      # Both reference SDKs pass all 118 cases. That is weaker than it sounds: a case
+      # Both reference SDKs pass every published case. That is weaker than it sounds: a case
       # constrains only the keys it names, so on every other key the two can disagree with
       # nothing noticing, and an integrator reads one and deploys the other. This compares
       # them to EACH OTHER, key for key, rather than to the contract.

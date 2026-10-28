@@ -91,7 +91,7 @@ language.
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (294 cases, measured against the repository on 2026-10-28) and every case of the frozen
+The SDK passes every case of the conformance suite (299 cases, measured against the repository on 2026-10-28) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building

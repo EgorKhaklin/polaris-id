@@ -126,9 +126,10 @@ def _extension(cert, cls) -> Any:
 
 
 def _read_key_file(agency_id, key_path: str) -> bytes:
-    """Open first, then check the mode of what was opened, so the file checked is the file read."""
+    """Open first, then check the mode of what was opened, so the file checked is the file read.
+    The open does not block, so a FIFO is refused rather than waited on."""
     try:
-        fd = os.open(key_path, os.O_RDONLY)
+        fd = os.open(key_path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError as exc:
         raise CopyKeyError("agency %s: cannot open the key file: %s" % (agency_id, exc)) from exc
     try:

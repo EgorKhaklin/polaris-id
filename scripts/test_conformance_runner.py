@@ -150,5 +150,30 @@ class TheRunnerScoresWrongVerifiersAsWrong(unittest.TestCase):
         self.assertEqual(self.run_with("exit_1"), 2)
 
 
+class TheCompatSuiteOrdersVersionsAsReleased(unittest.TestCase):
+    """A case's `since` decides whether the pinned v9 verifier may decline it as newer. The
+    numbers continued from v9.467 into 1.0.0 candidates and then 1.x releases, so 1.1.0 is
+    newer than every v9 release and every candidate, though it reads smaller as numbers."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "polaris_compat_suite", os.path.join(_HERE, "polaris-compat-suite.py"))
+        cls.C = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.C)
+
+    def test_releases_sort_in_the_order_they_shipped(self):
+        shipped = ["9.317", "9.467", "1.0.0-rc.1", "1.0.0-rc.9", "1.0.0-rc.10", "1.0.0-rc.71",
+                   "1.0.0", "1.1.0", "1.1.1", "1.2.0", "1.10.0", "2.0.0", "2.1.0"]
+        self.assertEqual(sorted(shipped, key=self.C._vkey), shipped)
+
+    def test_every_published_since_is_read(self):
+        with open(os.path.join(_ROOT, "conformance", "cases.json"), encoding="utf-8") as f:
+            since = {c["since"] for c in json.load(f)["cases"] if "since" in c}
+        self.assertIn("1.1.0", since)
+        newer = {s for s in since if self.C._vkey(s) > self.C._vkey("9.317")}
+        self.assertIn("1.1.0", newer, "a 1.1.0 case must be newer than the pinned v9.317")
+
+
 if __name__ == "__main__":
     unittest.main()

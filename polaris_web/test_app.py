@@ -8705,7 +8705,11 @@ class Uc4ReserveExpiryTests(PolarisTestCase):
 
 class TransparencyProofBoundsTests(UnauthenticatedTestCase):
     """The three logs' inclusion-proof routes answer an index past the end with 400. Switched
-    off, the route indexed past its list and answered 500; nothing noticed (2026-09-24)."""
+    off, the route indexed past its list and answered 500; nothing noticed (2026-09-24). And no
+    GET route answering without login serves a stored batch proof (docs/design/anchoring.md)."""
+
+    #: A path parameter as werkzeug writes one: <name>, <converter:name>, <converter(args):name>.
+    _PARAM = re.compile(r'<(?:(\w+)(?:\([^)]*\))?:)?(\w+)>')
 
     def test_an_index_past_the_end_is_a_clean_refusal(self):
         for log in ('', 'receipts/', 'timestamps/'):
@@ -8713,6 +8717,125 @@ class TransparencyProofBoundsTests(UnauthenticatedTestCase):
             r = self.client.get('/api/v1/transparency/%sproof/%d' % (log, size))
             self.assertEqual(r.status_code, 400, (log, r.get_data(as_text=True)[:200]))
             self.assertEqual(r.get_json()['log_size'], size)
+
+    def _close_a_batch_of_two(self):
+        """Anchor two credentials of one algorithm that have no anchor yet and close them into
+        one batch as POST /api/anchor/batch does (anchoring.compute_batch, then
+        close_anchor_batch), as the schema owner. Returns the first anchor's row, with its
+        batch's position in the anchor log, and the sibling hashes the two stored proofs hold.
+        The seed's batches hold one anchor each, so their stored proofs are empty."""
+        import anchoring
+        from psycopg2.extras import Json
+        pick = _sql("SELECT algorithm_id, (array_agg(token_id ORDER BY token_id))[1:2] AS token_ids "
+                    "FROM IdentityToken t WHERE NOT EXISTS (SELECT 1 FROM BlockchainAnchor a "
+                    "WHERE a.token_id = t.token_id) GROUP BY algorithm_id HAVING count(*) >= 2 "
+                    "ORDER BY algorithm_id LIMIT 1", fetch='one')
+        self.assertIsNotNone(pick, 'fixture: two credentials of one algorithm have no anchor')
+        for tid in pick['token_ids']:
+            _owner_write("INSERT INTO BlockchainAnchor (token_id, did, commitment_hash, ledger_network) "
+                         "VALUES (%s, %s, %s, 'ALGORAND_PQ')",
+                         (tid, 'did:polaris:test:proof-bounds-%d' % tid,
+                          '0x' + hashlib.sha3_256(b'proof-bounds-%d' % tid).hexdigest()))
+        pending = _sql("SELECT a.anchor_id, a.commitment_hash FROM BlockchainAnchor a "
+                       "JOIN IdentityToken t ON a.token_id = t.token_id "
+                       "WHERE a.batch_id IS NULL AND t.algorithm_id = %s ORDER BY a.anchor_id",
+                       (pick['algorithm_id'],))
+        self.assertEqual(len(pending), 2, 'fixture: the batch holds the two new anchors')
+        root, proofs = anchoring.compute_batch(
+            [(r['anchor_id'], r['commitment_hash']) for r in pending], 'SHA3-256')
+        _owner_write("CALL close_anchor_batch(%s, %s, %s)", (pick['algorithm_id'], root, Json(proofs)))
+        rows = _sql("SELECT a.anchor_id, a.token_id, a.batch_id, a.merkle_proof, t.issuing_agency_id, "
+                    "(SELECT count(*) FROM AnchorBatch b WHERE b.batch_id < a.batch_id) AS log_index "
+                    "FROM BlockchainAnchor a JOIN IdentityToken t ON t.token_id = a.token_id "
+                    "WHERE a.anchor_id = ANY(%s) ORDER BY a.anchor_id",
+                    ([r['anchor_id'] for r in pending],))
+        siblings = {step['sibling'] for r in rows for step in r['merkle_proof']}
+        self.assertEqual(len(siblings), 2, 'fixture: each stored proof holds the other leaf as its sibling')
+        return rows[0], siblings
+
+    def _urls(self, rule, anchor):
+        """The rule with its path parameters filled, as one URL or more: the closed batch's own
+        ids where the rule names one (credential, batch, anchor), the batch's position in the
+        anchor log for a log index, the credential's issuing authority for an authority, and
+        today for a day. A parameter it does not recognise gets each of the batch's three ids in
+        turn, one URL apiece, so a route that reads a generic id as an anchor, a credential or a
+        batch is asked for this batch's proof. A hash parameter gets zeros, never a hash from
+        the batch, so a route that echoes its path cannot pass for one that serves a proof."""
+        def fill(generic):
+            def value(m):
+                name = m.group(2)
+                if 'tok' in name:
+                    return str(anchor['token_id'])
+                if 'batch' in name:
+                    return str(anchor['batch_id'])
+                if 'anchor' in name:
+                    return str(anchor['anchor_id'])
+                if name in ('agency_id', 'ag_id'):
+                    return str(anchor['issuing_agency_id'])
+                if name in ('index', 'm'):
+                    return str(anchor['log_index'])
+                if name == 'n':
+                    return str(anchor['log_index'] + 1)
+                if name == 'day':
+                    return datetime.now(timezone.utc).date().isoformat()
+                if name.endswith('_hash'):
+                    return '00' * 32
+                return generic
+            return self._PARAM.sub(value, rule.rule)
+        return sorted({fill(str(anchor[k])) for k in ('anchor_id', 'token_id', 'batch_id')})
+
+    def _public_bodies(self, anchor):
+        """Every GET rule in the route table, requested with no session at each URL _urls gives
+        it: {rule: {url: (status, body)}} for each rule that answers without a redirect to the
+        login page, a 401 or a 403."""
+        rules = [r for r in flask_app.app.url_map.iter_rules() if 'GET' in r.methods]
+        self.assertGreaterEqual(len(rules), 80, 'the route table yielded %d GET rules' % len(rules))
+        anon = flask_app.app.test_client()
+        public = {}
+        for rule in sorted(rules, key=lambda r: r.rule):
+            for url in self._urls(rule, anchor):
+                flask_app.security.rate_limiter.reset()
+                r = anon.get(url)
+                if r.status_code in (401, 403) or (300 <= r.status_code < 400
+                                                   and '/login' in r.headers.get('Location', '')):
+                    continue
+                public.setdefault(rule.rule, {})[url] = (r.status_code, r.get_data(as_text=True))
+        return public
+
+    def test_a_batch_proof_is_served_only_behind_login(self):
+        """docs/design/anchoring.md: no GET route answering without login serves a stored batch
+        proof. A batch of two anchors is closed first, so each stored proof holds a sibling hash,
+        and the issuing authority is given a key, so the routes that publish its artifacts answer
+        in full. Every GET rule in the route table is then requested with no session, a path
+        parameter the sweep does not recognise once per id of the batch; 38 rules answered
+        without a redirect to the login page, a 401 or a 403 when this was written (2026-10-16;
+        the floors below are what is checked), and no body among them may carry a sibling hash.
+        The two routes built to serve a stored batch proof, /api/anchor/<token_id> and the token
+        export, redirect to the login page, and serve the proof once logged in (the read-only
+        SQL console returns one too, to the admin and auditor roles). A change that serves a
+        batch proof without login moves batches to version 2 first."""
+        anchor, siblings = self._close_a_batch_of_two()
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = %s",
+                     ('ab' * 16, anchor['issuing_agency_id']))
+        public = self._public_bodies(anchor)
+        self.assertGreaterEqual(len(public), 30, 'only %d routes answered without a session; the '
+                                'sweep must reach the public surface' % len(public))
+        leaked = sorted(url for answered in public.values() for url, (_status, body) in answered.items()
+                        if any(h in body or h.upper() in body for h in siblings))
+        self.assertEqual(leaked, [], 'served a stored proof\'s hashes without login')
+        own = {step['sibling'] for step in anchor['merkle_proof']}
+        routes = ('/api/anchor/%d' % anchor['token_id'], '/api/tokens/%d/export' % anchor['token_id'])
+        anon = flask_app.app.test_client()
+        gated = {p: anon.get(p) for p in routes}
+        self.assertEqual({p: (r.status_code, '/login' in r.headers.get('Location', ''),
+                              any(h in r.get_data(as_text=True) for h in own))
+                          for p, r in gated.items()}, dict.fromkeys(routes, (302, True, False)))
+        # The control: logged in, each serves the proof, so the hashes looked for above are the
+        # ones a route that served it would carry.
+        self._login()
+        behind = {p: self.client.get(p) for p in routes}
+        self.assertEqual({p: (r.status_code, any(h in r.get_data(as_text=True) for h in own))
+                          for p, r in behind.items()}, dict.fromkeys(routes, (200, True)))
 
 
 class ChainAnchorPublicationTests(UnauthenticatedTestCase):
@@ -9727,8 +9850,29 @@ class F04_SecurityHeadersTests(PolarisTestCase):
         self.assertIn('no-store', cc)
 
 
+def _signing_key_file_of_the_right_shape(directory):
+    """A file-driver key file the production boot can load: an accepted parameter set and a
+    public key of its length, mode 0600. No boot test signs with it, so its bytes are zeros."""
+    path = os.path.join(directory, 'polaris_signing_key')
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as fh:
+        json.dump({'algorithm': 'ML-DSA-65', 'secret_key_hex': '00' * 4032,
+                   'public_key_hex': '00' * custody.ALGORITHM_SIZES['ML-DSA-65'][0]}, fh)
+    return path
+
+
 class F05_ProductionSecretGuardTests(unittest.TestCase):
     """F-05: Refuse to start in prod with default secret. CWE-798 / OWASP A05."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls._keys = tempfile.TemporaryDirectory()
+        cls.signing_key_file = _signing_key_file_of_the_right_shape(cls._keys.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._keys.cleanup()
 
     def test_dev_default_secret_rejected_in_production(self):
         """Setting POLARIS_ENV=production with the dev secret must exit."""
@@ -9831,6 +9975,7 @@ class F05_ProductionSecretGuardTests(unittest.TestCase):
         proc = self._prod_import({'POLARIS_DB_SSLMODE': 'require',
                                   'POLARIS_DB_PASSWORD': 'a-real-password',
                                   'POLARIS_USE_REAL_PQC': '1',
+                                  'POLARIS_PQC_SIGNING_KEY_FILE': self.signing_key_file,
                                   'POLARIS_DOMAIN': 'polaris.example.org'})
         self.assertNotIn('setting(s) are wrong', proc.stderr)
 
@@ -9962,7 +10107,8 @@ class ConfigSchemaTests(unittest.TestCase):
         self.pw = os.path.join(self.tmp, 'p'); open(self.pw, 'w').write('real-password')
         self.good = {'POLARIS_ENV': 'production', 'POLARIS_SECRET_KEY_FILE': self.key,
                      'POLARIS_DB_PASSWORD_FILE': self.pw, 'POLARIS_DB_SSLMODE': 'require',
-                     'POLARIS_USE_REAL_PQC': '1', 'POLARIS_DOMAIN': 'polaris.example.org'}
+                     'POLARIS_USE_REAL_PQC': '1', 'POLARIS_DOMAIN': 'polaris.example.org',
+                     'POLARIS_PQC_SIGNING_KEY_FILE': self.key}
 
     def _p(self, **changes):
         env = dict(self.good)
@@ -9989,9 +10135,21 @@ class ConfigSchemaTests(unittest.TestCase):
                              (dict(POLARIS_CUSTODY_PKCS11_PIN='1234'), 'POLARIS_CUSTODY_PKCS11_PIN'),
                              (dict(POLARIS_WORKERS='four'), 'POLARIS_WORKERS'),
                              (dict(POLARIS_TRUST_PROXY='maybe'), 'POLARIS_TRUST_PROXY'),
-                             (dict(POLARIS_CUSTODY_DRIVER='hsm'), 'POLARIS_CUSTODY_DRIVER')):
+                             (dict(POLARIS_CUSTODY_DRIVER='hsm'), 'POLARIS_CUSTODY_DRIVER'),
+                             (dict(POLARIS_PQC_SIGNING_KEY_FILE=None), 'POLARIS_PQC_SIGNING_KEY_FILE'),
+                             (dict(POLARIS_PQC_SIGNING_KEY_FILE=None, POLARIS_CUSTODY_DRIVER='file'),
+                              'POLARIS_PQC_SIGNING_KEY_FILE')):
             found = self._p(**change)
             self.assertTrue(any(p.startswith(name + ':') for p in found), (change, found))
+
+    def test_a_token_or_kms_driver_stands_for_the_key_file(self):
+        """Production signs under the issuer's own key: the key file, or a PKCS#11 or AWS KMS
+        driver (whose own settings it loads at boot). Outside production nothing is required."""
+        for driver in ('pkcs11', 'awskms'):
+            found = self._p(POLARIS_PQC_SIGNING_KEY_FILE=None, POLARIS_CUSTODY_DRIVER=driver)
+            self.assertFalse(any(p.startswith('POLARIS_PQC_SIGNING_KEY_FILE:') for p in found),
+                             (driver, found))
+        self.assertEqual(self.cs.problems({'POLARIS_USE_REAL_PQC': '1'}, production=False), [])
 
     def test_a_secret_file_is_judged_by_what_it_holds(self):
         open(self.pw, 'w').write('polaris_dev_password')
@@ -15185,22 +15343,43 @@ class RealPqcDefaultBootTests(unittest.TestCase):
     A subprocess imports app so the guard is observable; POLARIS_DB_SSLMODE=require
     lets execution past the earlier SSL guard to reach this one."""
 
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls._keys = tempfile.TemporaryDirectory()
+        cls.signing_key_file = _signing_key_file_of_the_right_shape(cls._keys.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._keys.cleanup()
+
+    #: Reach the guards after the PQC ones without needing liboqs: a real primary and a witness.
+    REAL = ("import pqc_signing;"
+            "pqc_signing.is_enabled=lambda: True;"
+            "pqc_signing.second_witness_available=lambda: True;")
+    KEY_REFUSAL = "FATAL: POLARIS_ENV=production with real ML-DSA signing, but the issuer's signing key"
+
     def _boot(self, extra_env, preamble=None):
         import subprocess as _sp
         import sys as _sys
         import os as _os
         env = _os.environ.copy()
-        for k in ("POLARIS_ENV", "POLARIS_USE_REAL_PQC", "POLARIS_PQC_PROFILE"):
+        for k in ("POLARIS_ENV", "POLARIS_USE_REAL_PQC", "POLARIS_PQC_PROFILE", "POLARIS_CUSTODY_DRIVER"):
             env.pop(k, None)
         env["POLARIS_SECRET_KEY"] = "x" * 64
         env["POLARIS_DB_SSLMODE"] = "require"  # pass the production SSL guard to reach the PQC guard
         # Lab record 017: a production boot first meets the configuration contract. A real
         # database password and a domain (the security contact derives from it) let execution
-        # past it, so each test reaches the guard it is about.
+        # past it, so each test reaches the guard it is about. So does a signing key that loads.
         env["POLARIS_DB_PASSWORD"] = "a-real-password"
         env.pop("POLARIS_DB_PASSWORD_FILE", None)
         env["POLARIS_DOMAIN"] = "polaris.example.org"
-        env.update(extra_env)
+        env["POLARIS_PQC_SIGNING_KEY_FILE"] = self.signing_key_file
+        for k, v in extra_env.items():
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = v
         cwd = _os.path.dirname(_os.path.abspath(flask_app.__file__))
         return _sp.run([_sys.executable, "-c", (preamble or "") + "import app"], cwd=cwd,
                        capture_output=True, text=True, env=env)
@@ -15248,6 +15427,41 @@ class RealPqcDefaultBootTests(unittest.TestCase):
         self.assertNotIn("SECOND WITNESS", r.stderr)
         self.assertNotIn("real ML-DSA-65 signing is not available", r.stderr)
         self.assertNotIn("setting(s) are wrong", r.stderr)
+        self.assertNotIn(self.KEY_REFUSAL, r.stderr)
+
+    def test_production_refuses_boot_without_a_signing_key(self):
+        """No key file and no custody driver. Until 2026-10-15 this deployment booted, served,
+        and signed with a fresh keypair for every signature, which no key register, trust list
+        or anchor file names. The configuration contract now refuses it and names the key."""
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1",
+                        "POLARIS_PQC_SIGNING_KEY_FILE": None}, preamble=self.REAL)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("- POLARIS_PQC_SIGNING_KEY_FILE: production signs under the issuer's own key",
+                      r.stderr)
+
+    def test_production_refuses_boot_without_a_key_past_the_contract(self):
+        """The second line holds alone: with the contract out of the way, the boot guard finds
+        no key and refuses."""
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1",
+                        "POLARIS_PQC_SIGNING_KEY_FILE": None}, preamble=self.REAL + (
+            "import config_schema;"
+            "config_schema.production_problems=lambda env=None: [];"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(self.KEY_REFUSAL, r.stderr)
+        self.assertIn("is not available: no signing key is configured", r.stderr)
+
+    def test_production_refuses_boot_when_the_signing_key_does_not_load(self):
+        """A key file the contract accepts (it exists) that is not a key stops the boot, not the
+        first issue."""
+        not_a_key = os.path.join(self._keys.name, 'not-a-key')
+        fd = os.open(not_a_key, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as fh:
+            fh.write('{}')
+        r = self._boot({"POLARIS_ENV": "production", "POLARIS_USE_REAL_PQC": "1",
+                        "POLARIS_PQC_SIGNING_KEY_FILE": not_a_key}, preamble=self.REAL)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(self.KEY_REFUSAL, r.stderr)
+        self.assertIn("is not available: file: " + not_a_key, r.stderr)
 
     def test_unnamed_placeholder_warns(self):
         # Non-production, placeholder in use, dev profile not named: boot, but loudly.
@@ -16058,6 +16272,55 @@ class TokenVerifyTests(PolarisTestCase):
         r = self.client.get('/api/tokens/2/verify')
         self.assertEqual(r.status_code, 302)
         self.assertIn('/login', r.headers.get('Location', ''))
+
+    def _false_record(self, token_value):
+        """A credential issued here, whose ML-DSA-65 row is the control, plus one planted row
+        that records ML-DSA-87 over the same ML-DSA-65 signature and key. Returns its id."""
+        tok = self._issue_token(token_value)
+        signature, key_hex = _deployment_signature(token_value)
+        with self._new_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT algorithm_id FROM CryptographicAlgorithm WHERE name = 'ML-DSA-87'")
+            algorithm_id = cur.fetchone()['algorithm_id']
+        _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                     "signing_public_key_hex) VALUES (%s, %s, %s, %s)",
+                     (tok, algorithm_id, psycopg2.Binary(signature), key_hex))
+        return tok
+
+    def _assert_the_false_record_does_not_verify(self, body):
+        import pqc_signing
+        by_algorithm = {s['algorithm']: s for s in body['signatures']}
+        self.assertEqual(set(by_algorithm), {'ML-DSA-65', 'ML-DSA-87'}, body)
+        self.assertTrue(by_algorithm['ML-DSA-65']['valid'], body)
+        if pqc_signing.is_enabled():
+            self.assertEqual((by_algorithm['ML-DSA-87']['real_signature'],
+                              by_algorithm['ML-DSA-87']['valid']), (True, False), body)
+            self.assertFalse(body['signature_valid'], body)
+
+    def test_each_signature_is_checked_under_the_algorithm_its_row_records(self):
+        """docs/design/multi-sig-migration.md: "The schema records which algorithm produced a
+        signature". This route read the parameter set from the key's length, so a row that
+        records ML-DSA-87 over an ML-DSA-65 key and signature verified. Under the placeholder
+        profile a row has no key, so its algorithm decides nothing; the real-signer suite runs
+        the refusal."""
+        tok = self._false_record('ALG-RECORD-0001')
+        with patch.object(flask_app, '_VERIFY_SAMPLE_RATE', 0.0):
+            body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
+        self.assertFalse(body['sampled'])
+        self._assert_the_false_record_does_not_verify(body)
+
+    def test_the_sampled_second_witness_checks_under_the_recorded_algorithm_too(self):
+        """The sampled two-witness pass re-verifies every row. Under the recorded algorithm both
+        passes refuse the false record and agree; a pass that read the key's length instead
+        would accept it and page a witness disagreement."""
+        tok = self._false_record('ALG-RECORD-0002')
+        paged = []
+        with patch.object(flask_app, '_VERIFY_SAMPLE_RATE', 1.0), \
+             patch.object(flask_app.observability, 'record_witness_disagreement',
+                          side_effect=lambda **kw: paged.append(kw)):
+            body = self.client.get('/api/tokens/%d/verify' % tok).get_json()
+        self.assertTrue(body['sampled'])
+        self._assert_the_false_record_does_not_verify(body)
+        self.assertEqual(paged, [], "both witnesses refuse the false record, so they agree")
 
 
 class UiLinkIntegrityTests(PolarisTestCase):
@@ -18544,7 +18807,7 @@ class VerifyWitnessSamplingTests(PolarisTestCase):
     def test_witness_disagreement_pages(self):
         tok = self._issue('TKN-SAMPLE-DISAGREE-1')
 
-        def fake_verify(token_value, sig, pk, witnesses='both'):
+        def fake_verify(token_value, sig, pk, witnesses='both', algorithm=None):
             return witnesses == 'single'   # single says valid, both says invalid -> disagreement
 
         paged = []
@@ -18857,6 +19120,41 @@ class RelyingPartyApiTests(PolarisTestCase):
         if pqc_signing.is_enabled():
             self.assertEqual(after['reason'], 'not a verifiable presentation', after)
 
+    def test_a_signature_is_checked_under_the_algorithm_its_row_records(self):
+        """docs/design/multi-sig-migration.md: "The schema records which algorithm produced a
+        signature". The door read the algorithm from the key's length instead, so a row that
+        records ML-DSA-87 over an ML-DSA-65 signature and key verified as ML-DSA-65. Each of
+        agency 1's two ACTIVE sample credentials gets one planted row that the presented
+        signature matches: recorded under ML-DSA-65, the control, and under ML-DSA-87, a false
+        record. Their own rows are keyless backfills nothing presented matches. Under the
+        placeholder profile a row has no key, so its algorithm decides nothing; the real-signer
+        suite runs the refusal."""
+        import psycopg2
+        import pqc_signing
+        cid = self._register_rp('label-secret-1', suffix='0209')
+        auth = self._bearer(cid, 'label-secret-1')
+
+        def planted(token_value, algorithm):
+            with self._new_conn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT token_id FROM IdentityToken WHERE token_value = %s", (token_value,))
+                token_id = cur.fetchone()['token_id']
+                cur.execute("SELECT algorithm_id FROM CryptographicAlgorithm WHERE name = %s", (algorithm,))
+                algorithm_id = cur.fetchone()['algorithm_id']
+            signature, key_hex = _deployment_signature(token_value)
+            _owner_write("INSERT INTO TokenSignature (token_id, algorithm_id, signature_bytes, "
+                         "signing_public_key_hex) VALUES (%s, %s, %s, %s)",
+                         (token_id, algorithm_id, psycopg2.Binary(signature), key_hex))
+            return {'token_value': token_value, 'signature_hex': signature.hex()}
+
+        recorded_truly = planted('TKN-NY-2026-000003', 'ML-DSA-65')
+        recorded_falsely = planted('TKN-TX-2026-000004', 'ML-DSA-87')
+        control = self.client.post('/api/v1/verify', json=recorded_truly, headers=auth).get_json()
+        self.assertEqual(control['decision'], 'accept', control)
+        false_record = self.client.post('/api/v1/verify', json=recorded_falsely, headers=auth).get_json()
+        if pqc_signing.is_enabled():
+            self.assertIs(false_record['authentic'], False, false_record)
+            self.assertEqual(false_record['reason'], 'not a verifiable presentation', false_record)
+
     def test_the_door_dates_a_migration_signature_by_its_own_signing(self):
         """CORE-BUG, 2026-10-02. A key registered for a migration after the credential was
         issued, and before it signed, is authorized for the signature it made; dated by the
@@ -18895,10 +19193,11 @@ class RelyingPartyApiTests(PolarisTestCase):
                 'token_value': pack['token_value'], 'signature_hex': presented}).get_json()
             self.assertEqual((r['decision'], r['issuer_authorized_at_signing']), ('accept', True), r)
 
-    # -- THREAT-MODEL (2026-10-04): a compromised application role plants a signature row. The
-    # -- role may INSERT into TokenSignature; registration (AuthorityKeyEvent) is closed to it.
+    # -- THREAT-MODEL (2026-10-04): a planted signature row. The application role could INSERT
+    # -- into TokenSignature until the same day's revoke. It cannot write the authority key
+    # -- register (AuthorityKeyEvent), which the check reads.
 
-    def _plant_as_app(self, token_value, signature, key_hex):
+    def _plant_signature_row(self, token_value, signature, key_hex):
         """Plant a TokenSignature row under ML-DSA-87, an algorithm the credential (issued under
         ML-DSA-65) lacks, so the per-algorithm UNIQUE admits it. The application role is refused
         the write since 2026-10-04 (test_the_application_role_cannot_write_a_signature_row), so
@@ -18965,7 +19264,7 @@ class RelyingPartyApiTests(PolarisTestCase):
         auth = self._bearer(cid, 'plant-b-secret-1')
         tv = self._issue_and_pack('RP-PLANT-B-1')['token_value']
         digest = hashlib.sha3_256(tv.encode('utf-8')).digest()
-        self._plant_as_app(tv, digest, None)
+        self._plant_signature_row(tv, digest, None)
         with patch.object(pqc_signing, 'is_enabled', return_value=False):
             self.assertEqual(self._possession_answers(auth, tv, digest.hex()), ('accept', 200),
                              'control: the placeholder profile reads a keyless row')
@@ -18977,14 +19276,14 @@ class RelyingPartyApiTests(PolarisTestCase):
         """PLANT A. The attacker signs with its own ML-DSA-87 key; the signature check is stood
         in for (it would pass: the bytes are the attacker's genuine signature), so what decides
         is whether the issuing authority had registered that key. It had not, and the
-        application role cannot register one. Registering it (as the owner) is the control
-        that the refusal is that fact and nothing else."""
+        application role cannot write the authority key register. Registering it (as the
+        owner) is the control that the refusal is that fact and nothing else."""
         import pqc_signing
         cid = self._register_rp('plant-a-secret-1', suffix='0302')
         auth = self._bearer(cid, 'plant-a-secret-1')
         tv = self._issue_and_pack('RP-PLANT-A-1')['token_value']
         attacker_key, forged = 'a7' * 1312, b'\x5a' * 4627
-        self._plant_as_app(tv, forged, attacker_key)
+        self._plant_signature_row(tv, forged, attacker_key)
         with patch.object(pqc_signing, 'is_enabled', return_value=True), \
                 patch.object(pqc_signing, 'verify_stored_signature', return_value=True):
             self.assertEqual(self._possession_answers(auth, tv, forged.hex()), ('reject', 400),
@@ -22403,6 +22702,24 @@ class AnchoringMerkleHeldOutTests(unittest.TestCase):
             self.assertEqual(anchoring.log_inclusion_proof(idx, entries), [], idx)
         for m in (0, -1, 6):
             self.assertEqual(anchoring.log_consistency_proof(m, entries), [], m)
+
+
+class AnchorBatchTreeOddLevelTests(unittest.TestCase):
+    """Pins the per-batch tree's odd-level rule: a level with an odd count repeats its last node,
+    so [a, b, c] and [a, b, c, c] have one root. A change to that rule makes this test fail."""
+
+    def test_an_odd_level_repeats_its_last_node(self):
+        import anchoring
+        a, b, c = (anchoring.leaf_hash(i, '%064x' % i) for i in (1, 2, 3))
+        root = anchoring.merkle_root([a, b, c])
+        # [a, b, c] and [a, b, c, c] have one root, so c has two different proofs against it,
+        # as the third of three leaves and as the fourth of four.
+        self.assertEqual(anchoring.merkle_root([a, b, c, c]), root)
+        third_of_three = anchoring.inclusion_proof([a, b, c], 2)
+        fourth_of_four = anchoring.inclusion_proof([a, b, c, c], 3)
+        self.assertNotEqual(third_of_three, fourth_of_four)
+        self.assertTrue(anchoring.verify_proof(c, third_of_three, root))
+        self.assertTrue(anchoring.verify_proof(c, fourth_of_four, root))
 
 
 class RefusalsTheAppMutationDrillFound(PolarisTestCase):
