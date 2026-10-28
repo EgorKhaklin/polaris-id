@@ -387,8 +387,8 @@ did. Measured, 4000 trials per cell, with a control that must be certain at zero
 is a busy authority, and three gets to 97. At the volumes a coercer would actually pick, one
 observation decides it. That is not "how often duress events occur". It is *did THIS person
 signal*, which is the single question the mechanism exists to make unanswerable, and
-README.md's own framing is that duress codes resist a coercer **who does not know the
-mechanism exists**. This is one who does and who can read one number.
+README.md's own framing is that duress codes are built for a coercer **who does not know
+it exists**. This is one who does and who can read one number.
 
 **What it needs, and what it does not change.** Read access to `/metrics`, which is restricted
 at the edge to the monitoring network, enforced in both the Caddyfile and the Helm configmap,

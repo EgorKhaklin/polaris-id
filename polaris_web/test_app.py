@@ -446,6 +446,11 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
                 r = self.client.post('/api/v1/exchange-receipt/1/signed', json=unsigned(),
                                      environ_overrides={'REMOTE_ADDR': '10.0.0.%d' % (i % 4)})
                 self.assertEqual(r.status_code, 401, r.get_data(as_text=True)[:200])
+                # verify_both's 401, not the stale-clock branch's: that branch also answers 401
+                # before the limiter, on the old route as on this one, so a run whose attempts
+                # went stale would pass the status check without reaching the limiter at all.
+                self.assertEqual((r.get_json() or {}).get('error'), 'invalid_signature',
+                                 r.get_data(as_text=True)[:200])
             # The (N+1)th unsigned attempt. On 40f63aeb the 120 unsigned attempts above filled
             # exmint:1, so this one is refused 429 before verify_both; with the fix the unsigned
             # path never reached the limiter, so the bucket is empty and this is still 401.
@@ -453,6 +458,8 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
                                  environ_overrides={'REMOTE_ADDR': '10.0.0.0'})
         self.assertEqual(r.status_code, 401, 'an unsigned caller filled the exmint: budget before '
                          'authenticating: the limiter is spent before verify_both')
+        self.assertEqual((r.get_json() or {}).get('error'), 'invalid_signature',
+                         'the last attempt was refused before verify_both judged it')
 
 
 class ExchangeReceiptLogTests(PolarisTestCase):
@@ -22592,16 +22599,18 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
             def __exit__(self, *exc):
                 return False
 
-            def read(self):
-                return self._raw
+            def read(self, n=-1):
+                return self._raw if n is None or n < 0 else self._raw[:n]
 
         def forward(raw):
             payload = self._exchange_request(requester={'public_key_hex': 'ab' * 16},
                                              nonce='nonce-upstream-' + os.urandom(6).hex())
             with patch.object(rp_api.pqc_signing, 'verify_both', return_value=True), \
                     patch.object(rp_api, '_exchange_attestation', return_value=True), \
-                    patch('urllib.request.urlopen', return_value=_Upstream(raw)):
-                return self.client.post('/api/v1/exchange/1', json=payload)
+                    patch.object(rp_api._EXCHANGE_OPENER, 'open', return_value=_Upstream(raw)) as opened:
+                r = self.client.post('/api/v1/exchange/1', json=payload)
+            self.assertEqual(opened.call_count, 1, 'control: the forward reaches the stub upstream')
+            return r
 
         malformed = forward(b'{"answer": ')
         self.assertEqual(malformed.status_code, 502, malformed.get_data(as_text=True)[:200])
@@ -22630,8 +22639,8 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
             def __exit__(self, *exc):
                 return False
 
-            def read(self):
-                return self._raw
+            def read(self, n=-1):
+                return self._raw if n is None or n < 0 else self._raw[:n]
 
         def forward(raw):
             payload = self._exchange_request(requester={'public_key_hex': 'ab' * 16},
@@ -22639,13 +22648,156 @@ class RefusalsTheAppMutationDrillFound(PolarisTestCase):
             with patch.object(rp_api.pqc_signing, 'verify_both', return_value=True), \
                     patch.object(rp_api, '_exchange_attestation',
                                  return_value={'authority_id': 1, 'authority_name': 'Notional Authority'}), \
-                    patch('urllib.request.urlopen', return_value=_Upstream(raw)):
-                return self.client.post('/api/v1/exchange/1', json=payload)
+                    patch.object(rp_api._EXCHANGE_OPENER, 'open', return_value=_Upstream(raw)) as opened:
+                r = self.client.post('/api/v1/exchange/1', json=payload)
+            self.assertEqual(opened.call_count, 1, 'control: the forward reaches the stub upstream')
+            return r
 
         for raw in (b'{"answer": NaN}', b'[Infinity]', b'{"answer": -Infinity}', b'{"answer": 1e400}'):
             r = forward(raw)
             self.assertEqual(r.status_code, 502, (raw, r.get_data(as_text=True)[:200]))
             self.assertEqual(r.get_json()['error'], 'upstream_unavailable', raw)
+
+    def _exchange_upstream_server(self, handler):
+        """A real HTTP server on an ephemeral 127.0.0.1 port, stopped at cleanup."""
+        import http.server
+        import threading
+        srv = http.server.HTTPServer(('127.0.0.1', 0), handler)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        self.addCleanup(t.join, 5)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return 'http://127.0.0.1:%d/' % srv.server_address[1]
+
+    def _exchange_forward_to(self, url):
+        """One gateway exchange whose upstream is `url`; signature and authorization are granted."""
+        payload = self._exchange_request(requester={'public_key_hex': 'ab' * 16},
+                                         nonce='nonce-upstream-' + os.urandom(6).hex())
+        with patch.dict(os.environ, {'POLARIS_EXCHANGE_UPSTREAMS': json.dumps({'records': url})}), \
+                patch.object(rp_api.pqc_signing, 'verify_both', return_value=True), \
+                patch.object(rp_api, '_exchange_attestation',
+                             return_value={'authority_id': 1, 'authority_name': 'Notional Authority'}):
+            return self.client.post('/api/v1/exchange/1', json=payload)
+
+    def test_the_exchange_gateway_follows_no_upstream_redirect(self):
+        """The forward went through urllib's default opener, which follows a 302 on a POST as a
+        GET to whatever host the Location names and returned THAT host's answer as
+        response_body. Two real servers, no urllib mocks: A, the configured upstream, answers
+        302 to B; the gateway answers the documented 502 and B is never asked."""
+        import http.server
+        self._exchange_setup()
+        seen_a, seen_b = [], []
+
+        class _B(http.server.BaseHTTPRequestHandler):
+            def _answer(self):
+                seen_b.append(self.command)
+                out = b'{"from": "B"}'
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+            do_GET = do_POST = do_HEAD = _answer
+
+            def log_message(self, *a):
+                pass
+        b_url = self._exchange_upstream_server(_B)
+
+        class _A(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen_a.append(self.command)
+                self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                self.send_response(302)
+                self.send_header('Location', b_url)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        a_url = self._exchange_upstream_server(_A)
+
+        r = self._exchange_forward_to(a_url)
+        self.assertEqual(r.status_code, 502, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'upstream_unavailable')
+        self.assertIn('the nonce is consumed', r.get_json()['error_description'])
+        self.assertEqual(seen_a, ['POST'], 'control: the configured upstream was asked once')
+        self.assertEqual(seen_b, [], 'the redirect target must never be asked')
+
+    def test_an_upstream_answer_over_the_request_size_limit_is_a_502(self):
+        """The upstream's answer was read with no bound. It is now read only up to the request
+        door's limit: one byte over, declared or delimited by the close, is the documented 502,
+        and an answer of exactly the limit passes the size step and is receipted."""
+        import http.server
+        self._exchange_setup()
+        limit = rp_api.security.MAX_REQUEST_BODY_BYTES
+        answers = []
+
+        class _Upstream(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                out, declared = answers[-1]
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                if declared:
+                    self.send_header('Content-Length', str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+                self.close_connection = True
+
+            def log_message(self, *a):
+                pass
+        url = self._exchange_upstream_server(_Upstream)
+
+        answers.append((b'"' + b'a' * (limit - 1) + b'"', True))     # valid JSON, limit + 1 bytes
+        self.assertEqual(len(answers[-1][0]), limit + 1)
+        r = self._exchange_forward_to(url)
+        self.assertEqual(r.status_code, 502, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'upstream_unavailable')
+        self.assertIn('the nonce is consumed', r.get_json()['error_description'])
+
+        # No Content-Length, delimited by the close: its first `limit` bytes are valid JSON, so
+        # only a read of limit + 1 bytes sees that the answer runs past the limit.
+        answers.append((b'{}' + b' ' * (limit - 1), False))
+        self.assertEqual(len(answers[-1][0]), limit + 1)
+        r = self._exchange_forward_to(url)
+        self.assertEqual(r.status_code, 502, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'upstream_unavailable')
+        self.assertNotIn('receipt', r.get_json())
+
+        answers.append((b'"' + b'a' * (limit - 2) + b'"', True))     # control: exactly the limit
+        self.assertEqual(len(answers[-1][0]), limit)
+        ok = self._exchange_forward_to(url)
+        self.assertEqual(ok.status_code, 200, ok.get_data(as_text=True)[:200])
+        self.assertIn('receipt', ok.get_json())
+        self.assertEqual(len(ok.get_json()['response_body']), limit - 2)
+
+    def test_an_upstream_answer_shorter_than_it_declared_is_a_502(self):
+        """An upstream that declares Content-Length 10, sends '12345' and closes. The unbounded
+        read raised IncompleteRead, which nothing caught: a 500 with the nonce spent. A bounded
+        read returns the five bytes as if complete, and a cut number would be receipted. Both
+        are the documented 502, with no receipt."""
+        import http.server
+        self._exchange_setup()
+
+        class _Short(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', '10')
+                self.end_headers()
+                self.wfile.write(b'12345')
+                self.wfile.flush()
+                self.close_connection = True
+
+            def log_message(self, *a):
+                pass
+        r = self._exchange_forward_to(self._exchange_upstream_server(_Short))
+        self.assertEqual(r.status_code, 502, r.get_data(as_text=True)[:200])
+        self.assertEqual(r.get_json()['error'], 'upstream_unavailable')
+        self.assertIn('the nonce is consumed', r.get_json()['error_description'])
+        self.assertNotIn('receipt', r.get_json())
 
     def test_holder_signing_refuses_a_presentation_without_a_signature(self):
         """/api/v1/sign/<agency>/holder with token_value but no signature_hex is invalid_request."""

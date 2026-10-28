@@ -527,21 +527,6 @@
       "reproduce": "python -m unittest scripts/test_verify_refusals.py -k CommandLineExitCodes (needs a real ML-DSA backend; without one it is skipped, not passed)"
     },
     {
-      "id": "pre-pilot-notional-data",
-      "kind": "statement",
-      "claim": "notional data: it has never held real identity data, and no authority or relying party operates it.",
-      "surfaces": [
-        "README.md",
-        "site/llms.txt"
-      ],
-      "evidence": [
-        "check:public_claims_honest",
-        "file:docs/PRODUCTION-READINESS.md",
-        "file:lab/EXTERNAL-NOUNS.md"
-      ],
-      "reproduce": "Read docs/PRODUCTION-READINESS.md and the External relying party / operator, Use and Pilot sections of lab/EXTERNAL-NOUNS.md: no relying party, no production user, no pilot; the one outside operator is OID4VCgo's CI, in test."
-    },
-    {
       "id": "openid-certified-scoped",
       "kind": "statement",
       "claim": "polaris-oid4vp 1.0.0rc7 is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile",
@@ -555,35 +540,6 @@
         "url:https://openid.net/certification/certified-oid4vp-haip-final/"
       ],
       "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt."
-    },
-    {
-      "id": "openid-certified-limits",
-      "kind": "statement",
-      "claim": "not an endorsement, not an audit, and not a certification of the rest of Polaris",
-      "surfaces": [
-        "README.md",
-        "site/llms.txt",
-        "docs/reference/SPEC-COMPLIANCE.md"
-      ],
-      "evidence": [
-        "file:docs/reference/SPEC-COMPLIANCE.md",
-        "url:https://openid.net/certification/mark/"
-      ],
-      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/: it lists polaris-oid4vp 1.0.0rc7 in the Verifier role and nothing else of Polaris. The scoreboard's Independent security review section in lab/EXTERNAL-NOUNS.md reads None."
-    },
-    {
-      "id": "not-yet",
-      "kind": "statement",
-      "claim": "Not yet: an independent security review, a relying party, a pilot.",
-      "surfaces": [
-        "README.md",
-        "site/llms.txt"
-      ],
-      "evidence": [
-        "file:lab/EXTERNAL-NOUNS.md",
-        "file:docs/PRODUCTION-READINESS.md"
-      ],
-      "reproduce": "Read lab/EXTERNAL-NOUNS.md: the Independent security review and Pilot sections each read None, and the External relying party / operator section reads Relying party: none."
     }
   ]
 }

@@ -51,6 +51,10 @@ def _load_verifier():
     return m
 
 
+# --log: the log's routes under /api/v1/transparency (the app's rp_api.py serves all three).
+LOGS = {"anchors": "", "receipts": "/receipts", "timestamps": "/timestamps"}
+
+
 def _get(base, path):
     with urllib.request.urlopen(base.rstrip("/") + path, timeout=15) as r:
         return json.loads(r.read().decode("utf-8"))
@@ -96,7 +100,7 @@ def _gossip_pool_heads(gossip_dir, log_id):
 
 
 def poll(args, V):
-    prefix = "/api/v1/transparency" + ("/receipts" if getattr(args, "log", "anchors") == "receipts" else "")
+    prefix = "/api/v1/transparency" + LOGS[getattr(args, "log", "anchors")]
     try:
         sth = _get(args.url, prefix + "/sth")
     except (urllib.error.URLError, ValueError, OSError) as e:
@@ -171,8 +175,9 @@ def main(argv=None):
     ap.add_argument("--state", required=True, help="directory for this witness's state")
     ap.add_argument("--gossip", help="a shared directory where witnesses publish observed heads")
     ap.add_argument("--once", action="store_true", help="poll once and exit (the default in v1)")
-    ap.add_argument("--log", choices=("anchors", "receipts"), default="anchors",
-                    help="which log to witness: the audit-anchor log (default) or the P8.2c receipt log")
+    ap.add_argument("--log", choices=tuple(LOGS), default="anchors",
+                    help="which log to witness: the audit-anchor log (default), the P8.2c receipt log or the "
+                         "P8.5b timestamp log")
     args = ap.parse_args(argv)
     return poll(args, _load_verifier())
 

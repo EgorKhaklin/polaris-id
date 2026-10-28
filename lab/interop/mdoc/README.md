@@ -121,7 +121,7 @@ plus one negative for each stage. Each witness is counted only for the stages it
 - The EU reference verifier is eudi-srv-verifier-endpoint v0.12.0, its image pinned by digest. It
   counts for the SessionTranscript bytes, PKIX trust and validity. Its MSO signature, digests, docType
   and device signature are walt.id's, the library that built these responses, so they are not counted.
-- @owf/mdoc 0.8.2 counts for the MSO signature, digests, validity, docType and the device signature,
+- @owf/mdoc 0.8.3 counts for the MSO signature, digests, validity, docType and the device signature,
   checked against its own SessionTranscript. It also counts for the certificate signatures up to the
   given root, but not for the PKIX path rules: certificate validity, the CA flag, path length and key
   usage are the EU verifier's alone.
