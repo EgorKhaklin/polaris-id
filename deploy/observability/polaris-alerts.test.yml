@@ -403,3 +403,33 @@ tests:
             exp_annotations:
               summary: "No restore has been verified for 8 days"
               description: "pgBackRest backups are being taken, but none has been restored and the copy proven against the live database for 8 days (scripts/polaris-restore-verify.sh)."
+
+  # The app is down and its target stays listed (a static target): up is 0 and the info gauge
+  # is gone. Both SEV-1 alerts fire, and both carry job="polaris", the label Alertmanager's
+  # inhibit rule matches on (equal: ['job']), so PolarisAppInfoAbsent is muted while
+  # PolarisAppDown fires (scripts/polaris-page-drill.sh posts these label sets to the shipped
+  # Alertmanager).
+  - interval: 5m
+    input_series:
+      - series: 'up{job="polaris",instance="app:8000"}'
+        values: '0x6'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PolarisAppDown
+        exp_alerts:
+          - exp_labels:
+              severity: sev1
+              job: polaris
+              instance: app:8000
+            exp_annotations:
+              summary: "Polaris target is down (scrape failing for 2m)"
+              description: "Prometheus cannot scrape the polaris job; the app is unreachable or crashed."
+      - eval_time: 15m
+        alertname: PolarisAppInfoAbsent
+        exp_alerts:
+          - exp_labels:
+              severity: sev1
+              job: polaris
+            exp_annotations:
+              summary: "polaris_app_info absent for 5m"
+              description: "The app metadata gauge is missing, the process is not serving /metrics normally."

@@ -48,11 +48,11 @@ arguing with it. A decision that only reverses the one before it has not finishe
 
 | Record | Capability | State |
 |---|---|---|
-| [001-token-status-list.md](001-token-status-list.md) | Read a foreign issuer's revocation status (IETF Token Status List) | CLOSED. Both falsifiers checked and neither fired; shipped as v1.0.0-rc.4 and v1.0.0-rc.5. No outside party has used it. |
+| [001-token-status-list.md](001-token-status-list.md) | Read a foreign issuer's revocation status (IETF Token Status List) | CLOSED. Both falsifiers checked and neither fired; shipped as v1.0.0-rc.4 and v1.0.0-rc.5. |
 | [002-relying-party-api-compartment.md](002-relying-party-api-compartment.md) | Run the internet-facing relying-party API as its own service with its own least-privileged database login | MEASURED, NOT BUILT alone: separable (160 of 163 tests pass as the narrowed login, every operator write refused), but the public surface still shares the issuance signing key and reads every credential pack, so the split would overstate its protection. Next: signing custody (003). |
 | [003-signing-custody-compartment.md](003-signing-custody-compartment.md) | A signing service outside the web process that signs only the statement formats its caller may request | KILLED on criterion 1: the public surface signs trust decisions (manifest, trust list, registry) on every request, so formats do not partition. Found on the way: any authority-signed artifact re-wrapped as a credential pack verified as authentic. |
 | [004-operator-identity-for-four-eyes.md](004-operator-identity-for-four-eyes.md) | The database, not the application, decides which operator acted in separation-of-duties rules, starting with recovery | OPEN, record only. Next: complete a recovery as the application role naming two operators (the ledger's sentence as an executable counterexample). |
-| [005-oid4vci-issuer.md](005-oid4vci-issuer.md) | Issue a Polaris credential into a wallet Polaris did not write (OpenID4VCI), still governed by Polaris's issuance rules | OPEN, a demonstration: criterion 4 fired at rc.67 (no outside party has held a wallet copy). Answers 001's rejection of OID4VCI issuance; killed if the wallet copy can outlive or bypass the Polaris record. Step 1 ([005/WALL.md](005/WALL.md)): HAIP certification means a FAPI 2.0 authorization server, so the wallet loop (pre-authorized code) runs first. Step 2 ([005/STEP2.md](005/STEP2.md)): both wallets received with no workaround; the loop issuer, walt.id, `polaris-oid4vp` closed. Step 3 ([005/STEP3.md](005/STEP3.md)): 7 of 7, the wallet copy obeys the Polaris record while the issuing process does. The product loop is built, and S5 ([005/STEP5.md](005/STEP5.md)): walt.id and Credo each received a governed copy from `polaris_web` (VALID, then INVALID after revocation; none for a credential revoked before redemption). S6 ([005/STEP6.md](005/STEP6.md)): both presented it to `polaris-oid4vp`, which read the product's status list (VALID, then INVALID after revocation; only `age_over_18` disclosed). |
+| [005-oid4vci-issuer.md](005-oid4vci-issuer.md) | Issue a Polaris credential into a wallet Polaris did not write (OpenID4VCI), still governed by Polaris's issuance rules | OPEN, a demonstration: criterion 4 fired at rc.67. Answers 001's rejection of OID4VCI issuance; killed if the wallet copy can outlive or bypass the Polaris record. Step 1 ([005/WALL.md](005/WALL.md)): HAIP certification means a FAPI 2.0 authorization server, so the wallet loop (pre-authorized code) runs first. Step 2 ([005/STEP2.md](005/STEP2.md)): both wallets received with no workaround; the loop issuer, walt.id, `polaris-oid4vp` closed. Step 3 ([005/STEP3.md](005/STEP3.md)): 7 of 7, the wallet copy obeys the Polaris record while the issuing process does. The product loop is built, and S5 ([005/STEP5.md](005/STEP5.md)): walt.id and Credo each received a governed copy from `polaris_web` (VALID, then INVALID after revocation; none for a credential revoked before redemption). S6 ([005/STEP6.md](005/STEP6.md)): both presented it to `polaris-oid4vp`, which read the product's status list (VALID, then INVALID after revocation; only `age_over_18` disclosed). |
 | [006-verified-result-from-one-command.md](006-verified-result-from-one-command.md) | One command that runs the production stack on the stranger's own machine under a key minted there, issues one credential and hands over what `polaris-verify` needs to check it | OPEN. One command, `lab/strategy/006/try.sh` (steps 1 to 3, 2026-09-30): from a clean checkout it builds and runs the production stack, issues one credential under a key minted on the machine, and `polaris-verify` from PyPI verifies it, in 7 minutes with a no-cache build. The README names it and a workflow runs it nightly on a clean runner. Still the author's runs. |
 | [007-access-gate.md](007-access-gate.md) | A gate the relying organisation runs: a wallet presentation in, a standard OIDC ID token out with a pairwise subject, and a holder's agent grant in, a per-request token out, for the identity-aware proxies that already accept an OIDC provider | OPEN, 2026-10-01: falsifiers written first, then the gate and its tests (`lab/strategy/007/`); killed if no outsider runs the Pomerium demonstration by 2026-11-12 |
 | [008-population-scale.md](008-population-scale.md) | Hold eight billion credentials: 64-bit keys, and an operator console whose every page costs the same at any population (exact maintained counts, capped counts, bounded plans) | OPEN, 2026-10-01: falsifiers written first; step 1 (the Overview) done, 10.4 s to 0.12 s at two million persons; falsifier 4 fired twice and both estimators were replaced by exact counts. Next: forms, lists, detail pages, 64-bit keys |
@@ -83,17 +83,16 @@ format bridge here. The open question is demand rather than feasibility: SCITT's
 today are supply-chain tooling, and whether anything in identity consumes a SCITT receipt is
 exactly what a record would have to answer before this is worth building.
 
-**A signed algorithm-policy artifact.** On `lab/EXTERNAL-NOUNS.md`'s known-limitations list:
-algorithm deprecation lives in `CryptographicAlgorithm` rows, not in anything a detached
-verifier is handed and can check. Searched 2026-09-19 for a standard to adopt instead of
-inventing one, and there is none: RFC 7696 is agility *guidance*, RFC 3125 is a 2001 ASN.1
-signature-policy format with no live ecosystem, and NIST publishes deprecation *timelines*
-rather than a wire format. So this means inventing a format, which drops ecosystem momentum
-and raises maintenance and lock-in. It is not the credential-format mistake the mandate warns
-about, since such a policy is private between an issuer and its own verifiers and asks nobody
+**A signed algorithm-policy artifact.** Algorithm deprecation lives in `CryptographicAlgorithm`
+rows, not in anything a detached verifier is handed and can check. Searched 2026-09-19 for a
+standard to adopt instead of inventing one, and there is none: RFC 7696 is agility *guidance*, RFC
+3125 is a 2001 ASN.1 signature-policy format with no live ecosystem, and NIST publishes deprecation
+*timelines* rather than a wire format. So this means inventing a format, which drops ecosystem
+momentum and raises maintenance and lock-in. It is not the credential-format mistake the mandate
+warns about, since such a policy is private between an issuer and its own verifiers and asks nobody
 to migrate, but the payoff estimate has to carry the invention cost honestly. Note that
-`packages/polaris-oid4vp/polaris_oid4vp/status.py` now holds the freshness, staleness and
-rollback machinery such an artifact needs, so the cost is lower than it was before record 001.
+`packages/polaris-oid4vp/polaris_oid4vp/status.py` now holds the freshness, staleness and rollback
+machinery such an artifact needs, so the cost is lower than it was before record 001.
 
 ## What a record does not do
 

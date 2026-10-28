@@ -17,7 +17,7 @@
 #
 # Examples:
 #     ./scripts/polaris-load-test.sh                          # defaults: localhost, 50 rps, 30s
-#     ./scripts/polaris-load-test.sh https://polaris.example.com/api/health
+#     ./scripts/polaris-load-test.sh https://polaris.example.com/.well-known/security.txt
 #     ./scripts/polaris-load-test.sh http://localhost:5000/api/health 100 60
 #
 # Sample output:

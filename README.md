@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg?v=tm2" width="100%" alt="Polaris ID">
+<img src="docs/assets/hero.svg?v=sky" width="100%" alt="Polaris ID">
 
 **Polaris ID is identity infrastructure built to be checked, not trusted.**
 
@@ -42,11 +42,10 @@
 An authority issues a credential signed with **ML-DSA-65**; the person holds it; anyone checks it two ways.
 
 - **Authenticity, offline.** A standalone verifier checks the signature against published keys, with no database and no network.
-- **Authorization, fresh.** A relying-party API, or a short-lived signed status assertion, says whether the credential counts right now.
-- **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 388 machine-checked invariants and 37 CI jobs gate every change.
+- **Authorization, fresh.** A relying-party API says whether the credential counts right now; a short-lived signed status assertion carries that answer offline.
+- **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 389 machine-checked invariants and 37 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
-
-It runs on **notional data**: it has never held real identity data, and no authority or relying party operates it. One outside project runs its verifier in CI (OID4VCgo, since 2026-10-11).
+- **Verifiers can test themselves against it.** [`lab/interop/negative-vectors`](lab/interop/negative-vectors/) holds SD-JWT VC presentations and mdoc device responses, each with its expected verdict; every refusal cites the clauses or named policy it rests on.
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -84,13 +83,13 @@ polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack 
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="150"></a>
 
-**`polaris-oid4vp 1.0.0rc7` is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). A self-certification the OpenID Foundation approved and lists, for that package version in that role: not an endorsement, not an audit, and not a certification of the rest of Polaris. The newest release runs against the OpenID Foundation's conformance suite every week in CI. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
+**`polaris-oid4vp 1.0.0rc7` is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/), 24 September 2026). The newest release runs against the OpenID Foundation's conformance suite every week in CI. OpenID® and OpenID® Certified™ are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Tested against software nobody here wrote.** Seven wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup, Procivis One Core and the Yivi app (developer mode; built on irmago). Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck and Multipaz through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. The author drove every walk but one, which OID4VCgo's CI runs itself: this is interoperability, not use. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
+**Tested against software nobody here wrote.** Seven wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup, Procivis One Core and the Yivi app (developer mode; built on irmago). Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck and Multipaz through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. Every walk is driven from here except OID4VCgo's, which its own CI runs. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
 
 **Per implementation:** the version, date, result and controls of each one's latest run, in [INTEROP.md](docs/reference/INTEROP.md).
 
-**Not yet:** an independent security review, a relying party, a pilot. The 1.0.0 condition, an operator who is not the author running the verifier, was met on 2026-10-11: OID4VCgo's CI runs it daily and on each of its releases ([the scoreboard](lab/EXTERNAL-NOUNS.md#use)). Versions: [RELEASING.md](docs/RELEASING.md).
+**Run by an outside project.** Since 2026-10-11, OID4VCgo's CI runs the verifier daily and on each of its releases, which met the 1.0.0 condition: an operator who is not the author ([the scoreboard](lab/EXTERNAL-NOUNS.md#use)). Versions: [RELEASING.md](docs/RELEASING.md).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -111,13 +110,15 @@ The vocation above them: **no person can be compelled to renounce, transfer or s
 | **C9** | Concurrency is tested with real threads. | Engineering | Threaded suites against a live database |
 | **C10** | Identity is not money. | Constitutional | Structural absence, pinned by a check |
 
-The hard problems, each bounded: **coercion** (a second code yields a normal-looking verification and records a duress event; it works on a coercer who does not know the mechanism exists, not on one watching the holder, and is net-negative against lawful access: [assessment](lab/duress/README.md)), **total loss** (a witnessed, three-channel [recovery](docs/design/recovery-ceremony.md)), and **algorithm migration** (the algorithm is a row; credentials carry old and new signatures through an audited [migration](docs/design/multi-sig-migration.md)).
+Zero knowledge here means two specific things: a verification that stores no token identifier (C2), and a Merkle-membership proof.
+
+The hard problems, and the mechanism for each: **coercion** (a second code, built for a coercer who does not know it exists, yields a normal-looking verification and records a duress event in the append-only audit trail: [assessment](lab/duress/README.md)), **total loss** (a witnessed, three-channel [recovery](docs/design/recovery-ceremony.md)), and **algorithm migration** (the algorithm is a row; credentials carry old and new signatures through an audited [migration](docs/design/multi-sig-migration.md)).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
 ## Cryptography
 
-The claim is **algorithm agility under an audited migration path**, not settled security against a quantum adversary: whether Module-LWE holds is mathematics, not a property of this repository, and the classical half of a credential in migration is protected by nothing here ([PQC-POSTURE.md](docs/reference/PQC-POSTURE.md)).
+The claim is **algorithm agility under an audited migration path**: the algorithm is a row in the schema, and credentials move to a new one through an audited migration ([PQC-POSTURE.md](docs/reference/PQC-POSTURE.md)).
 
 | Algorithm | Family | PQ | Standard | Security (bits) | Public key | Signature | Role |
 |---|---|:---:|---|:---:|---:|---:|---|
@@ -128,45 +129,9 @@ The claim is **algorithm agility under an audited migration path**, not settled 
 | SLH-DSA-256s | SLH-DSA | ✓ | FIPS 205 | 256 | 64 B | 29,792 B | registered, no signer |
 | ECDSA-P256 | ECDSA | | FIPS 186-4 | 128 | 64 B | 72 B | legacy, sunset 2027 |
 
-Two ML-DSA implementations must agree at issuance or it fails closed; the TLS edge negotiates X25519MLKEM768. The detached verifier and both SDKs also check the FN-DSA family (draft FIPS 206): signatures 2.6 times smaller than ML-DSA-65's, with two independent implementations (liboqs, @noble/post-quantum) agreeing on its conformance vectors. Polaris signs under it only as an experimental signer, opted into and never in production, two-witnessed like ML-DSA, until its signing time passes Polaris's side-channel test.
+Two ML-DSA implementations must agree at issuance or it fails closed; the TLS edge negotiates X25519MLKEM768. The detached verifier and both SDKs also check the FN-DSA family (draft FIPS 206): signatures 2.6 times smaller than ML-DSA-65's, with two independent implementations (liboqs, @noble/post-quantum) agreeing on its conformance vectors. Polaris signs under it as an opt-in experimental signer, two-witnessed like ML-DSA.
 
 The migration path is tested beyond these: in the lab, one population moved through seven signature families (ML-DSA, FN-DSA, SLH-DSA, MAYO, UOV, SNOVA, CROSS) and 136 liboqs signature variants, never left without a valid signature ([CANDIDATES.md](lab/crypto-migration/CANDIDATES.md)). Lab results admit no algorithm to the product.
-
-<img src="docs/assets/rule.svg" width="100%" alt="">
-
-## When to use something else
-
-- To test a wallet, issuer or verifier against a ready-made counterpart, in the browser or on the command line:
-  [eudi-dev](https://github.com/eudi-dev/eudi-dev) (its v2.3.7 is OpenID Certified for the wallet profiles).
-- A full TypeScript framework for wallets, issuers and verifiers, DIDComm included: [Credo](https://github.com/openwallet-foundation/credo-ts).
-- The verifier the EU reference wallets are built against: [eudi-srv-verifier-endpoint](https://github.com/eu-digital-identity-wallet/eudi-srv-verifier-endpoint).
-- mdoc (ISO/IEC 18013-5) or the browser's Digital Credentials API: `polaris-oid4vp` supports neither;
-  [Multipaz](https://github.com/openwallet-foundation/multipaz) does.
-- Real identity data in production today: not yet (see [Limits](#limits-stated-plainly)).
-
-<img src="docs/assets/rule.svg" width="100%" alt="">
-
-## Limits, stated plainly
-
-- **Zero knowledge means two specific things:** no token identifier stored, and a membership proof. Polaris is not a general selective-disclosure or anonymous-credential system.
-- **Relying-party correlation is bounded, not eliminated.** What a verifier is **shown** differs from what it has to **store**: a full presentation still shows a stable `token_value`, so two relying parties keeping raw material can correlate; per-relying-party identifiers make what a verifier writes down unrecognisable at the next. [lab/linkability](lab/linkability/README.md).
-- **Offline status trades revocation latency for issuer non-observation:** a revoked credential's last assertion stays valid until it expires (an hour by default).
-- **Real identity data.** What stands between this repository and real identity data: [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
-
-<img src="docs/assets/rule.svg" width="100%" alt="">
-
-## Where Polaris sits
-
-| System | Deployed to a real population | National-scope issuance | Post-quantum default | Unlinkable verification default | Duress-aware primitive | Append-only audit at schema |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Real ID (US) | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ |
-| mDL / ISO 18013-5 | ✓ | ✓ | ✗ | partial | ✗ | ✗ |
-| Aadhaar (India) | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
-| e-Estonia | ✓ | ✓ | ✗ | ✗ | ✗ | partial |
-| W3C DIDs / VCs | partial | ✗ | method-dependent | method-dependent | ✗ | n/a |
-| **Polaris** | **✗** | **✗** | ✓ | ✓ | ✓ | ✓ |
-
-Every other row is deployed at national scale; Polaris is neither. Its ticks are design properties on notional data.
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
@@ -179,7 +144,7 @@ Every other row is deployed at national scale; Polaris is neither. Its ticks are
 | Review the architecture | [ARCHITECTURE-OVERVIEW](docs/ARCHITECTURE-OVERVIEW.md) · [SYSTEM-MAP](docs/reference/SYSTEM-MAP.md) · [DATA-MODEL](docs/reference/DATA-MODEL.md) |
 | Review security | [SECURITY.md](SECURITY.md) · [threat model](docs/design/threat-model.md) · [RED-TEAM-SCOPE](docs/RED-TEAM-SCOPE.md) · [REVIEW-PACKET](docs/REVIEW-PACKET.md) |
 | Integrate | [API](docs/reference/API.md) · [SPEC-COMPLIANCE](docs/reference/SPEC-COMPLIANCE.md) · [GLOSSARY](docs/reference/GLOSSARY.md) |
-| Operate an instance | [docs/operator/](docs/operator/README.md) · [Linux server](docs/operator/LINUX-SERVER.md) · [Kubernetes](docs/operator/KUBERNETES.md) · [evaluate an install](docs/operator/EVALUATE.md) |
+| Operate an instance | [docs/operator/](docs/operator/README.md) · [Linux server](docs/operator/LINUX-SERVER.md) · [Kubernetes](docs/operator/KUBERNETES.md) · [evaluate an install](docs/operator/EVALUATE.md) · [the operability gate](docs/PRODUCTION-READINESS.md#operability-gate) |
 | Read it as research | [Project report](docs/paper/polaris_project_report_v3.pdf) · [CITATION.cff](CITATION.cff) |
 | Ask or contribute | [Discussions](https://github.com/EgorKhaklin/polaris-id/discussions) · [Discord](https://discord.gg/ragewuCKj) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CHANGELOG.md](CHANGELOG.md) |
 

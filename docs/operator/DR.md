@@ -94,7 +94,7 @@ remains the recovery for that class.
 The shipped alerting rules in
 [`deploy/observability/polaris-alerts.yml`](../../deploy/observability/polaris-alerts.yml)
 carry a severity label on this ladder: `PolarisAppInfoAbsent`
-(`absent(polaris_app_info)` for 5 min) is SEV-1; `PolarisHighDBLatency`
+(`absent(polaris_app_info{job="polaris"})` for 5 min) is SEV-1; `PolarisHighDBLatency`
 (`polaris_db_query_latency_seconds` p99 over 5 s) is SEV-2. Alertmanager
 routing and the pager receiver are in
 [`deploy/observability/alertmanager.yml`](../../deploy/observability/alertmanager.yml);
@@ -315,7 +315,7 @@ $COMPOSE exec postgres psql -U postgres -d polaris -c "
 
 # 8. Only when step 6 exited 0: bring the app back and smoke-test.
 $COMPOSE up -d app
-curl -sf https://${POLARIS_DOMAIN}/api/health | jq .
+$COMPOSE exec -T app curl -sf http://localhost:8000/api/health | jq .
 ```
 
 For a restore that omits `--type=time`, pgBackRest replays every archived
@@ -480,7 +480,10 @@ aws s3 ls s3://${POLARIS_PGBACKREST_S3_BUCKET}/ --recursive | tail -10
 #    POLARIS_SECRET_KEY, the database passwords, AppUser password hashes, and
 #    session tokens. WebAuthn private keys never leave the authenticators.
 #    Rotation is per secret; SECRETS.md section 4 (Rotation) lists them.
-./scripts/polaris-rotate-secret.sh <name>
+#    The session key rotates with --drop-old, which keeps no retired key, so
+#    every session the old key signed ends.
+./scripts/polaris-rotate-secret.sh polaris_secret_key --drop-old
+./scripts/polaris-rotate-secret.sh <name>   # each other secret
 ./scripts/polaris-deploy.sh prod
 ```
 
@@ -773,7 +776,8 @@ Step 1.  Acknowledge the page within 5 min (SEV-1) / 15 min (SEV-2).
 Step 2.  Read the alert body first; RUNBOOKS.md has one entry per alert.
 
 Step 3.  Open three views:
-         (a) https://${POLARIS_DOMAIN}/api/health
+         (a) /api/health at the app's own address (the edge answers it 404):
+             docker exec polaris-app curl -s http://localhost:8000/api/health
          (b) the Grafana dashboards (deploy/observability/grafana)
          (c) docker compose logs --tail=200 over SSH
 
@@ -931,7 +935,7 @@ The section 8.4 template is the structure. Reviewers check:
   [`polaris-ct-monitor.sh`](../../scripts/polaris-ct-monitor.sh),
   [`polaris-rotate-secret.sh`](../../scripts/polaris-rotate-secret.sh).
   For a read-only health read of a running deployment, `GET /api/health`
-  reports structured per-component status; on a development checkout,
+  at the app's own address reports structured per-component status; on a development checkout,
   `./polaris_mac_launch.sh doctor` inspects the local stack.
 - [`polaris_web/docker-compose.prod.yml`](../../polaris_web/docker-compose.prod.yml):
   the production stack, including the `pg_data` and `pgbackrest_repo` volumes.

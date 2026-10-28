@@ -1,7 +1,6 @@
 # polaris-sdk-python
 
 [![PyPI](https://img.shields.io/pypi/v/polaris-sdk-python?include_prereleases&label=PyPI&color=3775a9&labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-sdk-python/)
-[![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified)
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/EgorKhaklin/polaris-id?label=stars&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
@@ -76,16 +75,18 @@ language.
 - `verify_presentation(presentation, ...)`: a wallet presentation, or a bare pack.
 - `verify_signed_artifact(obj, now)`: every other signed artifact of the wire spec: the epoch
   checkpoint, revocation feed, federation manifest, status bundle, transparency STH,
-  timestamp, registry, exchange request, exchange receipt, mint statement, signed document,
-  ID token and trust list (authenticity, freshness where windowed, and the artifact's
-  commitment or self-consistency).
+  timestamp, registry, exchange request, exchange receipt, mint statement, signed document
+  and trust list (authenticity, freshness where windowed, and the artifact's commitment or
+  self-consistency).
+- `verify_id_token(tok, audience, nonce, now, anchors)`: the ID token, checked against the
+  audience, the nonce and the agency keys you pass.
 - `verify_cross_authority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted. By default it accepts a trust edge the attesting agency did not sign, as version 1 manifests carry; a relying party should pass `require_signed_attestation=True` to require that agency's signature.
 - `verify_exchange_request(...)`, `verify_exchange_receipt(...)`, `verify_exchange_mint(...)`: an
   exchange artifact in use: whether it is by the party expected, whether the requester was
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (289 cases, measured against the repository on 2026-10-21) and every case of the frozen
+The SDK passes every case of the conformance suite (299 cases, measured against the repository on 2026-10-28) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py`, which runs on every CI push.
 
 ## Conformance

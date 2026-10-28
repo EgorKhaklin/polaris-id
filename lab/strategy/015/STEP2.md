@@ -29,10 +29,6 @@ classes interleaved at random, percentile crop, Welch's t; |t| > 4.5 suggests a 
   ML-DSA's noise.
 - **The setup can see a leak:** the planted 20 us difference reads |t| = 12.5.
 
-## What it does not show, and the verdict
+## The verdict
 
-A Python-level timer resolves about a microsecond, with the interpreter's own noise on top. Real
-side channels are often far below that. So this cannot show the signing path constant-time.
-**Falsifier 2 is not cleared**, and FN-DSA stays lab-only. Clearing it needs a native harness (C,
-the platform's cycle counter, dudect or its successors) on each platform the deployment profiles
-name, with classes chosen over the secret key's own values, not only over which key signs.
+**Falsifier 2 is not cleared**, and FN-DSA stays lab-only.

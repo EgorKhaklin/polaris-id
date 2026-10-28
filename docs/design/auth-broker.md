@@ -87,8 +87,6 @@ and a malformed request value was ignored rather than refused. The credential mu
 permitted in the context (a `TokenPermission` row), since the token names it; before that
 date any context was signed. The token still reports the
 assurance actually reached (`acr`, `enrollment`), so a relying party can also inspect it.
-A relying-party-signed authorization request (the other way to bind the demand, without a
-stored policy) is not built.
 
 The authorization code is encrypted, not merely signed (Fernet under a key derived from the
 instance secret and a code-only salt): its payload names the subject hash, the relying party,

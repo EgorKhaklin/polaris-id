@@ -5,7 +5,7 @@
 // its own repository, read anonymously; every artifact is checked against
 // gradle/verification-metadata.xml.
 plugins {
-    kotlin("jvm") version "2.4.20"
+    kotlin("jvm") version "2.4.21"
     application
 }
 

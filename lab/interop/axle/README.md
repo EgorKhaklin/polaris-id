@@ -45,7 +45,7 @@ module's `HeldSdJwtVc` takes one directly, so the harness calls that module.
 | | |
 |---|---|
 | Axle | `github.com/openwallet-foundation-labs/axle` at `f7b8054171bb49f3c27589d0b19b03285ed1dcc1` (main, 2026-08-31; Axle has no tags or releases), modules `openid4vp`, `trust`, `testkit` and their dependencies in `kotlin/` |
-| Build and runtime image | `gradle:9.3.1-jdk17@sha256:5fb7d4ea7ddf10b24c317bc7d665a7da6aae9104042091625f3061f98661b487` (the Gradle version Axle's wrapper names, and JDK 17, its toolchain); Kotlin 2.4.20 for both builds: Axle's declares 2.2.21, which OSV lists an advisory against (fixed in 2.4.20), and [`harness/lift.init.gradle.kts`](harness/lift.init.gradle.kts) lifts it, and Bouncy Castle in Axle's test fixtures from 1.78.1 to 1.86, without changing Axle's source |
+| Build and runtime image | `gradle:9.3.1-jdk17@sha256:5fb7d4ea7ddf10b24c317bc7d665a7da6aae9104042091625f3061f98661b487` (the Gradle version Axle's wrapper names, and JDK 17, its toolchain); Kotlin 2.4.21 for both builds: Axle's declares 2.2.21, which OSV lists an advisory against (fixed in 2.4.20), and [`harness/lift.init.gradle.kts`](harness/lift.init.gradle.kts) lifts it, and Bouncy Castle in Axle's test fixtures from 1.78.1 to 1.86, without changing Axle's source |
 | Dependencies | every one checked against [`harness/gradle/verification-metadata.xml`](harness/gradle/verification-metadata.xml) (74 components, Axle's build included, no OSV advisory), written by `gradle --init-script lift.init.gradle.kts --write-verification-metadata sha256 installDist` from an empty Gradle cache after removing the old file; changing one digit of a pinned hash fails the build |
 | Verifier | `polaris-oid4vp` 1.0.0rc16 from PyPI, its dependencies by hash ([`../requirements.txt`](../requirements.txt)) |
 | Runtime | Python 3.9.6 (the verifier's venv), Docker 29.8.1, macOS 26.3 (arm64) |
@@ -88,15 +88,12 @@ and (f) Axle presented a credential a holder could have checked first: it does n
 credential's issuer signature, nor that its key matches the credential's `cnf`. The verifier is
 the party that must refuse either, and did.
 
-## What this does not establish
+## What was run
 
-- It is Axle's Kotlin OpenID4VP client, driven by a harness written here. It is not an Axle wallet
-  app, not Axle's `Wallet` facade (above), and not its Swift SDK, which is a separate port.
+- It is Axle's Kotlin OpenID4VP client, driven by a harness written here.
 - The harness supplies the transport, the trust anchor and the consent decision. Control (d) shows
-  Axle's trust verdict and the harness acting on it; a different host could act differently.
+  Axle's trust verdict and the harness acting on it.
 - The issuer key, its CA and the credential are test material this repository's script made. The
   verifier's PKI is `polaris-oid4vp keygen`'s test PKI.
 - One credential format, one path, ES256 and P-256 throughout, at one Axle commit, on one machine.
-- Same category as the other rows: the author drove a published SDK on one machine. It is not an
-  outside party using Polaris, not a certification, and not a claim that Axle is interoperable in
-  general.
+- The author drove a published SDK on one machine.

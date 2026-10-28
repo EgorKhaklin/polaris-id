@@ -1,7 +1,6 @@
 # polaris-sdk-ts (TypeScript SDK)
 
 [![npm](https://img.shields.io/npm/v/polaris-sdk-ts/next?label=npm&color=cb3837&labelColor=0a1421&style=flat-square)](https://www.npmjs.com/package/polaris-sdk-ts)
-[![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified)
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/EgorKhaklin/polaris-id?label=stars&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
@@ -77,16 +76,18 @@ language.
 - `verifyPresentation(presentation, ...)`: a wallet presentation, or a bare pack.
 - `verifySignedArtifact(obj, now?)`: every other signed artifact of the wire spec: the epoch
   checkpoint, revocation feed, federation manifest, status bundle, transparency STH,
-  timestamp, registry, exchange request, exchange receipt, mint statement, signed document,
-  ID token and trust list (authenticity, freshness where windowed, and the artifact's
-  commitment or self-consistency).
+  timestamp, registry, exchange request, exchange receipt, mint statement, signed document
+  and trust list (authenticity, freshness where windowed, and the artifact's commitment or
+  self-consistency).
+- `verifyIdToken(tok, audience?, nonce?, now?, anchors?)`: the ID token, checked against the
+  audience, the nonce and the agency keys you pass.
 - `verifyCrossAuthority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted. By default it accepts a trust edge the attesting agency did not sign, as version 1 manifests carry; a relying party should pass `requireSignedAttestation` as `true` to require that agency's signature.
 - `verifyExchangeRequest(...)`, `verifyExchangeReceipt(...)`, `verifyExchangeMint(...)`: an
   exchange artifact in use: whether it is by the party expected, whether the requester was
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (289 cases, measured against the repository on 2026-10-21) and every case of the frozen
+The SDK passes every case of the conformance suite (299 cases, measured against the repository on 2026-10-28) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building
@@ -118,7 +119,7 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts@next
 ```
 
-This is release candidate 1.0.0-rc.9. Candidates are published under the `next` dist-tag; an install
+This is release candidate 1.0.0-rc.11. Candidates are published under the `next` dist-tag; an install
 without the tag resolves npm's `latest`, 0.1.0, until 1.0.0.
 
 It needs Node >= 20.19.0: the post-quantum crypto dependencies (`@noble/post-quantum` and the

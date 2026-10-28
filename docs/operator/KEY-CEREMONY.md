@@ -42,7 +42,8 @@ Secrets never travel through environment: the PKCS#11 PIN is read from
 `POLARIS_CUSTODY_PKCS11_PIN` is set; KMS credentials come from the instance
 role or a mounted credentials file. `python custody.py describe` and
 `scripts/polaris-pqc-status.sh` show the driver, key id, and public-key
-fingerprint; so does `/api/health` under `custody`.
+fingerprint. `/api/health` reports the driver and the fingerprint under
+`custody`, never the key id: it answers without authentication.
 
 ## The ceremony
 
@@ -127,8 +128,10 @@ has expired ([Rotation](#rotation)). Restrict the host per [`HARDENING.md`](HARD
    (the app image is built with `--build-arg POLARIS_CUSTODY_EXTRAS=1`, the
    vendor module and its client config mounted at `./custody/pkcs11/`), and
    layer `docker-compose.custody-pkcs11.yml` via `POLARIS_COMPOSE_EXTRA`.
-4. Deploy and confirm `/api/health` reports `custody.driver = pkcs11` with the
-   fingerprint from step 2; issue one test token and verify it.
+4. Deploy and confirm `/api/health` (at the app's own address) reports
+   `custody.driver = pkcs11` with the fingerprint from step 2, and
+   `python custody.py describe` in the app container the token and key labels;
+   issue one test token and verify it.
 
 Backup is the HSM's own backup/cloning procedure (a key that only exists in
 one device is a single point of failure, which is the HSM vendor's domain, not
@@ -146,7 +149,9 @@ Polaris's).
 3. Configure `POLARIS_CUSTODY_DRIVER=awskms`, `POLARIS_CUSTODY_AWSKMS_KEY_ID`,
    `POLARIS_CUSTODY_AWSKMS_REGION`; layer `docker-compose.custody-awskms.yml`.
    Prefer an instance role over static credentials.
-4. Deploy and confirm `/api/health` shows the fingerprint; issue one test token.
+4. Deploy and confirm `/api/health` (at the app's own address) shows the
+   fingerprint, and `python custody.py describe` in the app container the key
+   ARN; issue one test token.
 
 Enable multi-region replication or a documented restore path in KMS; a deleted
 KMS key cannot be recovered after its waiting period.

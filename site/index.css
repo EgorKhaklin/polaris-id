@@ -4,27 +4,27 @@
    all script, so everything visual is here, and every motion stops for prefers-reduced-motion.
 
    01 Fonts  02 Base  03 Bar  04 Hero  05 Sections  06 Verify  07 Evidence  08 How
-   09 Design  10 Limits  11 Start  12 Footer  13 Responsive and motion
+   09 Design  10 Start  11 Footer  12 Responsive and motion
    ============================================================================ */
 
-/* ----- 01 Fonts: the console's own files, unmodified (fonts/*-OFL.txt) ----- */
+/* ----- 01 Fonts: the console's own files cut to the Latin characters, every glyph, feature and axis kept (fonts/*-OFL.txt) ----- */
 @font-face {
     font-family: "Inter";
-    src: url("fonts/InterVariable.woff2") format("woff2");
+    src: url("fonts/inter.ce552fd9.woff2") format("woff2");
     font-weight: 100 900;
     font-style: normal;
     font-display: swap;
 }
 @font-face {
     font-family: "Cinzel";
-    src: url("fonts/Cinzel-Variable.ttf") format("truetype");
+    src: url("fonts/cinzel.6eb9f004.woff2") format("woff2");
     font-weight: 400 900;
     font-style: normal;
     font-display: swap;
 }
 @font-face {
     font-family: "JetBrains Mono";
-    src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2");
+    src: url("fonts/jetbrains-mono.0c051e48.woff2") format("woff2");
     font-weight: 400;
     font-style: normal;
     font-display: swap;
@@ -32,7 +32,7 @@
 
 /* ----- 02 Base ---------------------------------------------------------- */
 *, *::before, *::after { box-sizing: border-box; }
-html { scroll-behavior: smooth; scroll-padding-top: 80px; -webkit-text-size-adjust: 100%; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
 body {
     margin: 0;
     background: var(--ground);
@@ -78,12 +78,9 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
                     transform: scaleX(0); transition: transform .3s cubic-bezier(.2, .7, .2, 1); }
 .bar nav a:hover { color: var(--ink); }
 .bar nav a:hover::after { transform: scaleX(1); }
-.tag { white-space: nowrap; margin-left: auto; font: 500 11px/1 var(--font-mono); letter-spacing: 0.14em;
-       text-transform: uppercase; color: var(--warn); border: 1px solid rgba(227, 181, 91, 0.45);
-       background: var(--warn-wash); padding: 6px 9px; border-radius: 999px; }
 /* Discord and GitHub read as the nav does: text with the gold rule on hover, no boxes. The padding
    keeps a full tap target on phones. */
-.gh { position: relative; font-size: 12.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+.gh { position: relative; margin-left: auto; font-size: 12.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
       text-decoration: none; color: rgba(240, 240, 250, 0.9); padding: 10px 0; transition: color .2s; }
 .gh::after { content: ""; position: absolute; left: 0; right: 0; bottom: 4px; height: 1px; background: var(--gold);
              transform: scaleX(0); transition: transform .3s cubic-bezier(.2, .7, .2, 1); }
@@ -91,20 +88,26 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
 .gh:hover::after { transform: scaleX(1); }
 
 /* ----- 04 Hero: the pole star, and the sky turning around it ------------- */
-.hero-band { position: relative; overflow: hidden; overflow: clip; isolation: isolate; padding-top: 64px; }
+html { --spring: cubic-bezier(.3, 1.35, .5, 1); --spring-card: cubic-bezier(.3, 1.2, .5, 1); }
+@supports (transition-timing-function: linear(0, 1)) {
+    html { --spring: linear(0, 0.0419, 0.1465, 0.2861, 0.4389, 0.5886, 0.7246, 0.8402, 0.9326, 1.0018, 1.0494, 1.0784, 1.0922,
+                            1.0945, 1.0886, 1.0775, 1.0638, 1.0492, 1.0353, 1.0229, 1.0125, 1.0044, 0.9984, 0.9944, 0.9921, 0.9911,
+                            0.9911, 0.9919, 0.993, 0.9943, 0.9957, 0.997, 0.9981, 0.999, 0.9998, 1);
+           --spring-card: linear(0, 0.0714, 0.2319, 0.4213, 0.6021, 0.7547, 0.8716, 0.9535, 1.0052, 1.0333, 1.0447, 1.0452,
+                                 1.0396, 1.0314, 1.0227, 1.0149, 1.0086, 1.004, 1.0009, 0.999, 0.9981, 0.9979, 0.998, 1); }
+}
+.hero-band { position: relative; overflow: hidden; overflow: clip; isolation: isolate; padding-top: 64px;
+             background: var(--ground); }
 /* clip, not hidden: a hidden box is a scroll container, and every view() timeline inside it would
-   measure against the band instead of the page, so the hero's pieces would never leave. */
-.hero-band::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
-    background:
-        radial-gradient(ellipse 46% 70% at 70% 44%, rgba(13, 38, 77, 0.9), transparent 72%),
-        radial-gradient(ellipse 22% 30% at 70% 44%, rgba(221, 202, 155, 0.07), transparent 70%),
-        linear-gradient(180deg, transparent 70%, var(--ground)); }
+   measure against the band instead of the page, so the hero's pieces would never leave. The band's own
+   ground is opaque so the sky's screen blend has something to brighten everywhere: over a transparent
+   backdrop a blend is a plain paint, and the sky's black would cover the page's near-black. */
 .hero { position: relative; display: grid;
         grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-        grid-template-areas: "copy sky" "proof proof";
+        grid-template-areas: "copy sky" "proof sky" "scope sky";
         max-width: 1160px; margin: 0 auto; padding: 0 40px;
         min-height: min(calc(100vh - 64px), 860px); align-content: center; column-gap: 40px; }
-.hero-copy { grid-area: copy; align-self: center; padding: 72px 0 56px; }
+.hero-copy { grid-area: copy; align-self: end; padding: 72px 0 34px; }
 .eyebrow { font: 500 12px/1 var(--font-mono); letter-spacing: 0.16em; text-transform: uppercase;
            color: var(--gold); margin-bottom: 28px; }
 .hero h1 { font-size: clamp(36px, 4.3vw, 60px); line-height: 0.98; letter-spacing: -0.02em;
@@ -114,94 +117,177 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
 .lead { font-size: 19px; line-height: 1.6; max-width: 34em; color: var(--ink-2); margin-bottom: 36px; }
 .cta { display: flex; flex-wrap: wrap; gap: 14px; }
 .btn { display: inline-flex; align-items: center; gap: 12px; height: 50px; padding: 0 24px; border-radius: 3px;
-       letter-spacing: 0.09em; text-transform: uppercase;
-       font-size: 13px; font-weight: 600; text-decoration: none; transition: background .15s, border-color .15s, color .15s, transform .15s; }
-.btn-gold { position: relative; overflow: hidden; isolation: isolate; background: var(--gold); color: var(--ground);
-            box-shadow: 0 0 0 0 rgba(221, 202, 155, 0); transition: background .15s, transform .15s, box-shadow .3s; }
-.btn-gold::after { content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 60%; z-index: -1;
-    pointer-events: none; background: linear-gradient(110deg, transparent, rgba(255, 255, 255, 0.55) 50%, transparent);
-    animation: sheen 7s ease-in-out 2.6s infinite; }
-.btn-gold:hover { box-shadow: 0 10px 34px -10px rgba(221, 202, 155, 0.55); }
-@keyframes sheen { 0% { translate: 0 0; } 16%, 100% { translate: 280% 0; } }
-.btn-gold:hover { background: var(--ink); color: var(--ground); transform: translateY(-1px); }
+       letter-spacing: 0.09em; text-transform: uppercase; font-size: 13px; font-weight: 600; text-decoration: none;
+       --h: 5; --h0: 5; --rise: .75s; --ease-h: var(--spring-card);
+       transition: --h var(--rise) var(--ease-h), background-color .2s, border-color .2s, color .2s; }
+.btn:hover { --h: 14; }
+.btn:active { --h: 1; --rise: .12s; --ease-h: var(--settle); }
+/* The gold is the coin's metal under the coin's light: brightest at the upper left, deepening toward the lower
+   right, its upper-left edge catching the light. */
+.btn-gold { background-color: #d9c08a; color: var(--ground);
+            background-image: linear-gradient(135deg, #fbefcf 0%, #ead29d 26%, #cfb27c 58%, #a58758 100%);
+            --rim-lit: rgba(255, 251, 238, 0.75); --rim-dark: rgba(84, 62, 28, 0.55); }
+.btn-gold:hover { color: var(--ground); }
 .btn::before { content: "\2192"; order: 1; font-size: 15px; letter-spacing: 0; transition: transform .25s cubic-bezier(.2, .7, .2, 1); }
 .btn:hover::before { transform: translateX(4px); }
-.btn-line { border: 1px solid rgba(240, 240, 250, 0.35); background: rgba(0, 0, 0, 0.35); color: var(--ink);
-            transition: background .2s, color .2s, border-color .2s; }
-.btn-line:hover { background: #f0f0fa; border-color: #f0f0fa; color: var(--ground); }
+.btn-line { border: 1px solid rgba(240, 240, 250, 0.35); background-color: rgba(0, 0, 0, 0.35); color: var(--ink); --h: 3; --h0: 3; }
+.btn-line:hover { --h: 12; color: var(--ink); border-color: var(--gold); background-color: rgba(221, 202, 155, 0.08); }
 
 .sky { grid-area: sky; position: relative; align-self: center; justify-self: center;
        width: min(520px, 100%); aspect-ratio: 1; }
-/* The sky is a rendered film: faint orbit rings and a starfield whose stars each drift on their own,
-   a seamless 72-second loop on black at twice the display size. Screen blending makes the black
-   vanish, so only the light shows. The emblem stays a still image above it; phones get a 960 px cut. */
-.sky-film { position: absolute; inset: -12%; width: 124%; height: 124%; object-fit: cover;
-            mix-blend-mode: screen; pointer-events: none;
-            /* iOS Safari can paint the poster without the blend before the film starts, so the
-               poster is transparent where the film is black, and the box behind it is too */
-            background: transparent;
-            /* no fade-in: Safari will not autoplay a video that starts invisible; its first frame is the poster */
-            /* a soft round edge: the film's box never shows as a square against the sky */
-            -webkit-mask: radial-gradient(closest-side, #000 78%, transparent 100%);
-                    mask: radial-gradient(closest-side, #000 78%, transparent 100%); }
-.pole { position: absolute; z-index: 1; left: 50%; top: 50%; width: 58%; transform: translate(-50%, -50%); }
-/* Distant galaxies and a faint band of the Milky Way, behind everything and still, so the sky has
-   depth. Gradients only: the page loads no image for them. */
-.cosmos { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden;
-          animation: fade 1.8s ease-out both; }
+/* The sky is the real one: the naked-eye stars (the Yale Bright Star Catalogue to magnitude 6.5) and the Milky
+   Way out to 54 degrees from the celestial pole, at their places for October 2026, seen from the ground facing
+   north in a stereographic view (the Great Bear and Cassiopeia keep their shapes). It is drawn on black and
+   screen-blended, so only its light shows. The circle 11 degrees round the pole (0.18898 of the sky's width,
+   47% of this box) lies under the coin, whose face is 60% of the box. It turns about the pole
+   counterclockwise, as the sky does, once in twelve minutes. It holds still behind the page: scrolling, the band
+   slides up over it (13 Scroll), and the coin, carried up with the page, uncovers Polaris at the pole, the one
+   star that stays while the sky turns. */
+.heavens { position: absolute; left: 50%; top: 50%; width: 247.3%; aspect-ratio: 1; translate: -50% -50%;
+           pointer-events: none; mix-blend-mode: screen; animation: fade 2.4s ease-out both; }
+/* The coin's shadow on the sky behind it, from the lamp it was rendered under (upper left, 60 degrees up), in two
+   layers path-traced with the coin at rest 0.8 radii in front of the sky: the lamp's, cast down and to the right,
+   and the room's, the light the coin keeps from the sky just behind it. Multiplied over the sky, they dim the
+   stars and the Milky Way as a shadow would. Each layer follows the coin's poses, its press, its drop and its
+   lean (generated with the coin's states); each image spans 4.8 radii, 144% of this box. */
+.shade { position: absolute; left: -22%; top: -22%; width: 144%; aspect-ratio: 1; mix-blend-mode: multiply;
+         pointer-events: none; }
+.shade-drop, .shade img { position: absolute; inset: 0; width: 100%; height: 100%; }
+.shade img { transition: transform .9s var(--spring); }
+/* The night's own blue round the pole, laid over the stars as light. */
+.heavens::after { content: ""; position: absolute; inset: 0; mix-blend-mode: screen;
+                  background: radial-gradient(circle closest-side, rgba(13, 38, 77, 0.9), transparent 72%); }
 @keyframes fade { from { opacity: 0; } }
-.milky { position: absolute; left: -20%; top: 34%; width: 140%; height: 34%; transform: rotate(-16deg);
-         background:
-            radial-gradient(ellipse 50% 50% at 50% 50%, rgba(143, 179, 232, 0.07), transparent 100%),
-            radial-gradient(ellipse 30% 40% at 62% 46%, rgba(221, 202, 155, 0.05), transparent 100%),
-            radial-gradient(ellipse 22% 36% at 30% 54%, rgba(140, 112, 226, 0.06), transparent 100%); }
-/* Three kinds of galaxy, so no two look alike: an open spiral seen at a slant, a thin disc seen
-   edge-on with its dust lane, and a small smooth elliptical. They hold still; only the orbits turn. */
-.galaxy { position: absolute; pointer-events: none; }
-.galaxy::before, .galaxy::after { content: ""; position: absolute; inset: 0; border-radius: 50%; }
-.g1 { left: 1%; top: 3%; width: 220px; height: 220px; }
-.g1::before { transform: rotate(-28deg) scaleY(0.58);
-    background:
-        radial-gradient(closest-side, rgba(255, 244, 222, 0.95) 0 2.5%, rgba(236, 214, 170, 0.45) 7%, transparent 18%),
-        conic-gradient(from 20deg, transparent 0 4%, rgba(150, 178, 238, 0.22) 12%, transparent 22%,
-                       transparent 50%, rgba(160, 128, 236, 0.20) 62%, transparent 72%),
-        radial-gradient(closest-side, rgba(110, 120, 210, 0.10), transparent 80%);
-    -webkit-mask: radial-gradient(closest-side, #000 22%, transparent 100%);
-            mask: radial-gradient(closest-side, #000 22%, transparent 100%); }
-.g1::after { transform: rotate(-28deg) scaleY(0.58) rotate(160deg); opacity: 0.6;
-    background: conic-gradient(from 200deg, transparent 0 6%, rgba(190, 160, 245, 0.16) 16%, transparent 26%);
-    -webkit-mask: radial-gradient(closest-side, transparent 14%, #000 30%, transparent 92%);
-            mask: radial-gradient(closest-side, transparent 14%, #000 30%, transparent 92%); }
-.g2 { left: 0.5%; top: 58%; width: 150px; height: 150px; animation-duration: 110s; opacity: 0.8; }
-.g2::before { transform: rotate(24deg) scaleY(0.11);
-    background:
-        radial-gradient(closest-side, rgba(255, 238, 205, 0.95) 0 4%, rgba(228, 205, 160, 0.45) 14%, transparent 34%),
-        radial-gradient(closest-side, rgba(150, 170, 235, 0.32), rgba(140, 120, 220, 0.14) 60%, transparent 100%); }
-.g2::after { transform: rotate(24deg) scaleY(0.035) translateY(30%);
-    background: linear-gradient(90deg, transparent 8%, rgba(9, 9, 11, 0.85) 30%, rgba(9, 9, 11, 0.85) 70%, transparent 92%); }
-/* Two shooting stars, rare and brief: most of each cycle they wait, unseen. */
-.meteor { position: absolute; width: 140px; height: 1px; opacity: 0; transform-origin: left center;
-          background: linear-gradient(90deg, transparent, rgba(255, 246, 224, 0.9));
-          animation: meteor 15s cubic-bezier(.3, .1, .3, 1) infinite; }
-.meteor::after { content: ""; position: absolute; right: -2px; top: -2px; width: 5px; height: 5px; border-radius: 50%;
-                 background: radial-gradient(circle, #fff 0 1px, rgba(255, 246, 224, 0.5) 2px, transparent 3px); }
-.m1 { left: 18%; top: 12%; --a: 18deg; animation-delay: 4s; }
-.m2 { left: 58%; top: 4%; --a: 152deg; animation-duration: 23s; animation-delay: 11s; }
-@keyframes meteor {
-    0%, 93%  { opacity: 0; transform: rotate(var(--a)) translateX(0) scaleX(0.4); }
-    94.5%    { opacity: 1; }
-    99%      { opacity: 0; transform: rotate(var(--a)) translateX(260px) scaleX(1); }
-    100%     { opacity: 0; transform: rotate(var(--a)) translateX(260px) scaleX(1); } }
-.g3 { right: 4%; top: 9%; width: 64px; height: 64px; animation-duration: 75s; opacity: 0.85; }
-.g3::before { transform: rotate(-12deg) scaleY(0.72);
-    background: radial-gradient(closest-side, rgba(255, 236, 205, 0.9) 0 6%, rgba(236, 196, 150, 0.40) 26%,
-                                rgba(200, 150, 120, 0.12) 60%, transparent 100%); }
-/* A steady glow behind the pole star; the star and its light stay still while the sky turns. */
-.halo { position: absolute; left: 50%; top: 50%; width: 86%; aspect-ratio: 1; border-radius: 50%;
-        transform: translate(-50%, -50%); pointer-events: none; opacity: 0.8;
-        background: radial-gradient(closest-side, rgba(221, 202, 155, 0.30), rgba(221, 202, 155, 0.10) 55%, transparent); }
+.turn { width: 100%; height: 100%; }
+.turn { animation: turn 720s linear infinite; }
+@keyframes turn { to { rotate: -360deg; } }
+.stars { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* The coin: the emblem as the object it is, a gold and enamel medallion path-traced in Blender, standing on a
+   short sprung stand on the glass over the sky, turned toward the lamp it was rendered under. It arrives after
+   the words: dropped onto its stand from a little above, it lands, the stand gives, and it rocks on its rim with
+   the tilt's axis turning faster as the tilt dies (Euler's disk), then stops (.coin-land, generated). A pointer
+   pressing one of its nine parts tips that part away, a press pushes it back, and it settles on a spring (a
+   damped oscillator, 9% overshoot). Each pose's face is that pose's render seen straight on, so the light moves
+   across the relief as on a real coin; the rim is twelve layers behind the face. Sliding the glass (the page)
+   drags the stand, so the coin trails behind it, leaning, and springs back past rest when the page stops
+   (.coin-wob); as the page carries it up past the reader's eye it is seen from further below, and tips back by
+   that angle (.coin-rise, with its own faces). The faces of the other poses load once a pointer is over the
+   hero. */
+.coin { --rx: 8deg; --ry: -16deg; --z: 0px;
+        position: absolute; z-index: 1; left: 50%; top: 50%; width: 60%; aspect-ratio: 1; translate: -50% -50%;
+        container-type: inline-size; }
+.coin-stage { position: absolute; inset: 0; perspective: 450cqw; }
+.coin-rise, .coin-wob, .coin-land { position: absolute; inset: 0; transform-style: preserve-3d; }
+.coin-body { position: absolute; inset: 0; transform-style: preserve-3d;
+             transform: rotateX(var(--rx)) rotateY(var(--ry)) translateZ(var(--z));
+             transition: transform .9s var(--spring); }
+.coin-rim, .coin-rim i { position: absolute; inset: 0; transform-style: preserve-3d; }
+.coin-face { position: absolute; inset: 0; }
+.coin-face img { display: block; width: 100%; height: auto; }
+.coin-face i, .coin-face b { position: absolute; inset: 0; opacity: 0; background: center / 100% no-repeat; }
+.coin-face i { transition: opacity .45s ease-out; }
+.coin-touch { position: absolute; inset: 0; z-index: 2; display: grid;
+              grid-template: repeat(3, 1fr) / repeat(3, 1fr); clip-path: circle(50%); -webkit-tap-highlight-color: transparent; }
+.coin:has(.coin-touch i:active) .coin-body {
+    transition-duration: .16s; transition-timing-function: cubic-bezier(.3, .7, .4, 1); }
+/* The coin's states, rim and lazy faces: generated with the coin's renders, not written by hand. */
+.coin-rim i { border-radius: 50%; background: conic-gradient(#6d5c3c 0deg, #685739 10deg, #5d4d32 20deg, #453927 30deg, #2b241b 40deg, #1c1915 50deg, #181614 60deg, #151313 70deg, #131212 80deg, #141312 90deg, #181512 100deg, #1d1813 110deg, #231c14 120deg, #2a2016 130deg, #312518 140deg, #37291a 150deg, #3d2d1c 160deg, #41311d 170deg, #46341f 180deg, #48351f 190deg, #473520 200deg, #46341f 210deg, #43331f 220deg, #42321f 230deg, #41321f 240deg, #6d5c3c 250deg, #6d5c3c 260deg, #6d5c3c 270deg, #6d5c3c 280deg, #6d5c3c 290deg, #6d5c3c 300deg, #6d5c3c 310deg, #6d5c3c 320deg, #6d5c3c 330deg, #6d5c3c 340deg, #6d5c3c 350deg, #6d5c3c 360deg); }
+.coin-rim i:nth-child(1) { transform: translateZ(-0.417cqw); }
+.coin-rim i:nth-child(2) { transform: translateZ(-0.833cqw); }
+.coin-rim i:nth-child(3) { transform: translateZ(-1.250cqw); }
+.coin-rim i:nth-child(4) { transform: translateZ(-1.667cqw); }
+.coin-rim i:nth-child(5) { transform: translateZ(-2.083cqw); }
+.coin-rim i:nth-child(6) { transform: translateZ(-2.500cqw); }
+.coin-rim i:nth-child(7) { transform: translateZ(-2.917cqw); }
+.coin-rim i:nth-child(8) { transform: translateZ(-3.333cqw); }
+.coin-rim i:nth-child(9) { transform: translateZ(-3.750cqw); }
+.coin-rim i:nth-child(10) { transform: translateZ(-4.167cqw); }
+.coin-rim i:nth-child(11) { transform: translateZ(-4.583cqw); }
+.coin-rim i:nth-child(12) { transform: translateZ(-5.000cqw); }
+.coin:has(.coin-touch i:nth-child(1):hover) { --rx: 18deg; --ry: -26deg; }
+.coin:has(.coin-touch i:nth-child(1):active) { --rx: 21deg; --ry: -29deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(1):hover) .coin-face i:nth-of-type(1) { opacity: 1; }
+.coin:has(.coin-touch i:nth-child(2):hover) { --rx: 18deg; --ry: -16deg; }
+.coin:has(.coin-touch i:nth-child(2):active) { --rx: 21deg; --ry: -16deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(2):hover) .coin-face i:nth-of-type(2) { opacity: 1; }
+.coin:has(.coin-touch i:nth-child(3):hover) { --rx: 18deg; --ry: -6deg; }
+.coin:has(.coin-touch i:nth-child(3):active) { --rx: 21deg; --ry: -3deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(3):hover) .coin-face i:nth-of-type(3) { opacity: 1; }
+.coin:has(.coin-touch i:nth-child(4):hover) { --rx: 8deg; --ry: -26deg; }
+.coin:has(.coin-touch i:nth-child(4):active) { --rx: 8deg; --ry: -29deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(4):hover) .coin-face i:nth-of-type(4) { opacity: 1; }
+.coin:has(.coin-touch i:nth-child(5):active) { --rx: 8deg; --ry: -16deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(6):hover) { --rx: 8deg; --ry: -6deg; }
+.coin:has(.coin-touch i:nth-child(6):active) { --rx: 8deg; --ry: -3deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(6):hover) .coin-face i:nth-of-type(5) { opacity: 1; }
+.coin:has(.coin-touch i:nth-child(7):hover) { --rx: -2deg; --ry: -26deg; }
+.coin:has(.coin-touch i:nth-child(7):active) { --rx: -5deg; --ry: -29deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(7):hover) .coin-face i:nth-of-type(6) { opacity: 1; }
+.coin:has(.coin-touch i:nth-child(8):hover) { --rx: -2deg; --ry: -16deg; }
+.coin:has(.coin-touch i:nth-child(8):active) { --rx: -5deg; --ry: -16deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(8):hover) .coin-face i:nth-of-type(7) { opacity: 1; }
+.coin:has(.coin-touch i:nth-child(9):hover) { --rx: -2deg; --ry: -6deg; }
+.coin:has(.coin-touch i:nth-child(9):active) { --rx: -5deg; --ry: -3deg; --z: -6cqw; }
+.coin:has(.coin-touch i:nth-child(9):hover) .coin-face i:nth-of-type(8) { opacity: 1; }
+.hero-band:hover .coin-face i:nth-of-type(1) { background-image: url("hero/coin-0-640.5e465b5e.webp"); background-image: image-set(url("hero/coin-0-384.d98c2cbf.avif") type("image/avif") 1x, url("hero/coin-0-640.12275d1c.avif") type("image/avif") 2x, url("hero/coin-0-384.ba69753c.webp") type("image/webp") 1x, url("hero/coin-0-640.5e465b5e.webp") type("image/webp") 2x); }
+.hero-band:hover .coin-face i:nth-of-type(2) { background-image: url("hero/coin-1-640.5f34fbb3.webp"); background-image: image-set(url("hero/coin-1-384.9d2f5b86.avif") type("image/avif") 1x, url("hero/coin-1-640.26c4c8a8.avif") type("image/avif") 2x, url("hero/coin-1-384.102ce717.webp") type("image/webp") 1x, url("hero/coin-1-640.5f34fbb3.webp") type("image/webp") 2x); }
+.hero-band:hover .coin-face i:nth-of-type(3) { background-image: url("hero/coin-2-640.1f84e45d.webp"); background-image: image-set(url("hero/coin-2-384.f9627bd8.avif") type("image/avif") 1x, url("hero/coin-2-640.b771790f.avif") type("image/avif") 2x, url("hero/coin-2-384.117e51fb.webp") type("image/webp") 1x, url("hero/coin-2-640.1f84e45d.webp") type("image/webp") 2x); }
+.hero-band:hover .coin-face i:nth-of-type(4) { background-image: url("hero/coin-3-640.15bab85f.webp"); background-image: image-set(url("hero/coin-3-384.fd0be318.avif") type("image/avif") 1x, url("hero/coin-3-640.92768b58.avif") type("image/avif") 2x, url("hero/coin-3-384.19944fe6.webp") type("image/webp") 1x, url("hero/coin-3-640.15bab85f.webp") type("image/webp") 2x); }
+.hero-band:hover .coin-face i:nth-of-type(5) { background-image: url("hero/coin-5-640.d2936fa8.webp"); background-image: image-set(url("hero/coin-5-384.b4272c7b.avif") type("image/avif") 1x, url("hero/coin-5-640.869e9204.avif") type("image/avif") 2x, url("hero/coin-5-384.a7102d17.webp") type("image/webp") 1x, url("hero/coin-5-640.d2936fa8.webp") type("image/webp") 2x); }
+.hero-band:hover .coin-face i:nth-of-type(6) { background-image: url("hero/coin-6-640.4420b4e0.webp"); background-image: image-set(url("hero/coin-6-384.a4bea987.avif") type("image/avif") 1x, url("hero/coin-6-640.6427ea50.avif") type("image/avif") 2x, url("hero/coin-6-384.629c5d7a.webp") type("image/webp") 1x, url("hero/coin-6-640.4420b4e0.webp") type("image/webp") 2x); }
+.hero-band:hover .coin-face i:nth-of-type(7) { background-image: url("hero/coin-7-640.6481be7b.webp"); background-image: image-set(url("hero/coin-7-384.aa57d68e.avif") type("image/avif") 1x, url("hero/coin-7-640.b9542851.avif") type("image/avif") 2x, url("hero/coin-7-384.88ec9d64.webp") type("image/webp") 1x, url("hero/coin-7-640.6481be7b.webp") type("image/webp") 2x); }
+.hero-band:hover .coin-face i:nth-of-type(8) { background-image: url("hero/coin-8-640.230d37f6.webp"); background-image: image-set(url("hero/coin-8-384.79981b8d.avif") type("image/avif") 1x, url("hero/coin-8-640.5a52cbd0.avif") type("image/avif") 2x, url("hero/coin-8-384.d14fc385.webp") type("image/webp") 1x, url("hero/coin-8-640.230d37f6.webp") type("image/webp") 2x); }
+.sky:has(.coin-touch i:nth-child(1):hover) .shade .dir { transform: translate(-0.400%, 0.048%) matrix(0.992, -0.0378, 0.0667, 1.0308, 0, 0); }
+.sky:has(.coin-touch i:nth-child(1):active) .shade .dir { transform: translate(-1.421%, -0.973%) matrix(0.992, -0.0378, 0.0667, 1.0308, 0, 0); }
+.sky:has(.coin-touch i:nth-child(1):hover) .shade .ao { transform: translate(0.000%, -0.000%) matrix(0.935, -0.1026, -0.0, 0.9604, 0, 0); }
+.sky:has(.coin-touch i:nth-child(1):active) .shade .ao { transform: translate(0.000%, -0.000%) matrix(0.907, -0.0995, -0.0, 0.9316, 0, 0); }
+.sky:has(.coin-touch i:nth-child(2):hover) .shade .dir { transform: translate(-0.396%, 0.125%) matrix(0.9913, -0.0499, 0.0667, 1.0315, 0, 0); }
+.sky:has(.coin-touch i:nth-child(2):active) .shade .dir { transform: translate(-1.415%, -0.896%) matrix(0.9913, -0.0499, 0.0667, 1.0315, 0, 0); }
+.sky:has(.coin-touch i:nth-child(2):hover) .shade .ao { transform: translate(0.000%, -0.000%) matrix(1.0, -0.0503, -0.0, 0.9604, 0, 0); }
+.sky:has(.coin-touch i:nth-child(2):active) .shade .ao { transform: translate(-0.000%, -0.000%) matrix(0.97, -0.0488, -0.0, 0.9316, 0, 0); }
+.sky:has(.coin-touch i:nth-child(3):hover) .shade .dir { transform: translate(-0.196%, 0.206%) matrix(0.9603, -0.0626, 0.0684, 1.0322, 0, 0); }
+.sky:has(.coin-touch i:nth-child(3):active) .shade .dir { transform: translate(-1.217%, -0.815%) matrix(0.9603, -0.0626, 0.0684, 1.0322, 0, 0); }
+.sky:has(.coin-touch i:nth-child(3):hover) .shade .ao { transform: translate(-0.000%, -0.000%) matrix(1.0346, 0.0047, -0.0, 0.9604, 0, 0); }
+.sky:has(.coin-touch i:nth-child(3):active) .shade .ao { transform: translate(-0.000%, -0.000%) matrix(1.0036, 0.0046, -0.0, 0.9316, 0, 0); }
+.sky:has(.coin-touch i:nth-child(4):hover) .shade .dir { transform: translate(-0.021%, -0.260%) matrix(1.0031, 0.0404, -0.0002, 0.9978, 0, 0); }
+.sky:has(.coin-touch i:nth-child(4):active) .shade .dir { transform: translate(-1.040%, -1.281%) matrix(1.0031, 0.0404, -0.0002, 0.9978, 0, 0); }
+.sky:has(.coin-touch i:nth-child(4):hover) .shade .ao { transform: translate(0.000%, -0.000%) matrix(0.935, -0.0236, -0.0, 1.0, 0, 0); }
+.sky:has(.coin-touch i:nth-child(4):active) .shade .ao { transform: translate(0.000%, -0.000%) matrix(0.907, -0.0229, -0.0, 0.97, 0, 0); }
+.sky:has(.coin-touch i:nth-child(5):active) .shade .dir { transform: translate(-1.021%, -1.021%) matrix(1.0, -0.0, -0.0, 1.0, 0, 0); }
+.sky:has(.coin-touch i:nth-child(5):active) .shade .ao { transform: translate(-0.000%, -0.000%) matrix(0.97, -0.0, -0.0, 0.97, 0, 0); }
+.sky:has(.coin-touch i:nth-child(6):hover) .shade .dir { transform: translate(0.217%, 0.273%) matrix(0.9664, -0.0424, 0.0018, 1.0023, 0, 0); }
+.sky:has(.coin-touch i:nth-child(6):active) .shade .dir { transform: translate(-0.804%, -0.748%) matrix(0.9664, -0.0424, 0.0018, 1.0023, 0, 0); }
+.sky:has(.coin-touch i:nth-child(6):hover) .shade .ao { transform: translate(-0.000%, -0.000%) matrix(1.0346, 0.0248, -0.0, 1.0, 0, 0); }
+.sky:has(.coin-touch i:nth-child(6):active) .shade .ao { transform: translate(-0.000%, -0.000%) matrix(1.0036, 0.024, -0.0, 0.97, 0, 0); }
+.sky:has(.coin-touch i:nth-child(7):hover) .shade .dir { transform: translate(0.402%, -0.352%) matrix(1.0093, 0.1173, -0.0684, 0.9345, 0, 0); }
+.sky:has(.coin-touch i:nth-child(7):active) .shade .dir { transform: translate(-0.619%, -1.373%) matrix(1.0093, 0.1173, -0.0684, 0.9345, 0, 0); }
+.sky:has(.coin-touch i:nth-child(7):hover) .shade .ao { transform: translate(0.000%, -0.000%) matrix(0.935, 0.0562, -0.0, 1.0092, 0, 0); }
+.sky:has(.coin-touch i:nth-child(7):active) .shade .ao { transform: translate(0.000%, -0.000%) matrix(0.907, 0.0545, -0.0, 0.9789, 0, 0); }
+.sky:has(.coin-touch i:nth-child(8):hover) .shade .dir { transform: translate(0.425%, 0.081%) matrix(1.0056, 0.0499, -0.0682, 0.9381, 0, 0); }
+.sky:has(.coin-touch i:nth-child(8):active) .shade .dir { transform: translate(-0.596%, -0.940%) matrix(1.0056, 0.0499, -0.0682, 0.9381, 0, 0); }
+.sky:has(.coin-touch i:nth-child(8):hover) .shade .ao { transform: translate(0.000%, -0.000%) matrix(1.0, 0.0503, -0.0, 1.0092, 0, 0); }
+.sky:has(.coin-touch i:nth-child(8):active) .shade .ao { transform: translate(-0.000%, -0.000%) matrix(0.97, 0.0488, -0.0, 0.9789, 0, 0); }
+.sky:has(.coin-touch i:nth-child(9):hover) .shade .dir { transform: translate(0.646%, 0.538%) matrix(0.9714, -0.021, -0.0663, 0.942, 0, 0); }
+.sky:has(.coin-touch i:nth-child(9):active) .shade .dir { transform: translate(-0.375%, -0.483%) matrix(0.9714, -0.021, -0.0663, 0.942, 0, 0); }
+.sky:has(.coin-touch i:nth-child(9):hover) .shade .ao { transform: translate(-0.000%, -0.000%) matrix(1.0346, 0.0441, -0.0, 1.0092, 0, 0); }
+.sky:has(.coin-touch i:nth-child(9):active) .shade .ao { transform: translate(-0.000%, 0.000%) matrix(1.0036, 0.0427, -0.0, 0.9789, 0, 0); }
+.coin-face b:nth-of-type(1) { background-image: url("hero/coin-rx13-640.80bd5b6f.webp"); background-image: image-set(url("hero/coin-rx13-384.700e462e.avif") type("image/avif") 1x, url("hero/coin-rx13-640.5d4d7995.avif") type("image/avif") 2x, url("hero/coin-rx13-384.c17b76f8.webp") type("image/webp") 1x, url("hero/coin-rx13-640.80bd5b6f.webp") type("image/webp") 2x); animation-range: 0.0px 157.5px; }
+.coin-face b:nth-of-type(2) { --face: image-set(url("hero/coin-1-384.9d2f5b86.avif") type("image/avif") 1x, url("hero/coin-1-640.26c4c8a8.avif") type("image/avif") 2x, url("hero/coin-1-384.102ce717.webp") type("image/webp") 1x, url("hero/coin-1-640.5f34fbb3.webp") type("image/webp") 2x); animation-range: 157.5px 317.4px, 0px 10px; }
+.coin-face b:nth-of-type(3) { --face: image-set(url("hero/coin-rx23-384.98ae9360.avif") type("image/avif") 1x, url("hero/coin-rx23-640.785e5d54.avif") type("image/avif") 2x, url("hero/coin-rx23-384.b4c7930b.webp") type("image/webp") 1x, url("hero/coin-rx23-640.52c45910.webp") type("image/webp") 2x); animation-range: 317.4px 482.3px, 0px 10px; }
+.coin-face b:nth-of-type(4) { --face: image-set(url("hero/coin-rx28-384.2861d8ec.avif") type("image/avif") 1x, url("hero/coin-rx28-640.c9bbbd56.avif") type("image/avif") 2x, url("hero/coin-rx28-384.dc759804.webp") type("image/webp") 1x, url("hero/coin-rx28-640.11f73176.webp") type("image/webp") 2x); animation-range: 482.3px 655.1px, 0px 10px; }
+@keyframes coin-drop { 0.00% { transform: translate3d(21.84cqw, 11.13cqw, 76.15cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 0.99% { transform: translate3d(21.79cqw, 11.11cqw, 76.01cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 1.98% { transform: translate3d(21.67cqw, 11.05cqw, 75.57cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 2.98% { transform: translate3d(21.46cqw, 10.94cqw, 74.83cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 3.97% { transform: translate3d(21.16cqw, 10.79cqw, 73.81cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 4.96% { transform: translate3d(20.79cqw, 10.60cqw, 72.49cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 5.95% { transform: translate3d(20.32cqw, 10.36cqw, 70.88cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 6.94% { transform: translate3d(19.78cqw, 10.08cqw, 68.97cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 7.94% { transform: translate3d(19.15cqw, 9.76cqw, 66.78cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 8.93% { transform: translate3d(18.43cqw, 9.40cqw, 64.29cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 9.92% { transform: translate3d(17.64cqw, 8.99cqw, 61.50cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 10.91% { transform: translate3d(16.75cqw, 8.54cqw, 58.43cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 11.90% { transform: translate3d(15.79cqw, 8.05cqw, 55.06cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 12.90% { transform: translate3d(14.74cqw, 7.51cqw, 51.40cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 13.89% { transform: translate3d(13.60cqw, 6.94cqw, 47.44cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 14.88% { transform: translate3d(12.39cqw, 6.31cqw, 43.19cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 15.87% { transform: translate3d(11.08cqw, 5.65cqw, 38.65cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 16.87% { transform: translate3d(9.70cqw, 4.94cqw, 33.82cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 17.86% { transform: translate3d(8.23cqw, 4.19cqw, 28.69cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 18.85% { transform: translate3d(6.67cqw, 3.40cqw, 23.27cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 19.84% { transform: translate3d(5.03cqw, 2.57cqw, 17.56cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 20.83% { transform: translate3d(3.31cqw, 1.69cqw, 11.55cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 21.83% { transform: translate3d(1.51cqw, 0.77cqw, 5.25cqw) rotate3d(-0.6428, -0.7660, 0, 9.000deg); } 22.82% { transform: translate3d(-0.14cqw, -0.07cqw, -0.48cqw) rotate3d(-0.5059, -0.8626, 0, 8.982deg); } 23.81% { transform: translate3d(-0.64cqw, -0.33cqw, -2.24cqw) rotate3d(-0.3540, -0.9353, 0, 8.889deg); } 24.80% { transform: translate3d(-0.83cqw, -0.42cqw, -2.89cqw) rotate3d(-0.1912, -0.9816, 0, 8.796deg); } 25.79% { transform: translate3d(-0.75cqw, -0.38cqw, -2.62cqw) rotate3d(-0.0219, -0.9998, 0, 8.703deg); } 26.79% { transform: translate3d(-0.51cqw, -0.26cqw, -1.77cqw) rotate3d(0.1488, -0.9889, 0, 8.610deg); } 27.78% { transform: translate3d(-0.21cqw, -0.11cqw, -0.74cqw) rotate3d(0.3161, -0.9487, 0, 8.517deg); } 28.77% { transform: translate3d(0.05cqw, 0.02cqw, 0.16cqw) rotate3d(0.4748, -0.8801, 0, 8.423deg); } 29.76% { transform: translate3d(0.21cqw, 0.11cqw, 0.74cqw) rotate3d(0.6202, -0.7845, 0, 8.329deg); } 30.75% { transform: translate3d(0.27cqw, 0.14cqw, 0.95cqw) rotate3d(0.7474, -0.6644, 0, 8.235deg); } 31.75% { transform: translate3d(0.25cqw, 0.13cqw, 0.86cqw) rotate3d(0.8523, -0.5231, 0, 8.140deg); } 32.74% { transform: translate3d(0.17cqw, 0.09cqw, 0.58cqw) rotate3d(0.9311, -0.3647, 0, 8.045deg); } 33.73% { transform: translate3d(0.07cqw, 0.04cqw, 0.24cqw) rotate3d(0.9810, -0.1938, 0, 7.950deg); } 34.72% { transform: translate3d(-0.01cqw, -0.01cqw, -0.05cqw) rotate3d(0.9999, -0.0157, 0, 7.855deg); } 35.71% { transform: translate3d(-0.07cqw, -0.04cqw, -0.24cqw) rotate3d(0.9865, 0.1640, 0, 7.759deg); } 36.71% { transform: translate3d(-0.09cqw, -0.05cqw, -0.31cqw) rotate3d(0.9406, 0.3395, 0, 7.663deg); } 37.70% { transform: translate3d(-0.08cqw, -0.04cqw, -0.28cqw) rotate3d(0.8633, 0.5047, 0, 7.567deg); } 38.69% { transform: translate3d(-0.05cqw, -0.03cqw, -0.19cqw) rotate3d(0.7564, 0.6541, 0, 7.471deg); } 39.68% { transform: translate3d(-0.02cqw, -0.01cqw, -0.08cqw) rotate3d(0.6231, 0.7821, 0, 7.374deg); } 40.67% { transform: translate3d(0.00cqw, 0.00cqw, 0.02cqw) rotate3d(0.4674, 0.8840, 0, 7.277deg); } 41.67% { transform: translate3d(0.02cqw, 0.01cqw, 0.08cqw) rotate3d(0.2943, 0.9557, 0, 7.179deg); } 42.66% { transform: translate3d(0.03cqw, 0.02cqw, 0.10cqw) rotate3d(0.1096, 0.9940, 0, 7.081deg); } 43.65% { transform: translate3d(0.03cqw, 0.01cqw, 0.09cqw) rotate3d(-0.0803, 0.9968, 0, 6.983deg); } 44.64% { transform: translate3d(0.02cqw, 0.01cqw, 0.06cqw) rotate3d(-0.2686, 0.9633, 0, 6.885deg); } 45.63% { transform: translate3d(0.01cqw, 0.00cqw, 0.03cqw) rotate3d(-0.4483, 0.8939, 0, 6.786deg); } 46.63% { transform: translate3d(-0.00cqw, -0.00cqw, -0.01cqw) rotate3d(-0.6125, 0.7904, 0, 6.686deg); } 47.62% { transform: translate3d(-0.01cqw, -0.00cqw, -0.03cqw) rotate3d(-0.7547, 0.6561, 0, 6.587deg); } 48.61% { transform: translate3d(-0.01cqw, -0.00cqw, -0.03cqw) rotate3d(-0.8687, 0.4954, 0, 6.487deg); } 49.60% { transform: translate3d(-0.01cqw, -0.00cqw, -0.03cqw) rotate3d(-0.9494, 0.3140, 0, 6.386deg); } 50.60% { transform: translate3d(-0.01cqw, -0.00cqw, -0.02cqw) rotate3d(-0.9929, 0.1186, 0, 6.286deg); } 51.59% { transform: translate3d(-0.00cqw, -0.00cqw, -0.01cqw) rotate3d(-0.9965, -0.0831, 0, 6.184deg); } 52.58% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.9591, -0.2831, 0, 6.083deg); } 53.57% { transform: translate3d(0.00cqw, 0.00cqw, 0.01cqw) rotate3d(-0.8811, -0.4729, 0, 5.981deg); } 54.56% { transform: translate3d(0.00cqw, 0.00cqw, 0.01cqw) rotate3d(-0.7649, -0.6441, 0, 5.878deg); } 55.56% { transform: translate3d(0.00cqw, 0.00cqw, 0.01cqw) rotate3d(-0.6145, -0.7889, 0, 5.775deg); } 56.55% { transform: translate3d(0.00cqw, 0.00cqw, 0.01cqw) rotate3d(-0.4356, -0.9001, 0, 5.672deg); } 57.54% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.2355, -0.9719, 0, 5.568deg); } 58.53% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.0227, -0.9997, 0, 5.464deg); } 59.52% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.1932, -0.9812, 0, 5.359deg); } 60.52% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.4021, -0.9156, 0, 5.254deg); } 61.51% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.5934, -0.8049, 0, 5.148deg); } 62.50% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.7573, -0.6531, 0, 5.042deg); } 63.49% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.8845, -0.4665, 0, 4.935deg); } 64.48% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.9673, -0.2537, 0, 4.827deg); } 65.48% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.9997, -0.0252, 0, 4.719deg); } 66.47% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.9782, 0.2074, 0, 4.610deg); } 67.46% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.9022, 0.4313, 0, 4.501deg); } 68.45% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.7739, 0.6333, 0, 4.390deg); } 69.44% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.5988, 0.8009, 0, 4.280deg); } 70.44% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.3856, 0.9227, 0, 4.168deg); } 71.43% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.1457, 0.9893, 0, 4.056deg); } 72.42% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.1067, 0.9943, 0, 3.943deg); } 73.41% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.3558, 0.9346, 0, 3.829deg); } 74.40% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.5848, 0.8112, 0, 3.714deg); } 75.40% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.7768, 0.6297, 0, 3.599deg); } 76.39% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.9164, 0.4003, 0, 3.482deg); } 77.38% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.9905, 0.1374, 0, 3.364deg); } 78.37% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.9900, -0.1407, 0, 3.246deg); } 79.37% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.9108, -0.4128, 0, 3.126deg); } 80.36% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.7548, -0.6559, 0, 3.005deg); } 81.35% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.5306, -0.8476, 0, 2.883deg); } 82.34% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.2540, -0.9672, 0, 2.760deg); } 83.33% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.0528, -0.9986, 0, 2.635deg); } 84.33% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.3618, -0.9323, 0, 2.509deg); } 85.32% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.6411, -0.7674, 0, 2.381deg); } 86.31% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.8578, -0.5140, 0, 2.251deg); } 87.30% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.9811, -0.1934, 0, 2.120deg); } 88.29% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.9869, 0.1613, 0, 1.986deg); } 89.29% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.8620, 0.5068, 0, 1.851deg); } 90.28% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.6093, 0.7930, 0, 1.712deg); } 91.27% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.2514, 0.9679, 0, 1.571deg); } 92.26% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.1660, 0.9861, 0, 1.426deg); } 93.25% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(-0.5740, 0.8188, 0, 1.278deg); } 94.25% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.8844, 0.4667, 0, 1.125deg); } 95.24% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.9997, -0.0255, 0, 0.967deg); } 96.23% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.8328, -0.5536, 0, 0.802deg); } 97.22% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(-0.3430, -0.9393, 0, 0.628deg); } 98.21% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.3954, -0.9185, 0, 0.441deg); } 99.21% { transform: translate3d(-0.00cqw, -0.00cqw, -0.00cqw) rotate3d(0.9931, -0.1175, 0, 0.231deg); } 100.20% { transform: translate3d(0.00cqw, 0.00cqw, 0.00cqw) rotate3d(0.5983, 0.8013, 0, 0.000deg); } }
+.coin-land { animation: coin-drop 1.68s linear 1.45s both; }
+@keyframes shade-drop { 0.00% { translate: 13.61% 13.61%; scale: 1.400; opacity: 0.000; } 0.99% { translate: 13.58% 13.58%; scale: 1.399; opacity: 0.061; } 1.98% { translate: 13.50% 13.50%; scale: 1.397; opacity: 0.122; } 2.98% { translate: 13.37% 13.37%; scale: 1.393; opacity: 0.184; } 3.97% { translate: 13.19% 13.19%; scale: 1.388; opacity: 0.247; } 4.96% { translate: 12.95% 12.95%; scale: 1.381; opacity: 0.312; } 5.95% { translate: 12.67% 12.67%; scale: 1.372; opacity: 0.379; } 6.94% { translate: 12.33% 12.33%; scale: 1.362; opacity: 0.449; } 7.94% { translate: 11.93% 11.93%; scale: 1.351; opacity: 0.522; } 8.93% { translate: 11.49% 11.49%; scale: 1.338; opacity: 0.559; } 9.92% { translate: 10.99% 10.99%; scale: 1.323; opacity: 0.571; } 10.91% { translate: 10.44% 10.44%; scale: 1.307; opacity: 0.585; } 11.90% { translate: 9.84% 9.84%; scale: 1.289; opacity: 0.602; } 12.90% { translate: 9.18% 9.18%; scale: 1.270; opacity: 0.620; } 13.89% { translate: 8.48% 8.48%; scale: 1.249; opacity: 0.641; } 14.88% { translate: 7.72% 7.72%; scale: 1.227; opacity: 0.664; } 15.87% { translate: 6.91% 6.91%; scale: 1.203; opacity: 0.691; } 16.87% { translate: 6.04% 6.04%; scale: 1.178; opacity: 0.721; } 17.86% { translate: 5.13% 5.13%; scale: 1.151; opacity: 0.755; } 18.85% { translate: 4.16% 4.16%; scale: 1.122; opacity: 0.794; } 19.84% { translate: 3.14% 3.14%; scale: 1.092; opacity: 0.838; } 20.83% { translate: 2.06% 2.06%; scale: 1.061; opacity: 0.889; } 21.83% { translate: 0.94% 0.94%; scale: 1.028; opacity: 0.947; } 22.82% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 23.81% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 24.80% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 25.79% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 26.79% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 27.78% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 28.77% { translate: 0.03% 0.03%; scale: 1.001; opacity: 0.998; } 29.76% { translate: 0.13% 0.13%; scale: 1.004; opacity: 0.992; } 30.75% { translate: 0.17% 0.17%; scale: 1.005; opacity: 0.990; } 31.75% { translate: 0.15% 0.15%; scale: 1.005; opacity: 0.991; } 32.74% { translate: 0.10% 0.10%; scale: 1.003; opacity: 0.994; } 33.73% { translate: 0.04% 0.04%; scale: 1.001; opacity: 0.997; } 34.72% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 35.71% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 36.71% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 37.70% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 38.69% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 39.68% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 40.67% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 41.67% { translate: 0.01% 0.01%; scale: 1.000; opacity: 0.999; } 42.66% { translate: 0.02% 0.02%; scale: 1.001; opacity: 0.999; } 43.65% { translate: 0.02% 0.02%; scale: 1.000; opacity: 0.999; } 44.64% { translate: 0.01% 0.01%; scale: 1.000; opacity: 0.999; } 45.63% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 46.63% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 47.62% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 48.61% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 49.60% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 50.60% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 51.59% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 52.58% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 53.57% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 54.56% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 55.56% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 56.55% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 57.54% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 58.53% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 59.52% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 60.52% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 61.51% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 62.50% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 63.49% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 64.48% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 65.48% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 66.47% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 67.46% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 68.45% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 69.44% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 70.44% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 71.43% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 72.42% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 73.41% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 74.40% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 75.40% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 76.39% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 77.38% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 78.37% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 79.37% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 80.36% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 81.35% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 82.34% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 83.33% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 84.33% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 85.32% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 86.31% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 87.30% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 88.29% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 89.29% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 90.28% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 91.27% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 92.26% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 93.25% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 94.25% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 95.24% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 96.23% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 97.22% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 98.21% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 99.21% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } 100.20% { translate: 0.00% 0.00%; scale: 1.000; opacity: 1.000; } }
+.shade-drop { animation: shade-drop 1.68s linear 1.45s both; }
+.coin { --drop-at: 1.45s; }
+.coin-stage, .shade { --spring-scroll: linear(0.000 0.0%, 0.158 2.3%, 0.325 4.5%, 0.489 6.8%, 0.645 9.1%, 0.785 11.4%, 0.906 13.6%, 1.007 15.9%, 1.085 18.2%, 1.144 20.5%, 1.182 22.7%, 1.204 25.0%, 1.211 27.3%, 1.206 29.5%, 1.192 31.8%, 1.172 34.1%, 1.147 36.4%, 1.120 38.6%, 1.093 40.9%, 1.067 43.2%, 1.043 45.5%, 1.022 47.7%, 1.005 50.0%, 0.991 52.3%, 0.980 54.5%, 0.972 56.8%, 0.968 59.1%, 0.966 61.4%, 0.966 63.6%, 0.968 65.9%, 0.971 68.2%, 0.975 70.5%, 0.979 72.7%, 0.983 75.0%, 0.987 77.3%, 0.992 79.5%, 0.995 81.8%, 0.998 84.1%, 1.001 86.4%, 1.003 88.6%, 1.004 90.9%, 1.005 93.2%, 1.005 95.5%, 1.006 97.7%, 1.000 100.0%); }
+/* (end of the generated coin rules) */
+/* The sky ends at the band's foot as it ends at a horizon, fading into the ground rather than stopping at an
+   edge: one still layer above the sky, below the words and tiles. */
+.horizon { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; height: clamp(90px, 13vh, 130px);
+           pointer-events: none; background: linear-gradient(180deg, transparent, 62%, var(--ground)); }
 
-.hero-copy > *, .proof li { animation: up 1s cubic-bezier(.2, .7, .2, 1) both; }
+.hero-copy > *, .proof li, .proof-scope { animation: up 1s cubic-bezier(.2, .7, .2, 1) both; }
 .hero-copy > :nth-child(1) { animation-delay: .55s; }
 .hero-copy > :nth-child(2) { animation-delay: .68s; }
 .hero-copy > :nth-child(3) { animation-delay: .86s; }
@@ -210,196 +296,72 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
 .proof li:nth-child(2) { animation-delay: 1.23s; }
 .proof li:nth-child(3) { animation-delay: 1.31s; }
 .proof li:nth-child(4) { animation-delay: 1.39s; }
+.proof-scope { animation-delay: 1.39s; }
 @keyframes up { from { opacity: 0; translate: 0 16px; } to { opacity: 1; translate: 0 0; } }
 
-/* Four tiles, one fact each, large enough to read at a glance; each opens its evidence. The first
-   is the OpenID Certified mark itself, in the form the Foundation publishes. */
-.proof { grid-area: proof; list-style: none; margin: 24px 0 0; padding: 0;
-         display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+/* Three tiles under the words, large enough to read at a glance: the OpenID Certified mark itself, in the form
+   the Foundation publishes (opening the listing that states its scope); the EU's reference software it is tested
+   with; and the way to the mission. The column under the coin stays open sky, so the star the coin covered has
+   room to show when the page lifts the coin away. */
+.proof { grid-area: proof; align-self: start; list-style: none; margin: 0; padding: 0;
+         display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .proof li { display: flex; }
-.proof a { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 116px;
-           padding: 20px; border: 1px solid var(--line-strong); border-radius: 10px; text-align: center;
-           background: rgba(255, 255, 255, 0.02); color: var(--ink); text-decoration: none;
-           transition: border-color .2s, background .2s; }
-.proof a:hover { border-color: var(--gold); background: rgba(221, 202, 155, 0.06); }
-.proof b { font: 600 clamp(18px, 1.7vw, 23px)/1.15 var(--font-display); letter-spacing: -0.01em; }
-.proof-cert img { height: 66px; width: auto; border-radius: 6px; }
+.proof a { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 88px;
+           padding: 12px 10px; border: 1px solid var(--line-strong); border-radius: 8px; text-align: center;
+           background-color: rgba(255, 255, 255, 0.015);
+           background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.045), transparent 55%, rgba(0, 0, 0, 0.14));
+           color: var(--ink); text-decoration: none; --h: 4; --h0: 4; --rise: .75s; --ease-h: var(--spring-card);
+           transition: --h var(--rise) var(--ease-h), border-color .2s, background-color .2s; }
+.proof a:hover { --h: 14; border-color: var(--gold); background-color: rgba(221, 202, 155, 0.06); }
+.proof a:active { --h: 1; --rise: .12s; --ease-h: var(--settle); }
+.proof b { font: 600 13.5px/1.25 var(--font-display); letter-spacing: 0.01em; }
+.proof-cert img { height: 50px; width: auto; border-radius: 5px; }
+/* The mark's scope, said beside it: which package, which version, which profile. */
+.proof-scope { grid-area: scope; align-self: start; margin: 14px 0 56px; font: 400 12.5px/1.5 var(--font-sans);
+               letter-spacing: 0.01em; color: var(--ink-3); text-wrap: balance; }
+/* The star under the coin, named once the page has lifted the coin off it. It is part of the held sky (it
+   does not turn: Polaris circles the pole at 0.65 degrees, so its name stays beside it). */
+.polaris { position: absolute; z-index: 0; left: calc(50% + 16px); top: calc(50% - 9px); margin: 0;
+           pointer-events: none; opacity: 0; white-space: nowrap; font: 400 11px/1.5 var(--font-mono);
+           letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.polaris b { display: block; font-weight: 500; letter-spacing: 0.22em; color: var(--gold); }
 
-/* ----- 05 Sections ------------------------------------------------------ */
-.band { padding: 128px 0; border-top: 1px solid var(--line); }
-.num { font: 600 15px/1 var(--font-display); letter-spacing: 0.3em; color: var(--gold);
-       display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
-.num::after { content: ""; width: 40px; height: 1px; background: linear-gradient(90deg, var(--gold-deep), transparent); }
-.band h2 { font-size: clamp(30px, 3.8vw, 50px); line-height: 1.06; letter-spacing: -0.035em;
-           margin-bottom: 26px; max-width: 20ch; }
-.intro { max-width: 46em; }
-.kicker { font: 500 12px/1 var(--font-mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3);
-          margin: 0 0 18px; }
-.band h2.statement { font-size: clamp(36px, 6.2vw, 96px); line-height: 0.96; letter-spacing: -0.035em;
-                     font-weight: 700; text-transform: uppercase; max-width: 16ch; margin-bottom: 48px; }
-.src { font-size: 14px; color: var(--ink-3); margin-top: 28px; }
-.src a { color: var(--ink-2); }
-.split { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); gap: 56px; align-items: start; }
-.more { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 15px; margin-top: 28px; }
-.more a::after { content: " \2192"; }
-
-/* ----- 06 Verify: the transcript --------------------------------------- */
-.term { margin: 0; background: var(--sunken); border: 1px solid var(--line-strong); border-radius: 12px;
-        box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.02) inset; overflow: hidden; }
-.term-bar { display: flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px;
-            border-bottom: 1px solid var(--line); background: var(--surface); }
-.term-bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line-strong); }
-.term-bar span { margin-left: 10px; font: 400 12px/1 var(--font-mono); color: var(--ink-3); }
-.term pre { margin: 0; padding: 22px 24px; overflow-x: auto; }
-.term code { background: none; border: 0; padding: 0; font: 400 12.5px/1.75 var(--font-mono); color: var(--ink-2); white-space: pre; }
-.term .c { color: var(--gold-deep); }
-.term .d { color: var(--ink-3); }
-.term .ok { color: var(--ok); }
-.term .res { color: var(--ok); font-weight: 400; }
 /* After every `font` shorthand, which resets it: JetBrains Mono would draw == as one glyph. */
-code, .term code { font-variant-ligatures: none; }
-.term figcaption { padding: 14px 24px 18px; border-top: 1px solid var(--line); font-size: 12.5px;
-                   line-height: 1.55; color: var(--ink-3); }
-
-/* ----- 07 Evidence ------------------------------------------------------ */
-/* Fifteen projects (and, in section V, the five guarantees) behind one bar that names the best known of them; opened, three even columns of
-   five, so rows line up across the columns. A native disclosure: no script. */
-.roster, .more-box { margin-top: 48px; border: 1px solid var(--line-strong); border-radius: 10px; background: rgba(255, 255, 255, 0.02);
-          transition: border-color .2s; }
-.roster:hover, .roster[open], .more-box:hover, .more-box[open] { border-color: var(--gold-deep); }
-.roster summary, .more-box summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
-                  gap: 24px; padding: 22px 26px; font-size: 17px; color: var(--ink); }
-.roster summary::-webkit-details-marker, .more-box summary::-webkit-details-marker { display: none; }
-.roster .show::before, .more-box .show::before { content: attr(data-closed); }
-.roster[open] .show::before, .more-box[open] .show::before { content: attr(data-opened); }
-.roster .show, .more-box .show { flex: none; font: 500 12px/1 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
-                display: inline-flex; align-items: center; gap: 12px; }
-.roster .show::after, .more-box .show::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
-                       rotate: 45deg; translate: 0 -2px; transition: rotate .25s, translate .25s; }
-.roster[open] .show::after, .more-box[open] .show::after { rotate: 225deg; translate: 0 2px; }
-.roster ul { list-style: none; margin: 0; padding: 0 26px 10px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-             grid-template-rows: repeat(5, auto); grid-auto-flow: column; column-gap: 48px; }
-.roster li { display: flex; flex-direction: column; gap: 4px; padding: 14px 0; border-bottom: 1px solid var(--line); }
-.roster li b { font-size: 15.5px; font-weight: 500; }
-.roster li span { font-size: 13.5px; color: var(--ink-3); }
-
-
-.zeros { margin-top: 48px; }
-.zeros h3 { font-size: 20px; margin-bottom: 22px; }
-.zeros dl { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 0 0 22px;
-            border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line); }
-.zeros dl div { padding: 22px 22px 22px 0; }
-.zeros dl div + div { padding-left: 22px; border-left: 1px solid var(--line); }
-.zeros dt { font-size: 13px; color: var(--ink-3); margin-bottom: 8px; }
-.zeros dd { margin: 0; font-size: 21px; line-height: 1.3; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; }
-.zeros > p { max-width: 46em; font-size: 15px; color: var(--ink-3); }
-.stats { margin: 8px 0 40px; }
-.stats dd { font-size: 38px; letter-spacing: -0.03em; color: var(--gold); }
-
-/* ----- 08 How it works -------------------------------------------------- */
-.flow { list-style: none; margin: 48px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
-.flow li { position: relative; padding-top: 30px; border-top: 1px solid var(--line-strong); }
-.flow li::before { content: ""; position: absolute; top: -4px; left: 0; width: 7px; height: 7px;
-                   border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 4px var(--ground); }
-.step { display: block; font: 600 20px/1 var(--font-display); letter-spacing: 0.12em; color: var(--gold);
-        text-transform: uppercase; margin-bottom: 16px; }
-.flow p { font-size: 16px; }
-.kit { display: grid; grid-template-columns: repeat(2, max-content); gap: 10px 12px; margin-top: 44px; }
-.kit code { font-size: 13px; padding: 8px 12px; border-radius: 7px; color: var(--ink-2); }
-
-/* ----- 09 Design -------------------------------------------------------- */
-.rules { width: 100%; border-collapse: collapse; margin-top: 48px; font-size: 15.5px; }
-.rules thead th { font: 500 12px/1 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase;
-                  color: var(--ink-3); text-align: left; padding: 0 0 14px; border-bottom: 1px solid var(--line-strong); }
-.rules tbody th { color: var(--ink); font-weight: 500; text-align: left; width: 46%; }
-.rules tbody th, .rules td { padding: 17px 24px 17px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-.rules td { color: var(--ink-2); }
-.hard { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; margin-top: 48px; }
-.hard h3 { font-size: 18px; margin-bottom: 12px; padding-top: 20px; position: relative; }
-.hard h3::before { content: ""; position: absolute; top: 0; left: 0; width: 28px; height: 2px; background: var(--gold); }
-.hard p { font-size: 15.5px; }
-
-/* ----- 10 Limits -------------------------------------------------------- */
-
-/* ----- 11 Start --------------------------------------------------------- */
-.paths { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 48px; }
-.paths a { display: flex; flex-direction: column; gap: 10px; padding: 26px 24px 28px; text-decoration: none;
-           background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
-           transition: border-color .2s, transform .2s, background .2s; }
-.paths a:hover { border-color: var(--gold-deep); transform: translateY(-3px); background: var(--surface-2); }
-.paths .who { font: 500 11.5px/1.4 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
-.paths b { font-size: 20px; line-height: 1.25; }
-
-/* ----- 12 Footer -------------------------------------------------------- */
-.foot { border-top: 1px solid var(--line); padding: 72px 0 56px; background: var(--sunken); }
-.foot-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; font-size: 14px; }
-.foot-links a { color: var(--ink-2); text-decoration: none; transition: color .2s; }
-.foot-links a:hover { color: var(--gold); }
-.foot .fine { max-width: 62em; line-height: 1.6; }
-.foot-in { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 18px; }
-.maker img { width: 192px; opacity: 0.92; }
-.maker:hover img { opacity: 1; }
-.motto { font: 500 12px/1.6 var(--font-display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-3); margin: 0; }
-.fine { font-size: 13px; color: var(--ink-3); margin: 0; }
-.fine a { color: var(--ink-2); }
-
+code { font-variant-ligatures: none; }
 
 /* ----- 13 Responsive and motion ----------------------------------------- */
 @media (max-width: 1080px) {
     .bar nav { gap: 18px; }
-    .paths { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 900px) {
     .wrap, .bar-in, .hero { padding-left: 24px; padding-right: 24px; }
     .bar nav { display: none; }
-    .hero { grid-template-columns: 1fr; grid-template-areas: "sky" "copy" "proof"; min-height: 0; }
+    .hero { grid-template-columns: 1fr; grid-template-areas: "sky" "copy" "proof" "scope"; min-height: 0; }
     .hero h1 .nb { white-space: normal; }
-    .hero-band::before { background:
-        radial-gradient(ellipse 90% 34% at 50% 16%, rgba(13, 38, 77, 0.9), transparent 75%),
-        linear-gradient(180deg, transparent 70%, var(--ground)); }
-    .zeros dd { font-size: 18px; }
-    .stats dd { font-size: 30px; }
-    .zeros.stats dl { grid-auto-flow: row; grid-template-columns: 1fr; }
-    .zeros.stats dl div, .zeros.stats dl div + div, .zeros.stats dl div:nth-child(even) { padding: 16px 0; border-left: 0; }
-    .zeros.stats dl div + div { border-top: 1px solid var(--line); }
-    .kit { grid-template-columns: 1fr; }
-    .kit code { overflow-x: auto; }
     .sky { width: min(340px, 82vw); margin-top: 40px; }
     .hero-copy { padding: 24px 0 48px; }
-    .proof { grid-template-columns: 1fr 1fr; gap: 10px; }
-    .proof a { min-height: 92px; padding: 16px; }
-    .band { padding: 88px 0; }
-    .split, .flow, .hard { grid-template-columns: 1fr; gap: 32px; }
-    .zeros dl { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
-    .zeros dl div, .zeros dl div + div { padding: 18px 16px 18px 0; border-left: 0; }
-    .zeros dl div:nth-child(even) { padding-left: 16px; border-left: 1px solid var(--line); }
-    .zeros dl div:nth-child(n+3) { border-top: 1px solid var(--line); }
+    .proof a { min-height: 92px; padding: 12px 10px; }
+    /* one column: the star's name has no room beside the coin and would slide across the words */
+    .polaris { display: none; }
 }
 @media (max-width: 560px) {
     body { font-size: 16px; }
     .gh { display: none; }
     .gh.gh-keep { display: inline-block; }
-    .sky { width: min(236px, 60vw); margin-top: 8px; }
-    .g1 { width: 130px; height: 130px; left: -10%; top: 8%; }
-    .g2 { display: none; }
-    .g3 { width: 44px; height: 44px; right: 6%; top: 6%; }
+    .sky { width: min(300px, 78vw); margin-top: 8px; }
     .hero-copy { padding-top: 12px; }
     .cta .btn { flex: 1 1 100%; justify-content: center; text-align: center; }
     .lead { font-size: 17px; }
-    .paths { grid-template-columns: 1fr; }
-    .rules thead { display: none; }
-    .rules tbody tr { display: block; padding: 16px 0; border-bottom: 1px solid var(--line); }
-    .rules tbody th, .rules td { display: block; width: auto; padding: 0; border: 0; }
-    .rules td { margin-top: 6px; font-size: 14.5px; }
-    .roster ul { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-flow: row; }
 }
 @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
-    .halo { opacity: 0.6; }
-    .btn, .paths a { transition: none; }
+    .btn { transition: none; }
 }
 @media print {
-    .bar, .sky, .cta, .skip { display: none; }
+    .bar, .heavens, .shade, .polaris, .coin-touch, .horizon, .cta, .skip { display: none; }
+    /* on paper the sky goes and the coin stays, printed whole (its rim is painted with backgrounds) */
+    .coin { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .hero-band { background: none; padding-top: 0; }   /* its top padding is room for a header paper does not get */
     body { background: #fff; color: #000; }
 }
 
@@ -410,61 +372,77 @@ code, .term code { font-variant-ligatures: none; }
     .bar { position: fixed; animation: bar-out linear both; animation-timeline: scroll(root);
            animation-range: 0 320px; }
     /* Each item leaves in turn, left to right: it lifts a little and softens into the dark. */
-    .mark, .bar nav a, .tag, .gh { animation: item-out linear both; animation-timeline: scroll(root); }
+    .mark, .bar nav a, .gh { animation: item-out linear both; animation-timeline: scroll(root); }
     .mark                     { animation-range: 0px 110px; }
     .bar nav a:nth-child(1)   { animation-range: 24px 134px; }
     .bar nav a:nth-child(2)   { animation-range: 48px 158px; }
     .bar nav a:nth-child(3)   { animation-range: 72px 182px; }
     .bar nav a:nth-child(4)   { animation-range: 96px 206px; }
     .bar nav a:nth-child(5)   { animation-range: 120px 230px; }
-    .tag                      { animation-range: 150px 260px; }
     .gh                       { animation-range: 175px 285px; }
-    .gh.gh-keep               { animation-range: 200px 310px; }
+    .gh.gh-keep               { animation-range: 150px 260px; }
+    /* A keyboard reader who comes back up to the header finds it whole, wherever the page is. */
+    .bar:has(:focus-visible), .bar:has(:focus-visible) :is(.mark, nav a, .gh) { animation: none; }
 }
 @keyframes bar-out  { from { } to { visibility: hidden; } }
 @keyframes item-out { from { opacity: 1; translate: 0 0; filter: blur(0); }
-                      to   { opacity: 0; translate: 0 -16px; filter: blur(4px); } }
+                      to   { opacity: 0; translate: 0 -16px; filter: blur(4px); pointer-events: none; } }
 
-/* Each outside project's name opens its own repository: the reader checks the source, not us. */
-.roster b a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--line-strong);
-              transition: color .2s, border-color .2s; }
-.roster b a:hover { color: var(--gold); border-bottom-color: var(--gold); }
+/* The words and tiles sit above the horizon. */
+.hero-copy, .proof, .proof-scope { position: relative; z-index: 2; }
 
-/* The sky leaves behind a curtain: one layer the colour of the page fades in over the hero as it
-   scrolls away. Fading the sky itself would make every turning orbit blend through an extra
-   surface on every frame; the curtain costs one layer. The words and tiles sit above it. */
-.hero-band::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
-                    background: var(--ground); opacity: 0; }
-.hero-copy, .proof { position: relative; z-index: 2; }
+/* The page moves; the sky does not. The band is a window: as it scrolls up, the sky inside it is held where
+   it was, one pixel down for every pixel scrolled, so the stars stay put while the band's edges, the words
+   and the coin slide over them. The coin is seen from the reader's eye, 1800 px from the screen: carried up
+   by a scroll of s, it is seen from atan(s / 1800) further below and tips back by that angle, its rising
+   faces taking over in step (generated above). Polaris, which the coin covered, stays where it was. */
+/* The page's own speed, without a script: .sky carries the scroll offset (--p, px), and the parts that move
+   with the page keep a copy that follows it on a spring (--q). While the page moves the copy trails it, by an
+   amount that grows with the speed; when the page stops it overshoots and settles. Their difference is how far
+   the coin's stand is bent. */
 @supports (animation-timeline: scroll()) {
-    .hero-band::after { animation: curtain linear both; animation-timeline: scroll(root); animation-range: 10vh 90vh; }
+    .sky { animation: track linear both; animation-timeline: scroll(root); animation-range: 0px 3000px; }
+    .coin-stage, .shade { transition: --q 1.1s var(--spring-scroll); }
+    .coin-wob, .shade { --lag: clamp(-1, (var(--p) - var(--q)) / 250, 1); }
+    .coin-wob { transform: translateY(calc(var(--lag) * 14px)) rotateX(calc(var(--lag) * -9deg)); }
+    /* the shadow lags with the coin; and as the coin rises past the reader's eye, the sky 0.8 radii behind it is
+       seen from below too, so the shadow on it slides down from behind the coin by 0.8 radii x s / 1800 */
+    .shade { transform: translateY(calc(var(--lag) * 14px)); animation: shade-rise linear both;
+             animation-timeline: scroll(root); animation-range: 0 900px; }
+    .coin { animation: appear .14s linear var(--drop-at) both; }
+    .heavens { animation: fade 2.4s ease-out both, hold linear both; animation-timeline: auto, scroll(root);
+               animation-range: normal, 0 150vh; }
+    .coin-rise { animation: rise linear both; animation-timeline: scroll(root); animation-range: 0 900px; }
+    .polaris { animation: name-in linear both, hold linear both; animation-timeline: scroll(root), scroll(root);
+               animation-range: 170px 260px, 0 150vh; }
+    .coin-face b { animation: rise-face linear both; animation-timeline: scroll(root); }
+    /* longhands, not the shorthand: the shorthand would reset each face's own range (generated above) */
+    .coin-face b:nth-of-type(n + 2) { animation-name: rise-face, face-load; animation-timeline: scroll(root), scroll(root); }
+    /* once the first screen has gone, the sky stops turning: nothing off screen keeps drawing frames */
+    @container style(--p > 2000) { .turn { animation-play-state: paused; } }
 }
-@keyframes curtain { from { opacity: 0; } to { opacity: 1; } }
+@keyframes hold { to { transform: translateY(150vh); } }
+@keyframes track { to { --p: 3000; --q: 3000; } }
+@keyframes shade-rise { to { translate: 0 8.33%; } }
+@keyframes appear { from { opacity: 0; } }
+@keyframes rise { 0% { transform: rotateX(0deg); } 16.667% { transform: rotateX(4.764deg); }
+                  33.333% { transform: rotateX(9.462deg); } 50% { transform: rotateX(14.036deg); }
+                  66.667% { transform: rotateX(18.435deg); } 83.333% { transform: rotateX(22.62deg); }
+                  100% { transform: rotateX(26.565deg); } }
+@keyframes rise-face { from { opacity: 0; } to { opacity: 1; } }
+@keyframes name-in { from { opacity: 0; translate: -6px 0; } to { opacity: 1; translate: 0 0; } }
+@keyframes face-load { from { background-image: none; } to { background-image: var(--face); } }
 
-/* ----- 14 Scroll: each piece rises into place as it enters the view, and leaves like the header --
-   Scroll-driven, no script. A browser without scroll timelines shows everything, still. The
-   animations use translate (not transform), so the hover lifts on cards keep working.
-   The leaving half is the header's motion applied to the page: a piece lifts and fades as its
-   bottom edge crosses the top quarter of the view, so text in the reading zone stays at full
-   strength. It fills forwards only, so it never overrides the rise while the piece enters. No
-   blur here: on this many pieces it costs frames. */
+/* ----- 14 Scroll: the first screen's words leave like the header ---------------------------------
+   Scroll-driven, no script. A browser without scroll timelines shows everything, still. The animations
+   use translate (not transform), so the hover lifts on the tiles keep working. The leaving half fills
+   forwards only, so it never overrides the timed entrance. The acts after the first screen move by
+   their own rules (film.css). */
 @supports (animation-timeline: view()) {
-    .band .num, .band h2, .band .intro, .band .split > div > p, .src, .more,
-    .roster, .zeros h3, .zeros dl > div, .zeros > p, .flow li,
-    .more-box, .hard > div, .paths a, .term, .foot-in > *, .answer, .closing .cta {
-        animation: rise-in linear both, sink-out linear forwards; animation-timeline: view(), view();
-        animation-range: entry 0% entry 100%, cover calc(100% - 26vh) cover 100%; }
-    /* Grids arrive one item after another, left to right. */
-    .zeros dl > div:nth-child(2), .flow li:nth-child(2), .hard > div:nth-child(2), .paths a:nth-child(2) { animation-range: entry 12% entry 100%, cover calc(100% - 26vh) cover 100%; }
-    .zeros dl > div:nth-child(3), .flow li:nth-child(3), .hard > div:nth-child(3), .paths a:nth-child(3) { animation-range: entry 24% entry 100%, cover calc(100% - 26vh) cover 100%; }
-    .zeros dl > div:nth-child(4), .paths a:nth-child(4) { animation-range: entry 36% entry 100%, cover calc(100% - 26vh) cover 100%; }
-    /* The transcript leaves slowly, like the pole star: from the moment its top reaches the top of
-       the view, over its whole height. */
-    .term { animation-range: entry 0% entry 90%, exit 0% exit 100%; }
     /* The hero keeps its timed entrance and leaves the same way, but its fade starts only when a
        piece's top passes under the 64px header line: the hero sits near the top at load, and the
        quarter-view rule would start a tall screen with its first lines already dimmed. */
-    .hero-copy > *, .proof li {
+    .hero-copy > *, .proof li, .proof-scope {
         animation: up 1s cubic-bezier(.2, .7, .2, 1) both, sink-out linear forwards;
         animation-timeline: auto, view(); animation-range: normal, exit -64px exit 100%; }
     .hero-copy > :nth-child(1) { animation-delay: .55s, 0s; }
@@ -475,106 +453,59 @@ code, .term code { font-variant-ligatures: none; }
     .proof li:nth-child(2) { animation-delay: 1.23s, 0s; }
     .proof li:nth-child(3) { animation-delay: 1.31s, 0s; }
     .proof li:nth-child(4) { animation-delay: 1.39s, 0s; }
-    .num::after { transform-origin: left center; animation: draw linear both; animation-timeline: view();
-                  animation-range: entry 30% cover 30%; }
-    /* The transcript types itself once. The browser skips drawing it until it comes near the view
-       (content-visibility), so these one-shot animations start only then; scrolling back never
-       replays them, a reload does. Each command types at its own length; the output follows. */
-    .term { content-visibility: auto; contain-intrinsic-size: auto 640px; }
-    .term .l { display: inline-block; }
-    .term .l:nth-child(1) { animation: type .7s steps(41, end) both 1.00s; }
-    .term .l:nth-child(2) { animation: type .7s steps(65, end) both 1.75s; }
-    .term .l:nth-child(3) { animation: type .7s steps(44, end) both 2.50s; }
-    .term .l:nth-child(4) { animation: type .7s steps(53, end) both 3.25s; }
-    .term .l:nth-child(5) { animation: type .7s steps(45, end) both 4.00s; }
-    .term .l:nth-child(6) { animation: type .7s steps(13, end) both 4.75s; }
-    .term .l:nth-child(7) { animation: line-in .25s ease-out both 5.50s; }
-    .term .l:nth-child(8) { animation: line-in .25s ease-out both 5.64s; }
-    .term .l:nth-child(9) { animation: line-in .25s ease-out both 5.78s; }
-    .term .l:nth-child(10) { animation: line-in .25s ease-out both 5.92s; }
-    .term .l:nth-child(11) { animation: line-in .25s ease-out both 6.06s; }
-    .term .l:nth-child(12) { animation: line-in .25s ease-out both 6.20s; }
-    .term .l:nth-child(13) { animation: line-in .25s ease-out both 6.34s; }
-    .term .l:nth-child(14) { animation: line-in .25s ease-out both 6.48s; }
-    .term .l:nth-child(15) { animation: line-in .25s ease-out both 6.62s; }
-    .term .l:nth-child(16) { animation: line-in .25s ease-out both 6.76s; }
-    .term .l:nth-child(17) { animation: line-in .25s ease-out both 6.90s; }
-    .term .l:nth-child(18) { animation: pop .5s ease-out both 7.04s; }
-    .stats dd { animation: count-in linear both; animation-timeline: view(); animation-range: entry 20% cover 35%; }
+    .proof-scope { animation-delay: 1.39s, 0s; }
 }
-@keyframes rise-in  { from { opacity: 0; translate: 0 64px; } to { opacity: 1; translate: 0 0; } }
 @keyframes sink-out { from { opacity: 1; translate: 0 0; } to { opacity: 0; translate: 0 -48px; } }
-@keyframes draw     { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@keyframes type     { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
-@keyframes line-in  { from { opacity: 0; translate: -8px 0; } to { opacity: 1; translate: 0 0; } }
-@keyframes pop      { from { opacity: 0; scale: 0.6; } to { opacity: 1; scale: 1; } }
-@keyframes count-in { from { opacity: 0; scale: 0.9; } to { opacity: 1; scale: 1; } }
 
 /* Every motion on the page stops for a reader who asks for less; nothing is hidden by it. */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
-    .meteor { display: none; }
-    .sky-film { display: none; }
-    .sky::before { content: ""; position: absolute; inset: -12%; mix-blend-mode: screen;
-                   background: url(sky-poster.webp) center / 100% 100% no-repeat;
-                   /* the film's soft round edge: without it the still's square shows around the sky */
-                   -webkit-mask: radial-gradient(closest-side, #000 78%, transparent 100%);
-                           mask: radial-gradient(closest-side, #000 78%, transparent 100%); }
+    .coin-touch { display: none; }
     .bar { position: absolute !important; }
 }
-/* Windows contrast themes (forced colours) repaint the page in system colours, but the film and its
-   still keep their own black and stars: a black square on a light theme, a square of stars on a
-   dark one. There the sky is the emblem alone. */
+/* Windows contrast themes (forced colours) repaint the page in system colours, but the sky keeps its own
+   black and stars: a black square on a light theme, a square of stars on a dark one. There the sky is the
+   emblem alone. */
 @media (forced-colors: active) {
-    .sky-film, .sky::before { display: none; }
+    .heavens, .shade, .horizon { display: none; }
 }
 
-.more-box .rules { margin: 0; border-top: 1px solid var(--line); }
-.more-box .rules tr > :first-child { padding-left: 26px; }
-.more-box .rules tr > :last-child { padding-right: 26px; }
-
-
-/* The page ends on an invitation, centred, not on a second grid of cards. */
-.closing .wrap { text-align: center; }
-.closing .num { justify-content: center; }
-.closing h2, .closing .intro { margin-left: auto; margin-right: auto; }
-.closing .cta { justify-content: center; margin-top: 36px; }
-
-/* The disclosure bars open like a curtain: the height glides, then the contents arrive, the
-   projects column by column and the guarantees row by row. Closing glides shut. Browsers that
-   cannot animate a disclosure simply open it. */
-.roster, .more-box { interpolate-size: allow-keywords; }
-.roster::details-content, .more-box::details-content {
-    block-size: 0; overflow: hidden;
-    transition: block-size .7s cubic-bezier(.2, .7, .2, 1), content-visibility .7s allow-discrete; }
-.roster[open]::details-content, .more-box[open]::details-content { block-size: auto; }
-.roster[open] li, .more-box[open] tr { animation: unfold .6s cubic-bezier(.2, .7, .2, 1) both; }
-.roster[open] li:nth-child(n+6)  { animation-delay: .09s; }
-.roster[open] li:nth-child(n+11) { animation-delay: .18s; }
-.more-box[open] tr:nth-child(2) { animation-delay: .05s; }
-.more-box[open] tr:nth-child(3) { animation-delay: .10s; }
-.more-box[open] tr:nth-child(4) { animation-delay: .15s; }
-.more-box[open] tr:nth-child(5) { animation-delay: .20s; }
-@keyframes unfold { from { opacity: 0; translate: 0 -10px; } to { opacity: 1; translate: 0 0; } }
-
-/* The answer to the numbers above it: larger and brighter, not bold. */
-.answer { font-size: clamp(19px, 1.9vw, 24px); line-height: 1.4; color: var(--ink); font-weight: 500;
-          letter-spacing: -0.01em; max-width: 30em; margin: 4px 0 18px; }
-
-/* Issue, Hold, Verify: as the steps scroll in, a gold line draws across them and each step's dot
-   lights in turn. Transform and opacity only. */
-.flow { position: relative; view-timeline: --flow block; }
-.flow::after { content: ""; position: absolute; top: -1px; left: 0; right: 0; height: 1px; pointer-events: none;
-               background: linear-gradient(90deg, var(--gold), var(--gold-deep)); transform-origin: left center; transform: scaleX(0); }
-@supports (animation-timeline: view()) {
-    .flow::after { animation: draw linear both; animation-timeline: --flow; animation-range: entry 60% cover 50%; }
-    .flow li::before { animation: dot-on linear both; animation-timeline: --flow; }
-    .flow li:nth-child(1)::before { animation-range: entry 60% entry 80%; }
-    .flow li:nth-child(2)::before { animation-range: cover 30% cover 38%; }
-    .flow li:nth-child(3)::before { animation-range: cover 44% cover 50%; }
+/* ----- 15 The light: one light for the whole page ------------------------------------------------
+   The page is one lit world, the coin's: one soft light from the upper left, 60 degrees above the page, and
+   the faint light of the night sky all round. A plate --h pixels above the page casts the light's shadow
+   0.41 --h right and 0.41 --h down (the light's 60 degrees), softer the higher it is, and the sky's shadow
+   straight under it; its upper-left edges catch the light and its lower-right edges fall away. Touched, a
+   plate rises toward the reader: its shadow moves off and softens, and it grows by the perspective of a
+   reader about 2000px away. Pressed, it settles toward the page; let go, it springs back (a damped spring,
+   4.5% overshoot). Nothing moves untouched. --h is registered so it can glide; a browser that cannot
+   register it shows each height without the glide. */
+@property --h { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --p { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --q { syntax: "<number>"; inherits: true; initial-value: 0; }
+html { --shade: 1, 2, 6; --settle: cubic-bezier(.3, .7, .4, 1); }
+/* The light itself: a warm lamp at the upper left of the view, the one the coin is lit by. It stays with the
+   reader while the page scrolls under it, so the plates are lit, and cast their shadows, wherever they are. */
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background: radial-gradient(ellipse 85% 70% at 10% -8%, rgba(255, 244, 226, 0.05), rgba(255, 244, 226, 0.016) 50%, transparent 82%); }
+.proof a, .btn {
+    box-shadow:
+        inset 1px 1px 0 var(--rim-lit, rgba(255, 255, 255, 0.07)), inset -1px -1px 0 var(--rim-dark, rgba(0, 0, 0, 0.42)),
+        calc(var(--h) * 0.41px) calc(var(--h) * 0.41px) calc(var(--h) * 0.6px + 1px) rgba(var(--shade), 0.5),
+        calc(var(--h) * 0.9px) calc(var(--h) * 0.9px) calc(var(--h) * 1.9px + 2px) rgba(var(--shade), 0.28),
+        0 calc(var(--h) * 0.12px) calc(var(--h) * 1.3px) rgba(var(--shade), 0.36);
+    scale: calc(1 + (var(--h) - var(--h0)) * 0.0005); }
+/* Large gold type is the coin's metal too, lit the same way. */
+.hero h1 em {
+    background-image: linear-gradient(160deg, #fff5dc 0%, #edd5a0 30%, #d2b37d 62%, #a98a5a 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+@media (prefers-reduced-motion: reduce) {
+    .proof a, .btn { scale: none; }
 }
-@keyframes dot-on { from { opacity: 0.25; scale: 0.6; } to { opacity: 1; scale: 1.25; } }
-.more-box .kit { margin: 0; padding: 22px 26px 26px; border-top: 1px solid var(--line); }
-.more-box[open] .kit code { animation: unfold .6s cubic-bezier(.2, .7, .2, 1) both; }
-.more-box[open] .kit code:nth-child(n+3) { animation-delay: .08s; }
-
+@media (forced-colors: active) {
+    .hero h1 em { color: CanvasText; background: none; }
+    body::before { display: none; }
+}
+@media print {
+    .hero h1 em { color: #000; background: none; }
+    body::before { display: none; }
+}

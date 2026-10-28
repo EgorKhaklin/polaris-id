@@ -28,7 +28,7 @@ export COMPOSE_PROJECT_NAME=polaris-try POLARIS_DOMAIN=localhost
 COMPOSE=(docker compose -f "${ROOT}/polaris_web/docker-compose.prod.yml"
          -f "${ROOT}/polaris_web/docker-compose.citest.yml" -f "${HERE}/names.yml")
 NET=polaris-try_polaris-net
-PROM_IMAGE="prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
+PROM_IMAGE="prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
 BB_IMAGE="prom/blackbox-exporter@sha256:9613f2884689b6fad9f1939f6a3b0388c93a022cfaededb19545b329b5c83dea"  # v0.29.0
 PROM=polaris-alerts-drill-prometheus BB=polaris-alerts-drill-blackbox
 WORK="$(mktemp -d)"
@@ -68,10 +68,11 @@ cleanup() {
     if [[ -n "${ARCHIVE_TOUCHED:-}" ]]; then
         restore_archive
         "${COMPOSE[@]}" restart postgres > /dev/null 2>&1
-        # Hand the next step a stack, not a database still starting: wait until the app answers through
-        # the edge try.sh serves (a sign-in straight after this restart was refused, 2026-10-07).
+        # Hand the next step a stack, not a database still starting: wait until the app's roll-up, read
+        # at its own address (the edge refuses it from outside POLARIS_METRICS_ALLOW), is healthy again
+        # (a sign-in straight after this restart was refused, 2026-10-07).
         for _ in $(seq 1 90); do
-            [[ "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health 2>/dev/null)" == 200 ]] && break
+            [[ "$("${COMPOSE[@]}" exec -T app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2>/dev/null)" == 200 ]] && break
             sleep 1
         done
     fi
@@ -99,7 +100,7 @@ docker run -d --name "${PROM}" --network "${NET}" \
     -v "${WORK}:/etc/prometheus:ro" "${PROM_IMAGE}" --config.file=/etc/prometheus/prometheus.yml > /dev/null \
     || fail "starting Prometheus"
 api() {  # api <path>: GET Prometheus's HTTP API from the stack's network
-    docker run --rm --network "${NET}" curlimages/curl:8.11.1 -s "http://${PROM}:9090$1"
+    docker run --rm --network "${NET}" curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69 -s "http://${PROM}:9090$1"
 }
 alert_state() {  # alert_state <alertname>: firing, pending or inactive
     api "/api/v1/alerts" | python3 -c 'import json,sys

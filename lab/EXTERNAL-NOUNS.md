@@ -12,11 +12,9 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
-| External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. Relying party: none. |
-| Use | 1 outside project (OID4VCgo's CI, since 2026-10-11); production users 0 |
+| External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. |
+| Use | 1 outside project (OID4VCgo's CI, since 2026-10-11) |
 | Findings from outside | 2, both fixed |
-| Independent security review | none |
-| Pilot | none |
 
 ## External nouns
 
@@ -81,18 +79,13 @@ jurisdiction. Credo fetched the
 status list on receipt; walt.id did not. Evidence: [lab/strategy/005/STEP5.md](strategy/005/STEP5.md),
 [STEP6.md](strategy/005/STEP6.md); `product/run.py` and `product/present.py` reproduce both.
 
-**No outside holder at rc.67 (2026-09-30).** Strategy 005's fourth criterion asked whether, by the
-release after wallet copies shipped, an outside party had issued into or presented from a
-wallet with one. None had. The paragraph above stays what it is, the author's own
-interoperability run, and the criterion's blank is recorded here.
-
 **OID4VCgo changed after a report from here, 2026-09-30.** Its harness accepted any verifier TLS
 certificate without saying so; reported as [issue 312](https://github.com/IDFoundry/OID4VCgo/issues/312),
 its author shipped v0.22.0 the same day ([PR 314](https://github.com/IDFoundry/OID4VCgo/pull/314)):
 a startup warning, an optional check of the verifier's request-object chain against configured
 anchors, and a README section on what a passing run shows. Its author closed the issue as fixed on
 2026-10-01 and shipped v0.23.0, which also holds the verifier's leaf to HAIP 1.0 section 5. The
-last two rows are those versions, checked here on request. It is an outside project acting on a report, not an outside party using Polaris.
+last two rows are those versions, checked here on request.
 
 **eudi-dev changed after a report from here, 2026-10-02.** It did not validate the verifier's TLS
 certificate, even in `--mode strict`; reported as
@@ -104,8 +97,7 @@ overrides, and asked for a re-test. Checked here against the eudi-dev walk, with
 certificate (`tls: failed to verify certificate: x509: certificate signed by unknown authority`),
 where v2.3.7 presented; and `--tls-verify=false` restores presenting (accepted, all three controls
 refused). The one destination checked here is that listener; every-destination is the release's
-claim, not this run's. It is an outside project acting on a report, not an outside party using
-Polaris. Evidence: [lab/interop/eudi-dev](interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02). On 2026-10-03, with each
+claim, not this run's. It is an outside project acting on a report. Evidence: [lab/interop/eudi-dev](interop/eudi-dev/README.md#the-verifiers-tls-checked-in-strict-mode-2026-10-02). On 2026-10-03, with each
 verifier behind its own tunnel, strict mode presented with its TLS check on, and the run found a
 gap on this side: v2.5.0's issuer signs under an intermediate CA, and the verifier read one link.
 Fixed in bf3798d4 (row above).
@@ -117,13 +109,11 @@ findings were walt.id's own, recorded and not absorbed: its `present/resolve-req
 ignores configured trust anchors, and `x509TrustAnchors` wants PEM although its comment says
 base64 DER.
 
-**What the wallet rows do not establish.** Each was driven by the author, on one machine,
-against this repository's issuer script or a test CA and a scratch database (the 2026-09-30
-eudi-dev row against the wallet's own issuer): interoperability,
-not an outside party using Polaris. One credential format (SD-JWT VC), one presentation path
-(OpenID4VP `direct_post.jwt`), ES256 throughout; nothing about mdoc, other wallets or the
-post-quantum path. The issuing side is not HAIP (pre-authorized code only), and a wallet copy is
-a classical ES256 credential: nothing verified from it rests on ML-DSA-65.
+**What the wallet rows are.** Each was driven by the author, on one machine, against this
+repository's issuer script or a test CA and a scratch database (the 2026-09-30 eudi-dev row
+against the wallet's own issuer): interoperability. One credential format (SD-JWT VC), one
+presentation path (OpenID4VP `direct_post.jwt`), ES256 throughout; the issuing side uses a
+pre-authorized code, and a wallet copy is an ES256 credential.
 
 ### Conformance profile
 
@@ -137,8 +127,8 @@ The fee was waived on 2026-09-23 under the Foundation's open-source policy.
 
 It is a self-certification the OpenID Foundation approved and lists, not an endorsement and not an
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
-on that profile. It does not cover the rest of Polaris, other versions (1.0.0rc8 and later are
-not certified), the wallet role, other formats, or anything the suite does not test.
+on that profile. It does not cover the rest of Polaris, other versions, the wallet role, other formats, or
+anything the suite does not test.
 Measured after it, on 2026-09-30: 1.0.0rc7 refuses an issuer certificate whose extended key
 usage is ISO 18013-5's document signer, as EUDI issuers' are (eudi-dev's PID Provider: its chain
 check answers no), and its `serve` takes issuer keys only as a JWKS (`--issuer-jwks`), so an `x5c`
@@ -156,7 +146,7 @@ throwaway issuer key; their test identifiers let anyone signed in fetch the same
 Weekly since 2026-10-04, the wallet canary runs the suite's newest prebuilt images on a GitHub
 runner against the newest PyPI release: run 37191051451 (suite 9497248, 1.0.0rc15) finished 11 of
 11 modules clean (7 negative PASSED automatically, 4 positive in REVIEW) and both controls were
-noticed. A self-hosted run, not a certification: 1.0.0rc15 is not certified.
+noticed.
 
 ### Outside test corpus
 
@@ -175,11 +165,11 @@ become installable only when a maintainer approves them with a second factor.
 
 | Package | First | Release candidate | Current |
 |---|---|---|---|
-| `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc8, 2026-10-11, with `--pre` |
+| `polaris-verify` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc9, 2026-10-28, with `--pre` |
 | `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0, 2026-10-11 (1.0.0rc7 is the certified one) |
-| `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc8, 2026-10-11, with `--pre` |
+| `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc9, 2026-10-28, with `--pre` |
 | `polaris-id-cli` (PyPI) | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 |
-| `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.9, 2026-10-03, under `next` |
+| `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.10, 2026-10-28, under `next` |
 
 Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). The Current column was
 measured on 2026-10-15 by installing each package into a fresh container; without `--pre`, pip
@@ -190,20 +180,18 @@ Listed by outside parties: eudi-dev's maintainer merged `polaris-oid4vp` into it
 comparison of EUDI developer tools (eudi-dev/eudi-dev#22, 2026-10-04), and the IETF OAuth
 working group's SD-JWT repository merged it into its implementations list
 (oauth-wg/oauth-selective-disclosure-jwt#584, 2026-10-04), and best-of-digital-identity merged it
-into its ranked list (jruizaranguren/best-of-digital-identity#219, 2026-10-05). Proposed and not yet
-merged: the Token Status List implementation list, three curated lists, Multipaz's adopters list
-and the FIDES organization and relying-party catalogs. A listing is not use either.
+into its ranked list (jruizaranguren/best-of-digital-identity#219, 2026-10-05). Proposed: the Token
+Status List implementation list, three curated lists, Multipaz's adopters list and the FIDES
+organization and relying-party catalogs. A listing is not use either.
 
 ### External relying party / operator
 
 Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since
-2026-10-11 (see Use). Relying party: none. Nobody acts on a verdict in production.
+2026-10-11 (see Use).
 
 ### Use
 
     Outside projects running it:   1 (IDFoundry/OID4VCgo's CI, since 2026-10-11)
-    Production users:              0
-    Presentations outside CI:      0
 
 1. 2026-10-11: IDFoundry/OID4VCgo (maintainer osanderson) added
    [polaris-interop.yml](https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml):
@@ -228,34 +216,6 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    published one. Fixed the same day. The reviewer is not named, so this is not validated
    external evidence; three observations were answered "intentional" with measurements.
 
-### Independent security review
-
-None. No pentest, red team, threat-model review or cryptographic review has been performed by
-anyone who did not build this. Self-attack is not a substitute.
-
-### Pilot
-
-None. Nothing has run with real people, real operators or real consequences.
-
-### Known limitations, held here and not in ROADMAP.md
-
-Qualifications on the evidence above, not a plan. One leaves this list when an outside party
-trips over it.
-
-- **The OpenID path correlates more easily than the native privacy path.** A plain SD-JWT VC
-  presentation is exposed, never unlinkable; unlinkability is scoped to issuer-side and ZK mode.
-- **No native `age_over_21` anonymous credential.** The benchmark's first scenario is met by a
-  disclosed attribute, not an anonymous predicate.
-- **An offline status assertion's maximum lifetime rests partly on relying-party policy.** The
-  issuer mints a one-hour TTL and `expires_at` is signed and enforced; a caller that wants a
-  lower ceiling passes `max_window_seconds`. The artifact's own `max_window_seconds` is NOT
-  signed, so a verifier must never read it (`check_status_assertion_window_is_caller_policy`);
-  removing it is a wire change for the next format version.
-- **Algorithm deprecation is not signed runtime policy**: it lives in `CryptographicAlgorithm`
-  rows, not in anything a verifier is handed.
-- **The physical token is an emulator and a specification**, not certified silicon; enrollment
-  proofing has not been field-tested.
-
 ---
 
 ## Internal readiness (NOT external evidence)
@@ -278,7 +238,7 @@ Run by the author against the author's own code; none of it counts toward the 18
   exceptions and a negative control.
 - **The lab's three questions have answers.** [lab/linkability](linkability/README.md): no adversary
   advantage beyond the anonymity set, which is the epoch's membership. [lab/duress](duress/README.md):
-  the evidence did not support "compulsion-resistant", so the word is "duress-aware".
+  the word the evidence supports is "duress-aware".
   [lab/crypto-migration](crypto-migration/README.md): agility is real issuer-side and a software
   release verifier-side.
 

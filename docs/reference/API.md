@@ -13,8 +13,12 @@ and the JSON API under `/api/`. Every `/api/*` endpoint requires the
 session cookie established by `POST /login` except the health probes
 (`/api/health`, `/api/health/live`, `/api/health/ready`) and the two
 metrics surfaces (`/api/metrics`, `/metrics`), which are meant for
-probes and scrapers on an operator-internal network and must be
-restricted at the edge in production.
+probes and scrapers on an operator-internal network. The shipped TLS
+edges (the Caddyfile and the Helm chart's) answer all five with 404
+unless the client address is in `POLARIS_METRICS_ALLOW`
+(`edge.metricsAllow` in Helm), which unset names no client; the probes
+and scrapers reach the app's own address. No health answer names the
+signing key.
 
 **Machine-readable contract.** An OpenAPI 3.1 description of every `/api/v1` and OpenID4VCI route is at [`openapi.yaml`](openapi.yaml); [`API-CLIENTS.md`](API-CLIENTS.md) shows how to generate a typed client in any language from it.
 
@@ -54,8 +58,11 @@ Invalidates the session.
 
 ### `GET /api/health`
 
-**No authentication required.** Consumed by Caddy's upstream
-health check, load-balancer probes, and external uptime monitors.
+**No authentication required; the shipped edge restricts it** (see
+above). The roll-up for the operator's monitoring, read at the app's own
+address (`docker exec polaris-app curl -s http://localhost:8000/api/health`,
+or a `kubectl exec` into the app pod). A check from outside that the
+edge serves asks a public route, such as `/.well-known/security.txt`.
 
 Structured JSON contract:
 
@@ -70,7 +77,7 @@ Structured JSON contract:
     "zk_binary": {"status": "healthy", "path": "/opt/polaris/zk", "version": "0.2.0"},
     "disk":     {"status": "healthy", "free_gb": 42.7, "used_pct": 23.1},
     "atlas_cache": {"status": "healthy", "entries": 8, "hits": 142, "misses": 23},
-    "custody": {"status": "healthy", "driver": "file", "key_id": "..."}
+    "custody": {"status": "healthy", "driver": "file", "public_key_fingerprint": "..."}
   },
   "timestamp": "2026-05-14T12:34:56.789Z"
 }
@@ -95,7 +102,7 @@ Structured JSON contract:
 | `zk_binary` | binary exists, executable, `--version` returns within 2s | binary missing, not executable, or `--version` timed out | (not used today; ZK absence is degraded) |
 | `disk` | <85% used AND >5GB free | <85% used but <5GB free, OR >85% used | <500MB free |
 | `atlas_cache` | always healthy (informational only) | n/a | n/a |
-| `custody` | real PQC off (custody not required), or real PQC on and the custody driver loaded (driver and key id reported) | real PQC on with no persistent key (ephemeral signing) | the custody backend failed to load; issuance would fail |
+| `custody` | real PQC off (custody not required), or real PQC on and the custody driver loaded (the driver and the public key's fingerprint reported, never the key id) | real PQC on with no persistent key (ephemeral signing) | the custody backend failed to load; issuance would fail |
 
 `atlas_cache` does NOT contribute to the overall status: it's
 preserved for backwards compatibility with operational
@@ -122,7 +129,8 @@ blip cannot trigger a restart storm. Always `200` with
 `{"status": "alive", "version": ..., "uptime_seconds": ...}` unless the
 worker is wedged, in which case it does not answer at all, which is
 what an orchestrator should act on. The container `HEALTHCHECK` and the
-Kubernetes liveness probe use this route.
+Kubernetes liveness probe use this route, at the app's own port; the
+shipped edge restricts it as it does `/api/health`.
 
 ### `GET /api/health/ready`
 
@@ -132,8 +140,10 @@ custody, its second ML-DSA witness and its local disk, and returns `503`
 when one of those is unhealthy, so the edge or an orchestrator stops routing
 to it without restarting it. The shared database and redis are not part of
 it: they fail for every replica at once, and they are reported by
-`/api/health`. The payload carries `"scope": "instance"`. The TLS edge's
-upstream check and the Kubernetes readiness probe route on this route.
+`/api/health`. The payload carries `"scope": "instance"` and the same
+`custody` component as `/api/health`. The TLS edge's upstream check and
+the Kubernetes readiness probe route on this route, at the app's own
+port; the shipped edge restricts it from outside as it does `/api/health`.
 
 ---
 
@@ -946,8 +956,10 @@ instance forwards to (`404`); fresh within 300 s (`401 stale`); `request_hash` b
 and where versions are advertised); requester key known here (`401 unknown_requester`); signature two-witness (`401
 invalid_signature`); rate bound (`429`); requester authorized in the context by the trust graph
 (`403`) **before** forwarding; nonce consumed (`409 replay`); forwarded to the operator-configured
-upstream (`502` if it does not answer, or answers JSON it cannot parse; the nonce stays
-consumed); receipt minted with the
+upstream (`502` if it does not answer, or answers JSON it cannot parse; an upstream redirect
+is not followed, an answer over the request size limit is refused without being read to its end,
+and an answer shorter than its declared length is not used: each is the same `502`; the nonce
+stays consumed); receipt minted with the
 envelope's signed time and logged. No body is ever persisted. Verified offline with
 `verify_exchange_request` + `verify_exchange_receipt` + `exchange_evidence`. Specified in
 [exchange-gateway.md](../design/exchange-gateway.md); wire spec section 3.11.
@@ -998,9 +1010,12 @@ itself is never sent) and an optional nonce of its own; the authority keeps no p
 record unless the caller asks for an anchor. With `"anchor": true` (P8.5b, v9.341) the
 timestamp's SHA3-256 joins the append-only **timestamp transparency log** and the answer
 carries an unsigned `anchor` (`log_id`, `timestamp_hash`, the RFC-6962 inclusion `proof`, the
-signed head `sth`), which the detached verifier checks offline (`verify_timestamp_anchor`) and
-which is what survives this authority's key being stolen later; that is the one record the
-authority then keeps, one digest and one instant, by the caller's choice. Rate-bounded per authority.
+signed head `sth`), which the detached verifier checks offline
+(`verify_timestamp_anchor(timestamp, log_key)`, with `log_key` the instance's own key that signs
+the log's heads, read where its [key ceremony](../operator/KEY-CEREMONY.md#the-ceremony)
+published it and never from the head) and which is what survives this authority's key being
+stolen later; that is the one record the authority then keeps, one digest and one instant, by
+the caller's choice. Rate-bounded per authority.
 
 ```jsonc
 // request
@@ -1032,7 +1047,9 @@ Every minted receipt carries `log_id` and `log_index` (advisory, unsigned).
 **Public; no auth (P8.5b).** Inclusion evidence that an anchored timestamp is in this instance's
 append-only **timestamp transparency log**: `{log_id, proof, sth}`, the RFC-6962 inclusion proof
 for the timestamp's SHA3-256 (its canonical statement's hash) plus the current signed head. A
-third party verifies offline with `scripts/polaris-verify.py` (`verify_timestamp_anchor`) that the
+third party verifies offline with `scripts/polaris-verify.py`
+(`verify_timestamp_anchor(timestamp, log_key)`, with the instance's own key as `log_key`, read
+where its [key ceremony](../operator/KEY-CEREMONY.md#the-ceremony) published it) that the
 timestamp it holds was anchored here and cannot have been quietly dropped. The caller already
 holds the timestamp (it computes the hash); an unknown hash is `404`. Unanchored timestamps are
 never in the log.
@@ -1095,7 +1112,8 @@ caches this and later proves each newer head is an append-only extension. No per
 **Public; no auth.** An RFC-6962 **consistency proof** that the size-`m` tree is a prefix
 of the size-`n` tree: `{first_size, second_size, first_root_hex, second_root_hex,
 proof_hex}`. This is the append-only evidence; a monitor verifies it with
-`scripts/polaris-verify.py` (`verify_log_consistency`). `400` if the range is invalid.
+`scripts/polaris-verify.py` (`verify_log_consistency(old_sth, new_sth, proof, issuer_key)`, with
+the instance's own key as `issuer_key`). `400` if the range is invalid.
 
 ### `GET /api/v1/transparency/proof/<index>`
 
@@ -1434,7 +1452,9 @@ consistency model and the no-auto-derivation argument.
 ### `GET /tokens`, `GET /tokens/<id>`, `POST /tokens/<id>/transition`, `POST /tokens/<id>/delete`
 
 The token list and detail pages, the state transition form, and delete.
-There is no free-form edit: every status change goes through the
+The detail page shows the credential's lifecycle and the verifications of
+it, and records each of the two reads in `AuditAccessLog`, as
+`/investigate/token/<id>` does. There is no free-form edit: every status change goes through the
 state-machine trigger (`enforce_token_state_machine`), which rejects
 illegal transitions, and issuance goes through UC-1. Individuals and
 agencies have the usual `/new`, `/<id>/edit` and `/<id>/delete` forms.
@@ -1656,7 +1676,8 @@ verification (R2 audit refinement: identical observable behavior).
 
 ### `GET /api/duress/events` (admin/auditor)
 
-Returns up to 200 recent duress events. **NOT** accessible to the
+Returns up to 200 recent duress events, and records the read in
+`AuditAccessLog` as the `/duress` dashboard does. **NOT** accessible to the
 operator role, R6 anti-revealing posture means only admins and
 auditors can see the duress dashboard.
 
@@ -1828,6 +1849,9 @@ Status codes:
 - `403`: authenticated but insufficient role
 - `429`: rate limited
 - `500`: server error (sanitized)
+
+The pages and APIs that record their reads in `AuditAccessLog` answer `503`, without the rows,
+when that record cannot be written.
 
 A NUL character in the path, the query or a form field is `400` on every route: PostgreSQL text
 cannot hold one. A JSON body with a NUL in any string or key, a non-finite number (`NaN`,

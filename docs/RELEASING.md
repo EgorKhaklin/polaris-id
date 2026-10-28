@@ -13,11 +13,11 @@ when something externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc9, 2026-10-28 | 1.0.0rc8, 2026-10-11 |
 | `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0, 2026-10-11 | 1.0.0rc20, 2026-10-11 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc9, 2026-10-28 | 1.0.0rc8, 2026-10-11 |
 | `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
-| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.9, 2026-10-03 | 1.0.0-rc.8, 2026-10-01 |
+| `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.10, 2026-10-28 | 1.0.0-rc.9, 2026-10-03 |
 
 > **2026-10-04:** `polaris-oid4vp` 1.0.0rc16, approved at the environment gate and read back from PyPI:
 > a clean virtual environment installed it and ran the package's 422 tests, all passing. The EU
@@ -27,14 +27,13 @@ when something externally observable changes.
 > revoked was decided, where 1.0.0rc15 refused it as malformed. The weekly canary's twenty jobs passed
 > against it (run 37220600561), the OpenID Foundation suite's eleven modules among them with both
 > controls noticed, and the stranger's quick path was walked as written with macOS's system Python
-> 3.9.6. Not certified; 1.0.0rc7 is.
+> 3.9.6.
 >
 > **2026-10-04:** `polaris-oid4vp` 1.0.0rc15, approved at the environment gate and read back from PyPI:
 > a clean virtual environment installed it and ran the package's 378 tests, all passing. It verifies an
 > issuer `x5c` through the intermediate CAs it carries, as eudi-dev v2.5's own issuer sends: eudi-dev
 > v2.5.1 presented a PID signed under an intermediate CA and 1.0.0rc15 answered `200 authentic`, with all
-> four controls refused, where 1.0.0rc14 refused the same presentation (`issuer_key`). Not certified;
-> 1.0.0rc7 is.
+> four controls refused, where 1.0.0rc14 refused the same presentation (`issuer_key`).
 >
 > **2026-10-03:** `polaris-sdk-ts` 1.0.0-rc.9, staged under `next` and approved by the maintainer with a
 > second factor (shasum `8ad830518a2dd4877da956b233cd986eb6681971`), read back from the live registry: its
@@ -45,12 +44,12 @@ when something externally observable changes.
 > it carries the `--public-base-url` and `--no-local-tls` flags for a verifier behind a proxy or tunnel,
 > which 1.0.0rc13 predated. docs/STRANGER-PATH.md was re-walked against it from outside the repository:
 > eudi-dev v2.3.7's own binary (no Docker, system Python 3.9.6, macOS) presented a PID credential and the
-> verifier answered `200 authentic`, with all three controls refused. Not certified; 1.0.0rc7 is.
+> verifier answered `200 authentic`, with all three controls refused.
 >
 > **2026-10-02:** `polaris-oid4vp` 1.0.0rc13, approved at the environment gate and read back from the
 > live registry: a clean virtual environment installed it from PyPI and ran the package's 359 tests, all
 > passing. It carries the RFC 7515, RFC 9901 and HAIP 1.0 checks (#157) and the JWK `use`/`key_ops`/`alg`
-> rule (#168) that the 04:56 build behind 1.0.0rc12 lacked. Not certified; 1.0.0rc7 is.
+> rule (#168) that the 04:56 build behind 1.0.0rc12 lacked.
 >
 > **2026-10-01, later still:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc7, each approved
 > at the environment gate, and `polaris-sdk-ts` 1.0.0-rc.8, staged under `next` and approved by
@@ -64,7 +63,7 @@ when something externally observable changes.
 > status resolver checked as revoked, a presentation withholding a requested claim, a W3C
 > `vc+sd-jwt` credential, and an expired request object. The run that published it was dispatched
 > at 04:56 and built at 7bfd26ed, before the RFC 7515, RFC 9901 and HAIP checks and the JWK `use`
-> rule merged, so it carries neither; 1.0.0rc13 does. Not certified; 1.0.0rc7 is.
+> rule merged, so it carries neither; 1.0.0rc13 does.
 >
 > **2026-10-01:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc6, each approved at the environment
 > gate, and `polaris-sdk-ts` 1.0.0-rc.7, staged under `next` and approved by the maintainer with a
@@ -74,17 +73,16 @@ when something externally observable changes.
 > tree's and passes its contract run.
 >
 > **2026-09-30, evening:** `polaris-oid4vp` 1.0.0rc11, which takes ISO 18013-5's document
-> signer as an issuer certificate usage (not certified; 1.0.0rc7 is), and the first
+> signer as an issuer certificate usage, and the first
 > `polaris-id-cli`, 1.0.0rc1, each held at the environment gate until the maintainer approved
 > the run, then read back from the live registry.
 >
 > **2026-09-30, later:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc5 and `polaris-oid4vp`
 > 1.0.0rc10 went out the same way, each read back from the live registry, carrying the fixes
-> SECURITY.md lists against their predecessors. 1.0.0rc10 is not certified; 1.0.0rc7 is.
+> SECURITY.md lists against their predecessors.
 >
 > **2026-09-30:** `polaris-oid4vp` 1.0.0rc9 went out through trusted publishing over OIDC and was
-> read back from the live registry. It carries the fixes a review found in 1.0.0rc8 and is not
-> certified; the certified version is 1.0.0rc7.
+> read back from the live registry. It carries the fixes a review found in 1.0.0rc8.
 >
 > **2026-09-28:** `polaris-verify` and `polaris-sdk-python` 1.0.0rc4 and `polaris-oid4vp`
 > 1.0.0rc8 went out through trusted publishing over OIDC, each read back from the live
@@ -92,7 +90,7 @@ when something externally observable changes.
 > read back (shasum `09964827b3aedb66c23a19bb89aed0c0156ab42a`). It predated the TypeScript format fix,
 > so `polaris-sdk-ts` 1.0.0-rc.5 followed the same day, staged, approved and read back the same way
 > (shasum `c77a33fe0014e0ab7a0cf20bae7b99964cbe9d34`; the installed package passes all 184 conformance
-> cases). `polaris-oid4vp` 1.0.0rc8 is not certified; the certified version is 1.0.0rc7.
+> cases).
 >
 > **npm now takes two people-steps, and the first one lies.** `npm stage publish` uploads the
 > tarball and stops; the job exits 0 while nothing is installable. A maintainer then approves
@@ -327,21 +325,21 @@ worse state to be in than three runs.
 | 35946054368 | 2026-09-24 | dry run | built and gated; nothing published |
 | 35946206199 | 2026-09-24 | dry run | the PyPI job skipped: target or confirm did not match exactly; nothing published |
 | 35946434707 | 2026-09-24 | dry run | the same; nothing published |
-| 35946558589 | 2026-09-24 | `polaris-oid4vp` 1.0.0rc7 | published to PyPI by trusted publishing; read back from the live registry and installed into a clean environment outside the tree. Published so the OpenID Foundation certification run tests the version a stranger installs, not 0.1.0 |
+| 35946558589 | 2026-09-24 | `polaris-oid4vp` 1.0.0rc7 | published to PyPI by trusted publishing; read back from the live registry and installed into a clean environment outside the tree. Published so the OpenID Foundation certification run tests the version a stranger installs, not 0.1.0. This version is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile |
 | 36448334875 | 2026-09-28 | dry run | built and gated all four at the new versions; nothing published |
 | 36448595804 | 2026-09-28 | `polaris-verify` 1.0.0rc4 | published to PyPI by trusted publishing; read back from the live registry |
 | 36448937187 | 2026-09-28 | `polaris-sdk-python` 1.0.0rc4 | published to PyPI the same way; read back from the live registry |
-| 36449355751 | 2026-09-28 | `polaris-oid4vp` 1.0.0rc8 | published to PyPI the same way; read back from the live registry. Not certified: 1.0.0rc7 stays the certified version |
+| 36449355751 | 2026-09-28 | `polaris-oid4vp` 1.0.0rc8 | published to PyPI the same way; read back from the live registry |
 | 36449564786 | 2026-09-28 | `polaris-sdk-ts` 1.0.0-rc.4 | staged (id 24f2675d); approved by the maintainer with a second factor, then read back from the live registry under `next` |
 | 36467934686 | 2026-09-28 | `polaris-sdk-ts` 1.0.0-rc.5 | staged (id 0af1ec71); approved by the maintainer with a second factor, then read back from the live registry under `next`; the installed package passes all 184 conformance cases |
 | 36673380963 | 2026-09-30 | dry run | built and gated all four; nothing published |
-| 36673624400 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc9 | published to PyPI by trusted publishing; read back from the live registry and installed into a clean environment outside the tree. Not certified: 1.0.0rc7 stays the certified version |
+| 36673624400 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc9 | published to PyPI by trusted publishing; read back from the live registry and installed into a clean environment outside the tree |
 | 36700255631 | 2026-09-30 | dry run | built and gated all four at the new versions; nothing published |
 | 36702201606 | 2026-09-30 | `polaris-verify` 1.0.0rc5 | published to PyPI by trusted publishing; read back from the live registry |
 | 36702209438 | 2026-09-30 | `polaris-sdk-python` 1.0.0rc5 | published to PyPI the same way; read back from the live registry |
-| 36702217173 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc10 | published to PyPI the same way; read back, and STRANGER-PATH walked against it. Not certified: 1.0.0rc7 stays the certified version |
+| 36702217173 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc10 | published to PyPI the same way; read back, and STRANGER-PATH walked against it |
 | 36743013280 | 2026-09-30 | dry run | built and gated the four Python packages, polaris-id-cli among them, and the npm tarball; nothing published |
-| 36743023024 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc11 | approved by the maintainer at the environment gate, published by trusted publishing; read back, and STRANGER-PATH walked against it. Not certified: 1.0.0rc7 stays the certified version |
+| 36743023024 | 2026-09-30 | `polaris-oid4vp` 1.0.0rc11 | approved by the maintainer at the environment gate, published by trusted publishing; read back, and STRANGER-PATH walked against it |
 | 36743032972 | 2026-09-30 | `polaris-id-cli` 1.0.0rc1 | the first: approved at the gate, published the same way; read back, installed alone, `--version` and the clone-only refusals checked |
 | 36712332414 | 2026-09-30 | `polaris-sdk-ts` 1.0.0-rc.6 | staged (id d1d7abd7-f1ed-47ab-adb6-5f62497f3f0c); not published by the job; npm requires a maintainer's second factor |
 | (by hand) | 2026-09-30 | `polaris-sdk-ts` 1.0.0-rc.6 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum e57ef6929e7bf809efccd51c325a0592ca53b88d |
@@ -350,27 +348,31 @@ worse state to be in than three runs.
 | 36807880510 | 2026-10-01 | `polaris-sdk-python` 1.0.0rc6 | approved at the gate, published the same way; read back, and the installed package passes all 219 conformance cases (1.0.0rc5 fails 20) |
 | 36807922993 | 2026-10-01 | `polaris-sdk-ts` 1.0.0-rc.7 | staged (id 86ef20ea-2998-42c0-aaa6-681207109235); not published by the job; npm requires a maintainer's second factor |
 | (by hand) | 2026-10-01 | `polaris-sdk-ts` 1.0.0-rc.7 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum e86011abae989848bcaa6ecc7041804ae50ab605; the installed package passes all 219 conformance cases (1.0.0-rc.6 fails 20) |
-| 36817451155 | 2026-10-01 | `polaris-oid4vp` 1.0.0rc12 | dispatched 04:56, approved by the maintainer at the environment gate 12:56, published by trusted publishing from 7bfd26ed (before #157 and #168); read back, and STRANGER-PATH walked against it. Not certified: 1.0.0rc7 stays the certified version |
+| 36817451155 | 2026-10-01 | `polaris-oid4vp` 1.0.0rc12 | dispatched 04:56, approved by the maintainer at the environment gate 12:56, published by trusted publishing from 7bfd26ed (before #157 and #168); read back, and STRANGER-PATH walked against it |
 | 36865073345 | 2026-10-01 | `polaris-oid4vp` 1.0.0rc12 | dispatched again from df252fef; PyPI refused the upload, the version already existed, and nothing changed |
 | 36865574554 | 2026-10-01 | `polaris-verify` 1.0.0rc7 | approved by the maintainer at the environment gate, published by trusted publishing; read back: the wheel's verifier is byte-identical to the tree's and passes its contract run |
 | 36865603134 | 2026-10-01 | `polaris-sdk-python` 1.0.0rc7 | approved at the gate, published the same way; read back, and the installed package passes all 281 conformance cases |
 | 36865643449 | 2026-10-01 | `polaris-sdk-ts` 1.0.0-rc.8 | staged (id 970e5352-5353-4765-a995-ec90f0462198); not published by the job; npm requires a maintainer's second factor |
-| 36949202765 | 2026-10-02 | `polaris-oid4vp` 1.0.0rc13 | approved by the maintainer at the environment gate, published by trusted publishing from main; read back: a clean venv install passes all 359 package tests. Carries #157 and #168, which 1.0.0rc12 lacked. Not certified: 1.0.0rc7 stays the certified version |
+| 36949202765 | 2026-10-02 | `polaris-oid4vp` 1.0.0rc13 | approved by the maintainer at the environment gate, published by trusted publishing from main; read back: a clean venv install passes all 359 package tests. Carries #157 and #168, which 1.0.0rc12 lacked |
 | (by hand) | 2026-10-01 | `polaris-sdk-ts` 1.0.0-rc.8 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum 00555b86875e58f6ee07ec1d89f7226424bdcc41; the installed package passes all 281 conformance cases |
 | 37139232183 | 2026-10-03 | `polaris-sdk-ts` 1.0.0-rc.9 | staged (id 14d906c5-a442-46be-8da0-e658069057c6); not published by the job; npm requires a maintainer's second factor |
 | (by hand) | 2026-10-03 | `polaris-sdk-ts` 1.0.0-rc.9 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum 8ad830518a2dd4877da956b233cd986eb6681971; its `engines` require Node >= 20.19.0, which 1.0.0-rc.8 declared as >= 18 and did not satisfy |
-| 37139167517 | 2026-10-03 | `polaris-oid4vp` 1.0.0rc14 | approved by the maintainer at the environment gate, published by trusted publishing from main; read back: installable from PyPI, carries the `--public-base-url` / `--no-local-tls` proxy-tunnel flags that 1.0.0rc13 predated, and STRANGER-PATH re-walked against it (eudi-dev v2.3.7, `200 authentic`, all three controls refused). Not certified: 1.0.0rc7 stays the certified version |
+| 37139167517 | 2026-10-03 | `polaris-oid4vp` 1.0.0rc14 | approved by the maintainer at the environment gate, published by trusted publishing from main; read back: installable from PyPI, carries the `--public-base-url` / `--no-local-tls` proxy-tunnel flags that 1.0.0rc13 predated, and STRANGER-PATH re-walked against it (eudi-dev v2.3.7, `200 authentic`, all three controls refused) |
 | 37164429676 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc14 | dispatched from 44c369a0, before 1.0.0rc15 reached main, and approved at the gate; PyPI refused the upload, the version already existed, and nothing changed |
-| 37165550840 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc15 | approved by the maintainer at the environment gate, published by trusted publishing from main (3003f1a9); read back: a clean venv install passes all 378 package tests, and eudi-dev v2.5.1's intermediate-CA PID is accepted (`200 authentic`, all four controls refused) where 1.0.0rc14 refused it. Not certified: 1.0.0rc7 stays the certified version |
+| 37165550840 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc15 | approved by the maintainer at the environment gate, published by trusted publishing from main (3003f1a9); read back: a clean venv install passes all 378 package tests, and eudi-dev v2.5.1's intermediate-CA PID is accepted (`200 authentic`, all four controls refused) where 1.0.0rc14 refused it |
 | 37214911849 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc15 | dispatched from 8a351b21, before 1.0.0rc16 reached main, and approved at the gate; PyPI refused the upload, the version already existed, and nothing changed |
 | 37215403979 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc15 | the same, from 8a351b21 again; refused, nothing changed |
-| 37219760678 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc16 | approved by the maintainer at the environment gate, published by trusted publishing from main (794a5c43); read back: a clean venv install passes all 422 package tests; the EU iOS library with the wallet kit's encryption setting and the OpenWallet Foundation's large status list are accepted where 1.0.0rc15 refused them; the wallet canary passes against it (run 37220600561). Not certified: 1.0.0rc7 stays the certified version |
+| 37219760678 | 2026-10-04 | `polaris-oid4vp` 1.0.0rc16 | approved by the maintainer at the environment gate, published by trusted publishing from main (794a5c43); read back: a clean venv install passes all 422 package tests; the EU iOS library with the wallet kit's encryption setting and the OpenWallet Foundation's large status list are accepted where 1.0.0rc15 refused them; the wallet canary passes against it (run 37220600561) |
 | 38091215489 | 2026-10-10 | dry run | built and gated all four Python packages and the npm tarball at the new versions (polaris-verify 1.0.0rc8, polaris-sdk-python 1.0.0rc8, polaris-oid4vp 1.0.0rc18); nothing published |
 | 38091364797 | 2026-10-11 | `polaris-verify` 1.0.0rc8 | approved by the maintainer account under the owner's standing publish grant, published by trusted publishing from main (dbc708a8); read back from the live registry and installed into a clean environment outside the tree |
 | 38091377062 | 2026-10-11 | `polaris-sdk-python` 1.0.0rc8 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree |
-| 38091379847 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc18 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree; the wallet canary passes against it (run 38099791825). Not certified: 1.0.0rc7 stays the certified version |
-| 38113072995 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc20 | dispatched from main (84a805ff), approved and published the same way; read back from the live registry: the stranger's path, walked from empty directories outside the tree, installed 1.0.0rc20 from PyPI, and its one-minute script (with Docker and without) and its ten-minute half each answered `200 authentic`, with all three controls refused. Not certified: 1.0.0rc7 stays the certified version |
-| 38131929094 | 2026-10-11 | `polaris-oid4vp` 1.0.0 | dispatched from main (6f2b890a, tagged v1.0.0), approved and published the same way; read back from the live registry: a bare `pip install polaris-oid4vp` from an empty directory installs 1.0.0 (wheel sha256 34542f4d82753901303cb040a9d158a489559d5bef46059c2ab6c2c48f193afe), and the stranger's path, walked from empty directories outside the tree, installed 1.0.0 from PyPI; its one-minute script (with Docker and without) and its ten-minute half (without `--pre`) each answered `200 authentic`, with all three controls refused. The certified version stays 1.0.0rc7 |
+| 38091379847 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc18 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree; the wallet canary passes against it (run 38099791825) |
+| 38113072995 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc20 | dispatched from main (84a805ff), approved and published the same way; read back from the live registry: the stranger's path, walked from empty directories outside the tree, installed 1.0.0rc20 from PyPI, and its one-minute script (with Docker and without) and its ten-minute half each answered `200 authentic`, with all three controls refused |
+| 38131929094 | 2026-10-11 | `polaris-oid4vp` 1.0.0 | dispatched from main (6f2b890a, tagged v1.0.0), approved and published the same way; read back from the live registry: a bare `pip install polaris-oid4vp` from an empty directory installs 1.0.0 (wheel sha256 34542f4d82753901303cb040a9d158a489559d5bef46059c2ab6c2c48f193afe), and the stranger's path, walked from empty directories outside the tree, installed 1.0.0 from PyPI; its one-minute script (with Docker and without) and its ten-minute half (without `--pre`) each answered `200 authentic`, with all three controls refused |
+| 40663758226 | 2026-10-28 | `polaris-verify` 1.0.0rc9 | approved by the maintainer at the environment gate, published by trusted publishing from main (4d5091a9); read back from the live registry and installed into a clean environment outside the tree |
+| 40676854791 | 2026-10-28 | `polaris-sdk-python` 1.0.0rc9 | approved by the maintainer at the environment gate, published by trusted publishing from main (b13ed828); read back from the live registry and installed into a clean environment outside the tree |
+| 40688905626 | 2026-10-28 | `polaris-sdk-ts` 1.0.0-rc.10 | staged (id 1338492c-1577-486e-ab05-b8477c234b80); not published by the job; npm requires a maintainer's second factor |
+| (by hand) | 2026-10-28 | `polaris-sdk-ts` 1.0.0-rc.10 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum 824c5ad11f8961d8e61001f584801e4ed207b16c |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different

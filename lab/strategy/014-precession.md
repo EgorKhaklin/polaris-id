@@ -56,8 +56,7 @@ quantum-event drill):
 
 The operator class QUANTUM-EVENT.md and KEY-CEREMONY.md are written for: an authority that has to
 move its population when an algorithm weakens, rotate a key on schedule, and replace a
-compromised key without re-issuing every credential it signed. No outside party has asked for it
-yet. That is recorded here, not assumed away.
+compromised key without re-issuing every credential it signed.
 
 ## 3. What already solves it
 

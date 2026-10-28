@@ -17,12 +17,14 @@
 #   4. Within the ceilings, measured from the stop:
 #        the other member leads;
 #        an insert through a surviving app pod (app -> pgbouncer -> router -> leader) succeeds;
-#        /api/health answers 200 through a surviving edge pod, Redis included (if Redis was on the
+#        a surviving edge pod serves (/.well-known/security.txt: the edge refuses the health answers
+#        from outside edge.metricsAllow) and /api/health, read at a surviving app pod, answers 200,
+#        Redis included (if Redis was on the
 #        stopped node, it was moved, which the rate limiter needs: it refuses without Redis);
 #        the marker is intact.
 #   5. The node starts again, and the old leader rejoins as a replica.
 #   6. The node holding Redis is killed: Redis must run again on another node and the edge answer 200 with
-#      Redis healthy (the rate limiter refuses without it). The edge answers 503 while the database is
+#      Redis healthy (the rate limiter refuses without it). The roll-up answers 503 while the database is
 #      down, so when that node also holds the leader the failover must complete too.
 #
 # Kind on one machine simulates hosts and zones: separate kubelets and network namespaces, one kernel.
@@ -200,12 +202,23 @@ insert_ok() {
 insert_ok "a write before the stop" || fail "an insert through ${APPPOD} failed before anything stopped"
 PF_PORT=18445
 kubectl -n "${NS}" port-forward "pod/${EDGEPOD}" "${PF_PORT}:8443" > /dev/null 2>&1 & PF_PID=$!
-health() {  # prints "<http code> <redis status>"
-    curl -sk --max-time 5 -o "${WORK}/h.json" -w '%{http_code}' "https://localhost:${PF_PORT}/api/health" 2> /dev/null || printf 000
-    printf ' %s\n' "$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1]))["checks"].get("redis") or {}).get("status"))' "${WORK}/h.json" 2> /dev/null || echo none)"
+# The roll-up, read at an app pod's own address: "<http code> <redis status>".
+HEALTH_PY='
+import json, urllib.request, urllib.error
+try:
+    r = urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=5)
+except urllib.error.HTTPError as e:
+    r = e
+print(r.getcode(), (json.load(r)["checks"].get("redis") or {}).get("status"))'
+HEALTHPOD="${APPPOD}"
+health() {  # prints "<edge http code> <roll-up http code> <redis status>"
+    local edge app
+    edge=$(curl -sk --max-time 5 -o /dev/null -w '%{http_code}' "https://localhost:${PF_PORT}/.well-known/security.txt" 2> /dev/null || printf 000)
+    app=$(kubectl -n "${NS}" exec "${HEALTHPOD}" -c app -- python3 -c "${HEALTH_PY}" 2> /dev/null || echo "000 none")
+    printf '%s %s\n' "${edge}" "${app}"
 }
-for _ in $(seq 1 30); do [[ "$(health)" == "200 healthy" ]] && break; sleep 2; done
-[[ "$(health)" == "200 healthy" ]] || fail "the edge pod ${EDGEPOD} is not healthy before the stop ($(health))"
+for _ in $(seq 1 30); do [[ "$(health)" == "200 200 healthy" ]] && break; sleep 2; done
+[[ "$(health)" == "200 200 healthy" ]] || fail "the edge pod ${EDGEPOD} or the app pod ${HEALTHPOD} is not healthy before the stop ($(health))"
 ok "writes through ${APPPOD} and health through ${EDGEPOD}, both off ${L0NODE}"
 
 echo "== 3. ${L0NODE}, the leader's node, is killed =="
@@ -219,7 +232,7 @@ while :; do
     if [[ -z "${lead_s}" && "$(pg "${R0}" 'SELECT pg_is_in_recovery()')" == f ]]; then lead_s=${el}; fi
     # Recovery counts once the other member leads: an answer before that came from the old state.
     if [[ -n "${lead_s}" && -z "${write_s}" ]] && insert_ok "a write after the stop"; then write_s=${el}; fi
-    if [[ -n "${lead_s}" && -z "${health_s}" && "$(health)" == "200 healthy" ]]; then health_s=${el}; fi
+    if [[ -n "${lead_s}" && -z "${health_s}" && "$(health)" == "200 200 healthy" ]]; then health_s=${el}; fi
     [[ -n "${lead_s}" && -n "${write_s}" && -n "${health_s}" ]] && break
     [[ -z "${lead_s}" ]] && (( el > CEIL_LEAD )) && fail "${R0} did not lead within ${CEIL_LEAD}s of the stop"
     [[ -z "${write_s}" ]] && (( el > CEIL_WRITE )) && fail "no insert succeeded within ${CEIL_WRITE}s of the stop"
@@ -228,7 +241,7 @@ while :; do
 done
 [[ "$(pg "${R0}" "SELECT count(*) FROM drill.zone_marker WHERE note = 'before the node stops'")" == 1 ]] \
     || fail "the marker written before the stop is missing on the new leader"
-ok "${R0} led after ${lead_s}s; inserts resumed after ${write_s}s; /api/health 200, Redis healthy, after ${health_s}s; the marker intact"
+ok "${R0} led after ${lead_s}s; inserts resumed after ${write_s}s; the edge serving and /api/health 200, Redis healthy, after ${health_s}s; the marker intact"
 
 echo "== 5. ${L0NODE} starts again =="
 docker start "${L0NODE}" > /dev/null; STOPPED=""
@@ -250,18 +263,21 @@ held_leader=false
 EDGEPOD=$(kubectl -n "${NS}" get pods -l app.kubernetes.io/component=caddy --field-selector=status.phase=Running \
           -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName}{"\n"}{end}' | awk -v n="${REDISNODE}" '$2 != n && !seen++ {print $1}')
 [[ -n "${EDGEPOD}" ]] || fail "no edge pod off ${REDISNODE}"
+HEALTHPOD=$(kubectl -n "${NS}" get pods -l app.kubernetes.io/component=app --field-selector=status.phase=Running \
+          -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName}{"\n"}{end}' | awk -v n="${REDISNODE}" '$2 != n && !seen++ {print $1}')
+[[ -n "${HEALTHPOD}" ]] || fail "no app pod off ${REDISNODE}"
 # A new forward on a new port: the old one may still hold its port for a moment after it is killed.
 kill "${PF_PID}" 2> /dev/null || true; wait "${PF_PID}" 2> /dev/null || true
 PF_PORT=18446
 kubectl -n "${NS}" port-forward "pod/${EDGEPOD}" "${PF_PORT}:8443" > /dev/null 2>&1 & PF_PID=$!
-for _ in $(seq 1 30); do [[ "$(health)" == "200 healthy" ]] && break; sleep 2; done
-[[ "$(health)" == "200 healthy" ]] || fail "the edge pod ${EDGEPOD} is not healthy before Redis's node is killed ($(health))"
+for _ in $(seq 1 30); do [[ "$(health)" == "200 200 healthy" ]] && break; sleep 2; done
+[[ "$(health)" == "200 200 healthy" ]] || fail "the edge pod ${EDGEPOD} or the app pod ${HEALTHPOD} is not healthy before Redis's node is killed ($(health))"
 t2=$(now)
 docker kill "${REDISNODE}" > /dev/null; STOPPED="${REDISNODE}"
 while :; do
     # Nothing yet off the killed node is an answer, not an error (grep exits 1; set -e would end the drill).
     moved=$(nodes_of redis | grep -v -x "${REDISNODE}" | sed -n 1p || true)
-    if [[ -n "${moved}" && "$(health)" == "200 healthy" ]]; then redis_s=$(( $(now) - t2 )); break; fi
+    if [[ -n "${moved}" && "$(health)" == "200 200 healthy" ]]; then redis_s=$(( $(now) - t2 )); break; fi
     (( $(now) - t2 > CEIL_HEALTH )) && fail "Redis did not run again off ${REDISNODE} with the edge healthy within ${CEIL_HEALTH}s ($(health))"
     sleep 3
 done

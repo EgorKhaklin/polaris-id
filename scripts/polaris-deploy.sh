@@ -286,7 +286,7 @@ pg_major_check() {
         || image=""
     pull=never
     if [[ -z "${image}" ]] || ! docker image inspect "${image}" > /dev/null 2>&1; then
-        image=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+        image=alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
         pull=missing
     fi
     err=$(mktemp "${TMPDIR:-/tmp}/polaris-pg-major.XXXXXX")
@@ -337,7 +337,7 @@ for vol in caddy_data caddy_config; do
         | python3 -c "import json,sys; print(json.load(sys.stdin)['volumes']['${vol}'].get('name',''))" 2>/dev/null || true)
     if [[ -n "${vol_name}" ]] && docker volume inspect "${vol_name}" >/dev/null 2>&1; then
         docker run --rm -v "${vol_name}:/v" \
-            alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+            alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
             chown -R 1000:1000 /v >/dev/null 2>&1 || echo "  ! could not re-own ${vol_name}; the edge may fail to start as uid 1000" >&2
     fi
 done
@@ -580,7 +580,8 @@ cat <<EOF
 
   Stack:        ${COMPOSE_FILE}
   Domain:       https://${POLARIS_DOMAIN}/
-  Health:       https://${POLARIS_DOMAIN}/api/health
+  Health:       docker exec polaris-app curl -fsS http://localhost:8000/api/health
+                (the edge answers it only to POLARIS_METRICS_ALLOW)
   Logs:         docker compose -f polaris_web/docker-compose.prod.yml logs -f
   Backup:       ./scripts/polaris-backup.sh
   Rotate key:   ./scripts/polaris-rotate-secret.sh <name>

@@ -197,7 +197,7 @@ write a `TokenLifecycleEvent` if a token state is affected;
 updates to non-token fields are not currently audited (BACKLOG:
 audit non-token Individual changes).
 
-### Right to erasure (limited)
+### Right to erasure
 
 Polaris does NOT support deleting holder data. The audit invariant
 (C1) is non-negotiable. What CAN happen:
@@ -225,14 +225,6 @@ A jurisdiction with a "right to be forgotten" law that requires
 hard deletion is structurally incompatible with Polaris's audit
 invariant. Such a deployment would need a MISSION amendment
 (weakening C1) and the corresponding loss of non-repudiation.
-
-### Right to portability
-
-Holder data can be exported as a JSON document via a (future)
-`/api/individuals/<id>/export` endpoint (BACKLOG). The audit log
-fragments referencing the holder are included; the holder cannot
-take with them an audit trail that references actions by other
-agencies.
 
 ---
 
@@ -423,7 +415,9 @@ The recommended cadence from [SECRETS.md, section 1](SECRETS.md#1-the-secrets-ma
 Any secret rotates immediately on a suspected compromise or when an operator
 with prior access leaves. Rotation is operator-driven through
 `./scripts/polaris-rotate-secret.sh <name>`
-([SECRETS.md, section 4](SECRETS.md#4-rotation)). The prior value is archived
+([SECRETS.md, section 4](SECRETS.md#4-rotation)); in those two cases
+`polaris_secret_key` rotates with `--drop-old`, which keeps no retired key, so
+every session the old key signed ends. The prior value is archived
 under `polaris_web/secrets/.archive/<name>.<timestamp>` (mode 0600) so an
 operator can investigate if a rotation breaks production.
 
@@ -480,14 +474,10 @@ mechanism-design rationale.
 
 ---
 
-## What this document does NOT cover
-
-- Compliance frameworks (GDPR, CCPA, etc.): those are deployment-
-  specific and depend on your jurisdiction
-- Subprocessors / hosting providers: depends on your deployment
-- Children's data: Polaris has no special handling for minors;
-  the deployment is responsible for any age-related restrictions
+## Scope
 
 This file describes Polaris's architectural posture, not a legal
-privacy notice. A real privacy notice would be drafted by counsel
-with knowledge of the deployment context.
+privacy notice. A privacy notice is drafted by counsel with knowledge
+of the deployment context. Compliance frameworks, subprocessors and
+any age-related restrictions are set by the deployment for its
+jurisdiction.

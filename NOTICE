@@ -18,14 +18,10 @@ About this work
 Polaris is a pre-pilot identity-token system: ML-DSA-65 signatures under an
 audited algorithm-migration path, zero-knowledge verification, and an
 append-only audit of record, enforced in the database schema rather than in
-policy. What the cryptography does and does not buy, including what a break
-in the underlying lattice assumption would cost, is stated in
-docs/PRODUCTION-READINESS.md.
+policy. Its cryptographic posture is stated in docs/PRODUCTION-READINESS.md.
 
-Pre-pilot means it works end to end and outside wallets and an outside
-conformance suite have exercised it, but it has not run a pilot. It runs on
-notional data: it has never held real identity data, it is not deployed to
-any population, and the physical token it models is not manufactured. The constitution (the ten hard constraints C1 to C10 and
+Pre-pilot means it works end to end, and outside wallets and an outside
+conformance suite have exercised it. The constitution (the ten hard constraints C1 to C10 and
 the vocation) is MISSION.md.
 
 ================================================================================
@@ -79,11 +75,18 @@ publishes under the Apache License 2.0, used unmodified. Its NOTICE reads:
 The macOS launcher (Polaris.command + polaris_mac_launch.sh) is original
 to this work.
 
+The project site's sky (site/hero/sky-*) and its star trails (site/film/trails-*)
+adapt the Milky Way of NASA's Deep Star Maps 2020
+(https://svs.gsfc.nasa.gov/4851). Credit: NASA/Goddard Space Flight Center
+Scientific Visualization Studio; Gaia DR2: ESA/Gaia/DPAC. The project placed
+the stars of the Yale Bright Star Catalogue on it and licenses the adaptations
+CC BY-SA 3.0 IGO
+(https://creativecommons.org/licenses/by-sa/3.0/igo/), as REUSE.toml records.
+The site's copyright line links here.
+
 The project report in its three versions (polaris_project_report.pdf,
-polaris_project_report_v2.pdf and polaris_project_report_v3.pdf), the Russian
-edition of Version 3 (polaris_project_report_v3_ru.pdf), the evidence record
-and its Russian edition (polaris_evidence_record_v3.pdf and
-polaris_evidence_record_v3_ru.pdf) and the mathematical edition
+polaris_project_report_v2.pdf and polaris_project_report_v3.pdf), the evidence
+record (polaris_evidence_record_v3.pdf) and the mathematical edition
 (polaris_math.pdf), all under docs/paper/, are part of the same release and
 inherit the same Apache 2.0 license. The report's bibliography credits
 external sources under fair-use academic citation conventions.
@@ -95,10 +98,11 @@ Names and marks
 The Apache License covers this work's code, documents and image files, except
 the OpenID Certified mark (openid-certified-mark-on-white.png, in docs/assets/
 and site/), which belongs to the OpenID Foundation and is used under its
-certification terms. The license grants no right to the names and marks the
-files carry (section 6): the Polaris name, logo and star mark, the owl
-emblem, and the Khaklin Technologies name and lockup. TRADEMARKS.md says what
-that allows.
+certification terms, and the site's sky and star trails (site/hero/sky-*,
+site/film/trails-*), which are CC BY-SA 3.0 IGO as stated above. The license
+grants no right to the names and marks the files carry (section 6): the
+Polaris name, logo and star mark, the owl emblem, and the Khaklin Technologies
+name and lockup. TRADEMARKS.md says what that allows.
 
 ================================================================================
 Attribution

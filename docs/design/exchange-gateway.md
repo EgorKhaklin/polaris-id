@@ -30,7 +30,9 @@ institution's Polaris instance. The gateway there:
    envelope replayed to any worker is refused, and a request is never delivered twice;
 6. **forwards** the body to the upstream the operator configured for that kind
    (`POLARIS_EXCHANGE_UPSTREAMS`, a JSON map of kind to URL; a URL never comes from a
-   request), passing the authenticated requester key and context as headers;
+   request), passing the authenticated requester key and context as headers. It follows no
+   redirect, so each kind's URL is its final one: the gateway answers `502` to an upstream that
+   redirects (http to https, a trailing slash);
 7. **receipts** the exchange: a section 3.8 receipt with the envelope's signed time as
    `occurred_at`, binding both bodies by hash, its hash appended to the receipt log;
 8. returns the upstream's response body together with the receipt. The receipt is the

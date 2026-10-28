@@ -167,8 +167,8 @@ For the timestamp anchor the verdict is:
 
 - `anchored` (bool) -- the anchor's inclusion proof is for `SHA3-256(canonical timestamp)`,
   the proof and the head describe the same tree, the head is an authentic
-  `polaris-transparency-sth/1` for `polaris-timestamp-log` (signed by `log_key` when one is
-  given), and the RFC-6962 path reconstructs the head's root.
+  `polaris-transparency-sth/1` for `polaris-timestamp-log` signed by `log_key`, and the
+  RFC-6962 path reconstructs the head's root. A case with no `log_key` is not anchored.
 - `witnessed` (bool or null) -- `null` when no `trusted_witnesses` were supplied; otherwise
   whether at least `threshold` DISTINCT trusted witnesses have cosigned that exact head
   (same log, tree size and root). A stolen log key can sign a fabricated head, so a
@@ -345,6 +345,15 @@ The `holder-chain-proof-window-*` cases take a chain whose binding opens a day b
 so only the proof's own window decides, and decide it at the four edges: five minutes after and
 one second more, one minute before and one second more.
 
+No signed window (`*-unsigned-window`, 1.1.0). `fresh` answers only from fields the artifact's
+format signs. Eight cases take the published valid vector of each type that signs no validity
+window, or only one end of one and has no replay window (the transparency STH, the timestamp,
+the exchange request, receipt and mint statement, the signed document, the grant revocation and
+the agent proof), and add whichever of `issued_at` and `expires_at` it does not sign beside the
+signature, with no new signature. Each is as authentic as its published vector, and its `fresh`
+is `null`: a field outside the signed statement is one a verifier ignores for its decision
+(WIRE-SPEC 2.1 and section 6).
+
 Revoked leaves are hex and compared without regard to case, as the feed's own commitment is
 (`cross-authority-uppercase-leaf-*`, 1.0.0-rc.66): an authentic feed that lists a credential's
 leaf in upper case revokes it, and the same credential with no feed is the positive control.
@@ -369,7 +378,7 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 
 A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
 rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
-records which of the reference SDK's public functions actually execute: **the 289 cases enter
+records which of the reference SDK's public functions actually execute: **the 299 cases enter
 20 of the SDK's 23 public functions.** Three are never entered by any case, which means an
 implementation can get them wrong, or omit them, and still pass every case here.
 
@@ -388,7 +397,7 @@ runs it with collection disabled and requires that refusal.
 
 **The same gap, between the implementations.** Three verifiers here check these artifacts:
 the detached verifier a relying party installs, and the two reference SDKs. All three pass all
-289 cases, and a case constrains only the keys it names, so on every other key they could
+299 cases, and a case constrains only the keys it names, so on every other key they could
 differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py` compares them
 to EACH OTHER, key for key, on every case, and CI runs it.
 
@@ -417,8 +426,8 @@ them**. The known ones stay visible rather than being buried in a count.
 
 **The same question on hostile input.** A presenter does not send published cases.
 `scripts/polaris-hostile-agreement-drill.py` takes every case, replaces each node of what a
-presenter supplies with a value of the wrong JSON type or deletes it (186,639 inputs from the
-289 cases, measured 2026-10-21), and has
+presenter supplies with a value of the wrong JSON type or deletes it (192,174 inputs from the
+299 cases, measured 2026-10-28), and has
 all three verifiers decide each one. It fails on a verifier that raises, on any disagreement
 about the primary decision, and on any other disagreement that is not between two refusals or
 one of the conventions it names with its reason; `--prove-control` requires an inverted verdict

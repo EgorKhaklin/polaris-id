@@ -103,8 +103,7 @@ the inclusion proof plus the current signed head, and `verify_receipt_inclusion`
 offline that the receipt a party holds is in the log. The independent monitor and witness
 daemons watch the receipt log with `--log receipts`, so a dropped or rewritten receipt is a
 fork they alert on. The SET of receipts is transparent; each receipt stays in the hands of
-its parties. The log serves inclusion from the full entry list, as the anchor log does; a
-persisted Merkle tree is the obvious optimization when the log grows large.
+its parties.
 
 ## What runs
 

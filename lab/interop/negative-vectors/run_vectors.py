@@ -5,12 +5,18 @@
 vector, the verdict it should reach and the one it reached.
 
     python3 run_vectors.py vectors.json --adapter polaris-oid4vp [--json results.json]
+    python3 run_vectors.py mdoc-vectors.json --adapter verify-mdoc
 
 An adapter is one function: (vector, settings) -> ("accept" | "reject", a short reason). The run fails
 (exit 1) when a control is refused, because then every refusal it reports measured nothing, when a
 negative vector is accepted, when polaris-oid4vp refuses one with another code than POLARIS_OID4VP_CODES
 names, and when the file holds no vectors, no control, or no negative the adapter judged, or judges a negative
 in a layer whose own control (an accept-* vector of that layer) it left to its caller. Exit 2: the adapter could not run. A run that passes ends "done".
+
+A control is a vector of class `control`. A vector with a `repaired` twin (mdoc-vectors.json) is run twice: the vector
+as it stands, and its twin, the same vector with its one defect put back, which must be accepted (a refused twin means
+the vector's refusal measured nothing). The `verify-mdoc` adapter is lab/interop/mdoc/verify_mdoc.py, whose refusal
+check (its Refused.check) is compared for each negative.
 
 A vector with a `status_list` (0.3.0) is judged under its `policy`: the adapter serves `status_list.response`
 at `status_list.uri` from memory, opening no socket, and states the keys in settings.status_list_keys.
@@ -95,6 +101,52 @@ def status_required(revocation):
     return "reject", "%s: %s" % (code, revocation.get("reason"))
 
 
+# verify_mdoc.py's refusal check for each negative mdoc vector: it must refuse for the vector's reason, not for any.
+VERIFY_MDOC_CHECKS = {
+    "md-st-nonce": "device signature", "md-st-client-id-other": "device signature",
+    "md-st-client-id-no-prefix": "device signature", "md-st-response-uri": "device signature",
+    "md-st-thumbprint-other-key": "device signature", "md-st-thumbprint-absent": "device signature",
+    "md-st-dcapi-handover-on-redirect": "device signature", "md-st-redirect-handover-on-dcapi": "device signature",
+    "md-st-dcapi-origin-prefixed": "device signature", "md-st-dcapi-origin-other": "device signature",
+    "md-devicesig-other-key": "device signature", "md-devicesig-missing": "device signature",
+    "md-devicesig-not-detached": "device signature", "md-devicesig-doctype-other": "device signature",
+    "md-devicekey-kty-crv": "device key", "md-devicesigned-unauthorized-ns": "device data",
+    "md-doctype-not-requested": "requested docType",
+    "md-issuerauth-sig-flipped": "issuer signature", "md-issuerauth-sig-der": "issuer signature",
+    "md-issuerauth-alg-curve": "issuer signature", "md-issuerauth-crit-unknown": "issuer signature",
+    "md-issuerauth-dup-label": "issuer signature",
+    "md-mso-not-tag24": "mso",
+    "md-digest-value-modified": "digests", "md-digest-reencoded-item": "digests", "md-digest-id-absent": "digests",
+    "md-digest-alg-sha1": "digests", "md-digest-length": "digests", "md-doctype-vs-mso": "docType",
+    "md-sd-claim-absent": "requested claims", "md-sd-claim-sets-unmet": "requested claims",
+    "md-sd-value-other": "requested claims",
+}
+_VERIFY_MDOC = []
+
+
+def verify_mdoc(vector, settings):
+    """lab/interop/mdoc/verify_mdoc.py (cbor2 and cryptography) over one DeviceResponse, offline, at the vector's
+    instant, under its trust anchors and its inputs."""
+    import datetime
+    import importlib.util
+    from cryptography import x509
+    if not _VERIFY_MDOC:
+        path = os.path.join(HERE, "..", "mdoc", "verify_mdoc.py")
+        spec = importlib.util.spec_from_file_location("verify_mdoc", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _VERIFY_MDOC.append(module)
+    vm = _VERIFY_MDOC[0]
+    raw = base64.urlsafe_b64decode(vector["response"] + "=" * (-len(vector["response"]) % 4))
+    roots = [x509.load_pem_x509_certificate(p.encode()) for p in vector["trust_anchors_pem"]]
+    at = datetime.datetime.fromisoformat(vector["at"].replace("Z", "+00:00"))
+    try:
+        vm.verify(raw, vector["inputs"], roots, at)
+    except vm.Refused as e:
+        return "reject", str(e)
+    return "accept", ""
+
+
 def _es256_verifier(jwk):
     """verify(signing_input, signature, header) -> bool under one P-256 JWK; ES256 only, R||S (RFC 7518 s3.4)."""
     from cryptography.exceptions import InvalidSignature
@@ -171,8 +223,10 @@ def sd_jwt_js(vector, settings):
 
 
 _JS_FILE = []
-ADAPTERS = {"polaris-oid4vp": polaris_oid4vp, "sd-jwt-python": sd_jwt_python, "sd-jwt-js": sd_jwt_js}
-CODED = {"polaris-oid4vp": POLARIS_OID4VP_CODES}  # adapters whose refusal code is compared too
+ADAPTERS = {"polaris-oid4vp": polaris_oid4vp, "sd-jwt-python": sd_jwt_python, "sd-jwt-js": sd_jwt_js,
+            "verify-mdoc": verify_mdoc}
+CODED = {"polaris-oid4vp": POLARIS_OID4VP_CODES,  # adapters whose refusal code is compared too
+         "verify-mdoc": VERIFY_MDOC_CHECKS}
 
 
 def judge(adapter, vector, got, why):
@@ -200,7 +254,16 @@ def main(argv=None):
     _JS_FILE.append(os.path.abspath(args.vectors))
     run = ADAPTERS[args.adapter]
     results, wrong = [], []
+    kind, layer = {}, {}  # per row id: its class and its layer
+    rows = []
     for vector in doc["vectors"]:
+        rows.append(vector)
+        if "repaired" in vector:
+            # The twin: the vector with its one defect put back, accepted (it carries its own response and inputs).
+            rows.append(dict({k: v for k, v in vector.items() if k != "repaired"}, **vector["repaired"],
+                             id=vector["id"] + "+repaired", expected="accept", **{"class": "repaired"}))
+    for vector in rows:
+        kind[vector["id"]], layer[vector["id"]] = vector["class"], vector["layer"]
         try:
             got, why = run(vector, doc["settings"])
         except Exception as e:  # noqa: BLE001: an adapter that cannot judge a vector stops the run
@@ -215,8 +278,8 @@ def main(argv=None):
         if ok is False:
             wrong.append(vector["id"])
     # A control the adapter leaves to its caller (n/a) is not a refusal, and does not count as judged.
-    controls = [r for r in results if r["id"].startswith("accept-") and r["ok"] is not None]
-    negatives = [r for r in results if not r["id"].startswith("accept-") and r["ok"] is not None]
+    controls = [r for r in results if kind[r["id"]] == "control" and r["ok"] is not None]
+    negatives = [r for r in results if r["expected"] == "reject" and r["ok"] is not None]
     if not controls or not negatives:
         # No control means a verifier that refuses everything passes; no judged negative means nothing was refused.
         print("the run judged %d controls and %d negatives: it measured nothing" % (len(controls), len(negatives)),
@@ -224,10 +287,9 @@ def main(argv=None):
         return 1
     # A layer with its own control (accept-status-list for status-list) is measured only with that control: a
     # negative judged there while its control is left to the caller measured nothing.
-    layer = {v["id"]: v["layer"] for v in doc["vectors"]}
     own = {}
     for r in results:
-        if r["id"].startswith("accept-") and layer[r["id"]] != "control":
+        if kind[r["id"]] == "control" and layer[r["id"]] != "control":
             own.setdefault(layer[r["id"]], []).append(r)
     for name, layer_controls in sorted(own.items()):
         judged_here = [r for r in negatives if layer[r["id"]] == name]
@@ -240,6 +302,9 @@ def main(argv=None):
             json.dump({"adapter": args.adapter, "vectors_version": doc["version"], "results": results}, fh, indent=1)
     if any(r["ok"] is False for r in controls):
         print("a control was refused: the refusals above measured nothing", file=sys.stderr)
+        return 1
+    if any(r["ok"] is False for r in results if kind[r["id"]] == "repaired"):
+        print("a repaired twin was refused: its vector's refusal measured nothing", file=sys.stderr)
         return 1
     judged = [r for r in results if r["ok"] is not None]
     print("%d of %d as expected; %d not applicable to this verifier" % (len(judged) - len(wrong), len(judged),

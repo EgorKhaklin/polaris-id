@@ -192,7 +192,100 @@ def _verify_cryptography(digest, sig, pk, alg=ALGORITHM):
         return False
 
 
+#: PyPI's `oqs` is an unrelated project whose wheel also installs a top-level `oqs`. Uninstalling it
+#: removes the `__init__.py` both ship, so liboqs-python has to be reinstalled over it.
+_OQS_REPAIR = ("Run `pip uninstall oqs` if a distribution of that name is installed, then "
+               "`pip install --force-reinstall --no-deps liboqs-python`.")
+
+
+def _unrelated_oqs_installed():
+    """True iff a distribution named `oqs` is installed. liboqs-python's is `liboqs-python`."""
+    from importlib import metadata
+    try:
+        metadata.distribution("oqs")
+    except metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+def _liboqs_library():
+    """Find and load the liboqs shared library the way liboqs-python 0.16.0 does.
+
+    Returns (the first candidate that loads or None, the places looked). Without a library
+    that loads, `import oqs` clones liboqs from GitHub, builds it and installs it, and raises
+    SystemExit when that fails. The order is oqs/oqs.py's in liboqs-python 0.16.0:
+    `_load_liboqs` (l.255-270) takes OQS_INSTALL_PATH, else ~/_oqs, and its lib and lib64 (bin
+    on Windows); `_load_shared_obj` (l.116-161) names liboqs.dylib, oqs.dll and liboqs.dll, or
+    liboqs.so in each, puts ctypes.util.find_library("oqs") and then find_library("liboqs") in
+    front, and loads each in turn with ctypes (windll on Windows), skipping one that raises
+    OSError. A file that is there but does not load (truncated, another architecture) counts as
+    absent, as it does upstream. The same search as polaris-verify's detached verifier.
+    """
+    import ctypes
+    import ctypes.util
+    import os
+    import pathlib
+    import platform
+    system = platform.system()
+    if "OQS_INSTALL_PATH" in os.environ:
+        prefix = pathlib.Path(os.environ["OQS_INSTALL_PATH"])
+    else:
+        prefix = pathlib.Path.home() / "_oqs"
+    dirs = [prefix / "bin"] * 2 if system == "Windows" else [prefix / "lib", prefix / "lib64"]
+    files = []
+    for d in dirs:
+        if system == "Darwin":
+            files.append(d.absolute() / "liboqs.dylib")
+        elif system == "Windows":
+            files += [d.absolute() / "oqs.dll", d.absolute() / "liboqs.dll"]
+        else:
+            files.append(d.absolute() / "liboqs.so")
+    candidates = [str(f) for f in files]
+    for name in ("oqs", "liboqs"):
+        try:
+            hit = ctypes.util.find_library(name)
+        except Exception:  # noqa: BLE001 (liboqs-python ignores the same failure)
+            hit = None
+        if hit:
+            candidates.insert(0, hit)
+    places = list(dict.fromkeys(str(f) for f in files)) + ["the system library path"]
+    dll = ctypes.windll if system == "Windows" else ctypes.cdll
+    for candidate in candidates:
+        try:
+            dll.LoadLibrary(candidate)
+        except OSError:
+            continue
+        return candidate, places
+    return None, places
+
+
+class _OqsUnusable(ImportError):
+    """liboqs cannot be used here, for the reason the message names."""
+
+
+#: What the first `_import_oqs` in this process found: (the module, None, None), or (None, the
+#: class of the ImportError it raised, its message). Finding the library runs
+#: ctypes.util.find_library, which on Linux starts ldconfig for each name it is given, then gcc
+#: and then ld if the one before found nothing: once per process, not once per signature.
+_OQS_FOUND = None
+
+
 def _import_oqs():
+    """Import liboqs once per process (`_find_oqs` says how): every later call returns the same
+    module, or raises the same ImportError again, without looking a second time."""
+    global _OQS_FOUND
+    if _OQS_FOUND is None:
+        try:
+            _OQS_FOUND = (_find_oqs(), None, None)
+        except ImportError as e:   # _OqsUnusable included
+            _OQS_FOUND = (None, type(e), str(e))
+    module, error, reason = _OQS_FOUND
+    if error is not None:
+        raise error(reason)
+    return module
+
+
+def _find_oqs():
     """Import liboqs with its startup chatter kept off stdout.
 
     `import oqs` prints "liboqs-python faulthandler is disabled" to STDOUT. This module IS
@@ -204,16 +297,37 @@ def _import_oqs():
     Nothing caught it: `run_conformance.py --self` calls this SDK in-process rather than as
     a subprocess, and the CI job that drives a verifier as a subprocess drives the
     TypeScript one, which has no liboqs. Measured by running the documented command.
+
+    Importing a module runs its code, so nothing named `oqs` is imported while a distribution
+    named `oqs` is installed, or while no liboqs shared library loads from where liboqs-python
+    would load it, and an import that exits or raises is caught here: each is an ImportError, so
+    liboqs counts as absent, never as a witness, and a verify call never exits the process.
     """
     import contextlib
+    import importlib.util
     import sys as _sys
+    if _unrelated_oqs_installed():
+        raise _OqsUnusable("a distribution named `oqs` is installed, and it is not "
+                           "liboqs-python, so `oqs` is not imported. " + _OQS_REPAIR)
+    if importlib.util.find_spec("oqs") is None:   # locates without importing
+        raise ImportError("No module named 'oqs'")
+    library, places = _liboqs_library()
+    if library is None:
+        raise _OqsUnusable("liboqs-python needs the liboqs shared library, and none loads "
+                           "from %s, so `oqs` is not imported (without it, importing liboqs-python "
+                           "clones and builds liboqs). Install liboqs there, or set "
+                           "OQS_INSTALL_PATH to the prefix it is installed under."
+                           % ", ".join(places))
     with contextlib.redirect_stdout(_sys.stderr):
-        import oqs  # type: ignore
-    # PyPI's `oqs` is an unrelated project whose wheel also installs a top-level `oqs`.
-    # Imported, it is not liboqs: it counts as absent, never as a witness that refuses
-    # every credential.
+        try:
+            import oqs  # type: ignore
+        except SystemExit as e:
+            raise _OqsUnusable("importing `oqs` exited (%s)." % (e,)) from None
+        except Exception as e:  # noqa: BLE001 (a library that loads but is not liboqs: AttributeError)
+            raise _OqsUnusable("importing `oqs` failed (%s: %s)." % (type(e).__name__, e)) from None
     if not hasattr(oqs, "Signature"):
-        raise ImportError("the importable `oqs` is not liboqs-python: it has no Signature")
+        raise _OqsUnusable("the importable `oqs` is not liboqs-python: it has no "
+                           "Signature. " + _OQS_REPAIR)
     return oqs
 
 
@@ -432,16 +546,30 @@ def _within_replay_window(obj: dict, now=None):
     return (issued <= n + _CLOCK_SKEW_SECONDS) and ((n - issued) <= seconds)
 
 
-def _within_window(obj: dict, now=None):
-    """True iff now is within [issued_at, expires_at). `now` is an ISO-8601 string, or None
-    for the current time. None if the window is unparseable."""
-    ia, ea = _iso_to_epoch(obj.get("issued_at")), _iso_to_epoch(obj.get("expires_at"))
+def _within_window(obj: dict, now=None, start="issued_at", end="expires_at"):
+    """True iff now is within [obj[start], obj[end]), by default [issued_at, expires_at).
+    `now` is an ISO-8601 string, or None for the current time. None if the window is
+    unparseable."""
+    ia, ea = _iso_to_epoch(obj.get(start)), _iso_to_epoch(obj.get(end))
     if ia is None or ea is None:
         return None
     n = _iso_to_epoch(now) if now is not None else time.time()
     if n is None:
         return None
     return ia <= n < ea
+
+
+def _signed_window(keys):
+    """The (start, end) fields of the validity window a format SIGNS, read from its own signed
+    key list, or None when it signs no window. The ID token signs its window as `iat` and
+    `exp`. A field outside the signed statement is anyone's to add or change, so a format that
+    signs only one end of a window, or neither, has no window to answer `fresh` from
+    (2026-10-21)."""
+    if "iat" in keys and "exp" in keys:
+        return "iat", "exp"
+    if "issued_at" in keys and "expires_at" in keys:
+        return "issued_at", "expires_at"
+    return None
 
 
 @dataclasses.dataclass
@@ -614,8 +742,10 @@ class IdTokenVerdict:
 def verify_id_token(tok: dict, audience=None, nonce=None, now=None,
                     anchors=None) -> IdTokenVerdict:
     """Verify a polaris-id-token/1 (P8.4) as a relying party, offline: the issuing agency's
-    signature, that it was issued to THIS audience, that it carries the login's nonce, and
-    freshness (iat <= now < exp). The subject is a credential hash, never a person."""
+    signature, and whether that agency is one you trust (`issuer_trusted`, answered only
+    against the agency keys you pass as `anchors`; None without them), that it was issued to
+    THIS audience, that it carries the login's nonce, and freshness (iat <= now < exp). The
+    subject is a credential hash, never a person."""
     tok = tok if isinstance(tok, dict) else {}
     if tok.get("format") != "polaris-id-token/1":
         return IdTokenVerdict(False, None, None, None, tok.get("sub"), tok.get("acr"), "not a polaris-id-token/1")
@@ -647,8 +777,9 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     """Verify a Polaris signed artifact's AUTHENTICITY offline (P8.1, wire spec section 3): for
     the epoch checkpoint, revocation feed, federation manifest, status bundle, or transparency
     STH, recompute the canonical statement for its `format`, verify the ML-DSA-65 signature over
-    its SHA3-256, check freshness for a windowed artifact, and check the artifact's commitment
-    (feed/bundle) or self-consistency (manifest). Standalone. Reports authentic + fresh. The
+    its SHA3-256, check freshness against the window the format signs (None when it signs
+    none), and check the artifact's commitment (feed/bundle) or self-consistency (manifest).
+    Standalone. Reports authentic + fresh. The
     federation TRUST decision (accepting a foreign credential across authorities) is a separate,
     composite check, not this per-artifact authenticity."""
     obj = obj if isinstance(obj, dict) else {}
@@ -739,14 +870,18 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         ok = _hex_in(obj.get("public_key_hex"), active)
         note = None if ok else "the trust list is not signed by a key it lists as active for its own publisher"
     # A replay-windowed format answers freshness the other way round; _within_window
-    # needs both ends of an interval and such an artifact has only its issuance.
+    # needs both ends of an interval and such an artifact has only its issuance. Any other
+    # format answers from the window it signs, and None when it signs none.
     fresh = _within_replay_window(obj, now)
-    if fresh is None:
-        fresh = _within_window(obj, now)
+    win = _signed_window(keys)
+    if fresh is None and win is not None:
+        fresh = _within_window(obj, now, *win)
     # Same rule as the detached verifier: the key that signed it, lowercased, is in the
-    # anchor set. None when the caller supplied none.
+    # anchor set. None when the caller supplied none, and when the signature is not authentic:
+    # it read True beside a forged signature before this change, where the detached verifier's
+    # verify_signed_document reports signer_trusted None.
     trusted = None
-    if anchors is not None:
+    if anchors is not None and ok:
         try:
             trusted = _hex_in(obj.get("public_key_hex", ""), {_hex_text(a) for a in anchors})
         except TypeError:
@@ -851,11 +986,12 @@ class AnchorVerdict:
 def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, threshold: int = 1) -> AnchorVerdict:
     """Verify OFFLINE that a timestamp is ANCHORED in the timestamp transparency log: its
     unsigned `anchor` carries an inclusion proof and a Signed Tree Head, the proof is for this
-    timestamp's own hash, the head is an authentic head of that log (with `log_key`, signed by
-    the expected authority), and the proof reconstructs the head. With `trusted_witnesses`, the
-    head must also be cosigned by `threshold` DISTINCT trusted witnesses: a stolen authority key
-    can sign a fresh head over a fabricated log, but it cannot make a witness have cosigned that
-    head at the claimed time. No network, no Polaris code. Total on hostile input."""
+    timestamp's own hash, the head is an authentic head of that log signed by `log_key` (the
+    log key the caller names; with none, nothing is anchored), and the proof reconstructs the
+    head. With `trusted_witnesses`, the head must also be cosigned by `threshold` DISTINCT
+    trusted witnesses: a stolen authority key can sign a fresh head over a fabricated log, but
+    it cannot make a witness have cosigned that head at the claimed time. No network, no
+    Polaris code. Total on hostile input."""
     v = AnchorVerdict(False, False, None, 0, None, None, None, None)
     if not isinstance(ts, dict):
         v.note = "timestamp must be an object"
@@ -899,7 +1035,10 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
     if not v.sth_authentic:
         v.note = sv.note or "the head is not authentic"
         return v
-    if log_key is not None and not _same_hex(sth.get("public_key_hex"), log_key):
+    if log_key is None:
+        v.note = "no log key was named: the head must be signed by a log key the caller names"
+        return v
+    if not _same_hex(sth.get("public_key_hex"), log_key):
         v.note = "the head is not signed by the expected log key"
         return v
     v.anchored = verify_inclusion(idx, size, _leaf_hash(v.timestamp_hash), root, path)
@@ -1066,6 +1205,12 @@ def verify_attestation(att: dict, attesting_agency_id=None, expected_key=None) -
     return ArtifactVerdict(bool(ok), None, None if ok else (note or "the attestation signature is invalid"), ran)
 
 
+#: The formats the cross-authority decision and the exchange paths read by name, as the
+#: detached verifier reads them (WIRE-SPEC sections 3.1 and 3.3).
+_MANIFEST_FORMAT = "polaris-federation-manifest/1"
+_REVOCATION_FEED_FORMAT = "polaris-revocation-feed/1"
+
+
 def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=None,
                            revocation_feed=None, now=None,
                            require_signed_attestation: bool = False) -> CrossAuthorityVerdict:
@@ -1084,9 +1229,8 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     if trusted_anchors is None:
         # No root, no trusted authority. Every manifest is signed by a key it lists itself, so
         # with no anchor the relying party chose, an attacker's own manifest attesting the
-        # attacker's own credential decided (2026-09-30). The detached verifier's equivalent takes
-        # `trusted_manifests`, a set its caller vouches for by name; this function takes the
-        # manifests a presentation brought, so it trusts none of them unaided.
+        # attacker's own credential decided (2026-09-30). The detached verifier decides the same
+        # way.
         return CrossAuthorityVerdict("reject", True, None,
                                      reason="no trust anchors were given: a manifest vouches for nothing by itself")
     trusted = {_hex_text(t) for t in trusted_anchors}
@@ -1096,6 +1240,11 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     # let `true` through to the loop, which raised TypeError (2026-09-30).
     for m in (manifests if isinstance(manifests, (list, tuple)) else []):
         m = m if isinstance(m, dict) else {}
+        # Only a federation manifest is read as one, as in the detached verifier. Another
+        # artifact signs neither `anchors` nor `attestations`, so an edge carried beside its
+        # signed fields is no authority's word, whatever key signed the rest.
+        if m.get("format") != _MANIFEST_FORMAT:
+            continue
         mv = verify_signed_artifact(m, now=now)   # manifest: signature + self-consistency + freshness
         if not (mv.authentic and mv.fresh):
             continue
@@ -1131,6 +1280,12 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         # A feed that is not an object is not authentic, as in the detached verifier; the
         # binding below read `.get` off it and raised AttributeError (2026-09-28).
         feed = revocation_feed if isinstance(revocation_feed, dict) else {}
+        # Only a revocation feed answers for revocation, as in the detached verifier. Another
+        # artifact the issuer's key signed (an epoch checkpoint, a manifest) lists nothing.
+        if feed.get("format") != _REVOCATION_FEED_FORMAT:
+            return CrossAuthorityVerdict("reject", True, True, via_str,
+                                         "the revocation feed is not a %s" % _REVOCATION_FEED_FORMAT,
+                                         signed_edge)
         rv = verify_signed_artifact(feed, now=now)
         bound = token_key is not None and _hex_text(feed.get("public_key_hex")) == token_key
         if not (rv.authentic and rv.fresh and bound):
@@ -1645,6 +1800,9 @@ def _exchange_authorities(key_hex, context_id, manifests, now=None):
         return found
     for m in (manifests if isinstance(manifests, (list, tuple)) else []):
         m = m if isinstance(m, dict) else {}
+        # Only a federation manifest is read as one, as in the cross-authority decision.
+        if m.get("format") != _MANIFEST_FORMAT:
+            continue
         mv = verify_signed_artifact(m, now=now)
         if not (mv.authentic and mv.fresh is True):
             continue

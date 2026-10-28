@@ -8,6 +8,7 @@ injected online status (no server); and the conformance runner is driven against
 the bundled SDK. Skips where cryptography lacks ML-DSA-65."""
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,19 @@ _ROOT = os.path.dirname(os.path.dirname(_HERE))
 sys.path.insert(0, _HERE)
 
 import polaris_verify as pv
+
+# The `oqs` stubs below run `git clone`, as liboqs-python's import does, against a stub git on
+# PATH; a hook's GIT_* (the pre-commit index above all) would still reach any git a test starts,
+# so it is dropped for the module and restored after.
+_HOOK_GIT_ENV = {}
+
+
+def setUpModule():
+    _HOOK_GIT_ENV.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")})
+
+
+def tearDownModule():
+    os.environ.update(_HOOK_GIT_ENV)
 
 
 def _mldsa_available():
@@ -840,6 +854,13 @@ def _conformance_vector(name):
         return json.load(f)
 
 
+def _conformance_log_key(case_name):
+    """The log key a published case names (conformance/cases.json): the relying party's input,
+    never read off the head being judged."""
+    with open(os.path.join(_ROOT, "conformance", "cases.json")) as f:
+        return next(c["log_key"] for c in json.load(f)["cases"] if c["name"] == case_name)
+
+
 @unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
 class TamperedMaterialIsRefusedTests(unittest.TestCase):
     """The SIGNATURE-FAILURE return paths, which structural input cannot reach.
@@ -1125,8 +1146,10 @@ class TimestampAnchorHeldOutTests(unittest.TestCase):
         self.ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
         self.cos = self.ts["anchor"]["cosignatures"]
         self.both = [c["public_key_hex"] for c in self.cos]
+        self.log_key = _conformance_log_key("timestamp-anchor-witnessed")
 
     def verdict(self, trusted=None, threshold=2, **kw):
+        kw.setdefault("log_key", self.log_key)
         return pv.verify_timestamp_anchor(self.ts, trusted_witnesses=self.both if trusted is None else trusted,
                                           threshold=threshold, **kw)
 
@@ -1135,6 +1158,11 @@ class TimestampAnchorHeldOutTests(unittest.TestCase):
         self.assertTrue(v.anchored, v.note)
         self.assertTrue(v.witnessed)
         self.assertEqual(v.cosigner_count, 2)
+
+    def test_no_log_key_anchors_nothing(self):
+        v = self.verdict(log_key=None)
+        self.assertFalse(v.anchored)
+        self.assertEqual(v.note, "no log key was named: the head must be signed by a log key the caller names")
 
     def test_a_proof_for_another_entry_does_not_anchor(self):
         self.ts["anchor"]["proof"]["entry_hex"] = "00" * 32
@@ -1179,6 +1207,36 @@ class TimestampAnchorHeldOutTests(unittest.TestCase):
 
 
 @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class TimestampAnchorNamesItsLogKeyTests(unittest.TestCase):
+    """A head anchors a timestamp only under the log key the caller names. The published base
+    anchor, and the same anchor with its head re-signed by a key no case names
+    (conformance/make_stranger_head_vectors.py): only the signer differs."""
+
+    NO_LOG_KEY = "no log key was named: the head must be signed by a log key the caller names"
+
+    def setUp(self):
+        self.base = _conformance_vector("timestamp-anchor-variants-base.json")
+        self.stranger = _conformance_vector("timestamp-anchor-stranger-head.json")
+        self.log_key = _conformance_log_key("timestamp-anchor-variants-base")
+
+    def test_the_log_s_head_under_its_log_key_is_anchored(self):
+        v = pv.verify_timestamp_anchor(self.base, log_key=self.log_key)
+        self.assertTrue(v.anchored, v.note)
+
+    def test_a_stranger_s_head_with_no_log_key_is_not_anchored(self):
+        self.assertTrue(pv.verify_signed_artifact(self.stranger["anchor"]["sth"]).authentic,
+                        "control: the stranger's head is authentic under its own key")
+        v = pv.verify_timestamp_anchor(self.stranger)
+        self.assertFalse(v.anchored)
+        self.assertEqual(v.note, self.NO_LOG_KEY)
+
+    def test_a_stranger_s_head_under_the_log_key_is_not_anchored(self):
+        v = pv.verify_timestamp_anchor(self.stranger, log_key=self.log_key)
+        self.assertFalse(v.anchored)
+        self.assertEqual(v.note, "the head is not signed by the expected log key")
+
+
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
 class HostileFieldsAreAVerdictTests(unittest.TestCase):
     """Fields a third party writes, of the wrong JSON type, are refused, never raised.
     2026-09-28, a type sweep of every published case's payload through the conformance adapter:
@@ -1189,23 +1247,25 @@ class HostileFieldsAreAVerdictTests(unittest.TestCase):
         import copy
         ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
         both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
-        v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+        key = _conformance_log_key("timestamp-anchor-witnessed")
+        v = pv.verify_timestamp_anchor(ts, log_key=key, trusted_witnesses=both, threshold=2)
         self.assertTrue(v.anchored and v.witnessed, v.note)
         for bad in (True, 5):
             with self.subTest(cosignatures=bad):
                 ts["anchor"]["cosignatures"] = bad
-                v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+                v = pv.verify_timestamp_anchor(ts, log_key=key, trusted_witnesses=both, threshold=2)
                 self.assertTrue(v.anchored, v.note)
                 self.assertFalse(v.witnessed)
 
     def test_a_format_that_is_not_a_string_is_an_unknown_artifact(self):
         import copy
+        key = _conformance_log_key("timestamp-anchor-witnessed")
         for bad in ([], {}, ["polaris-epoch-checkpoint/1"]):
             with self.subTest(format=bad):
                 self.assertFalse(pv.verify_signed_artifact({"format": bad}).authentic)
                 ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
                 ts["anchor"]["sth"]["format"] = bad
-                self.assertFalse(pv.verify_timestamp_anchor(ts).anchored)
+                self.assertFalse(pv.verify_timestamp_anchor(ts, log_key=key).anchored)
 
     def test_a_revocation_feed_that_is_not_an_object_rejects(self):
         f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
@@ -1246,6 +1306,195 @@ class HostileFieldsAreAVerdictTests(unittest.TestCase):
         verdict = json.loads(out.getvalue())
         self.assertFalse(verdict["principal_bound"])
         self.assertIsNone(verdict["pairwise_handle"])
+
+
+class _Key:
+    """An ML-DSA-65 key made by the test, signing each artifact the way its authority does:
+    SHA3-256 over the canonical JSON of the format's signed fields (a pack: of its serial)."""
+
+    def __init__(self):
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        self._sk = mldsa.MLDSA65PrivateKey.generate()
+        self.pk = self._sk.public_key().public_bytes_raw().hex()
+
+    def sign(self, body):
+        import hashlib
+        body = dict(body)
+        body.pop("signature_hex", None)
+        body.pop("public_key_hex", None)
+        digest = hashlib.sha3_256(pv._canonical(body, pv._ARTIFACT_KEYS[body["format"]])).digest()
+        return dict(body, signature_hex=self._sk.sign(digest).hex(), public_key_hex=self.pk)
+
+    def pack(self, token_value):
+        return {"format": "polaris-authenticity-pack/1", "token_value": token_value, "algorithm": "ML-DSA-65",
+                "public_key_hex": self.pk, "signature_hex": self._sk.sign(pv._digest(token_value)).hex()}
+
+
+_XA_NOW = "2026-05-01T00:00:30Z"
+_XA_ISSUED = "2026-05-01T00:00:00Z"
+_XA_EXPIRES = "2026-05-02T00:00:00Z"
+_XA_HOME = {"agency_id": 1, "name": "Home Authority"}
+_XA_ISSUER = {"agency_id": 2, "name": "Issuing Authority"}
+
+
+def _xa_checkpoint(authority):
+    """An epoch checkpoint in the shape the relying-party API serves it (WIRE-SPEC 3.2)."""
+    return {"format": "polaris-epoch-checkpoint/1", "authority": authority,
+            "epoch": {"number": 7, "root_hex": "ab" * 32, "committed_count": 3, "valid_until": None},
+            "prev": {"number": 6, "root_hex": "cd" * 32}, "as_of": _XA_ISSUED,
+            "issued_at": _XA_ISSUED, "expires_at": _XA_EXPIRES, "algorithm": "ML-DSA-65"}
+
+
+def _xa_feed(authority, leaves, issued=_XA_ISSUED, expires=_XA_EXPIRES):
+    leaves = sorted({x.lower() for x in leaves})
+    return {"format": "polaris-revocation-feed/1", "authority": authority, "epoch_number": 7,
+            "as_of": issued, "revoked_root_hex": pv._revoked_root(leaves), "revoked_count": len(leaves),
+            "revoked_leaves": leaves, "issued_at": issued, "expires_at": expires, "algorithm": "ML-DSA-65"}
+
+
+def _xa_manifest(authority, anchor_keys, attestations):
+    return {"format": "polaris-federation-manifest/1", "authority": authority,
+            "anchors": [{"public_key_hex": k, "status": "active"} for k in anchor_keys],
+            "attestations": attestations, "epoch": None, "revocation": None,
+            "issued_at": _XA_ISSUED, "expires_at": _XA_EXPIRES, "algorithm": "ML-DSA-65"}
+
+
+def _xa_edge(attested_key, signer=None, attesting=_XA_HOME):
+    """A trust edge naming `attested_key` in context 1: unsigned (the operator's word carried by
+    the manifest's signature), or signed by `signer` in the attesting agency's name."""
+    edge = {"attesting_agency_id": attesting["agency_id"], "attested_agency_id": 9,
+            "attested_public_key_hex": attested_key, "context_id": 1}
+    if signer is None:
+        return edge
+    return signer.sign(dict(edge, format="polaris-trust-attestation/1", attested_date="2026-04-30",
+                            valid_until="2026-06-01T00:00:00Z", algorithm="ML-DSA-65"))
+
+
+class OnlyARevocationFeedAnswersForRevocationTests(unittest.TestCase):
+    """verify_cross_authority reads a supplied revocation feed only when its `format` is
+    polaris-revocation-feed/1, as polaris-verify's verify_revocation_feed does. Another artifact
+    the issuer's key signed is refused, and the feed's other verdicts are unchanged."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not _mldsa_available():
+            raise unittest.SkipTest("cryptography lacks ML-DSA-65")
+        cls.home, cls.issuer, cls.stranger = _Key(), _Key(), _Key()
+        cls.tv = "XA-FEED-0001"
+        cls.pack = cls.issuer.pack(cls.tv)
+        cls.leaf = pv._sha3_hex(cls.tv)
+        cls.manifest = cls.home.sign(_xa_manifest(_XA_HOME, [cls.home.pk], [_xa_edge(cls.issuer.pk)]))
+
+    def decide(self, feed):
+        return pv.verify_cross_authority(self.pack, 1, [self.manifest], [self.home.pk], feed, now=_XA_NOW)
+
+    def test_an_artifact_of_another_format_signed_by_the_issuer_is_refused_as_the_feed(self):
+        checkpoint = self.issuer.sign(_xa_checkpoint(_XA_ISSUER))
+        for label, feed in (
+                ("the issuer's epoch checkpoint", checkpoint),
+                ("the issuer's epoch checkpoint with an unsigned revoked_leaves", dict(checkpoint, revoked_leaves=[])),
+                ("a manifest the issuer's key signed",
+                 self.issuer.sign(_xa_manifest(_XA_ISSUER, [self.issuer.pk], [])))):
+            with self.subTest(case=label):
+                self.assertTrue(pv.verify_signed_artifact(feed, now=_XA_NOW).authentic,
+                                "%s is authentic as itself" % label)
+                v = self.decide(feed)
+                self.assertEqual((v.decision, v.reason),
+                                 ("reject", "the revocation feed is not a polaris-revocation-feed/1"), label)
+
+    def test_a_real_feed_decides_as_before(self):
+        self.assertEqual(self.decide(None).decision, "accept", "no feed: the attestation decision alone")
+        self.assertEqual(self.decide(self.issuer.sign(_xa_feed(_XA_ISSUER, ["ef" * 32]))).decision, "accept",
+                         "the issuer's real feed listing another leaf")
+        v = self.decide(self.issuer.sign(_xa_feed(_XA_ISSUER, [self.leaf])))
+        self.assertEqual(v.decision, "reject")
+        self.assertIn("revoked", v.reason)
+        for label, feed in (
+                ("a feed signed by a stranger", self.stranger.sign(_xa_feed(_XA_ISSUER, []))),
+                ("an expired real feed", self.issuer.sign(_xa_feed(_XA_ISSUER, [], issued="2026-04-01T00:00:00Z",
+                                                                    expires="2026-04-02T00:00:00Z")))):
+            with self.subTest(case=label):
+                v = self.decide(feed)
+                self.assertEqual(v.decision, "reject", label)
+                self.assertIn("not authentic, fresh, and bound", v.reason)
+
+
+class OnlyAFederationManifestIsReadAsOneTests(unittest.TestCase):
+    """verify_cross_authority, verify_exchange_request and verify_exchange_receipt read trust
+    edges only off an object whose `format` is polaris-federation-manifest/1, as polaris-verify's
+    verify_manifest does. An epoch checkpoint or a revocation feed signed by the trusted key, with
+    an edge (and an anchor) carried beside its signed fields, is not read as a manifest, with
+    require_signed_attestation off and on."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not _mldsa_available():
+            raise unittest.SkipTest("cryptography lacks ML-DSA-65")
+        cls.home, cls.own = _Key(), _Key()
+        cls.pack = cls.own.pack("XA-MANIFEST-0001")
+        unsigned, signed = _xa_edge(cls.own.pk), _xa_edge(cls.own.pk, signer=cls.own)
+        own_anchor = [{"public_key_hex": cls.own.pk, "status": "active"}]
+        checkpoint = cls.home.sign(_xa_checkpoint(_XA_HOME))
+        feed = cls.home.sign(_xa_feed(_XA_HOME, []))
+        cls.substitutes = (
+            ("an epoch checkpoint carrying an edge", dict(checkpoint, attestations=[unsigned])),
+            ("a revocation feed carrying an edge", dict(feed, attestations=[unsigned])),
+            ("an epoch checkpoint carrying an anchor and an edge it signed",
+             dict(checkpoint, anchors=own_anchor, attestations=[signed])),
+            ("a revocation feed carrying an anchor and an edge it signed",
+             dict(feed, anchors=own_anchor, attestations=[signed])))
+        cls.real = cls.home.sign(_xa_manifest(_XA_HOME, [cls.home.pk], [unsigned]))
+        cls.real_signed = cls.home.sign(_xa_manifest(_XA_HOME, [cls.home.pk],
+                                                     [_xa_edge(cls.own.pk, signer=cls.home)]))
+        body = {"account": "notional-7", "ask": "balance"}
+        cls.request = cls.own.sign({
+            "format": "polaris-exchange-request/1", "requester": {"agency_id": 9, "public_key_hex": cls.own.pk},
+            "target": {"agency_id": 1}, "context_id": 1,
+            "request_hash": pv._sha3_hex(json.dumps(body, sort_keys=True, separators=(",", ":"))),
+            "nonce": "n-1", "issued_at": _XA_ISSUED, "algorithm": "ML-DSA-65"})
+        cls.receipt = cls.home.sign({
+            "format": "polaris-exchange-receipt/1", "requester": {"agency_id": 9, "public_key_hex": cls.own.pk},
+            "responder": {"agency_id": 1}, "context_id": 1, "request_hash": "aa" * 32,
+            "response_hash": "bb" * 32, "authorized_via": None, "occurred_at": _XA_ISSUED,
+            "algorithm": "ML-DSA-65"})
+
+    def decide(self, manifest, require_signed):
+        return pv.verify_cross_authority(self.pack, 1, [manifest], [self.home.pk], None, now=_XA_NOW,
+                                         require_signed_attestation=require_signed)
+
+    def test_another_format_carrying_an_edge_is_not_a_manifest_for_the_cross_authority_decision(self):
+        for label, sub in self.substitutes:
+            self.assertTrue(pv.verify_signed_artifact(sub, now=_XA_NOW).authentic, "%s is authentic as itself" % label)
+            for require_signed in (False, True):
+                with self.subTest(case=label, require_signed_attestation=require_signed):
+                    v = self.decide(sub, require_signed)
+                    self.assertEqual((v.decision, v.issuer_trusted, v.via), ("reject", False, None), label)
+
+    def test_another_format_carrying_an_edge_is_not_a_manifest_for_an_exchange_request(self):
+        for label, sub in self.substitutes:
+            with self.subTest(case=label):
+                v = pv.verify_exchange_request(self.request, trusted_manifests=[sub], now=_XA_NOW)
+                self.assertTrue(v.authentic, v.note)
+                self.assertEqual((v.requester_authorized, v.attestation_signed), (False, None), label)
+
+    def test_another_format_carrying_an_edge_is_not_a_manifest_for_an_exchange_receipt(self):
+        for label, sub in self.substitutes:
+            with self.subTest(case=label):
+                v = pv.verify_exchange_receipt(self.receipt, now=_XA_NOW, trusted_manifests=[sub])
+                self.assertTrue(v.authentic, v.note)
+                self.assertEqual((v.requester_authorized, v.via, v.attestation_signed), (False, None, None), label)
+
+    def test_a_real_manifest_decides_as_before(self):
+        v = self.decide(self.real, False)
+        self.assertEqual((v.decision, v.via, v.attestation_signed), ("accept", _XA_HOME, False))
+        self.assertEqual(self.decide(self.real, True).decision, "reject", "an unsigned edge, a signature required")
+        v = self.decide(self.real_signed, True)
+        self.assertEqual((v.decision, v.via, v.attestation_signed), ("accept", _XA_HOME, True))
+        for man, signed in ((self.real, False), (self.real_signed, True)):
+            q = pv.verify_exchange_request(self.request, trusted_manifests=[man], now=_XA_NOW)
+            self.assertEqual((q.requester_authorized, q.attestation_signed), (True, signed))
+            r = pv.verify_exchange_receipt(self.receipt, now=_XA_NOW, trusted_manifests=[man])
+            self.assertEqual((r.requester_authorized, r.via, r.attestation_signed), (True, _XA_HOME, signed))
 
 
 class SignedCountsAreNumbersTests(unittest.TestCase):
@@ -1317,6 +1566,7 @@ class SignedCountsAreNumbersTests(unittest.TestCase):
         from unittest import mock
         ts = _conformance_vector("timestamp-anchor-variants-base.json")
         both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
+        key = _conformance_log_key("timestamp-anchor-variants-base")
 
         def anchor(size):
             t = copy.deepcopy(ts)
@@ -1324,7 +1574,7 @@ class SignedCountsAreNumbersTests(unittest.TestCase):
                 c["tree_size"] = size
             with mock.patch.object(pv, "_verify_cryptography", return_value=True), \
                     mock.patch.object(pv, "_verify_liboqs", return_value=True):
-                return pv.verify_timestamp_anchor(t, trusted_witnesses=both, threshold=1)
+                return pv.verify_timestamp_anchor(t, log_key=key, trusted_witnesses=both, threshold=1)
         v = anchor(1)
         self.assertEqual((v.anchored, v.witnessed, v.cosigner_count), (True, True, 2), "control: the integer 1")
         for size in (1.0, True):
@@ -1699,10 +1949,12 @@ class WitnessThresholdTests(unittest.TestCase):
     def test_the_threshold_is_a_whole_number_of_at_least_one(self):
         ts = _conformance_vector("timestamp-anchor-witnessed.json")
         both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
-        self.assertTrue(pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2).witnessed, "control")
+        key = _conformance_log_key("timestamp-anchor-witnessed")
+        self.assertTrue(pv.verify_timestamp_anchor(ts, log_key=key, trusted_witnesses=both, threshold=2).witnessed,
+                        "control")
         for bad in (0.5, -1, 0, "2", True, float("nan")):
             with self.subTest(threshold=bad):
-                v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=bad)
+                v = pv.verify_timestamp_anchor(ts, log_key=key, trusted_witnesses=both, threshold=bad)
                 self.assertIs(v.witnessed, False)
                 self.assertIn("whole number", v.note)
 
@@ -2023,6 +2275,61 @@ class HeldOutSemanticMutationsTests(unittest.TestCase):
                 self.assertIn("DISAGREE", a.note or "")
 
 
+@unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
+class FreshnessComesFromSignedFieldsTests(unittest.TestCase):
+    """verify_signed_artifact's `fresh` comes only from fields the format signs (2026-10-21).
+
+    Each vector below is a published, genuine one with only the window fields it does not sign
+    added: the signature still verifies, and `fresh` must not follow them. The controls are the
+    windows that ARE signed: the ID token's `iat` and `exp`, a format signing both ends, and the
+    holder proof's replay window. The TypeScript SDK carries the same tests."""
+
+    NOW = "2026-10-21T00:00:00Z"
+    ADDED = {"issued_at": "2026-01-01T00:00:00Z", "expires_at": "2099-01-01T00:00:00Z"}
+    NO_WINDOW = ("transparency-sth-valid.json", "timestamp-valid.json",
+                 "exchange-request-valid.json", "signed-document-valid.json",
+                 "exchange-receipt-valid.json", "exchange-mint-valid.json",
+                 "grant-revocation-valid.json", "agent-proof-valid.json",
+                 "trust-attestation-valid.json")
+
+    def _with_unsigned_window(self, name):
+        obj = _conformance_vector(name)
+        signed = pv._ARTIFACT_KEYS[obj["format"]]
+        added = {k: v for k, v in self.ADDED.items() if k not in obj and k not in signed}
+        self.assertTrue(added, "%s signs both ends of its window: a control, not a case" % name)
+        return dict(obj, **added)
+
+    def test_a_format_signing_no_window_reports_no_freshness_with_the_fields_added(self):
+        for name in self.NO_WINDOW:
+            with self.subTest(vector=name):
+                v = pv.verify_signed_artifact(self._with_unsigned_window(name), self.NOW)
+                self.assertTrue(v.authentic, "the added fields are outside the signed statement")
+                self.assertIsNone(v.fresh, "fresh must not come from fields the format does not sign")
+
+    def test_the_id_token_answers_from_its_signed_iat_and_exp(self):
+        tok = _conformance_vector("id-token-valid.json")   # iat 12:00:00Z, exp 12:05:00Z, 2026-05-01
+        self.assertIs(pv.verify_signed_artifact(tok, "2026-05-01T12:01:00Z").fresh, True)
+        self.assertIs(pv.verify_signed_artifact(tok, "2026-05-01T12:05:00Z").fresh, False,
+                      "the window is half-open: exp itself is outside it")
+        forged = self._with_unsigned_window("id-token-valid.json")
+        v = pv.verify_signed_artifact(forged, self.NOW)
+        self.assertTrue(v.authentic)
+        self.assertIs(v.fresh, False, "an expired token stays expired with issued_at and expires_at added")
+        self.assertIs(v.fresh, pv.verify_id_token(forged, now=self.NOW).fresh)
+
+    def test_controls_a_window_signed_at_both_ends_is_unchanged(self):
+        cp = _conformance_vector("epoch-checkpoint-valid.json")   # [2026-01-01, 2027-01-01)
+        self.assertIs(pv.verify_signed_artifact(cp, self.NOW).fresh, True)
+        self.assertIs(pv.verify_signed_artifact(cp, "2027-01-01T00:00:00Z").fresh, False)
+
+    def test_controls_the_holder_proof_keeps_its_replay_window(self):
+        p = dict(_conformance_vector("holder-proof-valid.json"),   # issued 2026-05-01T00:00:00Z
+                 expires_at=self.ADDED["expires_at"])
+        self.assertIs(pv.verify_signed_artifact(p, "2026-05-01T00:05:00Z").fresh, True)
+        self.assertIs(pv.verify_signed_artifact(p, "2026-05-01T00:05:01Z").fresh, False,
+                      "an unsigned expires_at does not stretch a replay window")
+
+
 class IsoInstantGrammarTests(unittest.TestCase):
     """sdk/testdata/iso-instants.json: the grammar both reference SDKs share. Until 2026-09-24
     this kit used datetime.fromisoformat, whose grammar depends on the interpreter."""
@@ -2121,8 +2428,15 @@ class RefusalsNoTestTookTests(unittest.TestCase):
 
     @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
     def test_anchors_that_are_not_a_collection_trust_nothing(self):
-        self.assertIs(pv.verify_signed_artifact(self.artifact(), anchors=5).issuer_trusted, False)
-        self.assertIs(pv.verify_signed_artifact(self.artifact(), anchors=["AB" * 1952]).issuer_trusted, True,
+        # Trust is answered for an authentic signature only (2026-10-21), so this one is genuine.
+        import hashlib
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        sk = mldsa.MLDSA65PrivateKey.generate()
+        art = self.artifact(public_key_hex=sk.public_key().public_bytes_raw().hex())
+        art["signature_hex"] = sk.sign(hashlib.sha3_256(
+            pv._canonical(art, pv._ARTIFACT_KEYS[art["format"]])).digest()).hex()
+        self.assertIs(pv.verify_signed_artifact(art, anchors=5).issuer_trusted, False)
+        self.assertIs(pv.verify_signed_artifact(art, anchors=[art["public_key_hex"].upper()]).issuer_trusted, True,
                       "control: the signing key, in any case, is trusted")
 
     @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
@@ -2172,6 +2486,38 @@ class RefusalsNoTestTookTests(unittest.TestCase):
                                        "currently_authoritative": None, "status": None, "reasons": ["x"]})
 
 
+@unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to sign and verify")
+class SignedArtifactTrustNeedsAuthenticityTests(unittest.TestCase):
+    """2026-10-21: a forged signature under its signer's key as the anchor reported issuer_trusted
+    True beside authentic False, where polaris-verify reports signer_trusted None for the same
+    signed document. Trust is answered for an authentic signature only. Signed for real."""
+
+    @classmethod
+    def setUpClass(cls):
+        import hashlib
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        sk = mldsa.MLDSA65PrivateKey.generate()
+        cls.S = sk.public_key().public_bytes_raw().hex()
+        doc = {"format": "polaris-signed-document/1",
+               "document": {"name": "report.txt", "digest_algorithm": "SHA3-256",
+                            "digest_hex": hashlib.sha3_256(b"a notional report\n").hexdigest()},
+               "signer": {"agency_id": 1, "name": "Notional Authority"}, "on_behalf_of": None,
+               "purpose": "approval", "signed_at": "2026-05-01T00:00:00Z", "algorithm": "ML-DSA-65"}
+        doc["signature_hex"] = sk.sign(hashlib.sha3_256(
+            pv._canonical(doc, pv._ARTIFACT_KEYS["polaris-signed-document/1"])).digest()).hex()
+        doc["public_key_hex"] = cls.S
+        cls.doc = doc
+
+    def test_control_an_authentic_document_under_its_signers_anchor_is_trusted(self):
+        v = pv.verify_signed_artifact(self.doc, anchors=[self.S])
+        self.assertEqual((v.authentic, v.issuer_trusted), (True, True), v.note)
+
+    def test_a_forged_document_reports_no_issuer_trust_under_its_signers_anchor(self):
+        sig = self.doc["signature_hex"]
+        forged = dict(self.doc, signature_hex=("00" if sig[:2] != "00" else "01") + sig[2:])
+        v = pv.verify_signed_artifact(forged, anchors=[self.S])
+        self.assertEqual((v.authentic, v.issuer_trusted), (False, None))
+
 class AnotherProjectsOqsModule(unittest.TestCase):
     """A module named `oqs` that is not liboqs-python is absent, not a witness that refuses.
 
@@ -2218,3 +2564,221 @@ class AnotherProjectsOqsModule(unittest.TestCase):
         self.assertIs(got[tampered][0], False, got[tampered])
         for path in (valid, tampered):
             self.assertFalse([w for w in got[path][1] or [] if "liboqs" in w], got[path])
+
+
+def _loadable_library():
+    """A shared library this interpreter can load: a copy stands in for liboqs."""
+    import importlib
+    import importlib.machinery
+    for name in ("_json", "_ctypes", "select", "_socket", "math", "_struct"):
+        try:
+            path = getattr(importlib.import_module(name), "__file__", None)
+        except ImportError:
+            continue
+        if path and path.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
+            return path
+    return None
+
+
+class OqsIsImportedOnlyWhenItIsLiboqs(unittest.TestCase):
+    """Nothing named `oqs` is imported unless it is liboqs-python with its library in place,
+    and a verify call never exits the process. The SDK's copy of the detached verifier's
+    OqsIsImportedOnlyWhenItIsLiboqs (scripts/test_verify_refusals.py), with the same stubs:
+    - named `oqs` (PyPI's unrelated project), with a `Signature` and an import that writes a
+      marker file: never imported, the liboqs witness abstains, and the reason names the repair;
+    - named `liboqs-python`, with the liboqs library where liboqs-python looks: imported, and
+      the witness runs (the control), whether the library is under lib, lib64 or where
+      ctypes.util.find_library finds it (a copy of one of this interpreter's extension modules);
+    - the same without its __init__.py (what `pip uninstall oqs` leaves): the same repair;
+    - `liboqs-python` without the library, whose import runs `git clone` (a stub git on PATH
+      records it) and raises SystemExit, as liboqs-python 0.16.0 does: not imported, nothing
+      fetched, the witness abstains;
+    - the same with a library file that does not load (an empty one): the same as none;
+    - `liboqs-python` whose import raises SystemExit with the library in place: no witness.
+    - no `oqs` at all, and no library: the reason is the missing module, not the library.
+    - liboqs-python whose import raises (a library that loads but is not liboqs): no witness;
+    - and in each, a later verify looks for nothing again.
+    A fresh interpreter under -S each time, so an installed liboqs-python cannot stand in for a
+    stub, with ctypes.util.find_library answering only what the test names."""
+
+    CODE = ("import os\n"
+            "open(os.environ['POLARIS_OQS_CANARY'], 'w').write('imported')\n"
+            "class Signature:\n"
+            "    pass\n")
+    CLONE = ("import subprocess\n"
+             "subprocess.call('git clone https://github.com/open-quantum-safe/liboqs --depth 1',\n"
+             "                shell=True)\n"
+             "raise SystemExit(1)\n")
+    PROBE = (
+        "import ctypes.util, json, os, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import polaris_verify as pv\n"
+        "out = {'sdk': pv.__file__}\n"
+        "try:\n"
+        "    pv._import_oqs(); out['import'] = None\n"
+        "except ImportError as e:\n"
+        "    out['import'] = str(e)\n"
+        "out['witness'] = pv._verify_liboqs(b'd' * 32, b'\\x02' * 3309, b'\\x01' * 1952)\n"
+        "print(json.dumps(out))\n")
+    REPAIR = "`pip install --force-reinstall --no-deps liboqs-python`"
+    LIBRARY = {"Darwin": "liboqs.dylib", "Windows": "oqs.dll"}.get(platform.system(), "liboqs.so")
+    LOADABLE = _loadable_library()
+
+    def setUp(self):
+        if self.LOADABLE is None:
+            self.skipTest("this interpreter has no extension module to stand in for liboqs")
+
+    def site(self, distribution, code=CODE, init=True, library="loads", where="lib"):
+        d = tempfile.mkdtemp(prefix="polaris-oqs-dist-")
+        self.addCleanup(shutil.rmtree, d, True)
+        if code is not None:
+            os.mkdir(os.path.join(d, "oqs"))
+            with open(os.path.join(d, "oqs", "oqs.py"), "w") as f:
+                f.write(code)
+            if init:
+                with open(os.path.join(d, "oqs", "__init__.py"), "w") as f:
+                    f.write("from .oqs import *  # noqa: F401,F403\n")
+            info = os.path.join(d, "%s-0.0.0.dist-info" % distribution.replace("-", "_"))
+            os.mkdir(info)
+            with open(os.path.join(info, "METADATA"), "w") as f:
+                f.write("Metadata-Version: 2.1\nName: %s\nVersion: 0.0.0\n" % distribution)
+        lib = os.path.join(d, "_oqs", "bin" if platform.system() == "Windows" else where)
+        os.makedirs(lib)
+        if library == "loads":
+            shutil.copyfile(self.LOADABLE, os.path.join(lib, self.LIBRARY))
+        elif library == "empty":
+            open(os.path.join(lib, self.LIBRARY), "wb").close()
+        os.mkdir(os.path.join(d, "stub-bin"))
+        git = os.path.join(d, "stub-bin", "git")
+        with open(git, "w") as f:
+            f.write("#!/bin/sh\necho \"$@\" >> \"$POLARIS_GIT_MARKER\"\nexit 128\n")
+        os.chmod(git, 0o700)
+        return d
+
+    def probe(self, site, find_library=None):
+        env = dict(os.environ, PYTHONPATH=site,
+                   POLARIS_OQS_CANARY=os.path.join(site, "imported"),
+                   POLARIS_GIT_MARKER=os.path.join(site, "git-called"),
+                   OQS_INSTALL_PATH=os.path.join(site, "_oqs"),
+                   PATH=os.path.join(site, "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+        env.pop("POLARIS_FIND_LIBRARY", None)
+        if find_library:
+            env["POLARIS_FIND_LIBRARY"] = find_library
+        r = subprocess.run([sys.executable, "-S", "-c", self.PROBE, _HERE], env=env, cwd=site,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(site, "git-called")),
+                         "git ran: %s" % r.stderr[-400:])
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertTrue(got["sdk"].startswith(_HERE), got["sdk"])
+        return got, os.path.exists(os.path.join(site, "imported"))
+
+    def test_a_distribution_named_oqs_is_never_imported(self):
+        got, imported = self.probe(self.site("oqs"))
+        self.assertIs(imported, False, "the package's code ran")
+        self.assertIn("a distribution named `oqs` is installed", got["import"])
+        self.assertIn(self.REPAIR, got["import"])
+        self.assertIsNone(got["witness"])
+
+    def test_liboqs_python_with_its_library_is_imported(self):
+        got, imported = self.probe(self.site("liboqs-python"))
+        self.assertIs(imported, True, "positive control: liboqs-python's oqs must load")
+        self.assertIsNone(got["import"])
+        # The stub's Signature takes no algorithm, so the witness ran and refused.
+        self.assertIs(got["witness"], False)
+
+    @unittest.skipIf(platform.system() == "Windows", "liboqs-python looks only in bin there")
+    def test_the_library_under_lib64_is_found(self):
+        got, imported = self.probe(self.site("liboqs-python", where="lib64"))
+        self.assertIs(imported, True)
+        self.assertIsNone(got["import"])
+
+    def test_the_library_ctypes_finds_on_the_system_path_is_found(self):
+        got, imported = self.probe(self.site("liboqs-python", library=None),
+                                   find_library=self.LOADABLE)
+        self.assertIs(imported, True)
+        self.assertIsNone(got["import"])
+
+    def test_what_uninstalling_oqs_leaves_gets_the_same_repair(self):
+        got, _ = self.probe(self.site("liboqs-python", init=False))
+        self.assertIn("it has no Signature", got["import"])
+        self.assertIn(self.REPAIR, got["import"])
+        self.assertIsNone(got["witness"])
+
+    def test_without_the_library_nothing_is_fetched_or_imported(self):
+        site = self.site("liboqs-python", code=self.CLONE, library=None)
+        got, _ = self.probe(site)
+        self.assertIn("liboqs-python needs the liboqs shared library", got["import"])
+        self.assertIn(os.path.join(site, "_oqs"), got["import"])
+        self.assertIsNone(got["witness"])
+
+    def test_a_library_file_that_does_not_load_counts_as_none(self):
+        got, _ = self.probe(self.site("liboqs-python", code=self.CLONE, library="empty"))
+        self.assertIn("liboqs-python needs the liboqs shared library", got["import"])
+        self.assertIsNone(got["witness"])
+
+    def test_an_import_that_exits_is_no_witness(self):
+        got, _ = self.probe(self.site("liboqs-python", code="raise SystemExit(1)\n"))
+        self.assertIn("importing `oqs` exited (1)", got["import"])
+        self.assertIsNone(got["witness"])
+
+    NOT_LIBOQS = "raise AttributeError('undefined symbol: OQS_init')\n"
+
+    def test_an_import_that_raises_is_no_witness(self):
+        # A library that loads but is not liboqs: liboqs-python's import raises AttributeError.
+        got, _ = self.probe(self.site("liboqs-python", code=self.NOT_LIBOQS))
+        self.assertIn("importing `oqs` failed (AttributeError: undefined symbol: OQS_init)",
+                      got["import"])
+        self.assertIsNone(got["witness"])
+
+    REPEAT = (
+        "import ctypes.util, json, os, subprocess, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import polaris_verify as pv\n"
+        "args = (b'd' * 32, b'\\x02' * 3309, b'\\x01' * 1952)\n"
+        "first = pv._verify_liboqs(*args)\n"
+        "calls = []\n"
+        "def counted(name, f):\n"
+        "    def g(*a, **k):\n"
+        "        calls.append(name)\n"
+        "        return f(*a, **k)\n"
+        "    return g\n"
+        "pv._liboqs_library = counted('_liboqs_library', pv._liboqs_library)\n"
+        "pv._unrelated_oqs_installed = counted('_unrelated_oqs_installed', pv._unrelated_oqs_installed)\n"
+        "ctypes.util.find_library = counted('find_library', ctypes.util.find_library)\n"
+        "subprocess.Popen.__init__ = counted('Popen', subprocess.Popen.__init__)\n"
+        "later = [pv._verify_liboqs(*args) for _ in range(3)]\n"
+        "print(json.dumps({'first': first, 'later': later, 'calls': calls}))\n")
+
+    def test_liboqs_is_looked_for_once_per_process(self):
+        # Finding the library runs ctypes.util.find_library, which on Linux starts ldconfig, then
+        # gcc and then ld if the one before found nothing: a later signature, liboqs found, absent
+        # or failing to import, looks nowhere and starts nothing.
+        for label, site, witness in (
+                ("found", self.site("liboqs-python"), False),
+                ("no library", self.site("liboqs-python", code=self.CLONE, library=None), None),
+                ("a library that is not liboqs", self.site("liboqs-python", code=self.NOT_LIBOQS), None)):
+            with self.subTest(label):
+                env = dict(os.environ, PYTHONPATH=site,
+                           POLARIS_OQS_CANARY=os.path.join(site, "imported"),
+                           POLARIS_GIT_MARKER=os.path.join(site, "git-called"),
+                           OQS_INSTALL_PATH=os.path.join(site, "_oqs"),
+                           PATH=os.path.join(site, "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+                env.pop("POLARIS_FIND_LIBRARY", None)
+                r = subprocess.run([sys.executable, "-S", "-c", self.REPEAT, _HERE], env=env, cwd=site,
+                                   capture_output=True, text=True, timeout=120)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertFalse(os.path.exists(os.path.join(site, "git-called")), r.stderr[-400:])
+                got = json.loads(r.stdout.strip().splitlines()[-1])
+                # The stub's Signature takes no algorithm: found, the witness ran and refused.
+                self.assertIs(got["first"], witness)
+                self.assertEqual(got["later"], [witness] * 3)
+                self.assertEqual(got["calls"], [])
+
+    def test_with_no_oqs_module_the_reason_names_no_library(self):
+        # `oqs` is located without importing it, before any library is looked for.
+        got, _ = self.probe(self.site("liboqs-python", code=None, library=None))
+        self.assertEqual(got["import"], "No module named 'oqs'")
+        self.assertIsNone(got["witness"])

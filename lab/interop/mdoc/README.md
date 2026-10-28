@@ -121,7 +121,7 @@ plus one negative for each stage. Each witness is counted only for the stages it
 - The EU reference verifier is eudi-srv-verifier-endpoint v0.12.0, its image pinned by digest. It
   counts for the SessionTranscript bytes, PKIX trust and validity. Its MSO signature, digests, docType
   and device signature are walt.id's, the library that built these responses, so they are not counted.
-- @owf/mdoc 0.8.2 counts for the MSO signature, digests, validity, docType and the device signature,
+- @owf/mdoc 0.8.3 counts for the MSO signature, digests, validity, docType and the device signature,
   checked against its own SessionTranscript. It also counts for the certificate signatures up to the
   given root, but not for the PKIX path rules: certificate validity, the CA flag, path length and key
   usage are the EU verifier's alone.
@@ -151,6 +151,34 @@ With no root, the EU verifier trusts any chain, so its trust verdict there is no
   and a capture run here exited 0 without finishing. `../eudi-issuer/run.sh` now passes its status
   to an `exit_trap`, which fails any run that stops before `finished=1`. The tail of `capture.sh`
   sets `finished=1` on its last line. `capture.sh` also counts a capture only if that tail completed.
+
+## Added with the negative vectors
+
+[`../negative-vectors/mdoc-vectors.json`](../negative-vectors/mdoc-vectors.json) (`make_mdoc_vectors.py`) judges this
+verifier's refusals. Six things were added to `verify_mdoc.py`, each with a test in `test_vectors.py` that turns red
+without it:
+- the Digital Credentials API handover (OpenID4VP 1.0 B.2.6.2, `response_mode` `dc_api` or `dc_api.jwt`, `origin` in
+  the inputs), reproducing that section's example byte for byte (`check_spec_vector_dcapi`);
+- every element DeviceSigned carries must be authorized by the MSO's KeyAuthorizations (a namespace in `nameSpaces`,
+  or the identifier under its namespace in `dataElements`);
+- when the inputs carry the DCQL `doctype_value`, every document must be of that docType. The captures' inputs do not,
+  so the three captures are judged as before;
+- a `crit` in a COSE_Sign1's protected header must be a non-empty array of labels this verifier processes (alg and
+  x5chain), each present in the protected header (RFC 9052 3.1: otherwise "a fatal error"). This verifier also refuses
+  a `crit` in the unprotected header, its own choice: section 3.1's MUST there binds the sender;
+- each IssuerSignedItem's `random` must be at least 16 bytes, a policy. The three captures carry no `crit` and 16-byte
+  randoms, so they are judged as before;
+- when the inputs carry the DCQL `claims` (and `claim_sets`), one option must be met: every claim, or one of the
+  `claim_sets`, each disclosed in IssuerSigned with a value among its `values` where it names them (a policy, the
+  vectors' `values-checked`), and nothing disclosed outside that option (OpenID4VP 1.0 6.4 and 6.4.1). Each claims
+  path must be two strings (7.2.1). The captures' inputs carry no `claims`, so they are judged as before.
+
+Two checks changed. An ECDSA signature's r and s are read at the key's length, as RFC 9053 section 2.1 encodes them,
+not at the length the alg names. The key's curve is checked against the alg first, so the two lengths agree wherever
+that check passes and no verdict changes; the pairing (ES256 under P-256, ES384 under P-384, a policy) is the one
+check that refuses ES384 under a P-256 key. x5chain is taken from IssuerAuth's protected header when it is there, and
+from the unprotected one only when it is not (RFC 9052 section 3); it was read from the unprotected header first. The
+three captures carry x5chain in the unprotected header only, so they are judged as before.
 
 ## What this does not establish
 

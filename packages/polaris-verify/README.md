@@ -1,7 +1,6 @@
 # polaris-verify
 
 [![PyPI](https://img.shields.io/pypi/v/polaris-verify?include_prereleases&label=PyPI&color=3775a9&labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-verify/)
-[![OpenID Certified: polaris-oid4vp verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_verifier-c9a352?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified)
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/EgorKhaklin/polaris-id?label=stars&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
@@ -43,7 +42,7 @@ to judge against, so the run abstains (exit 2) instead of exiting 0 on a credent
 have been signed by anyone; `--signature-only` is how a caller says that is the question they
 meant to ask.
 
-This is release candidate 1.0.0rc9; `pip install --pre` installs the newest candidate on PyPI.
+This is release candidate 1.0.0rc10; `pip install --pre` installs the newest candidate on PyPI.
 
 ## It refuses to start until you say what cryptography it is doing
 
@@ -156,4 +155,4 @@ A release candidate. No named external implementation has exercised this command
 other than the author has run it; see
 [the scoreboard](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/EXTERNAL-NOUNS.md).
 
-Apache 2.0. Part of Polaris, pre-pilot software that runs on notional data.
+Apache 2.0. Part of Polaris, pre-pilot software.

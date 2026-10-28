@@ -60,7 +60,7 @@ verifier states what it could not check rather than guessing.
 The verdict carries **no credential**. The proof is zero-knowledge, and the decision
 dict names an authority (`via`) and a decision, never a token.
 
-## Standalone, still
+## Standalone
 
 The detached verifier stays import-standalone: it imports no Polaris code, and
 shelling out to a separate binary is not an import. The `polaris-zk` binary is a

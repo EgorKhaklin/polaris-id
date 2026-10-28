@@ -24,6 +24,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import platform
 import shutil
 import stat
 import subprocess
@@ -38,6 +39,18 @@ ROOT = HERE.parent
 _spec = importlib.util.spec_from_file_location("polaris_verify_refusals", HERE / "polaris-verify.py")
 V = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(V)
+
+# Run from a hook, git hands this process GIT_INDEX_FILE and GIT_DIR. The probes below put a stub
+# git first on PATH; whatever answers to `git` there must not inherit the commit being made.
+_HOOK_GIT_ENV = {}
+
+
+def setUpModule():
+    _HOOK_GIT_ENV.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")})
+
+
+def tearDownModule():
+    os.environ.update(_HOOK_GIT_ENV)
 
 
 def _cryptography_mldsa():
@@ -317,6 +330,229 @@ class AnotherProjectsOqsModule(unittest.TestCase):
         self.assertIn("refusing to start: --pqc-provider oqs", r.stderr)
 
 
+def _loadable_library():
+    """A shared library this interpreter can load: a copy stands in for liboqs."""
+    import importlib
+    import importlib.machinery
+    for name in ("_json", "_ctypes", "select", "_socket", "math", "_struct"):
+        try:
+            path = getattr(importlib.import_module(name), "__file__", None)
+        except ImportError:
+            continue
+        if path and path.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
+            return path
+    return None
+
+
+class OqsIsImportedOnlyWhenItIsLiboqs(unittest.TestCase):
+    """Nothing named `oqs` is imported unless it is liboqs-python with its library in place.
+
+    Importing a module runs its code. The stubs keep liboqs-python's layout (the code in
+    oqs/oqs.py, which __init__.py imports) and are installed under a distribution name:
+    - named `oqs` (PyPI's unrelated project), with a `Signature` and an import that writes a
+      marker file: never imported under `auto` or `oqs`, and the refusal names the repair;
+    - named `liboqs-python`, with the liboqs library where liboqs-python looks: imported, and
+      a backend (the control), whether the library is under lib, lib64 or where
+      ctypes.util.find_library finds it (the library is a copy of one of this interpreter's
+      own extension modules, which loads);
+    - the same without its __init__.py (what `pip uninstall oqs` leaves): the same repair;
+    - `liboqs-python` without the library, whose import runs `git clone` (a stub git on PATH
+      records it) and raises SystemExit, as liboqs-python 0.16.0 does: not imported, nothing
+      fetched, `auto` goes on to cryptography and `oqs` refuses naming the library;
+    - the same with a library file that does not load (an empty one): the same as none;
+    - `liboqs-python` whose import raises SystemExit with the library in place: no backend.
+    A fresh interpreter each time, with ctypes.util.find_library answering only what the test
+    names, so no library on the machine stands in for the one the test places or withholds."""
+
+    CODE = ("import os\n"
+            "open(os.environ['POLARIS_OQS_CANARY'], 'w').write('imported')\n"
+            "class Signature:\n"
+            "    pass\n")
+    CLONE = ("import subprocess\n"
+             "subprocess.call('git clone https://github.com/open-quantum-safe/liboqs --depth 1',\n"
+             "                shell=True)\n"
+             "raise SystemExit(1)\n")
+    PROBE = (
+        "import ctypes.util, importlib.util, json, os, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "spec = importlib.util.spec_from_file_location('v', sys.argv[1])\n"
+        "V = importlib.util.module_from_spec(spec); spec.loader.exec_module(V)\n"
+        "print(json.dumps({'oqs': V._provider_available('oqs'),\n"
+        "    'mode': V.resolve_crypto_mode(sys.argv[2], False)}))\n")
+    REPAIR = "`pip install --force-reinstall --no-deps liboqs-python`"
+    LIBRARY = {"Darwin": "liboqs.dylib", "Windows": "oqs.dll"}.get(platform.system(), "liboqs.so")
+    LOADABLE = _loadable_library()
+
+    def setUp(self):
+        if self.LOADABLE is None:
+            self.skipTest("this interpreter has no extension module to stand in for liboqs")
+
+    def site(self, distribution, code=CODE, init=True, library="loads", where="lib"):
+        d = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oqs-dist-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        if code is not None:
+            (d / "oqs").mkdir()
+            (d / "oqs" / "oqs.py").write_text(code)
+            if init:
+                (d / "oqs" / "__init__.py").write_text("from .oqs import *  # noqa: F401,F403\n")
+            info = d / ("%s-0.0.0.dist-info" % distribution.replace("-", "_"))
+            info.mkdir()
+            (info / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: %s\nVersion: 0.0.0\n" % distribution)
+        lib = d / "_oqs" / ("bin" if platform.system() == "Windows" else where)
+        lib.mkdir(parents=True)
+        if library == "loads":
+            shutil.copyfile(self.LOADABLE, lib / self.LIBRARY)
+        elif library == "empty":
+            (lib / self.LIBRARY).write_bytes(b"")
+        (d / "stub-bin").mkdir()
+        git = d / "stub-bin" / "git"
+        git.write_text("#!/bin/sh\necho \"$@\" >> \"$POLARIS_GIT_MARKER\"\nexit 128\n")
+        git.chmod(0o755)
+        return d
+
+    def probe(self, site, provider, isolated=True, find_library=None):
+        """`isolated` (-S) keeps an installed liboqs-python from standing in for a stub."""
+        env = dict(os.environ, PYTHONPATH=str(site), POLARIS_OQS_CANARY=str(site / "imported"),
+                   POLARIS_GIT_MARKER=str(site / "git-called"), OQS_INSTALL_PATH=str(site / "_oqs"),
+                   PATH=str(site / "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+        env.pop("POLARIS_FIND_LIBRARY", None)
+        if find_library:
+            env["POLARIS_FIND_LIBRARY"] = find_library
+        r = subprocess.run([sys.executable] + (["-S"] if isolated else []) +
+                           ["-c", self.PROBE, str(HERE / "polaris-verify.py"), provider],
+                           env=env, cwd=str(site), capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((site / "git-called").exists(), "git ran: %s" % r.stderr[-400:])
+        return json.loads(r.stdout.strip().splitlines()[-1]), (site / "imported").exists()
+
+    def test_a_distribution_named_oqs_is_never_imported(self):
+        site = self.site("oqs")
+        for provider in ("auto", "oqs"):
+            with self.subTest(provider=provider):
+                got, imported = self.probe(site, provider)
+                self.assertIs(imported, False, "the package's code ran")
+                self.assertIs(got["oqs"], False)
+                self.assertIsNone(got["mode"][0])
+                self.assertIn("a distribution named `oqs` is installed", got["mode"][1])
+                self.assertIn(self.REPAIR, got["mode"][1])
+
+    def test_liboqs_python_with_its_library_is_imported(self):
+        got, imported = self.probe(self.site("liboqs-python"), "oqs")
+        self.assertIs(imported, True, "positive control: liboqs-python's oqs must load")
+        self.assertIs(got["oqs"], True)
+        self.assertEqual(got["mode"], ["oqs", None])
+
+    @unittest.skipIf(platform.system() == "Windows", "liboqs-python looks only in bin there")
+    def test_the_library_under_lib64_is_found(self):
+        got, imported = self.probe(self.site("liboqs-python", where="lib64"), "oqs")
+        self.assertIs(imported, True)
+        self.assertEqual(got["mode"], ["oqs", None])
+
+    def test_the_library_ctypes_finds_on_the_system_path_is_found(self):
+        site = self.site("liboqs-python", library=None)
+        got, imported = self.probe(site, "oqs", find_library=self.LOADABLE)
+        self.assertIs(imported, True)
+        self.assertEqual(got["mode"], ["oqs", None])
+
+    def test_what_uninstalling_oqs_leaves_gets_the_same_repair(self):
+        got, _ = self.probe(self.site("liboqs-python", init=False), "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("it has no Signature", got["mode"][1])
+        self.assertIn(self.REPAIR, got["mode"][1])
+
+    def test_without_the_library_nothing_is_fetched_or_imported(self):
+        site = self.site("liboqs-python", code=self.CLONE, library=None)
+        got, _ = self.probe(site, "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("liboqs-python needs the liboqs shared library", got["mode"][1])
+        self.assertIn(str(site / "_oqs"), got["mode"][1])
+        got, _ = self.probe(site, "auto", isolated=False)
+        if _cryptography_mldsa():
+            self.assertEqual(got["mode"], ["cryptography", None])
+        else:
+            self.assertIn("liboqs-python needs the liboqs shared library", got["mode"][1])
+
+    def test_a_library_file_that_does_not_load_counts_as_none(self):
+        site = self.site("liboqs-python", code=self.CLONE, library="empty")
+        got, _ = self.probe(site, "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("liboqs-python needs the liboqs shared library", got["mode"][1])
+
+    def test_an_import_that_exits_is_no_backend(self):
+        got, _ = self.probe(self.site("liboqs-python", code="raise SystemExit(1)\n"), "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("importing `oqs` exited (1)", got["mode"][1])
+
+    NOT_LIBOQS = "raise AttributeError('undefined symbol: OQS_init')\n"
+
+    def test_an_import_that_raises_is_no_backend(self):
+        # A library that loads but is not liboqs: liboqs-python's import raises AttributeError.
+        got, _ = self.probe(self.site("liboqs-python", code=self.NOT_LIBOQS), "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("importing `oqs` failed (AttributeError: undefined symbol: OQS_init)",
+                      got["mode"][1])
+
+    def test_with_no_oqs_module_the_refusal_names_the_library_once(self):
+        got, _ = self.probe(self.site("liboqs-python", code=None, library=None), "auto")
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("Install one (liboqs-python with the liboqs shared library", got["mode"][1])
+        self.assertNotIn("liboqs-python needs", got["mode"][1])
+
+    REPEAT = (
+        "import ctypes.util, importlib.util, json, os, subprocess, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "spec = importlib.util.spec_from_file_location('v', sys.argv[1])\n"
+        "V = importlib.util.module_from_spec(spec); spec.loader.exec_module(V)\n"
+        "args = (b'd' * 32, b'\\x02' * 3309, b'\\x01' * 1952)\n"
+        "first = V._verify_liboqs(*args)\n"
+        "calls = []\n"
+        "def counted(name, f):\n"
+        "    def g(*a, **k):\n"
+        "        calls.append(name)\n"
+        "        return f(*a, **k)\n"
+        "    return g\n"
+        "V._liboqs_library = counted('_liboqs_library', V._liboqs_library)\n"
+        "V._unrelated_oqs_installed = counted('_unrelated_oqs_installed', V._unrelated_oqs_installed)\n"
+        "ctypes.util.find_library = counted('find_library', ctypes.util.find_library)\n"
+        "subprocess.Popen.__init__ = counted('Popen', subprocess.Popen.__init__)\n"
+        "later = [V._verify_liboqs(*args) for _ in range(3)] + [V._provider_available('oqs')]\n"
+        "print(json.dumps({'first': first, 'later': later, 'calls': calls}))\n")
+
+    def repeat(self, site):
+        env = dict(os.environ, PYTHONPATH=str(site), POLARIS_OQS_CANARY=str(site / "imported"),
+                   POLARIS_GIT_MARKER=str(site / "git-called"), OQS_INSTALL_PATH=str(site / "_oqs"),
+                   PATH=str(site / "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+        env.pop("POLARIS_FIND_LIBRARY", None)
+        r = subprocess.run([sys.executable, "-S", "-c", self.REPEAT, str(HERE / "polaris-verify.py")],
+                           env=env, cwd=str(site), capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((site / "git-called").exists(), "git ran: %s" % r.stderr[-400:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_liboqs_is_looked_for_once_per_process(self):
+        # Finding the library runs ctypes.util.find_library, which on Linux starts ldconfig, then
+        # gcc and then ld if the one before found nothing: a later signature, liboqs found, absent
+        # or failing to import, looks nowhere and starts nothing.
+        for label, site, first, later in (
+                ("found", self.site("liboqs-python"), False, [False, False, False, True]),
+                ("no library", self.site("liboqs-python", code=self.CLONE, library=None),
+                 None, [None, None, None, False]),
+                ("a library that is not liboqs", self.site("liboqs-python", code=self.NOT_LIBOQS),
+                 None, [None, None, None, False])):
+            with self.subTest(label):
+                got = self.repeat(site)
+                # The stub's Signature takes no algorithm: the witness ran and refused.
+                self.assertIs(got["first"], first)
+                self.assertEqual(got["later"], later)
+                self.assertEqual(got["calls"], [])
+
+
 class ExactSizeIsCheckedBeforeEitherWitness(unittest.TestCase):
     """2026-10-10: the detached verifier did not check an ML-DSA public key's or signature's
     length before verifying, so a missing or truncated key could come back as a valid signature
@@ -463,13 +699,20 @@ def _hdr(major, n):
         return bytes([major << 5 | n])
     if n < 256:
         return bytes([major << 5 | 24, n])
-    return bytes([major << 5 | 25]) + n.to_bytes(2, "big")
+    if n < 65536:
+        return bytes([major << 5 | 25]) + n.to_bytes(2, "big")
+    if n < 2 ** 32:
+        return bytes([major << 5 | 26]) + n.to_bytes(4, "big")
+    return bytes([major << 5 | 27]) + n.to_bytes(8, "big")
 
 
 def _cbor(x):
-    """The smallest encoder these fixtures need: ints, bytes, text, lists, maps, tag 24."""
+    """The smallest encoder these fixtures need: ints, bytes, text, lists, maps, tag 24, and
+    ("raw", bytes) spliced in as given, for an encoding the encoder does not write."""
     if isinstance(x, tuple) and x[0] == "tag24":
         return b"\xd8\x18" + _cbor(x[1])
+    if isinstance(x, tuple) and x[0] == "raw":
+        return bytes(x[1])
     if isinstance(x, bool) or x is None:
         return {False: b"\xf4", True: b"\xf5", None: b"\xf6"}[x]
     if isinstance(x, int):
@@ -498,9 +741,42 @@ class CborRefusals(unittest.TestCase):
                            ("reserved additional information", b"\x1c"),
                            ("truncated string", _hdr(2, 5) + b"ab"),
                            ("a list as a map key", _hdr(5, 1) + _cbor([1]) + _cbor(1)),
+                           ("a map that repeats a key", _hdr(5, 2) + _cbor(1) + _cbor(-7) + _cbor(1) + _cbor(-49)),
+                           ("1 and true, keys this decoder reads as one", _hdr(5, 2) + _cbor(1) + _cbor(0) + _cbor(True) + _cbor(0)),
                            ("trailing bytes", _cbor(1) + _cbor(2))):
-            with self.assertRaises(ValueError, msg=label):
+            with self.subTest(label), self.assertRaises(ValueError):
                 V._cbor_decode(buf)
+
+    def test_only_tag_24_and_four_simple_values_decode(self):
+        # The decoder's docstring names the subset and promises a ValueError for anything else.
+        # Until 2026-10-28 major type 7 handed any other value back as its raw integer (a
+        # float16 1.0 came back as 15360) and major type 6 handed back any tag at all.
+        for buf, want in ((b"\xf4", False), (b"\xf5", True), (b"\xf6", None), (b"\xf7", None)):
+            self.assertIs(V._cbor_decode(buf), want, buf.hex())
+        # A tag-24 item also carries its own bytes as they sat in the input: an element's
+        # digest is over those, never over a re-encoding of them.
+        self.assertEqual(V._cbor_decode(_cbor(("tag24", b"ab"))), ("tag", 24, b"ab", b"\xd8\x18\x42ab"))
+        for label, buf in (("float16 1.0", b"\xf9\x3c\x00"),
+                           ("float32 1.0", b"\xfa\x3f\x80\x00\x00"),
+                           ("float64 1.0", b"\xfb\x3f\xf0" + bytes(6)),
+                           ("simple value 32", b"\xf8\x20"),
+                           ("simple value 0", b"\xe0"),
+                           ("simple value 19", b"\xf3"),
+                           ("tag 0, a date-time string", b"\xc0" + _cbor("2026-01-01T00:00:00Z")),
+                           ("tag 1, epoch seconds", b"\xc1\x1a" + (1767225600).to_bytes(4, "big")),
+                           ("tag 18, a COSE_Sign1", b"\xd2" + _cbor([b"", {}, b"", b""])),
+                           ("tag 1004, a full-date", b"\xd9\x03\xec" + _cbor("2000-01-01")),
+                           ("tag 24 over a map", b"\xd8\x18" + _cbor({1: 2})),
+                           ("tag 24 over an array", b"\xd8\x18" + _cbor([1, 2])),
+                           ("tag 24 over an integer", b"\xd8\x18" + _cbor(5)),
+                           ("tag 24 over a text string", b"\xd8\x18" + _cbor("ab"))):
+            with self.subTest(label), self.assertRaises(ValueError):
+                V._cbor_decode(buf)
+        # Every tag above wraps something other than a byte string, which the tag-24 guard
+        # refuses too. Over a byte string, only the refusal that names the subset is left.
+        with self.subTest("tag 2, an unsigned bignum"), \
+                self.assertRaisesRegex(ValueError, "outside the mdoc subset"):
+            V._cbor_decode(b"\xc2\x41\x01")
 
 
 class MdocTag24Refusals(unittest.TestCase):
@@ -526,6 +802,76 @@ class MdocTag24Refusals(unittest.TestCase):
         self.assertIs(v["issuer_authentic"], False)
         self.assertIsNot(v["digests_match"], True)
         self.assertIn("tag 24", json.dumps(v))
+
+    def test_tag_24_over_anything_but_bytes_is_a_refusal(self):
+        # 2026-10-28. An MSO payload of tag 24 over the map {1: 2} raised KeyError out of
+        # verify_mdoc (the MSO path read the map as if it were bytes); a list of small integers
+        # under tag 24 was read as bytes outright. Each is a verdict now, for the MSO and for an
+        # element alike.
+        for label, inner in (("a map", {1: 2}), ("an array", [1, 2]), ("an integer", 5), ("a text string", "ab")):
+            wrapped = b"\xd8\x18" + _cbor(inner)
+            with self.subTest("the MSO, " + label):
+                v = V.verify_mdoc(self.document(wrapped, []))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("must wrap a byte string", v["note"] or "")
+            with self.subTest("an element, " + label):
+                v = V.verify_mdoc(self.document(self.mso(), [("raw", wrapped)]))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNot(v["digests_match"], True)
+                self.assertIn("must wrap a byte string", json.dumps(v))
+
+
+class MdocFieldsOfAnotherType(unittest.TestCase):
+    """verify_mdoc is total on hostile input: a field the sender writes, given a CBOR type it
+    does not expect, is a verdict. No key is needed for any of them, so a hand-built document
+    reaches each with no crypto library at all."""
+
+    def document(self, name_spaces=None, value_digests=None, digest_algorithm="SHA-256",
+                 unprotected=None, signature=b"sig"):
+        mso = {"docType": V._MDOC_DOC_TYPE, "digestAlgorithm": digest_algorithm,
+               "valueDigests": {V._MDOC_NAMESPACE: {}} if value_digests is None else value_digests}
+        return _cbor({"docType": V._MDOC_DOC_TYPE,
+                      "issuerSigned": {"nameSpaces": {V._MDOC_NAMESPACE: []} if name_spaces is None else name_spaces,
+                                       "issuerAuth": [_cbor({1: -49}), unprotected or {}, _cbor(("tag24", _cbor(mso))), signature]}})
+
+    def test_the_hand_built_document_reaches_the_signature(self):
+        v = V.verify_mdoc(self.document())
+        self.assertIs(v["digests_match"], True)
+        self.assertIn("unaccepted signature algorithm", v["note"] or "")
+
+    def test_a_namespace_or_digest_map_of_another_type_is_a_verdict(self):
+        # 2026-10-28. Each raised AttributeError out of verify_mdoc: the map's .get ran on a list,
+        # an integer or a text string.
+        for label, value in (("a list", [1]), ("an integer", 5), ("a text string", "x")):
+            for field, doc in (("nameSpaces", self.document(name_spaces=value)),
+                               ("valueDigests", self.document(value_digests=value))):
+                with self.subTest(field + ", " + label):
+                    v = V.verify_mdoc(doc)
+                    self.assertIs(v["issuer_authentic"], False)
+                    self.assertIsNot(v["digests_match"], True)
+                    self.assertIn("digests are missing or malformed", v["note"] or "")
+
+    def test_a_signature_that_is_not_a_byte_string_is_a_verdict(self):
+        # 2026-10-28. bytes() read an integer signature as a length: 2**64 - 1 raised
+        # OverflowError, and a smaller one is allocated as that many zero bytes before any check.
+        for label, value in (("an integer past the index range", 2 ** 64 - 1), ("a small integer", 5),
+                             ("a list of small integers", [1, 2]), ("a text string", "ab")):
+            with self.subTest(label):
+                v = V.verify_mdoc(self.document(signature=value))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("signature is not a byte string", v["note"] or "")
+
+    def test_a_tag_24_algorithm_name_is_a_verdict(self):
+        # 2026-10-28. The decoder returns tag 24 as a tuple, and the note's bare % read it as its
+        # arguments: TypeError, for the MSO's digestAlgorithm and the unprotected polaris_algorithm.
+        tagged = ("tag24", b"\x01")
+        for label, doc, why in (("digestAlgorithm", self.document(digest_algorithm=tagged), "unsupported MSO digest algorithm"),
+                                ("polaris_algorithm", self.document(unprotected={"polaris_algorithm": tagged}),
+                                 "unaccepted signature algorithm")):
+            with self.subTest(label):
+                v = V.verify_mdoc(doc)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn(why, v["note"] or "")
 
 
 
@@ -717,7 +1063,7 @@ class MdocDecisions(unittest.TestCase):
         cls.other_sign, cls.other_pk = _mldsa_signer()
 
     def document(self, elements=None, mso_changes=None, unprotected=None, after=None,
-                 protected=None, prehash=False):
+                 protected=None, prehash=False, repeat=None):
         elements = elements if elements is not None else {"status": "ACTIVE", "checked_at": "2026-05-01T00:00:00Z"}
         items, digests = [], {}
         for i, (name, value) in enumerate(elements.items()):
@@ -740,9 +1086,12 @@ class MdocDecisions(unittest.TestCase):
         header.update(unprotected or {})
         if after:
             after(items)
-        return _cbor({"docType": V._MDOC_DOC_TYPE,
-                      "issuerSigned": {"nameSpaces": {V._MDOC_NAMESPACE: items},
-                                       "issuerAuth": [protected, header, payload, signature]}})
+        issuer_signed = {"nameSpaces": {V._MDOC_NAMESPACE: items},
+                         "issuerAuth": [protected, header, payload, signature]}
+        if repeat:  # (key, value): that key once more, ahead of the genuine entries
+            body = _cbor(repeat[0]) + _cbor(repeat[1]) + b"".join(_cbor(k) + _cbor(v) for k, v in issuer_signed.items())
+            issuer_signed = ("raw", _hdr(5, len(issuer_signed) + 1) + body)
+        return _cbor({"docType": V._MDOC_DOC_TYPE, "issuerSigned": issuer_signed})
 
     def test_a_genuine_document_verifies_digests_and_signature(self):
         doc = self.document()
@@ -816,6 +1165,81 @@ class MdocDecisions(unittest.TestCase):
         v = V.verify_mdoc(self.document(protected={1: -49, 4: b"kid"}), now=self.NOW)
         self.assertIs(v["issuer_authentic"], True, v["note"])
 
+    def test_a_map_that_repeats_a_key_is_refused(self):
+        # 2026-10-28. RFC 9052 s3: header labels MUST be unique, and a repeated one MUST be
+        # rejected. The decoder kept the last value of a repeated key, so each document below,
+        # genuinely signed, verified: alg -7 then -49 in the protected header was read as -49,
+        # and an issuerAuth nobody signed ahead of the genuine one was read as the genuine one.
+        decoy = [_cbor({1: -49}), {}, _cbor(("tag24", _cbor({}))), b"\x00" * 16]
+        for doc, why in ((self.document(protected=_hdr(5, 2) + _cbor(1) + _cbor(-7) + _cbor(1) + _cbor(-49)),
+                          "protected header does not decode"),
+                         (self.document(repeat=("issuerAuth", decoy)), "not decodable CBOR")):
+            with self.subTest(why):
+                v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNot(v["issuer_trusted"], True)
+                self.assertIn(why, v["note"] or "")
+                self.assertIn("repeats the key", v["note"] or "")
+
+    def test_an_element_value_outside_the_subset_is_refused(self):
+        # 2026-10-28. A genuinely signed document whose element value was a float16 1.0
+        # verified, with the value reported as 15360; a tagged value came back as a tuple. Each
+        # is now an element that does not decode, and no value is reported for it.
+        for raw, why in ((b"\xf9\x3c\x00", "float16 1.0"),
+                         (b"\xfa\x3f\x80\x00\x00", "float32 1.0"),
+                         (b"\xc0" + _cbor("2026-01-01T00:00:00Z"), "tag 0")):
+            with self.subTest(why):
+                doc = self.document(elements={"status": "ACTIVE", "credential_status": ("raw", raw)})
+                v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["digests_match"], False)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNone(v["elements"])
+                self.assertIn("an element does not decode", v["note"] or "")
+
+    def test_an_item_reframed_after_signing_is_refused(self):
+        # 2026-10-28. An element's digest is over the IssuerSignedItemBytes as received. It was
+        # recomputed over a minimal re-encoding of them, so the same item under a longer header,
+        # which anyone holding the document can write without a key, still matched: one signed
+        # credential, many accepted byte strings, and a reader that hashes the bytes it received
+        # refuses what this one accepted.
+        def reframe(head):
+            def after(items):
+                inner = items[0][1]
+                items[0] = ("raw", head(len(inner)) + inner)
+            return after
+        for head, why in ((lambda n: b"\xd8\x18\x59" + n.to_bytes(2, "big"), "a two-byte length"),
+                          (lambda n: b"\xd8\x18\x5a" + n.to_bytes(4, "big"), "a four-byte length"),
+                          (lambda n: b"\xd9\x00\x18\x58" + bytes([n]), "a two-byte tag number"),
+                          (lambda n: b"\xd9\x00\x18\x59" + n.to_bytes(2, "big"), "both")):
+            with self.subTest(why):
+                v = V.verify_mdoc(self.document(after=reframe(head)), anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["digests_match"], False)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("digest does not match", v["note"] or "")
+        # The same item rebuilt by hand in the framing it was signed in still verifies: what is
+        # refused is the re-framing, not the splice.
+        v = V.verify_mdoc(self.document(after=reframe(lambda n: b"\xd8\x18\x58" + bytes([n]))),
+                          anchor_keys=[self.pk.hex()], now=self.NOW)
+        self.assertIs(v["issuer_authentic"], True, v["note"])
+
+    def test_disagreeing_witnesses_are_a_refusal(self):
+        # The two-witness DISAGREE guard had no test on this path: without it every mdoc test
+        # stayed green. Either direction is a refusal, and the note says which.
+        doc = self.document()
+        saved = (V._verify_liboqs, V._verify_cryptography)
+        try:
+            for lib, crypto in ((True, False), (False, True)):
+                V._verify_liboqs = lambda *a, _r=lib, **k: _r
+                V._verify_cryptography = lambda *a, _r=crypto, **k: _r
+                with self.subTest(liboqs=lib, cryptography=crypto):
+                    v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                    self.assertIs(v["digests_match"], True)
+                    self.assertIs(v["issuer_authentic"], False)
+                    self.assertIsNot(v["issuer_trusted"], True)
+                    self.assertIn("DISAGREE", v["note"] or "")
+        finally:
+            V._verify_liboqs, V._verify_cryptography = saved
+
     def test_an_unreadable_window_is_not_fresh(self):
         v = V.verify_mdoc(self.document(mso_changes={"validityInfo": {}}), now=self.NOW)
         self.assertIs(v["fresh"], False)
@@ -847,9 +1271,12 @@ class CoseRfc9964KnownAnswer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.vector = json.loads(_RFC9964_COSE.read_text(encoding="utf-8"))
-        tag = V._cbor_decode(bytes.fromhex(cls.vector["sign1"]))
-        assert tag[0] == "tag" and tag[1] == 18, "Figure 7's sign1 is a tagged COSE_Sign1"
-        cls.protected, cls.unprotected, cls.payload, cls.signature = tag[2]
+        sign1 = bytes.fromhex(cls.vector["sign1"])
+        # Figure 7's sign1 is COSE_Sign1_Tagged: tag 18, the one byte 0xd2. The verifier's decoder
+        # reads tag 24 only (verify_mdoc takes issuerAuth's COSE_Sign1 untagged), so the tag byte
+        # is checked here and the quadruple after it is decoded on its own.
+        assert sign1[0] == 0xD2, "Figure 7's sign1 is a tagged COSE_Sign1"
+        cls.protected, cls.unprotected, cls.payload, cls.signature = V._cbor_decode(sign1[1:])
         cls.pk = bytes.fromhex(cls.vector["raw_public_key"])
 
     def test_the_sig_structure_is_the_rfcs_to_be_signed(self):
@@ -887,6 +1314,7 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.signer, cls.stamper, cls.second, cls.publisher = (_mldsa_signer() for _ in range(4))
+        cls.log, cls.witness, cls.stranger = (_mldsa_signer() for _ in range(3))
         cls.body = b"%PDF-1.7 a notional report\n"
 
     @staticmethod
@@ -947,7 +1375,31 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
 
     def decide(self, container, **kw):
         kw.setdefault("timestamp_anchors", [self.stamper[1].hex(), self.second[1].hex()])
+        kw.setdefault("trusted_anchors", [self.signer[1].hex()])
         return V.verify_signed_document(container, now=self.NOW, **kw)
+
+    def anchored(self, doc, head_key, witnessed=True):
+        """A container whose timestamp (the stamper's) carries an anchor: its inclusion proof in a
+        timestamp log whose head `head_key` signed, cosigned by the witness when `witnessed`."""
+        ts = self.timestamp(doc)
+        h = V.timestamp_hash(ts)
+        entries = [hashlib.sha3_256(b"other-%d" % i).hexdigest() for i in range(5)] + [h]
+        idx = len(entries) - 1
+        sth = self.seal({"format": "polaris-transparency-sth/1", "log_id": V._TIMESTAMP_LOG_ID,
+                         "tree_size": len(entries), "root_hash_hex": V.merkle_tree_head(entries).hex(),
+                         "timestamp": self.STAMPED}, V._sth_canonical, head_key)
+        cosignatures = [self.seal({"format": "polaris-transparency-cosignature/1", "log_id": sth["log_id"],
+                                   "tree_size": sth["tree_size"], "root_hash_hex": sth["root_hash_hex"]},
+                                  V._cosignature_canonical, self.witness)] if witnessed else []
+        ts["anchor"] = {"log_id": V._TIMESTAMP_LOG_ID, "timestamp_hash": h,
+                        "proof": {"log_id": V._TIMESTAMP_LOG_ID, "index": idx, "tree_size": len(entries),
+                                  "entry_hex": h, "proof_hex": [p.hex() for p in V.inclusion_proof(idx, entries)],
+                                  "root_hash_hex": sth["root_hash_hex"]},
+                        "sth": sth, "cosignatures": cosignatures}
+        return self.container(doc, timestamp=ts)
+
+    #: The clause an anchored policy adds to the note when the relying party named no log key.
+    NO_LOG_KEY = "no anchored timestamp under an anchored policy (no timestamp log key was named)"
 
     def test_the_signature_alone_is_authentic_binds_its_bytes_and_claims_nothing_long_term(self):
         doc = self.document()
@@ -991,6 +1443,47 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
         v = self.decide(both, timestamp_quorum=2)
         self.assertIs(v["valid_long_term"], True, v["note"])
         self.assertEqual(v["ltv"]["independent_timestamps"], 2)
+
+    def test_an_anchor_counts_under_the_log_key_the_relying_party_names(self):
+        """The product signs a timestamp with the agency key and the timestamp log's head with the
+        instance key."""
+        doc = self.document()
+        log_key, witnesses = self.log[1].hex(), [self.witness[1].hex()]
+        genuine = self.anchored(doc, self.log)
+        v = self.decide(genuine, require_anchored=True, trusted_witnesses=witnesses, timestamp_log_key=log_key)
+        self.assertIs(v["valid_long_term"], True, v["note"])
+        self.assertEqual((v["ltv"]["timestamp_anchored"], v["ltv"]["timestamp_witnessed"]), (True, True))
+        unwitnessed = self.decide(self.anchored(doc, self.log, witnessed=False), require_anchored=True,
+                                  timestamp_log_key=log_key)
+        self.assertIs(unwitnessed["valid_long_term"], True, unwitnessed["note"])
+        without = self.decide(genuine, require_anchored=True, trusted_witnesses=witnesses)
+        self.assertIs(without["valid_long_term"], False)
+        self.assertIn(self.NO_LOG_KEY, without["note"])
+
+    def test_the_timestamp_authority_s_key_is_no_default_log_key(self):
+        """A head signed by the timestamp authority's own key anchors nothing until the relying
+        party names that key as the log key."""
+        doc = self.document()
+        own = self.anchored(doc, self.stamper)
+        witnesses = [self.witness[1].hex()]
+        v = self.decide(own, require_anchored=True, trusted_witnesses=witnesses)
+        self.assertIs(v["valid_long_term"], False)
+        self.assertIs(v["ltv"]["timestamp_anchored"], False)
+        self.assertIn(self.NO_LOG_KEY, v["note"])
+        named = self.decide(own, require_anchored=True, trusted_witnesses=witnesses,
+                            timestamp_log_key=self.stamper[1].hex())
+        self.assertIs(named["valid_long_term"], True, named["note"])
+
+    def test_a_stranger_s_head_anchors_nothing_under_the_named_log_key(self):
+        doc = self.document()
+        for witnessed in (False, True):
+            with self.subTest(witnessed=witnessed):
+                v = self.decide(self.anchored(doc, self.stranger, witnessed=witnessed), require_anchored=True,
+                                trusted_witnesses=[self.witness[1].hex()], timestamp_log_key=self.log[1].hex())
+                self.assertIs(v["valid_long_term"], False)
+                self.assertIs(v["ltv"]["timestamp_anchored"], False)
+                self.assertIn("no anchored timestamp under an anchored policy", v["note"])
+                self.assertNotIn("no timestamp log key was named", v["note"])
 
     def test_a_credential_revoked_at_the_instant_ends_long_term_validity(self):
         leaf = hashlib.sha3_256(b"TKN-NOTIONAL-1").hexdigest()
@@ -1073,6 +1566,29 @@ class SignedDocumentLongTermValidation(unittest.TestCase):
         listed = self.decide(self.container(), trust_list=self.trust_list(),
                              trusted_anchors=[self.publisher[1].hex()])
         self.assertIs(listed["valid_long_term"], True, listed["note"])
+
+    def test_with_no_signer_anchors_nothing_is_valid_long_term(self):
+        """2026-10-21: with no signer anchors the signer's trust held by default, so a document any
+        key signed, which a trusted authority timestamped, was valid long-term."""
+        v = self.decide(self.container(), trusted_anchors=None)
+        self.assertIsNone(v["signer_trusted"])
+        self.assertIs(v["valid_long_term"], False)
+        self.assertEqual(v["note"], "long-term validation failed: no signer anchors were given, so signer "
+                                    "trust was not evaluated")
+        self.assertIs(self.decide(self.container())["valid_long_term"], True, "control: the signer as the anchor")
+        self.assertIs(self.decide(self.container(), trusted_anchors=None, timestamp_anchors=None)["valid_long_term"],
+                      False, "no timestamp anchors either")
+        good = self.container()
+        sig = good["signature_hex"]
+        flipped = dict(good, signature_hex=("00" if sig[:2] != "00" else "01") + sig[2:])
+        self.assertIs(self.decide(flipped, trusted_anchors=None)["valid_long_term"], False, "a flipped signature")
+
+    def test_an_untrusted_signer_s_note_names_its_reason_alone(self):
+        """The note joins its reasons once. It read "failed: , signer not trusted" when only the
+        trust gates failed, each clause carrying its own separator (before this change)."""
+        v = self.decide(self.container(), trusted_anchors=[self.second[1].hex()])
+        self.assertEqual(v["note"], "long-term validation failed: signer not trusted: its key is not among the "
+                                    "trusted anchors nor active on a trust list they publish")
 
     def test_each_refusal_of_the_signature_itself(self):
         good = self.document()
@@ -1256,7 +1772,8 @@ class VerifyDirHoldsEveryPackToItsExpectation(unittest.TestCase):
         with unittest.mock.patch.object(V, "_verify_liboqs", return_value=None), \
                 unittest.mock.patch.object(V, "_verify_cryptography", return_value=None):
             self.assertEqual(V.verify_pack(self.GENUINE)["note"], "no ML-DSA-65 verifier available: install "
-                             "liboqs-python (and optionally cryptography>=48 for the second witness)")
+                             "liboqs-python with the liboqs shared library (and optionally "
+                             "cryptography>=48 for the second witness)")
         self.addCleanup(V.set_dev_placeholder_mode, False)
         V.set_dev_placeholder_mode(True)
         self.assertEqual(V.verify_pack(self.GENUINE)["note"], "this run declared --dev-placeholder, so no "
@@ -1427,6 +1944,13 @@ class HeldOutSemanticMutations(unittest.TestCase):
             V._verify_liboqs, V._verify_cryptography = saved
 
 
+def _case_log_key(name):
+    """The log key a published case names (conformance/cases.json): the relying party's input,
+    never read off the head being judged."""
+    cases = json.loads((ROOT / "conformance" / "cases.json").read_text())["cases"]
+    return next(c["log_key"] for c in cases if c["name"] == name)
+
+
 class WitnessedCheckpointIsTotal(unittest.TestCase):
     """`verify_timestamp_anchor` says it is total on hostile input. Cosignatures that are not a
     list raised TypeError from `verify_witnessed_checkpoint` until 2026-09-28."""
@@ -1435,7 +1959,8 @@ class WitnessedCheckpointIsTotal(unittest.TestCase):
         import copy
         ts = json.loads((ROOT / "conformance" / "vectors" / "timestamp-anchor-witnessed.json").read_text())
         both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
-        good = V.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+        log_key = _case_log_key("timestamp-anchor-witnessed")
+        good = V.verify_timestamp_anchor(ts, log_key=log_key, trusted_witnesses=both, threshold=2)
         if not good.get("anchored"):
             self.skipTest("no ML-DSA-65 backend here: %s" % good.get("note"))
         self.assertTrue(good.get("witnessed"))
@@ -1443,9 +1968,48 @@ class WitnessedCheckpointIsTotal(unittest.TestCase):
             with self.subTest(cosignatures=bad):
                 t = copy.deepcopy(ts)
                 t["anchor"]["cosignatures"] = bad
-                v = V.verify_timestamp_anchor(t, trusted_witnesses=both, threshold=2)
+                v = V.verify_timestamp_anchor(t, log_key=log_key, trusted_witnesses=both, threshold=2)
                 self.assertTrue(v.get("anchored"))
                 self.assertFalse(v.get("witnessed"))
+
+
+#: The note a log-head verdict carries when the caller named no log key.
+_NO_LOG_KEY = "no log key was named: the head must be signed by a log key the caller names"
+
+
+@unittest.skipUnless(_an_ml_dsa_backend(), "no ML-DSA-65 backend here")
+class TimestampAnchorNamesItsLogKey(unittest.TestCase):
+    """A head anchors a timestamp only under the log key the caller names (WIRE-SPEC 3.9). The
+    published base anchor, and the same anchor with its head re-signed by a key no case names
+    (conformance/make_stranger_head_vectors.py): only the signer differs."""
+
+    @classmethod
+    def setUpClass(cls):
+        vectors = ROOT / "conformance" / "vectors"
+        cls.base = json.loads((vectors / "timestamp-anchor-variants-base.json").read_text())
+        cls.stranger = json.loads((vectors / "timestamp-anchor-stranger-head.json").read_text())
+        cls.log_key = _case_log_key("timestamp-anchor-variants-base")
+
+    def test_the_log_s_head_under_its_log_key_is_anchored(self):
+        v = V.verify_timestamp_anchor(self.base, log_key=self.log_key)
+        self.assertTrue(v["anchored"], v["note"])
+
+    def test_a_stranger_s_head_with_no_log_key_is_not_anchored(self):
+        self.assertTrue(V.verify_sth(self.stranger["anchor"]["sth"])["sth_authentic"],
+                        "control: the stranger's head is authentic under its own key")
+        v = V.verify_timestamp_anchor(self.stranger)
+        self.assertFalse(v["anchored"])
+        self.assertEqual(v["note"], _NO_LOG_KEY)
+
+    def test_the_log_s_own_head_with_no_log_key_is_not_anchored(self):
+        v = V.verify_timestamp_anchor(self.base)
+        self.assertFalse(v["anchored"])
+        self.assertEqual(v["note"], _NO_LOG_KEY)
+
+    def test_a_stranger_s_head_under_the_log_key_is_not_anchored(self):
+        v = V.verify_timestamp_anchor(self.stranger, log_key=self.log_key)
+        self.assertFalse(v["anchored"])
+        self.assertEqual(v["note"], "the head is not signed by the expected log key")
 
 
 # --------------------------------------------------------------------------- the exit codes
@@ -1807,17 +2371,25 @@ class StapledDecisionNeedsEveryFact(unittest.TestCase):
     GOOD_PACK = {"signature_valid": True, "issuer_trusted": True}
     GOOD_SA = {"status_authentic": True, "issuer_trusted": True, "fresh": True, "status": "ACTIVE"}
 
-    def decide(self, pack=None, sa=None, token=("T", "T"), key=("ab" * 32, "AB" * 32)):
+    def decide(self, pack=None, sa=None, token=("T", "T"), key=("ab" * 32, "AB" * 32), **kw):
         from unittest import mock
         with mock.patch.object(V, "verify_pack", return_value=dict(self.GOOD_PACK, **(pack or {}))), \
                 mock.patch.object(V, "verify_status_assertion", return_value=dict(self.GOOD_SA, **(sa or {}))):
             return V.verify_stapled({"token_value": token[0], "public_key_hex": key[0]},
-                                    {"token_value": token[1], "public_key_hex": key[1]})["decision"]
+                                    {"token_value": token[1], "public_key_hex": key[1]}, **kw)["decision"]
 
     def test_all_seven_facts_accept(self):
         self.assertEqual(self.decide(), "accept")
-        self.assertEqual(self.decide(pack={"issuer_trusted": None}, sa={"issuer_trusted": None}),
-                         "accept", "no anchor given is not an untrusted issuer")
+
+    def test_trust_not_evaluated_abstains_unless_the_signature_alone_is_asked_for(self):
+        """2026-10-21: no anchor given read as a trusted issuer, and the pair was accepted."""
+        unevaluated = {"issuer_trusted": None}
+        self.assertEqual(self.decide(pack=unevaluated, sa=unevaluated), "abstain")
+        self.assertEqual(self.decide(pack=unevaluated), "abstain")
+        self.assertEqual(self.decide(sa=unevaluated), "abstain")
+        self.assertEqual(self.decide(pack=unevaluated, sa=unevaluated, signature_only=True), "accept")
+        self.assertEqual(self.decide(pack={"issuer_trusted": False}, signature_only=True), "reject",
+                         "an untrusted issuer is not a signature-only question")
 
     def test_each_fact_alone_refuses(self):
         for label, pack, sa in (("credential signature", {"signature_valid": False}, None),
@@ -1879,7 +2451,7 @@ class AgentGrantContextAndProofTime(unittest.TestCase):
                                                                   "issuer_trusted": None, "note": None}):
             return V.verify_agent_grant(grant or self.grant(), binding={"status": "active"},
                                         credential={}, now=kw.pop("now", self.NOW),
-                                        requested_action="read:status",
+                                        requested_action="read:status", signature_only=True,
                                         agent_proof=proof or self.proof(), expected_nonce="svc-1", **kw)
 
     def test_the_whole_chain_is_usable_in_its_own_context(self):
@@ -1958,7 +2530,8 @@ class AgentGrantPrincipalBinding(unittest.TestCase):
                                                                   "issuer_trusted": None, "note": None}):
             return V.verify_agent_grant(self.grant, binding={"format": "x"}, credential={},
                                         now=self.NOW, requested_action="read:status",
-                                        agent_proof=self.proof, expected_nonce="svc-nonce-1")
+                                        agent_proof=self.proof, expected_nonce="svc-nonce-1",
+                                        signature_only=True)
 
     def test_a_good_binding_leaves_the_grant_usable(self):
         v = self.verdict()
@@ -2208,6 +2781,392 @@ class PresentationUsableNeedsEveryFact(unittest.TestCase):
                 self.assertIs(self.usable(**kw), False)
 
 
+def _iso(d):
+    return d.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _issued(token="NOTIONAL-0001"):
+    """A fresh issuer key S, its credential and an ACTIVE status assertion valid now, each
+    genuinely signed."""
+    sign, pk = _mldsa_signer()
+    now = datetime.now(timezone.utc)
+    win = {"issued_at": _iso(now - timedelta(minutes=1)), "expires_at": _iso(now + timedelta(minutes=30))}
+    pack = {"format": "polaris-authenticity-pack/1", "token_value": token, "algorithm": "ML-DSA-65",
+            "public_key_hex": pk.hex(), "signature_hex": sign(hashlib.sha3_256(token.encode("utf-8")).digest()).hex()}
+    sa = dict({"format": "polaris-status-assertion/1", "token_value": token, "status": "ACTIVE"}, **win)
+    sa.update(algorithm="ML-DSA-65", public_key_hex=pk.hex(),
+              signature_hex=sign(hashlib.sha3_256(V._status_assertion_canonical(sa)).digest()).hex())
+    return {"key": pk.hex(), "sign": sign, "pack": pack, "assertion": sa, "now": now, "window": win,
+            "presentation": {"format": V._PRESENTATION_FORMAT, "credential": pack, "status_assertion": sa}}
+
+
+def _holder_chain(issued):
+    """A holder key H bound to `issued`'s credential, and a maker of presentations whose holder
+    proof answers a given nonce."""
+    sign_h, pk_h = _mldsa_signer()
+    tok, win = issued["pack"]["token_value"], issued["window"]
+    b = dict({"format": "polaris-holder-binding/1", "token_value": tok, "holder_public_key_hex": pk_h.hex(),
+              "holder_algorithm": "ML-DSA-65", "bound_at": win["issued_at"], "status": "active",
+              "algorithm": "ML-DSA-65", "public_key_hex": issued["key"]}, **win)
+    b["signature_hex"] = issued["sign"](hashlib.sha3_256(V._holder_binding_canonical(b)).digest()).hex()
+
+    def presentation(nonce):
+        p = {"format": "polaris-holder-proof/1", "token_value": tok, "context_id": 7, "verifier_nonce": nonce,
+             "issued_at": _iso(issued["now"] - timedelta(seconds=30)), "algorithm": "ML-DSA-65",
+             "public_key_hex": pk_h.hex()}
+        p["signature_hex"] = sign_h(hashlib.sha3_256(V._holder_proof_canonical(p)).digest()).hex()
+        return dict(issued["presentation"], holder_binding=b, holder_proof=p)
+    return presentation
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class NoTrustAnchorIsNoTrustedIssuer(unittest.TestCase):
+    """2026-10-21: with no anchor given, a credential and an ACTIVE status assertion a stranger
+    signed were usable offline (`issuer_trusted is not False`) and accepted stapled
+    (`issuer_trusted in (None, True)`). A genuine signature is not a trusted issuer: with no
+    anchor each now withholds, and a caller who wants the signature alone says so. Real
+    signatures by a stranger S throughout; R is another issuer's key."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.x = _issued("STRANGER-0001")
+        cls.s, cls.r = cls.x["key"], _mldsa_signer()[1].hex()
+
+    def test_a_stranger_s_presentation_with_no_anchor_is_not_usable(self):
+        pres = self.x["presentation"]
+        v = V.verify_presentation(pres)
+        self.assertEqual((v["credential_authentic"], v["issuer_trusted"]), (True, None), "genuine, trust not evaluated")
+        self.assertIs(v["usable_offline"], False)
+        self.assertEqual(v["note"], "no anchor_keys were given, so issuer trust was not evaluated")
+        self.assertIs(V.verify_presentation(pres, anchor_keys=[self.s])["usable_offline"], True,
+                      "control: the issuer's key as the anchor")
+        self.assertIs(V.verify_presentation(pres, anchor_keys=[self.r])["usable_offline"], False,
+                      "control: another issuer's key")
+        self.assertIs(V.verify_presentation(pres, signature_only=True)["usable_offline"], True,
+                      "a genuine signature alone, asked for by name")
+
+    def test_a_stranger_s_stapled_pair_with_no_anchor_is_not_accepted(self):
+        pack, sa = self.x["pack"], self.x["assertion"]
+        v = V.verify_stapled(pack, sa)
+        self.assertEqual(v["decision"], "abstain")
+        self.assertIn("no anchor_keys were given, so issuer trust was not evaluated", v["reasons"])
+        self.assertEqual(V.verify_stapled(pack, sa, anchor_keys=[self.s])["decision"], "accept",
+                         "control: the issuer's key as the anchor")
+        self.assertEqual(V.verify_stapled(pack, sa, anchor_keys=[self.r])["decision"], "reject",
+                         "control: another issuer's key")
+        self.assertEqual(V.verify_stapled(pack, sa, signature_only=True)["decision"], "accept",
+                         "a genuine signature alone, asked for by name")
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class HolderProofNeedsTheNonceThisVerifierIssued(unittest.TestCase):
+    """WIRE-SPEC (holder proof): a verifier MUST require `verifier_nonce` to equal the one it
+    issued. Before this change verify_presentation read the unchecked nonce (None, no
+    `expected_nonce` given) as a match, so a proof replayed from another verifier proved, where
+    neither SDK and the published case `holder-chain-no-nonce` read it so. Real signatures."""
+
+    MINE, OTHER = "nonce-this-verifier-issued", "nonce-issued-by-another-verifier"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.x = _issued("HOLDER-0001")
+        cls.presentation = staticmethod(_holder_chain(cls.x))
+
+    def test_a_holder_proof_checked_against_no_nonce_is_not_proved(self):
+        for required in (True, False):
+            with self.subTest(require_holder_proof=required):
+                v = V.verify_presentation(self.presentation(self.OTHER), anchor_keys=[self.x["key"]],
+                                          require_holder_proof=required)
+                self.assertIsNone(v["holder"]["nonce_matches"], "no nonce was given, so none was compared")
+                self.assertIs(v["holder"]["proved"], False)
+                self.assertIs(v["usable_offline"], False)
+                self.assertEqual(v["note"], "no expected_nonce was given, so the holder proof was not checked "
+                                            "against a nonce this verifier issued")
+
+    def test_the_controls(self):
+        mine = V.verify_presentation(self.presentation(self.MINE), anchor_keys=[self.x["key"]],
+                                     expected_nonce=self.MINE, require_holder_proof=True)
+        self.assertEqual((mine["holder"]["proved"], mine["usable_offline"]), (True, True), mine["note"])
+        replay = V.verify_presentation(self.presentation(self.OTHER), anchor_keys=[self.x["key"]],
+                                       expected_nonce=self.MINE, require_holder_proof=True)
+        self.assertEqual((replay["holder"]["nonce_matches"], replay["usable_offline"]), (False, False))
+
+
+@unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS) and _cryptography_mldsa(),
+                     "no real ML-DSA backend")
+class CommandLineJsonSaysWhatTheExitCodeSays(unittest.TestCase):
+    """2026-10-21: the presentation path abstained (exit 2) with no --issuer-anchor, or with a
+    holder proof and no --nonce, while its --json verdict said `usable_offline: true`; a script
+    reading the verdict read a usable presentation the run did not accept. Every run here reads
+    the JSON verdict beside the exit code, and stderr says why only for an abstention. The rows
+    run on real signatures and the library's own decision, except where a verdict the library
+    no longer gives is replaced to show the command line holds it on its own."""
+
+    NONCE = "nonce-this-verifier-issued"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-cli-json-"))
+        x, held = _issued("STRANGER-0001"), _issued("HOLDER-0001")
+        files = {"stranger.json": x["presentation"], "pack.json": x["pack"], "assertion.json": x["assertion"],
+                 "holder.json": _holder_chain(held)(cls.NONCE), "s.json": [x["key"]],
+                 "r.json": [_mldsa_signer()[1].hex()], "i.json": [held["key"]], "blob.json": {}}
+        for name, body in files.items():
+            (cls.tmp / name).write_text(json.dumps(body))
+
+    def run_json(self, *argv):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = V.main(["--pqc-provider", "auto", "--json", *argv])
+        return code, json.loads(out.getvalue()), err.getvalue()
+
+    def f(self, name):
+        return str(self.tmp / name)
+
+    def test_the_presentation_path(self):
+        rows = ((("--presentation", self.f("stranger.json")), 2, True),
+                (("--presentation", self.f("stranger.json"), "--issuer-anchor", self.f("s.json")), 0, False),
+                (("--presentation", self.f("stranger.json"), "--issuer-anchor", self.f("r.json")), 2, False),
+                (("--presentation", self.f("stranger.json"), "--signature-only"), 0, False))
+        for argv, want, abstains in rows:
+            with self.subTest(argv=argv[2:]):
+                code, verdict, err = self.run_json(*argv)
+                self.assertEqual(code, want)
+                self.assertIs(verdict["usable_offline"], code == 0, "the JSON verdict says what the exit code says")
+                self.assertEqual("abstain:" in err, abstains)
+
+    def test_a_holder_proof_with_no_nonce(self):
+        holder = ("--presentation", self.f("holder.json"))
+        for flags, want, abstains in ((("--issuer-anchor", self.f("i.json")), 2, True), (("--signature-only",), 2, True),
+                                      (("--issuer-anchor", self.f("i.json"), "--nonce", self.NONCE), 0, False)):
+            with self.subTest(flags=flags):
+                code, verdict, err = self.run_json(*holder, *flags)
+                self.assertEqual(code, want)
+                self.assertIs(verdict["usable_offline"], code == 0, "the JSON verdict says what the exit code says")
+                self.assertEqual("abstain:" in err, abstains)
+
+    def test_a_usable_verdict_is_still_held_for_what_the_run_was_not_given(self):
+        """As on the stapled and zero-knowledge paths, the command line holds a usable verdict for
+        a missing trust root or nonce on its own, and the JSON says so."""
+        from unittest import mock
+        usable = {"usable_offline": True, "issuer_trusted": None, "note": None, "holder": {"present": False}}
+        proved = dict(usable, issuer_trusted=True, holder={"present": True})
+        for verdict, flags, want in ((usable, (), 2), (usable, ("--signature-only",), 0),
+                                     (proved, (), 2), (proved, ("--nonce", self.NONCE), 0)):
+            with self.subTest(issuer_trusted=verdict["issuer_trusted"], flags=flags), \
+                    mock.patch.object(V, "verify_presentation", return_value=dict(verdict)):
+                code, out, err = self.run_json("--presentation", self.f("blob.json"), *flags)
+                self.assertEqual(code, want)
+                self.assertIs(out["usable_offline"], code == 0, "the JSON verdict says what the exit code says")
+                self.assertEqual("abstain:" in err, code == 2)
+
+    def test_the_stapled_path(self):
+        staple = ("--pack", self.f("pack.json"), "--status-assertion", self.f("assertion.json"))
+        for flags, want, decision in (((), 2, "abstain"), (("--issuer-anchor", self.f("s.json")), 0, "accept"),
+                                      (("--issuer-anchor", self.f("r.json")), 2, "reject"),
+                                      (("--signature-only",), 0, "accept")):
+            with self.subTest(flags=flags):
+                code, verdict, err = self.run_json(*staple, *flags)
+                self.assertEqual((code, verdict["decision"]), (want, decision))
+                self.assertEqual("abstain:" in err, decision == "abstain")
+
+    def test_the_zero_knowledge_path(self):
+        """With no trust root the library refuses the run itself (2026-10-21), before any proof is
+        read; the command line prints that refusal as the abstention it printed before. Only the
+        checkpoint's own verdict is replaced: the library decides the rest."""
+        from unittest import mock
+        checkpoint = {"checkpoint_authentic": True, "fresh": True}
+        for flags, decision in (((), "abstain"), (("--signature-only",), "reject")):
+            with self.subTest(flags=flags), mock.patch.object(V, "verify_epoch_checkpoint", return_value=checkpoint), \
+                    mock.patch.object(V, "verify_cross_authority_zk", wraps=V.verify_cross_authority_zk) as vz:
+                code, verdict, err = self.run_json("--zk-proof", self.f("blob.json"), "--nonce", "7", *flags)
+                self.assertEqual((code, verdict["decision"]), (2, decision))
+                self.assertEqual("abstain:" in err, decision == "abstain")
+                self.assertIs(vz.call_args.kwargs.get("signature_only"), "--signature-only" in flags,
+                              "the question the run asks reaches the library")
+
+    def test_the_agent_grant_path(self):
+        """Its abstention printed `usable: true` in the JSON beside exit 2 as well."""
+        from unittest import mock
+        base = {"grant_authentic": True, "fresh": True, "credential_authentic": True, "principal_bound": True,
+                "action_in_scope": True, "revoked": None, "agent_proved": True, "pairwise_handle": None,
+                "correlation": None, "note": None, "usable": True}
+        for trusted, flags, want in ((None, (), 2), (None, ("--signature-only",), 0), (True, (), 0)):
+            with self.subTest(issuer_trusted=trusted, flags=flags), \
+                    mock.patch.object(V, "verify_agent_grant", return_value=dict(base, issuer_trusted=trusted)):
+                code, verdict, err = self.run_json("--agent-grant", self.f("pack.json"), *flags)
+                self.assertEqual(code, want)
+                self.assertIs(verdict["usable"], code == 0, "the JSON verdict says what the exit code says")
+                self.assertEqual("abstain:" in err, code == 2)
+
+
+class AgentGrantNeedsATrustAnchor(unittest.TestCase):
+    """2026-10-28: with no anchor_keys, verify_agent_grant answered usable True for a chain whose
+    credential a stranger issued, where every other function here abstains. The signatures are
+    stubbed to hold (as in the limits rows of test_verify_p9), so the anchors are the only thing
+    that can make the verdict differ; the credential's issuer is trusted only when the anchors
+    name its key."""
+
+    ISSUER = "cd" * 32
+    GRANT = {"format": "polaris-agent-grant/1", "grant_id": "g-1",
+             "public_key_hex": "cd" * 32, "algorithm": "ML-DSA-65",
+             "agent_public_key_hex": "ab" * 32, "agent_algorithm": "ML-DSA-65",
+             "actions": ["read"], "issued_at": "2026-05-01T00:00:00Z",
+             "expires_at": "2026-05-01T06:00:00Z"}
+    PROOF = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab" * 32,
+             "action": "read", "service_nonce": "n-1", "algorithm": "ML-DSA-65",
+             "issued_at": "2026-05-01T00:00:10Z", "signature_hex": "00" * 8}
+
+    def setUp(self):
+        self._saved = (V._signed_by, V.verify_pack, V.verify_holder_binding)
+        V._signed_by = lambda obj, msg, pk, alg: (True, ["stub"], None)
+
+        def pack(cred, anchor_keys=None):
+            trusted = None if anchor_keys is None else self.ISSUER in [str(a).lower() for a in anchor_keys]
+            return {"signature_valid": True, "issuer_trusted": trusted, "note": None}
+        V.verify_pack = pack
+        V.verify_holder_binding = lambda b, credential=None, now=None, anchor_keys=None: {
+            "binding_authentic": True, "fresh": True, "holder_public_key_hex": self.ISSUER,
+            "bound_to_credential": True}
+
+    def tearDown(self):
+        V._signed_by, V.verify_pack, V.verify_holder_binding = self._saved
+
+    def chain(self, **kw):
+        return V.verify_agent_grant(self.GRANT, binding={"status": "active"}, credential={},
+                                    now="2026-05-01T00:00:30Z", requested_action="read",
+                                    agent_proof=self.PROOF, expected_nonce="n-1", **kw)
+
+    def test_a_chain_no_anchor_vouches_for_is_not_usable(self):
+        v = self.chain()
+        self.assertEqual((v["usable"], v["issuer_trusted"], v["principal_bound"]), (False, None, True), v["note"])
+        self.assertEqual(v["note"], V._NO_ISSUER_ANCHOR)
+        self.assertIs(self.chain(anchor_keys=None, signature_only=False)["usable"], False)
+
+    def test_the_controls(self):
+        trusted = self.chain(anchor_keys=[self.ISSUER.upper()])
+        self.assertEqual((trusted["usable"], trusted["issuer_trusted"]), (True, True), trusted["note"])
+        other = self.chain(anchor_keys=["ee" * 32])
+        self.assertEqual((other["usable"], other["issuer_trusted"]), (False, False))
+        self.assertIs(self.chain(anchor_keys=[]) ["usable"], False, "an empty anchor list trusts nobody")
+
+    def test_the_signature_alone_is_asked_for_by_name(self):
+        alone = self.chain(signature_only=True)
+        self.assertEqual((alone["usable"], alone["issuer_trusted"]), (True, None), alone["note"])
+        wrong = self.chain(signature_only=True, anchor_keys=["ee" * 32])
+        self.assertIs(wrong["usable"], False, "signature_only does not excuse an anchor that names another issuer")
+        bare = V.verify_agent_grant(self.GRANT, requested_action="read", signature_only=True)
+        self.assertIs(bare["usable"], False, "signature_only does not supply the missing links")
+
+    @unittest.skipUnless(any(V._provider_available(p) for p in V.REAL_PROVIDERS) and _cryptography_mldsa(),
+                         "no real ML-DSA backend")
+    def test_the_command_says_what_its_exit_code_says(self):
+        import contextlib
+        import io
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-grant-json-"))
+        # The command reads the clock: a window that has not closed.
+        grant = dict(self.GRANT, expires_at="2099-01-01T00:00:00Z")
+        files = {"grant.json": grant, "binding.json": {"status": "active"}, "credential.json": {},
+                 "proof.json": self.PROOF, "issuer.json": [self.ISSUER], "other.json": ["ee" * 32]}
+        for name, body in files.items():
+            (tmp / name).write_text(json.dumps(body))
+        chain = ("--agent-grant", str(tmp / "grant.json"), "--holder-binding", str(tmp / "binding.json"),
+                 "--credential", str(tmp / "credential.json"), "--agent-proof", str(tmp / "proof.json"),
+                 "--action", "read", "--service-nonce", "n-1")
+        for flags, want, abstains in (((), 2, True), (("--issuer-anchor", str(tmp / "issuer.json")), 0, False),
+                                      (("--issuer-anchor", str(tmp / "other.json")), 2, False),
+                                      (("--signature-only",), 0, False)):
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(flags=flags):
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = V.main(["--pqc-provider", "auto", "--json", *chain, *flags])
+                verdict = json.loads(out.getvalue())
+                self.assertEqual(code, want, err.getvalue())
+                self.assertIs(verdict["usable"], code == 0, "the JSON verdict says what the exit code says")
+                self.assertEqual("abstain:" in err.getvalue(), abstains)
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class CrossAuthorityNeedsATrustAnchor(unittest.TestCase):
+    """2026-10-21: with no trust anchor given, verify_cross_authority honoured any authentic,
+    fresh manifest named to it, and every manifest is signed by a key it lists itself; so a
+    stranger M's manifest attesting a stranger T's credential was accepted, directly and through
+    a status bundle, where both SDKs refuse. Real signatures: R is the authority the relying
+    party trusts, M and T strangers, P a bundle publisher."""
+
+    CTX, NOW = 1, "2026-10-21T02:00:00Z"
+    WIN = {"issued_at": "2026-10-21T00:00:00Z", "expires_at": "2026-10-22T00:00:00Z"}
+
+    @classmethod
+    def setUpClass(cls):
+        keys = {n: _mldsa_signer() for n in "RMTP"}
+        cls.pk = {n: k[1].hex() for n, k in keys.items()}
+        cls.key = keys
+
+        def seal(obj, canonical, who):
+            out = dict(obj, algorithm="ML-DSA-65", public_key_hex=cls.pk[who])
+            out["signature_hex"] = keys[who][0](hashlib.sha3_256(canonical(out)).digest()).hex()
+            return out
+
+        def manifest(who):
+            return seal(dict({"format": "polaris-federation-manifest/1", "authority": {"agency_id": who, "name": who},
+                              "anchors": [{"public_key_hex": cls.pk[who], "status": "active"}],
+                              "attestations": [{"attested_public_key_hex": cls.pk["T"], "context_id": cls.CTX}],
+                              "epoch": None, "revocation": None}, **cls.WIN), V._manifest_canonical, who)
+
+        tv = "T-0001"
+        cls.pack = {"format": "polaris-authenticity-pack/1", "token_value": tv, "algorithm": "ML-DSA-65",
+                    "public_key_hex": cls.pk["T"],
+                    "signature_hex": keys["T"][0](hashlib.sha3_256(tv.encode("utf-8")).digest()).hex()}
+        sig = cls.pack["signature_hex"]
+        cls.forged = dict(cls.pack, signature_hex=("00" if sig[:2] != "00" else "01") + sig[2:])
+        feed = seal(dict({"format": V._REVOCATION_FEED_FORMAT, "authority": {"agency_id": "T"}, "epoch_number": 1,
+                          "as_of": cls.WIN["issued_at"], "revoked_root_hex": V.revoked_root([]), "revoked_count": 0,
+                          "revoked_leaves": []}, **cls.WIN), V._revocation_feed_canonical, "T")
+        members = [{"revocation_feed": feed}]
+        cls.bundle = seal(dict({"format": V._STATUS_BUNDLE_FORMAT, "publisher": {"agency_id": "P"}, "members": members,
+                                "members_root_hex": V.bundle_members_root(members), "member_count": 1}, **cls.WIN),
+                          V._status_bundle_canonical, "P")
+        cls.m_r, cls.m_m = manifest("R"), manifest("M")
+
+    def bundled(self, pack, manifest, **kw):
+        return V.verify_cross_authority_via_bundle(pack, self.CTX, [manifest], self.bundle, now=self.NOW, **kw)
+
+    def test_a_stranger_s_manifest_with_no_anchor_is_not_accepted(self):
+        v = V.verify_cross_authority(self.pack, self.CTX, [self.m_m], now=self.NOW)
+        self.assertEqual(v["decision"], "reject")
+        self.assertEqual(v["reasons"], ["no trust anchors were given: a manifest vouches for nothing by itself"])
+
+    def test_through_a_status_bundle(self):
+        self.assertEqual(self.bundled(self.pack, self.m_m)["decision"], "reject", "a stranger's manifest, no anchor")
+        self.assertEqual(self.bundled(self.pack, self.m_m, trusted_anchors=[self.pk["R"]])["decision"], "reject",
+                         "control: the same, with the relying party's anchor")
+        accepted = self.bundled(self.pack, self.m_r, trusted_anchors=[self.pk["R"]])
+        self.assertEqual((accepted["decision"], accepted["revocation_checked"]), ("accept", True),
+                         "control: the trusted authority's manifest")
+        self.assertEqual(self.bundled(self.forged, self.m_r, trusted_anchors=[self.pk["R"]])["decision"], "reject",
+                         "a forged credential signature, all else trusted")
+
+    def test_the_published_case_with_its_anchors_left_out(self):
+        """`cross-authority-untrusted` rejects under its anchors; with them omitted the detached
+        verifier accepted and the Python SDK rejected."""
+        cases = {c["name"]: c for c in json.loads((ROOT / "conformance" / "cases.json").read_text())["cases"]}
+        load = lambda c: (json.loads((ROOT / c["pack_file"]).read_text()),  # noqa: E731
+                          [json.loads((ROOT / f).read_text()) for f in c["manifest_files"]])
+        c = cases["cross-authority-untrusted"]
+        pack, manifests = load(c)
+        self.assertEqual(V.verify_cross_authority(pack, c["context_id"], manifests, now=c["now"])["decision"], "reject")
+        self.assertEqual(V.verify_cross_authority(pack, c["context_id"], manifests, now=c["now"],
+                                                  trusted_anchors=c["trusted_anchors"])["decision"], "reject")
+        c = cases["cross-authority-accept"]
+        pack, manifests = load(c)
+        anchors = [a["public_key_hex"] for m in manifests for a in m["anchors"] if a.get("status") in (None, "active")]
+        self.assertEqual(V.verify_cross_authority(pack, c["context_id"], manifests, now=c["now"],
+                                                  trusted_anchors=anchors)["decision"], "accept", "control")
+
+
 class CrossAuthorityZkTrustChain(unittest.TestCase):
     """verify_cross_authority_zk trusts a foreign epoch only through a fresh checkpoint, a
     fresh and trusted manifest, and an attestation of THAT key, in THIS context, inside its own
@@ -2219,8 +3178,8 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
     KEY = "cc" * 32
     ABSENT = object()
 
-    def decide(self, cv=None, mv=None, att=None, zk=None, context=1, anchors=("aa" * 32,),
-               size=20, **floor):
+    def verdict(self, cv=None, mv=None, att=None, zk=None, context=1, anchors=("aa" * 32,),
+                size=20, **floor):
         from unittest import mock
         attestation = dict({"attested_public_key_hex": self.KEY, "context_id": 1}, **(att or {}))
         cvr = dict({"checkpoint_authentic": True, "fresh": True}, **(cv or {}))
@@ -2236,10 +3195,23 @@ class CrossAuthorityZkTrustChain(unittest.TestCase):
                 mock.patch.object(V, "verify_manifest", return_value=mvr), \
                 mock.patch.object(V, "verify_zk_against_root", return_value=zkr):
             return V.verify_cross_authority_zk({}, checkpoint, context, [{}],
-                                               trusted_anchors=list(anchors), **floor)["decision"]
+                                               trusted_anchors=None if anchors is None else list(anchors), **floor)
+
+    def decide(self, **kw):
+        return self.verdict(**kw)["decision"]
 
     def test_every_link_holding_accepts(self):
         self.assertEqual(self.decide(), "accept")
+
+    def test_no_trust_anchor_is_no_trusted_authority(self):
+        """2026-10-21: with no anchor given the manifest trust check was skipped, so any authentic,
+        fresh manifest named here attested the checkpoint's issuer and the proof was accepted."""
+        v = self.verdict(anchors=None)
+        self.assertEqual(v["decision"], "reject")
+        self.assertEqual(v["reasons"], ["no trust anchors were given: a manifest vouches for nothing by itself"])
+        self.assertIsNone(v["issuer_trusted"])
+        self.assertEqual(self.decide(anchors=None, signature_only=True), "accept",
+                         "the proof and its binding alone, asked for by name")
 
     def test_each_broken_link_refuses(self):
         for label, kw in (("a stale checkpoint", {"cv": {"fresh": False}}),
@@ -2432,14 +3404,14 @@ class SignedTreeHeadDecisions(unittest.TestCase):
         self.assertEqual((v["consistent"], v["fork"]), (True, False), v["note"])
 
     def test_equal_sizes_decide_on_the_roots(self):
-        same = V.verify_log_consistency(self.sth(6), self.sth(6), [])
+        same = V.verify_log_consistency(self.sth(6), self.sth(6), [], issuer_key=self.pk.hex())
         self.assertEqual((same["consistent"], same["fork"]), (True, False), same["note"])
         other = V.merkle_tree_head(["x"] * 6).hex()
-        split = V.verify_log_consistency(self.sth(6), self.sth(6, root=other), [])
+        split = V.verify_log_consistency(self.sth(6), self.sth(6, root=other), [], issuer_key=self.pk.hex())
         self.assertEqual((split["consistent"], split["fork"]), (False, True), split["note"])
 
     def test_a_shrinking_tree_is_a_fork(self):
-        v = V.verify_log_consistency(self.sth(9), self.sth(4), [])
+        v = V.verify_log_consistency(self.sth(9), self.sth(4), [], issuer_key=self.pk.hex())
         self.assertEqual((v["consistent"], v["fork"]), (False, True))
         self.assertIn("SMALLER", v["note"])
 
@@ -2447,17 +3419,18 @@ class SignedTreeHeadDecisions(unittest.TestCase):
         rewritten = self.ENTRIES[:2] + ["rewritten"] + self.ENTRIES[3:11]
         head = self.sth(11, root=V.merkle_tree_head(rewritten).hex())
         proof = [h.hex() for h in V.consistency_proof(5, rewritten)]
-        v = V.verify_log_consistency(self.sth(5), head, proof)
+        v = V.verify_log_consistency(self.sth(5), head, proof, issuer_key=self.pk.hex())
         self.assertEqual((v["consistent"], v["fork"]), (False, True), v["note"])
 
     def test_heads_from_two_logs_are_not_compared(self):
-        v = V.verify_log_consistency(self.sth(5), self.sth(11, log_id="log-2"), self.proof(5, 11))
+        v = V.verify_log_consistency(self.sth(5), self.sth(11, log_id="log-2"), self.proof(5, 11),
+                                     issuer_key=self.pk.hex())
         self.assertEqual((v["consistent"], v["fork"]), (False, False))
         self.assertIn("different logs", v["note"])
 
     def test_an_inauthentic_head_decides_nothing(self):
         forged = dict(self.sth(11), root_hash_hex=V.merkle_tree_head(["x"] * 11).hex())
-        v = V.verify_log_consistency(self.sth(5), forged, self.proof(5, 11))
+        v = V.verify_log_consistency(self.sth(5), forged, self.proof(5, 11), issuer_key=self.pk.hex())
         self.assertEqual((v["consistent"], v["fork"]), (False, False))
         self.assertIn("not authentic", v["note"])
 
@@ -2467,15 +3440,24 @@ class SignedTreeHeadDecisions(unittest.TestCase):
         self.assertFalse(v["consistent"])
         self.assertIn("expected log key", v["note"])
 
+    def test_a_stranger_s_newer_head_with_no_log_key_is_not_consistent(self):
+        # The log's head and a stranger's newer head over the same entries, with a genuine
+        # proof between them: only the missing key can refuse it.
+        foreign = self.sth(11, sign=self.other_sign, pk=self.other_pk)
+        v = V.verify_log_consistency(self.sth(5), foreign, self.proof(5, 11))
+        self.assertEqual((v["consistent"], v["fork"]), (False, False))
+        self.assertEqual(v["note"], "no log key was named: both heads must be signed by a log key the caller names")
+
     def test_a_boolean_or_missing_size_is_refused(self):
         for bad in (True, None, -1, "5"):
             with self.subTest(tree_size=bad):
-                v = V.verify_log_consistency(self.sth(5), self.sth(11, tree_size=bad), self.proof(5, 11))
+                v = V.verify_log_consistency(self.sth(5), self.sth(11, tree_size=bad), self.proof(5, 11),
+                                             issuer_key=self.pk.hex())
                 self.assertFalse(v["consistent"])
                 self.assertIn("tree_size", v["note"])
 
     def test_a_proof_that_is_not_hex_is_refused(self):
-        v = V.verify_log_consistency(self.sth(5), self.sth(11), ["zz"])
+        v = V.verify_log_consistency(self.sth(5), self.sth(11), ["zz"], issuer_key=self.pk.hex())
         self.assertFalse(v["consistent"])
         self.assertIn("not valid hex", v["note"])
 
@@ -2576,12 +3558,13 @@ class ReceiptInclusionDecisions(unittest.TestCase):
                 self.assertTrue(v["log_matches"])
 
     def test_a_proof_for_another_receipt_is_refused(self):
-        v = V.verify_receipt_inclusion(self.RECEIPTS[2], self.proof(3), self.head())
+        v = V.verify_receipt_inclusion(self.RECEIPTS[2], self.proof(3), self.head(), log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("not for this receipt", v["note"])
 
     def test_a_head_of_another_log_is_refused(self):
-        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), self.head(log_id="another-log"))
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), self.head(log_id="another-log"),
+                                       log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn(V._RECEIPT_LOG_ID, v["note"])
 
@@ -2591,7 +3574,8 @@ class ReceiptInclusionDecisions(unittest.TestCase):
         for over in ({"index": float("inf")}, {"index": "three"}, {"proof_hex": ["zz"]},
                      {"index": 3.5}, {"tree_size": "7"}, {"index": True}, {"proof_hex": "00"}):
             with self.subTest(**{k: str(v) for k, v in over.items()}):
-                v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, **over), self.head())
+                v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, **over), self.head(),
+                                               log_key=self.pk.hex())
                 self.assertFalse(v["included"])
                 self.assertEqual(v["note"], "malformed proof")
 
@@ -2614,13 +3598,14 @@ class ReceiptInclusionDecisions(unittest.TestCase):
                 self.assertEqual(v["note"], "tree_size is not an integer from 0 to 2**53 - 1")
 
     def test_a_proof_and_head_of_different_trees_are_refused(self):
-        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, tree_size=6), self.head())
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, tree_size=6), self.head(),
+                                       log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("different trees", v["note"])
 
     def test_an_inauthentic_head_is_refused(self):
         altered = dict(self.head(), timestamp="2026-10-01T00:00:00Z")
-        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), altered)
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), altered, log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertFalse(v["sth_authentic"])
 
@@ -2631,13 +3616,25 @@ class ReceiptInclusionDecisions(unittest.TestCase):
         self.assertFalse(v["included"])
         self.assertIn("expected log key", v["note"])
 
+    def test_a_stranger_s_head_with_no_log_key_includes_nothing(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3),
+                                       self.head(sign=self.other_sign, pk=self.other_pk))
+        self.assertTrue(v["sth_authentic"], "control: the stranger's head is authentic under its own key")
+        self.assertFalse(v["included"])
+        self.assertEqual(v["note"], _NO_LOG_KEY)
+
+    def test_the_log_s_own_head_with_no_log_key_includes_nothing(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), self.head())
+        self.assertFalse(v["included"])
+        self.assertEqual(v["note"], _NO_LOG_KEY)
+
     def test_a_path_that_does_not_rebuild_the_head_is_refused(self):
-        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, index=4), self.head())
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, index=4), self.head(), log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("does not reconstruct", v["note"])
 
     def test_anything_but_three_objects_is_refused(self):
-        v = V.verify_receipt_inclusion("receipt", self.proof(3), self.head())
+        v = V.verify_receipt_inclusion("receipt", self.proof(3), self.head(), log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("must be objects", v["note"])
 
@@ -3159,6 +4156,81 @@ class ChainAnchorDecisions(unittest.TestCase):
     def test_a_header_that_is_not_80_bytes_is_refused(self):
         self.refused(self.anchor(), self.sources(self.HEADER[969876][:-2]), "80 bytes")
         self.refused(self.anchor(), self.sources("zz" * 80), "malformed")
+
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class AnEpochCheckpointIsComparedOnlyOnceItVerifies(unittest.TestCase):
+    """2026-10-21: verify_epoch_leaves compared the bundle's merkle_root with the root of whatever
+    dict it was handed as the epoch checkpoint and verified nothing, so a dict of another format
+    with a signature of 00, or a bare {merkle_root}, gave epoch_matches True. The published
+    vectors: the bundle epoch-leaves-valid, and the checkpoint epoch-checkpoint-valid, which names
+    another root under another key."""
+
+    @classmethod
+    def setUpClass(cls):
+        def vector(name):
+            return json.loads((ROOT / "conformance" / "vectors" / (name + ".json")).read_text())
+        cls.bundle, cls.cp = vector("epoch-leaves-valid"), vector("epoch-checkpoint-valid")
+        cls.now = cls.bundle["issued_at"]
+
+    def compared(self, bundle, checkpoint, **kw):
+        return V.verify_epoch_leaves(bundle, now=self.now, epoch_checkpoint=checkpoint, **kw)
+
+    def signed(self, sign, pk, bundle_root=None):
+        """A fresh bundle and a checkpoint naming its root, each signed by `sign`."""
+        b = dict(self.bundle, public_key_hex=pk.hex())
+        b["signature_hex"] = sign(hashlib.sha3_256(V._epoch_leaves_canonical(b)).digest()).hex()
+        cp = dict(self.cp, epoch=dict(self.cp["epoch"], root_hex=bundle_root or b["merkle_root"]),
+                  public_key_hex=pk.hex())
+        cp["signature_hex"] = sign(hashlib.sha3_256(V._epoch_checkpoint_canonical(cp)).digest()).hex()
+        return b, cp
+
+    def test_a_dict_that_does_not_verify_as_a_checkpoint_is_not_compared(self):
+        root, key = self.bundle["merkle_root"], self.bundle["public_key_hex"]
+        for label, forged in (
+                ("another format, a signature of 00", {"format": "not-a-checkpoint", "merkle_root": root,
+                                                       "signature_hex": "00", "public_key_hex": "00",
+                                                       "algorithm": "ML-DSA-65"}),
+                ("a bare merkle_root", {"merkle_root": root}),
+                ("the bundle's key, a signature that does not verify",
+                 dict(self.cp, epoch=dict(self.cp["epoch"], root_hex=root), public_key_hex=key))):
+            with self.subTest(label):
+                v = self.compared(self.bundle, forged)
+                self.assertEqual((v["leaves_authentic"], v["epoch_matches"]), (True, None), v["note"])
+                self.assertIn("the epoch checkpoint does not verify", v["note"])
+
+    def test_a_checkpoint_signed_by_a_key_nobody_named_is_not_compared(self):
+        v = self.compared(self.bundle, self.cp)
+        self.assertIsNone(v["epoch_matches"])
+        self.assertIn("signed by neither the bundle's key nor a trust anchor", v["note"])
+        b, _ = self.signed(*_mldsa_signer())
+        _, stranger = self.signed(*_mldsa_signer(), bundle_root=b["merkle_root"])
+        self.assertIsNone(self.compared(b, stranger)["epoch_matches"], "a stranger's checkpoint naming the same root")
+
+    def test_a_root_beside_the_checkpoint_signature_is_not_read(self):
+        """A checkpoint signs its root inside `epoch`; a `merkle_root` beside it was read when the
+        signed epoch named none."""
+        sign, pk = _mldsa_signer()
+        b, cp = self.signed(sign, pk)
+        rootless = dict(cp, epoch={k: x for k, x in cp["epoch"].items() if k != "root_hex"})
+        rootless["signature_hex"] = sign(hashlib.sha3_256(V._epoch_checkpoint_canonical(rootless)).digest()).hex()
+        v = self.compared(b, dict(rootless, merkle_root=b["merkle_root"]))
+        self.assertIs(v["epoch_matches"], False, v["note"])
+
+    def test_control_the_published_checkpoint_names_another_root(self):
+        v = self.compared(self.bundle, self.cp, anchor_keys=[self.bundle["public_key_hex"], self.cp["public_key_hex"]])
+        self.assertEqual((v["issuer_trusted"], v["epoch_matches"]), (True, False))
+        self.assertEqual(v["note"], "the bundle names a different epoch root than the published checkpoint")
+
+    def test_control_a_checkpoint_under_the_bundles_key_or_an_anchor_is_compared(self):
+        b, cp = self.signed(*_mldsa_signer())
+        v = self.compared(b, cp)
+        self.assertEqual((v["leaves_authentic"], v["epoch_matches"], v["note"]), (True, True, None))
+        sign, pk = _mldsa_signer()
+        _, other = self.signed(sign, pk, bundle_root=b["merkle_root"])
+        self.assertIs(self.compared(b, other, anchor_keys=[pk.hex()])["epoch_matches"], True,
+                      "a checkpoint under a key the caller trusts")
 
 
 if __name__ == "__main__":

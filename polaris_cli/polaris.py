@@ -1704,9 +1704,9 @@ def cmd_quota_show(args):
 def cmd_discretion_set(args):
     """Record a revocation bound for one agency: supersede the row in force, append a new one.
 
-    The bound is the share of its OWN tokens an issuing agency may revoke in a rolling
+    The bound is the share of an issuing agency's tokens that may be revoked in a rolling
     window, against a system default of 5.00% over 30 days. It is what stands between
-    one authority and mass revocation of the credentials it issued, so raising it is
+    one authority and mass revocation of an agency's credentials, so raising it is
     the act an audit most needs to see: the justification floor is 20 characters and
     the row is append-only at the database (trg_discretion_policy_immutable).
     """

@@ -16,7 +16,8 @@
 #                  the unsealed copy on a tmpfs with a sealed one, and no plaintext left behind
 #   configuration  the production configuration contract, judged in a one-off app container,
 #                  so it answers when the app itself cannot start
-#   edge           the TLS edge serves /api/health/live
+#   edge           the TLS edge serves /.well-known/security.txt (public; the edge refuses the
+#                  health answers to anyone outside POLARIS_METRICS_ALLOW)
 #   health         the app's own roll-up (/api/health, from inside the app container): every
 #                  component it judges
 #   key register   every active credential signed for real is under a key its authority had registered
@@ -139,13 +140,13 @@ if echo "${SERVICES}" | grep -x app >/dev/null; then
     fi
 fi
 
-# --- edge: the TLS edge serves the liveness probe
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${CURL_TLS[@]}" "${URL}/api/health/live" 2> /dev/null)
+# --- edge: the TLS edge serves a public route from the app (the health answers are refused there)
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${CURL_TLS[@]}" "${URL}/.well-known/security.txt" 2> /dev/null)
 if [[ "${code}" == 200 ]]; then
-    ok edge "${URL} serves /api/health/live"
+    ok edge "${URL} serves /.well-known/security.txt"
 else
-    why=$(curl -sS -o /dev/null --max-time 10 "${CURL_TLS[@]}" "${URL}/api/health/live" 2>&1 | sed -n 1p)
-    bad edge "${URL}/api/health/live answered ${code}${why:+ (${why})}"
+    why=$(curl -sS -o /dev/null --max-time 10 "${CURL_TLS[@]}" "${URL}/.well-known/security.txt" 2>&1 | sed -n 1p)
+    bad edge "${URL}/.well-known/security.txt answered ${code}${why:+ (${why})}"
 fi
 
 # --- health: the app's own roll-up, from inside the app container

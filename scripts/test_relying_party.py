@@ -152,7 +152,7 @@ class RelyingPartyCommandLineTests(unittest.TestCase):
                 return {"signature_valid": True, "issuer_trusted": None, "note": None}
 
             def verify_stapled(self, credential, assertion, now=None, max_window_seconds=None,
-                               anchor_keys=None):
+                               anchor_keys=None, signature_only=False):
                 # The detached verifier's stapled decision, stubbed: "issuer-signed" stands for a
                 # genuine signature by the credential's own key.
                 a = assertion if isinstance(assertion, dict) else {}
@@ -372,7 +372,7 @@ class RelyingPartyStatusBindingTests(unittest.TestCase):
             self.hashlib.sha3_256(self.V._status_assertion_canonical(a)).digest()).hex()
         return a
 
-    def _decide(self, token_value, status, token_id):
+    def _decide(self, token_value, status, token_id, anchors=()):
         issuer = _Issuer({
             ("POST", "/api/v1/status-assertion"):
                 lambda h, b: (200, self._assertion(json.loads(b)["token_value"], status)),
@@ -384,8 +384,9 @@ class RelyingPartyStatusBindingTests(unittest.TestCase):
         self.addCleanup(issuer.shutdown)
         presentation = {"format": "polaris-presentation/1", "token_id": token_id,
                         "credential": dict(self._credential(token_value), token_id=token_id)}
-        checker = self.rp._http_status_checker(issuer.url, [self.pk])
-        return self.rp.verify_presentation(presentation, anchor_keys=[self.pk],
+        anchors = [self.pk] if anchors == () else anchors
+        checker = self.rp._http_status_checker(issuer.url, anchors)
+        return self.rp.verify_presentation(presentation, anchor_keys=anchors,
                                            status_checker=checker), issuer
 
     def test_a_revoked_credential_with_an_edited_token_id_is_rejected(self):
@@ -396,6 +397,16 @@ class RelyingPartyStatusBindingTests(unittest.TestCase):
     def test_an_active_credential_is_accepted(self):
         v, _ = self._decide("RP-ACTIVE-0008", "ACTIVE", token_id=8)
         self.assertEqual((v["decision"], v["currently_authoritative"]), ("accept", True), v)
+
+    def test_with_no_anchor_the_answer_is_held_to_the_credentials_own_key(self):
+        """With no --issuer-anchor the status is still read: the issuer's answer must verify
+        under the credential's own key. The detached verifier abstains on a stapled pair with no
+        anchor unless the caller asks for the signature alone, so this command now asks."""
+        v, _ = self._decide("RP-ACTIVE-0009", "ACTIVE", token_id=9, anchors=None)
+        self.assertEqual((v["decision"], v["currently_authoritative"], v["issuer_trusted"]),
+                         ("accept", True, None), v)
+        v, _ = self._decide("RP-REVOKED-0010", "REVOKED", token_id=10, anchors=None)
+        self.assertEqual((v["decision"], v["currently_authoritative"]), ("reject", False), v)
 
 
 if __name__ == "__main__":

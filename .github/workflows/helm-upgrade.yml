@@ -7,8 +7,8 @@
 # chart under the restricted Pod Security Standard with Calico enforcing the NetworkPolicies, and
 # writes a marker. It then runs `helm upgrade` with this chart: the pre-upgrade Job
 # (deploy/helm/polaris/templates/migrate-job.yaml) applies the migrations the release lacks. It
-# requires no migration pending, more migrations recorded than before, the marker intact, and
-# /api/health answering through the edge.
+# requires no migration pending, more migrations recorded than before, the marker intact, the edge
+# serving, and /api/health answering at the app.
 #
 # It builds two releases' images and a cluster, so pull requests run it only when a path it
 # exercises changed. It also runs on every push to main, nightly, and by hand.

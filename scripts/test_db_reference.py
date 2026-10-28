@@ -244,10 +244,10 @@ class RolesTests(_Base):
         self.assertEqual(r.returncode, 1)
         self.assertIn("docker-init.sh cannot be read", r.stderr)
 
-    def test_the_real_tree_creates_polaris_app_and_polaris_replicator(self):
+    def test_the_real_tree_creates_polaris_app_the_console_reader_and_polaris_replicator(self):
         r = self.bash('polaris_db_reference_roles "%s"' % (ROOT / "polaris_sql"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.split(), ["polaris_app", "polaris_replicator"])
+        self.assertEqual(r.stdout.split(), ["polaris_app", "polaris_console_reader", "polaris_replicator"])
 
 
 class CrossClusterTests(_Base):

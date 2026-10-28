@@ -69,17 +69,21 @@ bash "${ROOT}/scripts/polaris-generate-secrets.sh" > "${OUT}/secrets.log" 2>&1 \
 step "3/7 start the production stack on https://localhost:8443"
 "${COMPOSE[@]}" up -d > "${OUT}/up.log" 2>&1 || fail "starting the stack" "${OUT}/up.log"
 ready=0
+# The edge serves a public route (it refuses the health answers from outside POLARIS_METRICS_ALLOW);
+# the roll-up is read at the app's own address.
 for _ in $(seq 1 90); do
     if "${COMPOSE[@]}" exec -T caddy cat /data/caddy/pki/authorities/local/root.crt \
            > "${OUT}/caddy-root.crt" 2>/dev/null && \
        [[ "$(curl -s --cacert "${OUT}/caddy-root.crt" -o /dev/null -w '%{http_code}' \
-             https://localhost:8443/api/health)" == "200" ]]; then
+             https://localhost:8443/.well-known/security.txt)" == "200" ]] && \
+       [[ "$("${COMPOSE[@]}" exec -T app curl -s -o /dev/null -w '%{http_code}' \
+             http://localhost:8000/api/health 2>/dev/null)" == "200" ]]; then
         ready=1
         break
     fi
     sleep 3
 done
-[[ "${ready}" == 1 ]] || { "${COMPOSE[@]}" ps >> "${OUT}/up.log" 2>&1; fail "waiting for /api/health" "${OUT}/up.log"; }
+[[ "${ready}" == 1 ]] || { "${COMPOSE[@]}" ps >> "${OUT}/up.log" 2>&1; fail "waiting for the edge and /api/health" "${OUT}/up.log"; }
 
 step "4/7 create the operator ${USERNAME}"
 if [[ "$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d polaris -tAc \

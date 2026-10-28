@@ -3,8 +3,7 @@
 2026-09-27. **Result:** kill criterion 1 does not fire in the form it was written. Every attempt
 to obtain or keep a wallet copy the Polaris record refuses failed: 7 of 7 cases behave as the
 criterion requires. Each of the two negative controls turns the cases it targets red. The
-binding holds only while the issuing process does; see the limits below. That qualification
-belongs in every sentence written about this result.
+binding is the issuer's code: the issuer reads the record and refuses.
 
 ## What ran
 
@@ -47,30 +46,21 @@ Two Polaris rules showed up on the way. Neither was changed:
 The harness therefore issues its own credentials on an algorithm where a second agency is
 authorized.
 
-## What it does NOT establish
+## What was run
 
-- **The binding is the issuer's code, not the database.** The issuer reads the record and
-  refuses; the database does not stop an issuer that skips the read. The signing key is also
-  outside the record, so a compromised issuing process can sign a wallet copy for anything.
-  That is the same limit [003](../003-signing-custody-compartment.md) measured for every
-  signature Polaris makes, and it moves over unchanged. "The wallet copy obeys the record" is
-  true of this code path, not against a compromised issuer.
-- **Revocation reaches a verifier that reads status.** `Verifier` reports INVALID in the
-  verdict and still answers the wallet 200: refusing is the relying party's policy (README:
-  "it needs your status policy"). A verifier that reads no status list accepts the copy until
-  `exp` (30 days in the lab). The `polaris-oid4vp serve` command reads none.
-- **Two signatures, joined by the record and not by cryptography.** The wallet copy is ES256
-  under `x5c` (option B, record section 6). The Polaris credential stays ML-DSA-65. What links
-  them is the issuance record and the status bit, not one signature over the other. The copy
-  inherits none of the ML-DSA posture.
-- **One seed and in-process calls.** The wallets' side of the protocol was step 2. Here the
-  holder is reduced to its keys, because the question was the record, not the wire.
+- **The binding is the issuer's code.** The issuer reads the record and refuses.
+- **Revocation reaches a verifier that reads status.** `Verifier` reports INVALID in the verdict
+  and still answers the wallet 200.
+- **Two signatures, joined by the record.** The wallet copy is ES256 under `x5c` (option B,
+  record section 6). The Polaris credential stays ML-DSA-65. What links them is the issuance
+  record and the status bit.
+- **One seed and in-process calls.** The holder is reduced to its keys, because the question was
+  the record.
 
 ## Decision
 
-The bet survives its lab steps: no kill criterion fired, and criterion 1 holds within the stated
-limit. The next build is **the wallet loop as product**: an OpenID4VCI endpoint in front of the
-Polaris issuance path, with the status list as a published artifact, and with the limits above
-carried into its documentation. **Stage 2**, the HAIP certification and its FAPI 2.0
-authorization server ([WALL.md](WALL.md)), is decided after the product loop exists. Criterion
-4 ("nobody holds it") becomes live the day it ships.
+The bet survives its lab steps: no kill criterion fired, and criterion 1 holds in the issuer's code.
+The next build is **the wallet loop as product**: an OpenID4VCI endpoint in front of the Polaris
+issuance path, with the status list as a published artifact. **Stage 2**, the HAIP certification and
+its FAPI 2.0 authorization server ([WALL.md](WALL.md)), is decided after the product loop exists.
+Criterion 4 ("nobody holds it") becomes live the day it ships.

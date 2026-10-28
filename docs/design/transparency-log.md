@@ -2,14 +2,14 @@
 
 **Reader:** an engineer or an assessor, or anyone who wants to run a monitor.
 **Job:** how the audit anchor log is turned into a public, append-only, independently
-verifiable log, and what a monitor can and cannot prove by watching it.
+verifiable log, and what a monitor proves by watching it.
 
 [anchoring.md](anchoring.md) explains the audit anchor: a periodic Merkle commitment
 over audit rows, recorded in the append-only `AnchorBatch` table. Its batch proofs are
-checked inside the application, behind login, and anchoring.md says what they bind. A
+checked by the application's verify route, and anchoring.md says what they bind. A
 single `AnchorBatch` root does not, on its own, prove that the operator did not later
 throw away a root and publish a different one in its place. An append-only transparency
-log closes that gap: it commits to the whole *sequence* of anchor roots, and lets anyone
+log answers that: it commits to the whole *sequence* of anchor roots, and lets anyone
 prove that the sequence only ever grew.
 
 ## The log is a signed view over AnchorBatch
@@ -44,7 +44,7 @@ canonical-signing oracle proves the signed tree head is byte-identical across th
 There is no personal data in any of it: the entries are anchor roots, and the heads and
 proofs are hashes.
 
-## What a monitor proves, and what it does not
+## What a monitor proves
 
 `scripts/polaris-transparency-monitor.py` is the auditor's side, and anyone can run it. It
 is standalone (only the standard library and the detached verifier), read-only, and it
@@ -58,9 +58,8 @@ exits non-zero.
 
 What this proves is **consistency**: the operator cannot rewrite history without every
 monitor that saw the old head detecting it, because the old head will not be a prefix of
-the new one. What it does not prove on its own is that two monitors were shown the *same*
-head at the same size; catching that split view requires the observers to compare notes.
-That is the split-view defence, built in P3.3b (below).
+the new one. Two monitors being shown the *same* head at the same size is established by
+the observers comparing notes: the split-view defence, built in P3.3b (below).
 
 ## Witnesses and the split view (P3.3b)
 
@@ -86,11 +85,9 @@ The append-only guarantee of the base log does not depend on any of this; witnes
 the defence against the one attack a lone monitor cannot see.
 
 What is built here is the **protocol** for independent witnesses: the cosignature format, the
-threshold rule, the equivocation proof, and a witness daemon anyone can run. What is not
-here, and cannot be until deployment, is a set of **institutionally independent** witnesses
-actually running it (a bank, a civil-society group, another authority). That gap is not a
-software deficiency; it is that the system has not been deployed. The strength of the
-defence in practice is exactly the independence of whoever runs the witnesses.
+threshold rule, the equivocation proof, and a witness daemon anyone can run. Witnesses are
+meant to be run by institutionally independent parties (a bank, a civil-society group,
+another authority); the defence is as strong as that independence.
 
 ## External-ledger publication (P3.3c)
 
@@ -143,13 +140,12 @@ Bitcoin.
   decides a proof (`verify`), and runs a monitor's `check`: every published anchor must verify,
   and each anchored head must be a prefix of its log today.
 
-What it does not establish: that what was logged is true; that today's heads are the
-instance's (the monitor's signature check does that); or that two observers saw the same head
-between anchors (the witnesses do that). It adds nothing to verifying a credential, which stays
-offline against published keys, and no chain enters a credential's trust path. The digest is
+Today's heads are tied to the instance by the monitor's signature check, and agreement
+between observers between anchors comes from the witnesses. It adds nothing to verifying a
+credential, which stays offline against published keys, and no chain enters a credential's
+trust path. The digest is
 SHA-256 because OpenTimestamps operates on SHA-256; the heads stay SHA3-256 under the
-instance's signature, and what secures the commitment is Bitcoin's accumulated work, not a
-quantum property it does not have.
+instance's signature, and what secures the commitment is Bitcoin's accumulated work.
 
 Measured: [lab/strategy/013/STEP1.md](../../lab/strategy/013/STEP1.md) put a checkpoint of a
 test instance's logs into block 969876. Recorded, published and checked through the product

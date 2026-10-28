@@ -159,9 +159,14 @@ break.
 - **Atlas APIs** (`/api/atlas/*`): bounded result sets (C8). Attempt an
   unbounded read.
 - **Investigative routes** (`/investigate/token/<id>`,
-  `/investigate/individual/<id>`) and every read of an audit-tracked table:
-  the read must leave an `AuditAccessLog` row. Reading an identity record
-  without one is a TA-2 success.
+  `/investigate/individual/<id>`) and every route that returns a person's
+  history from the four audit-tracked tables (`TokenLifecycleEvent`,
+  `VerificationEvent`, `AuthAuditLog`, `DuressEvent`): the read must leave an
+  `AuditAccessLog` row. Returning those rows without one is a TA-2 success. A
+  count over the four (the `/dashboard` figures) returns no one's rows and is
+  not recorded; tables outside the four that hold one person's rows,
+  `TokenStateEpochLeaf` (which `/epochs` returns) among them, are outside the
+  record.
 - **The ZK and anchoring APIs** (`/api/zk/verify`, `/api/zk/epoch/*`,
   `/api/anchor/*`): forged proofs, tampered inclusion proofs, and nonce
   replay against `ZkVerificationNonce`.
@@ -175,7 +180,9 @@ break.
   duress-code comparison and whether a duress event is distinguishable from
   a normal verification on the wire.
 - **The read-only SQL console** (`/sql`, admin and auditor): escape from
-  read-only, and reads that evade `AuditAccessLog`.
+  read-only, and from `polaris_console_reader`, the role its queries run as,
+  which holds none of the four audit-tracked tables: a row of one of them on
+  the page is a TA-2 success.
 
 ### Database layer
 

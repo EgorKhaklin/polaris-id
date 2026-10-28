@@ -72,7 +72,7 @@ read -r -a COMPOSE_EXTRA <<< "${POLARIS_COMPOSE_EXTRA:-}"
 compose() { (cd "$ROOT/polaris_web" && docker compose -f docker-compose.prod.yml "${COMPOSE_EXTRA[@]}" "$@"); }
 WORK="$(mktemp -d)"
 [[ -n "$OUT" ]] || OUT="$WORK/failover.json"
-PY_IMAGE="python:3.12-alpine@sha256:d81968c559557b881aa557ff6d1200acec8e72a2c85fcb4ad1806e8d13e09f0b"
+PY_IMAGE="python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
 WRITER=polaris-ha-writer
 SECRETS="${POLARIS_SECRETS_DIR:-$ROOT/polaris_web/secrets}"
 VERSION="$(sed -n 's/^__version__: str = "\(.*\)"/\1/p' "$ROOT/polaris_web/__version__.py")"
@@ -144,7 +144,11 @@ timeline_followed() {  # timeline_followed MEMBER VIA WANT: the member reports t
     [[ -n "$tl" && "$tl" == "$3" ]]
 }
 container_healthy() { [[ "$(docker inspect --format '{{.State.Health.Status}}' "$1" 2>/dev/null)" == "healthy" ]]; }
-edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/api/health" 2>/dev/null | grep 200 >/dev/null; }
+# The edge serves a public route; the roll-up is read at the app's own address, since the edge
+# refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
+app_health() { docker exec polaris-app curl -s "$@" http://localhost:8000/api/health 2>/dev/null; }
+edge_ok() { curl -sk -o /dev/null -w '%{http_code}' "$URL/.well-known/security.txt" 2>/dev/null | grep 200 >/dev/null \
+            && app_health -o /dev/null -w '%{http_code}' | grep 200 >/dev/null; }
 writes_ok_since() {  # an insert COMPLETED after T
     python3 -c "
 import sys
@@ -197,6 +201,9 @@ PYEOF
 cat > "$WORK/traffic.py" <<'PYEOF'
 import json, signal, ssl, sys, threading, time, urllib.request
 base = sys.argv[1]; out = sys.argv[2]
+# Public routes, since the edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW:
+# one the app answers alone, and one that reads the database (as /api/health did).
+PATHS = ["/.well-known/security.txt"] * 2 + ["/api/v1/transparency/anchors?end=0"] * 2
 ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
 stats = {"requests": 0, "served": 0, "drops": 0, "by": {}}
 lock = threading.Lock(); stop = threading.Event()
@@ -215,7 +222,7 @@ def worker(path):
             elif key != "http_429": stats["drops"] += 1
             stats["by"][key] = stats["by"].get(key, 0) + 1
         time.sleep(0.25)
-threads = [threading.Thread(target=worker, args=(p,), daemon=True) for p in ["/api/health/live"] * 2 + ["/api/health"] * 2]
+threads = [threading.Thread(target=worker, args=(p,), daemon=True) for p in PATHS]
 [t.start() for t in threads]
 while not stop.is_set(): time.sleep(0.2)
 time.sleep(0.5)
@@ -337,7 +344,7 @@ echo "  Patroni refuses an unauthenticated PATCH /config (401) and still serves 
 # from it (healthy + within the staleness contract).
 # The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
 # piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
-HEALTH=$(curl -sk "$URL/api/health" 2>/dev/null || true)
+HEALTH=$(app_health || true)
 RH=$(python3 -c "import json,sys; r=(json.loads(sys.argv[1]).get('checks') or {}).get('database_replica'); print('%s/%s' % (r.get('status'), r.get('serving_reads')) if r else 'absent')" "$HEALTH" 2>/dev/null || echo err)
 echo "  read replica routing: database_replica=$RH"
 [[ "$RH" == "healthy/True" ]] || fail "the app is not routing reads to the replica (database_replica=$RH; expected healthy/True)"

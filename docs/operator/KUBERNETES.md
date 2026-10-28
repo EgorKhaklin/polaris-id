@@ -1,7 +1,7 @@
 # KUBERNETES.md: the Helm reference profile
 
 **Reader:** a platform team deploying Polaris on a cluster. **Job:** the
-chart, what it enforces, how CI proves it boots, and its stated limits.
+chart, what it enforces, how CI proves it boots.
 
 The production topology on a Kubernetes cluster:
 [`deploy/helm/polaris`](../../deploy/helm/polaris). Docker Compose on one Linux
@@ -142,11 +142,13 @@ startup probe surfaces. [`HARDENING.md`](HARDENING.md) section 13.
 kubectl -n polaris get pods
 kubectl -n polaris port-forward svc/polaris-caddy 8443:443 &
 # edge.tls=secret or acme (the install above): a certificate clients already trust, for the domain
-curl --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/api/health | python3 -m json.tool
+curl --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/.well-known/security.txt
 # edge.tls=internal: trust the chart's root (or edge.caSecret's) rather than skipping verification
 kubectl -n polaris get secret polaris-edge-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > edge-ca.crt
-curl --cacert edge-ca.crt --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/api/health
-# either way: database, redis, zk_binary, custody: healthy
+curl --cacert edge-ca.crt --resolve polaris.example.org:8443:127.0.0.1 https://polaris.example.org:8443/.well-known/security.txt
+# the edge answers the health paths 404 outside edge.metricsAllow; read them at the app's own port
+kubectl -n polaris exec deploy/polaris-app -c app -- curl -s http://localhost:8000/api/health | python3 -m json.tool
+# database, redis, zk_binary, custody: healthy
 kubectl -n polaris exec polaris-postgres-0 -- patronictl -c /var/lib/postgresql/patroni.yml list   # one Leader, one streaming Replica
 ```
 
@@ -210,8 +212,9 @@ a kind cluster with the default CNI disabled and Calico installed, the four
 self-built images loaded (pull policy Never; redis pulled by its pinned digest),
 the namespace labelled restricted and a
 privileged pod rejected by the API server, the real secrets as a Secret,
-`helm lint` and `helm install --wait`, `/api/health` through the edge with
-database, redis, zk_binary, and custody healthy, a probe pod outside the
+`helm lint` and `helm install --wait`, the edge serving a public route and
+answering the three health paths 404 from outside, `/api/health` at the app's
+own port with database, redis, zk_binary, and custody healthy, a probe pod outside the
 topology denied by policy on postgres, pgbouncer, and app, a rolling
 restart that keeps the edge healthy, and (v9.244) the database failover
 under a writer with the app's labels inserting through pgbouncer: the leader
@@ -220,8 +223,7 @@ role, a restart in place: 3.2 s of write outage), the leader's container
 frozen through the node's runtime (a hung node: the other member held the
 lease after 21 s, the pool's query cancelled at the 15 s `query_timeout` so a
 15.8 s write outage, the thawed leader demoted and streaming again 6 s
-later), a planned switchover (3.5 s), and every
-acknowledged insert present on the leader afterwards; local reference run
-at v9.244, the ceilings 60 s, 60 s and 30 s. Stated limits:
-single-node kind and `tls: internal`; multi-node placement and ACME are
-operator-environment concerns.
+later), a planned switchover (3.5 s), and every acknowledged insert present
+on the leader afterwards; local reference run at v9.244, the ceilings 60 s,
+60 s and 30 s. Measured on single-node kind with `tls: internal`; multi-node
+placement and ACME are operator-environment concerns.

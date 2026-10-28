@@ -643,8 +643,9 @@ cat <<DONE
          curl -fsS http://localhost:8000/api/health | jq .
     2. Re-run the integrity tests:
          psql -d ${TARGET_DB} -f polaris_sql/08_tests.sql
-    3. If this was a real recovery, rotate every secret next:
-         ./scripts/polaris-rotate-secret.sh polaris_secret_key
+    3. If this was a real recovery, rotate every secret next (--drop-old ends
+       every session the old session key signed):
+         ./scripts/polaris-rotate-secret.sh polaris_secret_key --drop-old
          ./scripts/polaris-rotate-secret.sh polaris_db_password
          ./scripts/polaris-rotate-secret.sh polaris_db_root_password
 

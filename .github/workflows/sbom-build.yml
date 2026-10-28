@@ -34,7 +34,7 @@ permissions:
 
 env:
   # The one place the SBOM generator's Trivy version lives in THIS file (sbom.yml calls it). It
-  # must equal the image-cve-scan pin in ci.yml (checked by polaris_checks).
+  # must equal the image CVE scan's pin in image-cve-scan.yml (checked by polaris_checks).
   TRIVY_IMAGE: aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7
 
 jobs:

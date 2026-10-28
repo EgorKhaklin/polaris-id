@@ -31,7 +31,7 @@ and [../../SECURITY.md](../../SECURITY.md); the API in
 9. [Common errors](#common-errors)
 10. [Upgrades](#upgrades)
 11. [Decommissioning](#decommissioning)
-12. [What this document does NOT cover](#what-this-document-does-not-cover)
+12. [Related documents](#related-documents)
 
 ---
 
@@ -651,10 +651,11 @@ psql -d polaris_restored -f polaris_sql/08_tests.sql
 ```
 
 If this was a real recovery (not a drill), **rotate every secret next**;
-assume the prior secrets are also compromised:
+assume the prior secrets are also compromised. `--drop-old` keeps no retired
+session key, so every session the old key signed ends:
 
 ```bash
-./scripts/polaris-rotate-secret.sh polaris_secret_key
+./scripts/polaris-rotate-secret.sh polaris_secret_key --drop-old
 ./scripts/polaris-rotate-secret.sh polaris_db_password
 ./scripts/polaris-rotate-secret.sh polaris_db_root_password
 ```
@@ -1099,8 +1100,10 @@ cold storage with the non-repudiation chain intact.
 
 ### Health check
 
-`GET /api/health` (no auth) returns structured JSON; the full payload and the
-per-component semantics are specified in
+`GET /api/health` (no auth; the shipped edge answers it 404 outside
+`POLARIS_METRICS_ALLOW`, so read it at the app's own address) returns
+structured JSON; the full payload and the per-component semantics are
+specified in
 [API.md](../reference/API.md#get-apihealth). The fields the thresholds hang
 on:
 
@@ -1142,8 +1145,8 @@ carries the duress signal, so it must be reachable only by the operator's
 monitoring, never the public internet ([HARDENING.md, section 10](HARDENING.md)).
 
 **Edge exposure.** The shipped [polaris_web/Caddyfile](../../polaris_web/Caddyfile) answers
-`/metrics` and `/api/metrics` with 404 unless the client address is in `POLARIS_METRICS_ALLOW`,
-and unset it names no client. The rule keys on the address the edge sees, and behind a load
+`/metrics`, `/api/metrics` and the three health answers with 404 unless the client address is in
+`POLARIS_METRICS_ALLOW`, and unset it names no client. The rule keys on the address the edge sees, and behind a load
 balancer or NAT that is a private address for every client on the internet, so a private-ranges
 default would serve them all; `scripts/polaris-metrics-edge-drill.sh` asks through such a hop in
 CI. A Prometheus on the stack's network scrapes `app:8000` directly; name a monitoring network
@@ -1233,8 +1236,8 @@ increment. The percentage bound on revocation velocity
 (`trg_enforce_revocation_velocity`) still applies; whichever trips first
 refuses. An uncapped agency pays one primary-key lookup per write.
 
-**Revocation bounds.** `uc8_revoke_token` caps the share of its own tokens one
-issuing agency may revoke in a rolling window: 5.00% over 30 days by default,
+**Revocation bounds.** `uc8_revoke_token` caps the share of an issuing agency's
+tokens that may be revoked in a rolling window: 5.00% over 30 days by default,
 overridable per agency. Raising an agency's ceiling is the single most consequential
 per-agency setting in the schema, so it is kept, not edited, and it is set as
 the schema owner (the application's role is refused, so a compromised application
@@ -1454,8 +1457,9 @@ the app itself is down (see [DR.md](DR.md), section 4.1).
 
 4. **Rotate:** new password (`polaris-id user-passwd <username>`), new session
    secret if the compromise is widespread
-   (`./scripts/polaris-rotate-secret.sh polaris_secret_key` invalidates ALL
-   sessions).
+   (`./scripts/polaris-rotate-secret.sh polaris_secret_key --drop-old` keeps no
+   retired key, so every session ends; without `--drop-old` the retired key
+   still verifies the sessions it signed).
 
 5. **Document:** record a dated post-mortem
    ([DR.md, section 9, Post-incident review](DR.md); the internal summary
@@ -1616,8 +1620,10 @@ docker compose -f polaris_web/docker-compose.prod.yml down -v
 
 ### "Login redirects to /login again"
 
-Cause: `POLARIS_SECRET_KEY` was rotated. All session cookies signed under the
-old key now fail validation. Expected behavior; operators must sign in again.
+Cause: `POLARIS_SECRET_KEY` was rotated with `--drop-old`, or rotated twice. A
+plain rotation keeps the retired key, so the sessions it signed still verify;
+after `--drop-old`, or a second rotation, they fail validation. Expected
+behavior; operators must sign in again.
 
 ### "Localhost refused to connect" (dev launcher only)
 
@@ -1707,7 +1713,9 @@ you bring the stack up some other way, do it by hand first:
 
 ```bash
 for v in polaris_web_caddy_data polaris_web_caddy_config; do
-    docker run --rm -v "$v:/v" alpine:3.24 chown -R 1000:1000 /v
+    docker run --rm -v "$v:/v" \
+      alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
+      chown -R 1000:1000 /v
 done
 ```
 
@@ -1772,7 +1780,7 @@ elif docker volume inspect "${V}_old" >/dev/null 2>&1; then
 else
   docker volume create "${V}_old" &&
   docker run --rm -v "$V:/from:ro" -v "${V}_old:/to" \
-    alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+    alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
     cp -a /from/. /to/ &&
   docker volume rm "$V"
 fi
@@ -1817,7 +1825,7 @@ else
     docker volume create --label com.docker.compose.project="$P" \
       --label com.docker.compose.volume=pg_data "$V"
   docker run --rm -v "${V}_old:/from:ro" -v "$V:/to" \
-    alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
+    alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
     sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/' &&
   ./scripts/polaris-deploy.sh prod --no-pull &&
   ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgres printenv POLARIS_PGBACKREST_ENABLED) &&
@@ -1898,7 +1906,9 @@ If you ever need to retire a Polaris instance:
 
 ---
 
-## What this document does NOT cover
+## Related documents
+
+For each task below, see the document named.
 
 - Application code internals: [CONTRIBUTING.md](../../CONTRIBUTING.md), [DEVNOTES/](../../DEVNOTES/README.md)
 - Cryptographic algorithm choice: [PQC-POSTURE.md](../reference/PQC-POSTURE.md), [SECURITY.md](SECURITY-CONTROLS.md)
@@ -1911,8 +1921,6 @@ If you ever need to retire a Polaris instance:
 - Restore procedures by failure class: [DR.md](DR.md)
 - High availability (streaming standby, failover): [FAILOVER.md](FAILOVER.md)
 - Developer tooling (pre-commit hooks, test discipline): [CONTRIBUTING.md](../../CONTRIBUTING.md)
-- Multi-region deployment: not covered by any Polaris document
-- SOC 2 readiness checklist: not covered by any Polaris document
 
 ---
 

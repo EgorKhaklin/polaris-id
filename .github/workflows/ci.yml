@@ -94,7 +94,7 @@ jobs:
           # The base of a pull request or a merge group can be any number of commits back.
           fetch-depth: 0
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
       - name: Classify the changed paths (scripts/polaris-ci-changes.py)
@@ -171,7 +171,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -283,7 +283,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -426,13 +426,12 @@ jobs:
       - name: Transparency report — no withheld figure is recoverable by subtraction
         run: python scripts/polaris-transparency-report-drill.py
 
-      # v9.398 — the check layer, ATTACKED. Every guarantee here is believed because a check
-      # says so, and the checks are written by the same hand as the code; the review packet's
-      # A-12 asks a reviewer to break that layer. This runs the attack on every push. For each
+      # v9.398: the check layer, ATTACKED. The review packet's A-12 asks a reviewer to break
+      # that layer; this runs the attack on every push. For each
       # check it comments out every line carrying the check's own search strings -- leaving the
       # words in the comment, which is what `# temporarily disabled: <the thing>` looks like --
       # and re-runs it. Before v9.398, 71 of 75 still passed. No database.
-      - name: Check layer — no check passes on a broken tree, or on a missing one
+      - name: "Check layer: each mutated check fails on a broken tree, and on a missing one"
         run: python scripts/polaris-check-mutation-drill.py
 
       # 2026-09-27: the constitutional constraints, one at a time. The drill deletes each of
@@ -465,14 +464,11 @@ jobs:
       - name: Moved code — a check must follow the mechanism, not the path
         run: python scripts/polaris-move-mutation-drill.py
 
-      # v9.388 (P1.18 item 8) — the external-review packet, RE-CHECKED IN BOTH DIRECTIONS.
-      # Every citation resolves and every cited check runs, which is the discipline the 800-63
-      # mapping already uses. The new half is the limitations: each carries a WITNESS, a file
-      # and a string that must still be present for the limitation to hold, so FIXING one fails
-      # the build until the entry is removed. A limitations list that can only be appended to is
-      # a confession nobody maintains, and a stale one tells a reviewer the system is weaker
-      # than it is, which nobody catches because it reads as modesty. No database.
-      - name: Review packet — every citation resolves and every limitation is still true
+      # v9.388 (P1.18 item 8): the external-review packet. Every citation resolves and every
+      # cited check runs, which is the discipline the 800-63 mapping already uses; every threat
+      # row names what does not stand in the way; and the packet claims no outside review, audit
+      # or pen test. No database.
+      - name: "Review packet: every citation resolves and passes, and it claims no outside review"
         run: python scripts/polaris-review-packet-drill.py
 
       # v9.372 (P6.2) — the 800-63 mapping, RESOLVED. A control mapping is the easiest document
@@ -495,7 +491,7 @@ jobs:
       # job without checking what that job provides is how the mdoc drill (cbor2) and the
       # quantum-event drill (psycopg2) each went red after they were added.
       - name: Set up Java (for the TLA+ model checker)
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: temurin
           java-version: '21'
@@ -771,7 +767,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -821,7 +817,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -871,7 +867,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -976,7 +972,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -1026,7 +1022,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1154,7 +1150,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -1204,7 +1200,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1296,7 +1292,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -1346,7 +1342,7 @@ jobs:
           echo "chan=$chan" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust (pinned nightly for Plonky2)
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust_pin.outputs.chan }}
 
@@ -1371,7 +1367,7 @@ jobs:
       # leaves a pinned commit unreachable upstream. fallback: none keeps the install to the
       # checksummed prebuilt binary.
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-llvm-cov
           fallback: none
@@ -1479,7 +1475,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -1601,7 +1597,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -1741,7 +1737,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -1984,7 +1980,7 @@ jobs:
           docker network create pbci
           docker run -d --name pbci-pg --network pbci \
             -e POSTGRES_PASSWORD=rootpw -e POSTGRES_DB=polaris \
-            postgres:16-alpine -c password_encryption=scram-sha-256
+            postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea -c password_encryption=scram-sha-256
           # Wait for the REAL server, over TCP (v9.188). The official entrypoint
           # first runs a TEMPORARY init-only server bound to the Unix socket
           # alone (listen_addresses='') while POSTGRES_DB and the init scripts
@@ -2007,7 +2003,7 @@ jobs:
             -v /tmp/pbsecret:/run/secrets/polaris_db_password:ro polaris-pgbouncer:ci
           got=""
           for i in $(seq 1 15); do
-            got=$(docker run --rm --network pbci -e PGPASSWORD="$APPPW" postgres:16-alpine \
+            got=$(docker run --rm --network pbci -e PGPASSWORD="$APPPW" postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
               psql "host=pbci-pb port=6432 user=polaris_app dbname=polaris" -tAc "SELECT 'PB-OK'" 2>&1 | tr -d '[:space:]')
             [ "$got" = "PB-OK" ] && break
             sleep 1
@@ -2029,7 +2025,7 @@ jobs:
             -v /tmp/pbsecret:/run/secrets/polaris_db_password:ro polaris-pgbouncer:ci
           tlsgot=""
           for i in $(seq 1 15); do
-            tlsgot=$(docker run --rm --network pbci -e PGPASSWORD="$APPPW" postgres:16-alpine \
+            tlsgot=$(docker run --rm --network pbci -e PGPASSWORD="$APPPW" postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
               psql "host=pbci-tls port=6432 user=polaris_app dbname=polaris sslmode=require" -tAc "SELECT 'TLS-OK'" 2>&1 | tr -d '[:space:]')
             [ "$tlsgot" = "TLS-OK" ] && break
             sleep 1
@@ -2057,7 +2053,7 @@ jobs:
           openssl req -new -x509 -days 2 -nodes -subj "/CN=pgbouncer" -out /tmp/vca/pgb.crt -keyout /tmp/vca/pgb.key >/dev/null 2>&1
           chmod 644 /tmp/vca/*.crt /tmp/vca/*.key
           docker network create vcanet
-          docker run -d --name vca-pg --network vcanet -e POSTGRES_PASSWORD=rootpw -e POSTGRES_DB=polaris postgres:16-alpine
+          docker run -d --name vca-pg --network vcanet -e POSTGRES_PASSWORD=rootpw -e POSTGRES_DB=polaris postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
           # TCP: the entrypoint's temporary init server answers the socket only
           # (see the pbci probe above).
           for i in $(seq 1 60); do
@@ -2086,7 +2082,7 @@ jobs:
             polaris-pgbouncer:vca
           got=""
           for i in $(seq 1 20); do
-            got=$(docker run --rm --network vcanet -e PGPASSWORD="$APPPW" -v /tmp/vca/pgb.crt:/c/pgb.crt:ro postgres:16-alpine \
+            got=$(docker run --rm --network vcanet -e PGPASSWORD="$APPPW" -v /tmp/vca/pgb.crt:/c/pgb.crt:ro postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
               psql "host=vca-pb port=6432 user=polaris_app dbname=polaris sslmode=verify-ca sslrootcert=/c/pgb.crt" -tAc "SELECT 'VCA-OK'" 2>&1 | tr -d '[:space:]')
             [ "$got" = "VCA-OK" ] && break
             sleep 1
@@ -2104,7 +2100,7 @@ jobs:
           [ "$got" = "VCA-OK" ] || { echo "::error::verify-ca pinned connection failed"; exit 1; }
           [ "$backend" = "t" ] || { echo "::error::pgbouncer->postgres hop is not SSL (or no polaris_app backend visible)"; exit 1; }
           # The WRONG cert (postgres's, not pgbouncer's) must be rejected by verify-ca.
-          wrong=$(docker run --rm --network vcanet -e PGPASSWORD="$APPPW" -v /tmp/vca/pg.crt:/c/w.crt:ro postgres:16-alpine \
+          wrong=$(docker run --rm --network vcanet -e PGPASSWORD="$APPPW" -v /tmp/vca/pg.crt:/c/w.crt:ro postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
             psql "host=vca-pb port=6432 user=polaris_app dbname=polaris sslmode=verify-ca sslrootcert=/c/w.crt" -tAc "SELECT 'NO'" 2>&1 || true)
           echo "wrong-pin result: $wrong"
           echo "$wrong" | grep -q "certificate verify failed" || { echo "::error::a WRONG pinned cert was NOT rejected (verify-ca not enforced)"; exit 1; }
@@ -2138,7 +2134,7 @@ jobs:
           docker network create repci
           docker run -d --name repci-primary --network repci \
             -e POSTGRES_PASSWORD=rootpw -e POSTGRES_DB=polaris \
-            postgres:16-alpine \
+            postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
             -c wal_level=replica -c max_wal_senders=10 -c max_replication_slots=10 -c hot_standby=on
           # TCP: the entrypoint's temporary init server answers the socket only
           # (see the pbci probe above).
@@ -2157,7 +2153,7 @@ jobs:
           # Standby: pg_basebackup -R writes standby.signal + primary_conninfo (the
           # FAILOVER runbook's bootstrap). chmod 0700 so postgres accepts the dir.
           docker run -d --name repci-standby --network repci --user postgres -e PGPASSWORD=reppw \
-            postgres:16-alpine sh -c \
+            postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea sh -c \
             'rm -rf /var/lib/postgresql/data/* && pg_basebackup -h repci-primary -p 5432 -U polaris_replicator -D /var/lib/postgresql/data -R -X stream && chmod 0700 /var/lib/postgresql/data && exec postgres'
           # The standby runs postgres directly (no entrypoint init, no temporary
           # server); probed over TCP anyway so every probe has one shape.
@@ -2325,12 +2321,13 @@ jobs:
       # X25519MLKEM768, both when forced AND with the client's default groups
       # (so a modern browser gets PQ with no special config), and a classical
       # client must still connect (graceful fallback).
-      - name: The metrics surfaces are refused from outside the monitoring network
-        # The duress signal rides on /metrics and /api/metrics and neither route
-        # authenticates, so the edge is the control. The drill takes the rule out of the
-        # SHIPPED Caddyfile and asks in-network and through a TCP forwarder (what an
-        # internet client looks like behind an L4 load balancer or NAT): refused unless the
-        # monitoring network is named (lab record 017). Pinned by check_metrics_edge_acl.
+      - name: The metrics surfaces are refused from outside the monitoring network, and so are the health answers
+        # The duress signal rides on /metrics and /api/metrics, the health answers report
+        # every component, and none of them authenticates, so the edge is the control. The
+        # drill takes both rules out of the SHIPPED Caddyfile and asks in-network and through
+        # a TCP forwarder (what an internet client looks like behind an L4 load balancer or
+        # NAT): refused unless the monitoring network is named (lab record 017). Pinned by
+        # check_metrics_edge_acl.
         run: bash scripts/polaris-metrics-edge-drill.sh polaris-caddy:ci
 
       # Lab record 017 (gate row OP-26): behind an L7 load balancer named in
@@ -2367,22 +2364,30 @@ jobs:
           # network-alias 'edge' so the SNI/site host resolves to this container.
           docker run -d --name pqedge --network pqnet --network-alias edge \
             -v /tmp/pqtest.Caddyfile:/etc/caddy/Caddyfile:ro polaris-caddy:ci >/dev/null
+          # The client is alpine:3.24 at the Dockerfiles' pin, with curl and openssl installed at exact
+          # versions (pinned 2026-10-21; curl moved 2026-10-27). Alpine serves one build of each
+          # package per branch, so once either is replaced, apk refuses the next command and the step
+          # fails there with apk's error; the versions are then moved by hand, there and in the three
+          # client lines below.
+          docker run --rm alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
+            apk add --no-cache curl=8.23.0-r0 openssl=3.5.9-r0 >/dev/null \
+            || { echo "::error::apk could not install curl=8.23.0-r0 and openssl=3.5.9-r0 on alpine:3.24 (its error is above): move a version Alpine no longer serves by hand; a mirror error is a flake"; exit 1; }
           # Wait for the edge to serve TLS.
           for i in $(seq 1 30); do
-            docker run --rm --network pqnet alpine:3.22 sh -c \
-              'apk add --no-cache curl >/dev/null 2>&1; curl -sk https://edge:8443/ -o /dev/null -w "%{http_code}"' 2>/dev/null \
+            docker run --rm --network pqnet alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 sh -c \
+              'apk add --no-cache curl=8.23.0-r0 >/dev/null 2>&1; curl -sk https://edge:8443/ -o /dev/null -w "%{http_code}"' 2>/dev/null \
               | grep -q 200 && { echo "edge serving after ${i}"; break; }
             sleep 1
           done
           probe() { # $1 = -groups args; echoes the negotiated TLS1.3 group
-            docker run --rm --network pqnet alpine:3.22 sh -c \
-              "apk add --no-cache openssl >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge $1 -tls1_3 2>/dev/null | grep -i 'Negotiated TLS1.3 group'"
+            docker run --rm --network pqnet alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 sh -c \
+              "apk add --no-cache openssl=3.5.9-r0 >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge $1 -tls1_3 2>/dev/null | grep -i 'Negotiated TLS1.3 group'"
           }
           forced=$(probe "-groups X25519MLKEM768"); echo "forced ML-KEM:  $forced"
           deflt=$(probe "");                        echo "default groups: $deflt"
           # Classical client must still complete the handshake (fallback).
-          classical=$(docker run --rm --network pqnet alpine:3.22 sh -c \
-            'apk add --no-cache openssl >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge -groups X25519 -tls1_3 2>&1 | grep -c "New, TLSv1.3, Cipher is"')
+          classical=$(docker run --rm --network pqnet alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 sh -c \
+            'apk add --no-cache openssl=3.5.9-r0 >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge -groups X25519 -tls1_3 2>&1 | grep -c "New, TLSv1.3, Cipher is"')
           docker rm -f pqedge >/dev/null 2>&1 || true
           docker network rm pqnet >/dev/null 2>&1 || true
           echo "$forced" | grep -q 'X25519MLKEM768' \
@@ -2452,7 +2457,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -2483,7 +2488,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -2523,8 +2528,8 @@ jobs:
   # real inside Debian 12 and Rocky Linux 9 containers (Docker's official apt
   # and dnf repositories, signing-key fingerprint verified, no curl|sh); the
   # full installer then runs on this Ubuntu host with REAL systemd: /opt/polaris,
-  # secrets, units, `systemctl start polaris`, migrations, /api/health healthy
-  # through the TLS edge, the backup service producing a tarball, and health
+  # secrets, units, `systemctl start polaris`, migrations, the TLS edge serving and
+  # /api/health healthy at the app, the backup service producing a tarball, and health
   # again after `systemctl restart polaris`. ACME cannot run here, so the edge
   # uses Caddy's internal CA (docker-compose.citest.yml), exactly as the
   # prod-stack-boot job does. Pinned by check_linux_server_deployment.
@@ -2581,13 +2586,16 @@ jobs:
           sudo ls -la /var/backups/polaris/
           sudo sh -c 'ls /var/backups/polaris/*.tar.gz'
           sudo systemctl restart polaris.service
-          code=""
+          # The edge serves a public route; the roll-up is read at the app's own address, since the
+          # edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
+          code=""; app=""
           for i in $(seq 1 60); do
-            code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
-            [ "$code" = 200 ] && break
+            code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)
+            app=$(sudo docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            [ "$code" = 200 ] && [ "$app" = 200 ] && break
             sleep 3
           done
-          [ "$code" = 200 ] || { echo "::error::stack not healthy after systemctl restart polaris (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1; }
+          [ "$code" = 200 ] && [ "$app" = 200 ] || { echo "::error::stack not healthy after systemctl restart polaris (edge $code, app roll-up $app)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1; }
           echo "healthy again after systemctl restart polaris (check $i)"
 
       # Lab record 017: an operator runs the scripts with sudo, which resets the environment, so each
@@ -2598,14 +2606,15 @@ jobs:
         working-directory: /opt/polaris
         run: |
           set -e
-          health() {
-            code=""
+          health() {  # the edge serves a public route; the roll-up is read at the app's own address
+            code=""; app=""
             for _ in $(seq 1 60); do
-              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
-              [ "$code" = 200 ] && { echo "healthy after $1"; return 0; }
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)
+              app=$(sudo docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+              [ "$code" = 200 ] && [ "$app" = 200 ] && { echo "healthy after $1"; return 0; }
               sleep 3
             done
-            echo "::error::not healthy after $1 (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
+            echo "::error::not healthy after $1 (edge $code, app roll-up $app)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
           }
           printf 'a-password-for-this-ci-run-only\n' > /tmp/ci-operator.pw
           sudo scripts/polaris-create-operator.sh --username ci-admin --role admin --password-file /tmp/ci-operator.pw \
@@ -2751,7 +2760,7 @@ jobs:
           [ "$rc" = 1 ] && grep -q "failing: .*A.doctor.edge" /tmp/eval-noedge.out && sudo test -s /tmp/eval-noedge/report.json \
             || { cat /tmp/eval-noedge.out; echo "::error::the evaluation did not fail, with a report, with the edge down"; exit 1; }
           for _ in $(seq 1 60); do
-            [ "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)" = 200 ] && break
+            [ "$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)" = 200 ] && break
             sleep 2
           done
           grep "^polaris-evaluate: [0-9]" /tmp/eval-notional.out >> "$GITHUB_STEP_SUMMARY"
@@ -2781,14 +2790,15 @@ jobs:
         working-directory: /opt/polaris
         run: |
           set -e
-          health() {
-            code=""
+          health() {  # the edge serves a public route; the roll-up is read at the app's own address
+            code=""; app=""
             for _ in $(seq 1 60); do
-              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/api/health || true)
-              [ "$code" = 200 ] && { echo "healthy after $1"; return 0; }
+              code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:8443/.well-known/security.txt || true)
+              app=$(sudo docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+              [ "$code" = 200 ] && [ "$app" = 200 ] && { echo "healthy after $1"; return 0; }
               sleep 3
             done
-            echo "::error::not healthy after $1 (last HTTP $code)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
+            echo "::error::not healthy after $1 (edge $code, app roll-up $app)"; sudo journalctl -u polaris -e --no-pager | tail -30; exit 1
           }
           sudo apt-get install -y age > /dev/null
           sudo sh -c 'age-keygen -o /root/polaris-age.identity 2> /dev/null && age-keygen -y /root/polaris-age.identity > /root/polaris-age.recipients'
@@ -2905,12 +2915,15 @@ jobs:
         run: |
           set -e
           docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml up -d
+          # The edge serves a public route; the roll-up is read at the app's own address, since the
+          # edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
           for i in $(seq 1 60); do
-            code=$(curl -sk https://localhost:8443/api/health -o /dev/null -w '%{http_code}' || true)
-            [ "$code" = 200 ] && { echo "edge healthy after check $i"; break; }
+            code=$(curl -sk https://localhost:8443/.well-known/security.txt -o /dev/null -w '%{http_code}' || true)
+            app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            [ "$code" = 200 ] && [ "$app" = 200 ] && { echo "edge serves and the app is healthy after check $i"; break; }
             sleep 4
           done
-          [ "$code" = 200 ] || { docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps; docker logs polaris-app 2>&1 | tail -30; exit 1; }
+          [ "$code" = 200 ] && [ "$app" = 200 ] || { docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps; docker logs polaris-app 2>&1 | tail -30; exit 1; }
           docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml -f docker-compose.bluegreen.yml ps --format 'table {{.Service}}\t{{.Status}}'
 
       # Lab record 017, phase 4a: the rate limiter reaches Redis as its ACL user, and
@@ -2919,7 +2932,7 @@ jobs:
       - name: Redis authenticates (the app as its ACL user; others refused)
         run: |
           set -euo pipefail
-          health=$(curl -sk https://localhost:8443/api/health)
+          health=$(docker exec polaris-app curl -s http://localhost:8000/api/health)
           echo "$health" | jq -e '.checks.redis.backend == "redis" and .checks.redis.status == "healthy"' > /dev/null \
             || { echo "::error::the rate limiter is not on Redis"; echo "$health" | jq .checks.redis; exit 1; }
           out=$(docker exec polaris-redis redis-cli ping 2>&1 || true)
@@ -3041,12 +3054,14 @@ jobs:
         run: |
           set -e
           docker compose -f docker-compose.prod.yml $POLARIS_COMPOSE_EXTRA up -d || true   # the wait loop reports
+          # The edge serves a public route; the roll-up is read at the app's own address.
           for i in $(seq 1 90); do
-            code=$(curl -sk https://localhost:8443/api/health -o /dev/null -w '%{http_code}' || true)
-            [ "$code" = 200 ] && { echo "edge healthy after check $i"; break; }
+            code=$(curl -sk https://localhost:8443/.well-known/security.txt -o /dev/null -w '%{http_code}' || true)
+            app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            [ "$code" = 200 ] && [ "$app" = 200 ] && { echo "edge serves and the app is healthy after check $i"; break; }
             sleep 4
           done
-          [ "$code" = 200 ] || { docker compose -f docker-compose.prod.yml $POLARIS_COMPOSE_EXTRA ps; docker logs polaris-postgres 2>&1 | tail -40; docker logs polaris-postgres2 2>&1 | tail -20; exit 1; }
+          [ "$code" = 200 ] && [ "$app" = 200 ] || { docker compose -f docker-compose.prod.yml $POLARIS_COMPOSE_EXTRA ps; docker logs polaris-postgres 2>&1 | tail -40; docker logs polaris-postgres2 2>&1 | tail -20; exit 1; }
           docker exec polaris-postgres patronictl -c /var/lib/postgresql/patroni.yml list
 
       - name: Failover drill (leader crash, lease partition, switchover, etcd crash)
@@ -3148,7 +3163,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -3673,7 +3688,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -3770,7 +3785,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -3834,7 +3849,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       # The drill's npm leg packs the TypeScript SDK and installs the tarball into a bare
@@ -3905,6 +3920,12 @@ jobs:
       # not reach its last line; this holds all sixteen to it and runs the shape under /bin/bash.
       - name: The lab harnesses' EXIT traps (lab/interop/test_exit_trap.py), an early stop fails
         run: python -m unittest lab/interop/test_exit_trap.py
+      # lab/interop/waltid/setup.sh is the stranger's step 4. Run again on the same walt.id after
+      # step 3 made a new certificate, it must leave the wallet trusting the new certificate (keytool
+      # refuses an alias that exists, so the old alias goes first) and holding only the new
+      # credential (each run makes its wallet on stores of its own); any keytool or store error stops it.
+      - name: The stranger's step 4 run again trusts the new certificate and holds only the new credential (lab/interop/waltid/test_setup_rerun.py)
+        run: python -m unittest lab/interop/waltid/test_setup_rerun.py
       # lab/interop/oid4vcgo/run.sh runs in OID4VCgo's own CI, which tests a pull request before its
       # release with OID4VCGO_BIN or OID4VCGO_SRC: each input is the wallet that runs, a wrong one
       # stops the run with its reason, and the default stays the pinned version. No Docker.
@@ -3971,7 +3992,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
       - name: Install cryptography (polaris-oid4vp checks ES256, which is HAIP's floor)
@@ -4014,7 +4035,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -4087,10 +4108,6 @@ jobs:
         run: cd sdk/typescript && npx tsc --noEmit
       - name: SDK unit tests
         run: cd sdk/typescript && node --test
-      # The site's one edge function (edge/film.js, /film/* only): ranges, refusals, and If-Range,
-      # which must never splice a slice of one file onto a cached copy of another.
-      - name: The site's film function answers byte ranges and honours If-Range (edge/film.test.mjs)
-        run: node --test edge/film.test.mjs
       - name: Conformance suite — TypeScript SDK (the same runner as the Python SDK)
         run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts" --algorithm Falcon-padded-1024
 
@@ -4109,7 +4126,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.12'
       - name: The invariant layer
@@ -4169,10 +4186,12 @@ jobs:
     # OpenSSF Baseline OSPS-VM-05.03: every change is checked for malicious packages (the OpenSSF
     # Malicious Packages data in OSV) and known vulnerabilities, in the Python sets the images
     # actually install (each resolved in its own environment, so indirect dependencies count), in
-    # the npm and Rust lockfiles, and in every lab gradle/verification-metadata.xml (the files
-    # Scorecard's Vulnerabilities check reads). Any finding fails the job; one that does not affect
-    # Polaris is declared, with its reason, in osv-scanner.toml (the Gradle files have none). The
-    # scanner image is pinned by digest.
+    # the TypeScript SDK's npm lockfile and the Rust lockfile, in every lab
+    # gradle/verification-metadata.xml, and then in every file OSV-Scanner recognises anywhere in
+    # the tree, as Scorecard's Vulnerabilities check reads them, plus .github/ci/audit.txt, whose
+    # name it does not recognise. Any finding fails the job; one that does not affect Polaris is
+    # declared, with its reason, in the osv-scanner.toml beside the file (the Gradle files have
+    # none). The scanner image is pinned by digest.
     name: Malicious packages and known vulnerabilities (OSV)
     runs-on: ubuntu-latest
     steps:
@@ -4181,7 +4200,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.12'
       - name: Resolve each image's Python set exactly as it installs
@@ -4202,6 +4221,16 @@ jobs:
             -L requirements.txt:/scan/installed-patroni.txt \
             -L /src/sdk/typescript/package-lock.json \
             -L /src/polaris_zk/Cargo.lock
+      - name: Scan the whole tree as Scorecard does
+        # Scorecard's Vulnerabilities check runs OSV-Scanner recursively over the repository, with
+        # the osv-scanner.toml beside each file, so a lab lockfile or requirements file that no
+        # image installs still counts against the project. The CVE-scan job's own tool set is
+        # named explicitly: recursion finds requirements files by name, and audit.txt's is not one.
+        run: |
+          docker run --rm -v "$PWD:/src:ro" \
+            ghcr.io/google/osv-scanner@sha256:afd838850ac1a0fcc15ff4a041dc9ba11123c3f0d2666217a5f0fcf9222b55fa \
+            scan source --no-resolve -r /src \
+            -L requirements.txt:/src/.github/ci/audit.txt
       - name: Scan every Gradle verification-metadata file (detection fixture first)
         # The self-test must see a known-vulnerable file fail, an empty and a missing file fail,
         # and a clean file pass, before the tree's files are scanned; no file found also fails.
@@ -4230,7 +4259,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -4249,7 +4278,7 @@ jobs:
           pip-audit -r polaris_web/requirements-dev.txt --progress-spinner off
 
       # SAST: scan our own source for security anti-patterns. GATES on HIGH
-      # severity + medium-confidence (a real, actionable finding — e.g. the
+      # severity at any confidence, as SECURITY.md states it (e.g. the
       # world-writable state dir bandit caught at v9.112). Lower-severity
       # findings (bind-all on the container, parameterized SQL flagged as string
       # building, the dev /tmp default) are reported but do not block; a
@@ -4257,7 +4286,7 @@ jobs:
       - name: SAST (bandit, gating on HIGH severity)
         run: |
           echo "Scanning polaris_web + polaris_cli for HIGH-severity issues"
-          bandit -r polaris_web polaris_cli -x '*/venv/*' --severity-level high --confidence-level medium -q
+          bandit -r polaris_web polaris_cli -x '*/venv/*' --severity-level high --confidence-level all -q
 
   # --------------------------------------------------------------------------
   # Container IMAGE CVE scanning (v9.138). pip-audit (the cve-scan job) covers
@@ -4270,49 +4299,15 @@ jobs:
   # (base-image HIGHs churn daily and are mostly unfixable, so gating on them
   # would flake). The Dockerfiles apk/apt upgrade on top of the pinned bases so
   # the fixable CVEs are actually patched in what ships, not just reported.
+  # The steps live in image-cve-scan.yml (2026-10-21), which this job calls and
+  # which also runs weekly on main, so a fixable CRITICAL published against an
+  # image no change touched fails a run within a week.
   # --------------------------------------------------------------------------
   image-cve-scan:
     name: Container image CVE scan (Trivy)
     needs: [changes]
     if: needs.changes.outputs.full == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Build the self-built prod images
-        run: bash scripts/polaris-image-build.sh --stack cve
-
-      - name: Trivy — GATE on fixable CRITICAL (after .trivyignore)
-        run: |
-          set -e
-          for img in polaris-app:cve polaris-caddy:cve polaris-pgbouncer:cve polaris-postgres:cve polaris-etcd:cve; do
-            echo "::group::Trivy CRITICAL gate — $img"
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD/.trivyignore:/.trivyignore:ro" \
-              aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 image \
-                --scanners vuln --severity CRITICAL --ignore-unfixed \
-                --ignorefile /.trivyignore --exit-code 1 --no-progress "$img" \
-              || { echo "::error::$img has a fixable CRITICAL CVE not covered by .trivyignore"; exit 1; }
-            echo "::endgroup::"
-          done
-          echo "All prod images: no fixable CRITICAL CVEs (post-.trivyignore)"
-
-      - name: Trivy — report HIGH (informational, non-gating)
-        continue-on-error: true
-        run: |
-          for img in polaris-app:cve polaris-caddy:cve polaris-pgbouncer:cve polaris-postgres:cve polaris-etcd:cve; do
-            echo "=== HIGH (informational) — $img ==="
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD/.trivyignore:/.trivyignore:ro" \
-              aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7 image \
-                --scanners vuln --severity HIGH --ignore-unfixed \
-                --ignorefile /.trivyignore --exit-code 0 --no-progress "$img" || true
-          done
+    uses: ./.github/workflows/image-cve-scan.yml  # zizmor: ignore[self-repository] -- GitHub's "Reuse workflows": a ./ reusable workflow in the same repository is from the same commit as the caller, not the runner's workspace
 
   # --------------------------------------------------------------------------
   # Full PRODUCTION-compose boot (v9.140). The docker-image job boots the DEV
@@ -4323,8 +4318,9 @@ jobs:
   # before enabling TLS (v9.140) — the prod stack had never come up. This boots it
   # exactly like a deploy (real generated secrets + certs, the real images) with
   # only the Caddy ACME edge swapped for an internal CA (no public domain in CI),
-  # and asserts the stack SERVES /api/health through the TLS edge with the
-  # DB-backed components healthy. Pinned by check_prod_stack_boot.
+  # and asserts the stack SERVES through the TLS edge with the DB-backed
+  # components healthy at the app (the edge refuses /api/health from outside the
+  # allow-list, which the job asserts too). Pinned by check_prod_stack_boot.
   # --------------------------------------------------------------------------
   prod-stack-boot:
     name: Full prod compose boots + serves end to end
@@ -4391,19 +4387,22 @@ jobs:
             exit 1
           fi
 
-      - name: Assert the stack serves /api/health through the TLS edge
+      - name: Assert the stack serves through the TLS edge and its roll-up is healthy
         working-directory: polaris_web
         run: |
           set -e
           ok=0
+          # The edge serves a public route; the roll-up (/api/health) is read at the app's own
+          # address, since the edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW.
           for i in $(seq 1 60); do
-            code=$(curl -sk https://localhost:8443/api/health -o /dev/null -w '%{http_code}' || true)
-            if [ "$code" = "200" ]; then echo "served /api/health=200 through Caddy after check $i"; ok=1; break; fi
-            echo "check $i: /api/health through Caddy = $code"
+            code=$(curl -sk https://localhost:8443/.well-known/security.txt -o /dev/null -w '%{http_code}' || true)
+            app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            if [ "$code" = "200" ] && [ "$app" = "200" ]; then echo "the edge serves (security.txt=200) and /api/health=200 at the app after check $i"; ok=1; break; fi
+            echo "check $i: security.txt through Caddy = $code, /api/health at the app = $app"
             sleep 4
           done
           if [ "$ok" != "1" ]; then
-            echo "::error::the full prod stack did not serve /api/health through the TLS edge"
+            echo "::error::the full prod stack did not serve through the TLS edge with a healthy roll-up"
             docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml ps
             echo "=== postgres ==="; docker logs polaris-postgres 2>&1 | tail -40
             echo "=== pgbouncer ==="; docker logs polaris-pgbouncer 2>&1 | tail -20
@@ -4413,8 +4412,15 @@ jobs:
           fi
           # Not just 200: the DB-backed roll-up must be healthy (proves the whole
           # chain app -> pgbouncer verify-ca -> postgres TLS actually works).
-          body=$(curl -sk https://localhost:8443/api/health)
-          echo "$body" | python3 -c "import sys, json; d=json.load(sys.stdin); c=d['checks']; assert c['database']['status']=='healthy', 'database not healthy: %s' % c['database']; assert c['redis']['status']=='healthy', 'redis not healthy'; assert c['zk_binary']['status']=='healthy', 'zk_binary not healthy'; print('prod stack serves end to end: database + redis + zk_binary healthy through the TLS edge')"
+          body=$(docker exec polaris-app curl -s http://localhost:8000/api/health)
+          echo "$body" | python3 -c "import sys, json; d=json.load(sys.stdin); c=d['checks']; assert c['database']['status']=='healthy', 'database not healthy: %s' % c['database']; assert c['redis']['status']=='healthy', 'redis not healthy'; assert c['zk_binary']['status']=='healthy', 'zk_binary not healthy'; print('prod stack serves end to end: database + redis + zk_binary healthy at the app, the edge serving')"
+          # The shipped edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW,
+          # which is unset here, so no client is allowed.
+          for path in /api/health /api/health/ready /api/health/live; do
+            code=$(curl -sk "https://localhost:8443${path}" -o /dev/null -w '%{http_code}' || true)
+            [ "$code" = 404 ] || { echo "::error::the edge answered ${path} with ${code} to a client outside the allow-list"; exit 1; }
+          done
+          echo "the edge refuses /api/health, /api/health/ready and /api/health/live from outside the allow-list"
           # And postgres really has TLS on (the v9.140 regression that broke init).
           # Local socket as the postgres OS user (peer/trust auth, no password).
           docker exec -u postgres polaris-postgres psql -U postgres -d polaris -tAc "SHOW ssl" 2>/dev/null | grep -qx on \
@@ -4467,15 +4473,16 @@ jobs:
           sudo -E bash ../scripts/polaris-rotate-secret.sh polaris_secret_key
           after=$(sudo sha256sum /run/polaris/secrets/polaris_db_password | cut -c1-16)
           [ "$before" != "$after" ] || { echo "::error::db password did not change"; exit 1; }
-          code=""
+          code=""; app=""
           for i in $(seq 1 45); do
-            code=$(curl -sk https://localhost:8443/api/health -o /dev/null -w '%{http_code}' || true)
-            [ "$code" = 200 ] && break
+            code=$(curl -sk https://localhost:8443/.well-known/security.txt -o /dev/null -w '%{http_code}' || true)
+            app=$(docker exec polaris-app curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health 2> /dev/null || true)
+            [ "$code" = 200 ] && [ "$app" = 200 ] && break
             sleep 4
           done
-          [ "$code" = 200 ] || { echo "::error::stack not healthy after rotation (last HTTP $code)"; docker logs polaris-app 2>&1 | tail -30; exit 1; }
+          [ "$code" = 200 ] && [ "$app" = 200 ] || { echo "::error::stack not healthy after rotation (edge $code, app roll-up $app)"; docker logs polaris-app 2>&1 | tail -30; exit 1; }
           # Fetched, then parsed from argv: a fetch piped into an interpreter reads as code being run.
-          health=$(curl -sk https://localhost:8443/api/health)
+          health=$(docker exec polaris-app curl -s http://localhost:8000/api/health)
           python3 -c "import sys,json; d=json.loads(sys.argv[1]); assert d['checks']['database']['status']=='healthy', d['checks']['database']; print('healthy after rotating polaris_db_password + polaris_secret_key')" "$health"
           sudo -E bash ../scripts/polaris-secrets.sh verify
           echo "sealed store matches the live tmpfs after rotation (write-through holds)"

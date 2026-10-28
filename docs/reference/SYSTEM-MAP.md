@@ -85,7 +85,6 @@ polaris/
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── site/               ← the published project page (Cloudflare, wrangler.jsonc) and its logo
-├── edge/               ← film.js: answers byte-range requests for the site's /film/*, so Safari can play it
 │
 ├── .github/workflows/  ← ci.yml (37 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
@@ -136,7 +135,7 @@ polaris/
 - `osv-scan`: malicious packages and known vulnerabilities (OSV-Scanner) in each image's installed Python set and the npm and Rust lockfiles.
 - `cve-scan`: dependency CVE audit (pip-audit) plus SAST (bandit).
 - `image-cve-scan`: Trivy scan of the self-built prod images; gates on fixable CRITICALs.
-- `prod-stack-boot`: boots the full prod compose end to end and asserts `/api/health` serves through the TLS edge.
+- `prod-stack-boot`: boots the full prod compose end to end and asserts the TLS edge serves a public route and answers the three health paths 404 from outside, and `/api/health` is healthy at the app's own address.
 - `managed-postgres`: initialises a PostgreSQL Polaris does not ship, owned by a role that is not a superuser, with `scripts/polaris-db-init.sh`: refused before any write without the parameter grant, a production database with it.
 - `ui-drill`: drives the Atlas live-simulation mode in a headless Chromium (Playwright) and asserts the console actually streams: the sim counter climbs and the Overview aggregate grows: uploading the screenshots.
 
@@ -204,7 +203,7 @@ The authority layer's institutional protocol, built on the product and verified 
 ```
 MISSION.md                         the constitution: C1-C10 and the vocation
 polaris_checks/checks.py           the machine-checkable enforcement, gating CI
-docs/PRODUCTION-READINESS.md       the bound on every claim: what is open, and who decides it
+docs/PRODUCTION-READINESS.md       the bound on every claim
 ROADMAP.md                         what comes next, phase by phase
 CHANGELOG.md                       every ship, never edited retroactively
 ```

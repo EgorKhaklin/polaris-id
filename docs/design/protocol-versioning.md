@@ -38,12 +38,12 @@ verifier still accepts last month's vectors. Compatibility was a belief.
   verifiers; the v9.317 verifier agrees on 26 current cases, predates 16 artifact types,
   declines 2 newer ML-DSA-87 cases fail-closed, 0 violations.
 
-## Limits
+## Design choices
 
 - One pinned older verifier (v9.317, the P8.1 close) is vendored, byte-identical to the release
   except one comment line (a named product replaced by its class; no code changed). Older SDK releases are not
   pinned: the SDKs are published from this tree, and the frozen vectors are the contract an
   external SDK certifies against.
 - Minors are advertised, not signed separately: they ride inside the signed registry.
-- A `/2` of any format does not exist yet; the rule for introducing one (a new frozen set
-  beside version 1, decisions per artifact by `format`) is specified but not exercised.
+- The rule for introducing a `/2` of any format is a new frozen set beside version 1, with
+  decisions per artifact by `format`.

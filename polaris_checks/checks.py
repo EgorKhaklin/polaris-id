@@ -35,6 +35,8 @@ import subprocess
 import sys
 import types
 from dataclasses import dataclass
+from functools import lru_cache
+from html.parser import HTMLParser
 from typing import Callable
 
 
@@ -2073,6 +2075,62 @@ def check_cve_scanning(root: pathlib.Path) -> list[Finding]:
                "advisories")
 
 
+def _ci_and_called_workflows(root: pathlib.Path) -> list[tuple[str, str]]:
+    """ci.yml and each workflow of this repository that a ci.yml job calls (`uses:
+    ./.github/workflows/x.yml`, or the `$/` form), as (path, text): the places a gate that ci.yml
+    runs on a pull request can live."""
+    ci = _read(root, ".github/workflows/ci.yml")
+    if not ci:
+        return []
+    called = re.findall(r"""(?m)^\s+uses:\s*['"]?(?:\./|\$/)(\.github/workflows/[\w.-]+\.ya?ml)\b""", ci)
+    return [(".github/workflows/ci.yml", ci)] + [(rel, _read(root, rel)) for rel in sorted(set(called))]
+
+
+_TRIVY_GATE = (re.compile(r"\btrivy\b", re.I), re.compile(r"--severity[=\s]+(?:[A-Z]+,)*CRITICAL\b"),
+               re.compile(r"--ignore-unfixed\b"), re.compile(r"--exit-code[=\s]+1\b"))
+
+
+def _trivy_gate(text: str) -> int | None:
+    """The line of the first run-step command in a workflow that runs Trivy gating on fixable
+    CRITICAL (--severity CRITICAL, --ignore-unfixed and --exit-code 1 in one command), read with
+    comments blanked and continuations joined; None when no run step does."""
+    for first, body in _workflow_run_blocks(text):
+        at = 0
+        for line in _shell_code(body).split("\n"):
+            if all(p.search(line) for p in _TRIVY_GATE):
+                return first + body[:at].count("\n")
+            at += len(line) + 1
+    return None
+
+
+def _workflow_crons(text: str) -> list[str]:
+    """The cron expressions under a workflow's top-level `on:` > `schedule:`, read lexically."""
+    crons, in_on, child, in_schedule = [], False, None, False
+    for line in text.split("\n"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0:
+            in_on, child, in_schedule = bool(re.match(r"""(?:on|"on"|'on'):\s*(?:#.*)?$""", line)), None, False
+            continue
+        if not in_on:
+            continue
+        child = indent if child is None else child
+        if indent <= child:
+            in_schedule = indent == child and bool(re.match(r"\s*schedule:\s*(?:#.*)?$", line))
+            continue
+        m = re.match(r"""\s*(?:-\s+)?cron:\s*(["']?)([^"'#]*?)\1\s*(?:#.*)?$""", line)
+        if in_schedule and m:
+            crons.append(m.group(2).strip())
+    return crons
+
+
+def _fires_weekly(cron: str) -> bool:
+    """A cron that fires at least once a week: every day of every month, on any weekdays."""
+    fields = cron.split()
+    return len(fields) == 5 and fields[2] == "*" and fields[3] == "*"
+
+
 # ---------------------------------------------------------------------------
 # Container IMAGE CVE scanning (v9.138). pip-audit covers Python deps; bandit
 # covers our code; but the OS packages in the base images were unscanned and
@@ -2080,25 +2138,33 @@ def check_cve_scanning(root: pathlib.Path) -> list[Finding]:
 # Dockerfiles must patch their bases (apt-get upgrade / apk upgrade), CI must run
 # Trivy gating on fixable CRITICAL, and a documented .trivyignore carries the
 # justified exceptions. Without all three, image CVEs ship silently.
+# 2026-10-21: the gate also runs weekly, so a fixable CRITICAL published against
+# an image no change touches shows within a week. The check finds the gate where
+# CI runs it, in ci.yml or in a workflow a ci.yml job calls (image-cve-scan.yml
+# since that day), and requires a weekly schedule on the file that holds it; a
+# gate in neither place fails, whatever else names Trivy.
 # ---------------------------------------------------------------------------
 def check_image_cve_scanning(root: pathlib.Path) -> list[Finding]:
-    ci = _read(root, ".github/workflows/ci.yml")
-    if not ci:
+    places = _ci_and_called_workflows(root)
+    if not places:
         return _fail("image_cve_scan", ".github/workflows/ci.yml is missing")
-    if "trivy" not in ci.lower():
+    # The scan must GATE on fixable CRITICAL (--severity CRITICAL --exit-code 1 in one
+    # run step's command), not merely report, and --ignore-unfixed keeps it to ACTIONABLE
+    # CVEs rather than base-image ones with no upstream patch yet.
+    gate = next(((rel, line) for rel, text in places for line in [_trivy_gate(text)] if line), None)
+    if gate is None:
         return _fail("image_cve_scan",
-                     "CI must scan the built container images for OS-package CVEs (Trivy); "
-                     "pip-audit only covers Python dependencies")
-    # The scan must GATE on fixable CRITICAL (an --exit-code 1 + --severity CRITICAL
-    # run), not merely report. Require both tokens near the trivy usage.
-    if "--severity CRITICAL" not in ci or "--exit-code 1" not in ci:
+                     "no run step in ci.yml, or in a workflow a ci.yml job calls, runs Trivy gating on "
+                     "fixable CRITICAL (--severity CRITICAL --ignore-unfixed --exit-code 1 in one "
+                     "command); pip-audit only covers Python dependencies, and a scan that only "
+                     "reports, or that no pull request runs, gates nothing")
+    rel, line = gate
+    weekly = [c for c in _workflow_crons(_read(root, rel)) if _fires_weekly(c)]
+    if not weekly:
         return _fail("image_cve_scan",
-                     "the Trivy image scan must GATE on fixable CRITICAL "
-                     "(--severity CRITICAL --exit-code 1), not only report")
-    if "--ignore-unfixed" not in ci:
-        return _fail("image_cve_scan",
-                     "the Trivy gate should use --ignore-unfixed so it fails only on ACTIONABLE "
-                     "(fixable) CVEs, not on base-image CVEs with no upstream patch yet")
+                     f"{rel}, which holds the Trivy gate (line {line}), has no weekly schedule, so a "
+                     "fixable CRITICAL published against an image no change touches waits for the "
+                     "next change to show")
     # The fixable CVEs must be PATCHED in what ships, not just reported: the
     # self-built Dockerfiles upgrade their base packages.
     # The pattern tolerates apt-get options (the mirror-retry flags added at
@@ -2120,8 +2186,9 @@ def check_image_cve_scanning(root: pathlib.Path) -> list[Finding]:
         return _fail("image_cve_scan",
                      ".trivyignore is missing — Trivy exceptions must be documented + justified")
     return _ok("image_cve_scan",
-               "CI builds + Trivy-scans every prod image gating on fixable CRITICAL; the "
-               "Dockerfiles patch their bases; exceptions are documented in .trivyignore")
+               f"CI builds + Trivy-scans every prod image gating on fixable CRITICAL ({rel}:{line}), "
+               f"and that workflow also runs weekly ({weekly[0]}); the Dockerfiles patch their bases; "
+               "exceptions are documented in .trivyignore")
 
 
 # ---------------------------------------------------------------------------
@@ -2130,6 +2197,15 @@ def check_image_cve_scanning(root: pathlib.Path) -> list[Finding]:
 # crypto, world-writable files, shell=True, etc.). CI must run it and GATE on
 # high-severity findings so a real issue (e.g. the world-writable state dir
 # bandit caught at v9.112) fails the build rather than shipping.
+# 2026-10-21: at every confidence. SECURITY.md says bandit fails the build on a
+# high-severity finding, and the gate read medium confidence and above, so the
+# gating run must carry --confidence-level all (its last one: argparse keeps the
+# last). "low" is not every confidence: bandit 1.9.4 ranks UNDEFINED, the
+# confidence a finding gets when its test sets none, below LOW
+# (core/constants.py), and its help says such a finding is not listed in "low".
+# bandit 1.9.4 makes the count form (-i) and this flag mutually exclusive, and a
+# .bandit file's confidence applies only while the command line leaves the
+# default.
 # ---------------------------------------------------------------------------
 def check_sast_scanning(root: pathlib.Path) -> list[Finding]:
     ci = _read(root, ".github/workflows/ci.yml")
@@ -2137,11 +2213,21 @@ def check_sast_scanning(root: pathlib.Path) -> list[Finding]:
         return _fail("sast", ".github/workflows/ci.yml is missing")
     if "bandit" not in ci:
         return _fail("sast", "CI must run bandit (SAST) over polaris_web + polaris_cli")
-    if not re.search(r"bandit\b[^\n]*--severity-level\s+high", ci):
+    gating = [line for line in ci.splitlines() if re.search(r"bandit\b[^\n]*--severity-level\s+high", line)]
+    if not gating:
         return _fail("sast",
                      "the bandit run must GATE on high severity (--severity-level high), so a real "
                      "finding fails the build instead of shipping")
-    return _ok("sast", "CI runs bandit SAST gating on high-severity findings")
+    for line in gating:
+        # argparse also takes an unambiguous prefix of the flag (--confidence-l).
+        levels = re.findall(r"(?<![\w-])--confidence-l[\w-]*(?:=|\s+)(\w+)", line)
+        if not levels or levels[-1] != "all":
+            return _fail("sast",
+                         "the gating bandit run must report high-severity findings at every confidence "
+                         "(--confidence-level all), as SECURITY.md states it; it reads "
+                         + (f"--confidence-level {levels[-1]}" if levels else "no --confidence-level")
+                         + f": {line.strip()}")
+    return _ok("sast", "CI runs bandit SAST gating on high-severity findings at every confidence")
 
 
 # ---------------------------------------------------------------------------
@@ -3612,7 +3698,9 @@ def check_caddy_self_built(root: pathlib.Path) -> list[Finding]:
 # (v9.140) — the prod stack had never come up. This pins the keystone test: a CI
 # job generates secrets, builds the prod images, boots docker-compose.prod.yml +
 # the citest override (Caddy internal CA instead of ACME), and asserts the stack
-# serves /api/health through the TLS edge with the DB-backed components healthy.
+# serves through the TLS edge with the DB-backed components healthy. Since
+# 2026-10-21 the edge refuses /api/health from outside the allow-list, so the
+# edge is asked for a public route and the roll-up is read at the app's address.
 # ---------------------------------------------------------------------------
 def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
     ci = _read(root, ".github/workflows/ci.yml")
@@ -3636,14 +3724,16 @@ def check_prod_stack_boot(root: pathlib.Path) -> list[Finding]:
         return _fail("prod_stack_boot",
                      "the prod-stack boot job must run polaris-generate-secrets.sh so the stack "
                      "boots on real generated secrets + certs, like a deploy")
-    # It must assert the stack actually SERVES through the edge (a health probe).
-    if "/api/health" not in ci:
+    # It must assert the stack actually SERVES through the edge, and that the roll-up is healthy.
+    if ("https://localhost:8443/.well-known/security.txt" not in ci
+            or "docker exec polaris-app curl -s http://localhost:8000/api/health" not in ci):
         return _fail("prod_stack_boot",
-                     "the prod-stack boot job must assert the stack serves /api/health through the "
-                     "Caddy TLS edge (a 200 + DB-backed components healthy), not just that it starts")
+                     "the prod-stack boot job must assert the stack serves through the Caddy TLS edge "
+                     "(a public route, /.well-known/security.txt) and that /api/health, read at the "
+                     "app's own address, reports the DB-backed components healthy, not just that it starts")
     return _ok("prod_stack_boot",
                "CI boots the FULL prod compose (generated secrets, real images, TLS edge) and "
-               "asserts it serves /api/health end to end")
+               "asserts it serves through the edge with a healthy roll-up at the app")
 
 
 # ---------------------------------------------------------------------------
@@ -5042,8 +5132,15 @@ def check_cli_help_lists_every_command(root: pathlib.Path) -> list[Finding]:
 # and roughly when, a duress alarm fired. Both shipped edges (the compose
 # Caddyfile and the Helm configmap) must refuse them from outside the
 # monitoring network. Through v9.208 neither did, and the docstrings described
-# an ACL that existed only in prose.
+# an ACL that existed only in prose. 2026-10-21: the health answers too
+# (/api/health and everything under it), which report every component of the
+# deployment unauthenticated; API.md said they "must be restricted at the edge
+# in production" while the shipped edges restricted only the metrics.
 # ---------------------------------------------------------------------------
+_EDGE_RULES = (("metrics_from_outside", ("/metrics", "/api/metrics"), "the metrics surfaces"),
+               ("health_from_outside", ("/api/health", "/api/health/*"), "the health answers"))
+
+
 def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
     name = "metrics_edge_acl"
     edges = (("polaris_web/Caddyfile", "POLARIS_METRICS_ALLOW"),
@@ -5054,37 +5151,47 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
         conf = _read(root, rel)
         if not conf:
             return _fail(name, f"{rel} is missing")
-        if "@metrics_from_outside" not in conf or "respond @metrics_from_outside 404" not in conf:
-            return _fail(name,
-                         f"{rel} must refuse /metrics and /api/metrics from outside the monitoring "
-                         "network (a named matcher plus `respond ... 404`)")
-        matcher = conf[conf.index("@metrics_from_outside"):]
-        matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
-        for needle in ("/metrics", "/api/metrics", "not remote_ip"):
-            if needle not in matcher:
-                return _fail(name, f"{rel}'s matcher does not cover {needle}")
         if knob not in conf:
             return _fail(name, f"{rel} must let the operator name the allowed range ({knob})")
-        blocks[rel] = matcher
+        for rule, paths, what in _EDGE_RULES:
+            # The respond line on a line of its own: a commented-out `# respond @rule 404` is no refusal.
+            if f"@{rule} {{" not in conf or not re.search(rf"^\s*respond @{rule} 404\s*$", conf, re.M):
+                return _fail(name,
+                             f"{rel} must refuse {what} ({' '.join(paths)}) from outside the monitoring "
+                             f"network (a named matcher @{rule} plus `respond @{rule} 404`)")
+            matcher = conf[conf.index(f"@{rule} {{"):]
+            matcher = matcher[:matcher.index("}\n") + 1] if "}\n" in matcher else matcher[:matcher.index("}")]
+            path_line = re.search(r"^\s*path\s+(.*)$", matcher, re.M)
+            listed = path_line.group(1).split() if path_line else []
+            for needle in paths:
+                if needle not in listed:
+                    return _fail(name, f"{rel}'s @{rule} matcher does not cover {needle}")
+            if "not remote_ip" not in matcher:
+                return _fail(name, f"{rel}'s @{rule} matcher does not cover not remote_ip")
+            blocks[(rel, rule)] = matcher
     # 2026-10-07 (lab record 017): unset, the allow-list names no client. Until then it defaulted to
     # private ranges, and behind an L4 load balancer, Kubernetes' default externalTrafficPolicy,
     # rootless Docker or Docker's IPv6 userland proxy every internet client reaches the edge from
     # a private address: the duress counter was public (scripts/polaris-metrics-edge-drill.sh).
-    for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
-        m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[rel])
-        if not m or m.group(1).strip() != "0.0.0.0/32":
-            return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
-                         f"(0.0.0.0/32), not {m.group(1).strip() if m else 'nothing'}; behind SNAT "
-                         "every internet client is a private address")
-    helm = blocks["deploy/helm/polaris/templates/configmap-caddy.yaml"]
+    for rule, _paths, _what in _EDGE_RULES:
+        for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest"):
+            m = re.search(r"not remote_ip \{\$POLARIS_METRICS_ALLOW:([^}]*)\}", blocks[(rel, rule)])
+            if not m or m.group(1).strip() != "0.0.0.0/32":
+                return _fail(name, f"{rel}: with POLARIS_METRICS_ALLOW unset the edge must allow no client "
+                             f"(0.0.0.0/32) in @{rule}, not {m.group(1).strip() if m else 'nothing'}; behind "
+                             "SNAT every internet client is a private address")
+        if '| default "0.0.0.0/32"' not in blocks[("deploy/helm/polaris/templates/configmap-caddy.yaml", rule)]:
+            return _fail(name, f"the chart's @{rule} must allow no client unless edge.metricsAllow names one "
+                         '(the template default "0.0.0.0/32")')
     values = re.search(r'^\s*metricsAllow:\s*"([^"]*)"', _read(root, "deploy/helm/polaris/values.yaml"), re.M)
-    if '| default "0.0.0.0/32"' not in helm or not values or values.group(1) != "":
+    if not values or values.group(1) != "":
         return _fail(name, "the chart must allow no client unless edge.metricsAllow names one "
                      '(values metricsAllow "" and the template default "0.0.0.0/32")')
     norm = lambda t: [line.strip() for line in t.splitlines() if line.strip()]
-    if norm(blocks["polaris_web/Caddyfile"]) != norm(blocks["polaris_web/Caddyfile.citest"]):
-        return _fail(name, "Caddyfile.citest's metrics rule differs from the production Caddyfile's; "
-                     "the stack CI and try.sh boot must refuse the metrics the way production does")
+    for rule, _paths, what in _EDGE_RULES:
+        if norm(blocks[("polaris_web/Caddyfile", rule)]) != norm(blocks[("polaris_web/Caddyfile.citest", rule)]):
+            return _fail(name, f"Caddyfile.citest's @{rule} rule differs from the production Caddyfile's; "
+                         f"the stack CI and try.sh boot must refuse {what} the way production does")
     ci = _read(root, ".github/workflows/ci.yml")
     if ("metrics surfaces are refused from outside" not in ci
             or "bash scripts/polaris-metrics-edge-drill.sh" not in ci):
@@ -5094,10 +5201,16 @@ def check_metrics_edge_acl(root: pathlib.Path) -> list[Finding]:
     if "/polaris_web/Caddyfile" not in drill or 'probe 404 "${where}" /metrics' not in drill or "via SNAT" not in drill:
         return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the rule from the shipped "
                      "Caddyfile and ask through an SNAT hop as well as in-network")
+    if ("/@health_from_outside {/,/respond @health_from_outside 404/p" not in drill
+            or "HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)" not in drill
+            or 'for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done' not in drill):
+        return _fail(name, "scripts/polaris-metrics-edge-drill.sh must take the health rule from the shipped "
+                     "Caddyfile and require 404 on /api/health, /api/health/ready and /api/health/live, "
+                     "in-network and through the SNAT hop")
     return _ok(name,
-               "all three edges refuse the metrics surfaces unless the monitoring network is named "
-               "(no client by default), the CI edge's rule is production's, and CI asks in-network "
-               "and through an SNAT hop against the shipped rule")
+               "all three edges refuse the metrics surfaces and the health answers unless the monitoring "
+               "network is named (no client by default), the CI edge's rules are production's, and CI asks "
+               "in-network and through an SNAT hop against the shipped rules")
 
 
 # ---------------------------------------------------------------------------
@@ -5724,11 +5837,13 @@ _EARLY_GREP = re.compile(r"[ef]?grep((?:[ \t]+(?:-[A-Za-z0-9]+|--[a-z-]+(?:=\S+)
 _SED_QUIT = re.compile(r"(?:^|[;{}\n0-9$/])\s*[qQ]\s*\d*\s*(?:[;}]|$)")
 
 
-def _shell_code_mask(text: str) -> str:
+def _shell_code_mask(text: str, keep_literals: bool = False) -> str:
     """`text` with quoted literals, comments and heredoc bodies blanked, offsets unchanged.
 
     A `$(...)` inside double quotes stays code. A blanked character becomes a space and a newline
-    stays a newline, so an offset in the mask is the same offset in `text`.
+    stays a newline, so an offset in the mask is the same offset in `text`. With `keep_literals`,
+    only comments are blanked: quoted text and heredoc bodies stay as written, so a command inside
+    `sh -c "..."` can still be read.
     """
     out: list[str] = []
     stack = ["code"]
@@ -5739,10 +5854,10 @@ def _shell_code_mask(text: str) -> str:
         if top == "sq":
             if c == "'":
                 stack.pop()
-            out.append(c if c in "'\n" else " ")
+            out.append(c if keep_literals or c in "'\n" else " ")
         elif top == "dq":
             if c == "\\" and i + 1 < n:
-                out.append(" " + ("\n" if text[i + 1] == "\n" else " "))
+                out.append(text[i:i + 2] if keep_literals else " " + ("\n" if text[i + 1] == "\n" else " "))
                 i += 1
             elif c == '"':
                 stack.pop()
@@ -5752,7 +5867,7 @@ def _shell_code_mask(text: str) -> str:
                 out.append("$(")
                 i += 1
             else:
-                out.append(c if c == "\n" else " ")
+                out.append(c if keep_literals or c == "\n" else " ")
         elif c == "\\" and i + 1 < n:
             out.append(text[i:i + 2])
             i += 1
@@ -5789,7 +5904,7 @@ def _shell_code_mask(text: str) -> str:
                     j = text.find("\n", i)
                     j = n if j < 0 else j
                     line = text[i:j]
-                    out.append(" " * len(line) + ("\n" if j < n else ""))
+                    out.append((line if keep_literals else " " * len(line)) + ("\n" if j < n else ""))
                     i = j + 1
                     if (line.lstrip("\t") if strip_tabs else line) == word:
                         break
@@ -6797,7 +6912,9 @@ def check_sbom_workflow(root: pathlib.Path) -> list[Finding]:
 # If they drift, the bill of materials describes a package set the gate never
 # scanned (or vice versa), and the two documents stop corroborating each other.
 def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
-    ci = _read(root, ".github/workflows/ci.yml")
+    # The scanner is read where CI runs it: ci.yml and the workflows a ci.yml job calls
+    # (image-cve-scan.yml since 2026-10-21), and it must name a version of its own.
+    scan = "\n".join(text for _, text in _ci_and_called_workflows(root))
     sbom = _read(root, ".github/workflows/sbom.yml")
     if not sbom:
         return _fail("sbom_trivy", ".github/workflows/sbom.yml is missing")
@@ -6805,9 +6922,10 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
     if not re.search(r"aquasec/trivy:[0-9]", sbom):
         return _fail("sbom_trivy", "the SBOM generator (sbom.yml, sbom-build.yml) names no Trivy version, "
                      "so nothing holds it to the scanner's")
-    versions = set(re.findall(r"aquasec/trivy:([0-9][0-9.]*)", ci + sbom))
-    if not versions:
-        return _fail("sbom_trivy", "no aquasec/trivy version found in the workflows")
+    if not re.search(r"aquasec/trivy:[0-9]", scan):
+        return _fail("sbom_trivy", "the image CVE scan (ci.yml and the workflows its jobs call) names no "
+                     "Trivy version, so nothing holds the SBOM generator to the scanner's")
+    versions = set(re.findall(r"aquasec/trivy:([0-9][0-9.]*)", scan + "\n" + sbom))
     if len(versions) > 1:
         return _fail("sbom_trivy",
                      f"the SBOM generator and the CVE scanner use different Trivy "
@@ -6825,9 +6943,32 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 # wallets' latest builds by design). And Dependabot reads every manifest that pins something
 # (each npm lockfile, each published Python package, each Dockerfile directory, the compose
 # files, and since 2026-10-11 each Go, Gradle and Swift manifest), since a pin nothing refreshes stops
-# receiving security updates.
+# receiving security updates. 2026-10-24: and each directory with a .txt or .in file that pins a
+# version with `==` (requirements files and the CI tool lists alike). Dependabot raised a HIGH
+# alert on a pin in lab/strategy/013, a directory its version updates did not read, because pip
+# was required only for the published packages.
+#
+# 2026-10-21: "every workflow image" is what the check reads, and no more. It reads each `image:`,
+# `container:` and `uses: docker://` value in a workflow; each image a `docker run`, `create` or
+# `pull` in a run step names, read by docker's own option grammar (the CLI 29.8.1 tables below)
+# after continuations are joined, a `$VAR` resolved from the file's env blocks (one it cannot
+# resolve fails), and an image the same workflow built excluded by the exact tag it built; and, by a
+# lexical rule, each docker run, create or pull image and each assignment to a variable named
+# *IMAGE*, or to one a docker command there runs, in the shell scripts those run steps call. A ref a
+# script builds at run time, from `$(...)` or `$1`, is beyond it, and the OK line counts those. A
+# workflow ref whose tag a Dockerfile or compose file that Dependabot reads also pins must carry
+# that pin's digest, so Dependabot's update turns this red until the workflow copy follows in the
+# same PR. A pin with no such twin is refreshed by hand: the six drills' python:3.12-alpine, one
+# digest in all six (read 2026-10-24), and curlimages/curl:8.11.1 in lab/strategy/006/alerts.sh
+# (2026-10-21). ci.yml's key-exchange probe runs alpine:3.24 at the Dockerfiles' pin and installs
+# curl and openssl at exact versions, pinned the same day: Alpine serves one build of each package
+# per branch, so the probe fails closed when either is replaced, and is moved by hand.
+# 2026-10-28: a pin by digest alone is a pin of its repository. The observability overlay pins
+# Prometheus and Alertmanager with no tag, so no script ref twinned with them, and the page and
+# chaos drills (and lab/strategy/006/alerts.sh) ran images a month older than the overlay ships.
 _UNPINNED_BY_DESIGN = {"wallet-canary.yml"}
 _PUBLISHED_PY = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python", "polaris_cli")
+_REQUIREMENT_PIN = re.compile(r"(?m)^[A-Za-z0-9][\w.-]*(?:\[[\w.,-]*\])?\s*==")
 _WALK_PRUNE = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "dist", "build"}
 
 
@@ -6841,6 +6982,525 @@ def _dependabot_coverage(text: str) -> set[tuple[str, str]]:
             dirs += re.findall(r"- (\S+)", block.group(1))
         covered |= {(eco.group(1).strip('"'), d.strip('"').rstrip("/") or "/") for d in dirs} if eco else set()
     return covered
+
+
+# The options that take a value, as `docker run --help`, `docker create --help`, `docker pull --help`
+# and `docker --help` (the global options) print them for Docker CLI 29.8.1. The image is the first
+# word that is neither an option nor an option's value, so a value-taking option missing here would
+# make the parse read its value as the image; an option in no table stops the parse instead.
+_DOCKER_RUN_VALUE_OPTS = frozenset("""
+    --add-host --annotation -a --attach --blkio-weight --blkio-weight-device --cap-add --cap-drop
+    --cgroup-parent --cgroupns --cidfile --cpu-period --cpu-quota --cpu-rt-period --cpu-rt-runtime
+    -c --cpu-shares --cpus --cpuset-cpus --cpuset-mems --detach-keys --device --device-cgroup-rule
+    --device-read-bps --device-read-iops --device-write-bps --device-write-iops --dns --dns-option
+    --dns-search --domainname --entrypoint -e --env --env-file --expose --gpus --group-add
+    --health-cmd --health-interval --health-retries --health-start-interval --health-start-period
+    --health-timeout -h --hostname --ip --ip6 --ipc --isolation -l --label --label-file --link
+    --link-local-ip --log-driver --log-opt --mac-address -m --memory --memory-reservation
+    --memory-swap --memory-swappiness --mount --name --network --network-alias --oom-score-adj --pid
+    --pids-limit --platform -p --publish --pull --restart --runtime --security-opt --shm-size
+    --stop-signal --stop-timeout --storage-opt --sysctl --tmpfs --ulimit --umask -u --user --userns
+    --uts -v --volume --volume-driver --volumes-from -w --workdir""".split())
+_DOCKER_RUN_FLAGS = frozenset("""-d --detach --help --init -i --interactive --no-healthcheck
+    --oom-kill-disable --privileged -P --publish-all -q --quiet --read-only --rm --sig-proxy -t --tty
+    --use-api-socket""".split())
+_DOCKER_GRAMMAR = {
+    "": (frozenset("--config -c --context -H --host -l --log-level --tlscacert --tlscert --tlskey".split()),
+         frozenset("-D --debug --tls --tlsverify -v --version".split())),
+    "run": (_DOCKER_RUN_VALUE_OPTS, _DOCKER_RUN_FLAGS),
+    "create": (_DOCKER_RUN_VALUE_OPTS - {"--detach-keys"}, _DOCKER_RUN_FLAGS - {"-d", "--detach", "--sig-proxy"}),
+    "pull": (frozenset({"--platform"}), frozenset("-a --all-tags -q --quiet".split())),
+}
+_DOCKER_WORD = re.compile(r"(?:(?<=[\s;&|(`'\"{])|^)(?:[\w./${}-]*/)?docker(?=[ \t])", re.M)
+_DOCKER_RUNS = re.compile(r"(?<![\w-])docker[ \t]+(?:container[ \t]+|image[ \t]+)?(?:run|create|pull)(?![\w-])")
+_DOCKER_BUILDS = re.compile(r"(?<![\w-])docker[ \t]+(?:buildx[ \t]+|image[ \t]+|builder[ \t]+)?build(?![\w-])")
+_SHELL_OPERATOR = re.compile(r"[;&|()<>]+")
+_ARRAY_WORD = re.compile(r"\$(?:[@*]|\{[@*]\}|\{[A-Za-z_]\w*\[[@*]\])")
+
+
+@lru_cache(maxsize=512)
+def _shell_code(text: str) -> str:
+    """Shell `text` with its comments blanked and each backslash continuation joined, offsets unchanged.
+    Cached by text: a script many workflows call is scanned once."""
+    return re.sub(r"(?<!\\)((?:\\\\)*)\\\n", lambda m: m.group(1) + "  ",
+                  _shell_code_mask(text, keep_literals=True))
+
+
+def _shell_words(code: str, at: int):
+    """The words of `code` from `at` to the end of its line, read one at a time (posix quoting, with
+    `;&|()<>` words of their own), so quoting the lexer cannot follow past the word wanted is never read."""
+    import shlex
+    end = code.find("\n", at)
+    lex = shlex.shlex(code[at:] if end < 0 else code[at:end], posix=True, punctuation_chars=True)
+    lex.whitespace_split, lex.commenters = True, ""
+    return iter(lex.get_token, None)
+
+
+def _docker_option(word: str, words, values: frozenset, flags: frozenset) -> None:
+    """Read one option the way docker's flag parser does: `--name value`, `--name=value`, a cluster
+    of one-letter flags, and a one-letter option whose value is attached or is the next word."""
+    if word.startswith("--"):
+        name = word.split("=", 1)[0]
+        if name in values:
+            if "=" not in word:
+                next(words, None)
+        elif name not in flags:
+            raise ValueError(f"docker option {name} is in no table")
+        return
+    for j in range(1, len(word)):
+        if "-" + word[j] in values:
+            if j == len(word) - 1:
+                next(words, None)
+            return
+        if "-" + word[j] not in flags:
+            raise ValueError(f"docker option -{word[j]} is in no table")
+
+
+def _docker_image_at(code: str, at: int) -> tuple[str, str | None] | None:
+    """The docker command at `code[at]`: None unless it is run, create or pull, else (subcommand,
+    image), the image None when the command ends first. A word such as "$@" or "${ARGS[@]}" where an
+    option may stand is read as options. A ValueError names an option no table holds, or quoting the
+    lexer cannot follow."""
+    words = _shell_words(code, at)
+    next(words, None)
+    word = next(words, None)
+    while word is not None and word.startswith("-") and word != "-":
+        _docker_option(word, words, *_DOCKER_GRAMMAR[""])
+        word = next(words, None)
+    if word in ("container", "image"):
+        group, word = word, next(words, None)
+        if (group, word) not in (("container", "run"), ("container", "create"), ("image", "pull")):
+            return None
+    if word not in ("run", "create", "pull"):
+        return None
+    values, flags = _DOCKER_GRAMMAR[word]
+    for arg in words:
+        if arg == "--":
+            return word, next(words, None)
+        if _SHELL_OPERATOR.fullmatch(arg):
+            return word, None
+        if arg.startswith("-") and arg != "-":
+            _docker_option(arg, words, values, flags)
+        elif not _ARRAY_WORD.match(arg):
+            return word, arg
+    return word, None
+
+
+def _docker_commands(text: str, code: str) -> list[tuple[int, int, str, str | None, str]]:
+    """Each docker run, create or pull in shell `text`, read from `code` (its `_shell_code`):
+    (line of `docker`, line of the image, subcommand, image, why it could not be read)."""
+    found = []
+    for m in _DOCKER_WORD.finditer(code):
+        line = text.count("\n", 0, m.start()) + 1
+        try:
+            got = _docker_image_at(code, m.start())
+        except ValueError as e:
+            if _DOCKER_RUNS.match(code, m.end() - len("docker")):
+                found.append((line, line, "", None, str(e)))
+            continue
+        if got:
+            at = code.find(got[1], m.end()) if got[1] else -1
+            found.append((line, line if at < 0 else text.count("\n", 0, at) + 1, got[0], got[1], ""))
+    return found
+
+
+def _raw_word(code: str, at: int) -> str:
+    """The shell word at `code[at]` as written: its quotes, `$(...)` and `${...}` kept, nesting followed."""
+    stack, i = [], at
+    while i < len(code):
+        c, top = code[i], (stack[-1] if stack else "")
+        if top == "'":
+            if c == "'":
+                stack.pop()
+        elif c == "\\":
+            i += 1
+        elif top == '"' and c == '"':
+            stack.pop()
+        elif c in "'\"" and top != '"':
+            stack.append(c)
+        elif code.startswith(("$(", "${"), i):
+            stack.append(code[i + 1])
+            i += 1
+        elif c in ")}" and top in ("(", "{"):
+            stack.pop()
+        elif not stack and (c.isspace() or c in ";&|)<>"):
+            break
+        i += 1
+    return code[at:i]
+
+
+def _literal_part(word: str) -> str:
+    """The literal text of a shell word: its quotes dropped and every `$(...)`, `${...}`, backtick
+    command and `$NAME` removed, nesting followed. Empty means the word is built at run time."""
+    out, stack, i = [], [], 0
+    while i < len(word):
+        c, top = word[i], (stack[-1] if stack else "")
+        inside = any(s in stack for s in "({`")
+        if top == "'":
+            if c == "'":
+                stack.pop()
+            elif not inside:
+                out.append(c)
+        elif top == "`":
+            if c == "`":
+                stack.pop()
+        elif c == "\\":
+            i += 1
+            if not inside and i < len(word):
+                out.append(word[i])
+        elif top == '"' and c == '"':
+            stack.pop()
+        elif c in "'\"`" and top != '"' or c == "`":
+            stack.append(c)
+        elif word.startswith(("$(", "${"), i):
+            stack.append(word[i + 1])
+            i += 1
+        elif c in ")}" and top in ("(", "{"):
+            stack.pop()
+        elif c == "$" and re.match(r"[\w@*#?$!-]", word[i + 1:i + 2]):
+            i += len(re.match(r"[A-Za-z_]\w*|.", word[i + 1:]).group(0))
+        elif not inside:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _shell_builds(code: str, stack: tuple[str, ...]) -> tuple[set[str], set[str]]:
+    """The tags shell `code` builds, as (literals, variable names): each `docker build` -t/--tag, and
+    each call of scripts/polaris-image-build.sh, `<dockerfile> <tag>` or `--stack <suffix>` (`stack`
+    names the images that builds)."""
+    tags: set[str] = set()
+    names: set[str] = set()
+
+    def note(value: str | None) -> None:
+        var = re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", value or "")
+        if var:
+            names.add(var.group(1))
+        elif value and not _SHELL_OPERATOR.fullmatch(value):
+            tags.add(value)
+    for m in _DOCKER_BUILDS.finditer(code):
+        words = _shell_words(code, m.end())
+        try:
+            for w in words:
+                if _SHELL_OPERATOR.fullmatch(w):
+                    break
+                if w in ("-t", "--tag"):
+                    note(next(words, None))
+                elif w.startswith(("--tag=", "-t=")):
+                    note(w.split("=", 1)[1])
+        except ValueError:
+            continue
+    for m in re.finditer(r"polaris-image-build\.sh[\"']?(?=[ \t])", code):
+        words = _shell_words(code, m.end())
+        try:
+            first, second = next(words, None), next(words, None)
+        except ValueError:
+            continue
+        if first == "--stack" and second and not _SHELL_OPERATOR.fullmatch(second):
+            tags |= {f"{n}:{second}" for n in stack}
+        elif first and not _SHELL_OPERATOR.fullmatch(first):
+            note(second)
+    return tags, names
+
+
+def _called_scripts(root: pathlib.Path, code: str) -> set[str]:
+    """The shell scripts in the tree that a run step names: `bash x.sh`, `./x.sh`, `source x.sh`, or
+    a path through a mount (`/src/scripts/x.sh`), matched by its longest suffix that is a file."""
+    found = set()
+    for m in re.finditer(r"(?<![\w.-])[\w./${}-]*\.(?:sh|bash)(?![\w.-])", code):
+        path = re.sub(r"^(?:\$\{?\w+\}?|\$\{\{[^}]*\}\})/", "", m.group(0)).lstrip("./")
+        parts = path.split("/")
+        for k in range(len(parts)):
+            cand = "/".join(parts[k:])
+            if "$" not in cand and (root / cand).is_file():
+                found.add(cand)
+                break
+    return found
+
+
+def _workflow_run_blocks(text: str) -> list[tuple[int, str]]:
+    """Each `run:` value in a workflow, read lexically: (line of its first line, its text). A block
+    scalar (`|`, `>`) is every following line indented past the key, dedented; a value on the key's
+    line is that line, unquoted."""
+    lines = text.split("\n")
+    blocks, i = [], 0
+    while i < len(lines):
+        m = re.match(r"^(\s*(?:-\s+)?)run:(?:\s+(.*?))?\s*$", lines[i])
+        if not m:
+            i += 1
+            continue
+        col, value = len(m.group(1)), m.group(2) or ""
+        if value[:1] not in ("'", '"'):
+            value = re.sub(r"\s+#.*$", "", value)
+        if value and not re.fullmatch(r"[|>][-+0-9]*", value):
+            if len(value) > 1 and value[0] in "'\"" and value.endswith(value[0]):
+                value = value[1:-1]
+            blocks.append((i + 1, value))
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip(" ")) > col):
+            j += 1
+        body = lines[i + 1:j]
+        indent = min((len(l) - len(l.lstrip(" ")) for l in body if l.strip()), default=0)
+        blocks.append((i + 2, "\n".join(l[indent:] for l in body)))
+        i = j
+    return blocks
+
+
+def _workflow_env(text: str) -> dict[str, set[str]]:
+    """Every value each name takes in the workflow's `env:` blocks, at any level."""
+    env: dict[str, set[str]] = {}
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*)env:\s*(?:#.*)?$", line)
+        if not m:
+            continue
+        child = None
+        for nxt in lines[i + 1:]:
+            if not nxt.strip():
+                continue
+            indent = len(nxt) - len(nxt.lstrip(" "))
+            if indent <= len(m.group(1)):
+                break
+            child = indent if child is None else child
+            kv = re.match(r"\s*([A-Za-z_]\w*):\s*(.*?)\s*$", nxt)
+            if indent == child and kv:
+                v = kv.group(2) if kv.group(2)[:1] in ("'", '"') else re.sub(r"\s+#.*$", "", kv.group(2))
+                if len(v) > 1 and v[0] in "'\"" and v.endswith(v[0]):
+                    v = v[1:-1]
+                env.setdefault(kv.group(1), set()).add(v)
+    return env
+
+
+def _env_values(word: str, env: dict[str, set[str]]) -> tuple[set[str], str]:
+    """The values `word` takes once each `$NAME`, `${NAME}` and `${{ env.NAME }}` in it is replaced
+    from the workflow's env blocks, and the first expansion no env block names ("" when none)."""
+    values, todo = set(), [word]
+    for _ in range(256):
+        if not todo:
+            return values, ""
+        w = todo.pop()
+        m = re.search(r"\$\{\{\s*env\.(\w+)\s*\}\}|\$\{\{.*?\}\}|\$\{(\w+)\}|\$(\w+)|\$", w)
+        if not m:
+            values.add(w)
+            continue
+        name = m.group(1) or m.group(2) or m.group(3)
+        if not name or name not in env:
+            return set(), m.group(0)
+        todo += [w[:m.start()] + v + w[m.end():] for v in env[name]]
+    return set(), word
+
+
+def _build_push_tags(text: str) -> set[str]:
+    """The `tags:` of each docker/build-push-action step in a workflow."""
+    lines, tags = text.split("\n"), set()
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*(?:-\s+)?)uses:\s*[\"']?docker/build-push-action@", line)
+        if not m:
+            continue
+        col, start, end = len(m.group(1)), i, i + 1
+        while not m.group(1).rstrip().endswith("-") and start > 0:     # up to the step's `- ` line
+            prev = lines[start - 1]
+            indent = len(prev) - len(prev.lstrip())
+            if prev.strip() and indent < col - 2:
+                break
+            start -= 1
+            if prev.strip() and indent == col - 2:
+                break
+        while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) >= col):
+            end += 1
+        for k in range(start, end):
+            t = re.match(r"^(\s*)tags:\s*(.*?)\s*$", lines[k])
+            if not t:
+                continue
+            values = [t.group(2)]
+            if re.fullmatch(r"[|>][-+0-9]*", t.group(2)):
+                values = []
+                for nxt in lines[k + 1:end]:
+                    if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= len(t.group(1)):
+                        break
+                    values.append(nxt)
+            tags |= {v.strip("'\"[] ") for value in values for v in re.split(r"[,\s]+", value)
+                     if v.strip("'\"[] ")}
+    return tags
+
+
+def _image_ref(ref: str) -> tuple[str, str, str]:
+    """(repository, tag, digest) of an image reference, Docker Hub's `docker.io/` and `library/`
+    dropped, so postgres:16 and docker.io/library/postgres:16 are one repository."""
+    name, _, digest = ref.partition("@")
+    colon = name.rfind(":")
+    repo, tag = (name[:colon], name[colon + 1:]) if colon > name.rfind("/") else (name, "")
+    repo = re.sub(r"^(?:(?:index\.|registry-1\.)?docker\.io/)?(?:library/)?", "", repo)
+    return repo, tag, digest
+
+
+def _dependabot_pins(root: pathlib.Path, covered: set[tuple[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
+    """(repository, tag) -> {digest: file} for each image a Dockerfile or compose file that
+    Dependabot reads pins by digest, under a tag or (tag "") by digest alone."""
+    pins: dict[tuple[str, str], dict[str, str]] = {}
+    for eco, d in sorted(covered):
+        base = root / d.lstrip("/")
+        for f in sorted(base.iterdir()) if eco in ("docker", "docker-compose") and base.is_dir() else ():
+            if eco == "docker" and (f.name == "Dockerfile" or f.name.startswith("Dockerfile.")):
+                refs = re.findall(r"(?im)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", f.read_text())
+            elif eco == "docker-compose" and re.fullmatch(r"docker-compose(?:\.[\w-]+)?\.ya?ml", f.name):
+                refs = re.findall(r"(?m)^\s*image:\s*[\"']?([^\s\"'#]+)", f.read_text())
+            else:
+                continue
+            for repo, tag, digest in map(_image_ref, refs):
+                if digest:
+                    pins.setdefault((repo, tag), {}).setdefault(digest, f.relative_to(root).as_posix())
+    return pins
+
+
+#: An image pinned by digest in a shell script, as a word of its own or a `${VAR:-...}` default.
+#: Each `:` or `/` inside the name starts a word, so `${VAR:-image}` yields the image, not `VAR:-image`.
+_SCRIPT_DIGEST_REF = re.compile(
+    r"(?:(?<=:-)|(?<![\w./:@-]))\w[\w.-]*(?:[:/]\w[\w.-]*)*@sha256:[0-9a-f]{64}(?![0-9a-f])")
+
+
+def _script_digests_off_pin(root: pathlib.Path, pins: dict[tuple[str, str], dict[str, str]]) -> tuple[list[str], int, int]:
+    """Every shell script in the tree, called by a workflow or not, read for images pinned by digest:
+    (problems, scripts read, refs whose image a manifest Dependabot reads also pins, under the same
+    tag or by digest alone as they are). Such a ref must carry that pin's digest, as a workflow ref must."""
+    problems: list[str] = []
+    files = twinned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _WALK_PRUNE)
+        for f in sorted(filenames):
+            if not f.endswith((".sh", ".bash")):
+                continue
+            path = pathlib.Path(dirpath) / f
+            rel, files = path.relative_to(root).as_posix(), files + 1
+            for i, line in enumerate(path.read_text(errors="replace").split("\n"), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                for m in _SCRIPT_DIGEST_REF.finditer(line):
+                    repo, tag, digest = _image_ref(m.group(0))
+                    twins = pins.get((repo, tag), {})
+                    twinned += bool(twins)
+                    if twins and digest not in twins:
+                        pin, pinned_in = sorted(twins.items())[0]
+                        problems.append(f"{rel}:{i} pins {repo}{':' + tag if tag else ''} at {digest[7:19]}, but {pinned_in} "
+                                        f"pins it at {pin[7:19]}, which Dependabot refreshes")
+    return problems, files, twinned
+
+
+def _script_ref_problem(word: str, allowed: set[str]) -> tuple[str, str]:
+    """How the lexical rule reads one shell word naming an image: ("", "") when it carries a digest,
+    is a tag the workflows build, or is empty; ("tag", the ref) when it names an image by tag; ("run
+    time", word) when it is built at run time, which the rule does not read."""
+    bare = re.sub(r"['\"]", "", word)
+    if not bare or "@sha256:" in bare or bare in allowed:
+        return "", ""
+    defaults = [d.strip("'\"") for d in re.findall(r"\$\{[A-Za-z_0-9]+:?[-=]([^}]*)\}", word)]
+    if defaults:
+        bad = [d for d in defaults if d and "@sha256:" not in d and d not in allowed]
+        return ("tag", bad[0]) if bad else ("", "")
+    return ("tag", bare) if _literal_part(word).strip() else ("run time", word)
+
+
+def _workflow_images(root: pathlib.Path, pins: dict[tuple[str, str], dict[str, str]]) -> dict:
+    """Every image the workflows run, as check_supply_chain_pins reads them: "problems"; "refs",
+    each (workflow, line, how, image) outside the wallet canary; "scripts", each shell script a run
+    step calls, with the workflows that call it; and "run time", the script refs built at run time,
+    which the lexical rule does not read."""
+    wfdir = root / ".github" / "workflows"
+    stack = tuple(re.findall(r'build_one\s+\S+\s+"(polaris-[\w-]+):\$\{suffix\}"',
+                             _read(root, "scripts/polaris-image-build.sh")))
+    expr = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+    problems: list[str] = []
+    refs: list[tuple[str, int, str, str | None, str, dict[str, set[str]]]] = []
+    calls: dict[str, set[str]] = {}
+    built: dict[str, set[str]] = {}
+    for wf in sorted(wfdir.glob("*.yml")) if wfdir.is_dir() else ():
+        text = "\n".join("" if l.lstrip().startswith("#") else l for l in wf.read_text().split("\n"))
+        text = expr.sub(lambda m: "${{" + re.sub(r"\s+", "", m.group(1)) + "}}", text)
+        env, built[wf.name], read = _workflow_env(text), _build_push_tags(text), set()
+        mine = wf.name not in _UNPINNED_BY_DESIGN
+        for first, body in _workflow_run_blocks(text):
+            if "docker" not in body and ".sh" not in body and ".bash" not in body:
+                continue
+            code = _shell_code(body)
+            built[wf.name] |= _shell_builds(code, stack)[0]
+            for rel in _called_scripts(root, code):
+                calls.setdefault(rel, set()).add(wf.name)
+            for line, image_line, sub, image, why in _docker_commands(body, code):
+                read.add(first + line - 1)
+                if mine:
+                    refs.append((wf.name, first + image_line - 1, f"docker {sub}".strip(), image, why, env))
+        for i, line in enumerate(text.split("\n"), 1):
+            kv = re.match(r"^\s*(?:-\s+)?(image|container|uses):\s*(.*?)\s*$", line)
+            value = (kv.group(2) if kv.group(2)[:1] in ("'", '"') else re.sub(r"\s+#.*$", "", kv.group(2))) if kv else ""
+            if len(value) > 1 and value[0] in "'\"" and value.endswith(value[0]):
+                value = value[1:-1]
+            if kv and kv.group(1) == "uses":
+                value = value[len("docker://"):] if value.startswith("docker://") else ""
+            if mine and value and not re.fullmatch(r"[|>][-+0-9]*", value):
+                refs.append((wf.name, i, f"{kv.group(1)}:", value, "", env))
+            if mine and i not in read and _DOCKER_RUNS.search(re.sub(r"\s#.*", "", line)):
+                problems.append(f"{wf.name}:{i} has a docker run, create or pull that the check did not read")
+    scripts = {rel: (_read(root, rel), _shell_code(_read(root, rel))) for rel in sorted(calls)}
+    builds = {rel: _shell_builds(code, stack) for rel, (_, code) in scripts.items()}
+    for rel, workflows in calls.items():
+        for w in workflows:
+            built[w] |= builds[rel][0]
+    for wf, line, how, image, why, env in refs:
+        where = f"{wf}:{line}"
+        if why:
+            problems.append(f"{where} {how} could not be read: {why}")
+            continue
+        if image is None:
+            problems.append(f"{where} {how} names no image the check can read")
+            continue
+        values, unresolved = _env_values(image, env)
+        if unresolved:
+            problems.append(f"{where} runs {image}, and no env block in {wf} names {unresolved}")
+        for ref in sorted(values):
+            repo, tag, digest = _image_ref(ref)
+            twins = pins.get((repo, tag), {})
+            if "@sha256:" not in ref and ref not in built[wf]:
+                problems.append(f"{where} runs {ref} by tag ({how})")
+            elif digest and twins and digest not in twins:
+                pin, pinned_in = sorted(twins.items())[0]
+                problems.append(f"{where} runs {repo}{':' + tag if tag else ''} at {digest[7:19]}, but {pinned_in} pins it "
+                                f"at {pin[7:19]}, which Dependabot refreshes")
+    run_time: list[str] = []
+    for rel, (text, code) in scripts.items():
+        tags, names = builds[rel]
+        allowed = tags | set.intersection(*(built[w] for w in calls[rel]))
+        assigned = {m.group(1) for m in re.finditer(r"(?:^|(?<=[\s;&|({]))([A-Za-z_]\w*)=", code, re.M)}
+        ran: set[str] = set()  # variables a docker command here runs: their assignments are read below
+        for _, line, sub, image, why in _docker_commands(text, code):
+            where, var = f"{rel}:{line}", re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", image or "")
+            if why:
+                problems.append(f"{where} docker {sub} could not be read: {why}".replace("docker  ", "docker "))
+            elif image is None:
+                run_time.append(f"{where} docker {sub} names its image in words built at run time")
+            elif var and var.group(1) in names:
+                continue
+            elif var and var.group(1) in assigned:
+                ran.add(var.group(1))
+            elif var and "image" in var.group(1).lower():
+                run_time.append(f"{where} docker {sub} runs {image}, which {rel} never assigns")
+            else:
+                kind, ref = _script_ref_problem(image, allowed)
+                if kind == "tag":
+                    problems.append(f"{where} runs {ref} by tag (docker {sub})")
+                elif kind:
+                    run_time.append(f"{where} docker {sub} runs {ref}, built at run time")
+        for m in re.finditer(r"(?:^|(?<=[\s;&|({]))([A-Za-z_]\w*)=", code, re.M):
+            if ("image" not in m.group(1).lower() and m.group(1) not in ran) or m.group(1) in names:
+                continue
+            where = f"{rel}:{text.count(chr(10), 0, m.start()) + 1}"
+            kind, ref = _script_ref_problem(_raw_word(code, m.end()), allowed)
+            if kind == "tag":
+                problems.append(f"{where} assigns {ref} to {m.group(1)} by tag")
+            elif kind:
+                run_time.append(f"{where} assigns {m.group(1)}={ref}, built at run time")
+    return {"problems": problems, "refs": [r[:4] for r in refs], "scripts": calls, "run time": run_time}
 
 
 def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
@@ -6864,27 +7524,33 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
             and not re.search(r'kubectl apply -f "\$CALICO_MANIFEST"', drill)):
         problems.append("polaris-helm-drill.sh applies the Calico manifest without checking it "
                         "against a pinned SHA-256 first")
+    dep = _read(root, ".github/dependabot.yml")
+    covered = _dependabot_coverage(dep)
+    pins = _dependabot_pins(root, covered)
+    seen = _workflow_images(root, pins)
+    problems += seen["problems"]
+    off_pin, shell_files, twinned = _script_digests_off_pin(root, pins)
+    problems += off_pin
     wfdir = root / ".github" / "workflows"
     for wf in sorted(wfdir.glob("*.yml")) if wfdir.is_dir() else ():
         text = "\n".join(l for l in wf.read_text().splitlines() if not l.lstrip().startswith("#"))
-        if wf.name not in _UNPINNED_BY_DESIGN:
-            problems += [f"{wf.name} runs {img} by tag" for img in
-                         re.findall(r"(?m)^\s*image:\s*(\S+)\s*$", text)
-                         if "@sha256:" not in img and "${{" not in img]
         problems += [f"{wf.name} runs Trivy by tag ({ref})" for ref in
                      re.findall(r"aquasec/trivy:[^\s\"']+", text) if "@sha256:" not in ref]
     for compose in sorted((root / "polaris_web").glob("docker-compose*.yml")):
         problems += [f"{compose.name} runs {img} by tag" for img in
                      re.findall(r"(?m)^\s*image:\s*(\S+)", compose.read_text())
                      if not img.startswith("polaris-") and "@sha256:" not in img]
-    dep = _read(root, ".github/dependabot.yml")
-    covered = _dependabot_coverage(dep)
-    required = set()
+    required, pinned_py = set(), set()
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _WALK_PRUNE]
         r = os.path.relpath(dirpath, root)
         rel = "/" if r == "." else "/" + r.replace(os.sep, "/")
-        if rel.startswith(("/polaris_checks", "/.github")):
+        if rel.startswith("/polaris_checks"):
+            continue
+        if any(f.endswith((".txt", ".in")) and _REQUIREMENT_PIN.search(
+                (pathlib.Path(dirpath) / f).read_text(errors="replace")) for f in filenames):
+            pinned_py.add(rel)
+        if rel.startswith("/.github"):
             continue
         if "package-lock.json" in filenames:
             required.add(("npm", rel))
@@ -6899,18 +7565,26 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
         if "Package.swift" in filenames:
             required.add(("swift", rel))
     required |= {("pip", "/" + d) for d in _PUBLISHED_PY if (root / d / "pyproject.toml").is_file()}
+    required |= {("pip", d) for d in pinned_py}
     missing = sorted(required - covered)
     if missing:
         problems.append("Dependabot reads no " + ", ".join(f"{e} manifest in {d}" for e, d in missing[:4])
                         + ("" if len(missing) <= 4 else f" (+{len(missing) - 4} more)"))
     if problems:
-        return _fail(name, "; ".join(problems[:4]) + ("" if len(problems) <= 4 else
-                                                       f" (+{len(problems) - 4} more)"))
+        return _fail(name, "; ".join(problems))
+    commands = sum(1 for r in seen["refs"] if r[2].startswith("docker "))
     return _ok(name,
                f"the Caddy plugin is pinned to its release, etcd to the 3.6 series, the Calico "
                f"manifest to its SHA-256; every workflow and compose image and Trivy run by "
-               f"digest (the wallet canary excepted by design); Dependabot reads all {len(required)} "
-               f"manifests that pin something")
+               f"digest (the wallet canary excepted by design): {len(seen['refs'])} workflow image "
+               f"refs, {commands} of them docker run, create or pull in run steps, each equal to "
+               f"the pin of its tag in a manifest Dependabot reads where one pins it, and the docker "
+               f"refs and IMAGE assignments in the {len(seen['scripts'])} shell scripts run steps call, "
+               f"where {len(seen['run time'])} refs are built at run time and not read; the "
+               f"{twinned} digest pins, in {shell_files} shell scripts, of an image such a manifest "
+               f"pins (under the same tag, or by digest alone) carry its digest; Dependabot reads all {len(required)} manifest directories "
+               f"that pin something, {len(pinned_py)} of them holding a .txt or .in file with a "
+               f"requirement line pinning a version with == (name==version)")
 
 
 # P0.6 — every release artifact carries a signed SLSA provenance attestation,
@@ -8040,7 +8714,7 @@ def check_doctor_names_failures(root: pathlib.Path) -> list[Finding]:
     judges = (("compose ps -a --format json", "the services and their healthchecks"),
               ('"secrets"', "the secret files"),
               ("config_schema.py check --production", "the production configuration contract"),
-              ("/api/health/live", "the TLS edge"),
+              ('"${URL}/.well-known/security.txt" 2> /dev/null)', "the TLS edge (a public route)"),
               ("http://127.0.0.1:8000/api/health", "the app's own roll-up"),
               ('< "${SCRIPT_DIR}/polaris-key-register-check.sql"', "the key register"),
               ("printenv POLARIS_PGBACKREST_S3_BUCKET", "where the backup repository is (OP-14)"))
@@ -9293,7 +9967,7 @@ def check_key_custody_abstraction(root: pathlib.Path) -> list[Finding]:
     if "## Rotation" not in cer or "pkcs11-keygen" not in cer or "ML_DSA_65" not in cer:
         return _fail("key_custody", "KEY-CEREMONY.md must document the ceremony per driver and a Rotation section")
     if "'custody':" not in app or "def _health_check_custody" not in app:
-        return _fail("key_custody", "/api/health must report the custody component (driver, key id, fingerprint)")
+        return _fail("key_custody", "/api/health must report the custody component (driver, public-key fingerprint)")
     return _ok("key_custody", "issuer-key custody: file / PKCS#11 (CKM_ML_DSA, in-token, non-extractable) / "
                "AWS KMS (ML_DSA_65, RAW ML_DSA_SHAKE_256) behind one interface, PIN never from env, "
                "pqc_signing routed through it with the two-witness verify unchanged, "
@@ -10603,6 +11277,15 @@ def check_chaos_program(root: pathlib.Path) -> list[Finding]:
         return _fail("chaos_program", "chaos.yml must run weekly (a cron on one weekday)")
     if "contents: write" not in wf or "git push" not in wf or "CHAOS-DRILLS.md" not in wf:
         return _fail("chaos_program", "chaos.yml must be able to commit and push the ledger row")
+    # 2026-10-28: the ledger holds main's drill. A run dispatched on a branch checks that branch
+    # out, so a push from it would record an unmerged drill as main's. The condition is the step's
+    # whole `if:` line: one with `|| true` after it, or the text in a comment, guards nothing.
+    pushing = [s for s in re.split(r"\n\s*- (?=name:|uses:|run:)", wf) if "git push" in s]
+    main_only = re.compile(r"(?m)^\s+if: github\.ref == 'refs/heads/main'$")
+    if not pushing or any(not main_only.search(s) for s in pushing):
+        return _fail("chaos_program", "chaos.yml must push the ledger row only from main (if: github.ref == "
+                     "'refs/heads/main' on the step that pushes it): a run dispatched on a branch would record "
+                     "that branch's drill as main's")
     if "polaris-chaos-drill.sh --record" not in wf or "docker-compose.bluegreen.yml" not in wf:
         return _fail("chaos_program", "chaos.yml must boot the blue-green stack and run the drill with --record")
     if "docs/operator/CHAOS-DRILLS.md" not in ci.split("jobs:", 1)[0]:
@@ -10613,7 +11296,7 @@ def check_chaos_program(root: pathlib.Path) -> list[Finding]:
                "P2.11: the fail-closed harness runs on every push; weekly and on demand the drill crashes one colour "
                "(zero drops), stops both until PolarisAppDown reaches a webhook through real Prometheus and "
                "Alertmanager, crashes redis and postgres, partitions pgbouncer, measures every recovery against a "
-               "ceiling, and commits the row to the ledger")
+               "ceiling, and on main commits the row to the ledger")
 
 
 def check_ha_automation(root: pathlib.Path) -> list[Finding]:
@@ -10689,8 +11372,10 @@ def check_ha_automation(root: pathlib.Path) -> list[Finding]:
                          "asserted present afterwards")
     if "docker-compose.ha.yml" not in ci or "polaris-failover-drill.sh" not in ci:
         return _fail("ha_automation", "ci.yml must boot the HA profile and run scripts/polaris-failover-drill.sh")
-    if "polaris-etcd:cve" not in ci:
-        return _fail("ha_automation", "the image CVE scan must include the self-built etcd image")
+    # The scan's steps live in a workflow a ci.yml job calls (image-cve-scan.yml since 2026-10-21).
+    if "polaris-etcd:cve" not in "\n".join(text for _rel, text in _ci_and_called_workflows(root)):
+        return _fail("ha_automation", "the image CVE scan (ci.yml, or a workflow a ci.yml job calls) must "
+                     "include the self-built etcd image")
     for needle in ("split-brain", "failsafe_mode", "patronictl switchover", "polaris-failover-drill.sh"):
         if needle not in doc:
             return _fail("ha_automation", f"FAILOVER.md lacks {needle!r}: the split-brain analysis, the failsafe decision, "
@@ -11402,6 +12087,93 @@ _SITE_HEADERS_FIXED = {"x-content-type-options": "nosniff", "x-frame-options": "
 _URL_WITH_ORIGIN = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*:|//)")
 
 
+#: Start tags that end an <svg> or <math> the parser is inside: it closes the drawing and reads them as HTML.
+_FOREIGN_BREAKOUT = frozenset("b big blockquote body br center code dd div dl dt em embed h1 h2 h3 h4 h5 h6 head hr "
+                              "i img li listing menu meta nobr ol p pre ruby s small span strong strike sub sup "
+                              "table tt u ul var".split())
+#: The <svg> and <math> elements whose children the parser reads as HTML again.
+_FOREIGN_HTML_POINTS = frozenset(("foreignobject", "desc", "title", "mi", "mo", "mn", "ms", "mtext", "annotation-xml"))
+#: HTML elements that take no end tag.
+_VOID_TAGS = frozenset("area base br col embed hr img input link meta source track wbr".split())
+
+
+class _TagReader(HTMLParser):
+    """Every start tag of a page with its attributes as a browser reads them (double, single or
+    no quotes, any case, character references decoded, a repeated attribute kept each time), and
+    the text of every <title> the parser makes an HTML title, wherever it sits: the <title> of an
+    inline SVG or MathML drawing names the drawing, not the page, unless it sits where the parser
+    reads HTML again (a <foreignObject>, a <desc> or <title>, MathML text, or after a tag that ends
+    the drawing). Inside a drawing a <title>, <style> or <script> holds markup, not the raw text
+    the same tag holds in HTML. A <title> in a <template> or a <noscript> is kept: a crawler or a
+    reader without scripting may take it."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[tuple[str, list[tuple[str, str]]]] = []
+        self.titles: list[str] = []
+        # the elements open inside a drawing, each with whether its children are read as HTML
+        self._foreign: list[tuple[str, bool]] = []
+        self._title: list[str] | None = None
+        self._raw_text = True  # whether the tag just read may switch the parser to raw text
+        self.feed(text)
+        self.close()
+        if self._title is not None:  # a <title> left open runs to the end of the page
+            self.titles.append("".join(self._title))
+
+    @property
+    def title(self) -> str | None:
+        """The first page <title>, or None."""
+        return self.titles[0] if self.titles else None
+
+    def _html_here(self) -> bool:
+        return not self._foreign or self._foreign[-1][1]
+
+    def _break_out(self) -> None:
+        while not self._html_here():
+            self._foreign.pop()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.append((tag, [(k, v or "") for k, v in attrs]))
+        if not self._html_here() and (tag in _FOREIGN_BREAKOUT or tag == "font" and any(
+                k in ("color", "face", "size") for k, _ in attrs)):
+            self._break_out()
+        html = self._html_here()
+        self._raw_text = html
+        if tag == "title" and html and self._title is None:
+            self._title = []
+        if tag in ("svg", "math") or not html:
+            self._foreign.append((tag, tag in _FOREIGN_HTML_POINTS))
+        elif self._foreign and tag not in _VOID_TAGS:
+            self._foreign.append((tag, True))
+
+    def set_cdata_mode(self, elem: str, **kwargs: bool) -> None:
+        # The parser passes escapable only where its Python has it (3.12.13 has it, 3.9.6 does not).
+        if self._raw_text:  # an SVG or MathML <title>, <style> or <script> holds markup
+            super().set_cdata_mode(elem, **kwargs)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title" and self._title is not None:
+            self.titles.append("".join(self._title))
+            self._title = None
+        if tag in ("br", "p") and not self._html_here():
+            self._break_out()
+        names = [name for name, _ in self._foreign]
+        if tag in names:
+            del self._foreign[len(names) - 1 - names[::-1].index(tag):]
+
+    def handle_data(self, data: str) -> None:
+        if self._title is not None:
+            self._title.append(data)
+
+    def metas(self, key: str) -> list[str]:
+        """The content of every <meta> whose property or name is `key`, compared in any case."""
+        out: list[str] = []
+        for tag, attrs in self.tags:
+            if tag == "meta" and any(k in ("property", "name") and v.lower() == key.lower() for k, v in attrs):
+                out += [v for k, v in attrs if k == "content"]
+        return out
+
+
 def _site_headers_for(text: str, pattern: str = "/*") -> dict[str, str]:
     """The headers a _headers file sets for one path pattern, names lowercased."""
     out: dict[str, str] = {}
@@ -11417,6 +12189,11 @@ def _site_headers_for(text: str, pattern: str = "/*") -> dict[str, str]:
     return out
 
 
+#: The directive a preload's `as` falls under, where its name is not the directive's own (font, style, script).
+_PRELOAD_KINDS = {"image": "img", "audio": "media", "video": "media", "track": "media", "fetch": "connect",
+                  "document": "frame"}
+
+
 def _csp_allows(directives: dict[str, list[str]], kind: str, url: str | None) -> bool:
     """Whether a policy lets a resource of this kind load; url None means inline."""
     fallback = ("child-src", "default-src") if kind == "frame" else ("default-src",)
@@ -11430,6 +12207,40 @@ def _csp_allows(directives: dict[str, list[str]], kind: str, url: str | None) ->
     return "'self'" in sources
 
 
+def _urls_as_parsed(urls: list[str]) -> list[str]:
+    """Each URL as the URL parser reads it, not as written: it drops a tab or newline anywhere,
+    strips controls and spaces at either end, and reads a backslash as a slash in an http(s) URL,
+    so " https://x", "ht&#9;tps://x" and "/\\x" all load from another origin."""
+    return [re.sub(r"[\t\n\r]", "", u).strip("".join(map(chr, range(33)))).replace("\\", "/") for u in urls]
+
+
+def _image_set_strings(css: str) -> list[str]:
+    """The URLs an image-set() or -webkit-image-set() gives as bare strings (CSS Images 4 takes
+    image-set("x.avif" 1x) as well as url()), to its matching parenthesis, quotes respected. A url()
+    inside is read with the other url()s; the string in a type() names a format, not a file."""
+    out: list[str] = []
+    for m in re.finditer(r"(?i)(?<![\w-])(?:-webkit-)?image-set\(", css):
+        depth, i, quote = 1, m.end(), ""
+        while i < len(css) and depth:
+            c = css[i]
+            if quote:
+                if c == "\\":
+                    i += 1
+                elif c == quote:
+                    quote = ""
+            elif c in "\"'":
+                quote = c
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            i += 1
+        body = re.sub(r"""(?is)(?<![\w-])(?:url|type)\(\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^)]*?)\s*\)""", "",
+                      css[m.end():i - 1])
+        out += [a or b for a, b in re.findall(r""""((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'""", body)]
+    return _urls_as_parsed(out)
+
+
 def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Finding]:
     """site/_headers sends the hardening headers, and every page renders under that policy.
 
@@ -11437,8 +12248,10 @@ def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Find
     HSTS, X-Content-Type-Options: nosniff and X-Frame-Options. The policy must start from
     default-src 'none', refuse framing, and allow no inline code and no eval; then each page and
     stylesheet is read for what it would load (inline style or script, event handlers, scripts,
-    stylesheets, images, frames, fonts, CSS url() and @import) and each load must be one the
-    policy allows. A site with no page fails too, so a moved directory cannot pass.
+    stylesheets, images and every srcset candidate, image inputs, video, audio and track sources and
+    posters, SVG images, preloads, frames, fonts, CSS url(), the bare strings of an image-set() and
+    @import), each URL as the URL parser reads it, and each load must be one the policy allows.
+    A site with no page fails too, so a moved directory cannot pass.
     """
     text = _read(root, "site/_headers")
     if not text:
@@ -11473,24 +12286,49 @@ def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Find
     for page in pages:
         html = page.read_text(encoding="utf-8", errors="replace")
         rel = f"site/{page.name}"
-        if re.search(r"(?i)<style\b", html) or re.search(r"(?i)\sstyle\s*=", html):
-            loads.append((rel, "style", None))
-        if re.search(r"(?i)\son[a-z]+\s*=", html):
-            loads.append((rel, "script", None))
-        for tag in re.finditer(r"(?is)<(script|link|img|iframe|embed|object|source)\b([^>]*)>", html):
-            name, attrs = tag.group(1).lower(), tag.group(2)
-            urls = re.findall(r'(?i)\s(?:src|href|data)\s*=\s*"([^"]*)"', attrs)
+        for name, attrs in _TagReader(html).tags:
+            # an inline style or event handler is an attribute as the parser reads it (after a slash
+            # or straight after a quote too), or a <style> element
+            if name == "style" or any(k == "style" for k, _ in attrs):
+                loads.append((rel, "style", None))
+            if any(k.startswith("on") for k, _ in attrs):
+                loads.append((rel, "script", None))
+            if name not in ("script", "link", "img", "iframe", "embed", "object", "source", "video", "audio",
+                            "track", "image", "input"):
+                continue
+            own = _urls_as_parsed([v for k, v in attrs if k in ("src", "href", "data", "xlink:href")])
+            # a srcset, or a preload's imagesrcset, lists candidates ("URL [descriptor]", comma-separated)
+            # and the browser may fetch any one of them, so each candidate is a load
+            sets = _urls_as_parsed([c.split()[0] for k, v in attrs if k in ("srcset", "imagesrcset")
+                                    for c in v.split(",") if c.split()])
+            urls = own + sets
             if name == "link":
-                rel_attr = (re.search(r'(?i)\srel\s*=\s*"([^"]*)"', attrs) or [None, ""])[1].lower()
+                rel_attr = " ".join(v for k, v in attrs if k == "rel").lower()
                 if "stylesheet" in rel_attr:
                     loads += [(rel, "style", u) for u in urls]
                     sheets.update(u for u in urls if not _URL_WITH_ORIGIN.match(u))
                 elif "icon" in rel_attr:
                     loads += [(rel, "img", u) for u in urls]
+                elif "preload" in rel_attr:
+                    # a preload fetches under the directive of what it says it is (as="font": font-src)
+                    as_attr = next((v for k, v in attrs if k == "as"), "").lower()
+                    kind = "script" if "modulepreload" in rel_attr else _PRELOAD_KINDS.get(as_attr, as_attr or "default")
+                    loads += [(rel, kind, u) for u in urls]
             elif name == "script":
                 loads += [(rel, "script", u) for u in urls] or [(rel, "script", None)]
-            elif name in ("img", "source"):
+            elif name == "source":
+                # HTML lets a <source> carry src only in a <video> or <audio>, srcset only in a <picture>
+                loads += [(rel, "media", u) for u in own] + [(rel, "img", u) for u in sets]
+            elif name in ("video", "audio", "track"):
+                posters = _urls_as_parsed([v for k, v in attrs if k == "poster"])
+                loads += [(rel, "media", u) for u in urls] + [(rel, "img", u) for u in posters]
+            elif name in ("img", "image"):
                 loads += [(rel, "img", u) for u in urls]
+            elif name == "input":
+                # an <input type="image"> is a button drawn from its src (the first type attribute
+                # counts, as the parser keeps it); any other input ignores src
+                if next((v for k, v in attrs if k == "type"), "").strip().lower() == "image":
+                    loads += [(rel, "img", u) for u in _urls_as_parsed([v for k, v in attrs if k == "src"])]
             else:
                 loads += [(rel, "frame" if name == "iframe" else "object", u) for u in urls] or [(rel, "object", None)]
     for sheet in sorted(sheets):
@@ -11504,6 +12342,8 @@ def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Find
         for url in re.findall(r"""url\(\s*['"]?([^'")]+)""", fonts):
             loads.append((f"site/{sheet}", "font", url))
         for url in re.findall(r"""url\(\s*['"]?([^'")]+)""", re.sub(r"(?s)@font-face\s*\{.*?\}", "", css)):
+            loads.append((f"site/{sheet}", "img", url))
+        for url in _image_set_strings(re.sub(r"(?s)@font-face\s*\{.*?\}", "", css)):
             loads.append((f"site/{sheet}", "img", url))
     for where, kind, url in loads:
         if not _csp_allows(directives, kind, url):
@@ -12751,7 +13591,7 @@ def check_status_assertion_window_is_caller_policy(root: pathlib.Path) -> list[F
     a limitation note from 2026-09-15 to 2026-09-20 reading "the `max_window_seconds` the
     artifact carries is never read by `verify_status_assertion`". That is a true sentence
     phrased as a defect, and the obvious repair is the vulnerability. A reviewer or a future
-    session tidying the known-limitations list is exactly who would implement it.
+    session tidying the scoreboard is exactly who would implement it.
 
     What genuinely bounds staleness is `expires_at`, which is signed and enforced. The
     caller's bound is a separate policy ceiling against a long-lived assertion, and it belongs
@@ -12798,6 +13638,437 @@ def check_status_assertion_window_is_caller_policy(root: pathlib.Path) -> list[F
                      "signed statement (%s), and verify_status_assertion reads it only from "
                      "its caller; staleness is bounded by the signed expires_at instead"
                % ", ".join(sorted(signed)))
+
+
+# ---------------------------------------------------------------------------
+# The SDKs' `fresh` reads only signed fields (2026-10-21). Two models of the same rule, one per
+# SDK: the Python one read through the AST, the TypeScript one through its comment-free text.
+# Each returns ({format: signed fields}, {format: fields its freshness reads}, problems).
+# ---------------------------------------------------------------------------
+#: Where each SDK computes a window, and for which formats. A window computed anywhere else
+#: cannot be assigned to a format, so the check says it cannot measure rather than guess.
+_SDK_WINDOW_SITES = {
+    "python": {"verify_signed_artifact": "every format", "verify_status_assertion": "polaris-status-assertion/1"},
+    "typescript": {"verifySignedArtifact": "every format", "verifyStatusAssertion": "polaris-status-assertion/1"},
+}
+
+
+def _py_window_rules(fn):
+    """`_signed_window`'s rules as ([(fields it requires signed, (start, end))], fallback), or None
+    when its body is anything but `if "a" in keys and "b" in keys: return "a", "b"` lines and a
+    final return of a pair or None."""
+    if not fn.args.args:
+        return None
+    keys = fn.args.args[0].arg
+    body = list(fn.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+
+    def pair(v):
+        if (isinstance(v, ast.Tuple) and len(v.elts) == 2
+                and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts)):
+            return v.elts[0].value, v.elts[1].value
+        return None
+
+    rules = []
+    for i, st in enumerate(body):
+        last = i == len(body) - 1
+        if isinstance(st, ast.Return) and last:
+            if st.value is None or (isinstance(st.value, ast.Constant) and st.value.value is None):
+                return rules, None
+            p = pair(st.value)
+            return (rules, p) if p else None
+        if not (isinstance(st, ast.If) and not st.orelse and len(st.body) == 1
+                and isinstance(st.body[0], ast.Return) and pair(st.body[0].value)):
+            return None
+        terms = st.test.values if isinstance(st.test, ast.BoolOp) and isinstance(st.test.op, ast.And) else [st.test]
+        need = set()
+        for t in terms:
+            if not (isinstance(t, ast.Compare) and len(t.ops) == 1 and isinstance(t.ops[0], ast.In)
+                    and isinstance(t.left, ast.Constant) and isinstance(t.left.value, str)
+                    and isinstance(t.comparators[0], ast.Name) and t.comparators[0].id == keys):
+                return None
+            need.add(t.left.value)
+        rules.append((need, pair(st.body[0].value)))
+    return None
+
+
+def _py_reads(fn):
+    """(literal fields, parameter names) a function reads off its first parameter with `.get`, or
+    None when it reads one some other way."""
+    obj = fn.args.args[0].arg if fn.args.args else None
+    params = {a.arg for a in fn.args.args[1:]}
+    lit, par = set(), set()
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == obj:
+            return None
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "get"
+                and isinstance(n.func.value, ast.Name) and n.func.value.id == obj):
+            continue
+        a = n.args[0] if len(n.args) == 1 else None
+        if isinstance(a, ast.Constant) and isinstance(a.value, str):
+            lit.add(a.value)
+        elif isinstance(a, ast.Name) and a.id in params:
+            par.add(a.id)
+        else:
+            return None
+    return lit, par
+
+
+def _sdk_fresh_model_py(src: str):
+    problems: list[str] = []
+    where = "the Python SDK"
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:
+        return {}, {}, ["%s does not parse (%s)" % (where, exc.msg)]
+    consts, fns = {}, {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            consts[node.targets[0].id] = node.value
+        elif isinstance(node, ast.FunctionDef):
+            fns[node.name] = node
+
+    def literal(name):
+        try:
+            return ast.literal_eval(consts[name])
+        except (KeyError, ValueError, TypeError, SyntaxError):
+            problems.append("%s has no literal %s" % (where, name))
+            return None
+
+    keys = literal("_ARTIFACT_KEYS")
+    status = literal("_STATUS_ASSERTION_KEYS")
+    replay = literal("_REPLAY_WINDOW_SECONDS")
+    if not (isinstance(keys, dict) and len(keys) >= 10
+            and all(isinstance(v, list) and all(isinstance(f, str) for f in v) for v in keys.values())):
+        return {}, {}, problems + ["%s's per-format signed key list (_ARTIFACT_KEYS) did not parse to "
+                                   "ten or more formats" % where]
+    table = {f: list(v) for f, v in keys.items()}
+    if isinstance(status, list):
+        table["polaris-status-assertion/1"] = status
+    reads: dict = {f: set() for f in table}
+    win, rep, sel = fns.get("_within_window"), fns.get("_within_replay_window"), fns.get("_signed_window")
+    for label, fn in (("_within_window", win), ("_within_replay_window", rep)):
+        if fn is None:
+            problems.append("%s defines no %s" % (where, label))
+    if problems:
+        return table, reads, problems
+    win_reads, rep_reads = _py_reads(win), _py_reads(rep)
+    # Read only where a window call asks it which fields to read.
+    rules = _py_window_rules(sel) if sel is not None else None
+    if win_reads is None or not (win_reads[0] or win_reads[1]):
+        problems.append("%s's _within_window reads no field this check can name" % where)
+    if rep_reads is None or not rep_reads[0] or rep_reads[1]:
+        problems.append("%s's _within_replay_window reads no literal field this check can name" % where)
+    if not isinstance(replay, dict) or not replay:
+        problems.append("%s's replay table (_REPLAY_WINDOW_SECONDS) names no format" % where)
+    if problems:
+        return table, reads, problems
+    for fmt in replay:
+        if fmt not in keys:
+            problems.append("%s's replay table names %s, which has no signed key list" % (where, fmt))
+        else:
+            reads[fmt] |= rep_reads[0]
+    params = [a.arg for a in win.args.args]
+    defaults = {a.arg: d.value for a, d in zip(win.args.args[len(params) - len(win.args.defaults):],
+                                               win.args.defaults) if isinstance(d, ast.Constant)}
+
+    def bound(fn, var):
+        """The one value `var` is assigned in fn, or None when it is assigned none or several."""
+        vals = [n.value for n in ast.walk(fn) if isinstance(n, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == var for t in n.targets)]
+        return vals[0] if len(vals) == 1 else None
+
+    sites = 0
+    for fname, fn in fns.items():
+        for call in ast.walk(fn):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_within_window"):
+                continue
+            sites += 1
+            target = _SDK_WINDOW_SITES["python"].get(fname)
+            if target is None or (target != "every format" and target not in table):
+                problems.append("%s computes a window in %s, which this check cannot assign to a format" % (where, fname))
+                continue
+            tail = call.args[2:]
+            if call.keywords or len(call.args) < 2:
+                tail = None
+            elif not tail:
+                span = {p: defaults.get(p) for p in params[2:4]}
+            elif len(tail) == 1 and isinstance(tail[0], ast.Starred) and isinstance(tail[0].value, ast.Name):
+                chooser = bound(fn, tail[0].value.id)
+                over = (chooser.args[0].id if isinstance(chooser, ast.Call) and isinstance(chooser.func, ast.Name)
+                        and chooser.func.id == "_signed_window" and len(chooser.args) == 1
+                        and isinstance(chooser.args[0], ast.Name) else None)
+                listed = bound(fn, over) if over else None
+                if listed is None or "_ARTIFACT_KEYS" not in ast.unparse(listed) or rules is None:
+                    problems.append("%s's window in %s is not picked by _signed_window rules this check can read, "
+                                    "over the format's own signed key list" % (where, fname))
+                    continue
+                span = None
+            elif len(tail) == 2 and all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in tail):
+                span = dict(zip(params[2:4], (a.value for a in tail)))
+            else:
+                tail = None
+            if tail is None:
+                problems.append("%s's window call in %s names its fields in a way this check cannot read" % (where, fname))
+                continue
+            for fmt in (list(keys) if target == "every format" else [target]):
+                if span is None:
+                    chosen = next((p for need, p in rules[0] if need <= set(table[fmt])), rules[1])
+                    if chosen is None:
+                        continue
+                    pick = dict(zip(params[2:4], chosen))
+                else:
+                    pick = span
+                fields = win_reads[0] | {pick.get(p) for p in win_reads[1]}
+                if None in fields:
+                    problems.append("%s's window call in %s leaves a field it reads unnamed" % (where, fname))
+                    break
+                reads[fmt] |= fields
+    if not sites:
+        problems.append("%s computes no window with _within_window" % where)
+    elsewhere = sum(1 for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id == "_within_window") - sites
+    if elsewhere:
+        problems.append("%s computes %d window(s) outside a top-level function" % (where, elsewhere))
+    idt = fns.get("verify_id_token")
+    instants = set()
+    if idt is not None and idt.args.args:
+        tok = idt.args.args[0].arg
+        for n in ast.walk(idt):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_iso_to_epoch" and n.args
+                    and isinstance(n.args[0], ast.Call) and isinstance(n.args[0].func, ast.Attribute)
+                    and n.args[0].func.attr == "get" and isinstance(n.args[0].func.value, ast.Name)
+                    and n.args[0].func.value.id == tok and n.args[0].args
+                    and isinstance(n.args[0].args[0], ast.Constant)):
+                instants.add(n.args[0].args[0].value)
+    if len(instants) < 2 or "polaris-id-token/1" not in table:
+        problems.append("%s's verify_id_token reads no window off the token this check can name" % where)
+    else:
+        reads["polaris-id-token/1"] |= instants
+    return table, reads, problems
+
+
+def _ts_function(src: str, name: str):
+    """(parameter text, body text) of a top-level TypeScript `function NAME(...) ... { ... }`, or None."""
+    m = re.search(r"^(?:export\s+)?function\s+%s\s*\(" % re.escape(name), src, re.M)
+    if not m:
+        return None
+    i, depth = m.end(), 1
+    while i < len(src) and depth:
+        depth += {"(": 1, ")": -1}.get(src[i], 0)
+        i += 1
+    j = src.find("{", i)
+    if depth or j < 0:
+        return None
+    k, depth = j + 1, 1
+    while k < len(src) and depth:
+        depth += {"{": 1, "}": -1}.get(src[k], 0)
+        k += 1
+    return (src[m.end():i - 1], src[j + 1:k - 1]) if depth == 0 else None
+
+
+def _ts_reads(fn):
+    """(literal fields, parameter names) a TypeScript function reads off its first parameter, or None
+    when it reads one some other way."""
+    params, body = fn
+    names = re.findall(r"(?:^|,)\s*(\w+)", params)
+    if not names:
+        return None
+    obj, rest = names[0], set(names[1:])
+    lit, par = set(), set()
+    for m in re.finditer(r"\b%s\s*(\?\.\s*\[|\[|\?\.|\.)" % re.escape(obj), body):
+        tail = body[m.end():]
+        if m.group(1) in ("?.", "."):
+            prop = re.match(r"\s*(\w+)", tail)
+            if not prop:
+                return None
+            lit.add(prop.group(1))
+            continue
+        sub = re.match(r"\s*(?:\"([^\"]+)\"|(\w+))\s*\]", tail)
+        if sub and sub.group(1):
+            lit.add(sub.group(1))
+        elif sub and sub.group(2) in rest:
+            par.add(sub.group(2))
+        else:
+            return None
+    return lit, par
+
+
+def _ts_window_rules(fn):
+    """signedWindow's rules, as _py_window_rules reads `_signed_window`'s, or None."""
+    params, body = fn
+    kp = re.match(r"\s*(\w+)", params)
+    if not kp:
+        return None
+    lines = [ln.strip() for ln in body.split("\n") if ln.strip()]
+    rules = []
+    for i, ln in enumerate(lines):
+        last = i == len(lines) - 1
+        if last and re.fullmatch(r"return\s+null\s*;", ln):
+            return rules, None
+        ret = re.fullmatch(r'return\s*\[\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\]\s*;', ln)
+        if last and ret:
+            return rules, (ret.group(1), ret.group(2))
+        m = re.fullmatch(r'if\s*\((.+)\)\s*return\s*\[\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\]\s*;', ln)
+        if not m or last:
+            return None
+        need = set()
+        for term in re.split(r"\s*&&\s*", m.group(1).strip()):
+            t = re.fullmatch(r'%s\.includes\(\s*"([^"]+)"\s*\)' % re.escape(kp.group(1)), term)
+            if not t:
+                return None
+            need.add(t.group(1))
+        rules.append((need, (m.group(2), m.group(3))))
+    return None
+
+
+def _sdk_fresh_model_ts(src: str):
+    problems: list[str] = []
+    where = "the TypeScript SDK"
+    m = re.search(r"\bconst\s+ARTIFACT_KEYS\b[^=]*=\s*\{(.*?)\n\};", src, re.S)
+    keys = {f: re.findall(r'"([^"]*)"', body)
+            for f, body in re.findall(r'"([^"]+)"\s*:\s*\[([^\]]*)\]', m.group(1))} if m else {}
+    if len(keys) < 10:
+        return {}, {}, ["%s's per-format signed key list (ARTIFACT_KEYS) did not parse to ten or more "
+                        "formats" % where]
+    table = dict(keys)
+    s = re.search(r"\bconst\s+STATUS_ASSERTION_KEYS\b[^=]*=\s*\[([^\]]*)\]", src)
+    if s:
+        table["polaris-status-assertion/1"] = re.findall(r'"([^"]*)"', s.group(1))
+    else:
+        problems.append("%s has no STATUS_ASSERTION_KEYS" % where)
+    r = re.search(r"\bconst\s+REPLAY_WINDOW_SECONDS\b[^=]*=\s*\{([^}]*)\}", src)
+    replay = re.findall(r'"([^"]+)"\s*:\s*\d', r.group(1)) if r else []
+    if not replay:
+        problems.append("%s's replay table (REPLAY_WINDOW_SECONDS) names no format" % where)
+    reads: dict = {f: set() for f in table}
+    win, rep, sel = (_ts_function(src, n) for n in ("withinWindow", "withinReplayWindow", "signedWindow"))
+    for label, fn in (("withinWindow", win), ("withinReplayWindow", rep)):
+        if fn is None:
+            problems.append("%s defines no %s" % (where, label))
+    if problems:
+        return table, reads, problems
+    win_reads, rep_reads = _ts_reads(win), _ts_reads(rep)
+    # Read only where a window call asks it which fields to read.
+    rules = _ts_window_rules(sel) if sel is not None else None
+    if win_reads is None or not (win_reads[0] or win_reads[1]):
+        problems.append("%s's withinWindow reads no field this check can name" % where)
+    if rep_reads is None or not rep_reads[0] or rep_reads[1]:
+        problems.append("%s's withinReplayWindow reads no literal field this check can name" % where)
+    if problems:
+        return table, reads, problems
+    for fmt in replay:
+        if fmt not in keys:
+            problems.append("%s's replay table names %s, which has no signed key list" % (where, fmt))
+        else:
+            reads[fmt] |= rep_reads[0]
+    names = [re.match(r"\s*(\w+)", p).group(1) for p in win[0].split(",") if re.match(r"\s*(\w+)", p)]
+    defaults = dict(re.findall(r'(\w+)\s*=\s*"([^"]+)"', win[0]))
+    calls = [c for c in re.finditer(r"\bwithinWindow\s*\(", src)
+             if not re.search(r"function\s+$", src[max(0, c.start() - 40):c.start()])]
+    placed = 0
+    for fname, target in _SDK_WINDOW_SITES["typescript"].items():
+        fn = _ts_function(src, fname)
+        if fn is None:
+            continue
+        for call in re.finditer(r"\bwithinWindow\s*\(", fn[1]):
+            placed += 1
+            i, depth = call.end(), 1
+            while i < len(fn[1]) and depth:
+                depth += {"(": 1, ")": -1}.get(fn[1][i], 0)
+                i += 1
+            args = [a.strip() for a in fn[1][call.end():i - 1].split(",")]
+            if len(args) == 3 and args[2].startswith("..."):
+                var = args[2][3:]
+                bind = re.search(r"\bconst\s+%s\s*=\s*signedWindow\(\s*(\w+)\s*\)" % re.escape(var), fn[1])
+                src_keys = bind and re.search(r"\bconst\s+%s\s*=[^;]*\bARTIFACT_KEYS\b" % re.escape(bind.group(1)), fn[1])
+                if not src_keys or rules is None:
+                    problems.append("%s's window in %s is not picked by signedWindow rules this check can read, "
+                                    "over the format's own signed key list" % (where, fname))
+                    continue
+                span = None
+            elif len(args) == 2:
+                span = {p: defaults.get(p) for p in names[2:4]}
+            elif len(args) == 4 and all(re.fullmatch(r'"[^"]+"', a) for a in args[2:]):
+                span = dict(zip(names[2:4], (a.strip('"') for a in args[2:])))
+            else:
+                problems.append("%s's window call in %s names its fields in a way this check cannot read" % (where, fname))
+                continue
+            if target != "every format" and target not in table:
+                problems.append("%s computes a window in %s, which this check cannot assign to a format" % (where, fname))
+                continue
+            for fmt in (list(keys) if target == "every format" else [target]):
+                if span is None:
+                    chosen = next((p for need, p in rules[0] if need <= set(table[fmt])), rules[1])
+                    if chosen is None:
+                        continue
+                    pick = dict(zip(names[2:4], chosen))
+                else:
+                    pick = span
+                fields = win_reads[0] | {pick.get(p) for p in win_reads[1]}
+                if None in fields:
+                    problems.append("%s's window call in %s leaves a field it reads unnamed" % (where, fname))
+                    break
+                reads[fmt] |= fields
+    if placed != len(calls):
+        problems.append("%s computes %d window(s) outside the functions this check assigns to a format"
+                        % (where, len(calls) - placed))
+    if not calls:
+        problems.append("%s computes no window with withinWindow" % where)
+    idt = _ts_function(src, "verifyIdToken")
+    instants = set(re.findall(r"\bisoToEpoch\(\s*\w+\??\.(\w+)\s*\)", idt[1])) if idt else set()
+    if len(instants) < 2 or "polaris-id-token/1" not in table:
+        problems.append("%s's verifyIdToken reads no window off the token this check can name" % where)
+    else:
+        reads["polaris-id-token/1"] |= instants
+    return table, reads, problems
+
+
+def check_sdk_fresh_reads_only_signed_fields(root: pathlib.Path) -> list[Finding]:
+    """Each SDK's `fresh` reads, for every format, only fields that format signs (2026-10-21).
+
+    A field outside a signed statement is anyone's to add or change: the canonical statement
+    covers exactly the listed keys (WIRE-SPEC 2.1), and an unsigned top-level field is one a
+    verifier ignores for its decision (section 6). The ID token signs its window as `iat` and
+    `exp`, and several formats sign neither `issued_at` nor `expires_at`, or only one of them.
+
+    So, per SDK, this reads the per-format signed key list, the fields the window function and
+    the replay window read, which window `_signed_window` / `signedWindow` picks for each
+    format from that format's own list, every place a window is computed and for which
+    formats, and the instants `verify_id_token` / `verifyIdToken` read off the token. Every
+    field those window reads take, where they are called, must be in that format's signed
+    list; a read written inline elsewhere is outside it (the SDKs' own tests pin `fresh`).
+    Anything it cannot read is a failure to measure, never a pass.
+    """
+    name = "sdk_signed_window"
+    py = _read(root, "sdk/python/polaris_verify/__init__.py")
+    ts = _js_code(_read_raw(root, "sdk/typescript/src/index.ts"))
+    problems = []
+    if not re.search(r"^def _within_window\(", py, re.M):
+        problems.append("the Python SDK defines no _within_window")
+    if not re.search(r"^function withinWindow\(", ts, re.M):
+        problems.append("the TypeScript SDK defines no withinWindow")
+    models = {"python": _sdk_fresh_model_py(py), "typescript": _sdk_fresh_model_ts(ts)}
+    for _table, _reads, found in models.values():
+        problems += found
+    if problems:
+        return _fail(name, "cannot measure what the SDKs' freshness reads, so this would pass by "
+                           "finding nothing: " + "; ".join(problems))
+    unsigned = []
+    for sdk, (table, reads, _found) in models.items():
+        for fmt in sorted(reads):
+            extra = sorted(str(f) for f in reads[fmt] - set(table.get(fmt, ())))
+            if extra:
+                unsigned.append("%s %s reads %s" % (sdk, fmt, ", ".join(extra)))
+    if unsigned:
+        return _fail(name, "an SDK's fresh reads a field the format does not sign, which anyone holding "
+                           "the artifact can add or change: " + "; ".join(unsigned))
+    py_reads, ts_reads = models["python"][1], models["typescript"][1]
+    return _ok(name, "every field each SDK's window reads take is signed by its format: %d formats in "
+                     "Python and %d in TypeScript, %d of them answering from no window"
+               % (len(py_reads), len(ts_reads),
+                  sum(1 for r in py_reads.values() if not r)))
 
 
 def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Finding]:
@@ -14044,8 +15315,10 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
     an umbrella (which reads as general anonymous credentials), and the README
     must state the boundary explicitly: unlinkable verification records + a
     Merkle-membership proof, and NOT a general selective-disclosure / anonymous-
-    credential system. Detection: test_checks restores the umbrella tagline and
-    removes the boundary sentence."""
+    credential system. Since 2026-10-24 the boundary may be the positive definition instead,
+    "zero knowledge here means two specific things", naming both (no token identifier stored, a
+    membership proof) in that sentence, which bounds the word as tightly. Detection:
+    test_checks restores the umbrella tagline and removes the boundary sentence in both forms."""
     readme = _read(root, "README.md")
     if not readme:
         return _fail("zk_claim", "README.md is missing")
@@ -14058,10 +15331,13 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
                      "the README tagline headlines 'post-quantum, zero-knowledge ...' as an umbrella; there "
                      "'zero-knowledge' reads as general anonymous credentials. Name the precise property "
                      "(unlinkable-by-default) in the tagline and keep the zero-knowledge detail in the body")
-    if not re.search(r"not a general (selective.disclosure|anonymous.credential)", plain, re.I):
+    if not re.search(r"not a general (selective.disclosure|anonymous.credential)"
+                     r"|zero.knowledge (here )?means two specific things[^.]*token identifier[^.]*membership",
+                     plain, re.I):
         return _fail("zk_claim",
-                     "the README must state the boundary: Polaris is NOT a general selective-disclosure / "
-                     "anonymous-credential system (only unlinkable verification records + a Merkle-membership proof)")
+                     "the README must state the boundary: zero knowledge here means two specific things "
+                     "(verification records with no token identifier + a Merkle-membership proof), not a "
+                     "general selective-disclosure / anonymous-credential system")
     return _ok("zk_claim",
                "the public zero-knowledge claim is precise: no umbrella in the tagline, and the README states "
                "the boundary (unlinkable verification records + a Merkle-membership proof, not anonymous credentials)")
@@ -14254,12 +15530,9 @@ _APPARATUS_HISTORY = ("CHANGELOG.md", "docs/history/", "DEVNOTES/", "polaris_sql
 
 
 #: Phrasing that claims the system RESISTS compulsion, rather than that it notices duress.
-#: Measured in lab/duress/: the mechanism resists a casual coercer at the counter, does not
-#: resist an informed coercer standing beside the holder (the code is typed on the
-#: verifier's terminal, and enrolment is opt-in so its absence is interrogable), and does
-#: not resist lawful or institutional access at all -- against which it is net-negative,
-#: because DuressEvent is append-only with no purge path, so the mechanism manufactures
-#: indelible evidence that the holder resisted.
+#: The word the evidence in lab/duress/ supports is "duress-aware": the mechanism notices,
+#: records and routes a duress signal, and it is built for a casual coercer who does not know
+#: it exists.
 #: 2026-09-20: this banned "resists compulsion" and "resistant to compulsion" and neither
 #: coercion form, so the identical claim written with the other noun passed. The sibling list
 #: _PQ_SECURITY_ASSERTIONS already carries its "-proof" spellings and this one carried none.
@@ -14361,17 +15634,12 @@ def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
     """No outward surface claims compulsion RESISTANCE (2026-09-13).
 
     The operating contract: "If evidence does not support 'compulsion-resistant', product
-    vocabulary MUST be weakened, e.g.: 'duress-aware'." `lab/duress/README.md` assessed the
-    three coercers the contract names and the evidence does not support it.
+    vocabulary MUST be weakened, e.g.: 'duress-aware'." `lab/duress/README.md` records the
+    result and its findings.
 
-    The word is not banned because the mechanism is fake. It works, against the coercer it
-    was designed for. It is banned because it names the adversary the mechanism is WEAKEST
-    against: an institution that can later compel disclosure reads every `DuressEvent`, and
-    C1's append-only guarantee is what makes that record impossible to remove. A holder who
-    signals duress under a regime that later subpoenas the issuer has produced permanent
-    evidence that they resisted.
-
-    "duress-aware" is accurate: the system notices, records and routes a duress signal.
+    "duress-aware" is accurate: the system notices, records and routes a duress signal. The
+    mechanism is built for a casual coercer who does not know it exists, and the record it
+    appends is append-only (C1), which the outward surfaces say too.
 
     The CHANGELOG and the paper are exempt. Both are dated records of what was claimed at a
     version, and editing them to match a later assessment would be rewriting the past
@@ -14385,12 +15653,11 @@ def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
                            "weaker claim and nothing to point a surface at"
                            % _DURESS_LIMITATION_REL)
     for needle, why in (
-        ("casual coercer", "the assessment does not name the coercer the mechanism DOES "
-                           "resist, so it reads as a rejection rather than a bound"),
-        ("append-only", "the assessment does not say why lawful access is the case the "
-                        "mechanism makes worse rather than merely fails to help"),
-        ("duress-aware", "the assessment does not name the word that replaced the one it "
-                         "rejected"),
+        ("casual coercer", "the assessment does not name the coercer the mechanism is "
+                           "built for"),
+        ("append-only", "the assessment does not say that the duress record is append-only, "
+                        "which the outward surfaces state"),
+        ("duress-aware", "the assessment does not name the word the outward surfaces use"),
     ):
         if needle not in ledger:
             return _fail(name, why)
@@ -14409,21 +15676,19 @@ def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
         low = text.lower()
         for phrase in _COMPULSION_ASSERTIONS:
             if phrase in low:
-                findings.extend(_fail(name, "%s says %r. The duress path resists a casual "
-                                            "coercer at the counter; it does not resist an "
-                                            "informed coercer beside the holder, and against "
-                                            "lawful access it is net-negative because the "
-                                            "DuressEvent it appends can never be removed. "
-                                            "Say duress-aware (see %s)"
+                findings.extend(_fail(name, "%s says %r. Say duress-aware: the mechanism "
+                                            "notices, records and routes a duress signal, "
+                                            "built for a coercer who does not know it "
+                                            "exists (see %s)"
                                             % (rel, phrase, _DURESS_LIMITATION_REL)))
     if not checked:
         return _fail(name, "no outward surface could be read, so this measured nothing")
     if findings:
         return findings
     return _ok(name, "none of the %d outward surfaces claims compulsion RESISTANCE; the "
-                     "assessment in %s names the coercer the mechanism resists, the two it "
-                     "does not, and why an indelible DuressEvent makes institutional access "
-                     "the case it worsens" % (checked, _DURESS_LIMITATION_REL))
+                     "assessment in %s names the coercer the mechanism is built for, that "
+                     "its record is append-only, and the word duress-aware"
+                     % (checked, _DURESS_LIMITATION_REL))
 
 
 def check_no_citations_to_deleted_apparatus(root: pathlib.Path) -> list[Finding]:
@@ -14922,37 +16187,75 @@ def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
                      "path writes a placeholder" % len(_OUTWARD_SURFACES))
 
 
+#: The names a browser tab or a shared card may give Polaris without a qualifier (owner, 2026-10-23).
+_BARE_NAMES = ("Polaris", "Polaris ID")
+#: What the title and the social card never call Polaris (beside 'national' and a bare 'unlinkable').
+_CARD_OVERCLAIMS = ((r"\bdeployed\b", "deployed"), (r"\bpiloted\b", "piloted"),
+                    (r"\bproduction[- ]ready\b", "production-ready"))
+
+
 def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
-    """The site title and social card must name Polaris pre-pilot
-    (not present it AS a national identity system in a browser tab or a shared
-    link); the README must not carry the retired overclaims; and the 'Where
-    Polaris sits' comparison must keep the honest 'Deployed to a real population'
-    column that marks Polaris the one system NOT deployed, so its design ticks are
-    not read as a deployment. Detection: test_checks restores a bare title and an
-    overclaim phrase."""
+    """The site title and social card must not overstate Polaris in a browser
+    tab or a shared link: each name field (every page <title>, og:title, and any og:site_name
+    or twitter:title) is the bare name (owner, 2026-10-23) or says "pre-pilot", and
+    never "certified"; no field of the card, descriptions and image text included,
+    calls Polaris national, deployed, piloted or production-ready, or unlinkable
+    without its issuer qualifier (each occurrence), in any tag of that field, however it is quoted or
+    cased; the README must not carry the retired overclaims; a README comparison with a
+    row whose first cell begins with Polaris must keep the honest 'Deployed to a real population' column
+    that marks Polaris the one system NOT deployed, so its design ticks are not read
+    as a deployment; and a README that speaks of unlinkability or correlation must give
+    both sides of it. Since 2026-10-24 the README carries no comparison, and the two rules
+    hold whatever comes back. Detection: test_checks restores each refused
+    word in each kind of field, in a second tag, in single quotes, unquoted and in upper
+    case, a longer name without "pre-pilot", a missing or empty name field, a bare
+    'unlinkable' beside a qualified one, an overclaiming <title> beside an innocent one
+    in a drawing, a template or a noscript, or after it, and an overclaim phrase."""
     readme = _read(root, "README.md")
     site = _read(root, "site/index.html")
     if not readme or not site:
         return _fail("public_claims", "README.md or site/index.html is missing")
-    title = re.search(r"<title>([^<]*)</title>", site)
-    ogt = re.search(r'og:title"\s+content="([^"]*)"', site)
-    for label, m in (("<title>", title), ("og:title", ogt)):
-        if not m or "pre-pilot" not in m.group(1).lower():
+    # What a browser tab and a shared link say Polaris is. A name field is the bare name, which
+    # claims nothing, or else says "pre-pilot"; it never says "certified", which only a scoped
+    # sentence can say (one package, one version, one profile: docs/reference/claims.json,
+    # openid-certified-scoped). Every tag of a field is read, as a crawler may take any of them, and
+    # every <title> the parser makes is a name field, as a reader with scripting and one without
+    # may take different ones.
+    page = _TagReader(site)
+    names = [("<title>", v) for v in page.titles or [None]] + [("og:title", v) for v in page.metas("og:title") or [None]]
+    names += [(k, v) for k in ("og:site_name", "twitter:title") for v in page.metas(k)]
+    texts = [(k, v) for k in ("description", "og:description", "og:image:alt", "twitter:description",
+                              "twitter:image:alt") for v in page.metas(k)]
+    for label, value in names:
+        if value is None or not value.strip():
+            return _fail("public_claims", f"the site {label} is missing or empty")
+        if value.strip() not in _BARE_NAMES and "pre-pilot" not in value.lower():
             return _fail("public_claims",
-                         f"the site {label} must name Polaris pre-pilot, not present it AS a "
-                         "national identity system in a browser tab or a shared social card")
+                         f"the site {label} ({value.strip()!r}) is neither the bare name nor qualified as "
+                         "pre-pilot; a name field that says more than the name must say what Polaris is not yet")
+        if re.search(r"\bcertified\b", value, re.I):
+            return _fail("public_claims",
+                         f"the site {label} says 'certified'; only polaris-oid4vp 1.0.0rc7 is, to one profile, "
+                         "and a name field has no room for that scope")
+    for label, value in names + texts:
+        low = value.lower()
         # The category must match the honest GitHub one (a pre-pilot identity-token
         # system): the shareable surface must not call Polaris a "national"
         # system, which reads as a deployment. Understate, do not overstate.
-        if "national" in m.group(1).lower():
+        if re.search(r"\bnational\b", low):
             return _fail("public_claims",
                          f"the site {label} calls Polaris a 'national' system; that category overstates pre-pilot "
                          "software on notional data. Drop 'national' from the title and social card.")
+        for pattern, word in _CARD_OVERCLAIMS:
+            if re.search(pattern, low):
+                return _fail("public_claims",
+                             f"the site {label} says {word!r}; Polaris has not been deployed or piloted and is not "
+                             "production-ready, so the title and social card never say so")
         # Unlinkability is issuer-side and ZK-mode-scoped. A bare "unlinkable-by-default"
         # on the shareable surface reads as covering the holder-to-verifier hop, which it
-        # does not; the qualifier must be beside the claim, so say "issuer-unlinkable".
-        low = m.group(1).lower()
-        if "unlinkable" in low and "issuer-unlinkable" not in low:
+        # does not; the qualifier must be beside the claim, so say "issuer-unlinkable". Each
+        # occurrence is held: a qualified one does not excuse a bare one in the same field.
+        if re.search(r"(?<!issuer-)unlinkable", low):
             return _fail("public_claims",
                          f"the site {label} says 'unlinkable' without the issuer qualifier; unlinkability is "
                          "issuer-side and ZK-mode-scoped, so the shareable surface must say 'issuer-unlinkable' "
@@ -14962,41 +16265,48 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
             return _fail("public_claims",
                          f"the README carries the overclaim {bad!r}; shrink the claim to what the code does now "
                          "(the hardware token is modeled; Polaris is pre-pilot)")
-    if "Deployed to a real population" not in readme:
+    # A comparison is honest only with the column that marks Polaris the one system not
+    # deployed. The README carries none since 2026-10-24; one that comes back, in a table with a
+    # row whose first cell begins with Polaris, brings the column with it.
+    compared = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|", readme, re.M)
+    if compared and "Deployed to a real population" not in readme:
         return _fail("public_claims",
-                     "the 'Where Polaris sits' comparison must keep the 'Deployed to a real population' column so "
-                     "Polaris's design ticks are not read as a deployment")
+                     "the README compares Polaris with other systems without the 'Deployed to a real population' "
+                     "column, so Polaris's design ticks read as a deployment; keep the column or drop the comparison")
     # Unlinkability is issuer-side and ZK-mode-scoped. Since P9.4 the holder-to-verifier hop
-    # has a two-sided answer, and the README must give BOTH sides. Saying only that stored
-    # handles are now per-verifier would overclaim, because a full-credential presentation
-    # still SHOWS a stable token_value. Saying only the old flat sentence would understate
-    # work that shipped. Either half alone misleads, so both are required.
-    if "Relying-party correlation" not in readme:
+    # has a two-sided answer, and a README that speaks of it must give BOTH sides. Saying only
+    # that stored handles are now per-verifier would overclaim, because a full-credential
+    # presentation still SHOWS a stable token_value. Either half alone misleads, so both are
+    # required; a README that claims nothing about it needs neither (2026-10-24).
+    speaks = re.search(r"unlinkab|correlat|per-verifier|per-relying-party|cannot link|can't link|unable to link",
+                       readme, re.I)
+    if speaks and "Relying-party correlation" not in readme:
         return _fail("public_claims",
-                     "the README must state relying-party correlation positively, under a heading a reader "
-                     "can find")
-    para = readme[readme.index("Relying-party correlation"):][:2000]
-    if "store" not in para or "shown" not in para:
+                     "the README speaks of unlinkability or correlation, so it must state relying-party "
+                     "correlation positively, under a heading a reader can find")
+    para = readme[readme.index("Relying-party correlation"):][:2000] if speaks else ""
+    if speaks and ("store" not in para or "shown" not in para):
         return _fail("public_claims",
                      "the README must distinguish what a verifier STORES (a per-verifier handle since P9.4) "
                      "from what it is SHOWN (a full credential still carries a stable token_value); the "
                      "guarantee is about the first, and stating it without the second overclaims")
-    if "token_value" not in para:
+    if speaks and "token_value" not in para:
         return _fail("public_claims",
                      "the README must still name the stable token_value a full-credential presentation "
                      "shows a verifier; dropping it turns a bounded claim into an unlinkability claim")
     # The comparison must not award Polaris a deployment property it does not have:
     # its first two columns (deployed to a real population, national-scope issuance)
     # must both be a clear negative, so a skimmer is not told Polaris issues nationally.
-    prow = re.search(r"\|\s*\*\*Polaris\*\*\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme)
+    prow = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme, re.M)
     if prow and ("✓" in prow.group(1) or "✓" in prow.group(2)):
         return _fail("public_claims",
                      "the comparison awards Polaris a deployment/national-scope tick; Polaris is not deployed and "
                      "does not issue at national scale, so both leading columns must be a negative (the paragraph "
                      "and the table must not argue)")
     return _ok("public_claims",
-               "the outward surfaces name Polaris pre-pilot and drop the 'national' category "
-               "(title + social card), carry no retired overclaim, and the comparison marks Polaris neither deployed "
+               "the title and social card do not overstate Polaris (each name field the bare name or 'pre-pilot', "
+               "none 'certified'; no field national, deployed, piloted, production-ready or bare 'unlinkable'), "
+               "the README carries no retired overclaim, and any comparison marks Polaris neither deployed "
                "nor issuing at national scale so its design ticks are not read as a deployment")
 
 
@@ -16800,33 +18110,81 @@ def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
                "status per the trust list; drilled under a stolen key, across two instances, and stated on every surface")
 
 
+# What no check written in this repository can back, stated as a claim: an outside review or
+# audit, a penetration test, validated cryptography, an assessed 800-63 level, accessibility
+# conformance. Since 2026-10-24 (owner: no limitation lists in public text) the checks that read
+# the public pages refuse such a claim.
+_OVERCLAIMS = {
+    "outside review": r"\b(?:independent(?:ly)?|external(?:ly)?|third[- ]party|outside)\s+(?:security\s+)?"
+                      r"(?:reviewed|audited|assessed|pen(?:etration)?[- ]tested)\b"
+                      r"|\b(?:reviewed|audited|assessed) by (?:an? )?(?:independent|external|third[- ]party|outside)\b"
+                      r"|\baudited by\b|\bpen(?:etration)?[- ]tested\b"
+                      r"|\bpassed (?:an? )?(?:independent |external |third[- ]party )?(?:security )?"
+                      r"(?:audit|review|assessment|pen(?:etration)?[- ]test)\b"
+                      r"|\b(?:independent|external|third[- ]party|outside)\s+(?:security\s+)?"
+                      r"(?:audit|assessment|pen(?:etration)?[- ]test)s?\b"
+                      r"|\b(?:completed|underwent|received|had)\s+(?:an?\s+)?(?:independent|external|third[- ]party|outside)"
+                      r"\s+(?:security\s+)?review\b"
+                      r"|\b(?:security\s+)?audit by\b",
+    "validated cryptography": r"\bfips[- ]?140(?:-[23])?\b.{0,40}?\b(?:validated|certified)\b"
+                              r"|\b(?:fips[- ]validated|validated|certified)\s+cryptograph",
+    "assessed 800-63": r"\b800-63\S*\s+(?:conformant|compliant|assessed|certified)\b"
+                       r"|\b(?:conforms|complies)\s+(?:to|with)\s+(?:nist\s+)?(?:sp\s+)?800-63",
+    "accessibility conformance": r"\b(?:wcag|accessibility)\b.{0,40}?\b(?:conformant|conformance|compliant|compliance|certified)\b"
+                                 r"|\b(?:conforms|complies)\s+(?:to|with)\s+wcag",
+}
+# Before a match, only a negation next to it unmakes the claim ("has not been independently
+# reviewed", "no independent audit"), up to three filler words away; an unrelated "no" earlier
+# in the sentence ("with no outside funding, was independently audited") does not. "Does not
+# claim WCAG 2.2 AA conformance" is a negation too.
+_OVERCLAIM_NEGATION = re.compile(r"\b(?:not|never|no|nor|without|isn't|aren't|hasn't)\s+(?:(?:been|yet|ever|be|an?|any|claim|claimed)\s+){0,3}$")
+# After a match, only a predicate that negates it ("conformance is not established") unmakes the
+# claim; "audited by X, not by the author" and "conformant, with no known failures" still claim.
+_OVERCLAIM_NEGATED_AFTER = re.compile(r"^\s*(?:(?:is|are|was|were|has been|have been|has|have)\s+)?(?:not|never)\b")
+
+
+def _overclaim(text: str, kinds: tuple[str, ...] = tuple(_OVERCLAIMS)) -> str | None:
+    """The first sentence or table row of `text` that makes one of the `kinds` of claim, or None.
+    A match directly after a negation, with up to three filler words between ("has not been
+    independently reviewed", "does not claim WCAG ... conformance"), or followed by a predicate
+    that negates it ("conformance is not established"), is not a claim."""
+    units = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = block.split("\n")
+        units += [ln for ln in lines if ln.lstrip().startswith("|")]
+        units += re.split(r"(?<=[.!?;])\s+", _claim_text(" ".join(ln for ln in lines if not ln.lstrip().startswith("|"))))
+    for unit in units:
+        sentence = _claim_text(unit)
+        for kind in kinds:
+            for m in re.finditer(_OVERCLAIMS[kind], sentence):
+                if not (_OVERCLAIM_NEGATION.search(sentence[max(0, m.start() - 40):m.start()])
+                        or _OVERCLAIM_NEGATED_AFTER.search(sentence[m.end():])):
+                    return "%s (%r)" % (kind, sentence[:160])
+    return None
+
+
 def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
-    """v9.337: the roadmap cannot contradict itself. A subsystem whose row is marked done may
-    not still sit under "Do not have"; a done row may not open its notes with IN PROGRESS, NEXT
-    or TODO; the "N invariant checks (vX.Y)" stamp names the real count and a version within
-    twenty minors of the tree; and once the protocol phase is done the "Have" paragraph says
-    so. An outside review found all three drifts within a day of the prior drift fix, so the
-    class is now a gate, not a habit."""
+    """v9.337: the roadmap cannot contradict itself. The "N invariant checks (vX.Y)" stamp names
+    the real count and the tree's version, and the "Have" list names the protocol layer. An
+    outside review found these drifts within a day of the prior drift fix, so the class is a gate,
+    not a habit. The roadmap lists what Polaris has built and where each phase stands: a "Do not
+    have" list fails, and so does a claim no check here can back (an outside review or audit,
+    validated cryptography, an assessed 800-63 level, accessibility conformance). Detection:
+    test_checks restores each drift, a "Do not have" list, each claim in a sentence, and an
+    outside-review claim in a table row."""
     rm = _read(root, "ROADMAP.md")
     if not rm:
         return _fail("roadmap_consistent", "ROADMAP.md is missing")
-    done = set(re.findall(r"^\| \[x\] ([A-Z0-9.]+) \|", rm, re.M))
-    m = re.search(r"\*\*Do not have:\*\*(.*?)\n\n", rm, re.S)
-    if not m:
-        return _fail("roadmap_consistent", "ROADMAP.md must keep a 'Do not have' paragraph")
-    not_have = m.group(1).lower()
-    built = {"P8.1": ("normative wire specification",), "P8.2": ("secure-exchange gateway", "exchange gateway"),
-             "P8.3": ("service-and-authority registry", "authority registry"), "P8.4": ("auth/sso broker", "auth broker"),
-             "P8.5": ("general document signing",), "P8.6": ("wallet protocol surface",), "P8.7": ("trust list",),
-             "P8.8": ("cross-version compatibility",)}
-    for rid, phrases in built.items():
-        if rid in done:
-            for ph in phrases:
-                if ph in not_have:
-                    return _fail("roadmap_consistent", "ROADMAP.md lists %r under 'Do not have' while row %s is marked done" % (ph, rid))
-    stale = re.search(r"^\| \[x\] (\S+) \|(?:[^|\n]*\|){4}\s*(IN PROGRESS|NEXT|TODO|PLANNED)\b", rm, re.M)
-    if stale:
-        return _fail("roadmap_consistent", "ROADMAP.md row %s is marked done but its notes open with %s" % (stale.group(1), stale.group(2)))
+    if re.search(r"\bdo not have\b", rm, re.I):
+        return _fail("roadmap_consistent", 'ROADMAP.md lists what Polaris has built and where each phase stands; a '
+                     '"Do not have" list is not part of it.')
+    claim = _overclaim(rm)
+    if claim:
+        return _fail("roadmap_consistent", "ROADMAP.md claims what no check here can back: %s" % claim)
+    have = re.search(r"^\*\*Have\b(.*?)^## Phases\b", rm, re.S | re.M)
+    if not have:
+        return _fail("roadmap_consistent", "ROADMAP.md must keep its '**Have' list ahead of '## Phases'; without "
+                     "either there is no list to read")
     sm = re.search(r"(\d+) invariant\s+checks \(v([^)]+)\)", rm)
     if not sm:
         return _fail("roadmap_consistent", "ROADMAP.md must stamp 'N invariant checks (vVERSION)'")
@@ -16841,12 +18199,12 @@ def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
         return _fail("roadmap_consistent", "cannot read polaris_web/__version__.py, so the roadmap's check stamp can be compared to nothing")
     if sm.group(2) != vm.group(1):
         return _fail("roadmap_consistent", "ROADMAP.md's check stamp reads v%s but the tree is v%s; re-read the roadmap and restamp it to the current version" % (sm.group(2), vm.group(1)))
-    if "P8.8" in done and "protocol layer" not in rm.split("**Do not have:**")[0].lower():
-        return _fail("roadmap_consistent", "ROADMAP.md's 'Have' paragraph must name the protocol layer once P8 is done")
+    if "protocol layer" not in have.group(1).lower():
+        return _fail("roadmap_consistent", "ROADMAP.md's 'Have' list must name the protocol layer; P8 is done")
     return _ok("roadmap_consistent",
-               "the roadmap agrees with itself: nothing marked done sits under 'Do not have', no done row reads as in "
-               "progress, the check stamp names the real count and a current version, and the 'Have' paragraph names "
-               "the protocol layer")
+               "the roadmap agrees with itself: it lists no absences, the check stamp names the real count and the "
+               "current version, the 'Have' list names the protocol layer, and it claims no outside review, "
+               "validated cryptography, assessed 800-63 level or accessibility conformance")
 
 
 def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
@@ -17455,9 +18813,23 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
         if sym not in app:
             return _fail("exchange_gateway", "polaris_web/app.py lacks %s (%s)" % (why, sym))
     # AUTHORIZE before FORWARD: the attestation check must precede the upstream call.
-    i_auth, i_fwd = app.find("_exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("urllib.request.urlopen(up")
+    i_auth, i_fwd = app.find("_exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("_EXCHANGE_OPENER.open(up")
     if i_auth < 0 or i_fwd < 0 or i_auth > i_fwd:
         return _fail("exchange_gateway", "the gateway must authorize the requester (trust graph, in-context) BEFORE forwarding to the upstream")
+    # The forward follows no redirect: the default opener turns a 3xx into a GET to the host its
+    # Location names and reflects that host's answer. The opener is built with a handler whose
+    # redirect_request returns None, and the gateway's body never calls the default opener.
+    gw_at = app.find("def api_v1_exchange(")
+    gw_end = re.search(r"\n(?=def |class |@|[A-Za-z_]\w* *=)", app[gw_at:]) if gw_at >= 0 else None
+    if gw_end is None:
+        return _fail("exchange_gateway", "cannot find the gateway's body (def api_v1_exchange( ... up to the next top-level statement), so its forward cannot be read")
+    gateway = app[gw_at:gw_at + gw_end.start()]
+    if "urllib.request.urlopen(" in gateway:
+        return _fail("exchange_gateway", "the gateway forwards through urllib.request.urlopen, which follows an upstream redirect to another host; use _EXCHANGE_OPENER")
+    refusers = [m.group(1) for m in re.finditer(r"^class (\w+)\(urllib\.request\.HTTPRedirectHandler\):\n((?:[ \t]+.*\n|[ \t]*\n)*)", app, re.M)
+                if re.search(r"def redirect_request\(self[^)]*\):[ \t]*\n[ \t]+return None\b", m.group(2))]
+    if not any(re.search(r"^_EXCHANGE_OPENER = urllib\.request\.build_opener\(%s\)" % re.escape(n), app, re.M) for n in refusers):
+        return _fail("exchange_gateway", "_EXCHANGE_OPENER must be built with a redirect handler whose redirect_request returns None (the forward follows no upstream redirect)")
     if re.search(r"INSERT INTO \w+ \([^)]*\bbody\b", app, re.I):
         return _fail("exchange_gateway", "no persistence path may take a request or response body (evidence without retention)")
     if "CREATE TABLE ExchangeNonce" not in _read(root, "polaris_sql/01_schema.sql") or not _trigger_created(_read(root, "polaris_sql/06_triggers.sql"), "trg_exchange_nonce_append_only"):
@@ -19597,11 +20969,13 @@ def check_plonky3_evaluation(root: pathlib.Path) -> list[Finding]:
         return _fail(name,
                      "the record must state a DECISION, not only a comparison: a set of columns with "
                      "no conclusion leaves the next reader to re-run the whole evaluation")
-    if "NOT verified" not in doc and "not verified" not in doc:
+    # What any move must check first sits under that title, apart from what was measured.
+    if "Checked before any move" not in doc:
         return _fail(name,
-                     "the record must separate what was NOT verified from what was measured. A "
-                     "soundness-core rewrite justified by unsourced claims is the failure this "
-                     "section exists to prevent, and version and audit status have a shelf life")
+                     "the record must separate what is checked before any move from what was "
+                     "measured. A soundness-core rewrite justified by unsourced claims is the "
+                     "failure this section exists to prevent, and version and audit status have a "
+                     "shelf life")
     for needed, why in (("would change the decision",
                          "re-evaluation triggers; a decision with no expiry condition is one nobody "
                          "revisits on evidence"),
@@ -19631,7 +21005,7 @@ def check_plonky3_evaluation(root: pathlib.Path) -> list[Finding]:
     return _ok(name,
                "the proof-library decision is recorded and re-openable: it states a decision rather "
                "than only a comparison, separates what was measured here from what was reasoned "
-               "from the code and from what was deliberately NOT verified, names the version it "
+               "from the code and from what is checked before any move, names the version it "
                "evaluated against the one the lockfile pins, and carries the triggers that would "
                "re-open it")
 
@@ -21442,23 +22816,14 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
 
     A review packet is a set of claims about a codebase, written once and read by somebody who
     cannot check them. It rots the way every such document rots: a check is renamed, a drill
-    deleted, a limitation fixed, and the page keeps saying what it said. Nothing turns red; the
+    deleted, and the page keeps saying what it said. Nothing turns red; the
     document becomes untrue, and it is most untrue exactly where it matters, in the hands of the
     reviewer it was written for.
 
-    So every citation resolves and every cited check runs -- the discipline the 800-63 mapping
-    already uses. The new half is the limitations, and it runs in the OTHER DIRECTION. Each
-    carries a WITNESS: a file and a string that must still be present for the limitation to hold.
-    Fix the limitation and the witness goes, the drill fails, and the entry has to be removed.
-
-    THAT DIRECTION IS THE POINT. A limitations list that can only be appended to is a confession
-    nobody maintains, and an out-of-date one tells a reviewer the system is WEAKER than it is --
-    dishonesty that nobody catches because it reads as modesty.
-
-    And the packet must say, in its own first paragraph, that nothing in it has been reviewed by
-    anybody outside this repository. Every guarantee it lists is checked by machinery written by
-    the same hand as the guarantee. A packet that opens with its controls and omits that sentence
-    is committing the failure it exists to prevent."""
+    So every citation resolves, every cited check runs, and any witness the packet gives
+    resolves. The packet may not claim an outside review or audit, validated cryptography, an
+    assessed 800-63 level or accessibility conformance. Detection: test_checks restores each claim, renames a cited check,
+    deletes a section and breaks a witness."""
     name = "review_packet"
     doc = _read(root, "docs/REVIEW-PACKET.md")
     drill = root / "scripts" / "polaris-review-packet-drill.py"
@@ -21469,24 +22834,16 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
                      "scripts/polaris-review-packet-drill.py must exist. A packet nothing "
                      "re-checks is a document that was true once")
 
-    for heading in ("## 1. Threat matrix by subsystem", "## 2. Known limitations",
-                    "## 3. Guarantee-attack prompts"):
+    for heading in ("## 1. Threat matrix by subsystem", "## 2. Guarantee-attack prompts"):
         if heading not in doc:
             return _fail(name, f"the packet must carry the section {heading!r}")
 
-    flat = re.sub(r"\s+", " ", doc)
-    if "has been reviewed by anybody outside this repository" not in flat:
+    claim = _overclaim(doc)
+    if claim:
         return _fail(name,
-                     "the packet must say that nothing in it has been externally reviewed. Every "
-                     "guarantee it lists is checked by machinery written by the same hand as the "
-                     "guarantee, and a packet that omits that is the failure it exists to prevent")
+                     "the packet claims what no check here can back: %s" % claim)
 
     witnesses = re.findall(r"`witness:([^:`]+(?::[^:`]+)*)::([^`]+)`", doc)
-    if len(witnesses) < 5:
-        return _fail(name,
-                     f"only {len(witnesses)} limitation(s) carry a witness. A limitation without "
-                     "one cannot be checked for having been FIXED, which is the direction that "
-                     "keeps the list honest")
     stale = []
     for rel, needle in witnesses:
         target = root / rel
@@ -21494,8 +22851,8 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
             stale.append(f"{rel}::{needle[:30]}")
     if stale:
         return _fail(name,
-                     "a limitation's witness no longer resolves, so the limitation is either "
-                     "fixed or misstated and the entry must go: " + "; ".join(stale[:3]))
+                     "a witness in the packet no longer resolves, so the sentence it backs is "
+                     "misstated and must change: " + "; ".join(stale[:3]))
 
     cited = set(re.findall(r"`check:([A-Za-z0-9_]+)`", doc))
     known = {f.__name__.replace("check_", "") for f in CHECKS}
@@ -21506,13 +22863,11 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
         return _fail(name,
                      f"the packet cites only {len(cited)} checks. A packet that points at almost "
                      "nothing gives a reviewer nothing to aim at")
+    held = f", each of its {len(witnesses)} witness(es) still resolves," if witnesses else ""
     return _ok(name,
-               f"the packet carries a threat matrix, {len(witnesses)} witnessed limitations and "
-               f"attack prompts; every one of its {len(cited)} cited checks exists, every "
-               "witness still resolves, and it says on its own first page that nobody outside "
-               "this repository has reviewed any of it. A resolving witness is evidence that a "
-               "limitation has not been quietly FIXED; it is not evidence that the sentence is "
-               "true, and L-11's second half drifted for months with its witness resolving")
+               f"the packet carries a threat matrix and attack prompts; every one of its "
+               f"{len(cited)} cited checks exists{held} and it claims no outside review, audit or "
+               "penetration test")
 
 
 def check_capacity_model(root: pathlib.Path) -> list[Finding]:
@@ -21678,6 +23033,133 @@ _AUDITED_ROW_COLUMNS = re.compile(
     r"date_of_birth|duress_code_hash|holder\w*|subject\w*)\b", re.I)
 
 
+#: Routes whose own SQL names a tracked table and that are held to no AuditAccessLog row, each
+#: with its reason. An entry that no longer names such a route fails the check, so an exemption
+#: cannot outlive the reason it was given for.
+_AUDITED_READ_EXEMPT = {
+    "api_sim_tick": "answers 404 unless POLARIS_SIM_MODE is on, and reads count(*) of "
+                    "VerificationEvent: a count, no one's rows",
+    "api_duress_record": "reads back the event_id of the duress row it has just written, and "
+                         "nothing else of the table",
+}
+
+#: The console, held by name: its SQL is its caller's, so no string in the handler names what it
+#: reads, and no route can write the record for it. It reads as a role that holds none of it.
+_CONSOLE_MODULE, _CONSOLE_HANDLER, _CONSOLE_ROLE = "sql_console.py", "sql_query", "polaris_console_reader"
+
+
+def _sql_mentions(text: str, names) -> list[str]:
+    """The names a text mentions as whole words, case aside, with every INSERT INTO a table
+    taken out first: a write hands the caller no one's rows."""
+    text = re.sub(r'(?i)\bINSERT\s+INTO\s+(?:\w+\.)?"?\w+"?', " ", text)
+    return sorted({n for n in names if re.search(r"(?i)\b" + re.escape(n) + r"\b", text)})
+
+
+def _views_over(sql: str, tables) -> list[str]:
+    """The views whose definition, in any SQL source, reads one of the tables or a view that
+    does, to a fixed point. Every view runs as its caller, so a read through one is a read."""
+    defs: dict[str, str] = {}
+    for m in re.finditer(r"(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)(.*?);", sql):
+        defs[m.group(1)] = defs.get(m.group(1), "") + "\n" + m.group(2)
+    over: set[str] = set()
+    while True:
+        new = {v for v, body in defs.items()
+               if v not in over and _sql_mentions(body, list(tables) + sorted(over))}
+        if not new:
+            return sorted(over)
+        over |= new
+
+
+def _function_texts(src: str) -> list[tuple]:
+    """(name, line, whether it is a route, its own SQL text, whether it calls record_audit_access)
+    for every function in one module. Its own text: the string constants in its body, the
+    docstring left out and nested functions in, with each module-level string constant it names.
+    A comment is not a constant and a call that survives only as one is not a call. Raises
+    SyntaxError, which the caller reports."""
+    tree = ast.parse(src)
+    consts: dict[str, str] = {}
+    for stmt in tree.body:
+        targets = (stmt.targets if isinstance(stmt, ast.Assign)
+                   else [stmt.target] if isinstance(stmt, ast.AnnAssign) and stmt.value else [])
+        for t in targets:
+            if isinstance(t, ast.Name):
+                consts[t.id] = "\n".join(c.value for c in ast.walk(stmt.value)
+                                         if isinstance(c, ast.Constant) and isinstance(c.value, str))
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = node.body
+        if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            body = body[1:]
+        parts, calls = [], False
+        for stmt in body:
+            for c in ast.walk(stmt):
+                if isinstance(c, ast.Constant) and isinstance(c.value, str):
+                    parts.append(c.value)
+                elif isinstance(c, ast.Name) and c.id in consts:
+                    parts.append(consts[c.id])
+                elif isinstance(c, ast.Call) and (
+                        (isinstance(c.func, ast.Attribute) and c.func.attr == "record_audit_access")
+                        or (isinstance(c.func, ast.Name) and c.func.id == "record_audit_access")):
+                    calls = True
+        route = any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route"
+                    for d in node.decorator_list)
+        out.append((node.name, node.lineno, route, "\n".join(parts), calls))
+    return out
+
+
+def _console_problem(root: pathlib.Path, sql: str, modules, audited) -> str | None:
+    """Why the console could read what the record covers, or None. The handler hands the
+    database constant statements only, one of them a call of console_read; console_read is a
+    SECURITY DEFINER function given to the reader role; and no SQL source grants that role a
+    tracked table, a view over one, every table, a routine, a default privilege or a role."""
+    fn = None
+    for mod, src in modules:
+        if mod != _CONSOLE_MODULE:
+            continue
+        tree = ast.parse(src)
+        fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == _CONSOLE_HANDLER
+                   and any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route"
+                           for d in n.decorator_list)), None)
+    if fn is None:
+        return (f"the console route {_CONSOLE_HANDLER}() is not in polaris_web/{_CONSOLE_MODULE}, where this "
+                "check holds it by name")
+    statements = []
+    for c in ast.walk(fn):
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "execute":
+            first = c.args[0] if c.args else None
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+                return (f"{_CONSOLE_HANDLER}() line {c.lineno} executes a statement that is not a constant: "
+                        "the caller's text would run as the application role, which reads the tracked "
+                        "tables, and nothing would record it")
+            statements.append(first.value)
+    if not any(re.search(r"(?i)\bconsole_read\s*\(", t) for t in statements):
+        return f"{_CONSOLE_HANDLER}() never calls console_read(), the function that runs its text as {_CONSOLE_ROLE}"
+    head = re.search(r"(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+console_read\s*\((.*?)\bAS\s*\$", sql)
+    if not head or not re.search(r"(?i)\bSECURITY\s+DEFINER\b", head.group(1)):
+        return "no SQL source defines console_read() as a SECURITY DEFINER function"
+    if not re.search(r"(?is)\bALTER\s+FUNCTION\s+console_read\s*\([^)]*\)\s+OWNER\s+TO\s+"
+                     + _CONSOLE_ROLE + r"\b", sql):
+        return f"no SQL source gives console_read() to {_CONSOLE_ROLE}, so it would run as its loader"
+    for g in re.finditer(r"(?is)\bGRANT\s+((?:(?!\bGRANT\b|;).)*?)\s+TO\s+" + _CONSOLE_ROLE + r"\b", sql):
+        what = re.sub(r"\s+", " ", g.group(1)).strip()
+        on = re.search(r"(?is)\bON\b(.*)", what)
+        if not on:
+            return (f"GRANT {what} TO {_CONSOLE_ROLE} makes the reader a member of a role, whose rights "
+                    "it would then hold")
+        if (re.search(r"(?i)\bALL\s+TABLES\b|\b(?:FUNCTION|PROCEDURE|ROUTINE)S?\b", on.group(1))
+                or _sql_mentions(on.group(1), audited)):
+            return f"GRANT {what} TO {_CONSOLE_ROLE} lends the reader what the record covers"
+    if re.search(r"(?is)\bALTER\s+DEFAULT\s+PRIVILEGES\b[^;]*\bTO\s+" + _CONSOLE_ROLE + r"\b", sql):
+        return f"a default privilege is granted to {_CONSOLE_ROLE}, so a table added later would be its"
+    if re.search(r"(?is)\bCREATE\s+ROLE\s+" + _CONSOLE_ROLE + r"\b[^;]*\b(?:IN\s+(?:ROLE|GROUP)|ROLE|ADMIN|USER)\b", sql) \
+            or re.search(r"(?is)\bALTER\s+GROUP\s+\w+\s+ADD\s+USER\b[^;]*\b" + _CONSOLE_ROLE + r"\b", sql):
+        return f"{_CONSOLE_ROLE} is created or added as a member of another role"
+    return None
+
+
 def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     """A read of an audited table must leave a row even when it hides behind a function (P7.7).
 
@@ -21703,7 +23185,18 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
     event's own key or identifies a person or a credential (_AUDITED_ROW_COLUMNS), a SETOF a
     table, or an argument that selects one person's or one credential's rows. A function that
     returns only counts hands the caller nothing, as before. The check refuses to pass
-    vacuously: finding no such function means the parse broke."""
+    vacuously: finding no such function means the parse broke.
+
+    AND THE READS IN PLAIN SIGHT (2026-10-21). The rule above followed the read behind a function
+    and assumed the direct ones were covered. Three were not: /tokens/<id> returned a
+    credential's lifecycle and verification history, /api/duress/events the duress feed, and the
+    SQL console any SELECT its admin or auditor wrote, each with no AuditAccessLog row. So, per
+    module and by syntax tree: a route whose own SQL (its string constants, and the module's
+    constants it names) names a tracked table, or a view over one, calls record_audit_access, or
+    is in _AUDITED_READ_EXEMPT with its reason; no function that reads AuditAccessLog records
+    itself, since the regress stops at that table by construction; and the console, whose SQL is
+    its caller's, is held by name (_console_problem): it reads as polaris_console_reader, a role
+    the SQL sources grant none of what the record covers. A module that does not parse fails."""
     name = "audited_reads_are_logged"
     sec = _read(root, "polaris_web/security.py")
     app = _read_app(root)
@@ -21756,10 +23249,58 @@ def check_audited_reads_are_logged(root: pathlib.Path) -> list[Finding]:
                              "AuditAccessLog row. A read that hides behind a function name is "
                              "still a read of somebody's history, and the most invasive one in "
                              "the system is exactly where the omission is least visible")
+
+    # The direct reads, per module and by syntax tree.
+    views = _views_over(sql, tracked)
+    audited = tracked + views
+    modules = _app_modules(root)
+    direct, exempt_seen = [], set()
+    for mod, src in modules:
+        try:
+            functions = _function_texts(src)
+        except SyntaxError as e:
+            return _fail(name, f"polaris_web/{mod} does not parse ({e.msg}, line {e.lineno}), so its "
+                               "routes' reads cannot be read")
+        for fname, line, route, text, calls in functions:
+            if calls and _sql_mentions(text, ["AuditAccessLog"]):
+                return _fail(name, f"{mod}:{line} {fname}() reads AuditAccessLog and calls "
+                                   "record_audit_access: reads of AuditAccessLog are not logged, "
+                                   "which is where the audit of the audit stops")
+            if not route or (mod == _CONSOLE_MODULE and fname == _CONSOLE_HANDLER):
+                continue
+            named = _sql_mentions(text, audited)
+            if not named:
+                continue
+            if fname in _AUDITED_READ_EXEMPT:
+                exempt_seen.add(fname)
+            elif not calls:
+                return _fail(name, f"{mod}:{line} {fname}() reads {', '.join(named)} and records no "
+                                   "AuditAccessLog row. A route that returns a tracked table's rows "
+                                   "writes the record, whether it reads the table, a view over it "
+                                   "or a function returning it")
+            else:
+                direct.append(fname)
+    stale = sorted(set(_AUDITED_READ_EXEMPT) - exempt_seen)
+    if stale:
+        return _fail(name, "_AUDITED_READ_EXEMPT names " + ", ".join(stale) + ", which no longer "
+                           "is a route reading a tracked table: an exemption outlives its reason")
+    if not direct:
+        return _fail(name, "found no route reading a tracked table directly. The parse has broken; "
+                           "this check must not pass by finding nothing to check")
+    try:
+        problem = _console_problem(root, sql, modules, audited)
+    except SyntaxError as e:
+        return _fail(name, f"polaris_web/{_CONSOLE_MODULE} does not parse ({e.msg}, line {e.lineno})")
+    if problem:
+        return _fail(name, "the SQL console could return rows the record covers: " + problem)
     return _ok(name,
                f"every route reading audited rows through the {len(exposing)} function(s) that "
-               "return a history, from any SQL source, leaves an AuditAccessLog row; the tracked "
-               "list is read from security.py rather than restated here")
+               f"return a history, from any SQL source, leaves an AuditAccessLog row, and so do the "
+               f"{len(direct)} routes whose own SQL names a tracked table or one of the {len(views)} "
+               f"views over one ({len(_AUDITED_READ_EXEMPT)} more exempt, each with its reason); no "
+               "function reading AuditAccessLog records itself; the SQL console reads as "
+               f"{_CONSOLE_ROLE}, which no SQL source grants any of them; the tracked list is read "
+               "from security.py rather than restated here")
 
 
 def check_transparency_program(root: pathlib.Path) -> list[Finding]:
@@ -22780,8 +24321,17 @@ def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
                      "said nothing on the subject, which is the actual failure mode")
     for phrase, why in ("append-only", "the participant must be told what is kept"), \
                        ("including us", "and that the same protection constrains the operator"), \
-                       ("second, independent authority",
-                        "and that no single organisation can revoke everyone alone"):
+                       ("Ending this pilot requires a second authority, one that issued none of "
+                        "the credentials being withdrawn and is authorised to issue and verify "
+                        "under their signature algorithms, to co-sign the withdrawal of every "
+                        "credential.",
+                        "and that ending the pilot needs a second authority, one that issued "
+                        "none of the credentials being withdrawn and is authorised to issue and "
+                        "verify under their signature algorithms, to co-sign the withdrawal of "
+                        "every credential"), \
+                       ("Past that share, a second authority must co-sign",
+                        "and that past a set share of an authority's credentials, revoking them "
+                        "needs a second authority's co-signature"):
         if phrase not in consent:
             return _fail(name, why)
 
@@ -23122,19 +24672,24 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
                          "the document must state how much automation actually covers"),
                         ("does not claim wcag 2.2 aa conformance",
                          "the outward claim must match what was established"),
-                        ("has not been done",
-                         "manual testing with assistive technology is the largest gap and must "
-                         "be named as undone rather than left unmentioned")):
+                        ("needs manual testing with assistive technology",
+                         "the document must say what conformance needs beyond automation, "
+                         "or a green run reads as the whole of it")):
         if phrase not in low:
             return _fail(name, why)
 
-    # The outward surfaces must not have quietly started claiming it either.
-    roadmap = _read(root, "ROADMAP.md")
-    if "accessibility conformance" not in roadmap:
-        return _fail(name,
-                     "ROADMAP.md's not-claimed list must still carry accessibility conformance. "
-                     "Automated checks passing is a floor; removing the caveat would turn a "
-                     "third of the criteria into an assertion about all of them")
+    # The outward surfaces must not have quietly started claiming it either. Until 2026-10-24
+    # ROADMAP.md listed accessibility conformance as not claimed; since then (owner: no
+    # limitation lists in public text) no outward surface may claim it.
+    for rel in ("README.md", "ROADMAP.md", "site/index.html", "site/llms.txt"):
+        text = _read(root, rel)
+        if not text:
+            return _fail(name, "%s is missing, so its claim is compared to nothing" % rel)
+        claim = _overclaim(text, ("accessibility conformance",))
+        if claim:
+            return _fail(name,
+                         "%s claims %s. Automated checks passing is a floor; the claim would turn "
+                         "a third of the criteria into an assertion about all of them" % (rel, claim))
     return _ok(name,
                "every operator surface is audited in a real browser against a pinned, current "
                "axe-core at the WCAG 2.0, 2.1 and 2.2 A and AA tags, with the drill asserting "
@@ -23560,13 +25115,20 @@ def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     for phrase, why in (("not a conformance claim",
                          "the front matter must refuse the reading it will otherwise get: this "
                          "is the file somebody quotes after reading only its first page"),
-                        ("no assessment has been performed",
-                         "an unassessed mapping must say so"),
                         ("does not inherit",
                          "a deployment does not get these properties by running the code, and "
                          "the document must say it")):
         if phrase not in low:
             return _fail(name, why)
+    # Pre-pilot, in the first paragraph under the title: said further down, it is not in the part
+    # that gets quoted.
+    body = doc.strip()
+    if body.startswith("# "):
+        body = body.partition("\n")[2].strip()
+    first = re.split(r"\n\s*\n", body, maxsplit=1)[0]
+    if "pre-pilot" not in " ".join(first.lower().split()):
+        return _fail(name, "the page's first paragraph must say Polaris is pre-pilot: it is the part "
+                           "somebody quotes after reading only the first page")
     for level, why in (("highest holder aal claimed",
                         "the highest AAL claimed must be stated in one place, or a reader "
                         "infers it from the greenest row"),
@@ -23624,7 +25186,8 @@ def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
                "check, test, drill or schema object, the drill resolves each and runs every "
                "cited check, gaps are named with reasons rather than rounded away, the totals "
                "are recomputed from the rows, the front matter refuses the conformance reading "
-               "and says a deployment does not inherit these properties, and the drill states "
+               "and says a deployment does not inherit these properties, its first paragraph "
+               "says Polaris is pre-pilot, and the drill states "
                "the limit of what resolving citations can establish")
 
 
@@ -25220,7 +26783,7 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
                          % name)
     # A registry project page is an outward surface, and the standing rule is that one must
     # not read as more settled than the thing is. sdk/python declared NO classifiers: on PyPI
-    # that is a page with no maturity signal at all for a 0.1.0 nobody outside has used.
+    # that is a page with no maturity signal at all for a pre-pilot 0.1.0.
     for pkg in ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python"):
         toml = _read(root, pkg + "/pyproject.toml")
         if not toml:
@@ -25228,7 +26791,7 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
         if "Development Status ::" not in toml:
             return _fail("distribution_licence",
                          "%s declares no Development Status classifier, so its project page "
-                         "carries no maturity signal. At 0.1.0 with no outside user, silence "
+                         "carries no maturity signal. For pre-pilot software, silence "
                          "there reads as more settled than the thing is" % pkg)
         if "License :: OSI Approved :: Apache Software License" not in toml:
             return _fail("distribution_licence",
@@ -30170,6 +31733,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_conformance_contract_constrains,
     check_package_readme_counts_its_tests,
     check_status_assertion_window_is_caller_policy,
+    check_sdk_fresh_reads_only_signed_fields,
     check_conformance_spec_counts_its_artifacts,
     check_conformance_contract_distinguishes,
     check_procedure_refusals_are_mutation_tested,

@@ -125,8 +125,6 @@ def _load_cases():
             for k in ("log_key", "trusted_witnesses", "threshold"):
                 if k in c:
                     payload[k] = c[k]
-            if c.get("log_key") == "sth":
-                payload["log_key"] = payload["timestamp"]["anchor"]["sth"]["public_key_hex"]
             if c.get("trusted_witnesses") == "cosigners":
                 payload["trusted_witnesses"] = sorted(
                     {x["public_key_hex"] for x in payload["timestamp"]["anchor"].get("cosignatures", [])

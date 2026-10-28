@@ -15,8 +15,9 @@
 #      and a privileged pod REJECTED by the API server ("violates PodSecurity").
 #   3. The real secrets (polaris-generate-secrets.sh, including the ML-DSA-65
 #      signing key) as a Secret; `helm lint` and `helm install --wait`.
-#   4. /api/health through the Caddy edge (tls internal): database, redis,
-#      zk_binary, custody all healthy.
+#   4. The Caddy edge (tls internal) serves a public route and refuses the health
+#      answers from outside edge.metricsAllow; /api/health, read at the app pod's
+#      own address: database, redis, zk_binary, custody all healthy.
 #   5. A probe pod outside the topology cannot reach postgres:5432,
 #      pgbouncer:6432, or app:8000 (default-deny + allow-list holds), while the
 #      app plainly can (step 4 proved app -> pgbouncer -> postgres and app ->
@@ -144,15 +145,23 @@ helm install "$REL" "$ROOT/deploy/helm/polaris" -n "$NS" --set domain=localhost 
 kubectl -n "$NS" get pods -o wide | sed 's/^/  /'
 kubectl -n "$NS" get networkpolicy --no-headers | wc -l | sed 's/^/  networkpolicies: /'
 
-echo "== 4. health through the edge =="
+echo "== 4. the edge serves; health at the app =="
 kubectl -n "$NS" port-forward "svc/${REL}-caddy" 18443:443 >/dev/null 2>&1 & PF_PID=$!
 sleep 3
 code=""
-for i in $(seq 1 30); do code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/api/health || true); [ "$code" = 200 ] && break; sleep 3; done
-[ "$code" = 200 ] || { kubectl -n "$NS" logs -l app.kubernetes.io/component=caddy --tail=20; fail "edge did not serve /api/health (last HTTP $code)"; }
-# The health JSON is fetched into a variable and parsed from argv, not piped into python: a fetch
-# piped into an interpreter reads, to a supply-chain scanner, as downloaded code being run.
-health=$(curl -sk --max-time 30 https://localhost:18443/api/health)
+for i in $(seq 1 30); do code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/.well-known/security.txt || true); [ "$code" = 200 ] && break; sleep 3; done
+[ "$code" = 200 ] || { kubectl -n "$NS" logs -l app.kubernetes.io/component=caddy --tail=20; fail "edge did not serve /.well-known/security.txt (last HTTP $code)"; }
+# The chart's edge refuses the health answers to a client outside edge.metricsAllow (unset here); a
+# port-forward reaches the edge from the pod's own loopback, which is not in it.
+for path in /api/health /api/health/ready /api/health/live; do
+    code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' "https://localhost:18443${path}" || true)
+    [ "$code" = 404 ] || fail "the chart's edge answered ${path} with ${code} to a client outside edge.metricsAllow"
+done
+echo "  the edge serves /.well-known/security.txt and refuses /api/health, /api/health/ready, /api/health/live"
+# The health JSON is read at the app pod's own address into a variable and parsed from argv, not
+# piped into python: a fetch piped into an interpreter reads, to a supply-chain scanner, as
+# downloaded code being run.
+health=$(kubectl -n "$NS" exec "deploy/${REL}-app" -c app -- curl -s --max-time 30 http://localhost:8000/api/health)
 python3 -c "
 import sys, json; d = json.loads(sys.argv[1]); c = d['checks']
 bad = [k for k in ('database', 'redis', 'zk_binary', 'custody') if c[k]['status'] != 'healthy']
@@ -201,7 +210,7 @@ echo "  default-deny + allow-list holds (postgres, pgbouncer, app unreachable fr
 echo "== 6. rolling restart keeps the edge healthy =="
 kubectl -n "$NS" rollout restart "deploy/${REL}-app" >/dev/null
 kubectl -n "$NS" rollout status "deploy/${REL}-app" --timeout=300s >/dev/null
-code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/api/health || true)
+code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/.well-known/security.txt || true)
 [ "$code" = 200 ] || fail "edge unhealthy after the rolling restart (HTTP $code)"
 echo "  rolled (maxUnavailable 0); edge healthy"
 echo "== 7. automated database failover: Patroni with the Kubernetes API as the lease store =="
@@ -369,7 +378,7 @@ if [[ -n "$SYNC_WANT" && "$lost" -gt 0 ]]; then
     fail "$lost acknowledged inserts are not in the surviving history: with synchronous_mode on, a failover must lose none"
 fi
 kubectl -n "$NS" delete pod ha-writer --grace-period=0 --force >/dev/null 2>&1 || true
-code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/api/health || true)
+code=$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' https://localhost:18443/.well-known/security.txt || true)
 [ "$code" = 200 ] || fail "edge unhealthy after the failover drill (HTTP $code)"
 echo "== 8. every edge replica chains to the chart's root, before and after a replacement (G5) =="
 kubectl -n "$NS" get secret "${REL}-edge-ca" -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/polaris-edge-ca.crt
@@ -379,7 +388,7 @@ served() {   # pod curl-args... -> the SHA-256 fingerprint served, after a curl 
     local pod=$1 pf code="" fp; shift
     kubectl -n "$NS" port-forward "$pod" 18444:8443 >/dev/null 2>&1 & pf=$!
     for _ in $(seq 1 20); do
-        code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "$@" https://localhost:18444/api/health || true)
+        code=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "$@" https://localhost:18444/.well-known/security.txt || true)
         [ "$code" = 200 ] && break; sleep 1
     done
     fp=$(echo | openssl s_client -connect localhost:18444 -servername localhost 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null)
@@ -422,7 +431,7 @@ echo "  helm upgrade kept the root: $n replicas still verify against it"
 kubectl -n "$NS" port-forward "$(edge_pods | sed -n 1p)" 18444:8443 >/dev/null 2>&1 & pf=$!
 code=""
 for _ in $(seq 1 20); do
-    code=$(curl -s --cacert /tmp/polaris-edge-ca.crt --max-time 10 -D /tmp/polaris-internal.hdr -o /dev/null -w '%{http_code}' https://localhost:18444/api/health || true)
+    code=$(curl -s --cacert /tmp/polaris-edge-ca.crt --max-time 10 -D /tmp/polaris-internal.hdr -o /dev/null -w '%{http_code}' https://localhost:18444/.well-known/security.txt || true)
     [ "$code" = 200 ] && break; sleep 1
 done
 kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null || true
@@ -463,7 +472,7 @@ echo "  every edge replica serves the Secret's certificate"
 kubectl -n "$NS" port-forward "$(edge_pods | sed -n 1p)" 18444:8443 >/dev/null 2>&1 & pf=$!
 hsts=""
 for _ in $(seq 1 20); do
-    hsts=$(curl -sk --max-time 10 -D - -o /dev/null https://localhost:18444/api/health | grep -i '^strict-transport-security' || true)
+    hsts=$(curl -sk --max-time 10 -D - -o /dev/null https://localhost:18444/.well-known/security.txt | grep -i '^strict-transport-security' || true)
     [ -n "$hsts" ] && break; sleep 1
 done
 kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null || true

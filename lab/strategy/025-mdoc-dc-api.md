@@ -481,10 +481,31 @@ experimental half.
 
 **Wire.** OpenID4VP 1.0 (S1): section 5 (request), 6.1 and B.2.3 to B.2.4 (DCQL), 7.2 (claims path pointer), B.2.2
 (`vp_formats_supported`), 8.1 and B.2.5 (`vp_token`), 8.3 and 8.3.1 (`direct_post.jwt`), B.2.6.1 (OpenID4VPHandover),
-14.1.2 (replay), 14.8 (the full client identifier). HAIP 1.0 (S2): sections 5, 5.1, 5.3.1, 7, 8. ISO/IEC 18013-5:2021:
-8.3.2.1.2 (DeviceResponse; HAIP cites 8.3.2.1.2.2, Apple and the AV profile 8.3.2.1.2.3), 9.1.2 (issuer data
-authentication), 9.1.3 (mdoc authentication), 9.1.5.1 (SessionTranscript). Not read: paywalled. Read through Multipaz,
-isomdl and the EU reference verifier, as M1 was.
+14.1.2 (replay), 14.8 (the full client identifier). HAIP 1.0 (S2): sections 5, 5.1, 5.3.1, 7, 8. ISO/IEC 18013-5 was not
+read: it is paywalled, and M1 read its content through Multipaz, isomdl and the EU reference verifier. Each of its
+clause numbers here is the number a named implementation or HAIP gives, with the edition that source names:
+- 8.3.2.1.2 (DeviceRequest and DeviceResponse): OID4VCgo 0.49.0's `proximity` package, which its SPECIFICATIONS.md lists
+  under "ISO/IEC 18013-5:2021", version "First edition". HAIP 1.0 5.3.1 cites 8.3.2.1.2.2: "each ISO mdoc MUST be
+  returned in a separate DeviceResponse (as defined in 8.3.2.1.2.2 of [ISO.18013-5])"; its 3.3 lists [ISO.18013-5] as
+  "ISO/IEC 18013-5:2021 Personal identification - ISO-compliant driving licence Part 5: Mobile driving licence (mDL)
+  application". @owf/mdoc 0.8.2 (formerly mdoc-ts) and isomdl-uniffi 0.2.0-indicio.2 number rules on a DeviceResponse's
+  documents 8.3.2.1.2.2, naming no edition there. OID4VCgo's `proximity` numbers the DeviceResponse status codes
+  8.3.2.1.2.3 (Table 8). Apple (S6) and the AV profile (S8) cited 8.3.2.1.2.3 when read on 2026-10-13; no copy of
+  either is kept here, so the edition they name is not given. OID4VCgo 0.49.0's `oid4vpmdoc` numbers DeviceResponse
+  10.3.2 and 10.3.3, naming no edition there.
+- 9.1.2 (issuer data authentication): the clause number is inferred, from the numbers under it. Indicio-tech/isomdl
+  `204440bd` numbers issuer data authentication's digest check 9.1.2.5; @owf/mdoc 0.8.2, isomdl-uniffi 0.2.0-indicio.2
+  and OID4VCgo 0.49.0's verifier tests number rules of the MSO 9.1.2.4; each names no edition there. OID4VCgo 0.49.0's
+  `credential/mdoc` numbers the MSO 12.3.4 and the IssuerSignedItem digests 12.3.5, citing the 2025-09-14 CD ballot
+  resolution draft of the second edition.
+- 9.1.3 (mdoc authentication): OID4VCgo 0.49.0's `walletflow` and verifier tests, naming no edition there; its
+  `proximity` numbers the device signature 9.1.3.6 and the device MAC 9.1.3.5 (the first edition, as above). @owf/mdoc
+  0.8.2 numbers DeviceAuth 9.1.3.4 and Indicio-tech/isomdl `204440bd` the device MAC's key 9.1.3.5, naming no edition
+  there. OID4VCgo 0.49.0's `credential/mdoc` numbers mdoc authentication 12.4, citing the 2025-09-14 CD ballot
+  resolution draft of the second edition.
+- 9.1.5.1 (SessionTranscript): OID4VCgo 0.49.0's `oid4vpmdoc`, naming no edition there, and its `proximity` (the first
+  edition, as above). Its `credential/mdoc` numbers SessionTranscriptBytes 12.7.1, citing the 2025-09-14 CD ballot
+  resolution draft of the second edition.
 
 **Trust.** Pinned roots per docType (common section). Fixture roots: the EU reference issuer's public test root (M1) and
 roots minted in tests.

@@ -5,4 +5,4 @@
 # under Python 3.10, and installed beside requirements.txt only for such a run. setuptools 83
 # closes an sdist exclusion bypass on macOS file systems (GHSA-h35f-9h28-mq5c) and supports
 # Python 3.10 or newer, so building from the tree needs one; installing a release does not.
-setuptools>=83
+setuptools>=84.2.1

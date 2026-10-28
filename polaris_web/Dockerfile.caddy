@@ -94,6 +94,12 @@ RUN apk add --no-cache libcap && setcap -r /usr/bin/caddy && apk del libcap
 # depth against a silently-broken xcaddy build shipping a plugin-less Caddy).
 RUN caddy list-modules | grep -q '^http.handlers.rate_limit$'
 
+# Fail the build if the copied binary is not the release the runtime base names:
+# an update once moved the runtime to 2.11.7 while the compile stage still built
+# 2.11.6. The official images set CADDY_VERSION (the compile stage's ENV does not
+# reach this stage), and an empty one fails.
+RUN test -n "$CADDY_VERSION" && [ "$(caddy version | awk '{print $1}')" = "$CADDY_VERSION" ]
+
 # v9.239 — the edge runs as a non-root user everywhere, not only under the
 # Kubernetes profile. uid 1000 matches the chart's pod security context and the
 # app image, so one ownership rule covers every substrate. Caddy listens on

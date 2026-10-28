@@ -3,10 +3,8 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """polaris-check-mutation-drill.py - can a check pass on a tree where its property is gone?
 
-Every guarantee in this repository is believed because a check says so, and the checks are
-written by the same hand as the code. The review packet's last attack prompt (A-12) asks a
-reviewer to break that layer, on the grounds that if a check can be made to pass on a broken
-tree then everything above it is worth less than it looks.
+The review packet's last attack prompt (A-12) asks a reviewer to break the check layer: a
+check that passes on a broken tree is the finding worth most.
 
 This is that attack, run against ourselves on every push.
 
@@ -68,7 +66,9 @@ import pathlib
 import os
 import re
 import shutil
+import signal
 import sys
+import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -149,6 +149,20 @@ def _package_modules(rel_dir):
         return []
     return ["%s/%s" % (rel_dir, p.name) for p in sorted(d.glob("*.py"))
             if not p.name.startswith("test_")]
+
+
+def _ci_and_called_workflow_files():
+    """ci.yml and each workflow a ci.yml job calls, as repo-relative paths.
+
+    The other door of the same kind as `_read_app`. 2026-10-24: the Trivy gate moved from ci.yml
+    to image-cve-scan.yml, which a ci.yml job calls, and three checks came to read the scan through
+    `_ci_and_called_workflows`. With no door for it the drill named no input at all for
+    check_image_cve_scanning, and never deleted or commented out image-cve-scan.yml for it,
+    check_sbom_trivy_matches_scan or check_ha_automation. The list comes from checks.py's own
+    function, so it is the files those checks read and follows ci.yml's calls, not a file name.
+    """
+    from polaris_checks import checks as C
+    return [rel for rel, _text in C._ci_and_called_workflows(ROOT)]
 
 
 _PATH_TUPLES = None
@@ -252,6 +266,8 @@ def reads_of(fn):
                 out.extend(_looped[arg.id])
         elif fname in ("_read_app", "_app_modules"):
             out.extend(_package_modules("polaris_web"))
+        elif fname == "_ci_and_called_workflows":
+            out.extend(_ci_and_called_workflow_files())
         elif fname == "_read_package" and len(node.args) >= 2:
             arg = node.args[1]
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
@@ -348,6 +364,54 @@ def _read_path_targets(fn):
 
 
 _COMPILED_PATTERNS = None
+_HELPER_PATTERNS = None
+
+
+def _helper_patterns():
+    """Helpers in checks.py that match through a module-level tuple of compiled patterns, as
+    helper name -> those patterns.
+
+    `regexes_of` takes the patterns a check writes itself and the ones it calls through a compiled
+    name. check_image_cve_scanning finds the Trivy gate through `_trivy_gate`, which loops over
+    the `_TRIVY_GATE` tuple, so the drill saw nothing to search for in it even once its files were
+    named. A helper qualifies when it iterates such a tuple and calls `.search` (or a sibling) on
+    the loop variable; a check calling it is credited with the tuple's patterns, which is what it
+    matches.
+    """
+    global _HELPER_PATTERNS
+    if _HELPER_PATTERNS is not None:
+        return _HELPER_PATTERNS
+    _HELPER_PATTERNS = {}
+    try:
+        tree = ast.parse((ROOT / "polaris_checks" / "checks.py").read_text(errors="replace"))
+    except Exception:
+        return _HELPER_PATTERNS
+    tuples = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Tuple):
+            pats = [e.args[0].value for e in node.value.elts
+                    if isinstance(e, ast.Call) and getattr(e.func, "attr", "") == "compile"
+                    and getattr(getattr(e.func, "value", None), "id", "") == "re"
+                    and e.args and isinstance(e.args[0], ast.Constant)
+                    and isinstance(e.args[0].value, str)]
+            if pats and len(pats) == len(node.value.elts):
+                tuples[node.targets[0].id] = pats
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for loop in ast.walk(node):
+            if isinstance(loop, (ast.For, ast.comprehension)) and isinstance(loop.iter, ast.Name) \
+                    and loop.iter.id in tuples and isinstance(loop.target, ast.Name):
+                var = loop.target.id
+                if any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                       and isinstance(c.func.value, ast.Name) and c.func.value.id == var
+                       and c.func.attr in ("search", "match", "fullmatch", "findall", "finditer")
+                       for c in ast.walk(node)):
+                    _HELPER_PATTERNS.setdefault(node.name, []).extend(tuples[loop.iter.id])
+    return _HELPER_PATTERNS
+
+
 
 
 def _module_compiled_patterns():
@@ -400,10 +464,14 @@ def regexes_of(fn):
     if _COMPILED_PATTERNS is None:
         _COMPILED_PATTERNS = _module_compiled_patterns()
     out = set()
+    helpers = _helper_patterns()
     for node in ast.walk(fn):
         if not isinstance(node, ast.Call):
             continue
         f = node.func
+        if isinstance(f, ast.Name) and f.id in helpers:
+            out.update(helpers[f.id])
+            continue
         if not (isinstance(f, ast.Attribute) and f.attr in
                 ("search", "match", "findall", "finditer", "fullmatch")):
             continue
@@ -485,6 +553,20 @@ def opaque_inputs(fn):
 
 
 def main():
+    # The copies live in a directory of this run's own: with fixed /tmp paths, a second run
+    # on the machine deleted the first one's copy under it (three voided runs, 2026-10-21).
+    # It goes however the run ends; SIGTERM, which is how a held run is stopped, becomes an
+    # exit so the finally runs.
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-mutation-"))
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    print("tree copies in %s" % tmp)
+    try:
+        return _main(tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _main(tmp):
     from polaris_checks import checks as C
 
     source = (ROOT / "polaris_checks" / "checks.py").read_text(encoding="utf-8")
@@ -493,8 +575,7 @@ def main():
     fns = {n.name: n for n in tree.body
            if isinstance(n, ast.FunctionDef) and n.name in by_name}
 
-    base = pathlib.Path("/tmp/polaris-mutation-base")
-    shutil.rmtree(base, ignore_errors=True)
+    base = tmp / "base"
     shutil.copytree(ROOT, base, ignore=IGNORE)
 
     survived, mutated, skipped_opaque, skipped_nothing = [], 0, 0, 0
@@ -502,7 +583,7 @@ def main():
     no_named_input: list[str] = []
     unmutable_suffix: list = []
     no_line_matched: list[str] = []
-    work = pathlib.Path("/tmp/polaris-mutation-run")
+    work = tmp / "run"
 
     print("can a check pass on a tree where its property is gone?")
     print()
@@ -651,9 +732,6 @@ def main():
             notices_empty = True
         (prose_existence_only if notices_empty else prose_blind).append(name)
 
-    shutil.rmtree(work, ignore_errors=True)
-    shutil.rmtree(base, ignore_errors=True)
-
     print("  checks fully mutated and re-run              %4d" % mutated)
     print("  ...of those, still passing on a broken tree  %4d" % len(survived))
     print("  skipped: inputs this harness cannot enumerate %3d" % skipped_opaque)
@@ -763,10 +841,9 @@ def main():
             print("  %s" % name, file=sys.stderr)
         return 1
     if stale_exceptions:
-        # A limitations list that can only be appended to is a confession nobody
-        # maintains. polaris-review-packet-drill.py fails when one of ITS limitations is
-        # fixed, for the same reason: an exception that has stopped being true reads
-        # exactly like one that is still load-bearing, and the next person to read it
+        # An exception list that can only be appended to is one nobody maintains: an
+        # exception that has stopped being true reads exactly like one that is still
+        # load-bearing, and the next person to read it
         # believes it. check_image_builds_are_retried was listed here from the day its
         # needles lived in a file reads_of could not name, and stayed listed after that
         # was resolved.

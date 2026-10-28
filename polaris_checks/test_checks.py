@@ -2706,7 +2706,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
               '<img src="docs/assets/rule.svg" alt="">']
     two = "Two wallets ran unmodified: Alpha and Beta."
     one = "One more library took part: the reference library (Kotlin)."
-    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\n**Not yet:** an independent security review, a pilot.\n"
+    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\nAn outside wallet project runs the verifier in its CI.\n"
 
     def readme(rows=badges, two=two, one=one):
         return "<div>\n\n" + "\n".join(rows) + "\n\n</div>\n\n## What it is\n\nPre-pilot.\n\n" + status % (two, one)
@@ -2739,11 +2739,11 @@ def test_claims_manifest_check_discriminates(tmp_path):
          "implementations": [{"name": "Alpha", "scoreboard": "Alpha"}, {"name": "Beta", "scoreboard": "Beta wallet"}]},
         {"id": "one", "kind": "statement", "claim": one, "surfaces": ["README.md"], "evidence": ["file:LICENSE"],
          "reproduce": "Read the scoreboard.", "implementations": [{"name": "Kotlin", "scoreboard": "lib-kt"}]},
-        {"id": "not-yet", "kind": "statement", "claim": "Not yet: an independent security review, a pilot.",
+        {"id": "outside-ci", "kind": "statement", "claim": "An outside wallet project runs the verifier in its CI.",
          "surfaces": ["README.md", "site/llms.txt"], "evidence": ["file:LICENSE"], "reproduce": "Read the scoreboard."},
     ]}
     for rel, text in (("LICENSE", "Apache License\n"), ("t/test_x.py", "class XTests:\n    pass\n"),
-                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- Not yet: an independent security\n  review, a pilot.\n")):
+                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- An outside wallet project runs\n  the verifier in its CI.\n")):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(text)
     (tmp_path / "lab").mkdir()
@@ -2791,9 +2791,9 @@ def test_claims_manifest_check_discriminates(tmp_path):
         "must FAIL on an evidence token of no known kind"
 
     # A listed sentence edited, or an older one restored, on its surface.
-    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security review.\n")
+    (tmp_path / "site" / "llms.txt").write_text("- An outside wallet project runs the verifier.\n")
     assert run() == "FAIL", "must FAIL when a claim was edited on one of its surfaces"
-    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security\n  review, a pilot.\n")
+    (tmp_path / "site" / "llms.txt").write_text("- An outside wallet project runs\n  the verifier in its CI.\n")
     assert run() == "OK", "must PASS again once the surface says the claim"
     assert run(rd=readme(one="One more library presented through a wallet built here: the reference library (Kotlin).")) == "FAIL", \
         "must FAIL when an older, larger sentence replaces the listed one"
@@ -2857,7 +2857,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
     assert run(edit(lambda by: by["ci"].pop("why"))) == "FAIL", \
         "must FAIL on a null reproduce with no reason"
     assert run(edit(lambda by: by["site"].update(id="ci"))) == "FAIL", "must FAIL on two entries with one id"
-    assert run(edit(lambda by: by["not-yet"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
+    assert run(edit(lambda by: by["outside-ci"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
     manifest.unlink()
     assert checks.check_claims_manifest(tmp_path)[0].level == "FAIL", "must FAIL when the manifest is missing"
 
@@ -3174,19 +3174,48 @@ def test_sbom_trivy_match_check_discriminates(tmp_path):
     assert found.level == "FAIL" and "names no Trivy version" in found.message, \
         "must FAIL when the generator names no version at all, rather than passing on the scanner's alone"
 
+    # The scanner moved into a workflow a ci.yml job calls (image-cve-scan.yml since 2026-10-21):
+    # its pin is read there, and the scanner must name a version of its own.
+    (wf / "sbom-build.yml").write_text("env:\n  TRIVY_IMAGE: aquasec/trivy:0.58.1\n")
+    ci.write_text("jobs:\n  image-cve-scan:\n    uses: ./.github/workflows/image-cve-scan.yml\n")
+    scan = wf / "image-cve-scan.yml"
+    scan.write_text("run: docker run aquasec/trivy:0.58.1 image x\n")
+    assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "OK", \
+        "must PASS when the scanner ci.yml calls uses the generator's version"
+    scan.write_text("run: docker run aquasec/trivy:0.59.0 image x\n")
+    assert checks.check_sbom_trivy_matches_scan(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the scanner ci.yml calls uses another version than the generator"
+    scan.write_text("run: echo the scanner went elsewhere\n")
+    found = checks.check_sbom_trivy_matches_scan(tmp_path)[0]
+    assert found.level == "FAIL" and "image CVE scan" in found.message and "names no" in found.message, \
+        f"must FAIL when the scanner names no version, rather than passing on the generator's alone: {found.message}"
 
-def test_supply_chain_pins_check_discriminates(tmp_path):
-    files = ["polaris_web/Dockerfile.caddy", "polaris_web/Dockerfile.etcd",
-             "polaris_web/docker-compose.prod.yml", "polaris_web/docker-compose.yml",
-             "scripts/polaris-helm-drill.sh",
-             ".github/dependabot.yml", "sdk/typescript/package-lock.json",
+
+def _supply_chain_tree(tmp_path):
+    """What check_supply_chain_pins reads, copied from the real tree: Dependabot's config, two of
+    the manifests it must read, the workflows, the Dockerfiles and compose files, and every shell
+    script, so each script a run step calls is there to be read."""
+    files = [".github/dependabot.yml", "sdk/typescript/package-lock.json",
              "packages/polaris-verify/pyproject.toml"]
-    files += [str(p.relative_to(REPO)) for p in sorted((REPO / ".github/workflows").glob("*.yml"))]
+    for pattern in (".github/workflows/*.yml", "polaris_web/Dockerfile*", "polaris_web/docker-compose*.yml",
+                    "scripts/**/*.sh", "lab/**/*.sh", "deploy/**/*.sh"):
+        files += [str(p.relative_to(REPO)) for p in sorted(REPO.glob(pattern)) if p.is_file()]
     for rel in files:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text())
+
+
+def _supply_chain_workflow(root, steps, name="zz-fixture.yml", job=""):
+    """Write a workflow of one job, whose steps start on line 8, into the tree at `root`."""
+    (root / ".github/workflows" / name).write_text(
+        "name: fixture\non: workflow_dispatch\npermissions: {}\njobs:\n  one:\n    runs-on: ubuntu-latest\n"
+        + job + "    steps:\n" + steps)
+
+
+def test_supply_chain_pins_check_discriminates(tmp_path):
+    _supply_chain_tree(tmp_path)
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
-        "must PASS on the real Dockerfiles, drill, workflows and Dependabot config"
+        "must PASS on the real Dockerfiles, scripts, workflows and Dependabot config"
 
     def broken(rel, old, new, why):
         path = tmp_path / rel
@@ -3231,8 +3260,314 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
         assert checks.check_supply_chain_pins(tmp_path)[0].level == "FAIL", \
             f"must FAIL when {why} appears that Dependabot does not read"
         (d / manifest).unlink()
+    # 2026-10-24: a requirements file pinning a version is a manifest too. Dependabot raised a HIGH
+    # alert on a pin in lab/strategy/013, a directory its version updates did not read, as pip was
+    # required only for the published packages. A file that pins nothing (a bare name, an include)
+    # is not one.
+    d = tmp_path / "lab/harness-x"
+    (d / "requirements.txt").write_text("-r ../other.txt\nrequests\n")
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on a requirements file that pins no version"
+    for pinned in ("gitpython==3.2.0\n", "uvicorn[standard] == 0.32.0 \\\n    --hash=sha256:" + "a" * 64 + "\n"):
+        (d / "requirements.txt").write_text(pinned)
+        found = checks.check_supply_chain_pins(tmp_path)[0]
+        assert found.level == "FAIL" and "pip manifest in /lab/harness-x" in found.message, \
+            f"must FAIL when Dependabot does not read a requirements file that pins {pinned!r}: {found.message}"
+    (d / "requirements.txt").unlink()
+    # A .in alone counts: pip-compile's input pins too, and its directory need hold no .txt.
+    (d / "tools.in").write_text("gitpython==3.2.0\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "pip manifest in /lab/harness-x" in found.message, \
+        f"must FAIL when Dependabot does not read a directory whose only pinning file is a .in: {found.message}"
+    (d / "tools.in").unlink()
     assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
         "must PASS again once the unread manifests are gone"
+    # Under any name and in .github too: CI's audit tools are pinned in .github/ci/audit.txt.
+    (tmp_path / ".github/ci").mkdir()
+    (tmp_path / ".github/ci/audit.txt").write_text((REPO / ".github/ci/audit.txt").read_text())
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", \
+        "must PASS on .github/ci/audit.txt while Dependabot reads /.github/ci"
+    dep = tmp_path / ".github/dependabot.yml"
+    entry = "  - package-ecosystem: pip\n    directory: /.github/ci\n"
+    assert dep.read_text().count(entry) == 1, "the fixture drifted: dependabot.yml has no one /.github/ci pip entry"
+    dep.write_text(dep.read_text().replace(entry, "  - package-ecosystem: pip\n    directory: /.github/ci-gone\n"))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "pip manifest in /.github/ci" in found.message, \
+        f"must FAIL when Dependabot no longer reads .github/ci/audit.txt: {found.message}"
+
+
+# A docker run, create or pull in a run step is read by docker's own option grammar, so the image is
+# the first word that is neither an option nor an option's value. One test per way an image is named.
+def test_supply_chain_pins_reads_a_tagged_docker_run(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm redis:8-alpine redis-cli --version\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs redis:8-alpine by tag (docker run)" in found.message, \
+        f"must FAIL, naming the line, when a run step runs an image by tag: {found.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm redis:8-alpine@sha256:"
+                           "3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 redis-cli\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on the pinned form: {found.message}"
+
+
+def test_supply_chain_pins_reads_the_image_after_continued_options(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, (
+        "      - run: |\n"
+        "          docker run -d --name pg --network pgnet \\\n"
+        "            -e POSTGRES_PASSWORD=x -v /tmp/a:/b:ro \\\n"
+        "            postgres:16-alpine -c fsync=off\n"))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:11 runs postgres:16-alpine by tag (docker run)" in found.message, \
+        f"must FAIL on an image two continuation lines down, after options that take values: {found.message}"
+
+
+def test_supply_chain_pins_reads_a_tagged_docker_pull(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker pull --platform linux/arm64 -q alpine:3.24\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs alpine:3.24 by tag (docker pull)" in found.message, \
+        f"must FAIL when a run step pulls an image by tag: {found.message}"
+
+
+def test_supply_chain_pins_reads_a_tagged_docker_create(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker container create --name c -u 1000 -it busybox:1.37 sh\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs busybox:1.37 by tag (docker create)" in found.message, \
+        f"must FAIL when a run step creates a container from an image by tag: {found.message}"
+
+
+def test_supply_chain_pins_reads_container_and_docker_uses(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, "      - uses: docker://alpine:3.24\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs alpine:3.24 by tag (uses:)" in found.message, \
+        f"must FAIL on a docker:// action by tag: {found.message}"
+    _supply_chain_workflow(tmp_path, "      - run: true\n", job="    container: node:22-alpine\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:7 runs node:22-alpine by tag (container:)" in found.message, \
+        f"must FAIL on a job container by tag: {found.message}"
+
+
+# A workflow copy of an image a Dockerfile or compose file also pins must carry that pin's digest:
+# Dependabot refreshes the manifest and never the workflow, so a copy left behind turns this red.
+def test_supply_chain_pins_holds_a_run_step_to_the_dependabot_pin(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, f"      - run: docker run --rm postgres:16-alpine@sha256:{'a' * 64} true\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and ("zz-fixture.yml:8 runs postgres:16-alpine at aaaaaaaaaaaa, but "
+                                      "polaris_web/Dockerfile.postgres pins it at 721873c34ceb") in found.message, \
+        f"must FAIL, naming both files, when a run step's digest is not the one Dependabot refreshes: {found.message}"
+
+
+def test_supply_chain_pins_holds_a_service_image_to_the_dependabot_pin(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    ci = tmp_path / ".github/workflows/ci.yml"
+    good = ci.read_text()
+    pin = "image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+    assert pin in good, "the fixture drifted: ci.yml no longer names the Dockerfile's postgres pin in an image: line"
+    ci.write_text(good.replace(pin, f"image: postgres:16-alpine@sha256:{'b' * 64}", 1))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "runs postgres:16-alpine at bbbbbbbbbbbb, but polaris_web/Dockerfile.postgres" \
+        in found.message, f"must FAIL on a service image the same way: {found.message}"
+
+
+def test_supply_chain_pins_holds_every_script_pin_to_the_dependabot_pin(tmp_path):
+    # 2026-10-21: scripts/polaris-deploy.sh re-owned the edge's volumes with alpine:3.24 at an older
+    # digest than the Dockerfiles' pin, which Dependabot refreshes, and nothing saw it. No workflow
+    # calls that script, and in the scripts a run step does call only a ref by tag was refused, not
+    # a digest that differs.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    deploy = tmp_path / "scripts/polaris-deploy.sh"
+    good = deploy.read_text()
+    pin = "alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+    assert good.count(pin) == 2, "the fixture drifted: polaris-deploy.sh no longer pins alpine:3.24 twice"
+    deploy.write_text(good.replace(pin, f"alpine:3.24@sha256:{'d' * 64}", 1))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and ("scripts/polaris-deploy.sh:289 pins alpine:3.24 at dddddddddddd, but "
+                                      "polaris_web/Dockerfile.etcd pins it at 294b683cb724") in found.message, \
+        f"must FAIL, naming both files, on a script no workflow calls: {found.message}"
+    deploy.write_text(good)
+    # As a ${VAR:-...} default the same; a comment is not a pin, and a tag no manifest Dependabot
+    # reads pins is refreshed by hand.
+    script = tmp_path / "lab/zz-fixture.sh"
+    script.write_text('#!/usr/bin/env bash\nIMG="${IMG:-docker.io/library/alpine:3.24@sha256:' + "e" * 64 + '}"\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "lab/zz-fixture.sh:2 pins alpine:3.24 at eeeeeeeeeeee" in found.message, \
+        f"must FAIL on a pinned default naming the same image another way: {found.message}"
+    script.write_text("#!/usr/bin/env bash\n# alpine:3.24@sha256:" + "e" * 64 + "\nIMG=alpine:3.99@sha256:"
+                      + "e" * 64 + "\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on a commented pin and an untwinned tag: {found.message}"
+
+
+def test_supply_chain_pins_holds_a_digest_only_pin_to_the_overlays(tmp_path):
+    # 2026-10-28: the observability overlay pins Prometheus and Alertmanager by digest alone, so no
+    # script ref twinned with them, and the page and chaos drills ran images a month older than the
+    # overlay ships.
+    _supply_chain_tree(tmp_path)
+    overlay = (tmp_path / "polaris_web/docker-compose.observability.yml").read_text()
+    shipped = re.search(r"(?m)^\s*image: prom/alertmanager@sha256:([0-9a-f]{64})", overlay)
+    assert shipped, "the fixture drifted: the overlay no longer pins prom/alertmanager by digest"
+    drill = tmp_path / "scripts/polaris-page-drill.sh"
+    good = drill.read_text()
+    pin = "prom/alertmanager@sha256:" + shipped.group(1)
+    assert good.count(pin) == 1, "the fixture drifted: polaris-page-drill.sh no longer pins the overlay's Alertmanager"
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", "must PASS with the overlay's digest"
+    drill.write_text(good.replace(pin, "prom/alertmanager@sha256:" + "d" * 64))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and ("pins prom/alertmanager at dddddddddddd, but polaris_web/docker-compose."
+                                      "observability.yml pins it at " + shipped.group(1)[:12]) in found.message \
+        and "scripts/polaris-page-drill.sh:" in found.message, \
+        f"must FAIL, naming both files, on a digest-only pin off the overlay's: {found.message}"
+
+
+def test_supply_chain_pins_fails_closed_on_an_unresolved_variable(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, '      - run: docker run --rm "$PG_IMAGE" true\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs $PG_IMAGE, and no env block in zz-fixture.yml names " \
+        "$PG_IMAGE" in found.message, f"must FAIL on a variable no env block names: {found.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm ${{ matrix.image }} true\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "names ${{matrix.image}}" in found.message, \
+        f"must FAIL on an expression it cannot resolve: {found.message}"
+    step = ("      - name: env\n        env:\n          PG_IMAGE: postgres:16-alpine%s\n"
+            '        run: docker run --rm "$PG_IMAGE" true\n')
+    _supply_chain_workflow(tmp_path, step % "")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:11 runs postgres:16-alpine by tag (docker run)" in found.message, \
+        f"must FAIL on a tag an env block hands the run step: {found.message}"
+    _supply_chain_workflow(tmp_path, step % "@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when the env block names the pinned image: {found.message}"
+
+
+def test_supply_chain_pins_fails_when_a_docker_run_goes_unread(tmp_path):
+    # A parser that silently finds nothing must not pass: here the step's key is quoted, which the
+    # run-step reader does not take for `run:`, so the parse of this workflow comes back empty.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    _supply_chain_workflow(tmp_path, '      - "run": docker run --rm redis:8-alpine true\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 has a docker run, create or pull that the check did not " \
+        "read" in found.message, f"must FAIL when a workflow names a docker run it did not parse: {found.message}"
+
+
+def test_supply_chain_pins_reads_a_docker_run_in_a_called_script(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    (tmp_path / "scripts/zz-fixture.sh").write_text("#!/usr/bin/env bash\ndocker run --rm python:3.12-alpine true\n")
+    _supply_chain_workflow(tmp_path, "      - run: bash scripts/zz-fixture.sh\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/zz-fixture.sh:2 runs python:3.12-alpine by tag (docker run)" \
+        in found.message, f"must FAIL on a tagged docker run in a script a run step calls: {found.message}"
+    (tmp_path / ".github/workflows/zz-fixture.yml").unlink()
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when no run step calls the script: {found.message}"
+
+
+def test_supply_chain_pins_reads_an_image_assignment_in_a_called_script(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    script = tmp_path / "scripts/zz-fixture.sh"
+    script.write_text('#!/usr/bin/env bash\nPY_IMAGE=python:3.12-alpine\ndocker run --rm "$PY_IMAGE" true\n')
+    _supply_chain_workflow(tmp_path, "      - run: bash scripts/zz-fixture.sh\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/zz-fixture.sh:2 assigns python:3.12-alpine to PY_IMAGE by tag" \
+        in found.message, f"must FAIL on a tagged PY_IMAGE= in a script a run step calls: {found.message}"
+    script.write_text('#!/usr/bin/env bash\nPY_IMAGE="${PY_IMAGE:-python:3.12-alpine@sha256:' + "c" * 64 + '}"\n'
+                      'docker run --rm "$PY_IMAGE" true\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when the script's default is pinned: {found.message}"
+
+
+def test_supply_chain_pins_reads_the_assignments_of_a_variable_docker_runs(tmp_path):
+    # A variable a docker command runs is read however it is named: a tag-only fallback for a base the
+    # script reads from a Dockerfile is the image CI pulls the day that read stops matching.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    kex = tmp_path / "scripts/polaris-internal-kex-drill.sh"
+    good = kex.read_text()
+    closed = '[ -n "$APP_BASE" ] || { echo "polaris-internal-kex-drill: cannot read the runtime base'
+    assert closed in good, "the fixture drifted: the kex drill no longer fails closed on an unread APP_BASE"
+    kex.write_text(re.sub(r"(?m)^\[ -n \"\$APP_BASE\" \] \|\| \{.*\}$",
+                          '[ -n "$APP_BASE" ] || APP_BASE=python:3.12-slim-bookworm', good, count=1))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/polaris-internal-kex-drill.sh:70 assigns python:3.12-slim-bookworm " \
+        "to APP_BASE by tag" in found.message, f"must FAIL on a tag-only fallback for a variable docker runs: {found.message}"
+    kex.write_text(good)
+    script = tmp_path / "scripts/zz-fixture.sh"
+    script.write_text('#!/usr/bin/env bash\nBASE=$(sed -n 1p base.txt)\n[ -n "$BASE" ] || BASE=python:3.12-alpine\n'
+                      'docker run --rm "$BASE" true\n')
+    _supply_chain_workflow(tmp_path, "      - run: bash scripts/zz-fixture.sh\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "scripts/zz-fixture.sh:3 assigns python:3.12-alpine to BASE by tag" \
+        in found.message, f"must FAIL whatever the variable is named: {found.message}"
+    script.write_text('#!/usr/bin/env bash\nBASE=$(sed -n 1p base.txt)\n[ -n "$BASE" ] || exit 1\n'
+                      'docker run --rm "$BASE" true\n')
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when the script fails closed instead: {found.message}"
+
+
+def test_supply_chain_pins_counts_the_script_refs_built_at_run_time(tmp_path):
+    # A ref a script builds at run time is beyond the lexical rule; the OK line says how many there are,
+    # so the scope is read rather than assumed.
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    counted = re.search(r"where (\d+) refs are built at run time and not read", base.message)
+    assert counted, f"must name how many script refs are built at run time: {base.message}"
+    (tmp_path / "scripts/zz-fixture.sh").write_text('#!/usr/bin/env bash\ndocker run --rm "$1" true\n')
+    _supply_chain_workflow(tmp_path, "      - run: bash scripts/zz-fixture.sh alpine:3.24\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK" and f"where {int(counted.group(1)) + 1} refs are built at run time" in found.message, \
+        f"must count one more when a called script runs an image built at run time: {found.message}"
+
+
+def test_supply_chain_pins_excepts_only_what_the_workflow_built_and_the_canary(tmp_path):
+    _supply_chain_tree(tmp_path)
+    base = checks.check_supply_chain_pins(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    steps = "      - run: |\n          docker build -t fixture-app:ci .\n          docker run --rm fixture-app:%s true\n"
+    _supply_chain_workflow(tmp_path, steps % "ci")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on an image the same workflow built: {found.message}"
+    _supply_chain_workflow(tmp_path, steps % "other")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:10 runs fixture-app:other by tag" in found.message, \
+        f"must FAIL on another tag of a name the workflow built: excluded by tag, never by prefix: {found.message}"
+    (tmp_path / ".github/workflows/zz-fixture.yml").unlink()
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm alpine:latest true\n", name="wallet-canary.yml")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on the wallet canary, which walks the latest builds by design: {found.message}"
+    _supply_chain_workflow(tmp_path, "      - run: docker run --rm alpine:latest true\n")
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and "zz-fixture.yml:8 runs alpine:latest by tag" in found.message, \
+        f"must FAIL on the same step in any other workflow: {found.message}"
 
 
 def test_release_provenance_check_discriminates(tmp_path):
@@ -3801,6 +4136,8 @@ def test_doctor_names_failures_check_discriminates(tmp_path):
     broken(doc, "printenv POLARIS_PGBACKREST_S3_BUCKET", "printenv POLARIS_UNSET",
            "must FAIL when the doctor no longer reads where the backup repository is")
     broken(doc, "(start with ${FAILING[0]})", "", "must FAIL when the last line names no component")
+    broken(doc, '"${URL}/.well-known/security.txt" 2> /dev/null)', '"${URL}/api/health/live" 2> /dev/null)',
+           "must FAIL when the doctor judges the edge on a health answer, which the edge refuses from outside")
     broken(drill, "stop redis", "restart redis", "must FAIL when the drill no longer stops Redis")
     broken(drill, 'expect_named secrets', 'expect_clean secrets', "must FAIL when an emptied secret need not be named")
     broken(drill, "POLARIS_DB_SSLMODE: disable", "POLARIS_DB_SSLMODE: require",
@@ -5097,9 +5434,12 @@ def test_image_cve_scanning_check_discriminates(tmp_path):
     web = tmp_path / "polaris_web"
     web.mkdir()
 
-    GOOD_CI = ("jobs:\n  image-cve-scan:\n    steps:\n      run: |\n"
-               "        trivy image --severity CRITICAL --ignore-unfixed --ignorefile /.trivyignore "
-               "--exit-code 1 polaris-app:cve\n")
+    # Since 2026-10-21 the gate lives in a workflow that ci.yml's job calls and that runs weekly.
+    GOOD_CI = "jobs:\n  image-cve-scan:\n    uses: ./.github/workflows/image-cve-scan.yml\n"
+    GOOD_SCAN = ('on:\n  workflow_call:\n  schedule:\n    - cron: "53 5 * * 4"\n'
+                 "jobs:\n  scan:\n    steps:\n      - run: |\n"
+                 "          trivy image --severity CRITICAL --ignore-unfixed --ignorefile /.trivyignore "
+                 "--exit-code 1 polaris-app:cve\n")
     DOCKERFILES = {
         "Dockerfile.prod": "FROM python:3.12-slim-bookworm\nRUN apt-get update && apt-get -y upgrade\n",
         "Dockerfile.caddy": "FROM caddy:2-alpine\nRUN apk upgrade --no-cache\n",
@@ -5107,8 +5447,9 @@ def test_image_cve_scanning_check_discriminates(tmp_path):
         "Dockerfile.postgres": "FROM postgres:16-alpine\nRUN apk upgrade --no-cache\n",
     }
 
-    def write(ci=GOOD_CI, dockerfiles=None, trivyignore=True):
+    def write(ci=GOOD_CI, scan=GOOD_SCAN, dockerfiles=None, trivyignore=True):
         (gh / "ci.yml").write_text(ci)
+        (gh / "image-cve-scan.yml").write_text(scan)
         for name, body in (dockerfiles or DOCKERFILES).items():
             (web / name).write_text(body)
         ti = tmp_path / ".trivyignore"
@@ -5123,7 +5464,7 @@ def test_image_cve_scanning_check_discriminates(tmp_path):
         "must FAIL when CI does not run Trivy on the images"
 
     # 2. Trivy present but not gating (no --exit-code 1) -> FAIL.
-    write(ci="jobs:\n  s:\n    steps:\n      run: trivy image --severity CRITICAL --ignore-unfixed app\n")
+    write(scan=GOOD_SCAN.replace("--exit-code 1 ", ""))
     assert checks.check_image_cve_scanning(tmp_path)[0].level == "FAIL", \
         "must FAIL when the Trivy scan does not gate (--exit-code 1)"
 
@@ -5142,6 +5483,59 @@ def test_image_cve_scanning_check_discriminates(tmp_path):
     write()
     assert checks.check_image_cve_scanning(tmp_path)[0].level == "OK", \
         "must PASS with a gating image scan, base patching, and documented exceptions"
+
+
+def test_image_cve_scanning_requires_a_weekly_run_of_the_gate(tmp_path):
+    for rel in (".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml", ".trivyignore",
+                "polaris_web/Dockerfile.prod", "polaris_web/Dockerfile.caddy",
+                "polaris_web/Dockerfile.pgbouncer", "polaris_web/Dockerfile.postgres"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    wf = tmp_path / ".github" / "workflows"
+    ci, scan = (wf / "ci.yml").read_text(), (wf / "image-cve-scan.yml").read_text()
+    base = checks.check_image_cve_scanning(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    (wf / "ci.yml").write_text(ci.replace("uses: ./.github/workflows/", "uses: $/.github/workflows/"))
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when ci.yml calls the workflow in the $/ form: {found.message}"
+
+    # CI before 2026-10-21: the same steps inline in ci.yml's job, and no schedule there.
+    inline = re.sub(r"(?m)^    uses: \./\.github/workflows/image-cve-scan\.yml.*\n",
+                    lambda m: "    runs-on: ubuntu-latest\n" + scan[scan.index("    steps:\n"):], ci)
+    assert inline != ci
+    (wf / "ci.yml").write_text(inline)
+    (wf / "image-cve-scan.yml").unlink()
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "FAIL" and "ci.yml, which holds the Trivy gate" in found.message \
+        and "no weekly schedule" in found.message, found.message
+    (wf / "ci.yml").write_text(inline.replace("  workflow_dispatch:\n",
+                                              '  workflow_dispatch:\n  schedule:\n    - cron: "53 5 * * 4"\n', 1))
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "OK", f"must PASS when the file holding the gate, ci.yml here, runs weekly: {found.message}"
+
+    # The gate in neither place: the called workflow no longer gates, and ci.yml names the flags
+    # only in a comment. Red, whatever else names Trivy.
+    (wf / "ci.yml").write_text(ci + "# trivy image --severity CRITICAL --ignore-unfixed --exit-code 1\n")
+    (wf / "image-cve-scan.yml").write_text(scan.replace("--exit-code 1 ", "--exit-code 0 "))
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "FAIL" and "no run step" in found.message, found.message
+
+    # The gate in a workflow no ci.yml job calls, so no pull request runs it.
+    (wf / "ci.yml").write_text(ci.replace("uses: ./.github/workflows/image-cve-scan.yml",
+                                          "uses: ./.github/workflows/zz-other.yml"))
+    (wf / "image-cve-scan.yml").write_text(scan)
+    found = checks.check_image_cve_scanning(tmp_path)[0]
+    assert found.level == "FAIL" and "no run step" in found.message, found.message
+
+    # The gate's workflow runs monthly, or on no schedule at all.
+    (wf / "ci.yml").write_text(ci)
+    for text in (re.sub(r'cron: "[^"]*"', 'cron: "53 5 1 * *"', scan),
+                 re.sub(r"(?m)^  schedule:\n(?:    .*\n)+", "", scan)):
+        assert text != scan
+        (wf / "image-cve-scan.yml").write_text(text)
+        found = checks.check_image_cve_scanning(tmp_path)[0]
+        assert found.level == "FAIL" and "image-cve-scan.yml, which holds the Trivy gate" in found.message \
+            and "no weekly schedule" in found.message, found.message
 
 
 def test_migration_timeouts_check_discriminates(tmp_path):
@@ -5491,7 +5885,8 @@ def test_prod_stack_boot_check_discriminates(tmp_path):
     GOOD_CI = ("jobs:\n  prod-stack-boot:\n    steps:\n      run: |\n"
                "        bash scripts/polaris-generate-secrets.sh\n"
                "        docker compose -f docker-compose.prod.yml -f docker-compose.citest.yml up -d\n"
-               "        curl -sk https://localhost:8443/api/health\n")
+               "        curl -sk https://localhost:8443/.well-known/security.txt\n"
+               "        docker exec polaris-app curl -s http://localhost:8000/api/health\n")
 
     def write(ci_text=GOOD_CI, override=True, caddyfile=True):
         ci.write_text(ci_text)
@@ -5526,10 +5921,18 @@ def test_prod_stack_boot_check_discriminates(tmp_path):
     assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
         "must FAIL when the boot does not assert serving through the edge"
 
+    # 4b. Asks the edge for /api/health, which the edge refuses from outside the allow-list -> FAIL.
+    write(ci_text=GOOD_CI.replace("/.well-known/security.txt", "/api/health"))
+    assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the edge is asked for the health answers it refuses"
+    write(ci_text=GOOD_CI.replace("        docker exec polaris-app curl -s http://localhost:8000/api/health\n", ""))
+    assert checks.check_prod_stack_boot(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the roll-up is not read at the app"
+
     # 5. Override + Caddyfile + boots prod compose + secrets + health probe -> OK.
     write()
     assert checks.check_prod_stack_boot(tmp_path)[0].level == "OK", \
-        "must PASS for a full prod-compose boot that generates secrets and probes /api/health"
+        "must PASS for a full prod-compose boot that generates secrets, asks the edge and reads the roll-up"
 
 
 def test_container_hardening_check_discriminates(tmp_path):
@@ -5719,10 +6122,26 @@ def test_sast_scanning_check_discriminates(tmp_path):
     assert checks.check_sast_scanning(tmp_path)[0].level == "FAIL", \
         "must FAIL when bandit does not gate on high severity"
 
-    # 3. bandit gating on high severity -> OK.
-    write_ci("jobs:\n  s:\n    steps:\n      run: bandit -r polaris_web polaris_cli --severity-level high -q\n")
+    # 3. bandit gating on high severity at every confidence -> OK.
+    write_ci("jobs:\n  s:\n    steps:\n      run: bandit -r polaris_web polaris_cli --severity-level high "
+             "--confidence-level all -q\n")
     assert checks.check_sast_scanning(tmp_path)[0].level == "OK", \
-        "must PASS when bandit gates on high severity"
+        "must PASS when bandit gates on high severity at every confidence"
+
+    # 4. The real gate passes; CI's gate before 2026-10-21 (medium confidence and above) fails, as
+    # do a gate that names no confidence, one at low (which leaves out a finding of undefined
+    # confidence) and one whose last flag, or its prefix, raises it again.
+    real = (REPO / ".github/workflows/ci.yml").read_text()
+    write_ci(real)
+    found = checks.check_sast_scanning(tmp_path)[0]
+    assert found.level == "OK", f"must PASS on the real ci.yml: {found.message}"
+    assert real.count("--confidence-level all -q") == 1
+    for raised in ("--confidence-level medium -q", "-q", "--confidence-level low -q",
+                   "--confidence-level all --confidence-level high -q",
+                   "--confidence-l=high -q"):
+        write_ci(real.replace("--confidence-level all -q", raised))
+        found = checks.check_sast_scanning(tmp_path)[0]
+        assert found.level == "FAIL" and "--confidence-level all" in found.message, f"{raised}: {found.message}"
 
 
 def test_verify_enforced_check_discriminates(tmp_path):
@@ -8059,8 +8478,10 @@ def test_chaos_program_check_discriminates(tmp_path):
              "wait_for 10 app_resolves_pgbouncer\nCEIL_RESTART=60\nCEIL_DB=90\nCEIL_PAGE=240\n"
              "-v polaris-alerts.yml -v alertmanager.yml\n--record\nfail() { record_row FAIL; }\n")
     WF = ("on:\n  schedule:\n    - cron: \"47 5 * * 1\"\npermissions:\n  contents: write\n"
-          "run: docker compose -f docker-compose.bluegreen.yml up -d\nrun: bash scripts/polaris-chaos-drill.sh --record\n"
-          "run: git add docs/operator/CHAOS-DRILLS.md && git push\n")
+          "run: docker compose -f docker-compose.bluegreen.yml up -d\n"
+          "    steps:\n      - name: Chaos drill, recorded\n        run: bash scripts/polaris-chaos-drill.sh --record\n"
+          "      - name: Commit the ledger row\n        if: github.ref == 'refs/heads/main'\n"
+          "        run: git add docs/operator/CHAOS-DRILLS.md && git push\n")
     CI = "on:\n  push:\n    paths-ignore:\n      - docs/operator/CHAOS-DRILLS.md\njobs:\n  test:\n    run: bash scripts/polaris-chaos-test.sh\n"
     good = {
         ".github/workflows/ci.yml": CI,
@@ -8102,6 +8523,18 @@ def test_chaos_program_check_discriminates(tmp_path):
     # A workflow that runs the drill but cannot commit the row.
     write({".github/workflows/chaos.yml": WF.replace("permissions:\n  contents: write\n", "")})
     assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the ledger row cannot be committed"
+    # A branch dispatch that pushes its row: the ledger would record an unmerged drill as main's.
+    write({".github/workflows/chaos.yml": WF.replace("        if: github.ref == 'refs/heads/main'\n", "")})
+    assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when a branch run pushes the ledger row"
+    # The condition on another step leaves the push unguarded.
+    write({".github/workflows/chaos.yml": WF.replace("        if: github.ref == 'refs/heads/main'\n", "")
+           .replace("      - name: Chaos drill, recorded\n", "      - name: Chaos drill, recorded\n        if: github.ref == 'refs/heads/main'\n")})
+    assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the main-only condition is on another step"
+    # A condition that is always true, and the condition's text in a comment, guard nothing.
+    write({".github/workflows/chaos.yml": WF.replace("'refs/heads/main'\n", "'refs/heads/main' || true\n")})
+    assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the condition is always true"
+    write({".github/workflows/chaos.yml": WF.replace("        if: github.ref", "        # if: github.ref")})
+    assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the condition is a comment"
     # The ledger without its header: nothing to append to.
     write({"docs/operator/CHAOS-DRILLS.md": "# Chaos drills\n"})
     assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the ledger has no table"
@@ -8171,6 +8604,17 @@ def test_ha_automation_check_discriminates(tmp_path):
     assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when the lock pins another patroni than the .in chose"
     write({"polaris_web/requirements-patroni.txt": "patroni==4.1.5 \\\n    --hash=sha256:ab\n"})
     assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when the lock lacks the etcd3 extra's client"
+    # The scan's steps in a workflow a ci.yml job calls (image-cve-scan.yml since 2026-10-21): read there.
+    calls = CI.replace("for img in polaris-postgres:cve polaris-etcd:cve; do\n",
+                       "jobs:\n  image-cve-scan:\n    uses: ./.github/workflows/image-cve-scan.yml\n")
+    scan = "jobs:\n  scan:\n    steps:\n      - run: |\n          for img in polaris-postgres:cve polaris-etcd:cve; do\n"
+    write({".github/workflows/ci.yml": calls, ".github/workflows/image-cve-scan.yml": scan})
+    assert checks.check_ha_automation(tmp_path)[0].level == "OK", "must PASS when the scan lives in a workflow ci.yml calls"
+    write({".github/workflows/ci.yml": calls,
+           ".github/workflows/image-cve-scan.yml": scan.replace(" polaris-etcd:cve", "")})
+    assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when the called scan leaves out the etcd image"
+    write({".github/workflows/ci.yml": calls.replace("uses: ./", "uses: ./x/"), ".github/workflows/image-cve-scan.yml": scan})
+    assert checks.check_ha_automation(tmp_path)[0].level == "FAIL", "must FAIL when no ci.yml job calls the scan's workflow"
 
 
 def test_event_table_partitioning_check_discriminates(tmp_path):
@@ -9428,11 +9872,17 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
             p = tmp_path / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(body)
     matcher = ("@metrics_from_outside {\n    path /metrics /api/metrics\n"
                "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
-               "respond @metrics_from_outside 404\n")
+               "respond @metrics_from_outside 404\n"
+               "@health_from_outside {\n    path /api/health /api/health/*\n"
+               "    not remote_ip {$POLARIS_METRICS_ALLOW:0.0.0.0/32}\n}\n"
+               "respond @health_from_outside 404\n")
     helm = matcher.replace("{$POLARIS_METRICS_ALLOW:0.0.0.0/32}",
                            '{{ .Values.edge.metricsAllow | default "0.0.0.0/32" }}')
-    drill = ('sed -n x "${ROOT}/polaris_web/Caddyfile"\nfor where in "in-network" "via SNAT"; do\n'
-             '    probe 404 "${where}" /metrics\ndone\n')
+    drill = ('sed -n -e x -e \'/@health_from_outside {/,/respond @health_from_outside 404/p\' "${ROOT}/polaris_web/Caddyfile"\n'
+             'HEALTH_PATHS=(/api/health /api/health/ready /api/health/live)\n'
+             'for where in "in-network" "via SNAT"; do\n'
+             '    probe 404 "${where}" /metrics\n'
+             '    for path in "${HEALTH_PATHS[@]}"; do probe 404 "${where}" "${path}"; done\ndone\n')
     good = {
         "polaris_web/Caddyfile": "site {\n" + matcher + "reverse_proxy app:8000\n}\n",
         "polaris_web/Caddyfile.citest": "localhost:8443 {\n" + matcher + "reverse_proxy app:8000\n}\n",
@@ -9465,6 +9915,25 @@ def test_metrics_edge_acl_check_fails_when_an_edge_leaves_metrics_open(tmp_path)
            "must FAIL when the chart's default lets private addresses in")
     broken("scripts/polaris-metrics-edge-drill.sh", drill.replace('"via SNAT"', ""),
            "must FAIL when the drill no longer asks through an SNAT hop")
+    # 2026-10-21: the health answers, refused at every edge like the metrics.
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("path /api/health /api/health/*", "path /api/health"),
+           "must FAIL when the compose edge leaves a health path open")
+    broken("polaris_web/Caddyfile", good["polaris_web/Caddyfile"].replace("respond @health_from_outside 404\n", ""),
+           "must FAIL when the compose edge matches the health paths and serves them anyway")
+    broken("deploy/helm/polaris/templates/configmap-caddy.yaml",
+           good["deploy/helm/polaris/templates/configmap-caddy.yaml"].replace("path /api/health /api/health/*", "path /api/health/*"),
+           "must FAIL when the chart leaves /api/health open")
+    broken("polaris_web/Caddyfile.citest", good["polaris_web/Caddyfile.citest"].replace(
+               "path /api/health /api/health/*", "path /api/health /api/health/* /api/healthz"),
+           "must FAIL when the CI edge's health rule is not production's")
+    broken("scripts/polaris-metrics-edge-drill.sh", drill.replace("/api/health/ready ", ""),
+           "must FAIL when the drill no longer asks a health path")
+    # A respond line that is commented out refuses nothing: each rule, at each edge.
+    for rule in ("metrics_from_outside", "health_from_outside"):
+        for rel in ("polaris_web/Caddyfile", "polaris_web/Caddyfile.citest",
+                    "deploy/helm/polaris/templates/configmap-caddy.yaml"):
+            broken(rel, good[rel].replace(f"respond @{rule} 404\n", f"    # respond @{rule} 404\n"),
+                   f"must FAIL when {rel}'s `respond @{rule} 404` is commented out")
 
 
 def test_image_builds_are_retried_check_fails_when_a_build_bypasses_the_helper(tmp_path):
@@ -9595,6 +10064,56 @@ def test_site_pages_render_under_their_headers_check_discriminates(tmp_path):
 
     assert result() == "OK", \
         "must PASS when the policy is strict and the page loads only same-origin stylesheets and images (a canonical link loads nothing)"
+    with_fonts = headers.replace("img-src 'self';", "img-src 'self'; font-src 'self';")
+    same_origin_sets = ('<img src="logo.png" srcset="logo-1.png 1x, logo-2.png 2x" alt="">\n'
+                        '<picture><source type="image/avif" srcset="a-640.avif 640w, a-1280.avif 1280w">'
+                        '<img src="a.png" alt=""></picture>\n'
+                        '<link rel="preload" as="image" imagesrcset="a-640.avif 640w, a-1280.avif 1280w">\n')
+    assert result(site__index_dot_html=page + same_origin_sets) == "OK", \
+        "must PASS when every srcset and imagesrcset candidate is same-origin"
+    assert result(site___headers=with_fonts,
+                  site__index_dot_html=page + '<link rel="preload" href="f.woff2" as="font" type="font/woff2" crossorigin>\n') == "OK", \
+        "must PASS a same-origin font preload under font-src 'self'"
+    # each preload falls under the directive of what it says it is, and a module preload under script-src
+    with_kinds = headers.replace("img-src 'self';", "img-src 'self'; media-src 'self'; connect-src 'self'; "
+                                                    "frame-src 'self'; script-src 'self'; font-src 'self'; "
+                                                    "object-src 'self';")
+    preloads = {"font": '<link rel="preload" as="Font" href="f.woff2" crossorigin>\n',
+                "object": '<object data="o.svg"></object>\n<embed src="e.svg">\n',
+                "video": '<link rel="preload" as="video" href="v.mp4">\n',
+                "audio": '<link rel="preload" as="audio" href="a.mp3">\n',
+                "track": '<link rel="preload" as="track" href="t.vtt">\n',
+                "fetch": '<link rel="preload" as="fetch" href="d.json" crossorigin>\n',
+                "document": '<link rel="preload" as="document" href="b.html">\n',
+                "module": '<link rel="modulepreload" href="m.js">\n'}
+    assert result(site___headers=with_kinds, site__index_dot_html=page + "".join(preloads.values())) == "OK", \
+        "must PASS same-origin preloads of each kind under the directive that kind falls under"
+    # attributes as a browser reads them: either quote or none, any case
+    assert result(site__index_dot_html=page + "<IMG SRC='logo.png' ALT=''>\n<img src=logo.png alt=x>\n") == "OK", \
+        "must PASS same-origin images however their attributes are quoted"
+    # media loads under media-src and their posters and SVG images under img-src
+    media = ('<video src="v.mp4" poster="p.png"><source src="v.webm" type="video/webm"><track src="t.vtt"></video>\n'
+             '<audio src="a.mp3"></audio>\n<svg><image href="i.png"/><image xlink:href="j.png"/></svg>\n')
+    assert result(site___headers=with_kinds, site__index_dot_html=page + media) == "OK", \
+        "must PASS same-origin video, audio, track, poster and SVG image loads under the directives they fall under"
+    # an event handler or a style is an attribute the parser reads, not a word in the text
+    assert result(site__index_dot_html=page + "<p>count one = two; style = plain</p>\n") == "OK", \
+        "must not read prose that looks like an attribute as an inline handler or style"
+    # an image-set() may give its images as bare strings; the string in a type() names a format, not a file
+    assert result(site__a_dot_css="body{background:image-set(\"a.avif\" type(\"image/avif\") 1x, url(\"b.webp\") 1x)}\n"
+                                  "p{background:-webkit-image-set('c.png' 1x, 'c-2.png' 2x)}\n") == "OK", \
+        "must PASS an image-set whose bare strings and url()s are same-origin, its type() string not read as a URL"
+    cdn = headers.replace("img-src 'self';", "img-src https://cdn.example.org/;")
+    assert result(site___headers=cdn, site__index_dot_html='<link rel="stylesheet" href="a.css">\n',
+                  site__a_dot_css='body{background:image-set("https://cdn.example.org/a.avif" type("image/avif") 1x)}\n') == "OK", \
+        "must not read the string in an image-set's type() as a URL (under a policy with no 'self' for images)"
+    assert result(site__a_dot_css='body{background:x-image-set("https://example.org/x.png" 1x)}\n') == "OK", \
+        "must not read a function whose name only ends in image-set, which no browser runs"
+    # only an image input draws from its src, and the first type attribute is the one the parser keeps
+    assert result(site__index_dot_html=page + '<input type="text" src="https://example.org/x.png">\n'
+                                              '<input type="text" type="image" src="https://example.org/x.png">\n'
+                                              '<input type="image" src="go.png" alt="go">\n') == "OK", \
+        "must PASS an input that is not an image input whatever its src, and a same-origin image input"
     broken = {
         "the headers file is missing": {"site___headers": None},
         "the policy allows inline style": {"site___headers": headers.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")},
@@ -9609,11 +10128,57 @@ def test_site_pages_render_under_their_headers_check_discriminates(tmp_path):
         "a page carries an inline script": {"site__index_dot_html": page + "<script>go()</script>\n"},
         "a page loads a script the policy does not list": {"site__index_dot_html": page + '<script src="app.js"></script>\n'},
         "a page carries an event handler": {"site__index_dot_html": page + '<a href="#" onclick="go()">x</a>\n'},
+        "an event handler follows a slash": {"site__index_dot_html": page + '<img/onerror="x()" src="logo.png">\n'},
+        "an event handler follows a quote": {"site__index_dot_html": page + '<img src="logo.png"onerror="x()">\n'},
+        "a style attribute follows a slash": {"site__index_dot_html": page + '<p/style="color:red">x</p>\n'},
+        "a style block sits in a drawing": {"site__index_dot_html": page + "<svg><style>p{}</style></svg>\n"},
+        "a video source plays from the page's origin with no media-src": {"site__index_dot_html": page + '<video><source src="v.mp4"></video>\n'},
+        "a video plays from its src with no media-src": {"site__index_dot_html": page + '<video src="v.mp4"></video>\n'},
+        "audio plays from its src with no media-src": {"site__index_dot_html": page + '<audio src="a.mp3"></audio>\n'},
+        "a text track loads with no media-src": {"site__index_dot_html": page + '<video><track src="t.vtt"></video>\n'},
+        "a video poster comes from another origin": {"site__index_dot_html": page + '<video poster="https://example.org/p.png"></video>\n'},
+        "an SVG image comes from another origin": {"site__index_dot_html": page + '<svg><image href="https://example.org/x.png"/></svg>\n'},
+        "an off-origin image sits in an SVG title": {"site__index_dot_html": page + '<svg><title><img src="https://example.org/x.png" alt=""></title></svg>\n'},
+        "an SVG image comes from another origin by xlink:href": {"site__index_dot_html": page + '<svg><image xlink:href="https://example.org/x.png"/></svg>\n'},
+        "an off-origin image URL starts with a space": {"site__index_dot_html": page + '<img src=" https://example.org/x.png" alt="">\n'},
+        "an off-origin image URL writes a backslash for a slash": {"site__index_dot_html": page + '<img src="/\\example.org/x.png" alt="">\n'},
+        "an off-origin srcset candidate writes backslashes": {"site__index_dot_html": page + '<img src="logo.png" srcset="\\\\example.org/x.png 2x" alt="">\n'},
+        "an off-origin image URL has a tab in its scheme": {"site__index_dot_html": page + '<img src="ht&#9;tps://example.org/x.png" alt="">\n'},
+        "an off-origin image URL has a newline in its scheme": {"site__index_dot_html": page + '<img src="ht\ntps://example.org/x.png" alt="">\n'},
+        "a data: image starts with a space": {"site__index_dot_html": page + '<img src=" data:image/png;base64,AAAA" alt="">\n'},
+        "an off-origin poster starts with a space": {"site___headers": with_kinds, "site__index_dot_html": page + '<video poster=" https://example.org/p.png"></video>\n'},
+        "an off-origin stylesheet starts with a space": {"site__index_dot_html": page + '<link rel="stylesheet" href=" https://example.org/x.css">\n'},
         "a page loads an image from another origin": {"site__index_dot_html": page + '<img src="https://example.org/x.png" alt="">\n'},
+        "a srcset candidate comes from another origin": {"site__index_dot_html": page + '<img src="logo.png" srcset="logo.png 1x, https://example.org/x.png 2x" alt="">\n'},
+        "a picture source lists another origin": {"site__index_dot_html": page + '<picture><source type="image/avif" srcset="https://example.org/a.avif 640w"><img src="a.png" alt=""></picture>\n'},
+        "a srcset candidate is a data: image": {"site__index_dot_html": page + '<img src="logo.png" srcset="data:image/png;base64,AAAA 2x" alt="">\n'},
+        "a preloaded image set lists another origin": {"site__index_dot_html": page + '<link rel="preload" as="image" imagesrcset="a.avif 1x, https://example.org/b.avif 2x">\n'},
+        "a page preloads a font from another origin": {"site___headers": with_fonts, "site__index_dot_html": page + '<link rel="preload" href="https://example.org/f.woff2" as="font" crossorigin>\n'},
+        "a page preloads a font the policy has no font-src for": {"site__index_dot_html": page + '<link rel="preload" href="f.woff2" as="font" crossorigin>\n'},
+        "an image from another origin is single-quoted": {"site__index_dot_html": page + "<img src='https://example.org/x.png' alt=''>\n"},
+        "an image from another origin is unquoted and upper-case": {"site__index_dot_html": page + "<IMG SRC=https://example.org/x.png ALT=x>\n"},
+        "a srcset candidate from another origin is single-quoted": {"site__index_dot_html": page + "<img src='logo.png' srcset='https://example.org/x.png 2x' alt=''>\n"},
+        "a page preloads a video the policy has no media-src for": {"site__index_dot_html": page + '<link rel="preload" as="video" href="v.mp4">\n'},
+        "a page preloads audio the policy has no media-src for": {"site__index_dot_html": page + '<link rel="preload" as="audio" href="a.mp3">\n'},
+        "a page preloads a text track the policy has no media-src for": {"site__index_dot_html": page + '<link rel="preload" as="track" href="t.vtt">\n'},
+        "a page preloads a fetch the policy has no connect-src for": {"site__index_dot_html": page + '<link rel="preload" as="fetch" href="d.json" crossorigin>\n'},
+        "a page preloads a document the policy has no frame-src for": {"site__index_dot_html": page + '<link rel="preload" as="document" href="b.html">\n'},
+        "a page preloads a module the policy has no script-src for": {"site__index_dot_html": page + '<link rel="modulepreload" href="m.js">\n'},
+        "a page links a stylesheet from another origin, its rel capitalised": {"site__index_dot_html": page + '<link REL="Stylesheet" HREF="https://example.org/x.css">\n'},
+        "a page's icon comes from another origin": {"site__index_dot_html": page + '<link rel="icon" href="https://example.org/f.svg">\n'},
+        "an object loads from another origin": {"site__index_dot_html": page + '<object data="https://example.org/x.svg"></object>\n'},
+        "an embed loads from another origin": {"site__index_dot_html": page + '<embed src="https://example.org/x.svg">\n'},
         "a second page frames another origin": {"site__b_dot_html": '<iframe src="https://example.org/"></iframe>\n'},
         "a stylesheet uses a data: image": {"site__a_dot_css": "body{background:url(data:image/png;base64,AAAA)}\n"},
         "a stylesheet imports another origin": {"site__a_dot_css": "@import url(https://fonts.example.org/x.css);\n"},
         "a stylesheet loads a web font": {"site__a_dot_css": "@font-face{font-family:x;src:url(x.woff2)}\n"},
+        "an image-set names another origin in a bare string": {"site__a_dot_css": 'body{background:image-set("https://example.org/x.avif" 1x)}\n'},
+        "a -webkit-image-set names another origin in a single-quoted string": {"site__a_dot_css": "body{background:-webkit-image-set('https://example.org/x.png' 2x)}\n"},
+        "an image-set string is a data: image": {"site__a_dot_css": 'body{background:image-set("data:image/png;base64,AAAA" 1x)}\n'},
+        "an off-origin image-set string follows a url() and a type()": {"site__a_dot_css": 'body{background:image-set(url(a.avif) type("image/avif") 1x, "https://example.org/b.png" 1x)}\n'},
+        "an off-origin image-set string follows a string holding a parenthesis": {"site__a_dot_css": 'body{background:image-set("a).png" 1x, "https://example.org/b.png" 2x)}\n'},
+        "an image input draws from another origin": {"site__index_dot_html": page + '<input type="image" src="https://example.org/x.png" alt="go">\n'},
+        "an image input from another origin is written in capitals": {"site__index_dot_html": page + '<INPUT TYPE="IMAGE" SRC="https://example.org/x.png" ALT="go">\n'},
         "a linked stylesheet does not exist": {"site__a_dot_css": None},
         "there is no page at all": {"site__index_dot_html": None},
     }
@@ -10238,6 +10803,18 @@ def test_zk_claim_precise_check_discriminates(tmp_path):
     (tmp_path / "README.md").write_text(
         "# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\nNo boundary stated.\n")
     assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", "must FAIL without the boundary sentence"
+    # 2026-10-24: the positive definition bounds the word as tightly as the disclaimer did
+    POSITIVE = ("# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\n"
+                "Zero knowledge here means two specific things: a verification that stores no token "
+                "identifier, and a Merkle-membership proof.\n")
+    (tmp_path / "README.md").write_text(POSITIVE)
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "OK", "must PASS the positive definition"
+    (tmp_path / "README.md").write_text(POSITIVE.replace("means two specific things", "means many things"))
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition no longer bounds the word"
+    (tmp_path / "README.md").write_text(POSITIVE.split(": a verification")[0] + ".\n")
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition names neither of its two things"
 
 
 def test_no_scifi_schema_check_discriminates(tmp_path):
@@ -10354,10 +10931,117 @@ def test_public_claims_honest_check_discriminates(tmp_path):
         (tmp_path / "site" / "index.html").write_text(site)
     write()
     assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the honest surfaces"
-    # bare title (Polaris presented AS a system, not as pre-pilot)
-    write(site=SITE.replace("a pre-pilot identity-token system",
-                            "an identity-token system"))
-    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a bare title"
+    # the bare name is a title that claims nothing (owner, 2026-10-23); an empty one is not a title
+    write(site='<title>Polaris ID</title>\n<meta property="og:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the bare name"
+    write(site='<title> </title>\n<meta property="og:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an empty title"
+    assert "missing or empty" in checks.check_public_claims_honest(tmp_path)[0].message, "must name an empty title as empty"
+    BARE = '<title>Polaris ID</title>\n<meta property="og:title" content="Polaris ID">\n'
+    write(site='<title>Polaris ID</title>\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL without an og:title"
+    write(site='<title>Polaris ID</title>\n<meta property="og:title" content=" ">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an empty og:title"
+    assert "missing or empty" in checks.check_public_claims_honest(tmp_path)[0].message, "must name an empty og:title as empty"
+    # a name longer than the bare name must say what Polaris is not yet
+    write(site='<title>Polaris ID: digital identity</title>\n<meta property="og:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a longer title without 'pre-pilot'"
+    write(site='<title>Polaris ID</title>\n<meta property="og:title" content="Polaris ID for everyone">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a longer og:title without 'pre-pilot'"
+    # each word a name field never says, even beside 'pre-pilot'
+    for word in ("deployed", "piloted", "production-ready", "production ready", "certified"):
+        write(site=SITE.replace("a pre-pilot identity-token system", f"a pre-pilot identity-token system, {word}"))
+        assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on {word!r} in the title"
+    # og:site_name and twitter:title are name fields too, held when present
+    write(site=BARE + '<meta property="og:site_name" content="Polaris ID">\n<meta name="twitter:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the bare name in every name field"
+    write(site=BARE + '<meta property="og:site_name" content="Polaris ID (pre-pilot), the national identity system">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on 'national' in og:site_name"
+    write(site=BARE + '<meta property="og:site_name" content="Polaris ID, an identity system">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a longer og:site_name without 'pre-pilot'"
+    write(site=BARE + '<meta name="twitter:title" content="Polaris ID (pre-pilot), production-ready">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an overclaim in twitter:title"
+    # either attribute order
+    write(site='<title>Polaris ID</title>\n<meta content="Polaris ID" property="og:title">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must find an og:title written content first"
+    write(site='<title>Polaris ID</title>\n<meta content="Polaris national ID" property="og:title">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must read content before property too"
+    # every tag of a field, read as a browser or a crawler reads it: a second tag, either quote or
+    # none, upper case
+    write(site=BARE + '<meta property="og:description" content="An identity-token system.">\n'
+                      '<meta property="og:description" content="Deployed nationwide.">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an overclaim in a second og:description"
+    write(site=BARE + '<meta property="og:title" content="Polaris ID (pre-pilot), certified">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on 'certified' in a second og:title"
+    write(site=BARE + '<meta property="og:description" content="Deployed nationwide.">\n'
+                      '<meta property="og:description" content="An identity-token system.">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on an overclaim in the first of two tags"
+    write(site=BARE + '<meta property="og:site_name" content="Polaris ID">\n'
+                      '<meta property="og:site_name" content="Polaris ID, the national identity system">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a second og:site_name"
+    write(site=BARE + '<meta name="twitter:title" content="Polaris ID">\n'
+                      '<meta name="twitter:title" content="Polaris ID for every person">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a second twitter:title"
+    write(site='<title>Polaris ID (Pre-pilot)</title>\n<meta property="og:title" content="Polaris ID (PRE-PILOT)">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must read 'pre-pilot' in any case"
+    write(site='<title>Polaris ID (pre-pilot), OpenID Certified</title>\n<meta property="og:title" content="Polaris ID">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on 'Certified' in any case"
+    write(site=BARE + "<meta property='og:description' content='a deployed system'>\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must read a single-quoted tag"
+    write(site=BARE + "<meta property=og:description content=deployed>\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must read an unquoted tag"
+    write(site=BARE + '<META PROPERTY="OG:DESCRIPTION" CONTENT="Polaris: DEPLOYED.">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must read a tag written in upper case"
+    write(site=BARE + '<meta property="og:description" content="Polaris: Deployed.">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a capitalised overclaim"
+    # the bare name with spaces around it, and the shorter bare name, claim nothing either
+    write(site='<title> Polaris ID </title>\n<meta property="og:title" content=" Polaris ID ">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the bare name with spaces around it"
+    write(site='<title>Polaris</title>\n<meta property="og:title" content="Polaris">\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must PASS the shorter bare name"
+    # the <title> of an inline drawing names the drawing, not the page
+    write(site=BARE + '<body><svg viewBox="0 0 1 1"><title>Recovery after total loss</title></svg></body>\n')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must not read an inline SVG's title as the page's"
+    OG = '<meta property="og:title" content="Polaris ID">\n'
+    for page in ('<head>' + OG + '</head><body><svg><title>Polaris ID</title></svg></body>',
+                 '<head>' + OG + '</head><svg><title>Polaris ID</title></svg>',
+                 OG + '<body><svg><title>Polaris ID</title></svg></body>'):
+        write(site=page)
+        assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on a page whose only <title> is a drawing's: {page!r}"
+    # a drawing's title is skipped wherever the drawing sits, a head the parser leaves early included
+    write(site='<head>' + OG + '<svg><title>Recovery after total loss</title></svg><title>Polaris ID</title></head>')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must not read a drawing's title in the head as the page's"
+    write(site=BARE + '<body><svg><title>Recovery after <tspan>total</tspan> loss</title></svg></body>')
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", "must not read a drawing's title in the body as the page's"
+    # every other <title> is a name field, wherever it sits and however many there are: an innocent
+    # one in a drawing, a template or a noscript does not stand in for the real one, and a reader
+    # with scripting and one without each take a different one, so both are held
+    LOUD = '<title>Polaris ID, deployed nationally</title>'
+    for page in ('<!doctype html><html><head>' + OG + '<svg><title>Polaris ID</title></svg>' + LOUD,
+                 '<!doctype html><html><head>' + OG + '<template><title>Polaris ID</title></template>' + LOUD,
+                 '<head><noscript><title>Polaris ID</title></noscript>' + LOUD + OG + '</head>',
+                 '<head>' + BARE + '<noscript>' + LOUD + '</noscript></head>',
+                 BARE + LOUD,
+                 BARE + '<title>Polaris ID, deployed nationally',
+                 BARE + '<body><svg><foreignObject>' + LOUD + '</foreignObject></svg></body>',
+                 BARE + '<body><svg><desc>' + LOUD + '</desc></svg></body>',
+                 BARE + '<body><svg><title>' + LOUD + '</title></svg></body>',
+                 BARE + '<body><svg><g><p>' + LOUD + '</p></g></svg></body>',
+                 BARE + '<body><math><mtext>' + LOUD + '</mtext></math></body>'):
+        write(site=page)
+        assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on an overclaiming <title> beside an innocent one: {page!r}"
+    # the card's descriptions and image text: the scoped certification sentence is theirs to carry,
+    # 'international' is not 'national', and every refused word fails in every one of them
+    CERT = "Its verifier is OpenID Certified at 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile; international standards."
+    TEXTS = (("name", "description"), ("property", "og:description"), ("property", "og:image:alt"),
+             ("name", "twitter:description"), ("name", "twitter:image:alt"))
+    for attr, key in TEXTS:
+        write(site=BARE + f'<meta {attr}="{key}" content="{CERT}">\n')
+        assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", f"must PASS the scoped sentence in {key}"
+        for bad in ("a national identity system", "deployed at scale", "already piloted", "production ready",
+                    "unlinkable by default", "issuer-unlinkable tokens; presentations unlinkable by default"):
+            write(site=BARE + f'<meta {attr}="{key}" content="Polaris: {bad}.">\n')
+            assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on {bad!r} in {key}"
     # the 'national' category leaks back into the shareable title
     write(site=SITE.replace("a pre-pilot identity-token system",
                             "a pre-pilot national identity-token system"))
@@ -10366,6 +11050,10 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     write(site=SITE.replace("a pre-pilot identity-token system",
                             "a pre-pilot unlinkable-by-default identity-token system"))
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on bare 'unlinkable' without the issuer qualifier"
+    # each occurrence is held: a qualified one in the same field does not excuse a bare one
+    write(site=SITE.replace("a pre-pilot identity-token system",
+                            "a pre-pilot issuer-unlinkable, unlinkable-by-default identity-token system"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on a bare 'unlinkable' beside a qualified one"
     # the qualified form passes
     write(site=SITE.replace("a pre-pilot identity-token system",
                             "a pre-pilot issuer-unlinkable identity-token system"))
@@ -10397,6 +11085,31 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     # the two-witness overclaim returns
     write(readme=README + "Two independent witnesses for every cryptographic verdict.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on the two-witness overclaim"
+    # a README with no comparison is honest, as long as nothing is claimed
+    write(readme="# POLARIS\n\nPre-pilot.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", \
+        "must PASS a README with no comparison and nothing said about correlation"
+    write(readme="# POLARIS\n\nPre-pilot. Verification is unlinkable by default.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed with no two-sided correlation statement"
+    write(readme="# POLARIS\n\nA verifier stores a per-verifier handle.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when per-verifier handles are claimed with no two-sided correlation statement"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| Polaris | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a comparison returns, with an unbolded Polaris row, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| Polaris | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an unbolded Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| **Polaris ID** | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the comparison's row names Polaris by a longer name, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| **Polaris ID** | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a longer-named Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\nRelying parties cannot link two presentations.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed as 'cannot link' with no two-sided correlation statement"
 
 
 def test_detached_verifier_check_discriminates(tmp_path):
@@ -11703,6 +12416,9 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     # v9.324 (P8.2d): the gateway's order of operations IS the security argument; each
     # perturbation removes one leg.
     APP = (
+        "class _NoRedirect(urllib.request.HTTPRedirectHandler):\n"
+        "    def redirect_request(self, req, fp, code, msg, headers, newurl):\n        return None\n"
+        "_EXCHANGE_OPENER = urllib.request.build_opener(_NoRedirect)\n"
         "@app.route('/api/v1/exchange/<int:target_agency_id>', methods=['POST'])\n"
         "def api_v1_exchange(target_agency_id):\n"
         "    polaris-exchange-request/1 ; placeholder signature is not authentication\n"
@@ -11711,7 +12427,7 @@ def test_exchange_gateway_check_discriminates(tmp_path):
         "    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n"
         "    _consume_exchange_nonce(k, n)  INSERT INTO ExchangeNonce\n"
         "    up = _exchange_upstreams()[kind]  POLARIS_EXCHANGE_UPSTREAMS; A URL never comes from a request\n"
-        "    urllib.request.urlopen(up)\n"
+        "    _EXCHANGE_OPENER.open(up)\n"
         "    _build_exchange_receipt(target, target_agency_id, f, occurred_at=str(env.get('issued_at')))\n"
         "_REGISTRY_SERVICES = [{'kind': 'exchange'}]\n'exchange_kinds'\n"
     )
@@ -11744,9 +12460,25 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the gateway route"
     # forward BEFORE authorize -> FAIL (swap the two lines)
     swapped = APP.replace("    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n", "").replace(
-        "    urllib.request.urlopen(up)\n", "    urllib.request.urlopen(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
+        "    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
     write({'polaris_web/app.py': swapped})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the upstream is called before authorization"
+    # the forward through the default opener (which follows a 3xx to another host) -> FAIL
+    write({'polaris_web/app.py': APP.replace("    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    urllib.request.urlopen(up)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the gateway forwards through urllib.request.urlopen"
+    # a one-token signature edit must not hide the gateway's body from that scan
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def api_v1_exchange(target_agency_id: int):")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "OK", "control: an annotated signature is still the gateway"
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def api_v1_exchange(target_agency_id: int):").replace(
+        "    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    urllib.request.urlopen(up, timeout=10)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if urlopen is added under an edited signature"
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def exchange_view(target_agency_id):")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL when the gateway's body cannot be found"
+    # the opener built without the redirect refusal -> FAIL, both ways it can be lost
+    write({'polaris_web/app.py': APP.replace("build_opener(_NoRedirect)", "build_opener()")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the opener is built without the redirect refusal"
+    write({'polaris_web/app.py': APP.replace("        return None\n", "        return super().redirect_request(req, fp, code, msg, headers, newurl)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the handler's redirect_request follows the redirect"
     write({'polaris_web/app.py': APP.replace("A URL never comes from a request", "url = payload['url']")})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if a forwarding URL could come from the request"
     write({'polaris_web/app.py': APP + "    query('INSERT INTO ExchangeLog (body) VALUES (%s)', (body,))\n"})
@@ -13101,12 +13833,14 @@ def test_broker_policy_bound_check_discriminates(tmp_path):
 
 
 def test_roadmap_consistent_check_discriminates(tmp_path):
-    # v9.337: the roadmap cannot contradict itself.
+    # v9.337: the roadmap cannot contradict itself. 2026-10-28: it lists no absences (owner's
+    # direction), so a "Do not have" list that comes back fails, and the "Have" list names the
+    # protocol layer. The done-row guards went with the list: they read "| [x]" rows the roadmap
+    # has not carried since it was made concise, so they measured nothing.
     n = len(checks.CHECKS)
-    ROADMAP = ("**Have, working, CI-proven:** the protocol layer (P8, complete); %d invariant\nchecks (v9.337) each with a detection test.\n\n"
-               "**Do not have:** hardware tokens; an external team's docs-only integration; and every institutional prerequisite.\n\n"
-               "| [x] P8.3 | The signed registry | M | low | P8.1 | DONE (v9.323). Discovery over the authority layer. |\n"
-               "| [x] P8.8 | Versioning | M | low | P8.3 | DONE (v9.330). |\n" % n)
+    ROADMAP = ("# Roadmap\n\n**Have, working, CI-proven:**\n\n- The protocol layer, frozen at version 1.\n"
+               "- %d invariant\nchecks (v9.337) each with a detection test.\n\n"
+               "## Phases\n\n| P8 | The exchange fabric | Done |\n" % n)
     good = {'ROADMAP.md': ROADMAP, 'polaris_web/__version__.py': '__version__: str = "9.337"\n'}
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -13116,16 +13850,46 @@ def test_roadmap_consistent_check_discriminates(tmp_path):
     write()
     first = checks.check_roadmap_consistent(tmp_path)[0]
     assert first.level == "OK", "must PASS on the full fixture: " + first.message
-    write({'ROADMAP.md': ROADMAP.replace("hardware tokens;", "hardware tokens; a service-and-authority registry;")})
-    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if a done subsystem sits under Do not have"
-    write({'ROADMAP.md': ROADMAP.replace("| DONE (v9.323).", "| IN PROGRESS. The primitive shipped.")})
-    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if a done row reads as in progress"
+    for absent in ("**Do not have:** hardware tokens; an external team's docs-only integration.\n\n",
+                   "We do not have hardware tokens.\n\n"):
+        write({'ROADMAP.md': ROADMAP.replace("## Phases", absent + "## Phases")})
+        r = checks.check_roadmap_consistent(tmp_path)[0]
+        assert r.level == "FAIL" and '"Do not have" list is not part of it' in r.message, \
+            "must FAIL, for that reason, if a 'Do not have' list returns: " + absent
     write({'ROADMAP.md': ROADMAP.replace("(v9.337)", "(v9.300)")})
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a stale stamp version"
     write({'ROADMAP.md': ROADMAP.replace("%d invariant" % n, "%d invariant" % (n - 1))})
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a wrong stamp count"
-    write({'ROADMAP.md': ROADMAP.replace("the protocol layer (P8, complete); ", "")})
-    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer once P8 is done"
+    write({'ROADMAP.md': ROADMAP.replace("- The protocol layer, frozen at version 1.\n", "")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer"
+    write({'ROADMAP.md': ROADMAP.replace("- The protocol layer, frozen at version 1.\n", "") + "\nThe protocol layer.\n"})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "the protocol layer after '## Phases' is not in Have"
+    write({'ROADMAP.md': ROADMAP.replace("## Phases", "## Stages")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "with no '## Phases' heading there is no Have list to read"
+    write({'ROADMAP.md': ROADMAP.replace("**Have, working, CI-proven:**", "**Built:**")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "with no 'Have' list there is nothing to read"
+    # 2026-10-24 (owner): the roadmap claims nothing no check here backs
+    for claim, why in (("The sample has been independently audited.\n", "an outside audit in a sentence"),
+                       ("| P6 | Security | Penetration tested |\n", "a penetration test in a table row"),
+                       ("The signer uses FIPS 140-3 validated modules.\n", "validated cryptography"),
+                       ("Issuance conforms to NIST SP 800-63-4.\n", "an assessed 800-63 level"),
+                       ("The console is WCAG 2.2 AA compliant.\n", "accessibility conformance"),
+                       ("Audited by an outside firm, not by the author.\n", "a claim followed by a contrast"),
+                       ("Independently audited without a single critical finding.\n", "a claim followed by 'without'"),
+                       ("The console is WCAG 2.2 AA conformant, with no known failures.\n", "a claim followed by 'no'"),
+                       ("The sample completed an independent security audit in 2026.\n", "an outside audit as a noun"),
+                       ("A security audit by an outside firm covered the verifier.\n", "'security audit by'"),
+                       ("The project underwent an external security review.\n", "an outside review as a noun"),
+                       ("The sample, with no outside funding, was independently audited.\n", "an unrelated 'no' before the claim"),
+                       ("No findings remained after the sample was independently audited.\n", "a 'no' that negates something else"),
+                       ("| P6 | No regressions | Independently audited |\n", "a 'no' in an earlier table cell")):
+        write({'ROADMAP.md': ROADMAP + "\n" + claim})
+        assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on " + why
+    for negated in ("The sample has not been independently audited.\n", "The sample has not yet been independently audited.\n",
+                    "It has never been externally audited.\n", "No independent audit has been done.\n",
+                    "The sample does not claim WCAG 2.2 AA conformance.\n"):
+        write({'ROADMAP.md': ROADMAP + "\n" + negated})
+        assert checks.check_roadmap_consistent(tmp_path)[0].level == "OK", "a negated sentence is not a claim: " + negated
 
 
 def test_ship_tool_check_discriminates(tmp_path):
@@ -14298,7 +15062,7 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
     DOC = ("# Plonky2 to Plonky3\n"
            "**Decision: KEEP Plonky2.**\n"
            "Proof size 148,900 bytes, measured at depth 24. Pinned at 1.1.0.\n"
-           "## What was NOT verified\nPlonky3's current version and audit status.\n"
+           "## Checked before any move\nPlonky3's current version and audit status.\n"
            "The two-witness model would largely survive.\n"
            "## What would change the decision\nA stable Plonky3 release.\n")
     LOCK = 'name = "plonky2"\nversion = "1.1.0"\n'
@@ -14324,11 +15088,15 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
     assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the record compares but never decides"
 
-    # THE DANGEROUS ONE: unchecked claims lose their label and read as findings.
+    # THE DANGEROUS ONE: unchecked claims lose their label and read as findings. 2026-10-28:
+    # the list is the precondition of any move, under that title.
     write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
-        "## What was NOT verified\nPlonky3's current version and audit status.\n", "")})
+        "## Checked before any move\nPlonky3's current version and audit status.\n", "")})
     assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
-        "must FAIL when the record does not separate what it did not verify"
+        "must FAIL when the record does not separate what is checked before any move"
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace("## Checked before any move", "## What was NOT verified")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "the list is the precondition of a move, and its title says so"
 
     # A decision with no expiry condition is one nobody revisits on evidence.
     write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
@@ -14878,10 +15646,6 @@ def test_review_packet_check_discriminates(tmp_path):
     # v9.388 (P1.18 item 8): the ways a review packet stops being true. The real packet is the
     # fixture because the check resolves its witnesses against real files -- a synthetic one
     # would be testing a document nobody hands to a reviewer.
-    #
-    # The fixed-limitation case is the one worth having. Every other rot here makes the packet
-    # look BETTER than the system; that one makes it look WORSE, and nobody catches it because
-    # an out-of-date limitation reads as modesty.
     import re as _re
     import shutil
 
@@ -14894,12 +15658,11 @@ def test_review_packet_check_discriminates(tmp_path):
     #
     # Reading the witnesses off the packet removes the class: a witness added tomorrow is
     # copied tomorrow.
+    #
+    # Since 2026-10-24 the real packet may carry no witness at all; one left in it must resolve.
     PACKET_REL = "docs/REVIEW-PACKET.md"
     WITNESSED = sorted({m.group(1) for m in
                         _re.finditer(r"witness:([^:`\s]+)::", (REPO / PACKET_REL).read_text())})
-    assert len(WITNESSED) >= 8, (
-        "the packet's witnesses could not be read; a fixture that copies nothing would test "
-        "a packet whose every witness is missing, which fails for the wrong reason")
 
     def write(old=None, new=None):
         for rel in ['docs/REVIEW-PACKET.md',
@@ -14917,18 +15680,27 @@ def test_review_packet_check_discriminates(tmp_path):
     assert checks.check_review_packet(tmp_path)[0].level == "OK", \
         "the real packet must PASS: every witness resolves and every cited check exists"
 
-    # A LIMITATION THAT WAS FIXED. The entry has to go, and until it does the packet
-    # understates the system to the one audience that should not be misled either way.
-    write('witness:polaris_web/kms_standin.py::stand-in',
-          'witness:polaris_web/kms_standin.py::a real managed service')
+    # A WITNESS LEFT IN THE PACKET resolves, or the packet FAILs: the entry is fixed, or it was never true.
+    write('## 1. Threat matrix by subsystem',
+          '## 1. Threat matrix by subsystem\n\n`witness:scripts/polaris-review-packet-drill.py::import`')
+    assert checks.check_review_packet(tmp_path)[0].level == "OK", "a witness that resolves must PASS"
+    write('## 1. Threat matrix by subsystem',
+          '## 1. Threat matrix by subsystem\n\n`witness:scripts/polaris-review-packet-drill.py::a real managed service`')
     assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a limitation whose witness has gone must FAIL: it is fixed, or it was never true"
+        "a witness that no longer resolves must FAIL: it is fixed, or it was never true"
 
-    # THE PACKET STOPS SAYING NOBODY HAS REVIEWED IT.
-    write('has been reviewed by anybody outside this repository',
-          'has been audited by three independent firms')
-    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a packet that drops the unreviewed admission must FAIL"
+    # THE PACKET CLAIMS WHAT NO CHECK HERE CAN BACK.
+    for claim in ("**Status:** audited by three independent firms.",
+                  "**Status:** the system passed a penetration test.",
+                  "**Status:** independently reviewed in 2026.",
+                  "**Status:** a security audit by an outside firm covered it, not the maintainers.",
+                  "**Status:** the signer runs FIPS 140-3 validated cryptography.",
+                  "**Status:** issuance conforms to NIST SP 800-63-4.",
+                  "**Status:** the console is WCAG 2.2 AA compliant."):
+        write('**Status:** a packet, not a certificate.', claim)
+        assert checks.check_review_packet(tmp_path)[0].level == "FAIL", "must FAIL on: " + claim
+    write('**Status:** a packet, not a certificate.', '**Status:** it has not been independently reviewed.')
+    assert checks.check_review_packet(tmp_path)[0].level == "OK", "a negated sentence is not a claim"
 
     # A CITED CHECK THAT DOES NOT EXIST. The commonest rot: a rename.
     write('`check:audited_reads_are_logged`', '`check:audited_reads_are_definitely_logged`')
@@ -14936,14 +15708,9 @@ def test_review_packet_check_discriminates(tmp_path):
         "a citation naming a check that does not exist must FAIL"
 
     # A SECTION DELETED.
-    write('## 3. Guarantee-attack prompts', '## 3. Some further thoughts')
+    write('## 2. Guarantee-attack prompts', '## 2. Some further thoughts')
     assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a packet missing one of its three sections must FAIL"
-
-    # THE WITNESSES STRIPPED, which would leave the limitations uncheckable.
-    write('`witness:', '`formerly:')
-    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "limitations with no witnesses must FAIL: nothing could tell they were fixed"
+        "a packet missing one of its two required sections must FAIL"
 
 
 def test_capacity_model_check_discriminates(tmp_path):
@@ -15112,8 +15879,55 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
            "    security.record_audit_access(get_db, 'VerificationEvent',\n"
            "                                 result_row_count=len(results))\n"
            "    return render_template('uc7.html')\n")
+    # 2026-10-21: the direct reads (a route whose own SQL names a tracked table or a view over
+    # one), the two exempt routes, and the console with the role it reads as.
+    ROUTES = ("_DURESS = 'SELECT event_id, token_id FROM DuressEvent ORDER BY event_id DESC'\n\n"
+              "@app.route('/tokens/<int:tok_id>')\n"
+              "def tokens_detail(tok_id):\n"
+              "    lifecycle = query('SELECT * FROM TokenLifecycleEvent WHERE token_id = %s', (tok_id,))\n"
+              "    security.record_audit_access(get_db, 'TokenLifecycleEvent',\n"
+              "                                 result_row_count=len(lifecycle))\n"
+              "    return render_template('tokens_detail.html')\n\n"
+              "@app.route('/api/duress/events')\n"
+              "def api_duress_events():\n"
+              "    rows = query(_DURESS)\n"
+              "    security.record_audit_access(get_db, 'DuressEvent', result_row_count=len(rows))\n"
+              "    return jsonify(rows)\n\n"
+              "@app.route('/api/sim/tick', methods=['POST'])\n"
+              "def api_sim_tick():\n"
+              "    return query('SELECT count(*) AS n FROM VerificationEvent', fetch='one')\n\n"
+              "@app.route('/api/duress/record', methods=['POST'])\n"
+              "def api_duress_record():\n"
+              "    execute('INSERT INTO DuressEvent (token_id) VALUES (%s)', (1,))\n"
+              "    return query('SELECT event_id FROM DuressEvent ORDER BY event_id DESC LIMIT 1')\n\n"
+              "@app.route('/audit/access')\n"
+              "def audit_access():\n"
+              "    return query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n")
+    CONSOLE = ("@app.route('/sql', methods=['GET', 'POST'])\n"
+               "def sql_query():\n"
+               "    sql = request.form.get('sql', '')\n"
+               "    conn = psycopg2.connect(**DB_CONFIG)\n"
+               "    conn.set_session(readonly=True)\n"
+               "    with conn.cursor() as cur:\n"
+               "        cur.execute('SET statement_timeout = %s', (5000,))\n"
+               "        cur.execute('SELECT line FROM console_read(%s, %s, %s) AS line', (sql, 501, False))\n"
+               "        lines = cur.fetchall()\n"
+               "    return render_template('sql_console.html', lines=lines)\n")
+    GRANTS = ("CREATE OR REPLACE FUNCTION console_read(p_sql TEXT, p_max_rows INTEGER, p_explain BOOLEAN)\n"
+              "RETURNS SETOF TEXT\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = public, pg_temp\n"
+              "AS $$\nBEGIN\n    RETURN;\nEND;\n$$;\n"
+              "ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO polaris_console_reader;\n"
+              "REVOKE EXECUTE ON FUNCTION console_read(TEXT, INTEGER, BOOLEAN) FROM PUBLIC;\n"
+              "GRANT USAGE ON SCHEMA public TO polaris_console_reader;\n"
+              "GRANT SELECT ON Agency, VerificationContext TO polaris_console_reader;\n")
+    VIEWS = ("CREATE OR REPLACE VIEW v_timeline WITH (security_invoker = true) AS\n"
+             "    SELECT token_id, event_type FROM TokenLifecycleEvent;\n"
+             "CREATE OR REPLACE VIEW v_latest WITH (security_invoker = true) AS\n"
+             "    SELECT * FROM v_timeline;\n")
     good = {'polaris_web/security.py': SEC, 'polaris_sql/05_procedures.sql': SQL,
-            'polaris_web/app.py': APP}
+            'polaris_web/app.py': APP, 'polaris_web/operator_routes.py': ROUTES,
+            'polaris_web/sql_console.py': CONSOLE, 'polaris_sql/09_grants.sql': GRANTS,
+            'polaris_sql/03_view.sql': VIEWS}
 
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -15189,6 +16003,92 @@ def test_audited_reads_are_logged_check_discriminates(tmp_path):
         "\ndef api_atlas_breakdown():\n    return query('SELECT * FROM atlas_breakdown(%s)', (since,))\n")})
     assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
         "a function that only counts is not an audited read"
+    (tmp_path / 'polaris_sql' / '11_atlas.sql').unlink()
+    write()
+    assert checks.check_audited_reads_are_logged(tmp_path)[0].level == "OK", \
+        "the good tree, with its direct reads, exemptions and console, must PASS"
+
+    def fails(overrides, why, expect="FAIL"):
+        write(overrides)
+        got = checks.check_audited_reads_are_logged(tmp_path)[0]
+        for rel in set(overrides) - set(good):
+            (tmp_path / rel).unlink()
+        write()
+        assert got.level == expect, why + f" (got {got.level}: {got.message})"
+
+    # THE READS IN PLAIN SIGHT (2026-10-21). /tokens/<id> and /api/duress/events returned a
+    # tracked table's rows with no record, which the procedure rule could not see.
+    drop_tokens_call = ("    security.record_audit_access(get_db, 'TokenLifecycleEvent',\n"
+                        "                                 result_row_count=len(lifecycle))\n")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(drop_tokens_call, "")},
+          "a route selecting a tracked table directly and recording nothing must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        drop_tokens_call, "    # security.record_audit_access(get_db, 'TokenLifecycleEvent')\n")},
+        "a record call that survives only as a comment must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    security.record_audit_access(get_db, 'DuressEvent', result_row_count=len(rows))\n", "")},
+        "a route whose SQL is a module constant it names, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + (
+        "\n@app.route('/timeline/<int:tok_id>')\ndef timeline(tok_id):\n"
+        "    return query('SELECT * FROM v_latest WHERE token_id = %s', (tok_id,))\n")},
+        "a route reading a view over a view over a tracked table, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + (
+        "\n@app.route('/note', methods=['POST'])\ndef note():\n"
+        "    execute('INSERT INTO AuthAuditLog (event_type) VALUES (%s)', ('NOTE',))\n"
+        "    return ''\n")},
+        "a route that only writes a tracked table returns no one's rows and must PASS", expect="OK")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace("def api_sim_tick():", "def api_sim_count():")},
+          "a route renamed out of its exemption, recording nothing, must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    return query('SELECT count(*) AS n FROM VerificationEvent', fetch='one')\n",
+        "    return query('SELECT 1', fetch='one')\n")},
+        "an exemption that no longer exempts a read is stale and must FAIL")
+    fails({'polaris_web/operator_routes.py': ROUTES + "\ndef broken(:\n    pass\n"},
+          "a module that does not parse must FAIL rather than hide its routes")
+
+    # THE AUDIT OF THE AUDIT STOPS AT AuditAccessLog: a read of it never records itself.
+    fails({'polaris_web/operator_routes.py': ROUTES.replace(
+        "    return query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n",
+        "    rows = query('SELECT * FROM AuditAccessLog ORDER BY access_id DESC')\n"
+        "    security.record_audit_access(get_db, 'AuthAuditLog', result_row_count=len(rows))\n"
+        "    return rows\n")},
+        "a route reading AuditAccessLog that calls record_audit_access must FAIL")
+
+    # THE CONSOLE, BY NAME. Its SQL is its caller's, so it reads as a role that holds none of it.
+    fails({'polaris_web/sql_console.py': CONSOLE.replace(
+        "cur.execute('SELECT line FROM console_read(%s, %s, %s) AS line', (sql, 501, False))",
+        "cur.execute(sql)")},
+        "a console that executes its caller's text must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace(
+        "cur.execute('SET statement_timeout = %s', (5000,))", "cur.execute(f'EXPLAIN {sql}')")},
+        "a console that builds a statement from its caller's text must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace("console_read(%s, %s, %s)", "console_rows(%s, %s, %s)")},
+          "a console that does not call console_read must FAIL")
+    fails({'polaris_web/sql_console.py': CONSOLE.replace("def sql_query():", "def sql_page():")},
+          "a console handler this check cannot find by name must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS.replace("SECURITY DEFINER\n", "")},
+          "a console_read that runs as its caller must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS.replace(
+        "ALTER FUNCTION console_read(TEXT, INTEGER, BOOLEAN) OWNER TO polaris_console_reader;\n", "")},
+        "a console_read left with its loader must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON VerificationEvent TO polaris_console_reader;\n"},
+          "the reader granted a tracked table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON v_latest TO polaris_console_reader;\n"},
+          "the reader granted a view over a tracked table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT SELECT ON ALL TABLES IN SCHEMA public TO polaris_console_reader;\n"},
+          "the reader granted every table must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT EXECUTE ON FUNCTION uc7_warrant_audit(INTEGER) TO polaris_console_reader;\n"},
+          "the reader lent a routine must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT polaris_app TO polaris_console_reader;\n"},
+          "the reader made a member of the application role must FAIL")
+    fails({'polaris_sql/migrations/2026-10-22-001-x.up.sql': "GRANT pg_read_all_data TO polaris_console_reader;\n"},
+          "a membership granted by a migration must FAIL too")
+    fails({'polaris_sql/09_grants.sql': GRANTS + (
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO polaris_console_reader;\n")},
+        "a default privilege for the reader must FAIL")
+    fails({'polaris_sql/09_grants.sql': GRANTS + "GRANT polaris_console_reader TO polaris_owner;\n"},
+          "the loader made a member OF the reader holds the reader's rights, not the reverse, "
+          "and must PASS", expect="OK")
 
 
 def test_transparency_program_check_discriminates(tmp_path):
@@ -15892,8 +16792,13 @@ def test_pilot_winddown_check_discriminates(tmp_path):
            "\ndef consent_language(conn=None):\n"
            '    return ("We cannot promise your data will be deleted, because in this system "\n'
            '            "that would not be true. Records are append-only so that nobody, "\n'
-           '            "including us, can erase them. Ending this pilot requires a "\n'
-           '            "second, independent authority to co-sign.")\n')
+           '            "including us, can erase them. Ending this pilot requires a second "\n'
+           '            "authority, one that issued none of the credentials being withdrawn "\n'
+           '            "and is authorised to issue and verify under their signature algorithms, "\n'
+           '            "to co-sign the withdrawal of every credential. No single organisation "\n'
+           '            "can revoke more than a set share of the credentials an authority has "\n'
+           '            "issued within a set period on its own. "\n'
+           '            "Past that share, a second authority must co-sign.")\n')
     DRILL = ("a wind-down with no co-signer is REFUSED\n"
              "self_refused = 'cannot co-sign its own' in str(exc)\n"
              "...before anything was revoked\n"
@@ -15933,10 +16838,26 @@ def test_pilot_winddown_check_discriminates(tmp_path):
     write({'polaris_web/pilot.py': MOD.replace("We cannot promise", "We say nothing about")})
     assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
         "saying nothing on the subject is the actual failure mode, not a pass"
-    for phrase in ("append-only", "including us", "second, independent authority"):
+    for phrase in ("append-only", "including us"):
         write({'polaris_web/pilot.py': MOD.replace(phrase, "something")})
         assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
             f"the consent language must carry: {phrase}"
+    # The two co-signer sentences are pinned apart: each one weakened alone fails, and names
+    # its own sentence, so neither can stand in for the other.
+    for old, new, why in (
+            ("authority, one that issued none of the credentials being withdrawn ",
+             "authority, one that issued some of the credentials being withdrawn ",
+             "ending the pilot needs a second authority"),
+            ("withdrawal of every credential.", "withdrawal of a credential.",
+             "ending the pilot needs a second authority"),
+            ("and is authorised to issue and verify under their signature algorithms, ", "",
+             "ending the pilot needs a second authority"),
+            ("Past that share, a second authority must co-sign.",
+             "Past that share, the same authority may go on.",
+             "past a set share of an authority's credentials")):
+        write({'polaris_web/pilot.py': MOD.replace(old, new)})
+        out = checks.check_pilot_winddown(tmp_path)
+        assert out[0].level == "FAIL" and why in out[0].message, (old, out[0].message)
 
     # ONE AUTHORITY ALONE, and a co-signer validated too late.
     write({'polaris_web/pilot.py': MOD.replace("cosigner_agency_id=None,", "").replace(
@@ -16153,14 +17074,18 @@ def test_accessibility_check_discriminates(tmp_path):
     RUNNER = ('AXE_VERSION="${POLARIS_AXE_VERSION:-4.13.0}"\n'
               'npm install --no-save --silent "axe-core@${AXE_VERSION}"\n')
     DOC = ("A green run is a floor, not conformance. Automated testing detects roughly a\n"
-           "third of WCAG failures. Polaris does not claim WCAG 2.2 AA conformance. Manual\n"
-           "testing with assistive technology has not been done.\n")
-    ROADMAP = "Not claimed: accessibility conformance; any external audit.\n"
+           "third of WCAG failures. Polaris does not claim WCAG 2.2 AA conformance. WCAG 2.2 AA\n"
+           "conformance needs manual testing with assistive technology, a step for the\n"
+           "deploying organisation.\n")
+    ROADMAP = "Have: an accessibility drill over every operator surface.\n"
     good = {
         'scripts/polaris-accessibility-drill.py': DRILL,
         'scripts/polaris-accessibility-drill.sh': RUNNER,
         'docs/design/accessibility.md': DOC,
         'ROADMAP.md': ROADMAP,
+        'README.md': "Polaris: an identity-token system.\n",
+        'site/index.html': "<p>Polaris</p>\n",
+        'site/llms.txt': "- Polaris: an identity-token system.\n",
     }
 
     def write(overrides=None):
@@ -16216,15 +17141,26 @@ def test_accessibility_check_discriminates(tmp_path):
     for phrase in ("A green run is a floor, not conformance.",
                    "third of WCAG failures",
                    "Polaris does not claim WCAG 2.2 AA conformance.",
-                   "has not been done"):
+                   "needs manual testing with assistive technology"):
         write({'docs/design/accessibility.md': DOC.replace(phrase, "")})
         assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
             f"the record must state: {phrase}"
 
-    # AND THE OUTWARD CLAIM, quietly upgraded because the checks now pass.
-    write({'ROADMAP.md': "Not claimed: any external audit.\n"})
+    # AND THE OUTWARD CLAIM, quietly upgraded because the checks now pass (2026-10-24: the
+    # surfaces no longer list it as not claimed; each refuses the claim instead).
+    write({'ROADMAP.md': "The console meets WCAG 2.2 AA conformance.\n"})
     assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
-        "removing the caveat turns a third of the criteria into an assertion about all of them"
+        "a roadmap that claims WCAG conformance turns a third of the criteria into an assertion about all of them"
+    write({'ROADMAP.md': ROADMAP, 'site/llms.txt': "- The console conforms to WCAG 2.2.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", "must FAIL when the site's llms.txt claims it"
+    write({'site/llms.txt': "- Accessibility conformance is not established.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "OK", "a negated sentence is not a claim"
+    write({'site/llms.txt': "- The console is WCAG 2.2 AA conformant, with no known failures.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", "a claim followed by 'no' is still a claim"
+    for rel in ("README.md", "ROADMAP.md", "site/index.html", "site/llms.txt"):
+        write({rel: ""})
+        assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+            "an empty or missing %s is a claim compared to nothing" % rel
 
 
 def test_assurance_mapping_check_discriminates(tmp_path):
@@ -16233,7 +17169,9 @@ def test_assurance_mapping_check_discriminates(tmp_path):
     # writing the sentence; a drill that FINDS cited checks without RUNNING them, so a check
     # that fails still reads as evidence; a total that drifted from its own table; and front
     # matter that lets the whole thing be quoted as a certification.
-    DOC = ("This is not a conformance claim and no assessment has been performed. It does not\n"
+    DOC = ("# Mapping\n"
+           "\n"
+           "Polaris is pre-pilot software on notional data. This is not a conformance claim. It does not\n"
            "inherit.\n"
            "\n| Requirement | Verdict | Evidence |\n|---|---|---|\n"
            + "".join("| requirement %d | MET | `check:enrollment_proofing` |\n" % i
@@ -16262,11 +17200,20 @@ def test_assurance_mapping_check_discriminates(tmp_path):
         "the well-formed tree must PASS"
 
     # THE FRONT MATTER that lets it be quoted as a certification.
-    for phrase in ("not a conformance claim", "no assessment has been performed",
-                   "It does not\ninherit."):
+    for phrase in ("not a conformance claim", "It does not\ninherit."):
         write({'docs/reference/NIST-800-63-MAPPING.md': DOC.replace(phrase, "")})
         assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
             f"the front matter must carry: {phrase}"
+    # Pre-pilot, in the page's first paragraph (2026-10-28: it replaced "no assessment has been
+    # performed"). Said only further down, or not at all, is the page quoted without it.
+    status = "Polaris is pre-pilot software on notional data. "
+    for doc, why in ((DOC.replace(status, ""), "the page must say Polaris is pre-pilot"),
+                     (DOC.replace(status, "") + "\nPolaris is pre-pilot software.\n",
+                      "pre-pilot after the first paragraph is not where the page is quoted from"),
+                     (DOC.replace("# Mapping\n\n", "# Mapping\n\nA first paragraph without it.\n\n"),
+                      "pre-pilot in the second paragraph is not the first")):
+        write({'docs/reference/NIST-800-63-MAPPING.md': doc})
+        assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", why
     for phrase in ("**Highest holder AAL claimed: AAL2.**", "**Highest FAL claimed: FAL1.**"):
         write({'docs/reference/NIST-800-63-MAPPING.md': DOC.replace(phrase, "")})
         assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
@@ -19260,6 +20207,180 @@ def test_status_assertion_window_check_discriminates(tmp_path):
         "must FAIL rather than pass when what the signature covers cannot be read"
 
 
+def test_sdk_signed_window_check_discriminates(tmp_path):
+    """Each SDK's `fresh` reads, per format, only fields that format signs.
+
+    A field outside the signed statement is anyone's to add or change after signing, so a
+    `fresh` read from one says nothing about the artifact. The fixture is a small
+    SDK pair in the real shape: a per-format signed key list, a window function told which
+    fields to read, a chooser reading the format's own list, a replay window and the ID
+    token's own instants.
+    """
+    formats = (
+        '    "polaris-trust-list/1": ["format", "issued_at", "expires_at", "keys"],\n'
+        '    "polaris-registry/1": ["format", "issued_at", "expires_at", "contexts"],\n'
+        '    "polaris-revocation-feed/1": ["format", "issued_at", "expires_at", "revoked_root_hex"],\n'
+        '    "polaris-epoch-checkpoint/1": ["format", "issued_at", "expires_at", "epoch"],\n'
+        '    "polaris-holder-proof/1": ["format", "issued_at", "verifier_nonce"],\n'
+        '    "polaris-id-token/1": ["format", "iat", "exp", "aud", "nonce"],\n'
+        '    "polaris-timestamp/1": ["format", "issued_at", "digest_hex"],\n'
+        '    "polaris-exchange-request/1": ["format", "issued_at", "nonce"],\n'
+        '    "polaris-transparency-sth/1": ["format", "timestamp", "tree_size"],\n'
+        '    "polaris-signed-document/1": ["format", "signed_at", "document"],\n'
+        '    "polaris-exchange-mint/1": ["format", "occurred_at", "request_hash"],\n')
+    py_good = (
+        '_STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"]\n'
+        '_REPLAY_WINDOW_SECONDS = {"polaris-holder-proof/1": 300}\n'
+        '\n\n'
+        'def _iso_to_epoch(s):\n'
+        '    return s\n'
+        '\n\n'
+        'def _within_replay_window(obj, now=None):\n'
+        '    seconds = _REPLAY_WINDOW_SECONDS.get(obj.get("format"))\n'
+        '    return seconds, _iso_to_epoch(obj.get("issued_at"))\n'
+        '\n\n'
+        'def _within_window(obj, now=None, start="issued_at", end="expires_at"):\n'
+        '    return _iso_to_epoch(obj.get(start)), _iso_to_epoch(obj.get(end))\n'
+        '\n\n'
+        'def _signed_window(keys):\n'
+        '    if "iat" in keys and "exp" in keys:\n'
+        '        return "iat", "exp"\n'
+        '    if "issued_at" in keys and "expires_at" in keys:\n'
+        '        return "issued_at", "expires_at"\n'
+        '    return None\n'
+        '\n\n'
+        'def verify_status_assertion(assertion, now=None):\n'
+        '    return _within_window(assertion, now)\n'
+        '\n\n'
+        '_ARTIFACT_KEYS = {\n' + formats + '}\n'
+        '\n\n'
+        'def verify_id_token(tok, audience=None, nonce=None, now=None):\n'
+        '    return _iso_to_epoch(tok.get("iat")), _iso_to_epoch(tok.get("exp"))\n'
+        '\n\n'
+        'def verify_signed_artifact(obj, now=None):\n'
+        '    keys = _ARTIFACT_KEYS.get(obj.get("format"))\n'
+        '    fresh = _within_replay_window(obj, now)\n'
+        '    win = _signed_window(keys)\n'
+        '    if fresh is None and win is not None:\n'
+        '        fresh = _within_window(obj, now, *win)\n'
+        '    return fresh\n')
+    ts_good = (
+        'const STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"];\n'
+        'const REPLAY_WINDOW_SECONDS: Record<string, number> = { "polaris-holder-proof/1": 300 };\n'
+        '\n'
+        'function isoToEpoch(s: unknown): number | null {\n'
+        '  return typeof s === "string" ? 0 : null;\n'
+        '}\n'
+        '\n'
+        'function withinReplayWindow(obj: any, now?: string | null): boolean | null {\n'
+        '  const seconds = REPLAY_WINDOW_SECONDS[obj?.format];\n'
+        '  const issued = isoToEpoch(obj?.issued_at);\n'
+        '  return seconds === undefined || issued === null ? null : true;\n'
+        '}\n'
+        '\n'
+        'function withinWindow(obj: any, now?: string | null, start = "issued_at", end = "expires_at"): boolean | null {\n'
+        '  const ia = isoToEpoch(obj?.[start]);\n'
+        '  const ea = isoToEpoch(obj?.[end]);\n'
+        '  return ia === null || ea === null ? null : true;\n'
+        '}\n'
+        '\n'
+        'function signedWindow(keys: string[]): [string, string] | null {\n'
+        '  if (keys.includes("iat") && keys.includes("exp")) return ["iat", "exp"];\n'
+        '  if (keys.includes("issued_at") && keys.includes("expires_at")) return ["issued_at", "expires_at"];\n'
+        '  return null;\n'
+        '}\n'
+        '\n'
+        'export function verifyStatusAssertion(assertion: any, now?: string | null): boolean | null {\n'
+        '  return withinWindow(assertion, now);\n'
+        '}\n'
+        '\n'
+        'const ARTIFACT_KEYS: Record<string, string[]> = {\n' + formats + '};\n'
+        '\n'
+        'export function verifyIdToken(tok: any, now?: string | null): boolean | null {\n'
+        '  const t = tok ?? {};\n'
+        '  const ia = isoToEpoch(t.iat), ea = isoToEpoch(t.exp);\n'
+        '  return ia === null || ea === null ? null : true;\n'
+        '}\n'
+        '\n'
+        'export function verifySignedArtifact(obj: any, now?: string | null): boolean | null {\n'
+        '  const o = obj ?? {};\n'
+        '  const keys = ARTIFACT_KEYS[o.format];\n'
+        '  const replay = withinReplayWindow(o, now);\n'
+        '  const win = signedWindow(keys);\n'
+        '  return replay !== null ? replay : win !== null ? withinWindow(o, now, ...win) : null;\n'
+        '}\n')
+
+    def tree(label, py=py_good, ts=ts_good):
+        """A fresh root per fixture, so no read is served from another fixture's file."""
+        root = tmp_path / label
+        (root / "sdk" / "python" / "polaris_verify").mkdir(parents=True)
+        (root / "sdk" / "typescript" / "src").mkdir(parents=True)
+        (root / "sdk" / "python" / "polaris_verify" / "__init__.py").write_text(py)
+        (root / "sdk" / "typescript" / "src" / "index.ts").write_text(ts)
+        return root
+
+    def edit(text, old, new):
+        assert text.count(old) == 1, "the fixture edit must hit exactly one place: %r" % old
+        return text.replace(old, new)
+
+    out = checks.check_sdk_fresh_reads_only_signed_fields(tree("good"))
+    assert out[0].level == "OK", "must PASS when every field a format's fresh reads is signed: %s" % out[0].message
+    assert "12 formats in Python and 12 in TypeScript, 5 of them answering from no window" in out[0].message, \
+        "must have measured every format and status assertion: %s" % out[0].message
+
+    # Broken, in each SDK: the generic check reads the default window off every format.
+    py_bare = edit(py_good, "    win = _signed_window(keys)\n    if fresh is None and win is not None:\n"
+                            "        fresh = _within_window(obj, now, *win)\n",
+                   "    if fresh is None:\n        fresh = _within_window(obj, now)\n")
+    ts_bare = edit(ts_good, "win !== null ? withinWindow(o, now, ...win) : null", "withinWindow(o, now)")
+    for label, py, ts, sdk in (("py-bare", py_bare, ts_good, "python"), ("ts-bare", py_good, ts_bare, "typescript")):
+        out = checks.check_sdk_fresh_reads_only_signed_fields(tree(label, py, ts))
+        assert out[0].level == "FAIL" and "does not sign" in out[0].message, \
+            "must FAIL when %s's generic check reads a window the format does not sign" % sdk
+        for fmt in ("polaris-id-token/1 reads expires_at, issued_at", "polaris-timestamp/1 reads expires_at",
+                    "polaris-transparency-sth/1 reads expires_at, issued_at"):
+            assert "%s %s" % (sdk, fmt) in out[0].message, "must name %s %s: %s" % (sdk, fmt, out[0].message)
+        assert "polaris-trust-list/1" not in out[0].message, "a format signing both ends is not a finding"
+
+    # The chooser hands an unsigned window back: to a format signing none, or to the ID token.
+    for label, py, ts, named in (
+            ("py-fallback", edit(py_good, '    return None\n', '    return "issued_at", "expires_at"\n'), ts_good,
+             "python polaris-signed-document/1 reads expires_at, issued_at"),
+            ("ts-fallback", py_good, edit(ts_good, '  return null;\n}\n\nexport function verifyStatusAssertion',
+                                          '  return ["issued_at", "expires_at"];\n}\n\n'
+                                          'export function verifyStatusAssertion'),
+             "typescript polaris-signed-document/1 reads expires_at, issued_at"),
+            ("py-id-branch", edit(py_good, '        return "iat", "exp"\n', '        return "issued_at", "expires_at"\n'),
+             ts_good, "python polaris-id-token/1 reads expires_at, issued_at"),
+            ("ts-id-branch", py_good, edit(ts_good, 'return ["iat", "exp"];', 'return ["issued_at", "expires_at"];'),
+             "typescript polaris-id-token/1 reads expires_at, issued_at"),
+            ("py-replay", edit(py_good, '_iso_to_epoch(obj.get("issued_at"))\n',
+                               '_iso_to_epoch(obj.get("issued_at")), obj.get("expires_at")\n'), ts_good,
+             "python polaris-holder-proof/1 reads expires_at"),
+            ("ts-replay", py_good, edit(ts_good, '  const issued = isoToEpoch(obj?.issued_at);\n',
+                                        '  const issued = isoToEpoch(obj?.issued_at) ?? isoToEpoch(obj?.expires_at);\n'),
+             "typescript polaris-holder-proof/1 reads expires_at")):
+        out = checks.check_sdk_fresh_reads_only_signed_fields(tree(label, py, ts))
+        assert out[0].level == "FAIL" and named in out[0].message, \
+            "must FAIL naming %s (%s): %s" % (named, label, out[0].message)
+
+    # Anti-vacuity: what it cannot read is a failure to measure, in either SDK.
+    for label, py, ts in (
+            ("empty", "", ""),
+            ("py-no-list", edit(py_good, "_ARTIFACT_KEYS = {", "_KEYS = {"), ts_good),
+            ("ts-no-list", py_good, edit(ts_good, "const ARTIFACT_KEYS:", "const KEYS:")),
+            ("py-dynamic-read", edit(py_good, "_iso_to_epoch(obj.get(start))", "_iso_to_epoch(obj[start])"), ts_good),
+            ("ts-dynamic-read", py_good, edit(ts_good, "isoToEpoch(obj?.[start])", 'isoToEpoch(obj?.[start + ""])')),
+            ("py-unplaced-window", py_good + "\n\ndef verify_elsewhere(obj, now=None):\n"
+                                             "    return _within_window(obj, now)\n", ts_good),
+            ("ts-unplaced-window", py_good, ts_good + "\nexport function verifyElsewhere(obj: any): boolean | null {\n"
+                                                      "  return withinWindow(obj);\n}\n"),
+            ("py-no-id-instants", edit(py_good, 'tok.get("exp")', 'tok["exp"]'), ts_good)):
+        out = checks.check_sdk_fresh_reads_only_signed_fields(tree(label, py, ts))
+        assert out[0].level == "FAIL" and "cannot measure" in out[0].message, \
+            "must FAIL as unmeasurable rather than pass (%s): %s" % (label, out[0].message)
+
+
 def test_conformance_spec_count_check_discriminates(tmp_path):
     """The contract's own statement of its scope, held to the manifest.
 
@@ -20562,16 +21683,13 @@ def test_documented_verifier_commands_run_check_discriminates(tmp_path):
 
 
 def test_duress_claims_are_aware_check_discriminates(tmp_path):
-    """The word was weakened because the evidence did not support it, not as a hedge.
+    """The word is the one the evidence supports: duress-aware.
 
-    The mechanism resists a casual coercer at the counter. It does not resist an informed
-    coercer beside the holder, and against lawful access it is net-negative: DuressEvent is
-    append-only with no purge path, so signalling duress manufactures indelible evidence
-    that the holder resisted.
+    The mechanism notices, records and routes a duress signal; it is built for a casual
+    coercer who does not know it exists, and DuressEvent is append-only.
     """
-    LEDGER = ("The casual coercer is resisted.\n"
-              "DuressEvent is append-only with no purge path, so lawful access is the case "
-              "the mechanism makes worse.\n"
+    LEDGER = ("The mechanism is built for the casual coercer who does not know it exists.\n"
+              "DuressEvent is append-only.\n"
               "The word is duress-aware.\n")
     CLEAN = "Polaris is an issuer-unlinkable, duress-aware identity-token system.\n"
 
@@ -20608,16 +21726,15 @@ def test_duress_claims_are_aware_check_discriminates(tmp_path):
         write(site_index_html=CLEAN + "It is %s.\n" % phrase)
         assert level(phrase) == "FAIL", "must FAIL on %r" % phrase
 
-    # The assessment has to say which coercer IS resisted, or the weaker word reads as a
-    # blanket rejection of a mechanism that works.
-    write(ledger=LEDGER.replace("The casual coercer is resisted.\n", ""))
+    # The assessment has to name the coercer the mechanism is built for.
+    write(ledger=LEDGER.replace("The mechanism is built for the casual coercer who does not know it exists.\n", ""))
     assert level("does not name the coercer") == "FAIL", \
-        "must FAIL when the assessment does not name the coercer the mechanism resists"
+        "must FAIL when the assessment does not name the coercer the mechanism is built for"
 
-    # And why lawful access is the case it worsens rather than merely misses.
-    write(ledger=LEDGER.replace("append-only with no purge path, ", ""))
-    assert level("lawful access") == "FAIL", \
-        "must FAIL when the assessment does not say why the record is indelible"
+    # And that the record is append-only, which the outward surfaces state.
+    write(ledger=LEDGER.replace("DuressEvent is append-only.\n", ""))
+    assert level("does not say that the duress record") == "FAIL", \
+        "must FAIL when the assessment does not say the record is append-only"
 
     write(ledger=None)
     assert level("could not be read") == "FAIL", \
@@ -23293,9 +24410,8 @@ def _write_outward(tmp_path, extra_readme=""):
     (tmp_path / "lab" / "duress").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docs" / "PRODUCTION-READINESS.md").write_text(LEDGER)
     (tmp_path / "lab" / "duress" / "README.md").write_text(
-        "The casual coercer is resisted.\n"
-        "DuressEvent is append-only with no purge path, so lawful access is the case "
-        "the mechanism makes worse.\n"
+        "The mechanism is built for the casual coercer who does not know it exists.\n"
+        "DuressEvent is append-only.\n"
         "The word is duress-aware.\n")
     for rel in checks._OUTWARD_SURFACES:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -24553,3 +25669,75 @@ def test_interop_page_count_check_discriminates(tmp_path):
         assert text != files[rel], "the mutation did not apply: %r" % (case,)
         write(**{rel: text})
         assert level() == "FAIL", "must FAIL when the counts or names disagree: %r" % (case,)
+
+
+def _check_mutation_drill(root=None):
+    """scripts/polaris-check-mutation-drill.py loaded as a module, a fresh copy each call (its
+    readers cache what they parse), reading the tree at `root` (the repository by default)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "check_mutation_drill", REPO / "scripts" / "polaris-check-mutation-drill.py")
+    drill = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(drill)
+    if root is not None:
+        drill.ROOT = root
+    return drill
+
+
+def _check_def(name):
+    tree = ast.parse((REPO / "polaris_checks" / "checks.py").read_text(encoding="utf-8"))
+    return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def test_check_mutation_drill_names_the_workflows_ci_calls(tmp_path):
+    # 2026-10-24: when the Trivy gate moved to image-cve-scan.yml, three checks came to read the scan
+    # through _ci_and_called_workflows, and the drill's reads_of had no door for it. It named no input
+    # for check_image_cve_scanning, so it reached 146 checks instead of 147, and it never deleted or
+    # commented out image-cve-scan.yml for any of the three.
+    drill = _check_mutation_drill()
+    want = {".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml"}
+    blind = [name for name in ("check_image_cve_scanning", "check_sbom_trivy_matches_scan",
+                               "check_ha_automation")
+             if not want <= set(drill.reads_of(_check_def(name)))]
+    assert not blind, ("the check-mutation drill must name ci.yml and the workflow ci.yml calls "
+                       "for: " + ", ".join(blind))
+
+    # The door follows ci.yml's calls rather than a file name: a tree whose ci.yml calls another
+    # workflow has that one named, and a workflow ci.yml does not call is not.
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+    (gh / "ci.yml").write_text("jobs:\n  scan:\n    uses: ./.github/workflows/scan.yml\n")
+    (gh / "scan.yml").write_text("on: workflow_call\n")
+    (gh / "image-cve-scan.yml").write_text("on: workflow_call\n")
+    named = set(_check_mutation_drill(tmp_path).reads_of(_check_def("check_image_cve_scanning")))
+    assert named == {".github/workflows/ci.yml", ".github/workflows/scan.yml"}, sorted(named)
+
+
+def test_check_mutation_drill_reaches_the_trivy_gate_of_check_image_cve_scanning(tmp_path):
+    # check_image_cve_scanning matches the gate through _trivy_gate, whose patterns are the module's
+    # _TRIVY_GATE tuple, and regexes_of took only patterns written in the check itself, so the drill
+    # had nothing to search for in it.
+    drill = _check_mutation_drill()
+    fn = _check_def("check_image_cve_scanning")
+    patterns = drill.regexes_of(fn)
+    assert {p.pattern for p in checks._TRIVY_GATE} <= patterns, \
+        "the drill must take the patterns _trivy_gate matches with: %s" % sorted(patterns)
+
+    # The effect: the drill's comment pass for this check, on a copy of the inputs it reads here,
+    # turns the check red; the same copy untouched is green.
+    for rel in (".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml", ".trivyignore",
+                "polaris_web/Dockerfile.prod", "polaris_web/Dockerfile.caddy",
+                "polaris_web/Dockerfile.pgbouncer", "polaris_web/Dockerfile.postgres"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    assert checks.check_image_cve_scanning(tmp_path)[0].level == "OK"
+    needles, hidden = drill.needles_of(fn), 0
+    for rel in sorted(set(drill.reads_of(fn))):
+        lines = (tmp_path / rel).read_text(encoding="utf-8").split("\n")
+        for i, line in enumerate(lines):
+            if drill._line_carries(line, needles, patterns) and not line.lstrip().startswith("#"):
+                lines[i], hidden = "# hidden: " + line.strip(), hidden + 1
+        (tmp_path / rel).write_text("\n".join(lines), encoding="utf-8")
+    assert hidden, "the comment pass must find lines carrying what the check matches"
+    assert checks.check_image_cve_scanning(tmp_path)[0].level == "FAIL", \
+        "with the gate's lines commented out, the check must fail"

@@ -91,8 +91,12 @@ updates:
   # What lab/interop/*/run.sh install beside polaris-oid4vp: its one dependency (requirements.txt,
   # Python 3.9) and, for a run that builds it from the tree, the build backend
   # (requirements-build.txt, Python 3.10), hash-pinned by pip-compile; Dependabot recompiles both.
+  # lab/interop/mdoc's verifier set (cbor2, and cryptography as ../requirements.txt pins it) shares
+  # the entry and its Python 3.9 floor.
   - package-ecosystem: pip
-    directory: /lab/interop
+    directories:
+      - /lab/interop
+      - /lab/interop/mdoc
     schedule:
       interval: monthly
     cooldown:
@@ -116,6 +120,28 @@ updates:
         versions: [">=2.1"]
       - dependency-name: "pycparser"
         versions: [">=3"]
+
+  # The lab's other hash-pinned sets, both on Python 3.12: the access gate image's
+  # (lab/strategy/007) and the OpenTimestamps tools' (lab/strategy/013, compiled by pip-compile
+  # from requirements.in).
+  - package-ecosystem: pip
+    directories:
+      - /lab/strategy/007
+      - /lab/strategy/013
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      pip-lab-strategy-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   # The dependency-audit tools the CVE-scan job runs (pip-audit, bandit), hash-pinned by
   # pip-compile in .github/ci; Dependabot recompiles the hashes.
@@ -241,6 +267,14 @@ updates:
       # own change, with CI, the venv and pip-compile moved together; removing semver-minor here records taking it.
       - dependency-name: "python"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Under Caddy 2.11.7 a proxied HTTP/1.1 body that reaches the Caddyfile's read_body limit with less than
+      # 256 KiB unread is read to its end before the edge answers (caddyserver/caddy#8165): the edge-limits drill
+      # fails its case 2 there (CI, 2026-10-21), and 2.11.4 and 2.11.6 end the body at the limit. 2.11.6 can crash
+      # reading an HTTP/2 request body after its handler returns (caddyserver/caddy#8101), which 2.11.7 fixed.
+      # The fix for #8165, caddyserver/caddy#8178, is in no release as of 2026-10-23. Remove this block when a
+      # release carries it and passes the drill.
+      - dependency-name: "caddy"
+        versions: ["2.11.6", "2.11.7"]
     groups:
       docker-polaris_web-all:
         patterns:
@@ -333,15 +367,16 @@ updates:
         patterns:
           - "*"
 
-  # The interop harnesses' own manifests: Go (the irmago wallet), Gradle (the Kotlin wallets and
-  # Axle's harness) and Swift (the EUDI iOS wallet). Each pins the outside implementation it drives;
-  # one grouped PR a month per ecosystem, run against the published verifier by the wallet canary's
-  # pull_request trigger on lab/interop/**. Dependabot does not rewrite Gradle's dependency
-  # verification (axle/harness/gradle/verification-metadata.xml): a PR that bumps that harness
-  # needs the metadata regenerated before it can pass.
+  # The interop harnesses' own manifests: Go (the irmago wallet and the OID4VCgo mdoc witness),
+  # Gradle (the Kotlin wallets and Axle's harness) and Swift (the EUDI iOS wallet). Each pins the
+  # outside implementation it drives; one grouped PR a month per ecosystem, run against the
+  # published verifier by the wallet canary's pull_request trigger on lab/interop/**. Dependabot
+  # does not rewrite Gradle's dependency verification (axle/harness/gradle/verification-metadata.xml):
+  # a PR that bumps that harness needs the metadata regenerated before it can pass.
   - package-ecosystem: gomod
     directories:
       - /lab/interop/irmago/wallet
+      - /lab/interop/mdoc/witness-oid4vcgo
     schedule:
       interval: monthly
     cooldown:

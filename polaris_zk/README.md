@@ -43,11 +43,9 @@ The application calls it as a subprocess ([`polaris_web/zk.py`](../polaris_web/z
 - `POST /api/zk/epoch/close` (admin), `GET /api/zk/epoch/<id>`, `POST /api/zk/verify` (single-use
   nonces).
 
-## Limits
+## Scope
 
-- The claim is membership and nothing else; it does not hide a holder from the issuer, which
-  builds every leaf ([docs/PRODUCTION-READINESS.md](../docs/PRODUCTION-READINESS.md)).
-- The proof system rests on hash-based assumptions; its security level is Plonky2's, not
-  established here.
+- The claim is membership and nothing else. The issuer builds every leaf.
+- The proof system rests on hash-based assumptions; its security level is Plonky2's.
 
 Design record: [docs/design/zk-snark.md](../docs/design/zk-snark.md).

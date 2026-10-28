@@ -3,7 +3,7 @@
 // A wallet on the EU reference libraries: OpenID4VCI (eudi-lib-jvm-openid4vci-kt) to obtain a PID from
 // the EU reference issuer, OpenID4VP (eudi-lib-jvm-openid4vp-kt) to present it to polaris-oid4vp.
 plugins {
-    kotlin("jvm") version "2.4.20"
+    kotlin("jvm") version "2.4.21"
     application
 }
 

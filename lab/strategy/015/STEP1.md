@@ -25,12 +25,8 @@ SHA3-256 of a token value), with a fresh key per message.
 a second per SLH-DSA signature in each library. **Mutation:** with Falcon-512 paired against
 noble's Falcon-1024, every count fell to 0 and the run reported the variant as not to be wired.
 
-## What this does not establish
+## What was run
 
-- **Two implementations agreeing is not either being correct.** They are independent (C and
-  TypeScript, different authors), which is why agreement is evidence; a published known-answer set
-  for each standard is the next check, as ML-DSA has Wycheproof.
-- **FN-DSA here is Falcon as both libraries ship it, ahead of FIPS 206's final text.** Falsifier 4
-  (draft drift) stays open until the standard is final and both libraries track it.
-- **Nothing about timing.** Falsifier 2 (FN-DSA's signing path shown constant-time on the
-  deployment's platforms) is the next lab step, and FN-DSA is not wired until it holds.
+- **Two implementations agreeing.** They are independent (C and TypeScript, different authors),
+  which is why agreement is evidence.
+- **FN-DSA here is Falcon as both libraries ship it.**

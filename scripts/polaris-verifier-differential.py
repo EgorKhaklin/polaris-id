@@ -58,6 +58,9 @@ HOSTILE = [
     {"limits": [{"max_uses": 1}]}, {"limits": "max_uses=1"}, {"limits": 1},
 ]
 
+#: The log key for a timestamp anchor, named as a relying party names it.
+_LOG_KEY = "ab" * 1952
+
 #: How each shared function is called. A function whose two implementations take different
 #: argument shapes is not comparable and is named here rather than quietly skipped.
 CALLS = {
@@ -70,7 +73,7 @@ CALLS = {
     "verify_id_token":         lambda m, x: m.verify_id_token(x),
     "verify_inclusion":        lambda m, x: m.verify_inclusion(0, 1, b"a", b"a", x if isinstance(x, list) else []),
     "verify_status_assertion": lambda m, x: m.verify_status_assertion(x),
-    "verify_timestamp_anchor": lambda m, x: m.verify_timestamp_anchor(x),
+    "verify_timestamp_anchor": lambda m, x: m.verify_timestamp_anchor(x, log_key=_LOG_KEY),
 }
 
 #: Comparable in principle, not compared here, each with the reason. A skip without a reason

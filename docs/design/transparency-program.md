@@ -10,7 +10,7 @@ by `polaris-id transparency-report`.
 
 ---
 
-## 1. The gap this started from
+## 1. Where this started
 
 An identity authority asks to be trusted with the most invasive power in the system: pulling
 one named person's entire verification history. Every control around that power is invisible
@@ -49,6 +49,17 @@ the credential (the map's points with coordinates too), to every signed-in role,
 routes wrote no row, so the sentence above about every other read being a `SELECT` a grep finds
 did not hold for them. They were withdrawn ([lab/strategy/009](../../lab/strategy/009-atlas-athena-rework.md));
 the Atlas returns counts, and the check reads every SQL source.
+
+**And in plain sight.** Until 2026-10-21 the check followed the functions alone and left the
+reads a grep finds to the grep. Two routes that select a tracked table themselves returned its
+rows without a row of their own, and so did the SQL console, which ran its caller's text as the
+application role. The check now also holds every route whose own SQL names a tracked table or a
+view over one, each exemption with its reason, and the console reads as
+`polaris_console_reader`, which holds none of the four tables and no count table: a count cell
+can be one event, which the Atlas withholds below five and the console would return unrecorded.
+A count over the four that a page shows returns no one's rows and is not recorded; tables
+outside the four that hold one person's rows, `TokenStateEpochLeaf` (which `/epochs` returns)
+among them, are outside the record.
 
 The row records the QUERY and never the RESULTS. An audit-of-audit that copied the subject's
 verification history would double the exposure it exists to police, and the warrant already
@@ -162,7 +173,7 @@ sticky.**
 
 ---
 
-## 5. The cadence, and the gaps in it
+## 5. The cadence, and missing periods
 
 A transparency program without a standing cadence is a transparency gesture: the operator
 publishes when the numbers are comfortable. The cadence here is 90 days, and the report lists
@@ -177,7 +188,7 @@ happened in should not be able to publish a tidy series afterwards that hides th
 
 | Mechanism | What it holds |
 | --- | --- |
-| `check_audited_reads_are_logged` | A route reading a history of audited rows through a function, in any SQL source, writes an `AuditAccessLog` row. Fails if the parse finds nothing. |
+| `check_audited_reads_are_logged` | A route reading a history of audited rows through a function in any SQL source, or naming a tracked table or a view over one in its own SQL, writes an `AuditAccessLog` row; no function reading `AuditAccessLog` writes one; the SQL console reads as `polaris_console_reader`, which no SQL source grants a tracked table, a view, a routine or a role. Fails if the parse finds nothing. |
 | `check_transparency_program` | Every figure carries its source; the invertibility re-check runs BEFORE the digest; complementary suppression is tried before the total is withheld; the two kinds of withheld cell keep different a-priori ranges; periods are suppressed independently; no running total; the report states its own limit. |
 | `scripts/polaris-transparency-report-drill.py` | Attacks the report AS PUBLISHED over thousands of random tables and a growing multi-quarter series, with an adversary that enumerates reachable sums rather than recomputing the module's own bounds. Two different algorithms agreeing is evidence; one agreeing with itself is not. |
 | `polaris_web/test_transparency.py` | 36 measured tests: the worked example above, two cells pinned at the ceiling (which a "at least two withheld cells" rule passes and discloses), the refusal, per-period independence, the digest's domain separation. |

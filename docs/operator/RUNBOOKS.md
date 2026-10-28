@@ -98,7 +98,7 @@ The same drill crashes one colour and shows the other carries every request.
 
 ## PolarisAppInfoAbsent
 
-**Severity:** SEV-1 · **Expression:** `absent(polaris_app_info)` · **For:** 5m
+**Severity:** SEV-1 · **Expression:** `absent(polaris_app_info{job="polaris"})` · **For:** 5m
 
 **Trigger.** The `polaris_app_info` gauge has been missing from scrapes for 5
 minutes. The scrape is succeeding (otherwise `PolarisAppDown` would fire) but
@@ -606,7 +606,7 @@ route to the app.
 **Diagnosis.**
 1. `docker compose ps caddy` and `docker compose logs --tail 50 caddy`.
 2. From the observability network, the probe's own detail:
-   `curl -s "http://blackbox:9115/probe?module=edge_tls&target=https://caddy:8443/api/health/live&debug=true"`.
+   `curl -s "http://blackbox:9115/probe?module=edge_tls&target=https://caddy:8443/.well-known/security.txt&debug=true"`.
 3. `scripts/polaris-doctor.sh` names the failing component of the stack.
 
 **Remediation.** Restart or reload the edge once the cause is fixed (a

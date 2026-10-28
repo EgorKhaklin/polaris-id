@@ -43,8 +43,9 @@ Secrets never travel through env: the PKCS#11 PIN is read from a file
 (POLARIS_CUSTODY_PKCS11_PIN_FILE) and the module refuses to start if
 POLARIS_CUSTODY_PKCS11_PIN is set; KMS credentials are the SDK's usual
 instance-role / profile chain. The driver's `describe()` exposes only
-non-secret facts (driver, key id, public-key fingerprint) for /api/health and
-polaris-pqc-status.sh.
+non-secret facts (driver, key id, public-key fingerprint) for `custody.py
+describe` and polaris-pqc-status.sh; the unauthenticated /api/health reports the
+driver and the fingerprint, never the key id (an ARN, or token and key labels).
 
 Key ceremony and rotation: docs/operator/KEY-CEREMONY.md.
 """

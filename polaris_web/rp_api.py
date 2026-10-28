@@ -35,9 +35,12 @@ exists, and aliases itself into sys.modules first so `python3 app.py` does not l
 """
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import re
+import urllib.error
+import urllib.request
 
 import psycopg2
 from flask import jsonify, request
@@ -1970,6 +1973,19 @@ _EXCHANGE_RATE_PER_MIN = 120         # per requester key; the coarse velocity bo
 _EXCHANGE_UPSTREAM_TIMEOUT = 10      # seconds
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Follows no redirect: urllib then raises HTTPError for the 3xx."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# The default opener follows a 3xx to whatever host its Location names, as a GET, and the
+# answer from THAT host would come back as response_body: the forward goes only where the
+# operator configured it.
+_EXCHANGE_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _exchange_request_statement(body):
     """Canonical bytes a REQUESTER signs for an exchange envelope. MUST match
     scripts/polaris-verify.py's _exchange_request_canonical."""
@@ -2087,20 +2103,27 @@ def api_v1_exchange(target_agency_id):
     if not _consume_exchange_nonce(req_key, nonce):
         return jsonify(error='replay', error_description='this envelope (requester, nonce) was already exchanged; a retry needs a new nonce'), 409
     # Forward to the operator-configured upstream. The body exists only here, in memory.
-    import urllib.request
-    import urllib.error
     data = json.dumps(body, sort_keys=True, separators=(',', ':')).encode('utf-8')
     up = urllib.request.Request(upstreams[kind], data=data, method='POST',
                                 headers={'Content-Type': 'application/json',
                                          'X-Polaris-Requester': req_key, 'X-Polaris-Context': str(context_id)})
     try:
-        with urllib.request.urlopen(up, timeout=_EXCHANGE_UPSTREAM_TIMEOUT) as r:
-            raw = r.read().decode('utf-8')
+        with _EXCHANGE_OPENER.open(up, timeout=_EXCHANGE_UPSTREAM_TIMEOUT) as r:
+            raw = r.read(security.MAX_REQUEST_BODY_BYTES + 1)
+            # A bounded read returns a cut answer as if complete: bytes still owed against the
+            # declared Content-Length mean the upstream stopped short.
+            short = (getattr(r, 'length', None) or 0) > 0
+        # Bounded as the request door is: an answer over the limit is not read into memory.
+        if len(raw) > security.MAX_REQUEST_BODY_BYTES:
+            raise ValueError('the upstream answer exceeds the request size limit')
+        if short:
+            raise ValueError('the upstream answer is shorter than its declared length')
+        raw = raw.decode('utf-8')
         # The app's own parser, as at the request door: NaN, Infinity or 1e400 would be re-served
         # in a reply that is not JSON and hashed into a receipt no other parser reproduces, and an
         # answer nested past the parser's depth is refused the same way (all ValueError).
         response_body = app.json.loads(raw) if raw else None
-    except (urllib.error.URLError, ValueError, OSError, RecursionError) as e:
+    except (urllib.error.URLError, http.client.HTTPException, ValueError, OSError, RecursionError) as e:
         return jsonify(error='upstream_unavailable', error_description='the service did not answer (%s); the nonce is consumed, retry with a new one' % type(e).__name__), 502
     receipt, err = _build_exchange_receipt(target, target_agency_id, {
         'requester_public_key_hex': req_key, 'context_id': context_id,

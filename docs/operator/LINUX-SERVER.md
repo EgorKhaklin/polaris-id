@@ -41,14 +41,15 @@ does, in order:
    `/etc/polaris/polaris.env` written from
    [`deploy/linux/polaris.env.example`](../../deploy/linux/polaris.env.example),
    the systemd units installed and enabled, the stack started, migrations and
-   database objects synced, and `/api/health` asserted healthy through the TLS
-   edge.
+   database objects synced, the TLS edge asserted to serve a public route, and
+   `/api/health` asserted healthy at the app's own address (the edge answers
+   the health paths 404 from outside).
 
 Expect 5 to 10 minutes on first run (the app image builds liboqs for ML-DSA-65).
 It ends with:
 
 ```
-  ok   healthy through the TLS edge: https://polaris.example.org/api/health
+  ok   the TLS edge serves https://polaris.example.org/.well-known/security.txt; /api/health healthy at the app's own address
   Polaris is running under systemd.
 ```
 
@@ -182,7 +183,7 @@ sudo rm -f /etc/systemd/system/polaris*.service /etc/systemd/system/polaris*.tim
 sudo rm -rf /opt/polaris /etc/polaris                     # keep /var/backups/polaris if you want the backups
 ```
 
-## Known caveats
+## Platform notes
 
 - **RHEL family with SELinux enforcing**: Docker bind mounts of the secrets and
   config files can be denied. Either run the stack with SELinux permissive for
@@ -204,11 +205,11 @@ The `linux-install` CI job runs on every push: the **packages** stage executes
 for real inside Debian 12 and Rocky Linux 9 containers (both repository
 branches, key verification included), and the **full installer** runs on the
 Ubuntu runner with real systemd: `/opt/polaris`, secrets, units, `systemctl
-start polaris`, migrations, `/api/health` healthy through the TLS edge,
+start polaris`, migrations, the TLS edge serving a public route and
+`/api/health` healthy at the app's own address,
 `systemctl start polaris-backup` producing a tarball, and health again after
 `systemctl restart polaris`. After it, the fresh-host drill (gate row OP-2) takes the two steps
 above, issues a credential through the operator console, registers a relying party with
 `polaris-rp-register.sh` and has it verify the credential online, and reports the time from the
-install to that verification and the inputs it took. What CI cannot exercise is ACME against a public
-domain; it uses the internal-CA edge (`docker-compose.citest.yml`), which
-differs from production only in who signs the certificate.
+install to that verification and the inputs it took. CI uses the internal-CA edge
+(`docker-compose.citest.yml`), which differs from production only in who signs the certificate.
