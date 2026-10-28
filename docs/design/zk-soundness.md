@@ -125,14 +125,10 @@ The two-witness claim is about implementation divergence on the statement.
 ## Bottom line for an operator
 
 The constitutional invariants, C1 to C10, are enforced in PostgreSQL and are
-not what this ledger is about. This is only the optional ZK layer, and for
-that layer the position is:
-
-- The membership proof is transparent-setup, post-quantum-comfortable, and its
-  verdict is independently two-witnessed. That part is solid, and it is good
-  tooling to learn from and to build on.
-- The README's framing of the whole system as notional is the correct one, and
-  this layer is consistent with it.
+not what this ledger is about. This is only the optional ZK layer. Its
+membership proof is transparent-setup and hash-based, and an independent
+second witness re-establishes the statement it proves (membership and
+binding).
 
 | Question | Read |
 |---|---|

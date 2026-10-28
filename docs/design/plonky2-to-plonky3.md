@@ -1,8 +1,8 @@
 # Plonky2 to Plonky3: an evaluation, and the decision
 
 **Reader:** whoever next asks whether the proof library should be replaced. **Job:** record
-what was measured, what was reasoned, what was not verified, and the decision, so the question
-is re-opened by evidence rather than by mood.
+what was measured, what was reasoned, what is checked before any move, and the decision, so the
+question is re-opened by evidence rather than by mood.
 
 **Decision: KEEP Plonky2.** Re-evaluate when one of the triggers at the end fires. This is a
 spike with a decision record, not a migration, which is what roadmap P2.12 asked for.
@@ -86,24 +86,21 @@ is one more thing to re-anchor.
 That is a genuinely useful finding for the eventual decision, and it came from reading the
 witness rather than from assuming.
 
-## What was NOT verified, and must be before any decision to move
+## Checked before any move
 
-This spike did not re-check the external facts, and a future decision must not inherit them:
+A decision to move re-checks these external facts at their sources, and inherits none of them
+from this record:
 
 - **Plonky3's current version and release status.** The roadmap row recorded `0.7.0-rc.1` when
   it was written. Whether that is still a release candidate is the single most decision-
-  relevant fact here and it has a shelf life measured in months.
-- **Audit status of either library.** Neither the Plonky2 circuit nor its proof library has had
-  an external cryptographic audit *in this repository's use of it*, which
-  [zk-soundness.md](zk-soundness.md) already says in its own words. Whether either project has
-  been audited independently was not established here, and asserting it either way would be
-  worse than leaving it open.
-- **Maintenance trajectory.** "Stable" and "abandoned" look the same from a version number.
-  Commit activity, issue response and a stated support policy are the evidence, and they were
-  not gathered.
+  relevant fact here.
+- **Audit status of either library.** Whether either project has been audited independently,
+  and what that audit covered, is established from its own record before a move.
+- **Maintenance trajectory.** Commit activity, issue response and a stated support policy:
+  "stable" and "abandoned" look the same from a version number.
 
-Recording these as unverified is the point. A decision record that quietly presents unchecked
-claims as findings is how a rewrite gets justified by a paragraph nobody sourced.
+Keeping these apart from the findings is the point. A decision record that quietly presents
+unchecked claims as findings is how a rewrite gets justified by a paragraph nobody sourced.
 
 ## The decision
 
@@ -141,5 +138,5 @@ roadmap P0.7, not a change of proof system.
 ## Proven by
 
 `check_plonky3_evaluation` pins that this record exists, states a decision, separates what was
-measured from what was not verified, and carries re-evaluation triggers. It cannot check
+measured from what is checked before any move, and carries re-evaluation triggers. It cannot check
 whether the decision is right; it can check that the next person is told what it rested on.

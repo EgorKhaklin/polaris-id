@@ -178,8 +178,12 @@ def main():
     low = " ".join(text.lower().split())
     _row("the document states it is NOT a conformance claim",
          "not a conformance claim" in low, True)
-    _row("...and that no assessment has been performed",
-         "no assessment has been performed" in low, True)
+    body = text.strip()
+    if body.startswith("# "):
+        body = body.partition("\n")[2].strip()
+    first = " ".join(re.split(r"\n\s*\n", body, maxsplit=1)[0].lower().split())
+    _row("...and its first paragraph says Polaris is pre-pilot",
+         "pre-pilot" in first, True)
     _row("...and that a deployment does not inherit these properties",
          "does not inherit" in low or "it does not inherit" in low, True)
     _row("the highest AAL claimed is stated explicitly",

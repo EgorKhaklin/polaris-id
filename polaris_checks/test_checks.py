@@ -13777,12 +13777,14 @@ def test_broker_policy_bound_check_discriminates(tmp_path):
 
 
 def test_roadmap_consistent_check_discriminates(tmp_path):
-    # v9.337: the roadmap cannot contradict itself.
+    # v9.337: the roadmap cannot contradict itself. 2026-10-28: it lists no absences (owner's
+    # direction), so a "Do not have" list that comes back fails, and the "Have" list names the
+    # protocol layer. The done-row guards went with the list: they read "| [x]" rows the roadmap
+    # has not carried since it was made concise, so they measured nothing.
     n = len(checks.CHECKS)
-    ROADMAP = ("**Have, working, CI-proven:** the protocol layer (P8, complete); %d invariant\nchecks (v9.337) each with a detection test.\n\n"
-               "**Do not have:** hardware tokens; an external team's docs-only integration; and every institutional prerequisite.\n\n"
-               "| [x] P8.3 | The signed registry | M | low | P8.1 | DONE (v9.323). Discovery over the authority layer. |\n"
-               "| [x] P8.8 | Versioning | M | low | P8.3 | DONE (v9.330). |\n" % n)
+    ROADMAP = ("# Roadmap\n\n**Have, working, CI-proven:**\n\n- The protocol layer, frozen at version 1.\n"
+               "- %d invariant\nchecks (v9.337) each with a detection test.\n\n"
+               "## Phases\n\n| P8 | The exchange fabric | Done |\n" % n)
     good = {'ROADMAP.md': ROADMAP, 'polaris_web/__version__.py': '__version__: str = "9.337"\n'}
     def write(overrides=None):
         files = dict(good); files.update(overrides or {})
@@ -13792,20 +13794,25 @@ def test_roadmap_consistent_check_discriminates(tmp_path):
     write()
     first = checks.check_roadmap_consistent(tmp_path)[0]
     assert first.level == "OK", "must PASS on the full fixture: " + first.message
-    write({'ROADMAP.md': ROADMAP.replace("hardware tokens;", "hardware tokens; a service-and-authority registry;")})
-    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if a done subsystem sits under Do not have"
-    write({'ROADMAP.md': ROADMAP.replace("| DONE (v9.323).", "| IN PROGRESS. The primitive shipped.")})
-    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if a done row reads as in progress"
+    for absent in ("**Do not have:** hardware tokens; an external team's docs-only integration.\n\n",
+                   "We do not have hardware tokens.\n\n"):
+        write({'ROADMAP.md': ROADMAP.replace("## Phases", absent + "## Phases")})
+        r = checks.check_roadmap_consistent(tmp_path)[0]
+        assert r.level == "FAIL" and '"Do not have" list is not part of it' in r.message, \
+            "must FAIL, for that reason, if a 'Do not have' list returns: " + absent
     write({'ROADMAP.md': ROADMAP.replace("(v9.337)", "(v9.300)")})
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a stale stamp version"
     write({'ROADMAP.md': ROADMAP.replace("%d invariant" % n, "%d invariant" % (n - 1))})
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a wrong stamp count"
-    write({'ROADMAP.md': ROADMAP.replace("the protocol layer (P8, complete); ", "")})
-    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer once P8 is done"
-    # 2026-10-24 (owner): the "Do not have" paragraph is optional, and the roadmap claims nothing no check here backs
-    no_list = ROADMAP.replace("**Do not have:** hardware tokens; an external team's docs-only integration; and every institutional prerequisite.\n\n", "")
-    write({'ROADMAP.md': no_list})
-    assert checks.check_roadmap_consistent(tmp_path)[0].level == "OK", "must PASS without a Do not have paragraph"
+    write({'ROADMAP.md': ROADMAP.replace("- The protocol layer, frozen at version 1.\n", "")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer"
+    write({'ROADMAP.md': ROADMAP.replace("- The protocol layer, frozen at version 1.\n", "") + "\nThe protocol layer.\n"})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "the protocol layer after '## Phases' is not in Have"
+    write({'ROADMAP.md': ROADMAP.replace("## Phases", "## Stages")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "with no '## Phases' heading there is no Have list to read"
+    write({'ROADMAP.md': ROADMAP.replace("**Have, working, CI-proven:**", "**Built:**")})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "with no 'Have' list there is nothing to read"
+    # 2026-10-24 (owner): the roadmap claims nothing no check here backs
     for claim, why in (("The sample has been independently audited.\n", "an outside audit in a sentence"),
                        ("| P6 | Security | Penetration tested |\n", "a penetration test in a table row"),
                        ("The signer uses FIPS 140-3 validated modules.\n", "validated cryptography"),
@@ -13820,12 +13827,12 @@ def test_roadmap_consistent_check_discriminates(tmp_path):
                        ("The sample, with no outside funding, was independently audited.\n", "an unrelated 'no' before the claim"),
                        ("No findings remained after the sample was independently audited.\n", "a 'no' that negates something else"),
                        ("| P6 | No regressions | Independently audited |\n", "a 'no' in an earlier table cell")):
-        write({'ROADMAP.md': no_list + "\n" + claim})
+        write({'ROADMAP.md': ROADMAP + "\n" + claim})
         assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on " + why
     for negated in ("The sample has not been independently audited.\n", "The sample has not yet been independently audited.\n",
                     "It has never been externally audited.\n", "No independent audit has been done.\n",
                     "The sample does not claim WCAG 2.2 AA conformance.\n"):
-        write({'ROADMAP.md': no_list + "\n" + negated})
+        write({'ROADMAP.md': ROADMAP + "\n" + negated})
         assert checks.check_roadmap_consistent(tmp_path)[0].level == "OK", "a negated sentence is not a claim: " + negated
 
 
@@ -14999,7 +15006,7 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
     DOC = ("# Plonky2 to Plonky3\n"
            "**Decision: KEEP Plonky2.**\n"
            "Proof size 148,900 bytes, measured at depth 24. Pinned at 1.1.0.\n"
-           "## What was NOT verified\nPlonky3's current version and audit status.\n"
+           "## Checked before any move\nPlonky3's current version and audit status.\n"
            "The two-witness model would largely survive.\n"
            "## What would change the decision\nA stable Plonky3 release.\n")
     LOCK = 'name = "plonky2"\nversion = "1.1.0"\n'
@@ -15025,11 +15032,15 @@ def test_plonky3_evaluation_check_discriminates(tmp_path):
     assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
         "must FAIL when the record compares but never decides"
 
-    # THE DANGEROUS ONE: unchecked claims lose their label and read as findings.
+    # THE DANGEROUS ONE: unchecked claims lose their label and read as findings. 2026-10-28:
+    # the list is the precondition of any move, under that title.
     write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
-        "## What was NOT verified\nPlonky3's current version and audit status.\n", "")})
+        "## Checked before any move\nPlonky3's current version and audit status.\n", "")})
     assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
-        "must FAIL when the record does not separate what it did not verify"
+        "must FAIL when the record does not separate what is checked before any move"
+    write({'docs/design/plonky2-to-plonky3.md': DOC.replace("## Checked before any move", "## What was NOT verified")})
+    assert checks.check_plonky3_evaluation(tmp_path)[0].level == "FAIL", \
+        "the list is the precondition of a move, and its title says so"
 
     # A decision with no expiry condition is one nobody revisits on evidence.
     write({'docs/design/plonky2-to-plonky3.md': DOC.replace(
@@ -16725,8 +16736,13 @@ def test_pilot_winddown_check_discriminates(tmp_path):
            "\ndef consent_language(conn=None):\n"
            '    return ("We cannot promise your data will be deleted, because in this system "\n'
            '            "that would not be true. Records are append-only so that nobody, "\n'
-           '            "including us, can erase them. Ending this pilot requires a "\n'
-           '            "second, independent authority to co-sign.")\n')
+           '            "including us, can erase them. Ending this pilot requires a second "\n'
+           '            "authority, one that issued none of the credentials being withdrawn "\n'
+           '            "and is authorised to issue and verify under their signature algorithms, "\n'
+           '            "to co-sign the withdrawal of every credential. No single organisation "\n'
+           '            "can revoke more than a set share of the credentials an authority has "\n'
+           '            "issued within a set period on its own. "\n'
+           '            "Past that share, a second authority must co-sign.")\n')
     DRILL = ("a wind-down with no co-signer is REFUSED\n"
              "self_refused = 'cannot co-sign its own' in str(exc)\n"
              "...before anything was revoked\n"
@@ -16766,10 +16782,26 @@ def test_pilot_winddown_check_discriminates(tmp_path):
     write({'polaris_web/pilot.py': MOD.replace("We cannot promise", "We say nothing about")})
     assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
         "saying nothing on the subject is the actual failure mode, not a pass"
-    for phrase in ("append-only", "including us", "second, independent authority"):
+    for phrase in ("append-only", "including us"):
         write({'polaris_web/pilot.py': MOD.replace(phrase, "something")})
         assert checks.check_pilot_winddown(tmp_path)[0].level == "FAIL", \
             f"the consent language must carry: {phrase}"
+    # The two co-signer sentences are pinned apart: each one weakened alone fails, and names
+    # its own sentence, so neither can stand in for the other.
+    for old, new, why in (
+            ("authority, one that issued none of the credentials being withdrawn ",
+             "authority, one that issued some of the credentials being withdrawn ",
+             "ending the pilot needs a second authority"),
+            ("withdrawal of every credential.", "withdrawal of a credential.",
+             "ending the pilot needs a second authority"),
+            ("and is authorised to issue and verify under their signature algorithms, ", "",
+             "ending the pilot needs a second authority"),
+            ("Past that share, a second authority must co-sign.",
+             "Past that share, the same authority may go on.",
+             "past a set share of an authority's credentials")):
+        write({'polaris_web/pilot.py': MOD.replace(old, new)})
+        out = checks.check_pilot_winddown(tmp_path)
+        assert out[0].level == "FAIL" and why in out[0].message, (old, out[0].message)
 
     # ONE AUTHORITY ALONE, and a co-signer validated too late.
     write({'polaris_web/pilot.py': MOD.replace("cosigner_agency_id=None,", "").replace(
@@ -16986,14 +17018,18 @@ def test_accessibility_check_discriminates(tmp_path):
     RUNNER = ('AXE_VERSION="${POLARIS_AXE_VERSION:-4.13.0}"\n'
               'npm install --no-save --silent "axe-core@${AXE_VERSION}"\n')
     DOC = ("A green run is a floor, not conformance. Automated testing detects roughly a\n"
-           "third of WCAG failures. Polaris does not claim WCAG 2.2 AA conformance. Manual\n"
-           "testing with assistive technology has not been done.\n")
-    ROADMAP = "Planned: the console's next pages.\n"
+           "third of WCAG failures. Polaris does not claim WCAG 2.2 AA conformance. WCAG 2.2 AA\n"
+           "conformance needs manual testing with assistive technology, a step for the\n"
+           "deploying organisation.\n")
+    ROADMAP = "Have: an accessibility drill over every operator surface.\n"
     good = {
         'scripts/polaris-accessibility-drill.py': DRILL,
         'scripts/polaris-accessibility-drill.sh': RUNNER,
         'docs/design/accessibility.md': DOC,
         'ROADMAP.md': ROADMAP,
+        'README.md': "Polaris: an identity-token system.\n",
+        'site/index.html': "<p>Polaris</p>\n",
+        'site/llms.txt': "- Polaris: an identity-token system.\n",
     }
 
     def write(overrides=None):
@@ -17049,7 +17085,7 @@ def test_accessibility_check_discriminates(tmp_path):
     for phrase in ("A green run is a floor, not conformance.",
                    "third of WCAG failures",
                    "Polaris does not claim WCAG 2.2 AA conformance.",
-                   "has not been done"):
+                   "needs manual testing with assistive technology"):
         write({'docs/design/accessibility.md': DOC.replace(phrase, "")})
         assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
             f"the record must state: {phrase}"
@@ -17065,6 +17101,10 @@ def test_accessibility_check_discriminates(tmp_path):
     assert checks.check_accessibility(tmp_path)[0].level == "OK", "a negated sentence is not a claim"
     write({'site/llms.txt': "- The console is WCAG 2.2 AA conformant, with no known failures.\n"})
     assert checks.check_accessibility(tmp_path)[0].level == "FAIL", "a claim followed by 'no' is still a claim"
+    for rel in ("README.md", "ROADMAP.md", "site/index.html", "site/llms.txt"):
+        write({rel: ""})
+        assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
+            "an empty or missing %s is a claim compared to nothing" % rel
 
 
 def test_assurance_mapping_check_discriminates(tmp_path):
@@ -17073,7 +17113,9 @@ def test_assurance_mapping_check_discriminates(tmp_path):
     # writing the sentence; a drill that FINDS cited checks without RUNNING them, so a check
     # that fails still reads as evidence; a total that drifted from its own table; and front
     # matter that lets the whole thing be quoted as a certification.
-    DOC = ("This is not a conformance claim and no assessment has been performed. It does not\n"
+    DOC = ("# Mapping\n"
+           "\n"
+           "Polaris is pre-pilot software on notional data. This is not a conformance claim. It does not\n"
            "inherit.\n"
            "\n| Requirement | Verdict | Evidence |\n|---|---|---|\n"
            + "".join("| requirement %d | MET | `check:enrollment_proofing` |\n" % i
@@ -17102,11 +17144,20 @@ def test_assurance_mapping_check_discriminates(tmp_path):
         "the well-formed tree must PASS"
 
     # THE FRONT MATTER that lets it be quoted as a certification.
-    for phrase in ("not a conformance claim", "no assessment has been performed",
-                   "It does not\ninherit."):
+    for phrase in ("not a conformance claim", "It does not\ninherit."):
         write({'docs/reference/NIST-800-63-MAPPING.md': DOC.replace(phrase, "")})
         assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \
             f"the front matter must carry: {phrase}"
+    # Pre-pilot, in the page's first paragraph (2026-10-28: it replaced "no assessment has been
+    # performed"). Said only further down, or not at all, is the page quoted without it.
+    status = "Polaris is pre-pilot software on notional data. "
+    for doc, why in ((DOC.replace(status, ""), "the page must say Polaris is pre-pilot"),
+                     (DOC.replace(status, "") + "\nPolaris is pre-pilot software.\n",
+                      "pre-pilot after the first paragraph is not where the page is quoted from"),
+                     (DOC.replace("# Mapping\n\n", "# Mapping\n\nA first paragraph without it.\n\n"),
+                      "pre-pilot in the second paragraph is not the first")):
+        write({'docs/reference/NIST-800-63-MAPPING.md': doc})
+        assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", why
     for phrase in ("**Highest holder AAL claimed: AAL2.**", "**Highest FAL claimed: FAL1.**"):
         write({'docs/reference/NIST-800-63-MAPPING.md': DOC.replace(phrase, "")})
         assert checks.check_assurance_mapping(tmp_path)[0].level == "FAIL", \

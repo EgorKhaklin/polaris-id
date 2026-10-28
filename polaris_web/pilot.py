@@ -254,9 +254,12 @@ def consent_language(conn=None) -> str:
         "applies to you as much as it constrains you.\n\n"
         "We cannot promise your data will be deleted, because in this system that would not be "
         "true.\n\n"
-        "Ending this pilot requires a second, independent authority to co-sign the withdrawal "
-        "of every credential. No single organisation running this pilot, including the one "
-        "that enrolled you, can revoke everyone on its own.")
+        "Ending this pilot requires a second authority, one that issued none of the "
+        "credentials being withdrawn and is authorised to issue and verify under their "
+        "signature algorithms, to co-sign the withdrawal of every credential. No single "
+        "organisation running this pilot, including the one that enrolled you, can revoke "
+        "more than a set share of the credentials an authority has issued within a set "
+        "period on its own. Past that share, a second authority must co-sign.")
 
 # ---------------------------------------------------------------------------
 # The DPIA input pack

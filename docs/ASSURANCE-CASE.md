@@ -1,7 +1,7 @@
 # Assurance case
 
-Why Polaris's security requirements are met. It is a map to the evidence in this repository,
-not a substitute for it.
+The case that Polaris, pre-pilot software, meets its security requirements: a map to the evidence
+in this repository, not a substitute for it.
 
 ## 1. Security requirements
 

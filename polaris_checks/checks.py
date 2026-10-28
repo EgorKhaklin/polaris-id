@@ -17707,37 +17707,27 @@ def _overclaim(text: str, kinds: tuple[str, ...] = tuple(_OVERCLAIMS)) -> str | 
 
 
 def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
-    """v9.337: the roadmap cannot contradict itself. A subsystem whose row is marked done may
-    not still sit under "Do not have"; a done row may not open its notes with IN PROGRESS, NEXT
-    or TODO; the "N invariant checks (vX.Y)" stamp names the real count and a version within
-    twenty minors of the tree; and once the protocol phase is done the "Have" paragraph says
-    so. An outside review found all three drifts within a day of the prior drift fix, so the
-    class is now a gate, not a habit. Since 2026-10-24 (owner: no limitation lists in public text)
-    the "Do not have" paragraph is optional; where it appears its rule holds, and the roadmap
-    must not claim what no check here can back (an outside review or audit, validated
-    cryptography, an assessed 800-63 level, accessibility conformance). Detection: test_checks
-    restores each drift, each claim in a sentence, and an outside-review claim in a table row."""
+    """v9.337: the roadmap cannot contradict itself. The "N invariant checks (vX.Y)" stamp names
+    the real count and the tree's version, and the "Have" list names the protocol layer. An
+    outside review found these drifts within a day of the prior drift fix, so the class is a gate,
+    not a habit. The roadmap lists what Polaris has built and where each phase stands: a "Do not
+    have" list fails, and so does a claim no check here can back (an outside review or audit,
+    validated cryptography, an assessed 800-63 level, accessibility conformance). Detection:
+    test_checks restores each drift, a "Do not have" list, each claim in a sentence, and an
+    outside-review claim in a table row."""
     rm = _read(root, "ROADMAP.md")
     if not rm:
         return _fail("roadmap_consistent", "ROADMAP.md is missing")
-    done = set(re.findall(r"^\| \[x\] ([A-Z0-9.]+) \|", rm, re.M))
-    m = re.search(r"\*\*Do not have:\*\*(.*?)\n\n", rm, re.S)
-    not_have = m.group(1).lower() if m else ""
+    if re.search(r"\bdo not have\b", rm, re.I):
+        return _fail("roadmap_consistent", 'ROADMAP.md lists what Polaris has built and where each phase stands; a '
+                     '"Do not have" list is not part of it.')
     claim = _overclaim(rm)
     if claim:
         return _fail("roadmap_consistent", "ROADMAP.md claims what no check here can back: %s" % claim)
-    built = {"P8.1": ("normative wire specification",), "P8.2": ("secure-exchange gateway", "exchange gateway"),
-             "P8.3": ("service-and-authority registry", "authority registry"), "P8.4": ("auth/sso broker", "auth broker"),
-             "P8.5": ("general document signing",), "P8.6": ("wallet protocol surface",), "P8.7": ("trust list",),
-             "P8.8": ("cross-version compatibility",)}
-    for rid, phrases in built.items():
-        if rid in done:
-            for ph in phrases:
-                if ph in not_have:
-                    return _fail("roadmap_consistent", "ROADMAP.md lists %r under 'Do not have' while row %s is marked done" % (ph, rid))
-    stale = re.search(r"^\| \[x\] (\S+) \|(?:[^|\n]*\|){4}\s*(IN PROGRESS|NEXT|TODO|PLANNED)\b", rm, re.M)
-    if stale:
-        return _fail("roadmap_consistent", "ROADMAP.md row %s is marked done but its notes open with %s" % (stale.group(1), stale.group(2)))
+    have = re.search(r"^\*\*Have\b(.*?)^## Phases\b", rm, re.S | re.M)
+    if not have:
+        return _fail("roadmap_consistent", "ROADMAP.md must keep its '**Have' list ahead of '## Phases'; without "
+                     "either there is no list to read")
     sm = re.search(r"(\d+) invariant\s+checks \(v([^)]+)\)", rm)
     if not sm:
         return _fail("roadmap_consistent", "ROADMAP.md must stamp 'N invariant checks (vVERSION)'")
@@ -17752,13 +17742,12 @@ def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
         return _fail("roadmap_consistent", "cannot read polaris_web/__version__.py, so the roadmap's check stamp can be compared to nothing")
     if sm.group(2) != vm.group(1):
         return _fail("roadmap_consistent", "ROADMAP.md's check stamp reads v%s but the tree is v%s; re-read the roadmap and restamp it to the current version" % (sm.group(2), vm.group(1)))
-    if "P8.8" in done and "protocol layer" not in rm.split("**Do not have:**")[0].lower():
-        return _fail("roadmap_consistent", "ROADMAP.md's 'Have' paragraph must name the protocol layer once P8 is done")
+    if "protocol layer" not in have.group(1).lower():
+        return _fail("roadmap_consistent", "ROADMAP.md's 'Have' list must name the protocol layer; P8 is done")
     return _ok("roadmap_consistent",
-               "the roadmap agrees with itself: " + ("nothing marked done sits under 'Do not have', " if m else "")
-               + "no done row reads as in progress, the check stamp names the real count and a current version, the 'Have' paragraph names "
-               "the protocol layer, and it claims no outside review, validated cryptography, assessed 800-63 level "
-               "or accessibility conformance")
+               "the roadmap agrees with itself: it lists no absences, the check stamp names the real count and the "
+               "current version, the 'Have' list names the protocol layer, and it claims no outside review, "
+               "validated cryptography, assessed 800-63 level or accessibility conformance")
 
 
 def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
@@ -20523,11 +20512,13 @@ def check_plonky3_evaluation(root: pathlib.Path) -> list[Finding]:
         return _fail(name,
                      "the record must state a DECISION, not only a comparison: a set of columns with "
                      "no conclusion leaves the next reader to re-run the whole evaluation")
-    if "NOT verified" not in doc and "not verified" not in doc:
+    # What any move must check first sits under that title, apart from what was measured.
+    if "Checked before any move" not in doc:
         return _fail(name,
-                     "the record must separate what was NOT verified from what was measured. A "
-                     "soundness-core rewrite justified by unsourced claims is the failure this "
-                     "section exists to prevent, and version and audit status have a shelf life")
+                     "the record must separate what is checked before any move from what was "
+                     "measured. A soundness-core rewrite justified by unsourced claims is the "
+                     "failure this section exists to prevent, and version and audit status have a "
+                     "shelf life")
     for needed, why in (("would change the decision",
                          "re-evaluation triggers; a decision with no expiry condition is one nobody "
                          "revisits on evidence"),
@@ -20557,7 +20548,7 @@ def check_plonky3_evaluation(root: pathlib.Path) -> list[Finding]:
     return _ok(name,
                "the proof-library decision is recorded and re-openable: it states a decision rather "
                "than only a comparison, separates what was measured here from what was reasoned "
-               "from the code and from what was deliberately NOT verified, names the version it "
+               "from the code and from what is checked before any move, names the version it "
                "evaluated against the one the lockfile pins, and carries the triggers that would "
                "re-open it")
 
@@ -23873,8 +23864,17 @@ def check_pilot_winddown(root: pathlib.Path) -> list[Finding]:
                      "said nothing on the subject, which is the actual failure mode")
     for phrase, why in ("append-only", "the participant must be told what is kept"), \
                        ("including us", "and that the same protection constrains the operator"), \
-                       ("second, independent authority",
-                        "and that no single organisation can revoke everyone alone"):
+                       ("Ending this pilot requires a second authority, one that issued none of "
+                        "the credentials being withdrawn and is authorised to issue and verify "
+                        "under their signature algorithms, to co-sign the withdrawal of every "
+                        "credential.",
+                        "and that ending the pilot needs a second authority, one that issued "
+                        "none of the credentials being withdrawn and is authorised to issue and "
+                        "verify under their signature algorithms, to co-sign the withdrawal of "
+                        "every credential"), \
+                       ("Past that share, a second authority must co-sign",
+                        "and that past a set share of an authority's credentials, revoking them "
+                        "needs a second authority's co-signature"):
         if phrase not in consent:
             return _fail(name, why)
 
@@ -24215,9 +24215,9 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
                          "the document must state how much automation actually covers"),
                         ("does not claim wcag 2.2 aa conformance",
                          "the outward claim must match what was established"),
-                        ("has not been done",
-                         "manual testing with assistive technology is the largest gap and must "
-                         "be named as undone rather than left unmentioned")):
+                        ("needs manual testing with assistive technology",
+                         "the document must say what conformance needs beyond automation, "
+                         "or a green run reads as the whole of it")):
         if phrase not in low:
             return _fail(name, why)
 
@@ -24225,7 +24225,10 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
     # ROADMAP.md listed accessibility conformance as not claimed; since then (owner: no
     # limitation lists in public text) no outward surface may claim it.
     for rel in ("README.md", "ROADMAP.md", "site/index.html", "site/llms.txt"):
-        claim = _overclaim(_read(root, rel), ("accessibility conformance",))
+        text = _read(root, rel)
+        if not text:
+            return _fail(name, "%s is missing, so its claim is compared to nothing" % rel)
+        claim = _overclaim(text, ("accessibility conformance",))
         if claim:
             return _fail(name,
                          "%s claims %s. Automated checks passing is a floor; the claim would turn "
@@ -24655,13 +24658,20 @@ def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
     for phrase, why in (("not a conformance claim",
                          "the front matter must refuse the reading it will otherwise get: this "
                          "is the file somebody quotes after reading only its first page"),
-                        ("no assessment has been performed",
-                         "an unassessed mapping must say so"),
                         ("does not inherit",
                          "a deployment does not get these properties by running the code, and "
                          "the document must say it")):
         if phrase not in low:
             return _fail(name, why)
+    # Pre-pilot, in the first paragraph under the title: said further down, it is not in the part
+    # that gets quoted.
+    body = doc.strip()
+    if body.startswith("# "):
+        body = body.partition("\n")[2].strip()
+    first = re.split(r"\n\s*\n", body, maxsplit=1)[0]
+    if "pre-pilot" not in " ".join(first.lower().split()):
+        return _fail(name, "the page's first paragraph must say Polaris is pre-pilot: it is the part "
+                           "somebody quotes after reading only the first page")
     for level, why in (("highest holder aal claimed",
                         "the highest AAL claimed must be stated in one place, or a reader "
                         "infers it from the greenest row"),
@@ -24719,7 +24729,8 @@ def check_assurance_mapping(root: pathlib.Path) -> list[Finding]:
                "check, test, drill or schema object, the drill resolves each and runs every "
                "cited check, gaps are named with reasons rather than rounded away, the totals "
                "are recomputed from the rows, the front matter refuses the conformance reading "
-               "and says a deployment does not inherit these properties, and the drill states "
+               "and says a deployment does not inherit these properties, its first paragraph "
+               "says Polaris is pre-pilot, and the drill states "
                "the limit of what resolving citations can establish")
 
 
