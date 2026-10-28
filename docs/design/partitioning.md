@@ -92,7 +92,7 @@ application (the rename is atomic inside the migration's transaction). The
 down migration departitions by the reverse, preserving every row; the deploy's
 `--sync-objects` restores any view the departition's cascade dropped.
 
-The one honest cost: the conversion's index re-creation on the attached
+The cost: the conversion's index re-creation on the attached
 `DEFAULT` partition takes a brief lock proportional to the existing data. At
 the reference scale it is instant; an operator converting a very large table
 should build the indexes `CONCURRENTLY` out of band first, which the migration

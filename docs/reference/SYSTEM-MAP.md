@@ -203,7 +203,7 @@ The authority layer's institutional protocol, built on the product and verified 
 ```
 MISSION.md                         the constitution: C1-C10 and the vocation
 polaris_checks/checks.py           the machine-checkable enforcement, gating CI
-docs/PRODUCTION-READINESS.md       the bound on every claim: what is open, and who decides it
+docs/PRODUCTION-READINESS.md       the bound on every claim
 ROADMAP.md                         what comes next, phase by phase
 CHANGELOG.md                       every ship, never edited retroactively
 ```

@@ -69,22 +69,14 @@ serialise and different agencies proceed in parallel.
 [concurrency.md](concurrency.md) holds the catalogue and the reasoning behind
 each granularity.
 
-## What `signed_by` is, and is not
+## What `signed_by` records
 
 The column records which Polaris operator created the attestation. It is not a
 cryptographic signature from the attesting agency.
 
-That is an honest limit rather than an oversight. Operator accounts have no
-link to an agency and no cryptographic standing on an agency's behalf. The
-model assumes Polaris is run by an authority with the standing to record
-attestations, which is true of this pre-pilot system and would not be
-enough for a production federation.
-
-The upgrade is a migration that adds a nullable signature and its algorithm,
-requires them on new attestations, and leaves existing rows valid and
-queryable. What blocks it is not the schema: it is agency-level signing key
-management, which is its own design problem and one of the operator decisions
-in the readiness ledger.
+Operator accounts have no link to an agency and no cryptographic standing on an
+agency's behalf. The model assumes Polaris is run by an authority with the
+standing to record attestations.
 
 ## Requiring the attesting agency's signature
 
@@ -100,10 +92,10 @@ TypeScript): `verify_cross_authority` in every verifier, polaris-verify's
 (`verify_exchange_request`, `verify_exchange_receipt`) take no such option: they refuse a
 badly signed edge and report `attestation_signed`, which a relying party reads.
 
-Decision (2026-10-15, recorded, not built): the default becomes "require a signed edge" at the
+Decision (2026-10-15): the default becomes "require a signed edge" at the
 next major of the manifest format, never within version 1.
 
-- Who needs it: a relying party that does not know the option exists. None has been named.
+- Who needs it: a relying party that does not know the option exists.
 - What solves it today: the option in a cross-authority decision, and `attestation_signed` on
   an exchange verdict, for a relying party that reads it.
 - What would prove it wrong: an authority still publishing unsigned edges to relying parties

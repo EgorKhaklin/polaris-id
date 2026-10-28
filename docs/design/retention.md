@@ -135,7 +135,7 @@ Both are engineering defaults. Neither is a legal determination, and the
 procedure is admin-gated: it raises `insufficient_privilege` for any actor whose
 `AppUser.role` is not `admin`.
 
-## What this does not do
+## Scope
 
 It does not archive on its own. The operator still runs `polaris-archive.sh`
 and `polaris-purge.sh` as two deliberate steps.

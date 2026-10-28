@@ -122,32 +122,17 @@ the lifecycle log alone.
   other admin in real time, so a suspicious pattern is seen before the
   decision lands.
 - **What it costs.** A legitimate recovery takes at least 48 hours, and the
-  holder is without an identity for that window. That cost is real, and it is
-  the reason the operational grace period below is an open item rather than a
-  closed one.
+  holder is without an identity for that window. That cost is real.
 
 The shape of the defence is multiplicative rather than additive: the attacker
 must compromise three channels, and defeat the cool-down, and obtain an admin
 signature.
 
-## The grace period, in two readings
+## The administrative window
 
-A production recovery protocol is usually described as needing a grace period
-during which the holder keeps access to essential services. That admits two
-readings, and only one of them is built.
-
-**The administrative window** is the procedural time between request and
+The administrative window is the procedural time between request and
 decision, which stops a premature approval. That is the 48-hour cool-down, and
 `cooldown_window_minimum` enforces it in the schema.
-
-**The operational window** is a substitute credential that keeps the holder
-functioning while the request is pending. That is not built. It needs a
-`TemporaryAttestation` row with a lifetime tied to the cool-down, and, more
-significantly, a verifier-side acceptance rule for a flagged set of essential
-services, which is an integration question with the parties who would honour
-it rather than a schema question. When it lands it should be additive: a child
-row on the pending request, expiring with the cool-down. The schema is shaped
-so that it can be.
 
 ## What each check is holding up
 

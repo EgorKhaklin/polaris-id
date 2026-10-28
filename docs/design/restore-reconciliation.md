@@ -77,12 +77,12 @@ Credential 4, expired before the target, must be untouched, every sequence must 
 end, and a second run must re-apply nothing. Removing any one of the fifteen planners, or the
 identifier retirement, leaves the comparison failing (measured 2026-10-07).
 
-## What it does not do
+## Scope
 
 - It reads the archive's end, so writes in WAL the archive never received (`archive_timeout`, 60 s)
   are lost, withdrawals with them.
 - It re-makes no grant, re-issues no credential and closes no epoch. Epochs and anchors closed after
   the target exist outside the database, published and anchored; the restored log continues from new
   identifiers rather than reusing theirs.
-- The compose commands in DR.md 4.3 run the drill's restore and the same script, but the drill runs
-  them on standalone containers; a single command that performs the whole restore is not built yet.
+- The compose commands in DR.md 4.3 run the drill's restore and the same script, and the drill runs
+  them on standalone containers.

@@ -183,7 +183,7 @@ sudo rm -f /etc/systemd/system/polaris*.service /etc/systemd/system/polaris*.tim
 sudo rm -rf /opt/polaris /etc/polaris                     # keep /var/backups/polaris if you want the backups
 ```
 
-## Known caveats
+## Platform notes
 
 - **RHEL family with SELinux enforcing**: Docker bind mounts of the secrets and
   config files can be denied. Either run the stack with SELinux permissive for
@@ -211,6 +211,5 @@ start polaris`, migrations, the TLS edge serving a public route and
 `systemctl restart polaris`. After it, the fresh-host drill (gate row OP-2) takes the two steps
 above, issues a credential through the operator console, registers a relying party with
 `polaris-rp-register.sh` and has it verify the credential online, and reports the time from the
-install to that verification and the inputs it took. What CI cannot exercise is ACME against a public
-domain; it uses the internal-CA edge (`docker-compose.citest.yml`), which
-differs from production only in who signs the certificate.
+install to that verification and the inputs it took. CI uses the internal-CA edge
+(`docker-compose.citest.yml`), which differs from production only in who signs the certificate.

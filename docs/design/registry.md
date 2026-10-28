@@ -47,7 +47,7 @@ of B's registry and calls it, reads B's attestation of A from the trust graph, a
 revokes that attestation sees the re-fetched registry drop it. Version negotiation over
 `instance.protocol.formats` is P8.8.
 
-## What it deliberately does not contain
+## Scope
 
 No token, no holder, no verification record, no relying-party credential (organization name
 and scope only). Institutional data, published trust, nothing personal: the registry is a map

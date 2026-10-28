@@ -136,13 +136,13 @@ The general lesson: the policy is the guarantee only for a query that runs as th
 role, under the operator's session, against the table itself. Every mechanism that changes one
 of those (a view, `SECURITY DEFINER`, a cached value) has to be asked about separately.
 
-## What is still not enforced
+## Placement
 
-Nothing stops a deployment from running two authorities in one instance and binding no
-operators. The review deliberately did not add a boot-time refusal: an instance that legitimately
-holds several agencies for a single-issuer topology, or the shipped seed itself, would be
-refused for a configuration that is not wrong. What exists is the mechanism and the finding; the
-placement decision is the operator's, as the ADR already says of everything else in this layer.
+A deployment that runs several authorities in one instance must bind each operator account to
+its authority itself. A boot-time refusal would refuse an instance that legitimately holds several
+agencies for a single-issuer topology, or the shipped seed itself, for a configuration that is
+not wrong, so the instance does not refuse at boot. Placement is the operator's decision, as the
+ADR already says of everything else in this layer.
 
 ## Proven by
 
@@ -151,7 +151,7 @@ scopes to an operator's authority, a **raw SQL query** cannot read another autho
 not merely the application's own queries, which is the only version of that claim worth making.
 SQL the operator writes is outside it, as the drill's header says: the scope is a session setting,
 and the SQL console refuses a bound account. It also asserts the permissive default, and that
-holder identity is still visible, so the limitation above stays demonstrated rather than merely
+holder identity is still visible, so that boundary stays demonstrated rather than merely
 written down.
 
 The policies on the partitioned event tables (TokenLifecycleEvent, VerificationEvent) live on

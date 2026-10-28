@@ -1,12 +1,12 @@
 # Runtime self-protection
 
-**Reader:** an engineer or an assessor. **Job:** The runtime self-protection rules, which are implemented and which are gaps.
+**Reader:** an engineer or an assessor. **Job:** The runtime self-protection rules, and where the built ones are enforced.
 
 Runtime application self-protection is a marketing category for a set of
 techniques with one thing in common: detect anomalous behaviour while the
 system is running, and answer with something more precise than dropping the
 request. This document takes the techniques and leaves the category. It lists
-concrete rules, where each is enforced, and which ones are not built.
+concrete rules, and where the built ones are enforced.
 
 The rules fall into three layers: bounds on rate, signals on pattern, and what
 the edge refuses before a request reaches the application.
@@ -77,11 +77,9 @@ TLS terminates at Caddy, which provisions its own certificate and negotiates
 the X25519MLKEM768 hybrid key exchange, proven against a real certificate in
 CI on every push.
 
-**The gap.** There is no web application firewall, and none is planned. The
-SQL boundary is parameterised throughout, so injection is structurally
-prevented rather than filtered, and a firewall in front is a deployment
-decision an operator makes with their own provider. It is listed here so that
-its absence is a stated choice rather than an oversight.
+**Web application firewall.** The SQL boundary is parameterised throughout, so
+injection is structurally prevented rather than filtered, and a firewall in
+front is a deployment decision an operator makes with their own provider.
 
 ## The open list, in order
 

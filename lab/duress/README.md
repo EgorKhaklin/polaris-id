@@ -1,10 +1,10 @@
-# lab/duress: what the duress path resists
+# lab/duress: the coercer the duress path is built for
 
 **The lab's job is to falsify Polaris's differentiating claims.** This page records the result
 and findings of the assessment the operating contract asked for.
 
 **Result: the vocabulary is "duress-aware".** The mechanism is real and it works against the
-coercer it was designed for.
+coercer it was designed for: one who does not know duress codes exist.
 
 **And one measured finding, 2026-09-17.** Until this directory had an instrument, the claim
 that the front of house cannot distinguish had never been tested. It was false on one axis:

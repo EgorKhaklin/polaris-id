@@ -4,18 +4,15 @@
 "post-quantum" on the front door because it is the defensible claim, and it is still a
 claim, so it gets the same treatment as the other two.
 
-**Result: true issuer-side, and not what the phrase implies verifier-side.** No change is
-proposed here. A verifier-readable algorithm status would be a new product guarantee, and
-lab work does not get to create one.
+**Result: true issuer-side.** The algorithm is data, a population can be re-signed under a new
+algorithm and that path runs under measurement, and a credential names the algorithm that
+signed it.
 
 **The machinery under seven signature families, 2026-10-05:** one population moved through ML-DSA, FN-DSA, SLH-DSA, MAYO, UOV, SNOVA and CROSS with nobody left unverifiable, and the storage layout found not to survive large keys: [CANDIDATES.md](CANDIDATES.md).
 
-**Measured 2026-09-17, `algorithm_status.py`.** This assessment was written by reading the
-code. It now has an instrument, so the day somebody publishes an algorithm status the claim
-can widen on evidence rather than on somebody noticing, and the day the gap is quietly
-reopened it fails rather than going silent. It confirms the reading: across the twenty signed
-formats `docs/reference/WIRE-SPEC.md` specifies, **none carries an algorithm's standing**, and
-it measures what the mixed window below actually costs.
+**Measured 2026-09-17, `algorithm_status.py`.** Across the twenty signed formats
+`docs/reference/WIRE-SPEC.md` specifies, it reads whether any carries an algorithm's standing,
+and it measures what the mixed window below actually costs.
 
 ---
 
@@ -36,32 +33,7 @@ The agility is not decorative, and the parts that work are the ones usually miss
 
 ---
 
-## What the phrase does not cover
-
-### A verifier cannot learn that an algorithm is deprecated
-
-`deprecation_date` exists in the schema and reaches **no signed artifact**.
-
-- The signed registry publishes `protocol.algorithms` as a bare list of names. No status.
-- The trust list (`polaris-trust-list/1`) carries per-**key** status: `active`, `retired`,
-  `compromised`. There is no algorithm-level equivalent.
-- The detached verifier's accepted set is a hardcoded dict:
-  `_ACCEPTED = {"ML-DSA-65": (...), "ML-DSA-87": (...)}`, mapping each name to a backend
-  class and the expected key and signature sizes.
-
-So the issuer can record that an algorithm is deprecated and no verifier will ever find out.
-
-### Which makes retirement a software release, not a migration
-
-Removing an algorithm from circulation means editing `_ACCEPTED` and shipping a new verifier
-to every relying party. Adding one does too: the dict carries backend class names and sizes,
-so a new parameter set is a code change as well.
-
-That is the opposite of agility at the moment agility is for. The day a lattice assumption
-falls is the day the migration has to be fast, and on that day the issuer-side path is a
-stored procedure and the verifier-side path is a release cycle across every integrator.
-
-### Key revocation does not substitute for it
+## Key revocation and an algorithm break
 
 The obvious answer is "revoke the keys". It does not work here, and the reason is worth
 being precise about: if the underlying assumption breaks, an attacker forges signatures for
@@ -70,36 +42,10 @@ nothing, because the attacker simply forges under another. Revoking every key un
 broken algorithm does work, and it means nothing signed under it verifies any more.
 
 That is exactly the readiness ledger's *"every credential already issued under the broken
-algorithm is lost"*. What the ledger does not say is how it is reached: an operator marking
-each key compromised by hand, one `key-compromise` at a time, with no algorithm-level lever
-and no way to tell verifiers why.
+algorithm is lost"*. It is reached by an operator marking each key compromised by hand, one
+`key-compromise` at a time.
 
 ---
-
-## The honest statement
-
-| Claim | Supported? |
-|---|---|
-| The algorithm is data, not a hardcoded constant | **Yes**, issuer-side |
-| A population can be re-signed under a new algorithm, and that path runs | **Yes**, measured in CI |
-| A credential says which algorithm signed it | **Yes** |
-| An issuer can adopt a new algorithm without a schema change | **Yes** |
-| A verifier can be told an algorithm is deprecated | **No.** Nothing publishes it |
-| An algorithm can be retired without a software release to every verifier | **No** |
-| Key revocation covers an algorithm break | **No.** It is per-key, and a break forges any key |
-
-"Algorithm agility under an audited migration path" is accurate about the issuer and the
-audit. A reader is likely to hear it as a claim about the whole system, and verifier-side it
-is a release cycle.
-
----
-
-## What is NOT proposed
-
-An algorithm status in the registry or the trust list, an `_ACCEPTED` set driven by a signed
-artifact, or an algorithm-level compromise lever beside `key-compromise`. Each would be a
-new product guarantee. Recorded in `docs/PRODUCTION-READINESS.md` for the deploying
-organisation to decide about.
 
 ## The mixed window, measured
 
@@ -117,14 +63,8 @@ against the verifier's own predicate rather than reasoning about it. Over a popu
 | 99% | 100 | 9,900 | 100 |
 | 100% | 0 | 10,000 | 0 |
 
-The shape is not surprising. What makes it a finding is the sentence under it: **no signed
-artifact tells a relying party which row it is on.** A migration's progress is issuer-side
-knowledge, and the verifier that has to choose between accepting forgeable credentials and
-locking people out cannot see the number it would need to choose well. At 90 per cent it is
-turning away one holder in ten without being able to tell that is what it is doing.
-
-The curve is the SHAPE of the trade, not a prediction. A real population's migration rate is
-a deployment fact nobody here has.
+The curve is the SHAPE of the trade, measured over a population of 10,000 against the
+verifier's own predicate.
 
 ---
 
@@ -154,8 +94,7 @@ ML-DSA-65 again.
 **Migration is one-way per token, and the only reversal is sideways.** An authority that moved
 a population A to B and then learns B is broken cannot put it back on A. Its one move is to
 migrate to C, and C has to already exist, be keyed, and not be deprecated at the moment of the
-emergency. `CryptographicAlgorithm` is seeded with five here; whether a spare exists in a
-deployment is an operational question this lab can raise and cannot answer.
+emergency. `CryptographicAlgorithm` is seeded with five here.
 
 This is not a CORE-BUG. No published promise says a migration can be reversed, and an
 audit-of-record you can walk back is not one. What it is: a prerequisite for migration
@@ -189,12 +128,9 @@ and 0.6 days: seven times faster, because a SHA3-256 placeholder is not a lattic
 Signing's share moves from 2 per cent to 64 per cent between the two rows, which is the tell.
 Quote the `pqc-real` row.
 
-What the extrapolation assumes, stated because 2000 measured credentials to 350 million is
-five orders of magnitude: it is linear in the population and assumes runners do not contend,
-which holds while they divide the work by `SKIP LOCKED` and write disjoint rows. It does not
-model the write amplification of a larger signature, replication lag under sustained bulk
-insert, or an issuance load running alongside. The 64-runner row inherits all of that and
-should be read as a shape, not a schedule.
+The extrapolation from 2000 measured credentials to 350 million is linear in the population
+and assumes runners do not contend, which holds while they divide the work by `SKIP LOCKED`
+and write disjoint rows. The 64-runner row is a shape, not a schedule.
 
 The useful shape for planning is the split: at 64 per cent, this is a **signing-bound**
 operation, so the thing to buy more of is signing capacity, not database. That flips under the

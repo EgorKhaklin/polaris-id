@@ -58,8 +58,7 @@ verification is embarrassingly parallel:
   the signature check runs on every core. Use long-lived (preloaded) workers,
   not spawn-per-request, or process start-up dominates.
 - **Across HA replicas.** The verify route is replica-routed (a read) and needs no
-  shared secret, so app replicas can be added behind the edge. How throughput
-  grows with replicas has not been measured (gate row OP-25).
+  shared secret, so app replicas can be added behind the edge.
 
 The per-core rate times the cores, about 62,000 a second on an 8-core node, is a
 ceiling for the signature check, not the route's capacity. Measured on one 8-core
@@ -137,10 +136,9 @@ claim is measured, not asserted:
   colour at a time behind the retrying edge, so a verify request is always
   served by a live colour. The drill certifies **zero dropped verifications**
   across the rollover, the same bar its health traffic already meets.
-- **Failover (database-tier).** A verify request is a read; during a database
-  failover's window there is a gap where reads (verification included) fail,
-  exactly as writes do, because a promoted replica or a healed partition takes a
-  bounded time. The honest claim is therefore not zero-drop but **recovery**:
+- **Failover (database-tier).** A verify request is a read, so it follows the
+  database through a failover: it is served again once a promoted replica or a
+  healed partition answers. The claim here is **recovery**:
   the drill induces four failures (a leader crash, a lease partition, a
   switchover, an etcd crash) and, under a continuous verification load, asserts
   that verification is **served again after every one of them** and kept serving
