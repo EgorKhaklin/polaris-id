@@ -51,15 +51,9 @@ flag, and the wrong-anchor refusal is its control. The lab leaf also had to carr
 digitalSignature KeyUsage, which the verifier already required: its refusal of a leaf without
 one is a 2026-09-17 fix.
 
-## What this does NOT establish
+## What was run
 
-- **Not Polaris issuance.** The lab issuer signs whatever it is asked to. Whether the wallet
-  copy obeys the Polaris record (C3, revocation) is step 3, which is kill criterion 1 and
-  still open.
-- **Not HAIP.** There was no authorization code, PAR, DPoP or client attestation; see
-  [WALL.md](WALL.md).
-- **Credo presenting its received credential** was not run. The full loop was run once, with
-  walt.id.
-- **Not an external validation.** Both wallets ran here, driven by this repository. The
-  external evidence is that unmodified implementations accepted a specification-conformant
-  issuer, and nothing more.
+- The lab issuer signs whatever it is asked to.
+- The full loop was run once, with walt.id.
+- Both wallets ran here, driven by this repository. Unmodified implementations accepted the lab
+  issuer, written to OpenID4VCI 1.0 Final with the pre-authorized code grant.

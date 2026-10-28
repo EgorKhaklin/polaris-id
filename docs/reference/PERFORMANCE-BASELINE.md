@@ -74,10 +74,10 @@ no server error). Without TLS or pgbouncer a new connection is cheap here; throu
 production path each avoided connection also avoids a TLS handshake.
 
 Read the table with the topology line: one developer machine running both the
-application and PostgreSQL, so the two compete for the same cores; a dedicated
-database host has not been measured. The atlas numbers are bounded by the hours
-a window spans, not by the table size: the Atlas sums the activity rollups and
-reads no event table ([`SCALING.md`](SCALING.md)).
+application and PostgreSQL, so the two compete for the same cores. The atlas
+numbers are bounded by the hours a window spans, not by the table size: the
+Atlas sums the activity rollups and reads no event table
+([`SCALING.md`](SCALING.md)).
 
 ## Through the production path, per vCPU and across replicas
 

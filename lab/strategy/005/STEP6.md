@@ -58,19 +58,12 @@ From [`evidence/product-present-waltid/`](evidence/product-present-waltid/) and
 The product's own log shows the verifier fetching the agency's status list once per
 presentation.
 
-## What it does NOT establish
+## What was run
 
-- **Not an outside party.** Two wallets, one machine, a TEST CA and a scratch database, all
-  driven by this repository. It is the same category as the scoreboard's other wallet rows.
-- **A relying party that reads status.** The resolver and its policy are the relying party's,
-  written here. A verifier that reads no status accepts a revoked copy until `exp`.
-  `polaris-oid4vp serve` reads none, so this run served the library's `Verifier` with a
-  resolver.
-- **The verdict reports INVALID; it does not refuse.** The verifier answers the wallet
-  normally and puts the revocation state in its verdict. Refusing is the relying party's
-  policy, as the package README says.
-- **A race in `decide_by_fetching`, found here and fixed in the tree at `80c71ce0`.** It took
-  the caller's clock before its fetch and refused any `iat` later than that, so a list the
-  product signed during the fetch read as `iat_future`: unreachable, never a false VALID. The
-  resolver here fetches first and judges on arrival.
-- **Not HAIP issuance, and a classical credential,** as STEP5 says.
+- Two wallets, one machine, a TEST CA and a scratch database, all driven by this repository.
+- The resolver and its policy are the relying party's, written here. This run served the
+  library's `Verifier` with a resolver.
+- The verdict reports INVALID. The verifier answers the wallet normally and puts the revocation
+  state in its verdict.
+- A race in `decide_by_fetching`, found here and fixed in the tree at `80c71ce0`; the list read
+  as unreachable, never a false VALID. The resolver here fetches first and judges on arrival.

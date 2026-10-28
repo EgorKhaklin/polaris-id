@@ -10,7 +10,7 @@ by `polaris-id transparency-report`.
 
 ---
 
-## 1. The gap this started from
+## 1. Where this started
 
 An identity authority asks to be trusted with the most invasive power in the system: pulling
 one named person's entire verification history. Every control around that power is invisible
@@ -173,7 +173,7 @@ sticky.**
 
 ---
 
-## 5. The cadence, and the gaps in it
+## 5. The cadence, and missing periods
 
 A transparency program without a standing cadence is a transparency gesture: the operator
 publishes when the numbers are comfortable. The cadence here is 90 days, and the report lists

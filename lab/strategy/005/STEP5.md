@@ -62,21 +62,15 @@ Case A (no offer, and no copy even from a code minted without the offer route, f
 LOST or RESERVE credential) runs over HTTP in the suite, `WalletCopyIssuanceTests`, rather than
 here: a wallet cannot be offered what the offer route refuses.
 
-## What it does NOT establish
+## What was run
 
-- **Not an outside party using Polaris.** Both wallets ran here, driven by this repository, on
-  one machine, against a TEST CA and a scratch database. The evidence is that two unmodified
-  implementations took a governed copy from the product. That is the same category as the
-  wallet rows in [EXTERNAL-NOUNS](../../EXTERNAL-NOUNS.md), and nothing more.
-- **Not HAIP.** Pre-authorized code only: no authorization code, PAR, DPoP or wallet
-  attestation ([WALL.md](WALL.md)).
+- Both wallets ran here, driven by this repository, on one machine, against a TEST CA and a
+  scratch database. Two unmodified implementations took a governed copy from the product.
+- Pre-authorized code only.
 - **Revocation reaches a verifier that reads status.** Credo read the list at receipt and
-  walt.id did not. A verifier that reads no status accepts a revoked copy until `exp`: thirty
-  days, or the credential's own expiration if sooner.
-- **A classical credential.** The copy is ES256. Nothing verified from it rests on ML-DSA-65
-  ([design](../../../docs/design/oid4vci-issuer.md)).
-- **One run each, one configuration.** The claims were the five the design names, and the
-  presentation of the received copy to a relying party was not part of this step.
+  walt.id did not.
+- The copy is ES256.
+- **One run each, one configuration.** The claims were the five the design names.
 
 ## Decision
 

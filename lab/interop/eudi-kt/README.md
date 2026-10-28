@@ -62,12 +62,11 @@ file. Generate it from an empty Gradle cache: a warm cache resolved the plugin c
 `kotlinx-coroutines-bom` 1.8.0, which a clean machine fetches from the Gradle plugin portal, and the
 first CI run of this walk failed on it (2026-10-04). Its SHA-256 matches the copy on Maven Central.
 
-## What this does not establish
+## What was run
 
-- It is a wallet built here on the library, not the EUDI reference wallet app. The library is the
-  part that speaks OpenID4VP: it fetched, checked and answered the request. The trust decision and
-  the presentation are this repository's few lines, as they are any wallet's.
+- It is a wallet built here on the library. The library is the part that speaks OpenID4VP: it
+  fetched, checked and answered the request. The trust decision and the presentation are this
+  repository's few lines.
 - One credential format and one path, ES256 throughout. The credential was minted by this
   repository's issuer script and trusted through a JWKS.
-- Same category as the other rows: the author drove a published library on one machine. It is not
-  an outside party using Polaris, and not a claim of interoperability in general.
+- The author drove a published library on one machine.

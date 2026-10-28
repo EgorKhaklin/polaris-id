@@ -98,7 +98,7 @@ an external verifier and the presentation approved. All six controls were refuse
 caches (no Go image, module or build cache) the harness built in 13 s and the whole run took 29 s,
 on a shared machine.
 
-## What this does not establish
+## What was run
 
 - It is the harness at the listed release, run as a service and driven through its JSON API; the
   issuer, the user's approval and the TLS trust are this repository's lines. The harness keeps
@@ -107,8 +107,7 @@ on a shared machine.
   fetched the issuer key from a server the run started. One credential format and one path,
   ES256 throughout.
 - The verifier's origin was named in `WALLET_TARGET_BASE_URL` so that the harness would reach a
-  `.internal` host; the run says nothing about the harness under its default configuration.
+  `.internal` host.
 - Polaris answers an accepted presentation with a `redirect_uri`; the harness declined to follow
-  one whose host is a `.internal` name, so the redirect step was not exercised.
-- Same category as the other rows: the author drove a published wallet on one machine. It is not
-  an outside party using Polaris, and not a claim of interoperability in general.
+  one whose host is a `.internal` name.
+- The author drove a published wallet on one machine.

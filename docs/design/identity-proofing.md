@@ -10,12 +10,10 @@ runs the whole evidence table against a real database on every push.
 
 ---
 
-## 1. The gap this closes
+## 1. What the record holds
 
-Polaris could issue a credential and had no way to say how the person was proven to be who they
-claimed. `EnrollmentStatusEvent` recorded *that* enrollment happened; nothing recorded what it
-rested on. No assurance level could be asserted honestly, and the NIST 800-63-4 mapping
-(roadmap P6.2) was blocked on exactly that.
+`EnrollmentStatusEvent` records *that* enrollment happened; the proofing record says what it
+rested on, so an assurance level can be asserted from evidence.
 
 `EnrollmentProofing` is one proofing event; `EnrollmentEvidence` is what it rested on. They are
 append-only by the same trigger guard as the audit of record (`reject_audit_modification`),
@@ -99,7 +97,7 @@ reached. An authority that re-proofs someone and finds less than it found before
 something, and a record that kept the old high-water mark would be reporting a level nothing
 currently supports.
 
-## 7. What this row does not cover
+## 7. Scope
 
 - **The kiosk build.** A locked-down browser, its supervision model and its physical siting are
   deployment packaging, and remain open under P4.4.
@@ -107,7 +105,6 @@ currently supports.
   the checking is a vendor integration behind that interface.
 - **The 800-63-4 control mapping.** This provides the mechanism and the record. The
   control-by-control mapping with evidence per control is P6.2, and it is unblocked by this.
-- **The kiosk build.** Covered above: deployment packaging, still open under P4.4.
 
 ## How it was verified caps what it contributes
 
@@ -133,9 +130,9 @@ binds a document to a person would push operators toward the weaker paths.
 
 **The address is the part worth dwelling on.** A code sent to somebody's home proves whoever
 opens that post controls the enrollment. For most people that is them. For a person in a
-controlling household, a care setting, or a shelter with shared post, it is not -- and that is
-the same population the [trusted referee](trusted-referee.md) path exists for. The cap does not
-solve that. It stops the system recording a high assurance level on the strength of it.
+controlling household, a care setting, or a shelter with shared post, it is not, and the
+[trusted referee](trusted-referee.md) path is a route where the post is not the person's own.
+The cap stops the system recording a high assurance level on the strength of a posted code.
 
 Both capped methods were in the vocabulary from v9.371 and **no test used either**, which is
 where an overstatement hides: a vocabulary entry nothing exercises.
@@ -190,12 +187,9 @@ moves, and the bound never sees the brute force it exists for.
 `issue()` returns the plaintext exactly once and nothing stores it. That is what makes "never
 stored" true rather than aspirational: there is nowhere to read it back from.
 
-**None of this addresses whose mailbox it is.** A posted code proves whoever opens that post
-controls the enrollment, and for a person in a controlling household, a care setting or a
-shelter with shared post, that is not them. The channel is recorded because the coercion
-properties differ and nothing downstream can reconstruct it, and the cap stops a high assurance
-level resting on it -- but the honest position is that this mechanism helps most people and
-fails the same population the [trusted referee](trusted-referee.md) exists for.
+**A posted code proves whoever opens that post controls the enrollment.** The channel is
+recorded because the coercion properties differ and nothing downstream can reconstruct it, and
+the cap stops a high assurance level resting on it.
 
 ---
 

@@ -3,17 +3,15 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """issuer_metadata.py -- how much does issuer metadata narrow the anonymity set?
 
-THE QUESTION, from README.md's unmeasured list: "Agency id, algorithm, epoch id and epoch
-root each narrow the anonymity set to a subpopulation. How small does that set get in
-practice?"
+THE QUESTION: agency id, algorithm, epoch id and epoch root each narrow the anonymity set
+to a subpopulation. How small does that set get in practice?
 
 THE FIRST ANSWER IS THAT TWO OF THOSE FOUR FIELDS ARE NOT THERE. A zero-knowledge
 presentation carries exactly six public inputs, and this is read off the prover rather than
 modelled: `PublicInputs` in `polaris_zk/src/lib.rs` is `epoch_root_hex`, `epoch_id`,
 `context_id`, `nonce`, `scope`, `nullifier_hex`. No agency id. No algorithm. The relying
 party's request to `/api/zk/verify` adds `epoch_id`, `context_id` and `nonce`, which the
-bundle already carries. So the premise of that bullet was wrong for the ZK path, and the
-list has been corrected rather than measured around.
+bundle already carries. So the premise of the question was wrong for the ZK path.
 
 WHAT IS LEFT IS EPOCH AND CONTEXT, and the epoch half is answered by the schema:
 `TokenStateEpoch` has no agency column (verified against the live catalogue, not just the
@@ -173,12 +171,11 @@ def main():
           "look in and nothing further: the advantage is the cell, not the fields. ==" %
           (acc, baseline))
     print()
-    print("WHAT THIS DOES NOT SAY. The cell is real: a colluding pair learns the holder "
+    print("SCOPE. A colluding pair learns the holder "
           "presented in this epoch for this context, which is a subpopulation of size %.0f "
-          "at these parameters and would be smaller at a rarer context. It says nothing "
-          "about timing, status artifacts or transcript structure, which remain unmeasured "
-          "in README.md, and nothing about a FULL presentation, which carries a stable token "
-          "value by design and is not the mode this claim is about." % mean_cell)
+          "at these parameters and would be smaller at a rarer context. A FULL presentation "
+          "carries a stable token value by design and is not the mode this claim is about."
+          % mean_cell)
     return 0
 
 

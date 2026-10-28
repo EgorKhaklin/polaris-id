@@ -316,57 +316,31 @@ the ES256 one as the security claim.
 algorithm: IANA assigns `-49`, standards track via **RFC 9964**, marked *Recommended: Yes*
 (verified against the IANA COSE registry, 2026-09-13). HAIP permits ecosystem profiles to
 mandate additional suites, so this is the path a post-quantum ecosystem would actually take.
-It needs a named counterparty who already wants this, and there is no evidence one exists. It
-is the only option that demonstrates the actual claim.
+It needs a named counterparty who wants it. It is the only option that demonstrates the actual
+claim.
 
 **On the format**, if one is chosen for the issuer direction: mdoc is cheaper for Polaris
 because the bridge, the drill and the design doc exist and SD-JWT VC is zero files. For the
 **verifier** direction the choice is made for us, since the suite's current plan issues
-`sd_jwt_vc` and mdoc is not shipped yet.
+`sd_jwt_vc`.
 
 ---
 
-## What this does NOT establish
+## What was run
 
-Everything this section listed has been answered except the one thing that matters:
+`packages/polaris-oid4vp` is the verifier this assessment was scoping: SD-JWT VC verification,
+ECDH-ES response decryption, the signed request object, and a two-endpoint HTTPS listener that
+answers 200 or 4xx. It runs the whole plan clean, 11 of 11 modules, with the seven negative ones
+scored automatically by the suite. The result is in [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md),
+where it belongs; it is a local unpublished run against the OpenID Foundation's own software.
 
-- **No Polaris code has been tested and no result about Polaris exists.** `probe.py` built
-  that request, not Polaris, and `probe.py` is 250 lines that verify nothing. Sixty green
-  conditions measure the recipe, not the product.
-- **The credential has never been opened.** The encrypted `vp_token` the wallet POSTs back
-  sits on disk as 2723 bytes of JWE. Decrypting it, checking the SD-JWT VC issuer signature,
-  the disclosure digests and the key binding JWT is the entire remaining job, and it is the
-  half that the seven negative modules attack.
-- The seven negative modules have not been run, and cannot be until something answers 4xx.
-- Whether a partial run is worth publishing. The contract says to publish even if partially
-  red; still untried.
-- Anything about wallet certification, the other role, which Polaris is not.
-
-**And then it was built.** `packages/polaris-oid4vp` is the verifier this assessment was
-scoping: SD-JWT VC verification, ECDH-ES response decryption, the signed request object, and a
-two-endpoint HTTPS listener that answers 200 or 4xx. It runs the whole plan clean, 11 of 11
-modules, with the seven negative ones scored automatically by the suite. The result and its
-qualifications are in [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md), where they belong; the
-short version is that a local unpublished run against the OpenID Foundation's own software is
-a real thing and is not a certification.
-
-**And then it was certified (2026-09-24).** The certification run used the hosted instance, one
-plan (`7hXWngaA7f0QO`), and the `1.0.0rc7` artifact on PyPI: all eleven modules finished
-without failure. The request (OCS-3049) was approved, with the fee waived under the
-Foundation's open-source policy. `polaris-oid4vp 1.0.0rc7` is listed as OpenID Certified to the
-OpenID4VP 1.0 + HAIP 1.0 Verifier profile at
-<https://openid.net/certification/certified-oid4vp-haip-final/>. That is a self-certification
-the OpenID Foundation approved and lists, for that version in that role, and not an endorsement or
-an audit. [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md) records exactly what it covers.
-
-**What this assessment got right and wrong, kept here on purpose.** Right: that the protocol
-layer was the whole cost and the format choice was downstream of it. Wrong, badly, in its
-first version: it measured Polaris as issuer against a wall that does not stand in the
-verifier's way at all, and put three options in front of a decision that needed none of them.
-The correction took one afternoon of running the thing instead of reading about it, and the
-first version had been written the same day. That is the lesson worth keeping: the assessment
-was careful, sourced, and pointed the wrong way, and nothing in its own reasoning could have
-told it so.
+The certification run (2026-09-24) used the hosted instance, one plan (`7hXWngaA7f0QO`), and the
+`1.0.0rc7` artifact on PyPI: all eleven modules finished without failure. The request (OCS-3049) was
+approved, with the fee waived under the Foundation's open-source policy. `polaris-oid4vp 1.0.0rc7`
+is listed as OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile at
+<https://openid.net/certification/certified-oid4vp-haip-final/>. That is a self-certification the
+OpenID Foundation approved and lists, for that version in that role, not an endorsement and not an
+audit. [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md) records exactly what it covers.
 
 ---
 

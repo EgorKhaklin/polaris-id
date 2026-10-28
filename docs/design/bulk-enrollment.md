@@ -116,7 +116,7 @@ and a drill that leaves state behind is not one you can run on every push. The
 mechanism is pinned by `check_bulk_enrollment`, and the operator path by the
 `bulk-enroll` cases in the CLI suite.
 
-## What it deliberately is not
+## Scope
 
 It is not a general import-any-shape tool. One batch is one agency under one
 algorithm, the extract columns are fixed, and correlation to an existing person

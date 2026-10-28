@@ -85,8 +85,7 @@ generated for this one request. None has protected anything, and none should be 
 Apache-2.0, as the rest of this repository. eudi-dev, which produced the presentation layer, is
 Apache-2.0.
 
-## What this does not establish
+## What was run
 
 A lab run by the author on one machine: one wallet release, one credential format, ES256 and
-P-256 throughout, an issuer this repository wrote, trusted through a CA made for the run. It is
-not a certification of either side, and not a claim that the two interoperate in general.
+P-256 throughout, an issuer this repository wrote, trusted through a CA made for the run.

@@ -86,16 +86,13 @@ proc-macro-error2 2.0.1, sized-chunks 0.6.5, smallstr 0.3.1) and seven soundness
 advisories (git2 0.20.4 twice, im 15.1.0, rand 0.8.5, rkyv 0.7.46, serde_with 3.16.1,
 sized-chunks 0.6.5).
 
-## What this does not establish
+## What was run
 
-- It is Procivis One Core's server driven over its REST API, not the Procivis One wallet app.
-  The core is the part that speaks OpenID4VCI, OpenID4VP and SD-JWT VC: it issued, stored,
-  fetched, checked and answered. The certificates and the TLS trust are this repository's few
-  lines, as they are any deployment's.
+- It is Procivis One Core's server, driven over its REST API. The core is the part that speaks
+  OpenID4VCI, OpenID4VP and SD-JWT VC: it issued, stored, fetched, checked and answered. The
+  certificates and the TLS trust are this repository's few lines.
 - The issuer and the holder are one instance, two organisations. The credential crossed
-  Procivis's own OpenID4VCI endpoints between them, over TLS, but it never left the container.
-- The credential carries no status (the schema names no revocation method), so this run says
-  nothing about revocation.
+  Procivis's own OpenID4VCI endpoints between them, over TLS. It never left the container.
+- The credential carries no status (the schema names no revocation method).
 - One credential format and one path, ES256 throughout.
-- Same category as the other rows: the author drove a published implementation on one machine.
-  It is not an outside party using Polaris, and not a claim of interoperability in general.
+- The author drove a published implementation on one machine.

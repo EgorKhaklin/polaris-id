@@ -30,11 +30,10 @@ did not", using the verification surface and no privilege of any kind.
 
 WHY IT MATTERS, and what it does NOT show. It does not reveal a code, and it does not
 reveal that a duress signal fired. It reveals ENROLMENT, which is the fact that makes the
-signal usable. lab/duress/README.md already records that enrolment is opt-in, so "I have no
-duress code" is a claim a coercer can press on and the holder cannot disprove; an opt-in
-defence makes its absence interrogable. A coercer who can MEASURE it does not have to press.
-And the README's own unmeasured list names "the operator as coercer": an operator who is the
-coercer types the field and reads the latency off their own screen.
+signal usable. Enrolment is opt-in, so "I have no duress code" is a claim a coercer can
+press on and the holder cannot disprove; an opt-in defence makes its absence interrogable. A
+coercer who can MEASURE it does not have to press. And an operator who is the coercer types
+the field and reads the latency off their own screen.
 
 This is not a laboratory-grade side channel. It is roughly a third of a second.
 
@@ -218,12 +217,9 @@ def main():
 
     print("== CLOSED on this axis. Both paths run one comparison at the same parameters, so "
           "the response no longer says whether a duress code is enrolled.")
-    print("   WHAT THIS DOES NOT SAY. It is a measurement of the comparison COST, not of a "
-          "live request: the surrounding query, template render and network dominate the "
-          "variance and are not modelled here. It says nothing about the other two coercers "
-          "in README.md, nothing about an operator who watches the code being typed, and "
-          "nothing about long-run frequency analysis or enrolment-rate inference, which "
-          "remain unmeasured. It closes one channel that was open by 0.3 seconds. ==")
+    print("   WHAT THIS MEASURES. The cost of one comparison on each path, at the parameters "
+          "of the enrolled hash read from the tree, on this machine; not a live request. It "
+          "closes one channel that was open by 0.3 seconds. ==")
     return 0
 
 

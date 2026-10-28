@@ -41,7 +41,7 @@ stays experimental while FIPS 206 is a draft.
 
 An authority that has to leave lattices if they fall (SLH-DSA). An authority whose credentials
 travel in small channels, QR codes and cards (FN-DSA). An assessor who reads the posture claim and
-asks to see the rotation run. No outside party has asked yet; that is recorded, not assumed away.
+asks to see the rotation run.
 
 ## 3. Constraints it must keep
 

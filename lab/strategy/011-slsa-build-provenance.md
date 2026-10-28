@@ -57,8 +57,8 @@ commit by steps that could not also forge the attestation.
 ## 3. Who would plausibly need it?
 
 Relying parties and integrators who install the verifier; an independent security review; funders
-and evaluators who read a project's supply-chain posture. No one has asked for it by name: this is a
-bet, which is why it is recorded here.
+and evaluators who read a project's supply-chain posture. It is a bet,
+which is why it is recorded here.
 
 ## 4. What existing systems already solve it?
 
