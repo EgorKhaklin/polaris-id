@@ -16,6 +16,7 @@ it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 - A physical-layer profile: card profile with vectors, a software token emulator, card-generated keys, a reference verifier device.
 - Operations: a hardened five-service stack behind a post-quantum TLS edge; compose, blue-green, Linux and Helm deployments; backup, off-site restore, replication, HA failover and a DR drill measuring RPO and RTO; a retention engine; a sealed secrets store; SBOMs with provenance; CVE gates.
 - Verifiers anyone can build against: a detached verifier, Python and TypeScript SDKs and a 151-case conformance suite; `polaris-oid4vp` 1.0.0rc7 is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.
+- IDFoundry/OID4VCgo has run `polaris-oid4vp` in its CI, daily and per release, since 2026-10-11 ([the scoreboard](lab/EXTERNAL-NOUNS.md#use)).
 
 ## Phases
 

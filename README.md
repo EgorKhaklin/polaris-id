@@ -45,6 +45,7 @@ An authority issues a credential signed with **ML-DSA-65**; the person holds it;
 - **Authorization, fresh.** A relying-party API says whether the credential counts right now; a short-lived signed status assertion carries that answer offline.
 - **The rules live in the database.** A 60-table PostgreSQL schema whose triggers, CHECK constraints and unique indexes bind every client; 388 machine-checked invariants and 37 CI jobs gate every change.
 - **Wallets speak to it.** `polaris-oid4vp` is an OpenID4VP 1.0 + HAIP 1.0 verifier for SD-JWT VC, as a library or a server.
+- **Verifiers can test themselves against it.** [`lab/interop/negative-vectors`](lab/interop/negative-vectors/) holds SD-JWT VC presentations and mdoc device responses, each with its expected verdict; every refusal cites the clauses or named policy it rests on.
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
