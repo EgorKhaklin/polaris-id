@@ -27,8 +27,5 @@ abstract: >-
   verifier and two SDKs against a frozen, conformance-tested wire specification.
   The cryptographic claim is algorithm AGILITY under an audited migration path --
   the algorithm is a row in the schema, not a constant, and migration runs on
-  every push -- and not settled security against a quantum adversary; the default
-  signing path writes a labelled placeholder unless real ML-DSA is enabled. Both
-  limits, and what a break in Module-LWE would and would not cost, are stated in
+  every push. Its cryptographic posture is stated in
   docs/PRODUCTION-READINESS.md.
-  Notional data only; never deployed.

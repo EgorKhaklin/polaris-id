@@ -3,8 +3,8 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """enrolment_rate.py -- how identifying is a duress event, and to whom?
 
-THE QUESTION, from README.md's unmeasured list: "If few holders enrol, a `DuressEvent` is
-more identifying, which is the same anonymity-set problem measured in `lab/linkability/`."
+THE QUESTION: "If few holders enrol, a `DuressEvent` is more identifying, which is the same
+anonymity-set problem measured in `lab/linkability/`."
 
 THE PREMISE DOES NOT SURVIVE READING THE TABLE. `DuressEvent` is:
 
@@ -13,11 +13,9 @@ THE PREMISE DOES NOT SURVIVE READING THE TABLE. `DuressEvent` is:
 
 It records `token_id`. Anybody who can read the row knows exactly which credential signalled,
 and therefore which holder. There is no anonymity set to be small, and no inference to make,
-so the enrolment rate does not enter into it. That adversary is Coercer 3 in README.md, where
-this directory's conclusion is already that the mechanism is NET-NEGATIVE against lawful or
-institutional access, precisely because the record is append-only and names the holder.
+so the enrolment rate does not enter into it.
 
-SO THERE ARE TWO ADVERSARIES AND THE BULLET CONFLATED THEM.
+SO THERE ARE TWO ADVERSARIES AND THE QUESTION CONFLATED THEM.
 
   the RECORD READER   admin, auditor, a database session, or lawful access. Reads token_id.
                       Anonymity set of one, always, at any enrolment rate. Not measured here
@@ -84,7 +82,7 @@ def main():
     print("WHAT THE TABLE RECORDS: event_id, token_id, context_id, requesting_agency_id,")
     print("                        event_timestamp, oob_channel, oob_notified_at")
     print("  token_id is in the row, so a RECORD READER has an anonymity set of one at any")
-    print("  enrolment rate. That is Coercer 3 and is not an inference problem.")
+    print("  enrolment rate. That is a lookup and is not an inference problem.")
     print()
     print("Measured below: the COUNTER WATCHER, who sees polaris_duress_events_total move.")
     print()
@@ -116,7 +114,7 @@ def main():
     print()
     print("== THE SET IS THE PRODUCT: presentations in the window TIMES the enrolment rate. "
           "%d of the %d configurations above name a SINGLE holder more than half the time. "
-          "The bullet was right that a rare enrolment is more identifying, and the reason is "
+          "The question was right that a rare enrolment is more identifying, and the reason is "
           "sharper than it said: at 1 in 1000 enrolled, the counter names one person at "
           "1000 presentations a minute and a 60-second scrape, which is the busiest "
           "authority in this table. Low adoption does not dilute the signal, it IS the "

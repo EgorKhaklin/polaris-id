@@ -5,7 +5,7 @@
 # polaris-pseudonymize-individual.sh — right-to-erasure operator wrapper
 #
 # v9.125 (production-readiness, Wave 3). Polaris cannot DELETE a holder (C1 is
-# non-negotiable; see docs/operator/PRIVACY.md "Right to erasure (limited)").
+# non-negotiable; see docs/operator/PRIVACY.md "Right to erasure").
 # The supported erasure is to pseudonymize Individual.legal_name: the row stays
 # (so the audit trail and token bindings that reference individual_id remain
 # whole and non-repudiable), the plaintext name is replaced by a deterministic

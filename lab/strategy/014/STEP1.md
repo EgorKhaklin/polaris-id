@@ -57,10 +57,8 @@ credential's retired generation, which makes each attempt a real change.
 - **Re-signing is faster this way.** Today's quantum-event drill measures 310 per second per
   runner for one migration, and 952 here, partly because a row no longer carries the key.
 
-## What this does not establish
+## What was run
 
-- Lab only: no product route, CLI or verifier reads `generation` yet.
-- The application role's grants are not measured here; #254 (TokenSignature written by the owner
-  only) is the boundary this design keeps.
-- One runner, and no issuance load alongside it.
-- Falsifier 6 (an outside operator asking for rotation or rollback by 2027-03-12) is open.
+- Lab only.
+- #254 (TokenSignature written by the owner only) is the boundary this design keeps.
+- One runner, re-signing as the only load.

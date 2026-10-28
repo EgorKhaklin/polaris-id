@@ -1,7 +1,7 @@
 # Security Policy
 
 How to report a vulnerability, what is in scope, what to expect, and how to verify a release.
-Polaris is pre-pilot software on notional data; it has never held real identity data.
+Polaris is pre-pilot software.
 Related: [security controls](docs/operator/SECURITY-CONTROLS.md) · [threat model](docs/design/threat-model.md) · [red-team scope](docs/RED-TEAM-SCOPE.md) · [review packet](docs/REVIEW-PACKET.md).
 
 ---
@@ -27,8 +27,8 @@ and whether you have published anywhere.
 | Coordinated disclosure | 90 days from the report by default |
 
 **Before you start,** read [docs/REVIEW-PACKET.md](docs/REVIEW-PACKET.md): what each subsystem
-guarantees, what does not stand in the way, and the known limitations, so you can tell an
-accepted limitation from a defect. Constraints, triggers, procedures, row-level security, the
+guarantees, what holds it, and the attacks the maintainers most want attempted. Constraints,
+triggers, procedures, row-level security, the
 checks and the conformance suite are all mutation-tested; the conformance drill lists the 43
 verdict fields the published cases do not constrain.
 

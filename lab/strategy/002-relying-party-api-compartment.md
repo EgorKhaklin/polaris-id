@@ -86,7 +86,7 @@ Written before the work starts:
   be removed without changing a published behaviour.
 - **It costs more than it protects.** If running two services breaks the stranger's path or the
   single-host deployment (docs/STRANGER-PATH.md, the Linux profile), and the split cannot be
-  optional, it is not worth a surface nobody outside has asked to have hardened.
+  optional, it is not worth it.
 - **Nobody runs it split.** If, by the next release after it ships, no documented deployment
   (compose, Helm, Linux) runs the relying-party API separately by default, it was a diagram,
   not a compartment.

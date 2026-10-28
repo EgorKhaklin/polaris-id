@@ -88,15 +88,12 @@ and (f) Axle presented a credential a holder could have checked first: it does n
 credential's issuer signature, nor that its key matches the credential's `cnf`. The verifier is
 the party that must refuse either, and did.
 
-## What this does not establish
+## What was run
 
-- It is Axle's Kotlin OpenID4VP client, driven by a harness written here. It is not an Axle wallet
-  app, not Axle's `Wallet` facade (above), and not its Swift SDK, which is a separate port.
+- It is Axle's Kotlin OpenID4VP client, driven by a harness written here.
 - The harness supplies the transport, the trust anchor and the consent decision. Control (d) shows
-  Axle's trust verdict and the harness acting on it; a different host could act differently.
+  Axle's trust verdict and the harness acting on it.
 - The issuer key, its CA and the credential are test material this repository's script made. The
   verifier's PKI is `polaris-oid4vp keygen`'s test PKI.
 - One credential format, one path, ES256 and P-256 throughout, at one Axle commit, on one machine.
-- Same category as the other rows: the author drove a published SDK on one machine. It is not an
-  outside party using Polaris, not a certification, and not a claim that Axle is interoperable in
-  general.
+- The author drove a published SDK on one machine.

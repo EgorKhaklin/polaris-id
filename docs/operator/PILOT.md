@@ -93,7 +93,7 @@ authority keeps its holder the way an `ACTIVE` one does. Until 1.0.0-rc.20 the w
 **It is idempotent.** A wind-down that could not be re-run is one nobody dares run the first
 time.
 
-## 4. What is still in there afterwards
+## 4. What remains afterwards
 
 `residue()` answers that, **derived from the schema rather than from a list somebody
 maintains**. A hand-written inventory of what a wind-down leaves behind stops being true the
@@ -101,7 +101,7 @@ first time a table is added, and the failure is silent: the privacy claim keeps 
 correctly while becoming false. Add a table with a foreign key to `Individual` and it appears
 in the report on the next run, whether or not anyone thought about it.
 
-Run it and put the output in your exit report. It is the honest answer to the question a
+Run it and put the output in your exit report. It answers the question a
 participant, a regulator or your successor will actually ask.
 
 ## 5. One command

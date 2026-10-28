@@ -2,8 +2,7 @@
 
 **Reader:** an engineer implementing a card applet or a pinpad, and a reviewer asking what
 happens to the person holding the card. **Job:** how duress is entered, everything that must
-look the same when it is, and an honest account of what this protects against and what it does
-not.
+look the same when it is, and the safety review.
 
 The vocation above C1 to C10 says no person can be compelled to surrender their identity
 against their will. [duress-codes.md](duress-codes.md) is that mechanism in the application.
@@ -30,7 +29,7 @@ without their needing to see the keypad at all.
 presentation the *authority* could not tell apart either, and the authority is the one party
 that has to.
 
-### What was considered and not chosen
+### Alternatives considered
 
 | Method | Why not |
 |---|---|
@@ -73,7 +72,7 @@ This is the physical-layer twin of the rule in [card-profile.md](card-profile.md
 card carries a duress *slot* whether or not a PIN is enrolled. Both exist so that the mechanism
 says nothing about the individual.
 
-## 3. What the timing drill claims, and what it will not
+## 3. What the timing drill measures
 
 `scripts/polaris-duress-timing-drill.py` measures four pairs and reports each gap with the
 resolution the run achieved. It judges them against **10 microseconds**, which is what a
@@ -86,21 +85,21 @@ design.
 measured and reported rather than asserted away. It is not a leak: the status word already
 announces the difference, and it has to, because a holder who mistyped needs to be told.
 
-**An emulator cannot establish that a real secure element is constant-time**, resists fault
-injection, or keeps a key non-extractable. Those are properties of a certified part (P4.6). The
-structural half is what carries over to an applet: both comparisons always run, and a comparand
-always exists. Those are checked as properties rather than as text, because the first version
-of that check pinned the exact wording of the original defect and duly missed a
+**The structural property carries over to an applet:** both comparisons always run, and a
+comparand always exists. It is checked as a property rather than as text, because the first
+version of that check pinned the exact wording of the original defect and duly missed a
 differently-worded reintroduction of it.
+
+Constant-time execution, fault resistance and key non-extractability are properties of a
+certified part (P4.6).
 
 ## 4. Safety review
 
 The mechanism signals. It does not prevent, and treating it as prevention is how it gets people
 hurt.
 
-**A coercer who knows the scheme exists.** They can demand a second presentation, or demand the
-holder name their duress PIN, or simply not believe them. No card behaviour defeats this. What
-the card buys is that the *first* presentation already reached the authority, and that nothing
+**Who it is built for.** The card's duress path is built for a coercer who does not know the
+scheme exists: an online duress presentation has already reached the authority, and nothing
 about it looked unusual at the time.
 
 **Recall under stress.** A duress PIN is used once, possibly years after it was chosen, under
@@ -118,11 +117,9 @@ identically offline under either PIN and must not, for instance, decline to resp
 that behaved differently offline would tell the coercer which PIN was entered, which is worse
 than having no mechanism. Stated also in [card-profile.md](card-profile.md) §4.
 
-**A rare signal is a loud one.** If few holders enroll, a `DuressEvent` is unusual enough that
-the *response* to it may itself expose the holder. That is an operational matter rather than a
-card property, and it belongs in the authority's response procedure: the value of the mechanism
-rises with adoption, and an authority that treats duress alerts as rare emergencies rather than
-as a standing procedure will handle the first one badly.
+**Response procedure.** The response to a `DuressEvent` belongs in the authority's response
+procedure, as a standing procedure rather than a rare emergency, and one that does not itself
+expose the holder. That is an operational matter rather than a card property.
 
 **The holder cannot be told whether it worked.** By construction: any confirmation channel a
 holder could check is a channel a coercer can watch them check.
@@ -133,4 +130,4 @@ holder could check is a channel a coercer can watch them check.
 push, `polaris_card/test_emulator.py` (the retry counter, the blocking, the exact response
 length, the refusals at construction), and `check_duress_on_card`, which pins the entry-method
 rules, the always-compare property as a property rather than as text, and this document's
-statement of the limits.
+safety review.

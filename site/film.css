@@ -339,6 +339,10 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
 .route li p:last-child { max-width: 38ch; font-size: clamp(1.0625rem, 0.9rem + 0.4vw, 1.5rem); line-height: 1.55; color: var(--ink-2);
                          text-wrap: pretty; }
 .purpose { margin: clamp(64px, 9vh, 120px) 0 0; display: grid; gap: 16px; max-width: 44ch; }
+.purpose p { margin: 0; }
+.creed { margin-bottom: 8px; font: 600 clamp(1.75rem, 0.8rem + 2.4vw, 4rem)/1.02 var(--font-sans); letter-spacing: -0.03em; color: var(--ink);
+         text-wrap: balance; }
+.aim { max-width: 38ch; font-size: clamp(1.0625rem, 0.9rem + 0.4vw, 1.5rem); line-height: 1.55; color: var(--ink-2); text-wrap: pretty; }
 .purpose b { font: 500 13px/1.6 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
 .motto { margin: clamp(40px, 6vh, 80px) 0 0; font: 500 13px/1 var(--font-display); letter-spacing: 0.3em; text-transform: uppercase;
          color: var(--ink-3); font-feature-settings: "kern", "liga", "lnum"; }

@@ -28,14 +28,11 @@ witness meeting all four conditions:
    abstaining explicitly on any axis it cannot model faithfully. Silent
    non-coverage is forbidden: an abstention is recorded, not hidden.
 
-## What it catches, and what it does not
+## What it catches
 
 It catches implementation divergence: a bug in one verifier that the other does
-not share. It is a differential check, not an audit. It does not catch a shared
-misreading of the specification or the threat model, because both witnesses can
-be wrong in the same way, and it is not a substitute for external review. Every
-document that claims a two-witness result names that boundary, as
-[zk-soundness.md](zk-soundness.md) does.
+not share. It is a differential check. Every document that claims a two-witness
+result states its coverage, as [zk-soundness.md](zk-soundness.md) does.
 
 ## Why it belongs here
 

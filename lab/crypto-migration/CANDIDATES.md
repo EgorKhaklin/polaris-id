@@ -71,13 +71,3 @@ signature size for signing speed.
 
 **4. Returning is refused.** Moving back to ML-DSA-87 after leaving it fails on
 `one_signature_per_algorithm_per_token`: the reason for record 014.
-
-## Not measured here
-
-- **FAEST, SQIsign, MQOM, SDitH, QR-UOV, HAWK, LESS, Mirath, PERK and RYDE** are candidates that
-  liboqs 0.15.0 does not carry. Building their reference implementations means running unvetted
-  code, which belongs in a pinned, isolated container; until then they are unmeasured, not
-  passed.
-- **What is not stated:** these numbers say nothing about any candidate's security, nothing about
-  side channels (FN-DSA's floating-point signing in particular), and nothing about an
-  implementation outside liboqs.

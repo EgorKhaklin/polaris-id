@@ -13569,7 +13569,7 @@ def check_status_assertion_window_is_caller_policy(root: pathlib.Path) -> list[F
     a limitation note from 2026-09-15 to 2026-09-20 reading "the `max_window_seconds` the
     artifact carries is never read by `verify_status_assertion`". That is a true sentence
     phrased as a defect, and the obvious repair is the vulnerability. A reviewer or a future
-    session tidying the known-limitations list is exactly who would implement it.
+    session tidying the scoreboard is exactly who would implement it.
 
     What genuinely bounds staleness is `expires_at`, which is signed and enforced. The
     caller's bound is a separate policy ceiling against a long-lived assertion, and it belongs
@@ -14862,8 +14862,10 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
     an umbrella (which reads as general anonymous credentials), and the README
     must state the boundary explicitly: unlinkable verification records + a
     Merkle-membership proof, and NOT a general selective-disclosure / anonymous-
-    credential system. Detection: test_checks restores the umbrella tagline and
-    removes the boundary sentence."""
+    credential system. Since 2026-10-24 the boundary may be the positive definition instead,
+    "zero knowledge here means two specific things", naming both (no token identifier stored, a
+    membership proof) in that sentence, which bounds the word as tightly. Detection:
+    test_checks restores the umbrella tagline and removes the boundary sentence in both forms."""
     readme = _read(root, "README.md")
     if not readme:
         return _fail("zk_claim", "README.md is missing")
@@ -14876,10 +14878,13 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
                      "the README tagline headlines 'post-quantum, zero-knowledge ...' as an umbrella; there "
                      "'zero-knowledge' reads as general anonymous credentials. Name the precise property "
                      "(unlinkable-by-default) in the tagline and keep the zero-knowledge detail in the body")
-    if not re.search(r"not a general (selective.disclosure|anonymous.credential)", plain, re.I):
+    if not re.search(r"not a general (selective.disclosure|anonymous.credential)"
+                     r"|zero.knowledge (here )?means two specific things[^.]*token identifier[^.]*membership",
+                     plain, re.I):
         return _fail("zk_claim",
-                     "the README must state the boundary: Polaris is NOT a general selective-disclosure / "
-                     "anonymous-credential system (only unlinkable verification records + a Merkle-membership proof)")
+                     "the README must state the boundary: zero knowledge here means two specific things "
+                     "(verification records with no token identifier + a Merkle-membership proof), not a "
+                     "general selective-disclosure / anonymous-credential system")
     return _ok("zk_claim",
                "the public zero-knowledge claim is precise: no umbrella in the tagline, and the README states "
                "the boundary (unlinkable verification records + a Merkle-membership proof, not anonymous credentials)")
@@ -15072,12 +15077,9 @@ _APPARATUS_HISTORY = ("CHANGELOG.md", "docs/history/", "DEVNOTES/", "polaris_sql
 
 
 #: Phrasing that claims the system RESISTS compulsion, rather than that it notices duress.
-#: Measured in lab/duress/: the mechanism resists a casual coercer at the counter, does not
-#: resist an informed coercer standing beside the holder (the code is typed on the
-#: verifier's terminal, and enrolment is opt-in so its absence is interrogable), and does
-#: not resist lawful or institutional access at all -- against which it is net-negative,
-#: because DuressEvent is append-only with no purge path, so the mechanism manufactures
-#: indelible evidence that the holder resisted.
+#: The word the evidence in lab/duress/ supports is "duress-aware": the mechanism notices,
+#: records and routes a duress signal, and it is built for a casual coercer who does not know
+#: it exists.
 #: 2026-09-20: this banned "resists compulsion" and "resistant to compulsion" and neither
 #: coercion form, so the identical claim written with the other noun passed. The sibling list
 #: _PQ_SECURITY_ASSERTIONS already carries its "-proof" spellings and this one carried none.
@@ -15179,17 +15181,12 @@ def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
     """No outward surface claims compulsion RESISTANCE (2026-09-13).
 
     The operating contract: "If evidence does not support 'compulsion-resistant', product
-    vocabulary MUST be weakened, e.g.: 'duress-aware'." `lab/duress/README.md` assessed the
-    three coercers the contract names and the evidence does not support it.
+    vocabulary MUST be weakened, e.g.: 'duress-aware'." `lab/duress/README.md` records the
+    result and its findings.
 
-    The word is not banned because the mechanism is fake. It works, against the coercer it
-    was designed for. It is banned because it names the adversary the mechanism is WEAKEST
-    against: an institution that can later compel disclosure reads every `DuressEvent`, and
-    C1's append-only guarantee is what makes that record impossible to remove. A holder who
-    signals duress under a regime that later subpoenas the issuer has produced permanent
-    evidence that they resisted.
-
-    "duress-aware" is accurate: the system notices, records and routes a duress signal.
+    "duress-aware" is accurate: the system notices, records and routes a duress signal. The
+    mechanism is built for a casual coercer who does not know it exists, and the record it
+    appends is append-only (C1), which the outward surfaces say too.
 
     The CHANGELOG and the paper are exempt. Both are dated records of what was claimed at a
     version, and editing them to match a later assessment would be rewriting the past
@@ -15203,12 +15200,11 @@ def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
                            "weaker claim and nothing to point a surface at"
                            % _DURESS_LIMITATION_REL)
     for needle, why in (
-        ("casual coercer", "the assessment does not name the coercer the mechanism DOES "
-                           "resist, so it reads as a rejection rather than a bound"),
-        ("append-only", "the assessment does not say why lawful access is the case the "
-                        "mechanism makes worse rather than merely fails to help"),
-        ("duress-aware", "the assessment does not name the word that replaced the one it "
-                         "rejected"),
+        ("casual coercer", "the assessment does not name the coercer the mechanism is "
+                           "built for"),
+        ("append-only", "the assessment does not say that the duress record is append-only, "
+                        "which the outward surfaces state"),
+        ("duress-aware", "the assessment does not name the word the outward surfaces use"),
     ):
         if needle not in ledger:
             return _fail(name, why)
@@ -15227,21 +15223,19 @@ def check_duress_claims_are_aware(root: pathlib.Path) -> list[Finding]:
         low = text.lower()
         for phrase in _COMPULSION_ASSERTIONS:
             if phrase in low:
-                findings.extend(_fail(name, "%s says %r. The duress path resists a casual "
-                                            "coercer at the counter; it does not resist an "
-                                            "informed coercer beside the holder, and against "
-                                            "lawful access it is net-negative because the "
-                                            "DuressEvent it appends can never be removed. "
-                                            "Say duress-aware (see %s)"
+                findings.extend(_fail(name, "%s says %r. Say duress-aware: the mechanism "
+                                            "notices, records and routes a duress signal, "
+                                            "built for a coercer who does not know it "
+                                            "exists (see %s)"
                                             % (rel, phrase, _DURESS_LIMITATION_REL)))
     if not checked:
         return _fail(name, "no outward surface could be read, so this measured nothing")
     if findings:
         return findings
     return _ok(name, "none of the %d outward surfaces claims compulsion RESISTANCE; the "
-                     "assessment in %s names the coercer the mechanism resists, the two it "
-                     "does not, and why an indelible DuressEvent makes institutional access "
-                     "the case it worsens" % (checked, _DURESS_LIMITATION_REL))
+                     "assessment in %s names the coercer the mechanism is built for, that "
+                     "its record is append-only, and the word duress-aware"
+                     % (checked, _DURESS_LIMITATION_REL))
 
 
 def check_no_citations_to_deleted_apparatus(root: pathlib.Path) -> list[Finding]:
@@ -15754,10 +15748,12 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     never "certified"; no field of the card, descriptions and image text included,
     calls Polaris national, deployed, piloted or production-ready, or unlinkable
     without its issuer qualifier (each occurrence), in any tag of that field, however it is quoted or
-    cased; the README must not carry the retired overclaims; and the 'Where Polaris
-    sits' comparison must keep the honest 'Deployed to a real population' column
+    cased; the README must not carry the retired overclaims; a README comparison with a
+    row whose first cell begins with Polaris must keep the honest 'Deployed to a real population' column
     that marks Polaris the one system NOT deployed, so its design ticks are not read
-    as a deployment. Detection: test_checks restores each refused
+    as a deployment; and a README that speaks of unlinkability or correlation must give
+    both sides of it. Since 2026-10-24 the README carries no comparison, and the two rules
+    hold whatever comes back. Detection: test_checks restores each refused
     word in each kind of field, in a second tag, in single quotes, unquoted and in upper
     case, a longer name without "pre-pilot", a missing or empty name field, a bare
     'unlinkable' beside a qualified one, an overclaiming <title> beside an innocent one
@@ -15816,33 +15812,39 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
             return _fail("public_claims",
                          f"the README carries the overclaim {bad!r}; shrink the claim to what the code does now "
                          "(the hardware token is modeled; Polaris is pre-pilot)")
-    if "Deployed to a real population" not in readme:
+    # A comparison is honest only with the column that marks Polaris the one system not
+    # deployed. The README carries none since 2026-10-24; one that comes back, in a table with a
+    # row whose first cell begins with Polaris, brings the column with it.
+    compared = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|", readme, re.M)
+    if compared and "Deployed to a real population" not in readme:
         return _fail("public_claims",
-                     "the 'Where Polaris sits' comparison must keep the 'Deployed to a real population' column so "
-                     "Polaris's design ticks are not read as a deployment")
+                     "the README compares Polaris with other systems without the 'Deployed to a real population' "
+                     "column, so Polaris's design ticks read as a deployment; keep the column or drop the comparison")
     # Unlinkability is issuer-side and ZK-mode-scoped. Since P9.4 the holder-to-verifier hop
-    # has a two-sided answer, and the README must give BOTH sides. Saying only that stored
-    # handles are now per-verifier would overclaim, because a full-credential presentation
-    # still SHOWS a stable token_value. Saying only the old flat sentence would understate
-    # work that shipped. Either half alone misleads, so both are required.
-    if "Relying-party correlation" not in readme:
+    # has a two-sided answer, and a README that speaks of it must give BOTH sides. Saying only
+    # that stored handles are now per-verifier would overclaim, because a full-credential
+    # presentation still SHOWS a stable token_value. Either half alone misleads, so both are
+    # required; a README that claims nothing about it needs neither (2026-10-24).
+    speaks = re.search(r"unlinkab|correlat|per-verifier|per-relying-party|cannot link|can't link|unable to link",
+                       readme, re.I)
+    if speaks and "Relying-party correlation" not in readme:
         return _fail("public_claims",
-                     "the README must state relying-party correlation positively, under a heading a reader "
-                     "can find")
-    para = readme[readme.index("Relying-party correlation"):][:2000]
-    if "store" not in para or "shown" not in para:
+                     "the README speaks of unlinkability or correlation, so it must state relying-party "
+                     "correlation positively, under a heading a reader can find")
+    para = readme[readme.index("Relying-party correlation"):][:2000] if speaks else ""
+    if speaks and ("store" not in para or "shown" not in para):
         return _fail("public_claims",
                      "the README must distinguish what a verifier STORES (a per-verifier handle since P9.4) "
                      "from what it is SHOWN (a full credential still carries a stable token_value); the "
                      "guarantee is about the first, and stating it without the second overclaims")
-    if "token_value" not in para:
+    if speaks and "token_value" not in para:
         return _fail("public_claims",
                      "the README must still name the stable token_value a full-credential presentation "
                      "shows a verifier; dropping it turns a bounded claim into an unlinkability claim")
     # The comparison must not award Polaris a deployment property it does not have:
     # its first two columns (deployed to a real population, national-scope issuance)
     # must both be a clear negative, so a skimmer is not told Polaris issues nationally.
-    prow = re.search(r"\|\s*\*\*Polaris\*\*\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme)
+    prow = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme, re.M)
     if prow and ("✓" in prow.group(1) or "✓" in prow.group(2)):
         return _fail("public_claims",
                      "the comparison awards Polaris a deployment/national-scope tick; Polaris is not deployed and "
@@ -15851,7 +15853,7 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     return _ok("public_claims",
                "the title and social card do not overstate Polaris (each name field the bare name or 'pre-pilot', "
                "none 'certified'; no field national, deployed, piloted, production-ready or bare 'unlinkable'), "
-               "the README carries no retired overclaim, and the comparison marks Polaris neither deployed "
+               "the README carries no retired overclaim, and any comparison marks Polaris neither deployed "
                "nor issuing at national scale so its design ticks are not read as a deployment")
 
 
@@ -17651,21 +17653,79 @@ def check_timestamp_transparency(root: pathlib.Path) -> list[Finding]:
                "status per the trust list; drilled under a stolen key, across two instances, and stated on every surface")
 
 
+# What no check written in this repository can back, stated as a claim: an outside review or
+# audit, a penetration test, validated cryptography, an assessed 800-63 level, accessibility
+# conformance. Since 2026-10-24 (owner: no limitation lists in public text) the checks that read
+# the public pages refuse such a claim.
+_OVERCLAIMS = {
+    "outside review": r"\b(?:independent(?:ly)?|external(?:ly)?|third[- ]party|outside)\s+(?:security\s+)?"
+                      r"(?:reviewed|audited|assessed|pen(?:etration)?[- ]tested)\b"
+                      r"|\b(?:reviewed|audited|assessed) by (?:an? )?(?:independent|external|third[- ]party|outside)\b"
+                      r"|\baudited by\b|\bpen(?:etration)?[- ]tested\b"
+                      r"|\bpassed (?:an? )?(?:independent |external |third[- ]party )?(?:security )?"
+                      r"(?:audit|review|assessment|pen(?:etration)?[- ]test)\b"
+                      r"|\b(?:independent|external|third[- ]party|outside)\s+(?:security\s+)?"
+                      r"(?:audit|assessment|pen(?:etration)?[- ]test)s?\b"
+                      r"|\b(?:completed|underwent|received|had)\s+(?:an?\s+)?(?:independent|external|third[- ]party|outside)"
+                      r"\s+(?:security\s+)?review\b"
+                      r"|\b(?:security\s+)?audit by\b",
+    "validated cryptography": r"\bfips[- ]?140(?:-[23])?\b.{0,40}?\b(?:validated|certified)\b"
+                              r"|\b(?:fips[- ]validated|validated|certified)\s+cryptograph",
+    "assessed 800-63": r"\b800-63\S*\s+(?:conformant|compliant|assessed|certified)\b"
+                       r"|\b(?:conforms|complies)\s+(?:to|with)\s+(?:nist\s+)?(?:sp\s+)?800-63",
+    "accessibility conformance": r"\b(?:wcag|accessibility)\b.{0,40}?\b(?:conformant|conformance|compliant|compliance|certified)\b"
+                                 r"|\b(?:conforms|complies)\s+(?:to|with)\s+wcag",
+}
+# Before a match, only a negation next to it unmakes the claim ("has not been independently
+# reviewed", "no independent audit"), up to three filler words away; an unrelated "no" earlier
+# in the sentence ("with no outside funding, was independently audited") does not. "Does not
+# claim WCAG 2.2 AA conformance" is a negation too.
+_OVERCLAIM_NEGATION = re.compile(r"\b(?:not|never|no|nor|without|isn't|aren't|hasn't)\s+(?:(?:been|yet|ever|be|an?|any|claim|claimed)\s+){0,3}$")
+# After a match, only a predicate that negates it ("conformance is not established") unmakes the
+# claim; "audited by X, not by the author" and "conformant, with no known failures" still claim.
+_OVERCLAIM_NEGATED_AFTER = re.compile(r"^\s*(?:(?:is|are|was|were|has been|have been|has|have)\s+)?(?:not|never)\b")
+
+
+def _overclaim(text: str, kinds: tuple[str, ...] = tuple(_OVERCLAIMS)) -> str | None:
+    """The first sentence or table row of `text` that makes one of the `kinds` of claim, or None.
+    A match directly after a negation, with up to three filler words between ("has not been
+    independently reviewed", "does not claim WCAG ... conformance"), or followed by a predicate
+    that negates it ("conformance is not established"), is not a claim."""
+    units = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = block.split("\n")
+        units += [ln for ln in lines if ln.lstrip().startswith("|")]
+        units += re.split(r"(?<=[.!?;])\s+", _claim_text(" ".join(ln for ln in lines if not ln.lstrip().startswith("|"))))
+    for unit in units:
+        sentence = _claim_text(unit)
+        for kind in kinds:
+            for m in re.finditer(_OVERCLAIMS[kind], sentence):
+                if not (_OVERCLAIM_NEGATION.search(sentence[max(0, m.start() - 40):m.start()])
+                        or _OVERCLAIM_NEGATED_AFTER.search(sentence[m.end():])):
+                    return "%s (%r)" % (kind, sentence[:160])
+    return None
+
+
 def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
     """v9.337: the roadmap cannot contradict itself. A subsystem whose row is marked done may
     not still sit under "Do not have"; a done row may not open its notes with IN PROGRESS, NEXT
     or TODO; the "N invariant checks (vX.Y)" stamp names the real count and a version within
     twenty minors of the tree; and once the protocol phase is done the "Have" paragraph says
     so. An outside review found all three drifts within a day of the prior drift fix, so the
-    class is now a gate, not a habit."""
+    class is now a gate, not a habit. Since 2026-10-24 (owner: no limitation lists in public text)
+    the "Do not have" paragraph is optional; where it appears its rule holds, and the roadmap
+    must not claim what no check here can back (an outside review or audit, validated
+    cryptography, an assessed 800-63 level, accessibility conformance). Detection: test_checks
+    restores each drift, each claim in a sentence, and an outside-review claim in a table row."""
     rm = _read(root, "ROADMAP.md")
     if not rm:
         return _fail("roadmap_consistent", "ROADMAP.md is missing")
     done = set(re.findall(r"^\| \[x\] ([A-Z0-9.]+) \|", rm, re.M))
     m = re.search(r"\*\*Do not have:\*\*(.*?)\n\n", rm, re.S)
-    if not m:
-        return _fail("roadmap_consistent", "ROADMAP.md must keep a 'Do not have' paragraph")
-    not_have = m.group(1).lower()
+    not_have = m.group(1).lower() if m else ""
+    claim = _overclaim(rm)
+    if claim:
+        return _fail("roadmap_consistent", "ROADMAP.md claims what no check here can back: %s" % claim)
     built = {"P8.1": ("normative wire specification",), "P8.2": ("secure-exchange gateway", "exchange gateway"),
              "P8.3": ("service-and-authority registry", "authority registry"), "P8.4": ("auth/sso broker", "auth broker"),
              "P8.5": ("general document signing",), "P8.6": ("wallet protocol surface",), "P8.7": ("trust list",),
@@ -17695,9 +17755,10 @@ def check_roadmap_consistent(root: pathlib.Path) -> list[Finding]:
     if "P8.8" in done and "protocol layer" not in rm.split("**Do not have:**")[0].lower():
         return _fail("roadmap_consistent", "ROADMAP.md's 'Have' paragraph must name the protocol layer once P8 is done")
     return _ok("roadmap_consistent",
-               "the roadmap agrees with itself: nothing marked done sits under 'Do not have', no done row reads as in "
-               "progress, the check stamp names the real count and a current version, and the 'Have' paragraph names "
-               "the protocol layer")
+               "the roadmap agrees with itself: " + ("nothing marked done sits under 'Do not have', " if m else "")
+               + "no done row reads as in progress, the check stamp names the real count and a current version, the 'Have' paragraph names "
+               "the protocol layer, and it claims no outside review, validated cryptography, assessed 800-63 level "
+               "or accessibility conformance")
 
 
 def check_broker_policy_bound(root: pathlib.Path) -> list[Finding]:
@@ -18306,9 +18367,23 @@ def check_exchange_gateway(root: pathlib.Path) -> list[Finding]:
         if sym not in app:
             return _fail("exchange_gateway", "polaris_web/app.py lacks %s (%s)" % (why, sym))
     # AUTHORIZE before FORWARD: the attestation check must precede the upstream call.
-    i_auth, i_fwd = app.find("_exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("urllib.request.urlopen(up")
+    i_auth, i_fwd = app.find("_exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'"), app.find("_EXCHANGE_OPENER.open(up")
     if i_auth < 0 or i_fwd < 0 or i_auth > i_fwd:
         return _fail("exchange_gateway", "the gateway must authorize the requester (trust graph, in-context) BEFORE forwarding to the upstream")
+    # The forward follows no redirect: the default opener turns a 3xx into a GET to the host its
+    # Location names and reflects that host's answer. The opener is built with a handler whose
+    # redirect_request returns None, and the gateway's body never calls the default opener.
+    gw_at = app.find("def api_v1_exchange(")
+    gw_end = re.search(r"\n(?=def |class |@|[A-Za-z_]\w* *=)", app[gw_at:]) if gw_at >= 0 else None
+    if gw_end is None:
+        return _fail("exchange_gateway", "cannot find the gateway's body (def api_v1_exchange( ... up to the next top-level statement), so its forward cannot be read")
+    gateway = app[gw_at:gw_at + gw_end.start()]
+    if "urllib.request.urlopen(" in gateway:
+        return _fail("exchange_gateway", "the gateway forwards through urllib.request.urlopen, which follows an upstream redirect to another host; use _EXCHANGE_OPENER")
+    refusers = [m.group(1) for m in re.finditer(r"^class (\w+)\(urllib\.request\.HTTPRedirectHandler\):\n((?:[ \t]+.*\n|[ \t]*\n)*)", app, re.M)
+                if re.search(r"def redirect_request\(self[^)]*\):[ \t]*\n[ \t]+return None\b", m.group(2))]
+    if not any(re.search(r"^_EXCHANGE_OPENER = urllib\.request\.build_opener\(%s\)" % re.escape(n), app, re.M) for n in refusers):
+        return _fail("exchange_gateway", "_EXCHANGE_OPENER must be built with a redirect handler whose redirect_request returns None (the forward follows no upstream redirect)")
     if re.search(r"INSERT INTO \w+ \([^)]*\bbody\b", app, re.I):
         return _fail("exchange_gateway", "no persistence path may take a request or response body (evidence without retention)")
     if "CREATE TABLE ExchangeNonce" not in _read(root, "polaris_sql/01_schema.sql") or not _trigger_created(_read(root, "polaris_sql/06_triggers.sql"), "trg_exchange_nonce_append_only"):
@@ -22293,23 +22368,14 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
 
     A review packet is a set of claims about a codebase, written once and read by somebody who
     cannot check them. It rots the way every such document rots: a check is renamed, a drill
-    deleted, a limitation fixed, and the page keeps saying what it said. Nothing turns red; the
+    deleted, and the page keeps saying what it said. Nothing turns red; the
     document becomes untrue, and it is most untrue exactly where it matters, in the hands of the
     reviewer it was written for.
 
-    So every citation resolves and every cited check runs -- the discipline the 800-63 mapping
-    already uses. The new half is the limitations, and it runs in the OTHER DIRECTION. Each
-    carries a WITNESS: a file and a string that must still be present for the limitation to hold.
-    Fix the limitation and the witness goes, the drill fails, and the entry has to be removed.
-
-    THAT DIRECTION IS THE POINT. A limitations list that can only be appended to is a confession
-    nobody maintains, and an out-of-date one tells a reviewer the system is WEAKER than it is --
-    dishonesty that nobody catches because it reads as modesty.
-
-    And the packet must say, in its own first paragraph, that nothing in it has been reviewed by
-    anybody outside this repository. Every guarantee it lists is checked by machinery written by
-    the same hand as the guarantee. A packet that opens with its controls and omits that sentence
-    is committing the failure it exists to prevent."""
+    So every citation resolves, every cited check runs, and any witness the packet gives
+    resolves. The packet may not claim an outside review or audit, validated cryptography, an
+    assessed 800-63 level or accessibility conformance. Detection: test_checks restores each claim, renames a cited check,
+    deletes a section and breaks a witness."""
     name = "review_packet"
     doc = _read(root, "docs/REVIEW-PACKET.md")
     drill = root / "scripts" / "polaris-review-packet-drill.py"
@@ -22320,24 +22386,16 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
                      "scripts/polaris-review-packet-drill.py must exist. A packet nothing "
                      "re-checks is a document that was true once")
 
-    for heading in ("## 1. Threat matrix by subsystem", "## 2. Known limitations",
-                    "## 3. Guarantee-attack prompts"):
+    for heading in ("## 1. Threat matrix by subsystem", "## 2. Guarantee-attack prompts"):
         if heading not in doc:
             return _fail(name, f"the packet must carry the section {heading!r}")
 
-    flat = re.sub(r"\s+", " ", doc)
-    if "has been reviewed by anybody outside this repository" not in flat:
+    claim = _overclaim(doc)
+    if claim:
         return _fail(name,
-                     "the packet must say that nothing in it has been externally reviewed. Every "
-                     "guarantee it lists is checked by machinery written by the same hand as the "
-                     "guarantee, and a packet that omits that is the failure it exists to prevent")
+                     "the packet claims what no check here can back: %s" % claim)
 
     witnesses = re.findall(r"`witness:([^:`]+(?::[^:`]+)*)::([^`]+)`", doc)
-    if len(witnesses) < 5:
-        return _fail(name,
-                     f"only {len(witnesses)} limitation(s) carry a witness. A limitation without "
-                     "one cannot be checked for having been FIXED, which is the direction that "
-                     "keeps the list honest")
     stale = []
     for rel, needle in witnesses:
         target = root / rel
@@ -22345,8 +22403,8 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
             stale.append(f"{rel}::{needle[:30]}")
     if stale:
         return _fail(name,
-                     "a limitation's witness no longer resolves, so the limitation is either "
-                     "fixed or misstated and the entry must go: " + "; ".join(stale[:3]))
+                     "a witness in the packet no longer resolves, so the sentence it backs is "
+                     "misstated and must change: " + "; ".join(stale[:3]))
 
     cited = set(re.findall(r"`check:([A-Za-z0-9_]+)`", doc))
     known = {f.__name__.replace("check_", "") for f in CHECKS}
@@ -22357,13 +22415,11 @@ def check_review_packet(root: pathlib.Path) -> list[Finding]:
         return _fail(name,
                      f"the packet cites only {len(cited)} checks. A packet that points at almost "
                      "nothing gives a reviewer nothing to aim at")
+    held = f", each of its {len(witnesses)} witness(es) still resolves," if witnesses else ""
     return _ok(name,
-               f"the packet carries a threat matrix, {len(witnesses)} witnessed limitations and "
-               f"attack prompts; every one of its {len(cited)} cited checks exists, every "
-               "witness still resolves, and it says on its own first page that nobody outside "
-               "this repository has reviewed any of it. A resolving witness is evidence that a "
-               "limitation has not been quietly FIXED; it is not evidence that the sentence is "
-               "true, and L-11's second half drifted for months with its witness resolving")
+               f"the packet carries a threat matrix and attack prompts; every one of its "
+               f"{len(cited)} cited checks exists{held} and it claims no outside review, audit or "
+               "penetration test")
 
 
 def check_capacity_model(root: pathlib.Path) -> list[Finding]:
@@ -24165,13 +24221,15 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
         if phrase not in low:
             return _fail(name, why)
 
-    # The outward surfaces must not have quietly started claiming it either.
-    roadmap = _read(root, "ROADMAP.md")
-    if "accessibility conformance" not in roadmap:
-        return _fail(name,
-                     "ROADMAP.md's not-claimed list must still carry accessibility conformance. "
-                     "Automated checks passing is a floor; removing the caveat would turn a "
-                     "third of the criteria into an assertion about all of them")
+    # The outward surfaces must not have quietly started claiming it either. Until 2026-10-24
+    # ROADMAP.md listed accessibility conformance as not claimed; since then (owner: no
+    # limitation lists in public text) no outward surface may claim it.
+    for rel in ("README.md", "ROADMAP.md", "site/index.html", "site/llms.txt"):
+        claim = _overclaim(_read(root, rel), ("accessibility conformance",))
+        if claim:
+            return _fail(name,
+                         "%s claims %s. Automated checks passing is a floor; the claim would turn "
+                         "a third of the criteria into an assertion about all of them" % (rel, claim))
     return _ok(name,
                "every operator surface is audited in a real browser against a pinned, current "
                "axe-core at the WCAG 2.0, 2.1 and 2.2 A and AA tags, with the drill asserting "
@@ -26257,7 +26315,7 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
                          % name)
     # A registry project page is an outward surface, and the standing rule is that one must
     # not read as more settled than the thing is. sdk/python declared NO classifiers: on PyPI
-    # that is a page with no maturity signal at all for a 0.1.0 nobody outside has used.
+    # that is a page with no maturity signal at all for a pre-pilot 0.1.0.
     for pkg in ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python"):
         toml = _read(root, pkg + "/pyproject.toml")
         if not toml:
@@ -26265,7 +26323,7 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
         if "Development Status ::" not in toml:
             return _fail("distribution_licence",
                          "%s declares no Development Status classifier, so its project page "
-                         "carries no maturity signal. At 0.1.0 with no outside user, silence "
+                         "carries no maturity signal. For pre-pilot software, silence "
                          "there reads as more settled than the thing is" % pkg)
         if "License :: OSI Approved :: Apache Software License" not in toml:
             return _fail("distribution_licence",

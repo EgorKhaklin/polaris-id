@@ -1,6 +1,6 @@
 # Blockchain anchoring
 
-**Reader:** an engineer or an assessor. **Job:** How a batch of audit rows is committed to an external anchor, and what that does and does not prove.
+**Reader:** an engineer or an assessor. **Job:** How a batch of audit rows is committed to an external anchor, and what that proves.
 
 An audit trail held by one operator asks everyone to trust that operator not
 to rewrite it. Anchoring answers that without moving the system onto a ledger:
@@ -64,7 +64,7 @@ and split or duplicate the leaves between them, breaking the property that a
 leaf belongs to exactly one batch.
 `ConcurrencyTests.test_close_anchor_batch_concurrent` races them.
 
-## Three things the schema deliberately does not do
+## Design choices
 
 - **It does not mark a batch as committed.** `committed_to_chain` exists and
   no trigger sets it. Publishing to a ledger is an operator action, and the

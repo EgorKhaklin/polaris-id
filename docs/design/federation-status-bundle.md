@@ -195,11 +195,3 @@ about a bundle can change history; it only re-presents it.
 - `StatusBundleTests` in `polaris_web/test_app.py` validates the published shape, the
   commitment, the app-versus-verifier canonical byte equality, and the no-personal-
   data rule against a real server-built bundle.
-
-## Deferred
-
-Epoch-bound cross-authority **zero-knowledge** presentation is deferred to P3.2d: a
-holder proving in zero knowledge that a credential is included in an authority's
-issued set at a committed epoch, across the federation trust graph, without revealing
-the credential. P3.2c binds *status* to a committed epoch (`epoch_bound`); binding a
-*ZK presentation* to one is the next step and touches the Plonky2 circuit.

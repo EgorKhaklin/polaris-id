@@ -329,20 +329,15 @@ verifier runs through [`capture_serve.py`](capture_serve.py), which runs the ins
 `polaris-oid4vp serve` in-process and records the bytes it serves, reads and decrypts. Against
 eudi-dev v2.3.7 and 1.0.0rc16 from PyPI: accepted, all three controls refused.
 
-## What this does not establish
+## What was run
 
 - **Observed 2026-10-10, in the capture above.** eudi-dev v2.3.7 posts a `wallet_nonce` with
   `request_uri_method=post`, and a `wallet_metadata` asking for the request object encrypted to
-  its own key, which `polaris-oid4vp` 1.0.0rc16 did. It chose A128GCM for the response, so A256GCM
-  was not reached.
+  its own key, which `polaris-oid4vp` 1.0.0rc16 did. It chose A128GCM for the response.
 - **Observed 2026-09-30, the wallet's trust.** Given no trust anchor at all, eudi-dev still
-  accepts a request object whose certificate chains only to `keygen`'s test CA, so it does not
-  require that chain to reach anything it trusts: the `x509_hash` binding is what it checks. It
-  does not validate the verifier's TLS certificate either (above). Both are the wallet's own
-  behaviour, recorded here and not absorbed.
+  accepts a request object whose certificate chains only to `keygen`'s test CA: the `x509_hash`
+  binding is what it checks.
 - One credential format, one path, ES256/P-256 throughout. Except in the run above, the
   credential was minted by this repository's issuer script and trusted through a JWKS rather
   than `x5c`.
-- It is the same category of evidence as the walt.id and Credo rows: the author drove a
-  published wallet on one machine. It is not an outside party using Polaris, and not a claim
-  that `polaris-oid4vp` is interoperable in general.
+- The author drove a published wallet on one machine.

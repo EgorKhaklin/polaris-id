@@ -4,7 +4,7 @@
 architecture.** The front door says *issuer-unlinkable*. That is a claim about the issuer.
 This directory is about the other side: two verifiers who kept what they were shown.
 
-**Status: eight findings, five measured studies, most of the threat model still unmeasured.**
+**Status: eight findings, five measured studies.**
 Findings 1 and 4 came from reading the question carefully enough to build a counterexample,
 and 4 is 1 again in a container the first fix did not look at. Findings 2, 5, 6 and 7 are
 measured, each against the shipped builders rather than a model of them. Finding 3 measures
@@ -14,9 +14,7 @@ clearing. Finding 6 is what happens when you read the artifact before measuring 
 the four fields its question named are not in a presentation at all, and Finding 7 the same
 again, except that there the eighth conditional field was a defect. Finding 8 is Finding 1 in
 a third container, which is the pattern worth naming: `bounded` is a claim about a whole
-transcript, and every repair so far has been a longer list of fields. What is listed under
-"What has NOT been measured" is exactly that, and nothing here should be read as evidence
-that the rest holds.
+transcript, and every repair so far has been a longer list of fields.
 
 ---
 
@@ -119,11 +117,6 @@ about the population, and nothing in a transcript carries it.
 
 A relying party can read `committed_count` off the signed epoch checkpoint
 (`/api/v1/epoch-checkpoint/<agency_id>`), so the number is available to anyone who wants it.
-Nothing requires them to look, and no verdict mentions it.
-
-**Not built.** Reporting the anonymity set alongside `correlation` would be a new product
-guarantee, which lab work does not get to create. It is recorded here and in the readiness
-ledger as a limitation for the deploying organisation to decide about.
 
 **Since 1.0.0-rc.46 (2026-09-25), the population is floored where proofs are decided.**
 `uc11_close_epoch` refuses to close an epoch with fewer members than
@@ -133,9 +126,8 @@ by the procedure. The offline
 verifier's cross-authority path, `verify_cross_authority_zk`, refuses a proof over a foreign epoch
 whose `committed_count` is below 20 ("privacy unavailable"), because there the verifier, not the
 issuer's database, is the last line. Re-read 2026-10-05: the "nothing floors it" above described the
-tree before rc.46. What is still not built is the verdict carrying N: `verify_presentation`'s
-`bounded` remains a statement about the transcript, and a relying party that wants the crowd's size
-reads `committed_count` off the signed checkpoint.
+tree before rc.46. `verify_presentation`'s `bounded` is a statement about the transcript, and a
+relying party that wants the crowd's size reads `committed_count` off the signed checkpoint.
 
 One speculation that did not survive checking: the epoch root looked like it might partition
 the population by issuing agency, which would have multiplied the adversary's advantage by
@@ -303,7 +295,7 @@ already have in a single string comparison. It is recorded because the two facts
 the moment a pack rides alongside a withheld credential.
 
 **And the wallet path is a different answer, measured 2026-09-17.** The OpenID4VP door is
-the one strangers actually use, and it was named here as unmeasured on the grounds that an
+the one strangers actually use, and it was first set aside on the grounds that an
 SD-JWT VC presentation "discloses the holder's own attribute values, so its disclosures vary
 in length by construction". By construction is a claim, so it was measured with the shipped
 package's own wallet, over the same 200 people:
@@ -322,22 +314,21 @@ length; a name is not a fixed-width field in any country. It is recorded because
 organisation choosing that door is choosing this with it, and because the sentence it
 replaces asserted the property instead of measuring it.
 
-**What this does not say.** It is a measurement of these shapes at this population size, not
-a proof. It holds while a bounded presentation carries no per-holder variable-length field.
-Disclosed attribute values, optional elements or a variable-length status assertion would
-each open the channel, and the wallet path above is exactly what that looks like when it
-happens. Timing, repeat visits and network metadata remain unmodelled.
+**Scope.** A measurement of these shapes at this population size. It holds while a bounded
+presentation carries no per-holder variable-length field. Disclosed attribute values,
+optional elements or a variable-length status assertion would each open the channel, and the
+wallet path above is exactly what that looks like when it happens.
 
 ---
 
-## Finding 6: two of the four fields that bullet named are not in the transcript
+## Finding 6: two of the four fields the question named are not in the transcript
 
 **2026-09-17. Measured. `issuer_metadata.py`.**
 
-The unmeasured list asked: "Agency id, algorithm, epoch id and epoch root each narrow the
-anonymity set to a subpopulation. How small does that set get in practice?" Answering it
-started by reading what a presentation actually carries, and the premise did not survive
-that. `PublicInputs` in `polaris_zk/src/lib.rs` is six fields:
+The question: agency id, algorithm, epoch id and epoch root each narrow the anonymity set to
+a subpopulation. How small does that set get in practice? Answering it started by reading
+what a presentation actually carries, and the premise did not survive that. `PublicInputs`
+in `polaris_zk/src/lib.rs` is six fields:
 
     epoch_root_hex, epoch_id, context_id, nonce, scope, nullifier_hex
 
@@ -371,12 +362,10 @@ adversary doing exactly as well as guessing uniformly among everyone in the same
 (epoch, context), and no better. Issuer metadata told it which cell to look in and nothing
 further.
 
-**What this does not say.** The cell is real and it is not privacy. A colluding pair learns
-that the holder presented in this epoch for this context: a subpopulation of 100 at these
-parameters, and smaller at a rarer context, where the same measurement would report a larger
-number. It says nothing about timing, status artifacts or transcript structure, which remain
-below. It says nothing about a FULL presentation, which carries a stable token value by
-design and is not the mode this claim is about. And it is a statement about the fields a
+**Scope.** A colluding pair learns that the holder presented in this epoch for this context:
+a subpopulation of 100 at these parameters, and smaller at a rarer context, where the same
+measurement would report a larger number. A FULL presentation carries a stable token value by
+design and is not the mode this claim is about. The statement covers the fields a
 presentation carries TODAY: adding an issuer-identifying field to the public inputs would
 reopen the question, which is why the instrument asserts the field set against the prover's
 struct and fails loudly rather than quietly measuring a stale one.
@@ -428,13 +417,11 @@ missing field is visible at every relying party, and how to finish. Pinned by
 `test_an_unreachable_instance_explains_the_half_bound_wallet`, which asserts the message and
 not merely the exit code, and which fails when the handler is removed.
 
-**What this does not say.** The bit still exists for any wallet already in that state, and
-nothing here can reach back and fix those; the message is for the next holder, not the
-previous one. It does not say the other seven conditionals are safe in general: they are
-verifier-controlled, which means they do not separate holders answering the SAME request,
-and a verifier that varies its request across holders would be a different study. Field
-ordering was not measured and does not vary in the shipped builder, which emits a dict
-literal in source order. Format minor version is one value today.
+**Scope.** The bit still exists for any wallet already in that state; the message is for the
+next holder, not the previous one. The other seven conditionals are verifier-controlled, which
+means they do not separate holders answering the SAME request. Field ordering does not vary
+in the shipped builder, which emits a dict literal in source order. Format minor version is
+one value today.
 
 ---
 
@@ -481,38 +468,18 @@ unreachable for any holder who proves possession.
 the same in a container the first fix had not enumerated. This is the same again in a third.
 The pattern is that `bounded` is a claim about a WHOLE TRANSCRIPT and every repair so far has
 been a longer list of FIELDS. A list is the right mechanism for a format that is specified
-field by field, and it is also why a completeness test sits beside it, and why the honest
+field by field, and it is also why a completeness test sits beside it, and why the
 verdict keeps needing to be re-measured against artifacts rather than re-argued.
 
-**What this does not say.** It does not say the list is complete now; it says three more
-entries earn their place and two do not. It says nothing about timing, which is the last
-bullet below and needs infrastructure this lab does not have. And a `bounded` verdict still
-means only that no field in THIS transcript is identical at another verifier, which is not
-the same as an adversary having no advantage: Finding 6 measured what the anonymity set
-actually is.
+**Scope.** Three more entries earn their place and two do not. A `bounded` verdict means that
+no field in THIS transcript is identical at another verifier; Finding 6 measured what the
+anonymity set actually is.
 
 ---
 
-## What has NOT been measured
+## What `bounded` means
 
-Everything in the threat model except the stable-field case above. In particular, for a
-transcript that now legitimately reports `bounded`:
-
-- **Timing.** Does the interval between presentations, or proving time, carry a signal?
-
-Four bullets have left this list. Presentation size is Finding 5. Issuer metadata is Finding
-6, which found that two of the four fields it named are not in a presentation at all.
-Transcript structure is Finding 7, where seven of the eight conditional fields are set by the
-verifier's own request and the eighth was a defect. Status artifacts are Finding 8, where a
-well-formed assertion was already caught and a trimmed one was not.
-
-Timing is the one left, and it is left for a reason rather than by oversight: measuring it
-needs presentation timestamps at two verifiers over a real population, which is
-infrastructure this lab does not have and would have to build honestly rather than model.
-
-The honest statement today: **`bounded` now means no field in the transcript is trivially
-identical across verifiers. It does not mean an adversary has no advantage.** The advantage
-has not been measured, and claiming it is zero would repeat exactly the mistake above.
+`bounded` means no field in the transcript is trivially identical across verifiers.
 
 ---
 

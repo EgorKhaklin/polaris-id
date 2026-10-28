@@ -2706,7 +2706,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
               '<img src="docs/assets/rule.svg" alt="">']
     two = "Two wallets ran unmodified: Alpha and Beta."
     one = "One more library took part: the reference library (Kotlin)."
-    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\n**Not yet:** an independent security review, a pilot.\n"
+    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\nAn outside wallet project runs the verifier in its CI.\n"
 
     def readme(rows=badges, two=two, one=one):
         return "<div>\n\n" + "\n".join(rows) + "\n\n</div>\n\n## What it is\n\nPre-pilot.\n\n" + status % (two, one)
@@ -2739,11 +2739,11 @@ def test_claims_manifest_check_discriminates(tmp_path):
          "implementations": [{"name": "Alpha", "scoreboard": "Alpha"}, {"name": "Beta", "scoreboard": "Beta wallet"}]},
         {"id": "one", "kind": "statement", "claim": one, "surfaces": ["README.md"], "evidence": ["file:LICENSE"],
          "reproduce": "Read the scoreboard.", "implementations": [{"name": "Kotlin", "scoreboard": "lib-kt"}]},
-        {"id": "not-yet", "kind": "statement", "claim": "Not yet: an independent security review, a pilot.",
+        {"id": "outside-ci", "kind": "statement", "claim": "An outside wallet project runs the verifier in its CI.",
          "surfaces": ["README.md", "site/llms.txt"], "evidence": ["file:LICENSE"], "reproduce": "Read the scoreboard."},
     ]}
     for rel, text in (("LICENSE", "Apache License\n"), ("t/test_x.py", "class XTests:\n    pass\n"),
-                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- Not yet: an independent security\n  review, a pilot.\n")):
+                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- An outside wallet project runs\n  the verifier in its CI.\n")):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(text)
     (tmp_path / "lab").mkdir()
@@ -2791,9 +2791,9 @@ def test_claims_manifest_check_discriminates(tmp_path):
         "must FAIL on an evidence token of no known kind"
 
     # A listed sentence edited, or an older one restored, on its surface.
-    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security review.\n")
+    (tmp_path / "site" / "llms.txt").write_text("- An outside wallet project runs the verifier.\n")
     assert run() == "FAIL", "must FAIL when a claim was edited on one of its surfaces"
-    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security\n  review, a pilot.\n")
+    (tmp_path / "site" / "llms.txt").write_text("- An outside wallet project runs\n  the verifier in its CI.\n")
     assert run() == "OK", "must PASS again once the surface says the claim"
     assert run(rd=readme(one="One more library presented through a wallet built here: the reference library (Kotlin).")) == "FAIL", \
         "must FAIL when an older, larger sentence replaces the listed one"
@@ -2857,7 +2857,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
     assert run(edit(lambda by: by["ci"].pop("why"))) == "FAIL", \
         "must FAIL on a null reproduce with no reason"
     assert run(edit(lambda by: by["site"].update(id="ci"))) == "FAIL", "must FAIL on two entries with one id"
-    assert run(edit(lambda by: by["not-yet"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
+    assert run(edit(lambda by: by["outside-ci"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
     manifest.unlink()
     assert checks.check_claims_manifest(tmp_path)[0].level == "FAIL", "must FAIL when the manifest is missing"
 
@@ -10756,6 +10756,18 @@ def test_zk_claim_precise_check_discriminates(tmp_path):
     (tmp_path / "README.md").write_text(
         "# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\nNo boundary stated.\n")
     assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", "must FAIL without the boundary sentence"
+    # 2026-10-24: the positive definition bounds the word as tightly as the disclaimer did
+    POSITIVE = ("# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\n"
+                "Zero knowledge here means two specific things: a verification that stores no token "
+                "identifier, and a Merkle-membership proof.\n")
+    (tmp_path / "README.md").write_text(POSITIVE)
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "OK", "must PASS the positive definition"
+    (tmp_path / "README.md").write_text(POSITIVE.replace("means two specific things", "means many things"))
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition no longer bounds the word"
+    (tmp_path / "README.md").write_text(POSITIVE.split(": a verification")[0] + ".\n")
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition names neither of its two things"
 
 
 def test_no_scifi_schema_check_discriminates(tmp_path):
@@ -11026,6 +11038,31 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     # the two-witness overclaim returns
     write(readme=README + "Two independent witnesses for every cryptographic verdict.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on the two-witness overclaim"
+    # a README with no comparison is honest, as long as nothing is claimed
+    write(readme="# POLARIS\n\nPre-pilot.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", \
+        "must PASS a README with no comparison and nothing said about correlation"
+    write(readme="# POLARIS\n\nPre-pilot. Verification is unlinkable by default.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed with no two-sided correlation statement"
+    write(readme="# POLARIS\n\nA verifier stores a per-verifier handle.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when per-verifier handles are claimed with no two-sided correlation statement"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| Polaris | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a comparison returns, with an unbolded Polaris row, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| Polaris | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an unbolded Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| **Polaris ID** | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the comparison's row names Polaris by a longer name, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| **Polaris ID** | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a longer-named Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\nRelying parties cannot link two presentations.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed as 'cannot link' with no two-sided correlation statement"
 
 
 def test_detached_verifier_check_discriminates(tmp_path):
@@ -12323,6 +12360,9 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     # v9.324 (P8.2d): the gateway's order of operations IS the security argument; each
     # perturbation removes one leg.
     APP = (
+        "class _NoRedirect(urllib.request.HTTPRedirectHandler):\n"
+        "    def redirect_request(self, req, fp, code, msg, headers, newurl):\n        return None\n"
+        "_EXCHANGE_OPENER = urllib.request.build_opener(_NoRedirect)\n"
         "@app.route('/api/v1/exchange/<int:target_agency_id>', methods=['POST'])\n"
         "def api_v1_exchange(target_agency_id):\n"
         "    polaris-exchange-request/1 ; placeholder signature is not authentication\n"
@@ -12331,7 +12371,7 @@ def test_exchange_gateway_check_discriminates(tmp_path):
         "    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n"
         "    _consume_exchange_nonce(k, n)  INSERT INTO ExchangeNonce\n"
         "    up = _exchange_upstreams()[kind]  POLARIS_EXCHANGE_UPSTREAMS; A URL never comes from a request\n"
-        "    urllib.request.urlopen(up)\n"
+        "    _EXCHANGE_OPENER.open(up)\n"
         "    _build_exchange_receipt(target, target_agency_id, f, occurred_at=str(env.get('issued_at')))\n"
         "_REGISTRY_SERVICES = [{'kind': 'exchange'}]\n'exchange_kinds'\n"
     )
@@ -12364,9 +12404,25 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the gateway route"
     # forward BEFORE authorize -> FAIL (swap the two lines)
     swapped = APP.replace("    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n", "").replace(
-        "    urllib.request.urlopen(up)\n", "    urllib.request.urlopen(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
+        "    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
     write({'polaris_web/app.py': swapped})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the upstream is called before authorization"
+    # the forward through the default opener (which follows a 3xx to another host) -> FAIL
+    write({'polaris_web/app.py': APP.replace("    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    urllib.request.urlopen(up)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the gateway forwards through urllib.request.urlopen"
+    # a one-token signature edit must not hide the gateway's body from that scan
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def api_v1_exchange(target_agency_id: int):")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "OK", "control: an annotated signature is still the gateway"
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def api_v1_exchange(target_agency_id: int):").replace(
+        "    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    urllib.request.urlopen(up, timeout=10)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if urlopen is added under an edited signature"
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def exchange_view(target_agency_id):")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL when the gateway's body cannot be found"
+    # the opener built without the redirect refusal -> FAIL, both ways it can be lost
+    write({'polaris_web/app.py': APP.replace("build_opener(_NoRedirect)", "build_opener()")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the opener is built without the redirect refusal"
+    write({'polaris_web/app.py': APP.replace("        return None\n", "        return super().redirect_request(req, fp, code, msg, headers, newurl)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the handler's redirect_request follows the redirect"
     write({'polaris_web/app.py': APP.replace("A URL never comes from a request", "url = payload['url']")})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if a forwarding URL could come from the request"
     write({'polaris_web/app.py': APP + "    query('INSERT INTO ExchangeLog (body) VALUES (%s)', (body,))\n"})
@@ -13746,6 +13802,31 @@ def test_roadmap_consistent_check_discriminates(tmp_path):
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on a wrong stamp count"
     write({'ROADMAP.md': ROADMAP.replace("the protocol layer (P8, complete); ", "")})
     assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL if Have omits the protocol layer once P8 is done"
+    # 2026-10-24 (owner): the "Do not have" paragraph is optional, and the roadmap claims nothing no check here backs
+    no_list = ROADMAP.replace("**Do not have:** hardware tokens; an external team's docs-only integration; and every institutional prerequisite.\n\n", "")
+    write({'ROADMAP.md': no_list})
+    assert checks.check_roadmap_consistent(tmp_path)[0].level == "OK", "must PASS without a Do not have paragraph"
+    for claim, why in (("The sample has been independently audited.\n", "an outside audit in a sentence"),
+                       ("| P6 | Security | Penetration tested |\n", "a penetration test in a table row"),
+                       ("The signer uses FIPS 140-3 validated modules.\n", "validated cryptography"),
+                       ("Issuance conforms to NIST SP 800-63-4.\n", "an assessed 800-63 level"),
+                       ("The console is WCAG 2.2 AA compliant.\n", "accessibility conformance"),
+                       ("Audited by an outside firm, not by the author.\n", "a claim followed by a contrast"),
+                       ("Independently audited without a single critical finding.\n", "a claim followed by 'without'"),
+                       ("The console is WCAG 2.2 AA conformant, with no known failures.\n", "a claim followed by 'no'"),
+                       ("The sample completed an independent security audit in 2026.\n", "an outside audit as a noun"),
+                       ("A security audit by an outside firm covered the verifier.\n", "'security audit by'"),
+                       ("The project underwent an external security review.\n", "an outside review as a noun"),
+                       ("The sample, with no outside funding, was independently audited.\n", "an unrelated 'no' before the claim"),
+                       ("No findings remained after the sample was independently audited.\n", "a 'no' that negates something else"),
+                       ("| P6 | No regressions | Independently audited |\n", "a 'no' in an earlier table cell")):
+        write({'ROADMAP.md': no_list + "\n" + claim})
+        assert checks.check_roadmap_consistent(tmp_path)[0].level == "FAIL", "must FAIL on " + why
+    for negated in ("The sample has not been independently audited.\n", "The sample has not yet been independently audited.\n",
+                    "It has never been externally audited.\n", "No independent audit has been done.\n",
+                    "The sample does not claim WCAG 2.2 AA conformance.\n"):
+        write({'ROADMAP.md': no_list + "\n" + negated})
+        assert checks.check_roadmap_consistent(tmp_path)[0].level == "OK", "a negated sentence is not a claim: " + negated
 
 
 def test_ship_tool_check_discriminates(tmp_path):
@@ -15498,10 +15579,6 @@ def test_review_packet_check_discriminates(tmp_path):
     # v9.388 (P1.18 item 8): the ways a review packet stops being true. The real packet is the
     # fixture because the check resolves its witnesses against real files -- a synthetic one
     # would be testing a document nobody hands to a reviewer.
-    #
-    # The fixed-limitation case is the one worth having. Every other rot here makes the packet
-    # look BETTER than the system; that one makes it look WORSE, and nobody catches it because
-    # an out-of-date limitation reads as modesty.
     import re as _re
     import shutil
 
@@ -15514,12 +15591,11 @@ def test_review_packet_check_discriminates(tmp_path):
     #
     # Reading the witnesses off the packet removes the class: a witness added tomorrow is
     # copied tomorrow.
+    #
+    # Since 2026-10-24 the real packet may carry no witness at all; one left in it must resolve.
     PACKET_REL = "docs/REVIEW-PACKET.md"
     WITNESSED = sorted({m.group(1) for m in
                         _re.finditer(r"witness:([^:`\s]+)::", (REPO / PACKET_REL).read_text())})
-    assert len(WITNESSED) >= 8, (
-        "the packet's witnesses could not be read; a fixture that copies nothing would test "
-        "a packet whose every witness is missing, which fails for the wrong reason")
 
     def write(old=None, new=None):
         for rel in ['docs/REVIEW-PACKET.md',
@@ -15537,18 +15613,27 @@ def test_review_packet_check_discriminates(tmp_path):
     assert checks.check_review_packet(tmp_path)[0].level == "OK", \
         "the real packet must PASS: every witness resolves and every cited check exists"
 
-    # A LIMITATION THAT WAS FIXED. The entry has to go, and until it does the packet
-    # understates the system to the one audience that should not be misled either way.
-    write('witness:polaris_web/kms_standin.py::stand-in',
-          'witness:polaris_web/kms_standin.py::a real managed service')
+    # A WITNESS LEFT IN THE PACKET resolves, or the packet FAILs: the entry is fixed, or it was never true.
+    write('## 1. Threat matrix by subsystem',
+          '## 1. Threat matrix by subsystem\n\n`witness:scripts/polaris-review-packet-drill.py::import`')
+    assert checks.check_review_packet(tmp_path)[0].level == "OK", "a witness that resolves must PASS"
+    write('## 1. Threat matrix by subsystem',
+          '## 1. Threat matrix by subsystem\n\n`witness:scripts/polaris-review-packet-drill.py::a real managed service`')
     assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a limitation whose witness has gone must FAIL: it is fixed, or it was never true"
+        "a witness that no longer resolves must FAIL: it is fixed, or it was never true"
 
-    # THE PACKET STOPS SAYING NOBODY HAS REVIEWED IT.
-    write('has been reviewed by anybody outside this repository',
-          'has been audited by three independent firms')
-    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a packet that drops the unreviewed admission must FAIL"
+    # THE PACKET CLAIMS WHAT NO CHECK HERE CAN BACK.
+    for claim in ("**Status:** audited by three independent firms.",
+                  "**Status:** the system passed a penetration test.",
+                  "**Status:** independently reviewed in 2026.",
+                  "**Status:** a security audit by an outside firm covered it, not the maintainers.",
+                  "**Status:** the signer runs FIPS 140-3 validated cryptography.",
+                  "**Status:** issuance conforms to NIST SP 800-63-4.",
+                  "**Status:** the console is WCAG 2.2 AA compliant."):
+        write('**Status:** a packet, not a certificate.', claim)
+        assert checks.check_review_packet(tmp_path)[0].level == "FAIL", "must FAIL on: " + claim
+    write('**Status:** a packet, not a certificate.', '**Status:** it has not been independently reviewed.')
+    assert checks.check_review_packet(tmp_path)[0].level == "OK", "a negated sentence is not a claim"
 
     # A CITED CHECK THAT DOES NOT EXIST. The commonest rot: a rename.
     write('`check:audited_reads_are_logged`', '`check:audited_reads_are_definitely_logged`')
@@ -15556,14 +15641,9 @@ def test_review_packet_check_discriminates(tmp_path):
         "a citation naming a check that does not exist must FAIL"
 
     # A SECTION DELETED.
-    write('## 3. Guarantee-attack prompts', '## 3. Some further thoughts')
+    write('## 2. Guarantee-attack prompts', '## 2. Some further thoughts')
     assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "a packet missing one of its three sections must FAIL"
-
-    # THE WITNESSES STRIPPED, which would leave the limitations uncheckable.
-    write('`witness:', '`formerly:')
-    assert checks.check_review_packet(tmp_path)[0].level == "FAIL", \
-        "limitations with no witnesses must FAIL: nothing could tell they were fixed"
+        "a packet missing one of its two required sections must FAIL"
 
 
 def test_capacity_model_check_discriminates(tmp_path):
@@ -16908,7 +16988,7 @@ def test_accessibility_check_discriminates(tmp_path):
     DOC = ("A green run is a floor, not conformance. Automated testing detects roughly a\n"
            "third of WCAG failures. Polaris does not claim WCAG 2.2 AA conformance. Manual\n"
            "testing with assistive technology has not been done.\n")
-    ROADMAP = "Not claimed: accessibility conformance; any external audit.\n"
+    ROADMAP = "Planned: the console's next pages.\n"
     good = {
         'scripts/polaris-accessibility-drill.py': DRILL,
         'scripts/polaris-accessibility-drill.sh': RUNNER,
@@ -16974,10 +17054,17 @@ def test_accessibility_check_discriminates(tmp_path):
         assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
             f"the record must state: {phrase}"
 
-    # AND THE OUTWARD CLAIM, quietly upgraded because the checks now pass.
-    write({'ROADMAP.md': "Not claimed: any external audit.\n"})
+    # AND THE OUTWARD CLAIM, quietly upgraded because the checks now pass (2026-10-24: the
+    # surfaces no longer list it as not claimed; each refuses the claim instead).
+    write({'ROADMAP.md': "The console meets WCAG 2.2 AA conformance.\n"})
     assert checks.check_accessibility(tmp_path)[0].level == "FAIL", \
-        "removing the caveat turns a third of the criteria into an assertion about all of them"
+        "a roadmap that claims WCAG conformance turns a third of the criteria into an assertion about all of them"
+    write({'ROADMAP.md': ROADMAP, 'site/llms.txt': "- The console conforms to WCAG 2.2.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", "must FAIL when the site's llms.txt claims it"
+    write({'site/llms.txt': "- Accessibility conformance is not established.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "OK", "a negated sentence is not a claim"
+    write({'site/llms.txt': "- The console is WCAG 2.2 AA conformant, with no known failures.\n"})
+    assert checks.check_accessibility(tmp_path)[0].level == "FAIL", "a claim followed by 'no' is still a claim"
 
 
 def test_assurance_mapping_check_discriminates(tmp_path):
@@ -21315,16 +21402,13 @@ def test_documented_verifier_commands_run_check_discriminates(tmp_path):
 
 
 def test_duress_claims_are_aware_check_discriminates(tmp_path):
-    """The word was weakened because the evidence did not support it, not as a hedge.
+    """The word is the one the evidence supports: duress-aware.
 
-    The mechanism resists a casual coercer at the counter. It does not resist an informed
-    coercer beside the holder, and against lawful access it is net-negative: DuressEvent is
-    append-only with no purge path, so signalling duress manufactures indelible evidence
-    that the holder resisted.
+    The mechanism notices, records and routes a duress signal; it is built for a casual
+    coercer who does not know it exists, and DuressEvent is append-only.
     """
-    LEDGER = ("The casual coercer is resisted.\n"
-              "DuressEvent is append-only with no purge path, so lawful access is the case "
-              "the mechanism makes worse.\n"
+    LEDGER = ("The mechanism is built for the casual coercer who does not know it exists.\n"
+              "DuressEvent is append-only.\n"
               "The word is duress-aware.\n")
     CLEAN = "Polaris is an issuer-unlinkable, duress-aware identity-token system.\n"
 
@@ -21361,16 +21445,15 @@ def test_duress_claims_are_aware_check_discriminates(tmp_path):
         write(site_index_html=CLEAN + "It is %s.\n" % phrase)
         assert level(phrase) == "FAIL", "must FAIL on %r" % phrase
 
-    # The assessment has to say which coercer IS resisted, or the weaker word reads as a
-    # blanket rejection of a mechanism that works.
-    write(ledger=LEDGER.replace("The casual coercer is resisted.\n", ""))
+    # The assessment has to name the coercer the mechanism is built for.
+    write(ledger=LEDGER.replace("The mechanism is built for the casual coercer who does not know it exists.\n", ""))
     assert level("does not name the coercer") == "FAIL", \
-        "must FAIL when the assessment does not name the coercer the mechanism resists"
+        "must FAIL when the assessment does not name the coercer the mechanism is built for"
 
-    # And why lawful access is the case it worsens rather than merely misses.
-    write(ledger=LEDGER.replace("append-only with no purge path, ", ""))
-    assert level("lawful access") == "FAIL", \
-        "must FAIL when the assessment does not say why the record is indelible"
+    # And that the record is append-only, which the outward surfaces state.
+    write(ledger=LEDGER.replace("DuressEvent is append-only.\n", ""))
+    assert level("does not say that the duress record") == "FAIL", \
+        "must FAIL when the assessment does not say the record is append-only"
 
     write(ledger=None)
     assert level("could not be read") == "FAIL", \
@@ -24046,9 +24129,8 @@ def _write_outward(tmp_path, extra_readme=""):
     (tmp_path / "lab" / "duress").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docs" / "PRODUCTION-READINESS.md").write_text(LEDGER)
     (tmp_path / "lab" / "duress" / "README.md").write_text(
-        "The casual coercer is resisted.\n"
-        "DuressEvent is append-only with no purge path, so lawful access is the case "
-        "the mechanism makes worse.\n"
+        "The mechanism is built for the casual coercer who does not know it exists.\n"
+        "DuressEvent is append-only.\n"
         "The word is duress-aware.\n")
     for rel in checks._OUTWARD_SURFACES:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)

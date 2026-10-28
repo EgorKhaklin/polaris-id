@@ -367,15 +367,16 @@ updates:
         patterns:
           - "*"
 
-  # The interop harnesses' own manifests: Go (the irmago wallet), Gradle (the Kotlin wallets and
-  # Axle's harness) and Swift (the EUDI iOS wallet). Each pins the outside implementation it drives;
-  # one grouped PR a month per ecosystem, run against the published verifier by the wallet canary's
-  # pull_request trigger on lab/interop/**. Dependabot does not rewrite Gradle's dependency
-  # verification (axle/harness/gradle/verification-metadata.xml): a PR that bumps that harness
-  # needs the metadata regenerated before it can pass.
+  # The interop harnesses' own manifests: Go (the irmago wallet and the OID4VCgo mdoc witness),
+  # Gradle (the Kotlin wallets and Axle's harness) and Swift (the EUDI iOS wallet). Each pins the
+  # outside implementation it drives; one grouped PR a month per ecosystem, run against the
+  # published verifier by the wallet canary's pull_request trigger on lab/interop/**. Dependabot
+  # does not rewrite Gradle's dependency verification (axle/harness/gradle/verification-metadata.xml):
+  # a PR that bumps that harness needs the metadata regenerated before it can pass.
   - package-ecosystem: gomod
     directories:
       - /lab/interop/irmago/wallet
+      - /lab/interop/mdoc/witness-oid4vcgo
     schedule:
       interval: monthly
     cooldown:

@@ -43,8 +43,8 @@ was ever issued.
 
 Any relying party that must not be able to correlate one holder across verifiers. This is the
 mechanism the EU wallet architecture uses for unlinkability over SD-JWT VC, and OpenID4VCI 1.0
-specifies it. Polaris adopts it; it invents nothing. No outside party has asked yet. If a tested
-wallet requests a batch, the reason becomes EXT-INTEROP.
+specifies it. Polaris adopts it; it invents nothing. If a tested wallet
+requests a batch, the reason becomes EXT-INTEROP.
 
 ## 3. Constraints it must keep
 

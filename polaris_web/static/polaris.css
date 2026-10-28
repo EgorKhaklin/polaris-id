@@ -1322,8 +1322,6 @@ td.empty { border: 0; border-radius: 0; padding: var(--s-6); }
 .feature .icon { width: 20px; height: 20px; color: var(--gold); margin-bottom: var(--s-4); }
 .feature h3 { margin: 0 0 var(--s-2); font-size: 14.5px; }
 .feature p { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.6; }
-.limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s-3) var(--s-6); }
-.limits li { color: var(--ink-2); }
 .plain-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--s-3); }
 .plain-list li { display: flex; gap: var(--s-3); align-items: baseline; }
 .plain-list .icon { color: var(--ink-3); transform: translateY(2px); }

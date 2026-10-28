@@ -75,13 +75,11 @@ an operator can see a cache's behaviour without parsing the body.
 
 `Vary: Accept-Encoding` is set so a compressed and an uncompressed copy do not collide.
 
-## What this does not solve
+## Distribution
 
-Distribution at content-delivery scale is still an operator's deployment, not something the
-repository ships: there is no CDN configuration here, no origin-shield topology, and no
-measured cache hit rate at national volume. What is shipped is the property a CDN needs to be
-*safe* in front of this origin, which is that no correct cache can serve a status past the
-window its issuer signed. The remaining work is placement, and placement is the operator's.
+Distribution at content-delivery scale is an operator's deployment. What is shipped is the
+property a CDN needs to be *safe* in front of this origin, which is that no correct cache can
+serve a status past the window its issuer signed. Placement is the operator's.
 
 The monotonicity that makes a cached feed safe to compare against a newer one is a property
 of the underlying table rather than of the cache: `RevocationList` is append-only, so a feed
