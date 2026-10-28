@@ -88,6 +88,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- Revocation-feed input in polaris-sdk-python and polaris-sdk-ts.
+- Federation-manifest input in polaris-sdk-python and polaris-sdk-ts.
 - polaris-verify `verify_cross_authority_zk` (`--zk-proof`) applies the trust-edge rule `verify_cross_authority` applies: an edge whose signature does not verify, or whose signing key is not an active anchor of the manifest carrying it, is refused (it was counted), and the verdict reports `attestation_signed`. `require_signed_attestation`, and `--require-signed-attestation` on the command line, refuse an unsigned edge; by default every verifier still accepts version 1's unsigned edges, and the plain `--zk-proof` output says when it accepted one.
 - polaris-verify, polaris-sdk-python and polaris-sdk-ts: `verify_exchange_request` and `verify_exchange_receipt` (`verifyExchangeRequest`, `verifyExchangeReceipt`) apply the same trust-edge rule: a badly signed edge, or one whose signing key is not an active anchor of the manifest carrying it, no longer authorizes the requester, and the verdict reports `attestation_signed` (`attestationSigned`).
 - polaris-verify `verify_agent_grant` reads two signed fields it ignored: with `expected_context` (`--context` beside `--agent-grant`) a grant naming another context is not usable (`context_matches`), and an agent proof dated outside the grant's window, or more than 60 seconds ahead of the clock, proves nothing.

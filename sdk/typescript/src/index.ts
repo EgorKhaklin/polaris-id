@@ -1043,6 +1043,11 @@ export function verifyAttestation(att: any, attestingAgencyId?: number | null,
   return { authentic: ok, fresh: null, note: ok ? undefined : "the attestation signature is invalid" };
 }
 
+/** The formats the cross-authority decision and the exchange paths read by name, as the
+ * detached verifier reads them (WIRE-SPEC sections 3.1 and 3.3). */
+const MANIFEST_FORMAT = "polaris-federation-manifest/1";
+const REVOCATION_FEED_FORMAT = "polaris-revocation-feed/1";
+
 /** Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4). Accept
  * iff the authenticity pack is genuine, some federation manifest the relying party trusts
  * (authentic, fresh, signed by one of `trustedAnchors`) attests the credential's signing key in
@@ -1074,6 +1079,10 @@ export function verifyCrossAuthority(
   // A manifest set that is not an array is no manifests, as in the detached verifier:
   // `?? []` let `false` or an object through to `.map`, which threw (2026-09-30).
   for (const mm of (Array.isArray(manifests) ? manifests : []).map((m) => m ?? {})) {
+    // Only a federation manifest is read as one, as in the detached verifier. Another artifact
+    // signs neither `anchors` nor `attestations`, so an edge carried beside its signed fields is
+    // no authority's word, whatever key signed the rest.
+    if (mm.format !== MANIFEST_FORMAT) continue;
     const mv = verifySignedArtifact(mm, now);
     if (!(mv.authentic && mv.fresh)) continue;
     // Trusted iff the key that SIGNED the manifest (one of its own active anchors, which
@@ -1101,6 +1110,13 @@ export function verifyCrossAuthority(
   }
   if (revocationFeed != null) {
     const rf = revocationFeed ?? {};
+    // Only a revocation feed answers for revocation, as in the detached verifier. Another
+    // artifact the issuer's key signed (an epoch checkpoint, a manifest) lists nothing.
+    if (rf.format !== REVOCATION_FEED_FORMAT) {
+      return { decision: "reject", authentic: true, issuerTrusted: true, via,
+               reason: "the revocation feed is not a " + REVOCATION_FEED_FORMAT,
+               attestationSigned: signedEdge };
+    }
     const rv = verifySignedArtifact(rf, now);
     const bound = tokenKey !== null && hexText(rf.public_key_hex) === tokenKey;
     if (!(rv.authentic && rv.fresh && bound)) {
@@ -1596,6 +1612,8 @@ function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unk
   if (!want) return found;
   for (const raw of Array.isArray(manifests) ? manifests : []) {
     const m = raw && typeof raw === "object" ? raw : {};
+    // Only a federation manifest is read as one, as in the cross-authority decision.
+    if (m.format !== MANIFEST_FORMAT) continue;
     const mv = verifySignedArtifact(m, now ?? null, null);
     if (!(mv.authentic && mv.fresh === true)) continue;
     for (const att of Array.isArray(m.attestations) ? m.attestations : []) {

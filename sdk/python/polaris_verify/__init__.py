@@ -1174,6 +1174,12 @@ def verify_attestation(att: dict, attesting_agency_id=None, expected_key=None) -
     return ArtifactVerdict(bool(ok), None, None if ok else (note or "the attestation signature is invalid"), ran)
 
 
+#: The formats the cross-authority decision and the exchange paths read by name, as the
+#: detached verifier reads them (WIRE-SPEC sections 3.1 and 3.3).
+_MANIFEST_FORMAT = "polaris-federation-manifest/1"
+_REVOCATION_FEED_FORMAT = "polaris-revocation-feed/1"
+
+
 def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=None,
                            revocation_feed=None, now=None,
                            require_signed_attestation: bool = False) -> CrossAuthorityVerdict:
@@ -1204,6 +1210,11 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     # let `true` through to the loop, which raised TypeError (2026-09-30).
     for m in (manifests if isinstance(manifests, (list, tuple)) else []):
         m = m if isinstance(m, dict) else {}
+        # Only a federation manifest is read as one, as in the detached verifier. Another
+        # artifact signs neither `anchors` nor `attestations`, so an edge carried beside its
+        # signed fields is no authority's word, whatever key signed the rest.
+        if m.get("format") != _MANIFEST_FORMAT:
+            continue
         mv = verify_signed_artifact(m, now=now)   # manifest: signature + self-consistency + freshness
         if not (mv.authentic and mv.fresh):
             continue
@@ -1239,6 +1250,12 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         # A feed that is not an object is not authentic, as in the detached verifier; the
         # binding below read `.get` off it and raised AttributeError (2026-09-28).
         feed = revocation_feed if isinstance(revocation_feed, dict) else {}
+        # Only a revocation feed answers for revocation, as in the detached verifier. Another
+        # artifact the issuer's key signed (an epoch checkpoint, a manifest) lists nothing.
+        if feed.get("format") != _REVOCATION_FEED_FORMAT:
+            return CrossAuthorityVerdict("reject", True, True, via_str,
+                                         "the revocation feed is not a %s" % _REVOCATION_FEED_FORMAT,
+                                         signed_edge)
         rv = verify_signed_artifact(feed, now=now)
         bound = token_key is not None and _hex_text(feed.get("public_key_hex")) == token_key
         if not (rv.authentic and rv.fresh and bound):
@@ -1753,6 +1770,9 @@ def _exchange_authorities(key_hex, context_id, manifests, now=None):
         return found
     for m in (manifests if isinstance(manifests, (list, tuple)) else []):
         m = m if isinstance(m, dict) else {}
+        # Only a federation manifest is read as one, as in the cross-authority decision.
+        if m.get("format") != _MANIFEST_FORMAT:
+            continue
         mv = verify_signed_artifact(m, now=now)
         if not (mv.authentic and mv.fresh is True):
             continue

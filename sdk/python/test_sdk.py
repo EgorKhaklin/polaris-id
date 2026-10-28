@@ -1241,6 +1241,195 @@ class HostileFieldsAreAVerdictTests(unittest.TestCase):
         self.assertIsNone(verdict["pairwise_handle"])
 
 
+class _Key:
+    """An ML-DSA-65 key made by the test, signing each artifact the way its authority does:
+    SHA3-256 over the canonical JSON of the format's signed fields (a pack: of its serial)."""
+
+    def __init__(self):
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        self._sk = mldsa.MLDSA65PrivateKey.generate()
+        self.pk = self._sk.public_key().public_bytes_raw().hex()
+
+    def sign(self, body):
+        import hashlib
+        body = dict(body)
+        body.pop("signature_hex", None)
+        body.pop("public_key_hex", None)
+        digest = hashlib.sha3_256(pv._canonical(body, pv._ARTIFACT_KEYS[body["format"]])).digest()
+        return dict(body, signature_hex=self._sk.sign(digest).hex(), public_key_hex=self.pk)
+
+    def pack(self, token_value):
+        return {"format": "polaris-authenticity-pack/1", "token_value": token_value, "algorithm": "ML-DSA-65",
+                "public_key_hex": self.pk, "signature_hex": self._sk.sign(pv._digest(token_value)).hex()}
+
+
+_XA_NOW = "2026-05-01T00:00:30Z"
+_XA_ISSUED = "2026-05-01T00:00:00Z"
+_XA_EXPIRES = "2026-05-02T00:00:00Z"
+_XA_HOME = {"agency_id": 1, "name": "Home Authority"}
+_XA_ISSUER = {"agency_id": 2, "name": "Issuing Authority"}
+
+
+def _xa_checkpoint(authority):
+    """An epoch checkpoint in the shape the relying-party API serves it (WIRE-SPEC 3.2)."""
+    return {"format": "polaris-epoch-checkpoint/1", "authority": authority,
+            "epoch": {"number": 7, "root_hex": "ab" * 32, "committed_count": 3, "valid_until": None},
+            "prev": {"number": 6, "root_hex": "cd" * 32}, "as_of": _XA_ISSUED,
+            "issued_at": _XA_ISSUED, "expires_at": _XA_EXPIRES, "algorithm": "ML-DSA-65"}
+
+
+def _xa_feed(authority, leaves, issued=_XA_ISSUED, expires=_XA_EXPIRES):
+    leaves = sorted({x.lower() for x in leaves})
+    return {"format": "polaris-revocation-feed/1", "authority": authority, "epoch_number": 7,
+            "as_of": issued, "revoked_root_hex": pv._revoked_root(leaves), "revoked_count": len(leaves),
+            "revoked_leaves": leaves, "issued_at": issued, "expires_at": expires, "algorithm": "ML-DSA-65"}
+
+
+def _xa_manifest(authority, anchor_keys, attestations):
+    return {"format": "polaris-federation-manifest/1", "authority": authority,
+            "anchors": [{"public_key_hex": k, "status": "active"} for k in anchor_keys],
+            "attestations": attestations, "epoch": None, "revocation": None,
+            "issued_at": _XA_ISSUED, "expires_at": _XA_EXPIRES, "algorithm": "ML-DSA-65"}
+
+
+def _xa_edge(attested_key, signer=None, attesting=_XA_HOME):
+    """A trust edge naming `attested_key` in context 1: unsigned (the operator's word carried by
+    the manifest's signature), or signed by `signer` in the attesting agency's name."""
+    edge = {"attesting_agency_id": attesting["agency_id"], "attested_agency_id": 9,
+            "attested_public_key_hex": attested_key, "context_id": 1}
+    if signer is None:
+        return edge
+    return signer.sign(dict(edge, format="polaris-trust-attestation/1", attested_date="2026-04-30",
+                            valid_until="2026-06-01T00:00:00Z", algorithm="ML-DSA-65"))
+
+
+class OnlyARevocationFeedAnswersForRevocationTests(unittest.TestCase):
+    """verify_cross_authority reads a supplied revocation feed only when its `format` is
+    polaris-revocation-feed/1, as polaris-verify's verify_revocation_feed does. Another artifact
+    the issuer's key signed is refused, and the feed's other verdicts are unchanged."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not _mldsa_available():
+            raise unittest.SkipTest("cryptography lacks ML-DSA-65")
+        cls.home, cls.issuer, cls.stranger = _Key(), _Key(), _Key()
+        cls.tv = "XA-FEED-0001"
+        cls.pack = cls.issuer.pack(cls.tv)
+        cls.leaf = pv._sha3_hex(cls.tv)
+        cls.manifest = cls.home.sign(_xa_manifest(_XA_HOME, [cls.home.pk], [_xa_edge(cls.issuer.pk)]))
+
+    def decide(self, feed):
+        return pv.verify_cross_authority(self.pack, 1, [self.manifest], [self.home.pk], feed, now=_XA_NOW)
+
+    def test_an_artifact_of_another_format_signed_by_the_issuer_is_refused_as_the_feed(self):
+        checkpoint = self.issuer.sign(_xa_checkpoint(_XA_ISSUER))
+        for label, feed in (
+                ("the issuer's epoch checkpoint", checkpoint),
+                ("the issuer's epoch checkpoint with an unsigned revoked_leaves", dict(checkpoint, revoked_leaves=[])),
+                ("a manifest the issuer's key signed",
+                 self.issuer.sign(_xa_manifest(_XA_ISSUER, [self.issuer.pk], [])))):
+            with self.subTest(case=label):
+                self.assertTrue(pv.verify_signed_artifact(feed, now=_XA_NOW).authentic,
+                                "%s is authentic as itself" % label)
+                v = self.decide(feed)
+                self.assertEqual((v.decision, v.reason),
+                                 ("reject", "the revocation feed is not a polaris-revocation-feed/1"), label)
+
+    def test_a_real_feed_decides_as_before(self):
+        self.assertEqual(self.decide(None).decision, "accept", "no feed: the attestation decision alone")
+        self.assertEqual(self.decide(self.issuer.sign(_xa_feed(_XA_ISSUER, ["ef" * 32]))).decision, "accept",
+                         "the issuer's real feed listing another leaf")
+        v = self.decide(self.issuer.sign(_xa_feed(_XA_ISSUER, [self.leaf])))
+        self.assertEqual(v.decision, "reject")
+        self.assertIn("revoked", v.reason)
+        for label, feed in (
+                ("a feed signed by a stranger", self.stranger.sign(_xa_feed(_XA_ISSUER, []))),
+                ("an expired real feed", self.issuer.sign(_xa_feed(_XA_ISSUER, [], issued="2026-04-01T00:00:00Z",
+                                                                    expires="2026-04-02T00:00:00Z")))):
+            with self.subTest(case=label):
+                v = self.decide(feed)
+                self.assertEqual(v.decision, "reject", label)
+                self.assertIn("not authentic, fresh, and bound", v.reason)
+
+
+class OnlyAFederationManifestIsReadAsOneTests(unittest.TestCase):
+    """verify_cross_authority, verify_exchange_request and verify_exchange_receipt read trust
+    edges only off an object whose `format` is polaris-federation-manifest/1, as polaris-verify's
+    verify_manifest does. An epoch checkpoint or a revocation feed signed by the trusted key, with
+    an edge (and an anchor) carried beside its signed fields, is not read as a manifest, with
+    require_signed_attestation off and on."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not _mldsa_available():
+            raise unittest.SkipTest("cryptography lacks ML-DSA-65")
+        cls.home, cls.own = _Key(), _Key()
+        cls.pack = cls.own.pack("XA-MANIFEST-0001")
+        unsigned, signed = _xa_edge(cls.own.pk), _xa_edge(cls.own.pk, signer=cls.own)
+        own_anchor = [{"public_key_hex": cls.own.pk, "status": "active"}]
+        checkpoint = cls.home.sign(_xa_checkpoint(_XA_HOME))
+        feed = cls.home.sign(_xa_feed(_XA_HOME, []))
+        cls.substitutes = (
+            ("an epoch checkpoint carrying an edge", dict(checkpoint, attestations=[unsigned])),
+            ("a revocation feed carrying an edge", dict(feed, attestations=[unsigned])),
+            ("an epoch checkpoint carrying an anchor and an edge it signed",
+             dict(checkpoint, anchors=own_anchor, attestations=[signed])),
+            ("a revocation feed carrying an anchor and an edge it signed",
+             dict(feed, anchors=own_anchor, attestations=[signed])))
+        cls.real = cls.home.sign(_xa_manifest(_XA_HOME, [cls.home.pk], [unsigned]))
+        cls.real_signed = cls.home.sign(_xa_manifest(_XA_HOME, [cls.home.pk],
+                                                     [_xa_edge(cls.own.pk, signer=cls.home)]))
+        body = {"account": "notional-7", "ask": "balance"}
+        cls.request = cls.own.sign({
+            "format": "polaris-exchange-request/1", "requester": {"agency_id": 9, "public_key_hex": cls.own.pk},
+            "target": {"agency_id": 1}, "context_id": 1,
+            "request_hash": pv._sha3_hex(json.dumps(body, sort_keys=True, separators=(",", ":"))),
+            "nonce": "n-1", "issued_at": _XA_ISSUED, "algorithm": "ML-DSA-65"})
+        cls.receipt = cls.home.sign({
+            "format": "polaris-exchange-receipt/1", "requester": {"agency_id": 9, "public_key_hex": cls.own.pk},
+            "responder": {"agency_id": 1}, "context_id": 1, "request_hash": "aa" * 32,
+            "response_hash": "bb" * 32, "authorized_via": None, "occurred_at": _XA_ISSUED,
+            "algorithm": "ML-DSA-65"})
+
+    def decide(self, manifest, require_signed):
+        return pv.verify_cross_authority(self.pack, 1, [manifest], [self.home.pk], None, now=_XA_NOW,
+                                         require_signed_attestation=require_signed)
+
+    def test_another_format_carrying_an_edge_is_not_a_manifest_for_the_cross_authority_decision(self):
+        for label, sub in self.substitutes:
+            self.assertTrue(pv.verify_signed_artifact(sub, now=_XA_NOW).authentic, "%s is authentic as itself" % label)
+            for require_signed in (False, True):
+                with self.subTest(case=label, require_signed_attestation=require_signed):
+                    v = self.decide(sub, require_signed)
+                    self.assertEqual((v.decision, v.issuer_trusted, v.via), ("reject", False, None), label)
+
+    def test_another_format_carrying_an_edge_is_not_a_manifest_for_an_exchange_request(self):
+        for label, sub in self.substitutes:
+            with self.subTest(case=label):
+                v = pv.verify_exchange_request(self.request, trusted_manifests=[sub], now=_XA_NOW)
+                self.assertTrue(v.authentic, v.note)
+                self.assertEqual((v.requester_authorized, v.attestation_signed), (False, None), label)
+
+    def test_another_format_carrying_an_edge_is_not_a_manifest_for_an_exchange_receipt(self):
+        for label, sub in self.substitutes:
+            with self.subTest(case=label):
+                v = pv.verify_exchange_receipt(self.receipt, now=_XA_NOW, trusted_manifests=[sub])
+                self.assertTrue(v.authentic, v.note)
+                self.assertEqual((v.requester_authorized, v.via, v.attestation_signed), (False, None, None), label)
+
+    def test_a_real_manifest_decides_as_before(self):
+        v = self.decide(self.real, False)
+        self.assertEqual((v.decision, v.via, v.attestation_signed), ("accept", _XA_HOME, False))
+        self.assertEqual(self.decide(self.real, True).decision, "reject", "an unsigned edge, a signature required")
+        v = self.decide(self.real_signed, True)
+        self.assertEqual((v.decision, v.via, v.attestation_signed), ("accept", _XA_HOME, True))
+        for man, signed in ((self.real, False), (self.real_signed, True)):
+            q = pv.verify_exchange_request(self.request, trusted_manifests=[man], now=_XA_NOW)
+            self.assertEqual((q.requester_authorized, q.attestation_signed), (True, signed))
+            r = pv.verify_exchange_receipt(self.receipt, now=_XA_NOW, trusted_manifests=[man])
+            self.assertEqual((r.requester_authorized, r.via, r.attestation_signed), (True, _XA_HOME, signed))
+
+
 class SignedCountsAreNumbersTests(unittest.TestCase):
     """A signed count is a JSON number, never a boolean, and it must equal what it counts
     (2026-09-30, a three-way differential sweep of the published cases). Python's `==` has
