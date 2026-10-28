@@ -127,7 +127,7 @@ def _http_status_checker(issuer_url, anchor_keys=None):
         with urllib.request.urlopen(req, timeout=30) as r:
             assertion = json.loads(r.read())
         # With no anchor the answer is held to the credential's own key, as the docstring says;
-        # the detached verifier abstains there unless told so (2026-10-21).
+        # the detached verifier abstains there unless told so.
         d = _load_verifier().verify_stapled(credential, assertion, anchor_keys=anchor_keys,
                                             signature_only=anchor_keys is None)
         sa = d.get("status_assertion") or {}

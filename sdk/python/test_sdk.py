@@ -1866,7 +1866,7 @@ class HeldOutSemanticMutationsTests(unittest.TestCase):
 
 @unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
 class FreshnessComesFromSignedFieldsTests(unittest.TestCase):
-    """verify_signed_artifact's `fresh` comes only from fields the format signs (2026-10-21).
+    """verify_signed_artifact's `fresh` comes only from fields the format signs.
 
     Each vector below is a published, genuine one with only the window fields it does not sign
     added: the signature still verifies, and `fresh` must not follow them. The controls are the
@@ -2017,7 +2017,7 @@ class RefusalsNoTestTookTests(unittest.TestCase):
 
     @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
     def test_anchors_that_are_not_a_collection_trust_nothing(self):
-        # Trust is answered for an authentic signature only (2026-10-21), so this one is genuine.
+        # Trust is answered for an authentic signature only, so this one is genuine.
         import hashlib
         from cryptography.hazmat.primitives.asymmetric import mldsa
         sk = mldsa.MLDSA65PrivateKey.generate()
