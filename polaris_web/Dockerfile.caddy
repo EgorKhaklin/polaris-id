@@ -28,6 +28,18 @@
 # ============================================================================
 FROM caddy:2.11.4-builder-alpine@sha256:0aa610043dab5da82ad0a0268e46bb852785e6f5160f12f1c6fe3f42903d7e1b AS builder
 
+# The Go toolchain has a FLOOR, as x/crypto does below. This builder digest ships
+# Go 1.26.8, and the Go standard library is compiled into the binary: CVE-2026-56857
+# (CRITICAL, os.Root's Mkdir and MkdirAll can follow junctions out of the root) is
+# fixed in Go 1.26.9, and Trivy gates on fixable CRITICAL. GOTOOLCHAIN makes the go
+# command fetch go1.26.10, which also carries crypto/x509 security fixes, from the
+# module proxy, verified against the checksum database like the modules below.
+# Remove it once Dependabot's builder digest carries Go >= 1.26.10 on its own.
+ENV GOTOOLCHAIN=go1.26.10
+# Fail the build once that is true: the line above forces go1.26.10, so a builder
+# that ships a newer Go (or names none) would otherwise compile with the older one.
+RUN case "$GOLANG_VERSION" in 1.26.[0-9]) ;; *) echo "builder ships Go $GOLANG_VERSION: remove GOTOOLCHAIN=go1.26.10" >&2; exit 1;; esac
+
 # Compile the edge rate-limiter into the binary. Add future --with plugins here.
 #
 # The --replace line is a dependency FLOOR, not a plugin. Caddy 2.11.4's module
