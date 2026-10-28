@@ -11,7 +11,7 @@ Witnesses, each counted only for the stages its own code decides:
        SessionTranscript bytes its toHandover() builds, its PKIX trust (msoMdocIssuance), and its
        validity verdict. Its decoding, MSO signature, digests and device signature are walt.id's,
        the library that built the captures: reported, never counted.
-  owf  @owf/mdoc 0.8.2, witness_owf.mjs: its own SessionTranscript.forOid4Vp bytes, and every check
+  owf  @owf/mdoc 0.8.3, witness_owf.mjs: its own SessionTranscript.forOid4Vp bytes, and every check
        of Verifier.verifyDeviceResponse against that transcript (MSO signature, digests, validity,
        docType, device signature, the chain to the given roots, the DS certificate's countryName).
 
@@ -490,7 +490,25 @@ class WitnessEudiTests(unittest.TestCase):
             self.assertTrue("--network none" in line or "PHASE1" in line, line)
         lock = json.loads((HERE / "package-lock.json").read_text())
         self.assertTrue(all(v.get("integrity") for k, v in lock["packages"].items() if k))
-        self.assertEqual(lock["packages"]["node_modules/@owf/mdoc"]["version"], "0.8.2")
+        # Each version run.json records is the lockfile's, and every sentence naming it says so: a bump
+        # the witness was not run again on fails here.
+        results_md, readme = (HERE / "results.md").read_text(), (HERE.parent / "README.md").read_text()
+        named = {
+            ("owf_mdoc", "@owf/mdoc"): ((results_md, "the witness is @owf/mdoc %s**"),
+                                        (results_md, "| @owf/mdoc | %s and"), (readme, "@owf/mdoc %s counts")),
+            ("peculiar_x509", "@peculiar/x509"): ((results_md, "@peculiar/x509 %s's `X509ChainBuilder`"),),
+        }
+        for (key, pkg), said in named.items():
+            pinned = lock["packages"]["node_modules/" + pkg]["version"]
+            self.assertEqual(self.meta[key], pinned, "run.json records the %s the lockfile pins" % pkg)
+            for text, phrase in said:
+                self.assertIn(phrase % pinned, text)
+        # The context commit run.json records is the one witness_owf.mjs and results.md name.
+        stated = re.search(r"context\.ts at identity-common-ts ([0-9a-f]{8}) ", (HERE / "witness_owf.mjs").read_text())
+        self.assertTrue(stated, "witness_owf.mjs names the context commit")
+        self.assertRegex(self.meta["owf_context_commit"], r"^[0-9a-f]{40}$")
+        self.assertEqual(self.meta["owf_context_commit"][:8], stated.group(1))
+        self.assertIn("context.ts` at commit `%s`" % self.meta["owf_context_commit"], results_md)
         for key in ("eu_image", "eu_commit", "kotlinc_sha256", "node_image", "network", "phase1_hosts"):
             self.assertIn(key, self.meta)
         self.assertEqual(self.meta["network"], "none")

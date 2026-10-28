@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -590,6 +591,467 @@ class Rebinding(unittest.TestCase):
         for audience in ("https://verifier.test", "verifier", "x509_hash:", "origin:"):
             with self.assertRaises(ValueError, msg=audience):
                 mv.bind(audience=audience)
+
+
+MDOC = os.path.join(HERE, "..", "mdoc")
+MDOC_CONTROLS = ["md-accept-redirect", "md-accept-dcapi-oid4vp"]
+CLAIMS_FAMILY = ["md-sd-claim-absent", "md-sd-claim-sets-unmet", "md-sd-value-other"]
+# The vectors a device signature that verifies nothing accepts: the signature is what refuses each.
+SIGNATURE_FAMILY = ["md-st-nonce", "md-st-client-id-other", "md-st-client-id-no-prefix", "md-st-response-uri",
+                    "md-st-thumbprint-other-key", "md-st-thumbprint-absent", "md-st-dcapi-handover-on-redirect",
+                    "md-st-redirect-handover-on-dcapi", "md-st-dcapi-origin-prefixed", "md-st-dcapi-origin-other",
+                    "md-devicesig-other-key", "md-devicesig-doctype-other"]
+
+
+def _load_path(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class MdocVectors(unittest.TestCase):
+    """mdoc-vectors.json (area 1: the SessionTranscript and the device authentication; area 2 in part: the issuer
+    signature, the MSO and its digests; area 3: the claims the request asks for): what make_mdoc_vectors.py makes,
+    byte for byte and run to run; verified by lab/interop/mdoc/verify_mdoc.py to every expected verdict, with the
+    refusal for the vector's reason; and each vector's repaired twin, the same vector with its one defect put back,
+    accepted."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mm = _load("make_mdoc_vectors", "make_mdoc_vectors.py")
+        cls.rv = _load("run_vectors_mdoc", "run_vectors.py")
+        with open(os.path.join(HERE, "mdoc-vectors.json")) as fh:
+            cls.text = fh.read()
+        cls.doc = json.loads(cls.text)
+        cls.by_id = {v["id"]: v for v in cls.doc["vectors"]}
+
+    def _vm(self):
+        return _load_path("verify_mdoc_copy", os.path.join(MDOC, "verify_mdoc.py"))
+
+    def _judge(self, vm, vector, response=None, inputs=None):
+        import base64
+        import datetime
+        from cryptography import x509
+        raw = response or vector["response"]
+        raw = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+        roots = [x509.load_pem_x509_certificate(p.encode()) for p in vector["trust_anchors_pem"]]
+        at = datetime.datetime.fromisoformat(vector["at"].replace("Z", "+00:00"))
+        try:
+            vm.verify(raw, inputs or vector["inputs"], roots, at)
+        except vm.Refused as e:
+            return "reject", str(e)
+        return "accept", ""
+
+    def test_the_published_file_is_what_the_generator_makes(self):
+        self.assertEqual(json.dumps(self.mm.build(), indent=1) + "\n", self.text,
+                         "mdoc-vectors.json drifted from make_mdoc_vectors.py: regenerate it")
+
+    def test_two_runs_make_identical_files(self):
+        script = os.path.join(HERE, "make_mdoc_vectors.py")
+        runs = [subprocess.run([sys.executable, script], capture_output=True, check=True).stdout for _ in range(2)]
+        self.assertEqual(runs[0], runs[1])
+        self.assertEqual(runs[0].decode(), self.text)
+
+    def test_the_controls_come_first_and_cite_no_clause(self):
+        ids = [v["id"] for v in self.doc["vectors"]]
+        self.assertEqual(ids[:2], MDOC_CONTROLS)
+        for vid in MDOC_CONTROLS:
+            vector = self.by_id[vid]
+            self.assertEqual((vector["class"], vector["layer"], vector["expected"], vector["clauses"]),
+                             ("control", "control", "accept", []))
+            self.assertNotIn("repaired", vector)
+        self.assertEqual(len(ids), 34)
+        self.assertEqual(len(set(ids)), 34)
+
+    def test_every_vector_names_its_clause_and_grade(self):
+        for vector in self.doc["vectors"][2:]:
+            vid = vector["id"]
+            self.assertEqual(vector["expected"], "reject", vid)
+            self.assertIn(vector["class"], ("spec", "spec-implied", "policy"), vid)
+            self.assertIn(vector["layer"], self.doc["layers"], vid)
+            self.assertTrue(vector["clauses"], vid)
+            for clause in vector["clauses"]:
+                self.assertTrue(clause["ref"] and clause["text"], vid)
+                if clause["ref"].startswith("ISO"):
+                    # The ISO text was not read, so no ISO clause is quoted.
+                    self.assertTrue(clause["text"].startswith("not quoted"), vid)
+            unquoted = [c for c in vector["clauses"] if c["text"].startswith("not quoted")]
+            if vector["class"] == "spec":
+                # A spec grade rests on at least one clause whose text was read and is quoted.
+                self.assertLess(len(unquoted), len(vector["clauses"]), vid)
+            # A policy grade rests on its named policy, which the file states.
+            self.assertEqual("policy" in vector, vector["class"] == "policy", vid)
+            if vector["class"] == "policy":
+                self.assertIn(vector["policy"], self.doc["policies"], vid)
+            # Every ISO clause number carries its source: the implementation that gives it, with the edition that
+            # implementation names.
+            iso = [c["ref"] for c in vector["clauses"] if c["ref"].startswith("ISO")]
+            self.assertEqual("source" in vector, bool(iso), vid)
+            for number in re.findall(r"\d+(?:\.\d+)+|Table \d+", " ".join(iso)):
+                self.assertRegex(vector["source"], r"(?<![\d.])%s(?!\.?\d)" % re.escape(number), vid)
+            if "source" in vector:
+                self.assertEqual(vector["source"].count("OID4VCgo"), vector["source"].count(self.mm.OID4VCGO_EDITION),
+                                 vid)
+                self.assertEqual(vector["source"].count("@owf/mdoc"), vector["source"].count(self.mm.OWF_EDITION), vid)
+            # An outside implementation is named only as the source of a clause number, never beside a verdict.
+            rest = json.dumps({k: v for k, v in vector.items() if k != "source"})
+            for name in ("OID4VCgo", "@owf/mdoc", "mdoc-ts", "isomdl"):
+                self.assertNotIn(name, rest, vid)
+        for name in ("OID4VCgo", "@owf/mdoc", "mdoc-ts", "isomdl"):
+            self.assertNotIn(name, json.dumps({k: v for k, v in self.doc.items() if k != "vectors"}))
+        classes = {v["id"]: v["class"] for v in self.doc["vectors"]}
+        self.assertEqual([k for k, c in classes.items() if c == "spec-implied"],
+                         ["md-devicesig-not-detached", "md-devicesig-doctype-other", "md-devicesigned-unauthorized-ns",
+                          "md-issuerauth-sig-der", "md-issuerauth-crit-unknown", "md-mso-not-tag24",
+                          "md-digest-reencoded-item", "md-digest-alg-sha1", "md-digest-length", "md-doctype-vs-mso"])
+        self.assertEqual([k for k, c in classes.items() if c == "policy"],
+                         ["md-issuerauth-alg-curve", "md-sd-value-other"])
+        self.assertEqual(self.by_id["md-issuerauth-alg-curve"]["policy"], "alg-curve-pairing")
+        self.assertEqual(self.by_id["md-sd-value-other"]["policy"], "values-checked")
+        sources = {v["id"]: v["source"] for v in self.doc["vectors"] if "source" in v}
+        self.assertEqual(sorted(sources), ["md-devicesig-doctype-other", "md-devicesig-not-detached",
+                                           "md-devicesig-other-key", "md-devicesigned-unauthorized-ns",
+                                           "md-digest-alg-sha1", "md-digest-id-absent", "md-digest-length",
+                                           "md-digest-reencoded-item", "md-digest-value-modified", "md-doctype-vs-mso",
+                                           "md-issuerauth-sig-flipped", "md-mso-not-tag24"])
+        # Where two implementations number a clause differently, the source gives both, each with its edition.
+        self.assertEqual(sources["md-devicesigned-unauthorized-ns"],
+                         "@owf/mdoc 0.8.2 (formerly mdoc-ts) numbers the rule 9.1.3.4 and KeyAuthorizations 9.1.2.4, "
+                         "naming no edition there; OID4VCgo 0.49.0 numbers KeyAuthorizations 12.3.4 and the reader's "
+                         "check 12.8.2 step 1, citing the 2025-09-14 CD ballot resolution draft of the second edition")
+        # No edition is named but by an implementation, and by HAIP 1.0 in its own words.
+        self.assertEqual(self.text.count("18013-5:2021"), 1)
+        self.assertIn(self.mm.FROM_HAIP_TABLE, sources["md-digest-alg-sha1"])
+        # RFC 9360 is cited at its section 5 and at no other.
+        refs = [c["ref"] for v in self.doc["vectors"] for c in v["clauses"]]
+        self.assertIn("RFC 9360 5", refs)
+        self.assertEqual([r for r in refs if r.startswith("RFC 9360") and r != "RFC 9360 5"], [])
+
+    def test_every_client_id_carries_the_x509_san_dns_prefix_except_the_vector_that_strips_it(self):
+        for vector in self.doc["vectors"]:
+            for inputs in (vector["inputs"], vector.get("repaired", {}).get("inputs", {})):
+                if "client_id" in inputs:
+                    self.assertTrue(inputs["client_id"].startswith("x509_san_dns:"), vector["id"])
+            self.assertEqual(vector["trust_anchors_pem"], self.doc["vectors"][0]["trust_anchors_pem"])
+            self.assertEqual(vector["at"], self.doc["vectors"][0]["at"])
+
+    def test_the_minter_reproduces_the_specification_examples(self):
+        vm, mm = self._vm(), self.mm
+        import cbor2
+        self.assertEqual(mm.thumbprint(vm.SPEC_INPUTS["encryption_jwk"]).hex(), vm.SPEC_THUMBPRINT)
+        t = mm.redirect_transcript(vm.SPEC_INPUTS["client_id"], vm.SPEC_INPUTS["nonce"],
+                                   mm.thumbprint(vm.SPEC_INPUTS["encryption_jwk"]), vm.SPEC_INPUTS["response_uri"])
+        self.assertEqual(cbor2.dumps(t).hex(), vm.SPEC_TRANSCRIPT)
+        t = mm.dcapi_transcript(vm.SPEC_DCAPI_INPUTS["origin"], vm.SPEC_DCAPI_INPUTS["nonce"],
+                                mm.thumbprint(vm.SPEC_DCAPI_INPUTS["encryption_jwk"]))
+        self.assertEqual(cbor2.dumps(t).hex(), vm.SPEC_DCAPI_TRANSCRIPT)
+        self.assertTrue(vm.check_spec_vector())
+        self.assertTrue(vm.check_spec_vector_dcapi())
+
+    def test_every_random_is_32_bytes(self):
+        import base64
+        vm = self._vm()
+        short, items_seen = [], 0
+        for vector in self.doc["vectors"]:
+            for name, response in ((vector["id"], vector["response"]),
+                                   (vector["id"] + "+repaired", vector.get("repaired", {}).get("response"))):
+                if response is None:
+                    continue
+                raw = base64.urlsafe_b64decode(response + "=" * (-len(response) % 4))
+                for items in vm.load_all(raw)["documents"][0]["issuerSigned"]["nameSpaces"].values():
+                    for item in items:
+                        isi = vm.load_all(item.inner)
+                        items_seen += 1
+                        if len(isi["random"]) != 32:
+                            short.append((name, isi["elementIdentifier"], len(isi["random"])))
+        self.assertGreater(items_seen, 0)
+        self.assertEqual(short, [])
+
+    def test_verify_mdoc_reaches_every_expected_verdict_for_the_vectors_reason(self):
+        vm = self._vm()
+        negatives = [v["id"] for v in self.doc["vectors"] if v["expected"] == "reject"]
+        self.assertEqual(sorted(self.rv.VERIFY_MDOC_CHECKS), sorted(negatives))
+        for vector in self.doc["vectors"]:
+            got, why = self._judge(vm, vector)
+            self.assertEqual(got, vector["expected"], "%s: %s" % (vector["id"], why))
+            self.assertTrue(self.rv.judge("verify-mdoc", vector, got, why), "%s: %s" % (vector["id"], why))
+            self.assertEqual(self.rv.verify_mdoc(vector, self.doc["settings"])[0], vector["expected"])
+
+    def test_each_repaired_twin_is_accepted_and_differs_by_the_defect_only(self):
+        vm = self._vm()
+        twinned = [v for v in self.doc["vectors"] if "repaired" in v]
+        self.assertEqual([v["id"] for v in twinned], [v["id"] for v in self.doc["vectors"][2:]])
+        for vector in twinned:
+            twin = vector["repaired"]
+            self.assertEqual(self._judge(vm, vector, twin["response"], twin["inputs"]), ("accept", ""), vector["id"])
+            # The defect is in the verifier's inputs or in the response, never both.
+            self.assertTrue((twin["response"] == vector["response"]) != (twin["inputs"] == vector["inputs"]),
+                            vector["id"])
+        self.assertEqual(self.by_id["md-doctype-not-requested"]["repaired"]["response"],
+                         self.by_id["md-doctype-not-requested"]["response"])
+        self.assertNotEqual(self.by_id["md-doctype-not-requested"]["repaired"]["inputs"],
+                            self.by_id["md-doctype-not-requested"]["inputs"])
+        # A twin does not hide behind the control: the repaired unauthorized-namespace twin still carries the
+        # device-signed element, now authorized.
+        twin = self.by_id["md-devicesigned-unauthorized-ns"]["repaired"]["response"]
+        self.assertNotEqual(twin, self.by_id["md-accept-redirect"]["response"])
+        self.assertIn(self.mm.DEVICE_NS, self._device_signed(twin))
+
+    def _device_signed(self, response):
+        import base64
+        vm = self._vm()
+        raw = base64.urlsafe_b64decode(response + "=" * (-len(response) % 4))
+        return vm.load_all(vm.load_all(raw)["documents"][0]["deviceSigned"]["nameSpaces"].inner)
+
+    def test_without_the_device_signature_check_every_transcript_and_signer_vector_is_accepted(self):
+        # The detection side: a verifier that does not verify the DeviceSignature accepts exactly the family
+        # it refuses, and the controls stay accepted.
+        vm = self._vm()
+        real = vm.verify_cose
+        vm.verify_cose = lambda check, *a: "ES256" if check == "device signature" else real(check, *a)
+        for vector in self.doc["vectors"]:
+            got, why = self._judge(vm, vector)
+            self.assertEqual(got, "accept" if vector["id"] in SIGNATURE_FAMILY + MDOC_CONTROLS else vector["expected"],
+                             "%s: %s" % (vector["id"], why))
+
+    def test_without_the_key_type_check_the_okp_device_key_is_accepted(self):
+        vm = self._vm()
+        real = vm.cose_key
+        vm.cose_key = lambda k: real({**k, 1: 2})  # key type EC2 whatever the key says
+        vector = self.by_id["md-devicekey-kty-crv"]
+        self.assertEqual(self._judge(vm, vector), ("accept", ""))
+
+    def test_without_the_device_data_check_the_unauthorized_element_is_accepted(self):
+        vm = self._vm()
+        vm.device_signed_elements = lambda device_name_spaces, mso: []
+        self.assertEqual(self._judge(vm, self.by_id["md-devicesigned-unauthorized-ns"]), ("accept", ""))
+
+    def test_without_the_crit_check_the_unknown_critical_label_is_accepted(self):
+        vm = self._vm()
+        vm.crit_understood = lambda check, protected: None
+        self.assertEqual(self._judge(vm, self.by_id["md-issuerauth-crit-unknown"]), ("accept", ""))
+
+    def test_crit_refuses_an_unknown_label_an_empty_array_and_a_non_array(self):
+        vm = self._vm()
+        vm.crit_understood("issuer signature", {1: -7})
+        for crit in ([-65537], [1, -65537], [], 1, "alg"):
+            with self.assertRaises(vm.Refused, msg=repr(crit)) as ctx:
+                vm.crit_understood("issuer signature", {1: -7, 2: crit})
+            self.assertEqual(ctx.exception.check, "issuer signature")
+
+    def test_crit_refuses_a_label_absent_from_the_protected_header_and_a_crit_in_the_unprotected_one(self):
+        vm = self._vm()
+        import cbor2
+        vm.crit_understood("issuer signature", {1: -7, 2: [1, 33], 33: b"certificate"})
+        for protected in ({1: -7, 2: [33]}, {1: -7, 2: [1, 33]}):
+            with self.assertRaisesRegex(vm.Refused, "crit names 33, which is not in the protected header"):
+                vm.crit_understood("issuer signature", protected)
+        sign1 = [cbor2.dumps({1: -7}), {}, b"payload", b"signature"]
+        self.assertEqual(vm.cose_sign1(sign1, "issuer signature")[1], {1: -7})
+        for unprotected in ({2: [33], 33: b"certificate"}, {2: [-65537]}):
+            with self.assertRaisesRegex(vm.Refused, "crit in the unprotected header") as ctx:
+                vm.cose_sign1([sign1[0], unprotected, sign1[2], sign1[3]], "issuer signature")
+            self.assertEqual(ctx.exception.check, "issuer signature")
+
+    def test_x5chain_is_taken_from_the_protected_header_first(self):
+        vm = self._vm()
+        self.assertEqual(vm.x5chain_of({33: b"protected"}, {33: b"unprotected"}), [b"protected"])
+        self.assertEqual(vm.x5chain_of({33: [b"a", b"b"]}, {}), [b"a", b"b"])
+        self.assertEqual(vm.x5chain_of({1: -7}, {33: b"unprotected"}), [b"unprotected"])
+        for protected, unprotected in (({}, {}), ({33: []}, {33: b"unprotected"}), ({33: [1]}, {})):
+            with self.assertRaisesRegex(vm.Refused, "no x5chain"):
+                vm.x5chain_of(protected, unprotected)
+
+    def test_without_the_alg_curve_pairing_the_es384_signature_by_a_p256_key_is_accepted(self):
+        # The policy vector's one defect is the pairing: its signature is otherwise valid, r and s at the key's length.
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        vm = self._vm()
+        vm.ALGS = {**vm.ALGS, -35: ("ES384", ec.EllipticCurve, hashes.SHA384)}  # ES384 under any curve
+        self.assertEqual(self._judge(vm, self.by_id["md-issuerauth-alg-curve"]), ("accept", ""))
+
+    def _with_item(self, index, **fields):
+        # The redirect control's DeviceResponse with one IssuerSignedItem's fields replaced and nothing else: the MSO
+        # and its signature stay as they were, so an item the item checks let through is refused at its digest.
+        import base64
+        import cbor2
+        control = self.by_id["md-accept-redirect"]
+        response = cbor2.loads(base64.urlsafe_b64decode(control["response"] + "=" * (-len(control["response"]) % 4)))
+        items = response["documents"][0]["issuerSigned"]["nameSpaces"][self.mm.MDL_NS]
+        item = {k: v for k, v in cbor2.loads(items[index].value).items() if k not in fields or fields[k] is not None}
+        item.update({k: v for k, v in fields.items() if v is not None})
+        items[index] = cbor2.CBORTag(24, cbor2.dumps(item))
+        return base64.urlsafe_b64encode(cbor2.dumps(response)).decode().rstrip("=")
+
+    def test_a_random_shorter_than_the_minimum_is_refused_before_its_digest(self):
+        control = self.by_id["md-accept-redirect"]
+        self.assertEqual(self._vm().RANDOM_MIN, 16)
+        stale = "digests: org.iso.18013.5.1/family_name (digestID 0) does not match the MSO"
+        for size, minimum, reason in ((15, 16, "digests: org.iso.18013.5.1/family_name (digestID 0) has a random of 15 "
+                                                "bytes, fewer than 16"),
+                                      (16, 16, stale), (15, 15, stale),
+                                      (16, 17, "digests: org.iso.18013.5.1/family_name (digestID 0) has a random of 16 "
+                                               "bytes, fewer than 17")):
+            vm = self._vm()
+            vm.RANDOM_MIN = minimum
+            self.assertEqual(self._judge(vm, control, self._with_item(0, random=b"\x01" * size)), ("reject", reason),
+                             (size, minimum))
+
+    def test_a_missing_or_repeated_digest_id_is_refused(self):
+        control = self.by_id["md-accept-redirect"]
+        for index, digest_id in ((1, 0), (0, None), (0, "0")):
+            self.assertEqual(self._judge(self._vm(), control, self._with_item(index, digestID=digest_id)),
+                             ("reject", "digests: missing or repeated digestID in 'org.iso.18013.5.1'"), digest_id)
+        self.assertEqual(self._judge(self._vm(), control, self._with_item(2, digestID=2))[0], "accept")
+
+    def test_an_alg_the_protected_header_lacks_or_names_otherwise_is_refused(self):
+        vm = self._vm()
+        for protected in ({}, {1: -8}, {1: "ES256"}, {33: b"certificate"}):
+            with self.assertRaisesRegex(vm.Refused, "is not ES256/ES384 in the protected header") as ctx:
+                vm.verify_cose("issuer signature", None, b"", protected, b"payload", b"signature")
+            self.assertEqual(ctx.exception.check, "issuer signature")
+
+    def test_a_digest_id_the_mso_lacks_is_refused_as_having_no_digest(self):
+        vm = self._vm()
+        self.assertEqual(self._judge(vm, self.by_id["md-digest-id-absent"]),
+                         ("reject", "digests: org.iso.18013.5.1/birth_date (digestID 2) has no digest in the MSO"))
+        self.assertEqual(self._judge(vm, self.by_id["md-digest-value-modified"]),
+                         ("reject", "digests: org.iso.18013.5.1/family_name (digestID 0) does not match the MSO"))
+
+    def test_the_requested_doctype_is_checked_only_when_the_inputs_carry_it(self):
+        vm = self._vm()
+        vector = self.by_id["md-doctype-not-requested"]
+        inputs = {k: v for k, v in vector["inputs"].items() if k != "doctype_value"}
+        self.assertEqual(self._judge(vm, vector, inputs=inputs), ("accept", ""))
+        self.assertEqual(self._judge(vm, vector, inputs=dict(inputs, doctype_value=5))[0], "reject")
+
+    def test_without_the_requested_claims_check_the_claims_vectors_are_accepted(self):
+        vm = self._vm()
+        vm.requested_claims = lambda inputs, elements, log: None
+        for vector in self.doc["vectors"]:
+            got, why = self._judge(vm, vector)
+            self.assertEqual(got, "accept" if vector["id"] in CLAIMS_FAMILY + MDOC_CONTROLS else vector["expected"],
+                             "%s: %s" % (vector["id"], why))
+
+    def test_the_requested_claims_are_checked_only_when_the_inputs_carry_them(self):
+        vm = self._vm()
+        vector = self.by_id["md-sd-claim-absent"]
+        inputs = {k: v for k, v in vector["inputs"].items() if k != "claims"}
+        self.assertEqual(self._judge(vm, vector, inputs=inputs), ("accept", ""))
+        self.assertEqual(self._judge(vm, vector, inputs=dict(inputs, claim_sets=[["a"]])),
+                         ("reject", "requested claims: claim_sets without claims (OpenID4VP 1.0 6.4.1)"))
+        self.assertEqual(self._judge(self._vm(), self.by_id["md-accept-redirect"])[0], "accept")
+
+    def test_one_claim_sets_option_is_met_and_nothing_outside_it_is_disclosed(self):
+        # md-sd-claim-sets-unmet asks for family_name with birth_date, or for given_name: either option alone is
+        # accepted, both together are not, since the second option's element was not selected.
+        import base64
+        vm = self._vm()
+        vector = self.by_id["md-sd-claim-sets-unmet"]
+        for disclosed, verdict in ((("family_name", "birth_date"), ("accept", "")), (("given_name",), ("accept", "")),
+                                   (("family_name", "birth_date", "given_name"),
+                                    ("reject", "requested claims: org.iso.18013.5.1/given_name is disclosed but not "
+                                               "requested"))):
+            response = base64.urlsafe_b64encode(self.mm.mint(transcript=self.mm._rt(), disclosed=disclosed))
+            self.assertEqual(self._judge(vm, vector, response.decode().rstrip("="), vector["repaired"]["inputs"]),
+                             verdict, disclosed)
+
+    def test_an_element_disclosed_outside_the_requested_claims_is_refused(self):
+        vm = self._vm()
+        claims = {"claims": [{"path": [self.mm.MDL_NS, "family_name"]}]}
+        elements = {(self.mm.MDL_NS, "family_name"): "Mustermann"}
+        vm.requested_claims(claims, elements, lambda c, d: None)
+        with self.assertRaisesRegex(vm.Refused, "org.iso.18013.5.1/given_name is disclosed but not requested"):
+            vm.requested_claims(claims, {**elements, (self.mm.MDL_NS, "given_name"): "Erika"}, lambda c, d: None)
+
+    def test_a_claims_path_is_two_strings_and_a_value_matches_in_type_and_value(self):
+        import cbor2
+        vm = self._vm()
+        elements = {(self.mm.MDL_NS, "family_name"): "Mustermann"}
+        vm.requested_claims({"claims": [{"path": [self.mm.MDL_NS, "family_name"], "values": ["Mustermann"]}]},
+                            elements, lambda c, d: None)
+        for claims in ([{"path": ["family_name"]}], [{"path": [self.mm.MDL_NS, "family_name", 0]}],
+                       [{"path": [self.mm.MDL_NS, 5]}], [{"path": [self.mm.MDL_NS, "family_name"], "values": []}],
+                       [], "family_name"):
+            with self.assertRaises(vm.Refused, msg=repr(claims)) as ctx:
+                vm.requested_claims({"claims": claims}, elements, lambda c, d: None)
+            self.assertEqual(ctx.exception.check, "requested claims")
+        self.assertTrue(vm._value_matches("Mustermann", ["Erika", "Mustermann"]))
+        self.assertTrue(vm._value_matches(1, [1]))
+        for value, values in ((True, [1]), (1, [True]), ("1", [1]), ("Mustermann", ["mustermann"]),
+                              (cbor2.CBORTag(1004, "1964-08-12"), ["1964-08-12"])):
+            self.assertFalse(vm._value_matches(value, values), (value, values))
+
+    def test_key_authorizations_authorize_a_namespace_or_one_element(self):
+        import cbor2
+        vm = self._vm()
+        ns, other = self.mm.DEVICE_NS, "org.example.other"
+        signed = cbor2.dumps({ns: {"a": 1, "b": 2}})
+
+        def mso(auth):
+            return {"deviceKeyInfo": {"keyAuthorizations": auth} if auth is not None else {}}
+        self.assertEqual(vm.device_signed_elements(signed, mso({"nameSpaces": [ns]})), [ns + "/a", ns + "/b"])
+        self.assertEqual(vm.device_signed_elements(signed, mso({"dataElements": {ns: ["a", "b", "c"]}})),
+                         [ns + "/a", ns + "/b"])
+        self.assertEqual(vm.device_signed_elements(cbor2.dumps({}), mso(None)), [])
+        for auth in (None, {}, {"nameSpaces": [other]}, {"dataElements": {ns: ["a"]}}, {"dataElements": {other: ["a", "b"]}},
+                     {"nameSpaces": "org.example.device"}):
+            with self.assertRaises(vm.Refused, msg=repr(auth)) as ctx:
+                vm.device_signed_elements(signed, mso(auth))
+            self.assertEqual(ctx.exception.check, "device data")
+        with self.assertRaises(vm.Refused):
+            vm.device_signed_elements(cbor2.dumps([1]), mso(None))
+
+    def test_the_run_passes_and_says_done(self):
+        run = subprocess.run([sys.executable, os.path.join(HERE, "run_vectors.py"),
+                              os.path.join(HERE, "mdoc-vectors.json"), "--adapter", "verify-mdoc"],
+                             capture_output=True, check=False)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertTrue(run.stdout.endswith(b"done\n"), run.stdout[-200:])
+        self.assertIn(b"md-st-nonce+repaired", run.stdout)
+
+    def _main(self, doc, adapter):
+        rv = _load("run_vectors_mdoc_main", "run_vectors.py")
+        rv.ADAPTERS["verify-mdoc"] = adapter
+        tmp = tempfile.mkdtemp(prefix="mdoc-main-")
+        self.addCleanup(shutil.rmtree, tmp)
+        path = os.path.join(tmp, "mdoc-vectors.json")
+        with open(path, "w") as fh:
+            json.dump(doc, fh)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rv.main([path, "--adapter", "verify-mdoc"])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_run_fails_when_a_repaired_twin_is_refused(self):
+        real = self.rv.verify_mdoc
+
+        def refuses_one_twin(vector, settings):
+            if vector["id"] == "md-st-nonce+repaired":
+                return "reject", "device signature: refused"
+            return real(vector, settings)
+        code, out, err = self._main(self.doc, refuses_one_twin)
+        self.assertEqual(code, 1, out)
+        self.assertIn("a repaired twin was refused", err)
+        self.assertNotIn("done", out)
+
+    def test_the_run_fails_without_a_control_and_when_a_control_is_refused(self):
+        negatives = [v for v in self.doc["vectors"] if v["expected"] == "reject"]
+        code, out, _ = self._main(dict(self.doc, vectors=negatives), self.rv.verify_mdoc)
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("done", out)
+        real = self.rv.verify_mdoc
+        code, out, err = self._main(self.doc, lambda v, st: ("reject", "x: y") if v["id"] == MDOC_CONTROLS[0]
+                                    else real(v, st))
+        self.assertEqual(code, 1, out)
+        self.assertIn("a control was refused", err)
+
+    def test_a_refusal_for_another_check_fails(self):
+        vector = self.by_id["md-devicekey-kty-crv"]
+        self.assertTrue(self.rv.judge("verify-mdoc", vector, "reject", "device key: deviceKey is not an EC2 key"))
+        self.assertFalse(self.rv.judge("verify-mdoc", vector, "reject", "device signature: does not verify"))
+        self.assertFalse(self.rv.judge("verify-mdoc", vector, "accept", ""))
 
 
 if __name__ == "__main__":

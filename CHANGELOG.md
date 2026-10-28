@@ -11,6 +11,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Security
 
+- The exchange gateway forwards only to the upstream its operator configured: it follows no redirect, and a redirect, an answer over the request size limit (refused without being read to its end) or one shorter than its declared length is the documented `502 upstream_unavailable` (rp_api.py).
 - The responder-signed mint and holder-signing routes spend their per-principal rate limits (`exmint:` per authority, `sign:` per credential) only after the caller authenticates, so an unauthenticated caller can no longer fill a named authority's or credential's bucket and deny it the route until the limit resets (rp_api.py).
 - OpenTelemetry moves to 1.45.1, with its instrumentations at 0.66b1: opentelemetry-api before 1.45.1 parses an inbound `tracestate` header in time quadratic in its length (GHSA-xcq7-p3pf-p88h). Polaris reaches that parser only with tracing on (`POLARIS_OTEL`) behind a trusted proxy (`POLARIS_TRUST_PROXY`).
 - The OpenTimestamps tools in lab/strategy/013 install GitPython 3.2.1, the release GHSA-83vg-56qc-22m7 names as patched: GitPython 3.2.0 and earlier validate a submodule's `.git` path only after cloning into it, and 3.2.0 came in through opentimestamps-client. Dependabot now reads the hash-pinned requirements in lab/strategy/013, lab/strategy/007 and lab/interop/mdoc, which it did not before. lab/strategy/007's gate image moves to cryptography 50.0.2 and pycparser 3.11, the product's pins: its header said it pinned what the product does, and it had been left at 50.0.1 and 3.0. Lab only; no product change.
@@ -18,9 +19,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- The stranger path's `lab/interop/waltid/setup.sh` can be run again on the same walt.id container after `polaris-oid4vp keygen` made new certificates. A second run left walt.id trusting the first TLS certificate (keytool refuses an alias that exists, and the error was discarded) and made its wallet on the first run's stores, so the wallet also held the first credential (with the certificate fixed, walt.id presented that one, and the verifier refused it under the new issuer key). Each run now replaces the trusted certificate and makes its wallet on stores of its own; a keytool or store error stops the run. docs/STRANGER-PATH.md is unchanged: removing the container before a second run stays the path it gives.
+
 - The project site scopes five sentences to the documents behind them: recovery after total loss runs through three channels, one of them a witness from a second authority (it added "never by one operator", which a holder of the application's database credential can defeat: docs/design/recovery-ceremony.md); a migration never leaves a token without an active signature (it said "exactly one active"; both stay active through the window); four of the five database rules are held by the database itself (the disclosure level is the application's, with the CHECK behind it); zero-knowledge mode proves a valid token exists without revealing identity (it said "no identifier at all"); and ProtocolSoup is listed as a wallet harness (the Foundation's listing names a commit other than the v4.0.0 tested here).
 
 - The readiness ledger and the paper (v3, English and Russian) said nothing floors an epoch's anonymity set above one. Since 1.0.0-rc.46 an epoch below `polaris.min_epoch_anonymity_set` (20 unless set) is not closed, and a proof against a smaller one answers "privacy unavailable"; above the floor no verdict reports the set's size. Both corrections tables record it. The rebuilt PDFs, the mathematical edition included, also carry the 2026-10-21 correction of which pages return no location for a zero-knowledge event.
+
+- The transparency monitor and witness take `--log timestamps` and follow the timestamp log (`polaris-timestamp-log`), as docs/design/timestamp-transparency.md and docs/reference/API.md say they do; before, each stopped at its options with exit 2 (scripts/polaris-transparency-monitor.py, scripts/polaris-transparency-witness.py).
 
 ### Added
 

@@ -651,10 +651,11 @@ psql -d polaris_restored -f polaris_sql/08_tests.sql
 ```
 
 If this was a real recovery (not a drill), **rotate every secret next**;
-assume the prior secrets are also compromised:
+assume the prior secrets are also compromised. `--drop-old` keeps no retired
+session key, so every session the old key signed ends:
 
 ```bash
-./scripts/polaris-rotate-secret.sh polaris_secret_key
+./scripts/polaris-rotate-secret.sh polaris_secret_key --drop-old
 ./scripts/polaris-rotate-secret.sh polaris_db_password
 ./scripts/polaris-rotate-secret.sh polaris_db_root_password
 ```
@@ -1456,8 +1457,9 @@ the app itself is down (see [DR.md](DR.md), section 4.1).
 
 4. **Rotate:** new password (`polaris-id user-passwd <username>`), new session
    secret if the compromise is widespread
-   (`./scripts/polaris-rotate-secret.sh polaris_secret_key` invalidates ALL
-   sessions).
+   (`./scripts/polaris-rotate-secret.sh polaris_secret_key --drop-old` keeps no
+   retired key, so every session ends; without `--drop-old` the retired key
+   still verifies the sessions it signed).
 
 5. **Document:** record a dated post-mortem
    ([DR.md, section 9, Post-incident review](DR.md); the internal summary
@@ -1618,8 +1620,10 @@ docker compose -f polaris_web/docker-compose.prod.yml down -v
 
 ### "Login redirects to /login again"
 
-Cause: `POLARIS_SECRET_KEY` was rotated. All session cookies signed under the
-old key now fail validation. Expected behavior; operators must sign in again.
+Cause: `POLARIS_SECRET_KEY` was rotated with `--drop-old`, or rotated twice. A
+plain rotation keeps the retired key, so the sessions it signed still verify;
+after `--drop-old`, or a second rotation, they fail validation. Expected
+behavior; operators must sign in again.
 
 ### "Localhost refused to connect" (dev launcher only)
 

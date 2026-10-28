@@ -9,8 +9,9 @@
 # eu   the EU reference verifier, eudi-srv-verifier-endpoint v0.12.0, its published image pinned by
 #      digest. Witness.kt is compiled against the image's own classes (kotlinc 2.4.0, SHA-256
 #      pinned, in the pinned JDK image, no network) and run on the image's own JRE, no network.
-# owf  @owf/mdoc 0.8.2, witness_owf.mjs, in the pinned Node image, no network. Its dependencies come
-#      from package-lock.json (integrity-checked) in a separate phase: network on, npm ci only, a
+# owf  @owf/mdoc as package-lock.json pins it (run.json records the version installed),
+#      witness_owf.mjs, in the pinned Node image, no network. Its dependencies come from
+#      package-lock.json (integrity-checked) in a separate phase: network on, npm ci only, a
 #      fresh named volume and nothing else mounted; the hosts it contacted are logged; the volume
 #      is deleted at the end.
 # Every witness container runs with --network none, a read-only root and read-only mounts of the
@@ -86,7 +87,7 @@ docker run --rm --network none -v "$WORK/kotlinc":/kotlinc:ro -v "$WORK/workspac
 docker run --rm --network none --platform linux/amd64 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --entrypoint "$JRE" -v "$WORK/driver":/driver:ro -v "$MDOC":/captures:ro -v "$WORK/inputs":/inputs:ro -v "$WORK/jobs.json":/in/jobs.json:ro "$EU_IMAGE" \
   -cp '/workspace/BOOT-INF/classes:/workspace/BOOT-INF/lib/*:/driver' WitnessKt /in/jobs.json > "$WORK/eu.out" 2> "$WORK/eu.err" || { tail -20 "$WORK/eu.err" >&2; exit 1; }
 
-echo "== owf: @owf/mdoc 0.8.2 in $NODE_IMAGE"
+echo "== owf: @owf/mdoc in $NODE_IMAGE"
 docker volume create "$PHASE1_VOL" >/dev/null
 # Phase 1, the only one with a network: npm ci from package-lock.json into the fresh volume. Every
 # fetch npm logs is kept (results/phase1-fetches.txt), and the hosts are read from that log.
@@ -95,6 +96,13 @@ COPYFILE_DISABLE=1 tar -C "$HERE" -cf - package.json package-lock.json | docker 
 grep -oE "https?://[^/ ]+" "$WORK/phase1-fetches.txt" | sort -u > "$WORK/phase1.hosts"
 [ -s "$WORK/phase1.hosts" ] || { echo "phase 1 logged no fetch" >&2; exit 1; }
 sed 's/^/        phase 1 contacted /' "$WORK/phase1.hosts"
+# The versions run.json records are the installed packages' own, never literals.
+VERSIONS="$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 -v "$PHASE1_VOL":/deps:ro "$NODE_IMAGE" \
+  node -p "['@owf/mdoc', '@peculiar/x509'].map((p) => require('/deps/node_modules/' + p + '/package.json').version).join(' ')")"
+read -r OWF_MDOC PECULIAR_X509 <<<"$VERSIONS"
+[[ "$OWF_MDOC $PECULIAR_X509" == "$VERSIONS" && "$OWF_MDOC" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$PECULIAR_X509" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || { echo "the installed versions unread: '$VERSIONS'" >&2; exit 1; }
+echo "        @owf/mdoc $OWF_MDOC and @peculiar/x509 $PECULIAR_X509 installed"
 # Phase 2: the volume read-only; the script beside a link to its node_modules, in a tmpfs.
 owf() {  # $1 the witness script, $2 its output
   docker run --rm --network none --read-only --tmpfs /w --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 -v "$PHASE1_VOL":/deps:ro -v "$1":/s/witness_owf.mjs:ro -v "$MDOC":/captures:ro -v "$WORK/inputs":/inputs:ro -v "$WORK/jobs.json":/in/jobs.json:ro "$NODE_IMAGE" \
@@ -117,13 +125,13 @@ done
 for w in eu owf; do sed -n 's/^WITNESS //p' "$WORK/$w.out" > "$RESULTS/$w.jsonl"; done
 cp "$WORK/jobs.json" "$WORK/inputs/unrelated-root.pem" "$WORK/phase1-fetches.txt" "$RESULTS/"
 write_run() {  # $1 the tests the witness mutation failed ("pending" before it ran)
-  "$PYTHON" -I - "$RESULTS/run.json" "$WORK/phase1.hosts" "$EU_IMAGE" "$EU_COMMIT" "$JDK_IMAGE" "$NODE_IMAGE" "$KOTLINC_SHA256" "$(docker version --format '{{.Server.Version}}')" "$1" <<'EOF'
+  "$PYTHON" -I - "$RESULTS/run.json" "$WORK/phase1.hosts" "$EU_IMAGE" "$EU_COMMIT" "$JDK_IMAGE" "$NODE_IMAGE" "$KOTLINC_SHA256" "$(docker version --format '{{.Server.Version}}')" "$1" "$OWF_MDOC" "$PECULIAR_X509" <<'EOF'
 import datetime, json, sys
-out, hosts, eu_image, eu_commit, jdk, node, kotlinc, docker, mutation = sys.argv[1:]
+out, hosts, eu_image, eu_commit, jdk, node, kotlinc, docker, mutation, owf_mdoc, peculiar_x509 = sys.argv[1:]
 json.dump({
     "ran_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "eu_image": eu_image, "eu_commit": eu_commit, "jdk_image": jdk, "node_image": node,
-    "kotlinc_sha256": kotlinc, "owf_mdoc": "0.8.2", "owf_context_commit": "0666f743e7fccab8ac97ce92191055e12d745ebb",
+    "kotlinc_sha256": kotlinc, "owf_mdoc": owf_mdoc, "peculiar_x509": peculiar_x509, "owf_context_commit": "0666f743e7fccab8ac97ce92191055e12d745ebb",
     "network": "none", "docker": docker,
     "phase1_hosts": sorted({h.split("://", 1)[1] for h in open(hosts).read().split()}),
     "owf_sign1_verify_true_fails": mutation.split(),

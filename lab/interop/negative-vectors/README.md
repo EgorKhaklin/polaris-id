@@ -104,6 +104,13 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 - a run with no vectors, no control or no judged negative fails;
 - the views equal the generator's output, and a view with no vectors or a missing pair file fails;
 - each certificate defect is the only one, because the same chain repaired is accepted.
+- `mdoc-vectors.json` equals its generator's output, run to run; `verify_mdoc.py` reaches every verdict with the
+  refusal check each vector names; every repaired twin is accepted; the generator reproduces the OpenID4VP 1.0 B.2.6.1
+  and B.2.6.2 examples; every issuer-signed item's random is 32 bytes; a digestID the MSO lacks is refused as having
+  no digest in it; every ISO clause number has a `source`; a verifier without the device-signature, key-type,
+  device-data, crit, alg-curve pairing or requested-claims check accepts the vectors that check refuses; a claims
+  path is two strings and a value matches in type and value; and either `claim_sets` option of
+  `md-sd-claim-sets-unmet` is accepted alone, both together refused.
 
 ## Bind them to your verifier
 
@@ -158,6 +165,65 @@ Without binding flags, `python3 make_vectors.py > vectors.json` reproduces `vect
   array; each entry is `{"test-name": <vector id>, "expected-result": <the verdict the verifier reaches today>,
   "reason": <why>, "link": <the tracking issue>}`. `test-name` and `expected-result` follow the conformance
   suite's expected-failures files; `reason` and `link` are ours.
+
+## The mdoc vectors
+
+[`mdoc-vectors.json`](mdoc-vectors.json) is a separate file, for a verifier of ISO/IEC 18013-5 mdoc DeviceResponses
+presented over OpenID4VP 1.0. It holds **area 1**, the SessionTranscript the verifier builds from its own request and
+the device authentication over it, and **area 2 in part**: the issuer signature (the IssuerAuth COSE_Sign1 and its
+payload) and the MSO against the items it digests and the document it names; and **area 3**, the disclosed elements
+against the claims the request asks for. Verifier side only: a vector is a DeviceResponse the verifier must judge
+against its own request.
+
+Two **controls** come first: an mDL over the redirect handover (`OpenID4VPHandover`, with a JWK thumbprint) and an mDL
+over the Digital Credentials API handover (`OpenID4VPDCAPIHandover`). The other 32 are a control with one thing changed,
+re-signed wherever the change needs it, each refused by a verifier that applies the clauses and policies it names, and
+**each carries its repaired twin** (`repaired`): the same vector with that one defect put back, which a correct
+verifier accepts. A twin that is refused means the vector's refusal
+measured nothing.
+
+| Group | Vectors |
+|---|---|
+| SessionTranscript (`session-transcript`) | `md-st-nonce`; `md-st-client-id-other` and `md-st-client-id-no-prefix`; `md-st-response-uri`; `md-st-thumbprint-other-key` and `md-st-thumbprint-absent`; `md-st-dcapi-handover-on-redirect`; `md-st-redirect-handover-on-dcapi`; `md-st-dcapi-origin-prefixed` and `md-st-dcapi-origin-other` |
+| Device authentication (`device-auth`) | `md-devicesig-other-key`, `md-devicesig-missing`, `md-devicesig-not-detached`, `md-devicesig-doctype-other`; `md-devicekey-kty-crv`; `md-devicesigned-unauthorized-ns` |
+| The request (`request`) | `md-doctype-not-requested`; `md-sd-claim-absent`, `md-sd-claim-sets-unmet`; `md-sd-value-other` |
+| Issuer signature (`issuer-auth`) | `md-issuerauth-sig-flipped`, `md-issuerauth-sig-der`; `md-issuerauth-alg-curve`; `md-issuerauth-crit-unknown`, `md-issuerauth-dup-label`; `md-mso-not-tag24` |
+| The MSO and its digests (`mso`) | `md-digest-value-modified`, `md-digest-reencoded-item`; `md-digest-id-absent`; `md-digest-alg-sha1`, `md-digest-length`; `md-doctype-vs-mso` |
+
+Each case carries: `response` (the base64url DeviceResponse), `inputs` (the verifier's own request, from which it
+builds the SessionTranscript: `response_mode`, `client_id` and `response_uri`, or `origin`, with the `nonce`, the
+`encryption_jwk`, the DCQL `doctype_value` and, where the request asks for claims, the DCQL `claims` and
+`claim_sets`), `trust_anchors_pem` (the IACA root), `at` (the instant), `expected`, `layer`, and `class` with its
+`clauses`. `class` is `spec` where a normative sentence of OpenID4VP 1.0, RFC 9052 or RFC 9053 requires the refusal
+(quoted); `spec-implied` where a quoted sentence binds the issuer or the wallet, or a definition implies the refusal,
+or where the clause is ISO-only: the clause number is given and nothing is quoted; and
+`policy` where no sentence requires the refusal, the verdict following the vector's `policy`, which the file's
+`policies` states. 10 vectors are `spec-implied` and two are `policy`: `md-issuerauth-alg-curve` (`alg-curve-pairing`)
+and `md-sd-value-other` (`values-checked`). Every ISO/IEC 18013-5 clause number comes with the vector's `source`: the
+implementation that gives the number and the edition that implementation names (OID4VCgo 0.49.0 cites the 2025-09-14 CD
+ballot resolution draft of the second edition; @owf/mdoc 0.8.2 names none for these numbers), both where two number a
+clause differently.
+`md-issuerauth-dup-label` is refused as malformed, the refusal RFC 9052 section 3 requires.
+
+The claims vectors judge the IssuerSigned elements a document discloses against the request's `claims`: every
+requested claim disclosed (`md-sd-claim-absent`) and one `claim_sets` option met (`md-sd-claim-sets-unmet`), as
+OpenID4VP 1.0 8.6 directs the verifier to check that the Presentations returned satisfy the request "as described in
+Section 6.4". `md-sd-value-other` is `policy`: section 6.4.1 makes value matching best-effort, and a verifier that
+accepts the document and checks the value itself reads it legitimately.
+
+The IACA and document signer certificates carry what outside mdoc verifiers check of the ISO/IEC 18013-5 Annex B
+profile: the same countryName in both subjects, key usages, the document signer's id-mdl-ds extended key usage, key
+identifiers, an issuer alternative name and a CRL distribution point (named, never served). The controls sign with
+ES256 (-7).
+
+```bash
+python3 make_mdoc_vectors.py > mdoc-vectors.json       # byte for byte, run to run; needs cbor2 and cryptography
+python3 run_vectors.py mdoc-vectors.json --adapter verify-mdoc
+```
+
+`verify-mdoc` is [`../mdoc/verify_mdoc.py`](../mdoc/verify_mdoc.py). The runner counts a control as the vectors'
+`class` `control`, runs every twin as a row `<id>+repaired`, and fails the run when a twin is refused. The keys and
+certificates are test material from public seeds, as above.
 
 ## Credits
 
