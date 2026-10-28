@@ -1855,6 +1855,13 @@ class HeldOutSemanticMutations(unittest.TestCase):
             V._verify_liboqs, V._verify_cryptography = saved
 
 
+def _case_log_key(name):
+    """The log key a published case names (conformance/cases.json): the relying party's input,
+    never read off the head being judged."""
+    cases = json.loads((ROOT / "conformance" / "cases.json").read_text())["cases"]
+    return next(c["log_key"] for c in cases if c["name"] == name)
+
+
 class WitnessedCheckpointIsTotal(unittest.TestCase):
     """`verify_timestamp_anchor` says it is total on hostile input. Cosignatures that are not a
     list raised TypeError from `verify_witnessed_checkpoint` until 2026-09-28."""
@@ -1863,7 +1870,8 @@ class WitnessedCheckpointIsTotal(unittest.TestCase):
         import copy
         ts = json.loads((ROOT / "conformance" / "vectors" / "timestamp-anchor-witnessed.json").read_text())
         both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
-        good = V.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+        log_key = _case_log_key("timestamp-anchor-witnessed")
+        good = V.verify_timestamp_anchor(ts, log_key=log_key, trusted_witnesses=both, threshold=2)
         if not good.get("anchored"):
             self.skipTest("no ML-DSA-65 backend here: %s" % good.get("note"))
         self.assertTrue(good.get("witnessed"))
@@ -1871,9 +1879,48 @@ class WitnessedCheckpointIsTotal(unittest.TestCase):
             with self.subTest(cosignatures=bad):
                 t = copy.deepcopy(ts)
                 t["anchor"]["cosignatures"] = bad
-                v = V.verify_timestamp_anchor(t, trusted_witnesses=both, threshold=2)
+                v = V.verify_timestamp_anchor(t, log_key=log_key, trusted_witnesses=both, threshold=2)
                 self.assertTrue(v.get("anchored"))
                 self.assertFalse(v.get("witnessed"))
+
+
+#: The note a log-head verdict carries when the caller named no log key.
+_NO_LOG_KEY = "no log key was named: the head must be signed by a log key the caller names"
+
+
+@unittest.skipUnless(_an_ml_dsa_backend(), "no ML-DSA-65 backend here")
+class TimestampAnchorNamesItsLogKey(unittest.TestCase):
+    """A head anchors a timestamp only under the log key the caller names (WIRE-SPEC 3.9). The
+    published base anchor, and the same anchor with its head re-signed by a key no case names
+    (conformance/make_stranger_head_vectors.py): only the signer differs."""
+
+    @classmethod
+    def setUpClass(cls):
+        vectors = ROOT / "conformance" / "vectors"
+        cls.base = json.loads((vectors / "timestamp-anchor-variants-base.json").read_text())
+        cls.stranger = json.loads((vectors / "timestamp-anchor-stranger-head.json").read_text())
+        cls.log_key = _case_log_key("timestamp-anchor-variants-base")
+
+    def test_the_log_s_head_under_its_log_key_is_anchored(self):
+        v = V.verify_timestamp_anchor(self.base, log_key=self.log_key)
+        self.assertTrue(v["anchored"], v["note"])
+
+    def test_a_stranger_s_head_with_no_log_key_is_not_anchored(self):
+        self.assertTrue(V.verify_sth(self.stranger["anchor"]["sth"])["sth_authentic"],
+                        "control: the stranger's head is authentic under its own key")
+        v = V.verify_timestamp_anchor(self.stranger)
+        self.assertFalse(v["anchored"])
+        self.assertEqual(v["note"], _NO_LOG_KEY)
+
+    def test_the_log_s_own_head_with_no_log_key_is_not_anchored(self):
+        v = V.verify_timestamp_anchor(self.base)
+        self.assertFalse(v["anchored"])
+        self.assertEqual(v["note"], _NO_LOG_KEY)
+
+    def test_a_stranger_s_head_under_the_log_key_is_not_anchored(self):
+        v = V.verify_timestamp_anchor(self.stranger, log_key=self.log_key)
+        self.assertFalse(v["anchored"])
+        self.assertEqual(v["note"], "the head is not signed by the expected log key")
 
 
 # --------------------------------------------------------------------------- the exit codes
@@ -2860,14 +2907,14 @@ class SignedTreeHeadDecisions(unittest.TestCase):
         self.assertEqual((v["consistent"], v["fork"]), (True, False), v["note"])
 
     def test_equal_sizes_decide_on_the_roots(self):
-        same = V.verify_log_consistency(self.sth(6), self.sth(6), [])
+        same = V.verify_log_consistency(self.sth(6), self.sth(6), [], issuer_key=self.pk.hex())
         self.assertEqual((same["consistent"], same["fork"]), (True, False), same["note"])
         other = V.merkle_tree_head(["x"] * 6).hex()
-        split = V.verify_log_consistency(self.sth(6), self.sth(6, root=other), [])
+        split = V.verify_log_consistency(self.sth(6), self.sth(6, root=other), [], issuer_key=self.pk.hex())
         self.assertEqual((split["consistent"], split["fork"]), (False, True), split["note"])
 
     def test_a_shrinking_tree_is_a_fork(self):
-        v = V.verify_log_consistency(self.sth(9), self.sth(4), [])
+        v = V.verify_log_consistency(self.sth(9), self.sth(4), [], issuer_key=self.pk.hex())
         self.assertEqual((v["consistent"], v["fork"]), (False, True))
         self.assertIn("SMALLER", v["note"])
 
@@ -2875,17 +2922,18 @@ class SignedTreeHeadDecisions(unittest.TestCase):
         rewritten = self.ENTRIES[:2] + ["rewritten"] + self.ENTRIES[3:11]
         head = self.sth(11, root=V.merkle_tree_head(rewritten).hex())
         proof = [h.hex() for h in V.consistency_proof(5, rewritten)]
-        v = V.verify_log_consistency(self.sth(5), head, proof)
+        v = V.verify_log_consistency(self.sth(5), head, proof, issuer_key=self.pk.hex())
         self.assertEqual((v["consistent"], v["fork"]), (False, True), v["note"])
 
     def test_heads_from_two_logs_are_not_compared(self):
-        v = V.verify_log_consistency(self.sth(5), self.sth(11, log_id="log-2"), self.proof(5, 11))
+        v = V.verify_log_consistency(self.sth(5), self.sth(11, log_id="log-2"), self.proof(5, 11),
+                                     issuer_key=self.pk.hex())
         self.assertEqual((v["consistent"], v["fork"]), (False, False))
         self.assertIn("different logs", v["note"])
 
     def test_an_inauthentic_head_decides_nothing(self):
         forged = dict(self.sth(11), root_hash_hex=V.merkle_tree_head(["x"] * 11).hex())
-        v = V.verify_log_consistency(self.sth(5), forged, self.proof(5, 11))
+        v = V.verify_log_consistency(self.sth(5), forged, self.proof(5, 11), issuer_key=self.pk.hex())
         self.assertEqual((v["consistent"], v["fork"]), (False, False))
         self.assertIn("not authentic", v["note"])
 
@@ -2895,15 +2943,24 @@ class SignedTreeHeadDecisions(unittest.TestCase):
         self.assertFalse(v["consistent"])
         self.assertIn("expected log key", v["note"])
 
+    def test_a_stranger_s_newer_head_with_no_log_key_is_not_consistent(self):
+        # The log's head and a stranger's newer head over the same entries, with a genuine
+        # proof between them: only the missing key can refuse it.
+        foreign = self.sth(11, sign=self.other_sign, pk=self.other_pk)
+        v = V.verify_log_consistency(self.sth(5), foreign, self.proof(5, 11))
+        self.assertEqual((v["consistent"], v["fork"]), (False, False))
+        self.assertEqual(v["note"], "no log key was named: both heads must be signed by a log key the caller names")
+
     def test_a_boolean_or_missing_size_is_refused(self):
         for bad in (True, None, -1, "5"):
             with self.subTest(tree_size=bad):
-                v = V.verify_log_consistency(self.sth(5), self.sth(11, tree_size=bad), self.proof(5, 11))
+                v = V.verify_log_consistency(self.sth(5), self.sth(11, tree_size=bad), self.proof(5, 11),
+                                             issuer_key=self.pk.hex())
                 self.assertFalse(v["consistent"])
                 self.assertIn("tree_size", v["note"])
 
     def test_a_proof_that_is_not_hex_is_refused(self):
-        v = V.verify_log_consistency(self.sth(5), self.sth(11), ["zz"])
+        v = V.verify_log_consistency(self.sth(5), self.sth(11), ["zz"], issuer_key=self.pk.hex())
         self.assertFalse(v["consistent"])
         self.assertIn("not valid hex", v["note"])
 
@@ -2995,12 +3052,13 @@ class ReceiptInclusionDecisions(unittest.TestCase):
                 self.assertTrue(v["log_matches"])
 
     def test_a_proof_for_another_receipt_is_refused(self):
-        v = V.verify_receipt_inclusion(self.RECEIPTS[2], self.proof(3), self.head())
+        v = V.verify_receipt_inclusion(self.RECEIPTS[2], self.proof(3), self.head(), log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("not for this receipt", v["note"])
 
     def test_a_head_of_another_log_is_refused(self):
-        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), self.head(log_id="another-log"))
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), self.head(log_id="another-log"),
+                                       log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn(V._RECEIPT_LOG_ID, v["note"])
 
@@ -3010,18 +3068,20 @@ class ReceiptInclusionDecisions(unittest.TestCase):
         for over in ({"index": float("inf")}, {"index": "three"}, {"proof_hex": ["zz"]},
                      {"index": 3.5}, {"tree_size": "7"}, {"index": True}, {"proof_hex": "00"}):
             with self.subTest(**{k: str(v) for k, v in over.items()}):
-                v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, **over), self.head())
+                v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, **over), self.head(),
+                                               log_key=self.pk.hex())
                 self.assertFalse(v["included"])
                 self.assertEqual(v["note"], "malformed proof")
 
     def test_a_proof_and_head_of_different_trees_are_refused(self):
-        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, tree_size=6), self.head())
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, tree_size=6), self.head(),
+                                       log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("different trees", v["note"])
 
     def test_an_inauthentic_head_is_refused(self):
         altered = dict(self.head(), timestamp="2026-10-01T00:00:00Z")
-        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), altered)
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), altered, log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertFalse(v["sth_authentic"])
 
@@ -3032,13 +3092,25 @@ class ReceiptInclusionDecisions(unittest.TestCase):
         self.assertFalse(v["included"])
         self.assertIn("expected log key", v["note"])
 
+    def test_a_stranger_s_head_with_no_log_key_includes_nothing(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3),
+                                       self.head(sign=self.other_sign, pk=self.other_pk))
+        self.assertTrue(v["sth_authentic"], "control: the stranger's head is authentic under its own key")
+        self.assertFalse(v["included"])
+        self.assertEqual(v["note"], _NO_LOG_KEY)
+
+    def test_the_log_s_own_head_with_no_log_key_includes_nothing(self):
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3), self.head())
+        self.assertFalse(v["included"])
+        self.assertEqual(v["note"], _NO_LOG_KEY)
+
     def test_a_path_that_does_not_rebuild_the_head_is_refused(self):
-        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, index=4), self.head())
+        v = V.verify_receipt_inclusion(self.RECEIPTS[3], self.proof(3, index=4), self.head(), log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("does not reconstruct", v["note"])
 
     def test_anything_but_three_objects_is_refused(self):
-        v = V.verify_receipt_inclusion("receipt", self.proof(3), self.head())
+        v = V.verify_receipt_inclusion("receipt", self.proof(3), self.head(), log_key=self.pk.hex())
         self.assertFalse(v["included"])
         self.assertIn("must be objects", v["note"])
 

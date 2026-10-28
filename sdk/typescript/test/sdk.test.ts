@@ -709,6 +709,11 @@ test("the cached token lifetime is bounded, and matches the Python kit", () => {
 // is a boundary moved. Each test pins one boundary where the mutation changes the answer.
 // The Python SDK carries the same tests, against the same fixtures.
 const conf = (n: string) => JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", n), "utf8"));
+// The log key a published case names (conformance/cases.json): the relying party's input, never
+// read off the head being judged.
+const caseLogKey = (name: string): string =>
+  JSON.parse(readFileSync(join(ROOT, "conformance", "cases.json"), "utf8")).cases
+    .find((c: any) => c.name === name).log_key;
 
 test("held-out: a status assertion is not fresh before its window opens", () => {
   const a = conf("status-assertion-valid.json");   // [2026-01-01, 2027-01-01)
@@ -969,9 +974,10 @@ test("a holder proof's age is read in UTC whatever the machine's time zone", asy
 test("a witness threshold is a whole number of at least one", () => {
   const ts = JSON.parse(readFileSync(join(ROOT, "conformance", "vectors", "timestamp-anchor-witnessed.json"), "utf8"));
   const both = ts.anchor.cosignatures.map((c: any) => c.public_key_hex);
-  assert.equal(verifyTimestampAnchor(ts, null, both, 2).witnessed, true, "control");
+  const key = caseLogKey("timestamp-anchor-witnessed");
+  assert.equal(verifyTimestampAnchor(ts, key, both, 2).witnessed, true, "control");
   for (const bad of [0.5, -1, 0, "2" as any, true as any, NaN]) {
-    const v = verifyTimestampAnchor(ts, null, both, bad);
+    const v = verifyTimestampAnchor(ts, key, both, bad);
     assert.equal(v.witnessed, false, String(bad));
     assert.match(v.note ?? "", /whole number/);
   }
@@ -1082,19 +1088,30 @@ test("an exchange verdict says whether the edge was signed", () => {
 const ANCH = JSON.parse(readFileSync(join(ROOT, "sdk", "testdata", "anchor-variants.json"), "utf8"));
 const witnessedTs = () => JSON.parse(JSON.stringify(conf("timestamp-anchor-witnessed.json")));
 const bothWitnesses = (ts: any) => ts.anchor.cosignatures.map((c: any) => c.public_key_hex);
+const WITNESSED_LOG_KEY = caseLogKey("timestamp-anchor-witnessed");
+const NO_LOG_KEY = "no log key was named: the head must be signed by a log key the caller names";
 
 test("held-out: the genuine anchor is anchored and witnessed", () => {
   const ts = witnessedTs();
-  const v = verifyTimestampAnchor(ts, null, bothWitnesses(ts), 2);
+  const v = verifyTimestampAnchor(ts, WITNESSED_LOG_KEY, bothWitnesses(ts), 2);
   assert.equal(v.anchored, true);
   assert.equal(v.witnessed, true);
 });
 
+test("held-out: the genuine anchor with no log key named is not anchored", () => {
+  const ts = witnessedTs();
+  for (const none of [null, undefined]) {
+    const v = verifyTimestampAnchor(ts, none, bothWitnesses(ts), 2);
+    assert.equal(v.anchored, false, String(none));
+    assert.equal(v.note, NO_LOG_KEY);
+  }
+});
+
 test("held-out: an anchor refuses a proof for another entry, another root, a bad head, another log key", () => {
   const cases: [string, (ts: any) => void, string | null][] = [
-    ["another entry", (ts) => { ts.anchor.proof.entry_hex = "00".repeat(32); }, null],
-    ["another root in the proof", (ts) => { ts.anchor.proof.root_hash_hex = "00".repeat(32); }, null],
-    ["an unauthentic head", (ts) => { const s = ts.anchor.sth.signature_hex; ts.anchor.sth.signature_hex = (s[0] !== "0" ? "0" : "1") + s.slice(1); }, null],
+    ["another entry", (ts) => { ts.anchor.proof.entry_hex = "00".repeat(32); }, WITNESSED_LOG_KEY],
+    ["another root in the proof", (ts) => { ts.anchor.proof.root_hash_hex = "00".repeat(32); }, WITNESSED_LOG_KEY],
+    ["an unauthentic head", (ts) => { const s = ts.anchor.sth.signature_hex; ts.anchor.sth.signature_hex = (s[0] !== "0" ? "0" : "1") + s.slice(1); }, WITNESSED_LOG_KEY],
     ["another log key", () => {}, "ab".repeat(1952)],
   ];
   for (const [label, edit, logKey] of cases) {
@@ -1106,10 +1123,10 @@ test("held-out: an anchor refuses a proof for another entry, another root, a bad
 
 test("held-out: only trusted, distinct witnesses over this exact head count", () => {
   const ts = witnessedTs();
-  const one = verifyTimestampAnchor(ts, null, bothWitnesses(ts).slice(0, 1), 2);
+  const one = verifyTimestampAnchor(ts, WITNESSED_LOG_KEY, bothWitnesses(ts).slice(0, 1), 2);
   assert.deepEqual([one.cosignerCount, one.witnessed], [1, false], "an untrusted cosigner counted");
   ts.anchor.cosignatures = [ts.anchor.cosignatures[0], { ...ts.anchor.cosignatures[0] }];
-  const dup = verifyTimestampAnchor(ts, null, bothWitnesses(witnessedTs()), 2);
+  const dup = verifyTimestampAnchor(ts, WITNESSED_LOG_KEY, bothWitnesses(witnessedTs()), 2);
   assert.deepEqual([dup.cosignerCount, dup.witnessed], [1, false], "one witness counted twice");
   for (const variant of ["cosig_other_size", "cosig_other_root"]) {
     const v = verifyTimestampAnchor(ANCH[variant], ANCH.log_key, ANCH.witnesses, 2);
@@ -1120,6 +1137,28 @@ test("held-out: only trusted, distinct witnesses over this exact head count", ()
 
 test("held-out: a genuinely signed head for another log does not anchor", () => {
   assert.equal(verifyTimestampAnchor(ANCH.other_log, ANCH.log_key, ANCH.witnesses, 2).anchored, false);
+});
+
+// A head anchors a timestamp only under the log key the caller names. The published base anchor,
+// and the same anchor with its head re-signed by a key no case names
+// (conformance/make_stranger_head_vectors.py): only the signer differs.
+test("the log's head under its log key is anchored", () => {
+  const v = verifyTimestampAnchor(conf("timestamp-anchor-variants-base.json"), caseLogKey("timestamp-anchor-variants-base"));
+  assert.equal(v.anchored, true, String(v.note));
+});
+
+test("a stranger's head with no log key named is not anchored", () => {
+  const ts = conf("timestamp-anchor-stranger-head.json");
+  assert.equal(verifySignedArtifact(ts.anchor.sth).authentic, true, "control: authentic under its own key");
+  const v = verifyTimestampAnchor(ts, null);
+  assert.equal(v.anchored, false);
+  assert.equal(v.note, NO_LOG_KEY);
+});
+
+test("a stranger's head under the log key is not anchored", () => {
+  const v = verifyTimestampAnchor(conf("timestamp-anchor-stranger-head.json"), caseLogKey("timestamp-anchor-variants-base"));
+  assert.equal(v.anchored, false);
+  assert.equal(v.note, "the head is not signed by the expected log key");
 });
 
 
@@ -1264,7 +1303,7 @@ test("a cosignature from another witness, or one that does not decode, is not au
 
 test("a timestamp anchor that is missing, misshapen, for another entry or another log is not anchored", () => {
   const ts = witnessedTs();
-  assert.equal(verifyTimestampAnchor(ts, null, bothWitnesses(ts), 2).anchored, true);
+  assert.equal(verifyTimestampAnchor(ts, WITNESSED_LOG_KEY, bothWitnesses(ts), 2).anchored, true);
   const cases: [any, RegExp][] = [
     [null, /must be an object/],
     [{ ...ts, anchor: null }, /carries no anchor/],
@@ -1274,7 +1313,7 @@ test("a timestamp anchor that is missing, misshapen, for another entry or anothe
     [{ ...ts, anchor: { ...ts.anchor, proof: { ...ts.anchor.proof, proof_hex: ["abc"] } } }, /malformed proof/],
   ];
   for (const [t, why] of cases) {
-    const v = verifyTimestampAnchor(t, null, bothWitnesses(ts), 2);
+    const v = verifyTimestampAnchor(t, WITNESSED_LOG_KEY, bothWitnesses(ts), 2);
     assert.equal(v.anchored, false, String(why));
     assert.match(v.note ?? "", why);
   }

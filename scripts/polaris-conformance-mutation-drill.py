@@ -134,8 +134,9 @@ SURVIVORS_EXPECTED = (
     "verify_signed_document.signer_trusted",
     "verify_status_assertion.issuer_trusted",
     "verify_status_bundle.publisher_matches",
-    "verify_sth.issuer_matches",
-    "verify_timestamp_anchor.log_matches",
+    # `verify_sth.issuer_matches` and `verify_timestamp_anchor.log_matches` stood here until the
+    # stranger-head cases (1.1.0): a head signed by a key other than the log key the case names
+    # drives both false, and an implementation that skipped the head's key check would anchor it.
 )
 
 def _load(name: str, path: pathlib.Path):

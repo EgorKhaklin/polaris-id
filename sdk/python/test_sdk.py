@@ -833,6 +833,13 @@ def _conformance_vector(name):
         return json.load(f)
 
 
+def _conformance_log_key(case_name):
+    """The log key a published case names (conformance/cases.json): the relying party's input,
+    never read off the head being judged."""
+    with open(os.path.join(_ROOT, "conformance", "cases.json")) as f:
+        return next(c["log_key"] for c in json.load(f)["cases"] if c["name"] == case_name)
+
+
 @unittest.skipUnless(_mldsa_available(), "cryptography lacks ML-DSA-65")
 class TamperedMaterialIsRefusedTests(unittest.TestCase):
     """The SIGNATURE-FAILURE return paths, which structural input cannot reach.
@@ -1118,8 +1125,10 @@ class TimestampAnchorHeldOutTests(unittest.TestCase):
         self.ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
         self.cos = self.ts["anchor"]["cosignatures"]
         self.both = [c["public_key_hex"] for c in self.cos]
+        self.log_key = _conformance_log_key("timestamp-anchor-witnessed")
 
     def verdict(self, trusted=None, threshold=2, **kw):
+        kw.setdefault("log_key", self.log_key)
         return pv.verify_timestamp_anchor(self.ts, trusted_witnesses=self.both if trusted is None else trusted,
                                           threshold=threshold, **kw)
 
@@ -1128,6 +1137,11 @@ class TimestampAnchorHeldOutTests(unittest.TestCase):
         self.assertTrue(v.anchored, v.note)
         self.assertTrue(v.witnessed)
         self.assertEqual(v.cosigner_count, 2)
+
+    def test_no_log_key_anchors_nothing(self):
+        v = self.verdict(log_key=None)
+        self.assertFalse(v.anchored)
+        self.assertEqual(v.note, "no log key was named: the head must be signed by a log key the caller names")
 
     def test_a_proof_for_another_entry_does_not_anchor(self):
         self.ts["anchor"]["proof"]["entry_hex"] = "00" * 32
@@ -1172,6 +1186,36 @@ class TimestampAnchorHeldOutTests(unittest.TestCase):
 
 
 @unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
+class TimestampAnchorNamesItsLogKeyTests(unittest.TestCase):
+    """A head anchors a timestamp only under the log key the caller names. The published base
+    anchor, and the same anchor with its head re-signed by a key no case names
+    (conformance/make_stranger_head_vectors.py): only the signer differs."""
+
+    NO_LOG_KEY = "no log key was named: the head must be signed by a log key the caller names"
+
+    def setUp(self):
+        self.base = _conformance_vector("timestamp-anchor-variants-base.json")
+        self.stranger = _conformance_vector("timestamp-anchor-stranger-head.json")
+        self.log_key = _conformance_log_key("timestamp-anchor-variants-base")
+
+    def test_the_log_s_head_under_its_log_key_is_anchored(self):
+        v = pv.verify_timestamp_anchor(self.base, log_key=self.log_key)
+        self.assertTrue(v.anchored, v.note)
+
+    def test_a_stranger_s_head_with_no_log_key_is_not_anchored(self):
+        self.assertTrue(pv.verify_signed_artifact(self.stranger["anchor"]["sth"]).authentic,
+                        "control: the stranger's head is authentic under its own key")
+        v = pv.verify_timestamp_anchor(self.stranger)
+        self.assertFalse(v.anchored)
+        self.assertEqual(v.note, self.NO_LOG_KEY)
+
+    def test_a_stranger_s_head_under_the_log_key_is_not_anchored(self):
+        v = pv.verify_timestamp_anchor(self.stranger, log_key=self.log_key)
+        self.assertFalse(v.anchored)
+        self.assertEqual(v.note, "the head is not signed by the expected log key")
+
+
+@unittest.skipUnless(_mldsa_available(), "needs ML-DSA-65")
 class HostileFieldsAreAVerdictTests(unittest.TestCase):
     """Fields a third party writes, of the wrong JSON type, are refused, never raised.
     2026-09-28, a type sweep of every published case's payload through the conformance adapter:
@@ -1182,23 +1226,25 @@ class HostileFieldsAreAVerdictTests(unittest.TestCase):
         import copy
         ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
         both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
-        v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+        key = _conformance_log_key("timestamp-anchor-witnessed")
+        v = pv.verify_timestamp_anchor(ts, log_key=key, trusted_witnesses=both, threshold=2)
         self.assertTrue(v.anchored and v.witnessed, v.note)
         for bad in (True, 5):
             with self.subTest(cosignatures=bad):
                 ts["anchor"]["cosignatures"] = bad
-                v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2)
+                v = pv.verify_timestamp_anchor(ts, log_key=key, trusted_witnesses=both, threshold=2)
                 self.assertTrue(v.anchored, v.note)
                 self.assertFalse(v.witnessed)
 
     def test_a_format_that_is_not_a_string_is_an_unknown_artifact(self):
         import copy
+        key = _conformance_log_key("timestamp-anchor-witnessed")
         for bad in ([], {}, ["polaris-epoch-checkpoint/1"]):
             with self.subTest(format=bad):
                 self.assertFalse(pv.verify_signed_artifact({"format": bad}).authentic)
                 ts = copy.deepcopy(_conformance_vector("timestamp-anchor-witnessed.json"))
                 ts["anchor"]["sth"]["format"] = bad
-                self.assertFalse(pv.verify_timestamp_anchor(ts).anchored)
+                self.assertFalse(pv.verify_timestamp_anchor(ts, log_key=key).anchored)
 
     def test_a_revocation_feed_that_is_not_an_object_rejects(self):
         f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
@@ -1303,10 +1349,12 @@ class WitnessThresholdTests(unittest.TestCase):
     def test_the_threshold_is_a_whole_number_of_at_least_one(self):
         ts = _conformance_vector("timestamp-anchor-witnessed.json")
         both = [c["public_key_hex"] for c in ts["anchor"]["cosignatures"]]
-        self.assertTrue(pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=2).witnessed, "control")
+        key = _conformance_log_key("timestamp-anchor-witnessed")
+        self.assertTrue(pv.verify_timestamp_anchor(ts, log_key=key, trusted_witnesses=both, threshold=2).witnessed,
+                        "control")
         for bad in (0.5, -1, 0, "2", True, float("nan")):
             with self.subTest(threshold=bad):
-                v = pv.verify_timestamp_anchor(ts, trusted_witnesses=both, threshold=bad)
+                v = pv.verify_timestamp_anchor(ts, log_key=key, trusted_witnesses=both, threshold=bad)
                 self.assertIs(v.witnessed, False)
                 self.assertIn("whole number", v.note)
 

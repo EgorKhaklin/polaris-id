@@ -105,7 +105,7 @@ def main():
                               "list (WIRE-SPEC, anchoring): " + why + ". Read leniently it is the genuine "
                               "one-leaf proof of timestamp-anchor-variants-base; before this case the "
                               "three verifiers each accepted it."})
-        log_key = ts["anchor"]["sth"]["public_key_hex"]
+        log_key = base_case["log_key"]
         checks.append((name,
                        lambda ts=ts, lk=log_key: V.verify_timestamp_anchor(ts, log_key=lk, trusted_witnesses=witnesses,
                                                                            threshold=2)["anchored"],

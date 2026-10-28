@@ -1010,9 +1010,12 @@ itself is never sent) and an optional nonce of its own; the authority keeps no p
 record unless the caller asks for an anchor. With `"anchor": true` (P8.5b, v9.341) the
 timestamp's SHA3-256 joins the append-only **timestamp transparency log** and the answer
 carries an unsigned `anchor` (`log_id`, `timestamp_hash`, the RFC-6962 inclusion `proof`, the
-signed head `sth`), which the detached verifier checks offline (`verify_timestamp_anchor`) and
-which is what survives this authority's key being stolen later; that is the one record the
-authority then keeps, one digest and one instant, by the caller's choice. Rate-bounded per authority.
+signed head `sth`), which the detached verifier checks offline
+(`verify_timestamp_anchor(timestamp, log_key)`, with `log_key` the instance's own key that signs
+the log's heads, read where its [key ceremony](../operator/KEY-CEREMONY.md#the-ceremony)
+published it and never from the head) and which is what survives this authority's key being
+stolen later; that is the one record the authority then keeps, one digest and one instant, by
+the caller's choice. Rate-bounded per authority.
 
 ```jsonc
 // request
@@ -1044,7 +1047,9 @@ Every minted receipt carries `log_id` and `log_index` (advisory, unsigned).
 **Public; no auth (P8.5b).** Inclusion evidence that an anchored timestamp is in this instance's
 append-only **timestamp transparency log**: `{log_id, proof, sth}`, the RFC-6962 inclusion proof
 for the timestamp's SHA3-256 (its canonical statement's hash) plus the current signed head. A
-third party verifies offline with `scripts/polaris-verify.py` (`verify_timestamp_anchor`) that the
+third party verifies offline with `scripts/polaris-verify.py`
+(`verify_timestamp_anchor(timestamp, log_key)`, with the instance's own key as `log_key`, read
+where its [key ceremony](../operator/KEY-CEREMONY.md#the-ceremony) published it) that the
 timestamp it holds was anchored here and cannot have been quietly dropped. The caller already
 holds the timestamp (it computes the hash); an unknown hash is `404`. Unanchored timestamps are
 never in the log.
@@ -1107,7 +1112,8 @@ caches this and later proves each newer head is an append-only extension. No per
 **Public; no auth.** An RFC-6962 **consistency proof** that the size-`m` tree is a prefix
 of the size-`n` tree: `{first_size, second_size, first_root_hex, second_root_hex,
 proof_hex}`. This is the append-only evidence; a monitor verifies it with
-`scripts/polaris-verify.py` (`verify_log_consistency`). `400` if the range is invalid.
+`scripts/polaris-verify.py` (`verify_log_consistency(old_sth, new_sth, proof, issuer_key)`, with
+the instance's own key as `issuer_key`). `400` if the range is invalid.
 
 ### `GET /api/v1/transparency/proof/<index>`
 

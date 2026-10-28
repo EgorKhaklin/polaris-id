@@ -106,6 +106,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - The health answers no longer name the signing key, and the shipped edges (the Caddyfile and the Helm chart's) answer `/api/health`, `/api/health/ready` and `/api/health/live` only to `POLARIS_METRICS_ALLOW` (`edge.metricsAllow`), as they do the metrics surfaces; probes and checks read them at the app's own address.
 - The rate limiter's Redis persists nothing in the compose stack or the chart (no append-only file, `--save ""`, `/data` in memory). It wrote an append-only file, so a sign-in through the auth broker left the credential-hash prefix, both client IPs and the client_id on disk after the counters expired, against auth-broker.md's "no record of who authenticated where". The upgrade needs one step: delete the old Redis volume (OPERATIONS.md, "Upgrading across the Redis persistence change").
 - CI pins by digest the fifteen container image references in its run steps, and in the scripts they call, that named only a tag, and `check_supply_chain_pins` now reads those steps and scripts: a workflow's copy of an image that a Dockerfile or compose file pins must carry the same digest, so a Dependabot update cannot leave it behind. The six drills' `python:3.12-alpine` and every `alpine:3.24` pin, scripts/polaris-deploy.sh's included, now name one digest each.
+- Log-head verification defaults in polaris-verify, polaris-sdk-python and polaris-sdk-ts.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 

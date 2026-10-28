@@ -794,11 +794,11 @@ export type AnchorVerdict = {
 
 /** Verify OFFLINE that a timestamp is ANCHORED in the timestamp transparency log: its unsigned
  * `anchor` carries an inclusion proof and a Signed Tree Head, the proof is for this timestamp's
- * own hash, the head is an authentic head of that log (with `logKey`, signed by the expected
- * authority), and the proof reconstructs the head. With `trustedWitnesses`, the head must also
- * be cosigned by `threshold` DISTINCT trusted witnesses: a stolen authority key can sign a fresh
- * head over a fabricated log, but it cannot make a witness have cosigned that head at the
- * claimed time. No network. Total on hostile input. */
+ * own hash, the head is an authentic head of that log signed by `logKey` (the log key the caller
+ * names; with none, nothing is anchored), and the proof reconstructs the head. With
+ * `trustedWitnesses`, the head must also be cosigned by `threshold` DISTINCT trusted witnesses:
+ * a stolen authority key can sign a fresh head over a fabricated log, but it cannot make a
+ * witness have cosigned that head at the claimed time. No network. Total on hostile input. */
 export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWitnesses?: string[] | null,
                                       threshold: number = 1): AnchorVerdict {
   const v: AnchorVerdict = { anchored: false, sthAuthentic: false, witnessed: null, cosignerCount: 0,
@@ -856,7 +856,11 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
     return v;
   }
   if (!v.sthAuthentic) { v.note = sv.note ?? "the head is not authentic"; return v; }
-  if (logKey != null && !sameHex(sth.public_key_hex, logKey)) {
+  if (logKey == null) {
+    v.note = "no log key was named: the head must be signed by a log key the caller names";
+    return v;
+  }
+  if (!sameHex(sth.public_key_hex, logKey)) {
     v.note = "the head is not signed by the expected log key";
     return v;
   }

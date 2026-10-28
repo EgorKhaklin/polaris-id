@@ -171,8 +171,6 @@ def decide(V, case):
             return None, "predates %s" % art
         ts = _read(case["timestamp_file"])
         log_key = case.get("log_key")
-        if log_key == "sth":
-            log_key = ts["anchor"]["sth"]["public_key_hex"]
         tw = case.get("trusted_witnesses")
         if tw == "cosigners":
             tw = sorted({x["public_key_hex"] for x in ts["anchor"].get("cosignatures", [])

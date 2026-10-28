@@ -940,11 +940,12 @@ class AnchorVerdict:
 def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, threshold: int = 1) -> AnchorVerdict:
     """Verify OFFLINE that a timestamp is ANCHORED in the timestamp transparency log: its
     unsigned `anchor` carries an inclusion proof and a Signed Tree Head, the proof is for this
-    timestamp's own hash, the head is an authentic head of that log (with `log_key`, signed by
-    the expected authority), and the proof reconstructs the head. With `trusted_witnesses`, the
-    head must also be cosigned by `threshold` DISTINCT trusted witnesses: a stolen authority key
-    can sign a fresh head over a fabricated log, but it cannot make a witness have cosigned that
-    head at the claimed time. No network, no Polaris code. Total on hostile input."""
+    timestamp's own hash, the head is an authentic head of that log signed by `log_key` (the
+    log key the caller names; with none, nothing is anchored), and the proof reconstructs the
+    head. With `trusted_witnesses`, the head must also be cosigned by `threshold` DISTINCT
+    trusted witnesses: a stolen authority key can sign a fresh head over a fabricated log, but
+    it cannot make a witness have cosigned that head at the claimed time. No network, no
+    Polaris code. Total on hostile input."""
     v = AnchorVerdict(False, False, None, 0, None, None, None, None)
     if not isinstance(ts, dict):
         v.note = "timestamp must be an object"
@@ -988,7 +989,10 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
     if not v.sth_authentic:
         v.note = sv.note or "the head is not authentic"
         return v
-    if log_key is not None and not _same_hex(sth.get("public_key_hex"), log_key):
+    if log_key is None:
+        v.note = "no log key was named: the head must be signed by a log key the caller names"
+        return v
+    if not _same_hex(sth.get("public_key_hex"), log_key):
         v.note = "the head is not signed by the expected log key"
         return v
     v.anchored = verify_inclusion(idx, size, _leaf_hash(v.timestamp_hash), root, path)

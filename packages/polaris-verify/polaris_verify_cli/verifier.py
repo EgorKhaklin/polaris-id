@@ -2218,11 +2218,12 @@ def timestamp_hash(ts):
 def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=1):
     """Verify OFFLINE (P8.5b) that a timestamp is ANCHORED: its unsigned `anchor` carries an
     RFC-6962 inclusion proof and a Signed Tree Head of the timestamp log, the proof is for this
-    timestamp's hash, the head is an authentic head of that log (with log_key: signed by the
-    expected authority), and the proof reconstructs the head. With trusted_witnesses the head
-    must also be cosigned by `threshold` distinct trusted witnesses (`anchor.cosignatures`):
-    a stolen authority key can sign a fresh head over a fabricated log, but it cannot make a
-    witness have cosigned that head at the claimed time. Total on hostile input."""
+    timestamp's hash, the head is an authentic head of that log signed by `log_key` (the log
+    key the caller names; with none, nothing is anchored), and the proof reconstructs the head.
+    With trusted_witnesses the head must also be cosigned by `threshold` distinct trusted
+    witnesses (`anchor.cosignatures`): a stolen authority key can sign a fresh head over a
+    fabricated log, but it cannot make a witness have cosigned that head at the claimed time.
+    Total on hostile input."""
     v = {"anchored": False, "sth_authentic": False, "log_matches": None, "witnessed": None,
          "cosigner_count": 0, "timestamp_hash": None, "index": None, "tree_size": None, "note": None}
     if not isinstance(ts, dict):
@@ -2265,7 +2266,10 @@ def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=
     if not v["sth_authentic"]:
         v["note"] = sv.get("note") or "the head is not authentic"
         return v
-    if log_key is not None and not v["log_matches"]:
+    if log_key is None:
+        v["note"] = "no log key was named: the head must be signed by a log key the caller names"
+        return v
+    if not v["log_matches"]:
         v["note"] = "the head is not signed by the expected log key"
         return v
     try:
@@ -2288,8 +2292,9 @@ def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=
 def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
     """Verify OFFLINE (P8.2c) that a receipt is in an append-only receipt log: the receipt's
     hash is the proof's entry; the RFC-6962 inclusion proof reconstructs the head; the head
-    is an authentic Signed Tree Head of the RECEIPT log (with log_key: signed by the expected
-    log); and proof and head describe the same tree. No network."""
+    is an authentic Signed Tree Head of the RECEIPT log signed by `log_key` (the log key the
+    caller names; with none, nothing is included); and proof and head describe the same
+    tree. No network."""
     v = {"included": False, "sth_authentic": False, "log_matches": None, "receipt_hash": None,
          "index": None, "tree_size": None, "note": None}
     if not isinstance(receipt, dict) or not isinstance(proof, dict) or not isinstance(sth, dict):
@@ -2324,7 +2329,10 @@ def verify_receipt_inclusion(receipt, proof, sth, log_key=None):
     if not v["sth_authentic"]:
         v["note"] = sv.get("note") or "the head is not authentic"
         return v
-    if log_key is not None and not v["log_matches"]:
+    if log_key is None:
+        v["note"] = "no log key was named: the head must be signed by a log key the caller names"
+        return v
+    if not v["log_matches"]:
         v["note"] = "the head is not signed by the expected log key"
         return v
     ok = verify_inclusion(idx, size, _lh(h), root, path)
@@ -3513,15 +3521,19 @@ def verify_sth(sth, issuer_key=None):
 
 def verify_log_consistency(old_sth, new_sth, proof, issuer_key=None):
     """Decide whether new_sth is an append-only extension of old_sth (P3.3), using a
-    consistency proof. Both STHs must be authentic (and, with issuer_key, from the same
-    expected log key); the newer tree must be at least as large; and the proof must show
-    the older head is a prefix of the newer. Returns {consistent, fork, note}. fork=True
-    means the log rewrote or dropped history -- the tampering a monitor exists to catch."""
+    consistency proof. Both STHs must be authentic and signed by `issuer_key` (the log key
+    the caller names; with none, nothing is consistent); the newer tree must be at least as
+    large; and the proof must show the older head is a prefix of the newer. Returns
+    {consistent, fork, note}. fork=True means the log rewrote or dropped history -- the
+    tampering a monitor exists to catch."""
     ov = verify_sth(old_sth, issuer_key=issuer_key)
     nv = verify_sth(new_sth, issuer_key=issuer_key)
     if not (ov["sth_authentic"] and nv["sth_authentic"]):
         return {"consistent": False, "fork": False, "note": "an STH is not authentic"}
-    if issuer_key is not None and not (ov["issuer_matches"] and nv["issuer_matches"]):
+    if issuer_key is None:
+        return {"consistent": False, "fork": False,
+                "note": "no log key was named: both heads must be signed by a log key the caller names"}
+    if not (ov["issuer_matches"] and nv["issuer_matches"]):
         return {"consistent": False, "fork": False, "note": "an STH is not signed by the expected log key"}
     if (old_sth.get("log_id") != new_sth.get("log_id")):
         return {"consistent": False, "fork": False, "note": "the STHs are from different logs"}

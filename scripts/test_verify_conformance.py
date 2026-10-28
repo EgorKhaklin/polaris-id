@@ -216,8 +216,6 @@ def _verdict_for(case):
     if artifact == "timestamp-anchor":
         ts = _load(case["timestamp_file"])
         log_key = case.get("log_key")
-        if log_key == "sth":
-            log_key = ts["anchor"]["sth"]["public_key_hex"]
         witnesses = case.get("trusted_witnesses")
         if witnesses == "cosigners":
             witnesses = sorted({x["public_key_hex"] for x in ts["anchor"].get("cosignatures", [])
