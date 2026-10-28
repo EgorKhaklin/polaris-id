@@ -26,6 +26,10 @@
 #   3. After the flip, a webhook arrives carrying alertname=PolarisDuressEvent,
 #      severity=sev1, status=firing, receiver=pager, within 90s; the measured
 #      time-to-page is printed.
+#   4. One page for one outage: with the label sets the shipped rules give in a full
+#      outage posted to the same Alertmanager, PolarisAppInfoAbsent{job="polaris"} is
+#      active until PolarisAppDown arrives and suppressed (inhibitedBy PolarisAppDown)
+#      after; the same alert without the job label stays active (the control).
 #
 # Requires docker + python3. Cleans up on exit.  Usage: scripts/polaris-page-drill.sh
 # ============================================================================
@@ -36,8 +40,8 @@ ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
 OBS="$ROOT/deploy/observability"
 
 # Digest-pinned (the repo's standard): a mutated tag cannot change the drill.
-PROM_IMAGE="prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
-AM_IMAGE="prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d"
+PROM_IMAGE="prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
+AM_IMAGE="prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a"
 PY_IMAGE="python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
 
 NET=polaris-page-net
@@ -166,4 +170,44 @@ for line in open(sys.argv[1], "rb"):
 assert ok, "no firing PolarisDuressEvent payload found"
 PYEOF
 echo "  time-to-page: $((t1 - t0))s from the counter increment to the webhook"
-echo "== PAGE DRILL PASSED: a duress increment reaches the pager through the shipped rules + receiver =="
+echo "== 4. one page for one outage: PolarisAppInfoAbsent is inhibited while PolarisAppDown fires =="
+# The label sets the shipped rules give in a full outage (polaris-alerts.test.yml asserts them
+# with promtool), posted to the Alertmanager above, which runs the shipped alertmanager.yml.
+# The info alert without a job label is the control: the inhibit rule's equal: ['job'] must
+# leave it active, so the suppression comes from the matching job and not from the name.
+am_add() { docker exec "$AM" amtool --alertmanager.url=http://127.0.0.1:9093 alert add "$@" >/dev/null; }
+am_alerts() { docker exec "$AM" wget -q -O - http://127.0.0.1:9093/api/v2/alerts > "$WORK/am-alerts.json"; }
+check_inhibit() {
+    python3 - "$WORK/am-alerts.json" "$1" <<'PYEOF'
+import json, sys
+alerts, phase = json.load(open(sys.argv[1])), sys.argv[2]
+by = {(a["labels"].get("alertname"), a["labels"].get("job")): a for a in alerts}
+info, bare = by.get(("PolarisAppInfoAbsent", "polaris")), by.get(("PolarisAppInfoAbsent", None))
+assert info and bare, f"the two info alerts are not both listed: {sorted(map(str, by))}"
+assert bare["status"]["state"] == "active" and not bare["status"]["inhibitedBy"], \
+    f"the control without a job label is not active: {bare['status']}"
+if phase == "before":
+    assert info["status"]["state"] == "active", f"suppressed with no PolarisAppDown: {info['status']}"
+    print("  no PolarisAppDown: both info alerts are active, as required")
+else:
+    down = by.get(("PolarisAppDown", "polaris"))
+    assert down and down["status"]["state"] == "active", "PolarisAppDown is not active"
+    st = info["status"]
+    assert st["state"] == "suppressed" and st["inhibitedBy"] == [down["fingerprint"]], \
+        f"PolarisAppInfoAbsent{{job=polaris}} is not inhibited by PolarisAppDown: {st}"
+    print(f"  PolarisAppInfoAbsent{{job=polaris}}: suppressed, inhibitedBy PolarisAppDown {down['fingerprint']}")
+    print("  PolarisAppInfoAbsent without a job label (control): active")
+PYEOF
+}
+am_add alertname=PolarisAppInfoAbsent severity=sev1 job=polaris || fail "amtool could not post PolarisAppInfoAbsent"
+am_add alertname=PolarisAppInfoAbsent severity=sev1 || fail "amtool could not post the control"
+am_alerts || fail "could not read /api/v2/alerts"
+check_inhibit before || fail "the info alerts are not both active before PolarisAppDown"
+am_add alertname=PolarisAppDown severity=sev1 job=polaris instance=app:8000 || fail "amtool could not post PolarisAppDown"
+for _ in $(seq 1 30); do
+    am_alerts || fail "could not read /api/v2/alerts"
+    grep -q '"suppressed"' "$WORK/am-alerts.json" && break
+    sleep 1
+done
+check_inhibit after || fail "PolarisAppInfoAbsent is not inhibited while PolarisAppDown fires"
+echo "== PAGE DRILL PASSED: a duress increment reaches the pager through the shipped rules + receiver, and PolarisAppInfoAbsent is inhibited under PolarisAppDown =="

@@ -26,7 +26,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The transparency monitor and witness take `--log timestamps` and follow the timestamp log (`polaris-timestamp-log`), as docs/design/timestamp-transparency.md and docs/reference/API.md say they do; before, each stopped at its options with exit 2 (scripts/polaris-transparency-monitor.py, scripts/polaris-transparency-witness.py).
 
-- The weekly chaos drill runs against the shipped `prometheus.yml` again: its rewrite still looked for the static app target that the discovery block replaced, so the drill stopped before its first stage. It now keeps the discovery block, which finds both colours on the stack's network, and checks that the block and the drill's Alertmanager target are there (scripts/polaris-chaos-drill.sh).
+- The weekly chaos drill keeps the shipped `prometheus.yml` discovery block: its rewrite still looked for the static app target that the block replaced, so the drill stopped before its first stage. It now checks that the block and the drill's Alertmanager target are there (scripts/polaris-chaos-drill.sh), and a dispatch on a branch runs that branch's drill, where it ran main's, and records no ledger row (.github/workflows/chaos.yml).
+- The page and chaos drills run the Prometheus and Alertmanager images the observability overlay ships, and `lab/strategy/006/alerts.sh` its Prometheus, where they ran older ones. The supply-chain check now holds an image pinned by digest alone to the digest a manifest Dependabot reads pins for it.
+- `PolarisAppInfoAbsent` carries `job="polaris"`, so Alertmanager's inhibit rule (`equal: ['job']`) mutes it while `PolarisAppDown` fires for the same job. It carried no job label, so the rule never matched and both alerts paged. A promtool test asserts the label (deploy/observability/polaris-alerts.test.yml), and the page drill posts both alerts to the shipped Alertmanager and checks that the info alert is inhibited and that one without the label is not (scripts/polaris-page-drill.sh).
 
 ### Added
 

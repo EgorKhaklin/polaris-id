@@ -24,8 +24,11 @@ groups:
           summary: "Polaris target is down (scrape failing for 2m)"
           description: "Prometheus cannot scrape the polaris job; the app is unreachable or crashed."
 
+      # The job matcher is what gives the alert its job label (absent() copies equality
+      # matchers), and Alertmanager's inhibit rule mutes it under PolarisAppDown only for an
+      # equal job. Without it a full outage with a static target paged twice.
       - alert: PolarisAppInfoAbsent
-        expr: absent(polaris_app_info)
+        expr: absent(polaris_app_info{job="polaris"})
         for: 5m
         labels:
           severity: sev1

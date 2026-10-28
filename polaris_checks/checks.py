@@ -6949,6 +6949,9 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 # (2026-10-21). ci.yml's key-exchange probe runs alpine:3.24 at the Dockerfiles' pin and installs
 # curl and openssl at exact versions, pinned the same day: Alpine serves one build of each package
 # per branch, so the probe fails closed when either is replaced, and is moved by hand.
+# 2026-10-28: a pin by digest alone is a pin of its repository. The observability overlay pins
+# Prometheus and Alertmanager with no tag, so no script ref twinned with them, and the page and
+# chaos drills (and lab/strategy/006/alerts.sh) ran images a month older than the overlay ships.
 _UNPINNED_BY_DESIGN = {"wallet-canary.yml"}
 _PUBLISHED_PY = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python", "polaris_cli")
 _REQUIREMENT_PIN = re.compile(r"(?m)^[A-Za-z0-9][\w.-]*(?:\[[\w.,-]*\])?\s*==")
@@ -7321,7 +7324,7 @@ def _image_ref(ref: str) -> tuple[str, str, str]:
 
 def _dependabot_pins(root: pathlib.Path, covered: set[tuple[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
     """(repository, tag) -> {digest: file} for each image a Dockerfile or compose file that
-    Dependabot reads pins by digest under a tag."""
+    Dependabot reads pins by digest, under a tag or (tag "") by digest alone."""
     pins: dict[tuple[str, str], dict[str, str]] = {}
     for eco, d in sorted(covered):
         base = root / d.lstrip("/")
@@ -7333,7 +7336,7 @@ def _dependabot_pins(root: pathlib.Path, covered: set[tuple[str, str]]) -> dict[
             else:
                 continue
             for repo, tag, digest in map(_image_ref, refs):
-                if tag and digest:
+                if digest:
                     pins.setdefault((repo, tag), {}).setdefault(digest, f.relative_to(root).as_posix())
     return pins
 
@@ -7345,9 +7348,9 @@ _SCRIPT_DIGEST_REF = re.compile(
 
 
 def _script_digests_off_pin(root: pathlib.Path, pins: dict[tuple[str, str], dict[str, str]]) -> tuple[list[str], int, int]:
-    """Every shell script in the tree, called by a workflow or not, read for images pinned by digest
-    under a tag: (problems, scripts read, refs whose tag a manifest Dependabot reads also pins). Such
-    a ref must carry that pin's digest, as a workflow ref must."""
+    """Every shell script in the tree, called by a workflow or not, read for images pinned by digest:
+    (problems, scripts read, refs whose image a manifest Dependabot reads also pins, under the same
+    tag or by digest alone as they are). Such a ref must carry that pin's digest, as a workflow ref must."""
     problems: list[str] = []
     files = twinned = 0
     for dirpath, dirnames, filenames in os.walk(root):
@@ -7362,11 +7365,11 @@ def _script_digests_off_pin(root: pathlib.Path, pins: dict[tuple[str, str], dict
                     continue
                 for m in _SCRIPT_DIGEST_REF.finditer(line):
                     repo, tag, digest = _image_ref(m.group(0))
-                    twins = pins.get((repo, tag), {}) if tag else {}
+                    twins = pins.get((repo, tag), {})
                     twinned += bool(twins)
                     if twins and digest not in twins:
                         pin, pinned_in = sorted(twins.items())[0]
-                        problems.append(f"{rel}:{i} pins {repo}:{tag} at {digest[7:19]}, but {pinned_in} "
+                        problems.append(f"{rel}:{i} pins {repo}{':' + tag if tag else ''} at {digest[7:19]}, but {pinned_in} "
                                         f"pins it at {pin[7:19]}, which Dependabot refreshes")
     return problems, files, twinned
 
@@ -7448,7 +7451,7 @@ def _workflow_images(root: pathlib.Path, pins: dict[tuple[str, str], dict[str, s
                 problems.append(f"{where} runs {ref} by tag ({how})")
             elif digest and twins and digest not in twins:
                 pin, pinned_in = sorted(twins.items())[0]
-                problems.append(f"{where} runs {repo}:{tag} at {digest[7:19]}, but {pinned_in} pins it "
+                problems.append(f"{where} runs {repo}{':' + tag if tag else ''} at {digest[7:19]}, but {pinned_in} pins it "
                                 f"at {pin[7:19]}, which Dependabot refreshes")
     run_time: list[str] = []
     for rel, (text, code) in scripts.items():
@@ -7564,8 +7567,8 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
                f"the pin of its tag in a manifest Dependabot reads where one pins it, and the docker "
                f"refs and IMAGE assignments in the {len(seen['scripts'])} shell scripts run steps call, "
                f"where {len(seen['run time'])} refs are built at run time and not read; the "
-               f"{twinned} digest pins, in {shell_files} shell scripts, of a tag such a manifest "
-               f"pins carry its digest; Dependabot reads all {len(required)} manifest directories "
+               f"{twinned} digest pins, in {shell_files} shell scripts, of an image such a manifest "
+               f"pins (under the same tag, or by digest alone) carry its digest; Dependabot reads all {len(required)} manifest directories "
                f"that pin something, {len(pinned_py)} of them holding a .txt or .in file with a "
                f"requirement line pinning a version with == (name==version)")
 
@@ -11264,6 +11267,15 @@ def check_chaos_program(root: pathlib.Path) -> list[Finding]:
         return _fail("chaos_program", "chaos.yml must run weekly (a cron on one weekday)")
     if "contents: write" not in wf or "git push" not in wf or "CHAOS-DRILLS.md" not in wf:
         return _fail("chaos_program", "chaos.yml must be able to commit and push the ledger row")
+    # 2026-10-28: the ledger holds main's drill. A run dispatched on a branch checks that branch
+    # out, so a push from it would record an unmerged drill as main's. The condition is the step's
+    # whole `if:` line: one with `|| true` after it, or the text in a comment, guards nothing.
+    pushing = [s for s in re.split(r"\n\s*- (?=name:|uses:|run:)", wf) if "git push" in s]
+    main_only = re.compile(r"(?m)^\s+if: github\.ref == 'refs/heads/main'$")
+    if not pushing or any(not main_only.search(s) for s in pushing):
+        return _fail("chaos_program", "chaos.yml must push the ledger row only from main (if: github.ref == "
+                     "'refs/heads/main' on the step that pushes it): a run dispatched on a branch would record "
+                     "that branch's drill as main's")
     if "polaris-chaos-drill.sh --record" not in wf or "docker-compose.bluegreen.yml" not in wf:
         return _fail("chaos_program", "chaos.yml must boot the blue-green stack and run the drill with --record")
     if "docs/operator/CHAOS-DRILLS.md" not in ci.split("jobs:", 1)[0]:
@@ -11274,7 +11286,7 @@ def check_chaos_program(root: pathlib.Path) -> list[Finding]:
                "P2.11: the fail-closed harness runs on every push; weekly and on demand the drill crashes one colour "
                "(zero drops), stops both until PolarisAppDown reaches a webhook through real Prometheus and "
                "Alertmanager, crashes redis and postgres, partitions pgbouncer, measures every recovery against a "
-               "ceiling, and commits the row to the ledger")
+               "ceiling, and on main commits the row to the ledger")
 
 
 def check_ha_automation(root: pathlib.Path) -> list[Finding]:

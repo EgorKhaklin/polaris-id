@@ -94,7 +94,7 @@ remains the recovery for that class.
 The shipped alerting rules in
 [`deploy/observability/polaris-alerts.yml`](../../deploy/observability/polaris-alerts.yml)
 carry a severity label on this ladder: `PolarisAppInfoAbsent`
-(`absent(polaris_app_info)` for 5 min) is SEV-1; `PolarisHighDBLatency`
+(`absent(polaris_app_info{job="polaris"})` for 5 min) is SEV-1; `PolarisHighDBLatency`
 (`polaris_db_query_latency_seconds` p99 over 5 s) is SEV-2. Alertmanager
 routing and the pager receiver are in
 [`deploy/observability/alertmanager.yml`](../../deploy/observability/alertmanager.yml);
