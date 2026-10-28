@@ -111,7 +111,7 @@ def _name(cn):
 
 
 def _cert(cn, key, issuer_cn, issuer_key, serial, *, ca, pathlen=None, leaf_san=False, san=None, not_before=None,
-          not_after=None):
+          not_after=None, extensions=()):
     not_before = T0 if not_before is None else not_before
     not_after = T1 if not_after is None else not_after
     b = (x509.CertificateBuilder().subject_name(_name(cn)).issuer_name(_name(issuer_cn))
@@ -127,6 +127,8 @@ def _cert(cn, key, issuer_cn, issuer_key, serial, *, ca, pathlen=None, leaf_san=
                                                          x509.DNSName("issuer.example")]), critical=False)
     if san:
         b = b.add_extension(x509.SubjectAlternativeName(list(san)), critical=False)
+    for extension, critical in extensions:  # (value, critical) pairs, for profiles the SD-JWT vectors do not use
+        b = b.add_extension(extension, critical=critical)
     return b.sign(issuer_key, hashes.SHA256(), ecdsa_deterministic=True)
 
 

@@ -2706,7 +2706,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
               '<img src="docs/assets/rule.svg" alt="">']
     two = "Two wallets ran unmodified: Alpha and Beta."
     one = "One more library took part: the reference library (Kotlin)."
-    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\n**Not yet:** an independent security review, a pilot.\n"
+    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\nAn outside wallet project runs the verifier in its CI.\n"
 
     def readme(rows=badges, two=two, one=one):
         return "<div>\n\n" + "\n".join(rows) + "\n\n</div>\n\n## What it is\n\nPre-pilot.\n\n" + status % (two, one)
@@ -2739,11 +2739,11 @@ def test_claims_manifest_check_discriminates(tmp_path):
          "implementations": [{"name": "Alpha", "scoreboard": "Alpha"}, {"name": "Beta", "scoreboard": "Beta wallet"}]},
         {"id": "one", "kind": "statement", "claim": one, "surfaces": ["README.md"], "evidence": ["file:LICENSE"],
          "reproduce": "Read the scoreboard.", "implementations": [{"name": "Kotlin", "scoreboard": "lib-kt"}]},
-        {"id": "not-yet", "kind": "statement", "claim": "Not yet: an independent security review, a pilot.",
+        {"id": "outside-ci", "kind": "statement", "claim": "An outside wallet project runs the verifier in its CI.",
          "surfaces": ["README.md", "site/llms.txt"], "evidence": ["file:LICENSE"], "reproduce": "Read the scoreboard."},
     ]}
     for rel, text in (("LICENSE", "Apache License\n"), ("t/test_x.py", "class XTests:\n    pass\n"),
-                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- Not yet: an independent security\n  review, a pilot.\n")):
+                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- An outside wallet project runs\n  the verifier in its CI.\n")):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(text)
     (tmp_path / "lab").mkdir()
@@ -2791,9 +2791,9 @@ def test_claims_manifest_check_discriminates(tmp_path):
         "must FAIL on an evidence token of no known kind"
 
     # A listed sentence edited, or an older one restored, on its surface.
-    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security review.\n")
+    (tmp_path / "site" / "llms.txt").write_text("- An outside wallet project runs the verifier.\n")
     assert run() == "FAIL", "must FAIL when a claim was edited on one of its surfaces"
-    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security\n  review, a pilot.\n")
+    (tmp_path / "site" / "llms.txt").write_text("- An outside wallet project runs\n  the verifier in its CI.\n")
     assert run() == "OK", "must PASS again once the surface says the claim"
     assert run(rd=readme(one="One more library presented through a wallet built here: the reference library (Kotlin).")) == "FAIL", \
         "must FAIL when an older, larger sentence replaces the listed one"
@@ -2857,7 +2857,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
     assert run(edit(lambda by: by["ci"].pop("why"))) == "FAIL", \
         "must FAIL on a null reproduce with no reason"
     assert run(edit(lambda by: by["site"].update(id="ci"))) == "FAIL", "must FAIL on two entries with one id"
-    assert run(edit(lambda by: by["not-yet"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
+    assert run(edit(lambda by: by["outside-ci"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
     manifest.unlink()
     assert checks.check_claims_manifest(tmp_path)[0].level == "FAIL", "must FAIL when the manifest is missing"
 
@@ -10791,6 +10791,18 @@ def test_zk_claim_precise_check_discriminates(tmp_path):
     (tmp_path / "README.md").write_text(
         "# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\nNo boundary stated.\n")
     assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", "must FAIL without the boundary sentence"
+    # 2026-10-24: the positive definition bounds the word as tightly as the disclaimer did
+    POSITIVE = ("# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\n"
+                "Zero knowledge here means two specific things: a verification that stores no token "
+                "identifier, and a Merkle-membership proof.\n")
+    (tmp_path / "README.md").write_text(POSITIVE)
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "OK", "must PASS the positive definition"
+    (tmp_path / "README.md").write_text(POSITIVE.replace("means two specific things", "means many things"))
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition no longer bounds the word"
+    (tmp_path / "README.md").write_text(POSITIVE.split(": a verification")[0] + ".\n")
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition names neither of its two things"
 
 
 def test_no_scifi_schema_check_discriminates(tmp_path):
@@ -11061,6 +11073,31 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     # the two-witness overclaim returns
     write(readme=README + "Two independent witnesses for every cryptographic verdict.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on the two-witness overclaim"
+    # a README with no comparison is honest, as long as nothing is claimed
+    write(readme="# POLARIS\n\nPre-pilot.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", \
+        "must PASS a README with no comparison and nothing said about correlation"
+    write(readme="# POLARIS\n\nPre-pilot. Verification is unlinkable by default.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed with no two-sided correlation statement"
+    write(readme="# POLARIS\n\nA verifier stores a per-verifier handle.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when per-verifier handles are claimed with no two-sided correlation statement"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| Polaris | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a comparison returns, with an unbolded Polaris row, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| Polaris | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an unbolded Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| **Polaris ID** | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the comparison's row names Polaris by a longer name, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| **Polaris ID** | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a longer-named Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\nRelying parties cannot link two presentations.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed as 'cannot link' with no two-sided correlation statement"
 
 
 def test_detached_verifier_check_discriminates(tmp_path):
@@ -12358,6 +12395,9 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     # v9.324 (P8.2d): the gateway's order of operations IS the security argument; each
     # perturbation removes one leg.
     APP = (
+        "class _NoRedirect(urllib.request.HTTPRedirectHandler):\n"
+        "    def redirect_request(self, req, fp, code, msg, headers, newurl):\n        return None\n"
+        "_EXCHANGE_OPENER = urllib.request.build_opener(_NoRedirect)\n"
         "@app.route('/api/v1/exchange/<int:target_agency_id>', methods=['POST'])\n"
         "def api_v1_exchange(target_agency_id):\n"
         "    polaris-exchange-request/1 ; placeholder signature is not authentication\n"
@@ -12366,7 +12406,7 @@ def test_exchange_gateway_check_discriminates(tmp_path):
         "    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n"
         "    _consume_exchange_nonce(k, n)  INSERT INTO ExchangeNonce\n"
         "    up = _exchange_upstreams()[kind]  POLARIS_EXCHANGE_UPSTREAMS; A URL never comes from a request\n"
-        "    urllib.request.urlopen(up)\n"
+        "    _EXCHANGE_OPENER.open(up)\n"
         "    _build_exchange_receipt(target, target_agency_id, f, occurred_at=str(env.get('issued_at')))\n"
         "_REGISTRY_SERVICES = [{'kind': 'exchange'}]\n'exchange_kinds'\n"
     )
@@ -12399,9 +12439,25 @@ def test_exchange_gateway_check_discriminates(tmp_path):
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL without the gateway route"
     # forward BEFORE authorize -> FAIL (swap the two lines)
     swapped = APP.replace("    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n", "").replace(
-        "    urllib.request.urlopen(up)\n", "    urllib.request.urlopen(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
+        "    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    if not _exchange_attestation(target_agency_id, req_key, context_id):\n        return jsonify(error='forbidden'), 403\n")
     write({'polaris_web/app.py': swapped})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the upstream is called before authorization"
+    # the forward through the default opener (which follows a 3xx to another host) -> FAIL
+    write({'polaris_web/app.py': APP.replace("    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    urllib.request.urlopen(up)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the gateway forwards through urllib.request.urlopen"
+    # a one-token signature edit must not hide the gateway's body from that scan
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def api_v1_exchange(target_agency_id: int):")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "OK", "control: an annotated signature is still the gateway"
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def api_v1_exchange(target_agency_id: int):").replace(
+        "    _EXCHANGE_OPENER.open(up)\n", "    _EXCHANGE_OPENER.open(up)\n    urllib.request.urlopen(up, timeout=10)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if urlopen is added under an edited signature"
+    write({'polaris_web/app.py': APP.replace("def api_v1_exchange(target_agency_id):", "def exchange_view(target_agency_id):")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL when the gateway's body cannot be found"
+    # the opener built without the redirect refusal -> FAIL, both ways it can be lost
+    write({'polaris_web/app.py': APP.replace("build_opener(_NoRedirect)", "build_opener()")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the opener is built without the redirect refusal"
+    write({'polaris_web/app.py': APP.replace("        return None\n", "        return super().redirect_request(req, fp, code, msg, headers, newurl)\n")})
+    assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if the handler's redirect_request follows the redirect"
     write({'polaris_web/app.py': APP.replace("A URL never comes from a request", "url = payload['url']")})
     assert checks.check_exchange_gateway(tmp_path)[0].level == "FAIL", "must FAIL if a forwarding URL could come from the request"
     write({'polaris_web/app.py': APP + "    query('INSERT INTO ExchangeLog (body) VALUES (%s)', (body,))\n"})
