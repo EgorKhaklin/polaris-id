@@ -26,6 +26,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The transparency monitor and witness take `--log timestamps` and follow the timestamp log (`polaris-timestamp-log`), as docs/design/timestamp-transparency.md and docs/reference/API.md say they do; before, each stopped at its options with exit 2 (scripts/polaris-transparency-monitor.py, scripts/polaris-transparency-witness.py).
 
+- The weekly chaos drill runs against the shipped `prometheus.yml` again: its rewrite still looked for the static app target that the discovery block replaced, so the drill stopped before its first stage. It now keeps the discovery block, which finds both colours on the stack's network, and checks that the block and the drill's Alertmanager target are there (scripts/polaris-chaos-drill.sh).
+
 ### Added
 
 - polaris-oid4vp `serve --once --result FILE` keeps FILE a JSON object, apart from the log on stdout, saying what became of the request: `nothing_received` until a response arrives, then `accepted` with the claim names, `refused` with the check and reason its `<-` line prints, or `wallet_error`; the HTTP status the wallet was answered; and the request object fetches served and refused. It is rewritten whole before each answer goes out.
