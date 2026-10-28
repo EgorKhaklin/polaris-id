@@ -14862,8 +14862,10 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
     an umbrella (which reads as general anonymous credentials), and the README
     must state the boundary explicitly: unlinkable verification records + a
     Merkle-membership proof, and NOT a general selective-disclosure / anonymous-
-    credential system. Detection: test_checks restores the umbrella tagline and
-    removes the boundary sentence."""
+    credential system. Since 2026-10-24 the boundary may be the positive definition instead,
+    "zero knowledge here means two specific things", naming both (no token identifier stored, a
+    membership proof) in that sentence, which bounds the word as tightly. Detection:
+    test_checks restores the umbrella tagline and removes the boundary sentence in both forms."""
     readme = _read(root, "README.md")
     if not readme:
         return _fail("zk_claim", "README.md is missing")
@@ -14876,10 +14878,13 @@ def check_zk_claim_precise(root: pathlib.Path) -> list[Finding]:
                      "the README tagline headlines 'post-quantum, zero-knowledge ...' as an umbrella; there "
                      "'zero-knowledge' reads as general anonymous credentials. Name the precise property "
                      "(unlinkable-by-default) in the tagline and keep the zero-knowledge detail in the body")
-    if not re.search(r"not a general (selective.disclosure|anonymous.credential)", plain, re.I):
+    if not re.search(r"not a general (selective.disclosure|anonymous.credential)"
+                     r"|zero.knowledge (here )?means two specific things[^.]*token identifier[^.]*membership",
+                     plain, re.I):
         return _fail("zk_claim",
-                     "the README must state the boundary: Polaris is NOT a general selective-disclosure / "
-                     "anonymous-credential system (only unlinkable verification records + a Merkle-membership proof)")
+                     "the README must state the boundary: zero knowledge here means two specific things "
+                     "(verification records with no token identifier + a Merkle-membership proof), not a "
+                     "general selective-disclosure / anonymous-credential system")
     return _ok("zk_claim",
                "the public zero-knowledge claim is precise: no umbrella in the tagline, and the README states "
                "the boundary (unlinkable verification records + a Merkle-membership proof, not anonymous credentials)")
@@ -15754,10 +15759,12 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     never "certified"; no field of the card, descriptions and image text included,
     calls Polaris national, deployed, piloted or production-ready, or unlinkable
     without its issuer qualifier (each occurrence), in any tag of that field, however it is quoted or
-    cased; the README must not carry the retired overclaims; and the 'Where Polaris
-    sits' comparison must keep the honest 'Deployed to a real population' column
+    cased; the README must not carry the retired overclaims; a README comparison with a
+    row whose first cell begins with Polaris must keep the honest 'Deployed to a real population' column
     that marks Polaris the one system NOT deployed, so its design ticks are not read
-    as a deployment. Detection: test_checks restores each refused
+    as a deployment; and a README that speaks of unlinkability or correlation must give
+    both sides of it. Since 2026-10-24 the README carries no comparison, and the two rules
+    hold whatever comes back. Detection: test_checks restores each refused
     word in each kind of field, in a second tag, in single quotes, unquoted and in upper
     case, a longer name without "pre-pilot", a missing or empty name field, a bare
     'unlinkable' beside a qualified one, an overclaiming <title> beside an innocent one
@@ -15816,33 +15823,39 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
             return _fail("public_claims",
                          f"the README carries the overclaim {bad!r}; shrink the claim to what the code does now "
                          "(the hardware token is modeled; Polaris is pre-pilot)")
-    if "Deployed to a real population" not in readme:
+    # A comparison is honest only with the column that marks Polaris the one system not
+    # deployed. The README carries none since 2026-10-24; one that comes back, in a table with a
+    # row whose first cell begins with Polaris, brings the column with it.
+    compared = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|", readme, re.M)
+    if compared and "Deployed to a real population" not in readme:
         return _fail("public_claims",
-                     "the 'Where Polaris sits' comparison must keep the 'Deployed to a real population' column so "
-                     "Polaris's design ticks are not read as a deployment")
+                     "the README compares Polaris with other systems without the 'Deployed to a real population' "
+                     "column, so Polaris's design ticks read as a deployment; keep the column or drop the comparison")
     # Unlinkability is issuer-side and ZK-mode-scoped. Since P9.4 the holder-to-verifier hop
-    # has a two-sided answer, and the README must give BOTH sides. Saying only that stored
-    # handles are now per-verifier would overclaim, because a full-credential presentation
-    # still SHOWS a stable token_value. Saying only the old flat sentence would understate
-    # work that shipped. Either half alone misleads, so both are required.
-    if "Relying-party correlation" not in readme:
+    # has a two-sided answer, and a README that speaks of it must give BOTH sides. Saying only
+    # that stored handles are now per-verifier would overclaim, because a full-credential
+    # presentation still SHOWS a stable token_value. Either half alone misleads, so both are
+    # required; a README that claims nothing about it needs neither (2026-10-24).
+    speaks = re.search(r"unlinkab|correlat|per-verifier|per-relying-party|cannot link|can't link|unable to link",
+                       readme, re.I)
+    if speaks and "Relying-party correlation" not in readme:
         return _fail("public_claims",
-                     "the README must state relying-party correlation positively, under a heading a reader "
-                     "can find")
-    para = readme[readme.index("Relying-party correlation"):][:2000]
-    if "store" not in para or "shown" not in para:
+                     "the README speaks of unlinkability or correlation, so it must state relying-party "
+                     "correlation positively, under a heading a reader can find")
+    para = readme[readme.index("Relying-party correlation"):][:2000] if speaks else ""
+    if speaks and ("store" not in para or "shown" not in para):
         return _fail("public_claims",
                      "the README must distinguish what a verifier STORES (a per-verifier handle since P9.4) "
                      "from what it is SHOWN (a full credential still carries a stable token_value); the "
                      "guarantee is about the first, and stating it without the second overclaims")
-    if "token_value" not in para:
+    if speaks and "token_value" not in para:
         return _fail("public_claims",
                      "the README must still name the stable token_value a full-credential presentation "
                      "shows a verifier; dropping it turns a bounded claim into an unlinkability claim")
     # The comparison must not award Polaris a deployment property it does not have:
     # its first two columns (deployed to a real population, national-scope issuance)
     # must both be a clear negative, so a skimmer is not told Polaris issues nationally.
-    prow = re.search(r"\|\s*\*\*Polaris\*\*\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme)
+    prow = re.search(r"^\|\s*\**\s*Polaris\b[^|]*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", readme, re.M)
     if prow and ("✓" in prow.group(1) or "✓" in prow.group(2)):
         return _fail("public_claims",
                      "the comparison awards Polaris a deployment/national-scope tick; Polaris is not deployed and "
@@ -15851,7 +15864,7 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     return _ok("public_claims",
                "the title and social card do not overstate Polaris (each name field the bare name or 'pre-pilot', "
                "none 'certified'; no field national, deployed, piloted, production-ready or bare 'unlinkable'), "
-               "the README carries no retired overclaim, and the comparison marks Polaris neither deployed "
+               "the README carries no retired overclaim, and any comparison marks Polaris neither deployed "
                "nor issuing at national scale so its design ticks are not read as a deployment")
 
 
@@ -26271,7 +26284,7 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
                          % name)
     # A registry project page is an outward surface, and the standing rule is that one must
     # not read as more settled than the thing is. sdk/python declared NO classifiers: on PyPI
-    # that is a page with no maturity signal at all for a 0.1.0 nobody outside has used.
+    # that is a page with no maturity signal at all for a pre-pilot 0.1.0.
     for pkg in ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python"):
         toml = _read(root, pkg + "/pyproject.toml")
         if not toml:
@@ -26279,7 +26292,7 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
         if "Development Status ::" not in toml:
             return _fail("distribution_licence",
                          "%s declares no Development Status classifier, so its project page "
-                         "carries no maturity signal. At 0.1.0 with no outside user, silence "
+                         "carries no maturity signal. For pre-pilot software, silence "
                          "there reads as more settled than the thing is" % pkg)
         if "License :: OSI Approved :: Apache Software License" not in toml:
             return _fail("distribution_licence",

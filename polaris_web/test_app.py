@@ -446,6 +446,11 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
                 r = self.client.post('/api/v1/exchange-receipt/1/signed', json=unsigned(),
                                      environ_overrides={'REMOTE_ADDR': '10.0.0.%d' % (i % 4)})
                 self.assertEqual(r.status_code, 401, r.get_data(as_text=True)[:200])
+                # verify_both's 401, not the stale-clock branch's: that branch also answers 401
+                # before the limiter, on the old route as on this one, so a run whose attempts
+                # went stale would pass the status check without reaching the limiter at all.
+                self.assertEqual((r.get_json() or {}).get('error'), 'invalid_signature',
+                                 r.get_data(as_text=True)[:200])
             # The (N+1)th unsigned attempt. On 40f63aeb the 120 unsigned attempts above filled
             # exmint:1, so this one is refused 429 before verify_both; with the fix the unsigned
             # path never reached the limiter, so the bucket is empty and this is still 401.
@@ -453,6 +458,8 @@ class ExchangeReceiptSignedTests(UnauthenticatedTestCase):
                                  environ_overrides={'REMOTE_ADDR': '10.0.0.0'})
         self.assertEqual(r.status_code, 401, 'an unsigned caller filled the exmint: budget before '
                          'authenticating: the limiter is spent before verify_both')
+        self.assertEqual((r.get_json() or {}).get('error'), 'invalid_signature',
+                         'the last attempt was refused before verify_both judged it')
 
 
 class ExchangeReceiptLogTests(PolarisTestCase):

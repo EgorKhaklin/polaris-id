@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 # The other two publishable packages carry these and this one carried none, so its project
-# page would have shown no maturity signal at all: 0.1.0, unpublished, no outside user, and
+# page would have shown no maturity signal at all: a pre-pilot 0.1.0, unpublished, and
 # nothing on the page saying so. The front-door rule is that an outward surface must not read
 # as more settled than the thing is.
 keywords = ["identity", "credential", "verifier", "ml-dsa", "sdk"]

@@ -31,7 +31,7 @@ info:
     (`token_value` + the genuine `signature_hex`) rather than by a bearer, so a holder can act on
     their own credential without being a registered relying party.
 
-    Pre-pilot software on notional data. See docs/PRODUCTION-READINESS.md for the bound on claims.
+    Pre-pilot software.
   license:
     name: Apache-2.0
     identifier: Apache-2.0

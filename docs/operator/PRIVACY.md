@@ -423,7 +423,9 @@ The recommended cadence from [SECRETS.md, section 1](SECRETS.md#1-the-secrets-ma
 Any secret rotates immediately on a suspected compromise or when an operator
 with prior access leaves. Rotation is operator-driven through
 `./scripts/polaris-rotate-secret.sh <name>`
-([SECRETS.md, section 4](SECRETS.md#4-rotation)). The prior value is archived
+([SECRETS.md, section 4](SECRETS.md#4-rotation)); in those two cases
+`polaris_secret_key` rotates with `--drop-old`, which keeps no retired key, so
+every session the old key signed ends. The prior value is archived
 under `polaris_web/secrets/.archive/<name>.<timestamp>` (mode 0600) so an
 operator can investigate if a rotation breaks production.
 

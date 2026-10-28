@@ -58,7 +58,7 @@ mechanism was built to prevent.
 
 | # | Limitation | Witness |
 | --- | --- | --- |
-| L-1 | **It has never held real identity data, and the physical token it models is not manufactured.** Every number in this repository was measured on notional data. | `witness:README.md::never held real identity data` |
+| L-1 | **It has never held real identity data, and the physical token it models is not manufactured.** Every number in this repository was measured on notional data. | `witness:docs/PRODUCTION-READINESS.md::never held real identity data` |
 | L-2 | **99.99% availability is not validated and cannot be, from what is measured here.** What exists is a rolling deploy that drops zero verifications and a failover that induces four failures and recovers, on a TWO-MEMBER topology on CI hardware. A four-nines figure extrapolated from that would be an assertion wearing a measurement's clothes. | `witness:polaris_web/capacity.py::UNVALIDATED_LINKS` |
 | L-3 | **Every core count is extrapolated from a one-core measurement.** Verification is measured at ~7,848/s on one core; that verification fans out linearly across cores and replicas is plausible, and the multiplication has never been run. | `witness:polaris_web/capacity.py::LINEAR_FANOUT` |
 | L-4 | **Warrant-audit statistics rest on the authority's own log.** No reader outside the authority can derive them, and none can detect an access that was never recorded. The log is append-only, which defends against revision and not against omission. | `witness:polaris_web/transparency.py::SOURCE_OPERATOR_ATTESTED` |

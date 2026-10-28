@@ -7,7 +7,7 @@
   "dependencies": {
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
-    "@owf/mdoc": "0.8.2",
+    "@owf/mdoc": "0.8.3",
     "@peculiar/x509": "2.2.0",
     "jose": "6.2.12",
     "reflect-metadata": "0.2.2"
