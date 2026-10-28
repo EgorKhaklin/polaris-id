@@ -9,5 +9,5 @@
 
 -c requirements.txt
 
-python-pkcs11==0.10.0
-boto3==1.43.114
+python-pkcs11==0.10.1
+boto3==1.43.116

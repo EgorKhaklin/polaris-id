@@ -28,6 +28,9 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The transparency monitor and witness take `--log timestamps` and follow the timestamp log (`polaris-timestamp-log`), as docs/design/timestamp-transparency.md and docs/reference/API.md say they do; before, each stopped at its options with exit 2 (scripts/polaris-transparency-monitor.py, scripts/polaris-transparency-witness.py).
 
+- The weekly chaos drill keeps the shipped `prometheus.yml` discovery block and checks that the block and the drill's Alertmanager target are there (scripts/polaris-chaos-drill.sh); a dispatch on a branch runs that branch's drill and records no ledger row (.github/workflows/chaos.yml).
+- The page and chaos drills run the Prometheus and Alertmanager images the observability overlay ships, and `lab/strategy/006/alerts.sh` its Prometheus. The supply-chain check holds an image pinned by digest alone to the digest a manifest Dependabot reads pins for it.
+- `PolarisAppInfoAbsent` carries `job="polaris"`, so Alertmanager's inhibit rule (`equal: ['job']`) mutes it while `PolarisAppDown` fires for the same job. A promtool test asserts the label (deploy/observability/polaris-alerts.test.yml), and the page drill posts both alerts to the shipped Alertmanager and checks that the info alert is inhibited and that one without the label is not (scripts/polaris-page-drill.sh).
 - polaris-verify `verify_mdoc` digests each IssuerSignedItemBytes as received, tag and length headers included. Its CBOR decoder refuses a float, a simple value other than false, true, null and undefined, any tag but 24, a tag 24 over anything but a byte string, and, as RFC 9052 section 3 requires for header labels ("MUST be rejected"), a map that repeats a key. `verify_mdoc` returns a verdict, not authentic, for a `nameSpaces` or `valueDigests` that is not a map, a COSE signature that is not a byte string, and an algorithm name given as tag 24.
 
 ### Added

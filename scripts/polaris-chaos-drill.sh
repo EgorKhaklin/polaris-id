@@ -78,8 +78,8 @@ compose() { (cd "$ROOT/polaris_web" && docker compose -f docker-compose.prod.yml
 WORK="$(mktemp -d)"
 [[ -n "$OUT" ]] || OUT="$WORK/chaos.json"
 OBS="$ROOT/deploy/observability"
-PROM_IMAGE="prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
-AM_IMAGE="prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d"
+PROM_IMAGE="prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
+AM_IMAGE="prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a"
 PY_IMAGE="python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
 SINK=polaris-chaos-sink; AM=polaris-chaos-alertmanager; PROM=polaris-chaos-prometheus
 DATE="$(date -u +%Y-%m-%dT%H:%MZ)"
@@ -203,11 +203,14 @@ class H(BaseHTTPRequestHandler):
 HTTPServer(("0.0.0.0", 8080), H).serve_forever()
 PYEOF
 echo "http://polaris-chaos-sink:8080/webhook" > "$WORK/pager_webhook_url"; chmod 0644 "$WORK/pager_webhook_url" "$WORK/sink.py"
-sed -e 's/scheme: https/scheme: http/' \
-    -e "s/targets: \['polaris.example.com:443'\]/targets: ['polaris-app:8000', 'polaris-app-green:8000']/" \
-    -e "s/targets: \['alertmanager:9093'\]/targets: ['polaris-chaos-alertmanager:9093']/" \
+# The drill copy of prometheus.yml: the shipped discovery block finds both colours by their
+# service names on $NET, which this Prometheus joins; only Alertmanager and the intervals move.
+sed -e "s/targets: \['alertmanager:9093'\]/targets: ['polaris-chaos-alertmanager:9093']/" \
     -e 's/30s/1s/g' "$OBS/prometheus.yml" > "$WORK/prometheus.yml"
-grep -q "polaris-app:8000" "$WORK/prometheus.yml" || fail "the drill prometheus.yml did not take the app targets"
+grep -q "names: \['app', 'app-green'\]" "$WORK/prometheus.yml" \
+    || fail "the drill prometheus.yml lacks the app discovery block"
+grep -q "targets: \['polaris-chaos-alertmanager:9093'\]" "$WORK/prometheus.yml" \
+    || fail "the drill prometheus.yml did not take the drill Alertmanager"
 docker rm -f "$SINK" "$AM" "$PROM" >/dev/null 2>&1 || true
 docker run -d --name "$SINK" --network "$NET" -v "$WORK/sink.py:/sink.py:ro" -v "$WORK/state:/state" "$PY_IMAGE" python /sink.py >/dev/null
 docker run -d --name "$AM" --network "$NET" \

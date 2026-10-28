@@ -3418,6 +3418,27 @@ def test_supply_chain_pins_holds_every_script_pin_to_the_dependabot_pin(tmp_path
     assert found.level == "OK", f"must PASS on a commented pin and an untwinned tag: {found.message}"
 
 
+def test_supply_chain_pins_holds_a_digest_only_pin_to_the_overlays(tmp_path):
+    # 2026-10-28: the observability overlay pins Prometheus and Alertmanager by digest alone, so no
+    # script ref twinned with them, and the page and chaos drills ran images a month older than the
+    # overlay ships.
+    _supply_chain_tree(tmp_path)
+    overlay = (tmp_path / "polaris_web/docker-compose.observability.yml").read_text()
+    shipped = re.search(r"(?m)^\s*image: prom/alertmanager@sha256:([0-9a-f]{64})", overlay)
+    assert shipped, "the fixture drifted: the overlay no longer pins prom/alertmanager by digest"
+    drill = tmp_path / "scripts/polaris-page-drill.sh"
+    good = drill.read_text()
+    pin = "prom/alertmanager@sha256:" + shipped.group(1)
+    assert good.count(pin) == 1, "the fixture drifted: polaris-page-drill.sh no longer pins the overlay's Alertmanager"
+    assert checks.check_supply_chain_pins(tmp_path)[0].level == "OK", "must PASS with the overlay's digest"
+    drill.write_text(good.replace(pin, "prom/alertmanager@sha256:" + "d" * 64))
+    found = checks.check_supply_chain_pins(tmp_path)[0]
+    assert found.level == "FAIL" and ("pins prom/alertmanager at dddddddddddd, but polaris_web/docker-compose."
+                                      "observability.yml pins it at " + shipped.group(1)[:12]) in found.message \
+        and "scripts/polaris-page-drill.sh:" in found.message, \
+        f"must FAIL, naming both files, on a digest-only pin off the overlay's: {found.message}"
+
+
 def test_supply_chain_pins_fails_closed_on_an_unresolved_variable(tmp_path):
     _supply_chain_tree(tmp_path)
     base = checks.check_supply_chain_pins(tmp_path)[0]
@@ -8445,8 +8466,10 @@ def test_chaos_program_check_discriminates(tmp_path):
              "wait_for 10 app_resolves_pgbouncer\nCEIL_RESTART=60\nCEIL_DB=90\nCEIL_PAGE=240\n"
              "-v polaris-alerts.yml -v alertmanager.yml\n--record\nfail() { record_row FAIL; }\n")
     WF = ("on:\n  schedule:\n    - cron: \"47 5 * * 1\"\npermissions:\n  contents: write\n"
-          "run: docker compose -f docker-compose.bluegreen.yml up -d\nrun: bash scripts/polaris-chaos-drill.sh --record\n"
-          "run: git add docs/operator/CHAOS-DRILLS.md && git push\n")
+          "run: docker compose -f docker-compose.bluegreen.yml up -d\n"
+          "    steps:\n      - name: Chaos drill, recorded\n        run: bash scripts/polaris-chaos-drill.sh --record\n"
+          "      - name: Commit the ledger row\n        if: github.ref == 'refs/heads/main'\n"
+          "        run: git add docs/operator/CHAOS-DRILLS.md && git push\n")
     CI = "on:\n  push:\n    paths-ignore:\n      - docs/operator/CHAOS-DRILLS.md\njobs:\n  test:\n    run: bash scripts/polaris-chaos-test.sh\n"
     good = {
         ".github/workflows/ci.yml": CI,
@@ -8488,6 +8511,18 @@ def test_chaos_program_check_discriminates(tmp_path):
     # A workflow that runs the drill but cannot commit the row.
     write({".github/workflows/chaos.yml": WF.replace("permissions:\n  contents: write\n", "")})
     assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the ledger row cannot be committed"
+    # A branch dispatch that pushes its row: the ledger would record an unmerged drill as main's.
+    write({".github/workflows/chaos.yml": WF.replace("        if: github.ref == 'refs/heads/main'\n", "")})
+    assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when a branch run pushes the ledger row"
+    # The condition on another step leaves the push unguarded.
+    write({".github/workflows/chaos.yml": WF.replace("        if: github.ref == 'refs/heads/main'\n", "")
+           .replace("      - name: Chaos drill, recorded\n", "      - name: Chaos drill, recorded\n        if: github.ref == 'refs/heads/main'\n")})
+    assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the main-only condition is on another step"
+    # A condition that is always true, and the condition's text in a comment, guard nothing.
+    write({".github/workflows/chaos.yml": WF.replace("'refs/heads/main'\n", "'refs/heads/main' || true\n")})
+    assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the condition is always true"
+    write({".github/workflows/chaos.yml": WF.replace("        if: github.ref", "        # if: github.ref")})
+    assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the condition is a comment"
     # The ledger without its header: nothing to append to.
     write({"docs/operator/CHAOS-DRILLS.md": "# Chaos drills\n"})
     assert checks.check_chaos_program(tmp_path)[0].level == "FAIL", "must FAIL when the ledger has no table"
