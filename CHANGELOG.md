@@ -69,6 +69,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp `serve` prints its startup lines and the `--once` launch links before it waits, and each verdict line as it happens. When stdout was not a terminal (a pipe, a file, a container log), Python's buffering held them until its buffer filled or the process exited.
 - docs/RED-TEAM-SCOPE.md said every read of an audit-tracked table must leave an `AuditAccessLog` row, wider than the review packet's A-8: a count over those tables (the dashboard's figures) returns no one's rows. Both now name the four tables and the rows a page returns, and name the tables holding one person's rows that are outside the record, `TokenStateEpochLeaf` (`/epochs`) among them.
 - polaris-oid4vp's `serve` command and its `serve()` function listen on 127.0.0.1 by default, as the 1.0.0 README said ("localhost by default"); both listened on every interface, and a caller of `serve(verifier)` now gets this machine only. `--bind 0.0.0.0`, or `serve(..., host="0.0.0.0")`, listens on every interface.
+- The English Version 3 report, its evidence record and the mathematical edition in docs/paper/ are rebuilt with their revision of 28 October 2026; the evidence record's provenance table lists what it changed.
 
 ### Security
 
