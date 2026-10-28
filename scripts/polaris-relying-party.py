@@ -126,7 +126,10 @@ def _http_status_checker(issuer_url, anchor_keys=None):
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=30) as r:
             assertion = json.loads(r.read())
-        d = _load_verifier().verify_stapled(credential, assertion, anchor_keys=anchor_keys)
+        # With no anchor the answer is held to the credential's own key, as the docstring says;
+        # the detached verifier abstains there unless told so (2026-10-21).
+        d = _load_verifier().verify_stapled(credential, assertion, anchor_keys=anchor_keys,
+                                            signature_only=anchor_keys is None)
         sa = d.get("status_assertion") or {}
         if not (d.get("bound") and sa.get("status_authentic")) or sa.get("issuer_trusted") is False:
             return {"error": "the issuer's status assertion did not verify for this credential: %s"

@@ -260,6 +260,8 @@ class _StandInIssuer:
                 self.end_headers()
                 self.wfile.write(data)
 
+            do_GET = do_POST   # a GET has no body: the same route table answers it
+
             def log_message(self, *args):
                 pass
 
@@ -419,6 +421,109 @@ class GrantLimitsAreSignedAsVerifiersReadThem(unittest.TestCase):
     def test_a_limit_that_is_not_finite_is_refused(self):
         with self.assertRaises(SystemExit):
             self._grant(float("nan"))
+
+
+@unittest.skipUnless(_HAVE_OQS, "liboqs-python is not installed")
+class ProveMembershipFromAnInstanceTests(unittest.TestCase):
+    """prove-membership --from-instance, as a holder runs it against a stand-in authority.
+    Before this change the fetched set was checked against no key, so a set re-signed with any key passed
+    and the wallet said the issuing authority had signed it; a set of any size was proved in; and
+    the proof's root was never compared with the root signed beside the set."""
+
+    PACK = WalletAgainstAnIssuerTests.PACK
+    THREE = ["%064x" % i for i in range(1, 4)]
+
+    def setUp(self):
+        import oqs
+        self.dir = tempfile.mkdtemp()
+        self.wallet = os.path.join(self.dir, "w")
+        pack = os.path.join(self.dir, "cred.json")
+        with open(pack, "w") as f:
+            json.dump(self.PACK, f)
+        self.assertEqual(self._run("enroll", "--pack", pack).returncode, 0)
+        self.V = _load_verifier()
+        self.key = oqs.Signature("ML-DSA-65")
+        self.pk = self.key.generate_keypair().hex()
+        self.anchor = self._anchor(self.pk)
+
+    def _run(self, *args):
+        return subprocess.run([sys.executable, _WALLET, "--wallet", self.wallet, *args],
+                              capture_output=True, text=True)
+
+    def _anchor(self, *keys):
+        path = os.path.join(self.dir, "anchor-%d.json" % len(os.listdir(self.dir)))
+        with open(path, "w") as f:
+            json.dump(list(keys), f)
+        return path
+
+    def _set(self, leaves, merkle_root="ab" * 32):
+        """A polaris-epoch-leaves/1 set for epoch 7 in context 1, current, signed by this test's key."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        b = {"format": "polaris-epoch-leaves/1", "authority": {"agency_id": 1, "name": "Authority A"},
+             "epoch_id": 7, "context_id": 1, "merkle_root": merkle_root, "leaf_count": len(leaves),
+             "all_leaves_hex": leaves, "leaves_root_hex": self.V._leaves_root(leaves),
+             "issued_at": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "expires_at": (now + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "algorithm": "ML-DSA-65", "public_key_hex": self.pk}
+        b["signature_hex"] = self.key.sign(hashlib.sha3_256(self.V._epoch_leaves_canonical(b)).digest()).hex()
+        return b
+
+    def _prove(self, bundle, *flags):
+        issuer = _StandInIssuer({"/api/v1/epoch/7/leaves": (200, bundle)})
+        self.addCleanup(issuer.close)
+        return self._run("prove-membership", "--from-instance", issuer.url, "--epoch-id", "7", *flags)
+
+    def test_a_set_signed_by_a_key_nobody_named_is_refused(self):
+        r = self._prove(self._set(self.THREE))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("signed by the issuing authority", r.stderr)
+        self.assertIn("no --issuer-anchor", r.stderr)
+
+    def test_a_set_the_anchor_did_not_sign_is_refused(self):
+        import oqs
+        published = oqs.Signature("ML-DSA-65").generate_keypair().hex()
+        r = self._prove(self._set(self.THREE), "--issuer-anchor", self._anchor(published))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not signed by a key among your --issuer-anchor keys", r.stderr)
+
+    def test_a_set_below_the_floor_is_refused(self):
+        r = self._prove(self._set(self.THREE), "--issuer-anchor", self.anchor)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("has 3 members, below the minimum of 20", r.stderr)
+
+    def _twenty(self):
+        binary = _zk_binary()
+        if not os.path.exists(binary):
+            self.skipTest("polaris-zk binary not built")
+        leaves = [_leaf(binary, 42, self.PACK["token_value"], 1)] + [
+            _leaf(binary, i, "OTHER-%d" % i, 1) for i in range(19)]
+        out = subprocess.run([binary, "compute-root"], input=json.dumps({"leaves_hex": leaves}),
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return binary, leaves, json.loads(out.stdout)["epoch_root_hex"]
+
+    def test_control_a_set_the_anchor_signed_is_proved_in_and_the_wallet_says_whose_key(self):
+        binary, leaves, root = self._twenty()
+        out = os.path.join(self.dir, "proof.json")
+        r = self._prove(self._set(leaves, merkle_root=root), "--issuer-anchor", self.anchor, "--out", out)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("anonymity set: 20 members, signed by key %s..., one of your --issuer-anchor keys"
+                      % self.pk[:16], r.stderr)
+        with open(out) as f:
+            proof = f.read()
+        self.assertEqual(json.loads(proof)["public_inputs"]["epoch_root_hex"], root)
+        v = subprocess.run([binary, "verify"], input=proof, capture_output=True, text=True)
+        self.assertTrue(json.loads(v.stdout)["verified"])
+
+    def test_a_proof_over_another_root_than_the_signed_one_is_not_written(self):
+        _binary, leaves, root = self._twenty()
+        out = os.path.join(self.dir, "proof.json")
+        r = self._prove(self._set(leaves, merkle_root="ab" * 32), "--issuer-anchor", self.anchor, "--out", out)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("is not the merkle_root the authority signed", r.stderr)
+        self.assertFalse(os.path.exists(out), "no proof is written over a root the authority did not sign")
+
 
 if __name__ == "__main__":
     unittest.main()

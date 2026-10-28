@@ -13630,6 +13630,437 @@ def check_status_assertion_window_is_caller_policy(root: pathlib.Path) -> list[F
                % ", ".join(sorted(signed)))
 
 
+# ---------------------------------------------------------------------------
+# The SDKs' `fresh` reads only signed fields (2026-10-21). Two models of the same rule, one per
+# SDK: the Python one read through the AST, the TypeScript one through its comment-free text.
+# Each returns ({format: signed fields}, {format: fields its freshness reads}, problems).
+# ---------------------------------------------------------------------------
+#: Where each SDK computes a window, and for which formats. A window computed anywhere else
+#: cannot be assigned to a format, so the check says it cannot measure rather than guess.
+_SDK_WINDOW_SITES = {
+    "python": {"verify_signed_artifact": "every format", "verify_status_assertion": "polaris-status-assertion/1"},
+    "typescript": {"verifySignedArtifact": "every format", "verifyStatusAssertion": "polaris-status-assertion/1"},
+}
+
+
+def _py_window_rules(fn):
+    """`_signed_window`'s rules as ([(fields it requires signed, (start, end))], fallback), or None
+    when its body is anything but `if "a" in keys and "b" in keys: return "a", "b"` lines and a
+    final return of a pair or None."""
+    if not fn.args.args:
+        return None
+    keys = fn.args.args[0].arg
+    body = list(fn.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+
+    def pair(v):
+        if (isinstance(v, ast.Tuple) and len(v.elts) == 2
+                and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in v.elts)):
+            return v.elts[0].value, v.elts[1].value
+        return None
+
+    rules = []
+    for i, st in enumerate(body):
+        last = i == len(body) - 1
+        if isinstance(st, ast.Return) and last:
+            if st.value is None or (isinstance(st.value, ast.Constant) and st.value.value is None):
+                return rules, None
+            p = pair(st.value)
+            return (rules, p) if p else None
+        if not (isinstance(st, ast.If) and not st.orelse and len(st.body) == 1
+                and isinstance(st.body[0], ast.Return) and pair(st.body[0].value)):
+            return None
+        terms = st.test.values if isinstance(st.test, ast.BoolOp) and isinstance(st.test.op, ast.And) else [st.test]
+        need = set()
+        for t in terms:
+            if not (isinstance(t, ast.Compare) and len(t.ops) == 1 and isinstance(t.ops[0], ast.In)
+                    and isinstance(t.left, ast.Constant) and isinstance(t.left.value, str)
+                    and isinstance(t.comparators[0], ast.Name) and t.comparators[0].id == keys):
+                return None
+            need.add(t.left.value)
+        rules.append((need, pair(st.body[0].value)))
+    return None
+
+
+def _py_reads(fn):
+    """(literal fields, parameter names) a function reads off its first parameter with `.get`, or
+    None when it reads one some other way."""
+    obj = fn.args.args[0].arg if fn.args.args else None
+    params = {a.arg for a in fn.args.args[1:]}
+    lit, par = set(), set()
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == obj:
+            return None
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "get"
+                and isinstance(n.func.value, ast.Name) and n.func.value.id == obj):
+            continue
+        a = n.args[0] if len(n.args) == 1 else None
+        if isinstance(a, ast.Constant) and isinstance(a.value, str):
+            lit.add(a.value)
+        elif isinstance(a, ast.Name) and a.id in params:
+            par.add(a.id)
+        else:
+            return None
+    return lit, par
+
+
+def _sdk_fresh_model_py(src: str):
+    problems: list[str] = []
+    where = "the Python SDK"
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:
+        return {}, {}, ["%s does not parse (%s)" % (where, exc.msg)]
+    consts, fns = {}, {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            consts[node.targets[0].id] = node.value
+        elif isinstance(node, ast.FunctionDef):
+            fns[node.name] = node
+
+    def literal(name):
+        try:
+            return ast.literal_eval(consts[name])
+        except (KeyError, ValueError, TypeError, SyntaxError):
+            problems.append("%s has no literal %s" % (where, name))
+            return None
+
+    keys = literal("_ARTIFACT_KEYS")
+    status = literal("_STATUS_ASSERTION_KEYS")
+    replay = literal("_REPLAY_WINDOW_SECONDS")
+    if not (isinstance(keys, dict) and len(keys) >= 10
+            and all(isinstance(v, list) and all(isinstance(f, str) for f in v) for v in keys.values())):
+        return {}, {}, problems + ["%s's per-format signed key list (_ARTIFACT_KEYS) did not parse to "
+                                   "ten or more formats" % where]
+    table = {f: list(v) for f, v in keys.items()}
+    if isinstance(status, list):
+        table["polaris-status-assertion/1"] = status
+    reads: dict = {f: set() for f in table}
+    win, rep, sel = fns.get("_within_window"), fns.get("_within_replay_window"), fns.get("_signed_window")
+    for label, fn in (("_within_window", win), ("_within_replay_window", rep)):
+        if fn is None:
+            problems.append("%s defines no %s" % (where, label))
+    if problems:
+        return table, reads, problems
+    win_reads, rep_reads = _py_reads(win), _py_reads(rep)
+    # Read only where a window call asks it which fields to read.
+    rules = _py_window_rules(sel) if sel is not None else None
+    if win_reads is None or not (win_reads[0] or win_reads[1]):
+        problems.append("%s's _within_window reads no field this check can name" % where)
+    if rep_reads is None or not rep_reads[0] or rep_reads[1]:
+        problems.append("%s's _within_replay_window reads no literal field this check can name" % where)
+    if not isinstance(replay, dict) or not replay:
+        problems.append("%s's replay table (_REPLAY_WINDOW_SECONDS) names no format" % where)
+    if problems:
+        return table, reads, problems
+    for fmt in replay:
+        if fmt not in keys:
+            problems.append("%s's replay table names %s, which has no signed key list" % (where, fmt))
+        else:
+            reads[fmt] |= rep_reads[0]
+    params = [a.arg for a in win.args.args]
+    defaults = {a.arg: d.value for a, d in zip(win.args.args[len(params) - len(win.args.defaults):],
+                                               win.args.defaults) if isinstance(d, ast.Constant)}
+
+    def bound(fn, var):
+        """The one value `var` is assigned in fn, or None when it is assigned none or several."""
+        vals = [n.value for n in ast.walk(fn) if isinstance(n, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == var for t in n.targets)]
+        return vals[0] if len(vals) == 1 else None
+
+    sites = 0
+    for fname, fn in fns.items():
+        for call in ast.walk(fn):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_within_window"):
+                continue
+            sites += 1
+            target = _SDK_WINDOW_SITES["python"].get(fname)
+            if target is None or (target != "every format" and target not in table):
+                problems.append("%s computes a window in %s, which this check cannot assign to a format" % (where, fname))
+                continue
+            tail = call.args[2:]
+            if call.keywords or len(call.args) < 2:
+                tail = None
+            elif not tail:
+                span = {p: defaults.get(p) for p in params[2:4]}
+            elif len(tail) == 1 and isinstance(tail[0], ast.Starred) and isinstance(tail[0].value, ast.Name):
+                chooser = bound(fn, tail[0].value.id)
+                over = (chooser.args[0].id if isinstance(chooser, ast.Call) and isinstance(chooser.func, ast.Name)
+                        and chooser.func.id == "_signed_window" and len(chooser.args) == 1
+                        and isinstance(chooser.args[0], ast.Name) else None)
+                listed = bound(fn, over) if over else None
+                if listed is None or "_ARTIFACT_KEYS" not in ast.unparse(listed) or rules is None:
+                    problems.append("%s's window in %s is not picked by _signed_window rules this check can read, "
+                                    "over the format's own signed key list" % (where, fname))
+                    continue
+                span = None
+            elif len(tail) == 2 and all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in tail):
+                span = dict(zip(params[2:4], (a.value for a in tail)))
+            else:
+                tail = None
+            if tail is None:
+                problems.append("%s's window call in %s names its fields in a way this check cannot read" % (where, fname))
+                continue
+            for fmt in (list(keys) if target == "every format" else [target]):
+                if span is None:
+                    chosen = next((p for need, p in rules[0] if need <= set(table[fmt])), rules[1])
+                    if chosen is None:
+                        continue
+                    pick = dict(zip(params[2:4], chosen))
+                else:
+                    pick = span
+                fields = win_reads[0] | {pick.get(p) for p in win_reads[1]}
+                if None in fields:
+                    problems.append("%s's window call in %s leaves a field it reads unnamed" % (where, fname))
+                    break
+                reads[fmt] |= fields
+    if not sites:
+        problems.append("%s computes no window with _within_window" % where)
+    elsewhere = sum(1 for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id == "_within_window") - sites
+    if elsewhere:
+        problems.append("%s computes %d window(s) outside a top-level function" % (where, elsewhere))
+    idt = fns.get("verify_id_token")
+    instants = set()
+    if idt is not None and idt.args.args:
+        tok = idt.args.args[0].arg
+        for n in ast.walk(idt):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_iso_to_epoch" and n.args
+                    and isinstance(n.args[0], ast.Call) and isinstance(n.args[0].func, ast.Attribute)
+                    and n.args[0].func.attr == "get" and isinstance(n.args[0].func.value, ast.Name)
+                    and n.args[0].func.value.id == tok and n.args[0].args
+                    and isinstance(n.args[0].args[0], ast.Constant)):
+                instants.add(n.args[0].args[0].value)
+    if len(instants) < 2 or "polaris-id-token/1" not in table:
+        problems.append("%s's verify_id_token reads no window off the token this check can name" % where)
+    else:
+        reads["polaris-id-token/1"] |= instants
+    return table, reads, problems
+
+
+def _ts_function(src: str, name: str):
+    """(parameter text, body text) of a top-level TypeScript `function NAME(...) ... { ... }`, or None."""
+    m = re.search(r"^(?:export\s+)?function\s+%s\s*\(" % re.escape(name), src, re.M)
+    if not m:
+        return None
+    i, depth = m.end(), 1
+    while i < len(src) and depth:
+        depth += {"(": 1, ")": -1}.get(src[i], 0)
+        i += 1
+    j = src.find("{", i)
+    if depth or j < 0:
+        return None
+    k, depth = j + 1, 1
+    while k < len(src) and depth:
+        depth += {"{": 1, "}": -1}.get(src[k], 0)
+        k += 1
+    return (src[m.end():i - 1], src[j + 1:k - 1]) if depth == 0 else None
+
+
+def _ts_reads(fn):
+    """(literal fields, parameter names) a TypeScript function reads off its first parameter, or None
+    when it reads one some other way."""
+    params, body = fn
+    names = re.findall(r"(?:^|,)\s*(\w+)", params)
+    if not names:
+        return None
+    obj, rest = names[0], set(names[1:])
+    lit, par = set(), set()
+    for m in re.finditer(r"\b%s\s*(\?\.\s*\[|\[|\?\.|\.)" % re.escape(obj), body):
+        tail = body[m.end():]
+        if m.group(1) in ("?.", "."):
+            prop = re.match(r"\s*(\w+)", tail)
+            if not prop:
+                return None
+            lit.add(prop.group(1))
+            continue
+        sub = re.match(r"\s*(?:\"([^\"]+)\"|(\w+))\s*\]", tail)
+        if sub and sub.group(1):
+            lit.add(sub.group(1))
+        elif sub and sub.group(2) in rest:
+            par.add(sub.group(2))
+        else:
+            return None
+    return lit, par
+
+
+def _ts_window_rules(fn):
+    """signedWindow's rules, as _py_window_rules reads `_signed_window`'s, or None."""
+    params, body = fn
+    kp = re.match(r"\s*(\w+)", params)
+    if not kp:
+        return None
+    lines = [ln.strip() for ln in body.split("\n") if ln.strip()]
+    rules = []
+    for i, ln in enumerate(lines):
+        last = i == len(lines) - 1
+        if last and re.fullmatch(r"return\s+null\s*;", ln):
+            return rules, None
+        ret = re.fullmatch(r'return\s*\[\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\]\s*;', ln)
+        if last and ret:
+            return rules, (ret.group(1), ret.group(2))
+        m = re.fullmatch(r'if\s*\((.+)\)\s*return\s*\[\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\]\s*;', ln)
+        if not m or last:
+            return None
+        need = set()
+        for term in re.split(r"\s*&&\s*", m.group(1).strip()):
+            t = re.fullmatch(r'%s\.includes\(\s*"([^"]+)"\s*\)' % re.escape(kp.group(1)), term)
+            if not t:
+                return None
+            need.add(t.group(1))
+        rules.append((need, (m.group(2), m.group(3))))
+    return None
+
+
+def _sdk_fresh_model_ts(src: str):
+    problems: list[str] = []
+    where = "the TypeScript SDK"
+    m = re.search(r"\bconst\s+ARTIFACT_KEYS\b[^=]*=\s*\{(.*?)\n\};", src, re.S)
+    keys = {f: re.findall(r'"([^"]*)"', body)
+            for f, body in re.findall(r'"([^"]+)"\s*:\s*\[([^\]]*)\]', m.group(1))} if m else {}
+    if len(keys) < 10:
+        return {}, {}, ["%s's per-format signed key list (ARTIFACT_KEYS) did not parse to ten or more "
+                        "formats" % where]
+    table = dict(keys)
+    s = re.search(r"\bconst\s+STATUS_ASSERTION_KEYS\b[^=]*=\s*\[([^\]]*)\]", src)
+    if s:
+        table["polaris-status-assertion/1"] = re.findall(r'"([^"]*)"', s.group(1))
+    else:
+        problems.append("%s has no STATUS_ASSERTION_KEYS" % where)
+    r = re.search(r"\bconst\s+REPLAY_WINDOW_SECONDS\b[^=]*=\s*\{([^}]*)\}", src)
+    replay = re.findall(r'"([^"]+)"\s*:\s*\d', r.group(1)) if r else []
+    if not replay:
+        problems.append("%s's replay table (REPLAY_WINDOW_SECONDS) names no format" % where)
+    reads: dict = {f: set() for f in table}
+    win, rep, sel = (_ts_function(src, n) for n in ("withinWindow", "withinReplayWindow", "signedWindow"))
+    for label, fn in (("withinWindow", win), ("withinReplayWindow", rep)):
+        if fn is None:
+            problems.append("%s defines no %s" % (where, label))
+    if problems:
+        return table, reads, problems
+    win_reads, rep_reads = _ts_reads(win), _ts_reads(rep)
+    # Read only where a window call asks it which fields to read.
+    rules = _ts_window_rules(sel) if sel is not None else None
+    if win_reads is None or not (win_reads[0] or win_reads[1]):
+        problems.append("%s's withinWindow reads no field this check can name" % where)
+    if rep_reads is None or not rep_reads[0] or rep_reads[1]:
+        problems.append("%s's withinReplayWindow reads no literal field this check can name" % where)
+    if problems:
+        return table, reads, problems
+    for fmt in replay:
+        if fmt not in keys:
+            problems.append("%s's replay table names %s, which has no signed key list" % (where, fmt))
+        else:
+            reads[fmt] |= rep_reads[0]
+    names = [re.match(r"\s*(\w+)", p).group(1) for p in win[0].split(",") if re.match(r"\s*(\w+)", p)]
+    defaults = dict(re.findall(r'(\w+)\s*=\s*"([^"]+)"', win[0]))
+    calls = [c for c in re.finditer(r"\bwithinWindow\s*\(", src)
+             if not re.search(r"function\s+$", src[max(0, c.start() - 40):c.start()])]
+    placed = 0
+    for fname, target in _SDK_WINDOW_SITES["typescript"].items():
+        fn = _ts_function(src, fname)
+        if fn is None:
+            continue
+        for call in re.finditer(r"\bwithinWindow\s*\(", fn[1]):
+            placed += 1
+            i, depth = call.end(), 1
+            while i < len(fn[1]) and depth:
+                depth += {"(": 1, ")": -1}.get(fn[1][i], 0)
+                i += 1
+            args = [a.strip() for a in fn[1][call.end():i - 1].split(",")]
+            if len(args) == 3 and args[2].startswith("..."):
+                var = args[2][3:]
+                bind = re.search(r"\bconst\s+%s\s*=\s*signedWindow\(\s*(\w+)\s*\)" % re.escape(var), fn[1])
+                src_keys = bind and re.search(r"\bconst\s+%s\s*=[^;]*\bARTIFACT_KEYS\b" % re.escape(bind.group(1)), fn[1])
+                if not src_keys or rules is None:
+                    problems.append("%s's window in %s is not picked by signedWindow rules this check can read, "
+                                    "over the format's own signed key list" % (where, fname))
+                    continue
+                span = None
+            elif len(args) == 2:
+                span = {p: defaults.get(p) for p in names[2:4]}
+            elif len(args) == 4 and all(re.fullmatch(r'"[^"]+"', a) for a in args[2:]):
+                span = dict(zip(names[2:4], (a.strip('"') for a in args[2:])))
+            else:
+                problems.append("%s's window call in %s names its fields in a way this check cannot read" % (where, fname))
+                continue
+            if target != "every format" and target not in table:
+                problems.append("%s computes a window in %s, which this check cannot assign to a format" % (where, fname))
+                continue
+            for fmt in (list(keys) if target == "every format" else [target]):
+                if span is None:
+                    chosen = next((p for need, p in rules[0] if need <= set(table[fmt])), rules[1])
+                    if chosen is None:
+                        continue
+                    pick = dict(zip(names[2:4], chosen))
+                else:
+                    pick = span
+                fields = win_reads[0] | {pick.get(p) for p in win_reads[1]}
+                if None in fields:
+                    problems.append("%s's window call in %s leaves a field it reads unnamed" % (where, fname))
+                    break
+                reads[fmt] |= fields
+    if placed != len(calls):
+        problems.append("%s computes %d window(s) outside the functions this check assigns to a format"
+                        % (where, len(calls) - placed))
+    if not calls:
+        problems.append("%s computes no window with withinWindow" % where)
+    idt = _ts_function(src, "verifyIdToken")
+    instants = set(re.findall(r"\bisoToEpoch\(\s*\w+\??\.(\w+)\s*\)", idt[1])) if idt else set()
+    if len(instants) < 2 or "polaris-id-token/1" not in table:
+        problems.append("%s's verifyIdToken reads no window off the token this check can name" % where)
+    else:
+        reads["polaris-id-token/1"] |= instants
+    return table, reads, problems
+
+
+def check_sdk_fresh_reads_only_signed_fields(root: pathlib.Path) -> list[Finding]:
+    """Each SDK's `fresh` reads, for every format, only fields that format signs (2026-10-21).
+
+    A field outside a signed statement is anyone's to add or change: the canonical statement
+    covers exactly the listed keys (WIRE-SPEC 2.1), and an unsigned top-level field is one a
+    verifier ignores for its decision (section 6). The ID token signs its window as `iat` and
+    `exp`, and several formats sign neither `issued_at` nor `expires_at`, or only one of them.
+
+    So, per SDK, this reads the per-format signed key list, the fields the window function and
+    the replay window read, which window `_signed_window` / `signedWindow` picks for each
+    format from that format's own list, every place a window is computed and for which
+    formats, and the instants `verify_id_token` / `verifyIdToken` read off the token. Every
+    field those window reads take, where they are called, must be in that format's signed
+    list; a read written inline elsewhere is outside it (the SDKs' own tests pin `fresh`).
+    Anything it cannot read is a failure to measure, never a pass.
+    """
+    name = "sdk_signed_window"
+    py = _read(root, "sdk/python/polaris_verify/__init__.py")
+    ts = _js_code(_read_raw(root, "sdk/typescript/src/index.ts"))
+    problems = []
+    if not re.search(r"^def _within_window\(", py, re.M):
+        problems.append("the Python SDK defines no _within_window")
+    if not re.search(r"^function withinWindow\(", ts, re.M):
+        problems.append("the TypeScript SDK defines no withinWindow")
+    models = {"python": _sdk_fresh_model_py(py), "typescript": _sdk_fresh_model_ts(ts)}
+    for _table, _reads, found in models.values():
+        problems += found
+    if problems:
+        return _fail(name, "cannot measure what the SDKs' freshness reads, so this would pass by "
+                           "finding nothing: " + "; ".join(problems))
+    unsigned = []
+    for sdk, (table, reads, _found) in models.items():
+        for fmt in sorted(reads):
+            extra = sorted(str(f) for f in reads[fmt] - set(table.get(fmt, ())))
+            if extra:
+                unsigned.append("%s %s reads %s" % (sdk, fmt, ", ".join(extra)))
+    if unsigned:
+        return _fail(name, "an SDK's fresh reads a field the format does not sign, which anyone holding "
+                           "the artifact can add or change: " + "; ".join(unsigned))
+    py_reads, ts_reads = models["python"][1], models["typescript"][1]
+    return _ok(name, "every field each SDK's window reads take is signed by its format: %d formats in "
+                     "Python and %d in TypeScript, %d of them answering from no window"
+               % (len(py_reads), len(ts_reads),
+                  sum(1 for r in py_reads.values() if not r)))
+
+
 def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Finding]:
     """The published contract's own count of what it certifies, held to the manifest.
 
@@ -31288,6 +31719,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_conformance_contract_constrains,
     check_package_readme_counts_its_tests,
     check_status_assertion_window_is_caller_policy,
+    check_sdk_fresh_reads_only_signed_fields,
     check_conformance_spec_counts_its_artifacts,
     check_conformance_contract_distinguishes,
     check_procedure_refusals_are_mutation_tested,

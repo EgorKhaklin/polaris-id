@@ -424,13 +424,24 @@ function withinReplayWindow(obj: any, now?: string | null): boolean | null {
   return issued <= n + CLOCK_SKEW_SECONDS && n - issued <= seconds;
 }
 
-function withinWindow(obj: any, now?: string | null): boolean | null {
-  const ia = isoToEpoch(obj?.issued_at);
-  const ea = isoToEpoch(obj?.expires_at);
+function withinWindow(obj: any, now?: string | null, start = "issued_at", end = "expires_at"): boolean | null {
+  const ia = isoToEpoch(obj?.[start]);
+  const ea = isoToEpoch(obj?.[end]);
   if (ia === null || ea === null) return null;
   const n = now != null ? isoToEpoch(now) : Date.now() / 1000;
   if (n === null) return null;
   return ia <= n && n < ea;
+}
+
+/** The [start, end] fields of the validity window a format SIGNS, read from its own signed key
+ * list, or null when it signs no window. The ID token signs its window as `iat` and `exp`. A
+ * field outside the signed statement is anyone's to add or change, so a format that signs only
+ * one end of a window, or neither, has no window to answer `fresh` from (2026-10-21). Matches
+ * `_signed_window` in the Python SDK. */
+function signedWindow(keys: string[]): [string, string] | null {
+  if (keys.includes("iat") && keys.includes("exp")) return ["iat", "exp"];
+  if (keys.includes("issued_at") && keys.includes("expires_at")) return ["issued_at", "expires_at"];
+  return null;
 }
 
 /** Verify a Polaris status assertion OFFLINE (P3.6, wire spec section 3.5): the ML-DSA-65
@@ -527,8 +538,9 @@ function membersRoot(members: any): string {
 /** Verify a Polaris signed artifact's AUTHENTICITY OFFLINE (P8.1, wire spec section 3): for the
  * epoch checkpoint, revocation feed, federation manifest, status bundle, or transparency STH,
  * recompute the canonical statement for its `format`, verify the ML-DSA-65 signature over its
- * SHA3-256, check freshness for a windowed artifact, and check the commitment (feed/bundle) or
- * self-consistency (manifest). The federation TRUST decision is a separate composite check. */
+ * SHA3-256, check freshness against the window the format signs (null when it signs none), and
+ * check the commitment (feed/bundle) or self-consistency (manifest). The federation TRUST
+ * decision is a separate composite check. */
 export type IdTokenVerdict = {
   authentic: boolean;
   audienceMatches: boolean | null;
@@ -544,8 +556,10 @@ export type IdTokenVerdict = {
 };
 
 /** Verify a polaris-id-token/1 (P8.4) as a relying party, offline: the issuing agency's
- * signature, that it was issued to THIS audience, that it carries the login's nonce, and
- * freshness (iat <= now < exp). The subject is a credential hash, never a person. */
+ * signature, and whether that agency is one you trust (`issuerTrusted`, answered only against
+ * the agency keys you pass as `anchors`; null without them), that it was issued to THIS
+ * audience, that it carries the login's nonce, and freshness (iat <= now < exp). The subject
+ * is a credential hash, never a person. */
 export function verifyIdToken(tok: any, audience?: string | null, nonce?: string | null,
                               now?: string | null, anchors?: string[] | null): IdTokenVerdict {
   const t = tok ?? {};
@@ -667,14 +681,18 @@ export function verifySignedArtifact(obj: any, now?: string | null,
     ok = hexIn(o.public_key_hex, active);
   }
   // A replay-windowed format answers freshness the other way round; withinWindow needs
-  // both ends of an interval and such an artifact has only its issuance.
+  // both ends of an interval and such an artifact has only its issuance. Any other
+  // format answers from the window it signs, and null when it signs none.
   const replay = withinReplayWindow(o, now);
+  const win = signedWindow(keys);
   // Same rule as the detached verifier and the Python SDK: the key that signed it,
-  // lowercased, is in the anchor set. Null when the caller supplied none.
-  const issuerTrusted = anchors == null
+  // lowercased, is in the anchor set. Null when the caller supplied none, and when the
+  // signature is not authentic: it read true beside a forged signature before this change, where
+  // the detached verifier's verify_signed_document reports signer_trusted null.
+  const issuerTrusted = anchors == null || !ok
     ? null
     : hexIn(o.public_key_hex, anchors.map((a) => hexText(a)));
-  return { authentic: ok, fresh: replay !== null ? replay : withinWindow(o, now),
+  return { authentic: ok, fresh: replay !== null ? replay : win !== null ? withinWindow(o, now, ...win) : null,
            issuerTrusted, ...(commitmentNote ? { note: commitmentNote } : {}) };
 }
 
@@ -794,11 +812,11 @@ export type AnchorVerdict = {
 
 /** Verify OFFLINE that a timestamp is ANCHORED in the timestamp transparency log: its unsigned
  * `anchor` carries an inclusion proof and a Signed Tree Head, the proof is for this timestamp's
- * own hash, the head is an authentic head of that log (with `logKey`, signed by the expected
- * authority), and the proof reconstructs the head. With `trustedWitnesses`, the head must also
- * be cosigned by `threshold` DISTINCT trusted witnesses: a stolen authority key can sign a fresh
- * head over a fabricated log, but it cannot make a witness have cosigned that head at the
- * claimed time. No network. Total on hostile input. */
+ * own hash, the head is an authentic head of that log signed by `logKey` (the log key the caller
+ * names; with none, nothing is anchored), and the proof reconstructs the head. With
+ * `trustedWitnesses`, the head must also be cosigned by `threshold` DISTINCT trusted witnesses:
+ * a stolen authority key can sign a fresh head over a fabricated log, but it cannot make a
+ * witness have cosigned that head at the claimed time. No network. Total on hostile input. */
 export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWitnesses?: string[] | null,
                                       threshold: number = 1): AnchorVerdict {
   const v: AnchorVerdict = { anchored: false, sthAuthentic: false, witnessed: null, cosignerCount: 0,
@@ -856,7 +874,11 @@ export function verifyTimestampAnchor(ts: any, logKey?: string | null, trustedWi
     return v;
   }
   if (!v.sthAuthentic) { v.note = sv.note ?? "the head is not authentic"; return v; }
-  if (logKey != null && !sameHex(sth.public_key_hex, logKey)) {
+  if (logKey == null) {
+    v.note = "no log key was named: the head must be signed by a log key the caller names";
+    return v;
+  }
+  if (!sameHex(sth.public_key_hex, logKey)) {
     v.note = "the head is not signed by the expected log key";
     return v;
   }
@@ -1027,6 +1049,11 @@ export function verifyAttestation(att: any, attestingAgencyId?: number | null,
   return { authentic: ok, fresh: null, note: ok ? undefined : "the attestation signature is invalid" };
 }
 
+/** The formats the cross-authority decision and the exchange paths read by name, as the
+ * detached verifier reads them (WIRE-SPEC sections 3.1 and 3.3). */
+const MANIFEST_FORMAT = "polaris-federation-manifest/1";
+const REVOCATION_FEED_FORMAT = "polaris-revocation-feed/1";
+
 /** Decide a FOREIGN credential across authorities OFFLINE (P8.1, wire spec section 4). Accept
  * iff the authenticity pack is genuine, some federation manifest the relying party trusts
  * (authentic, fresh, signed by one of `trustedAnchors`) attests the credential's signing key in
@@ -1046,9 +1073,7 @@ export function verifyCrossAuthority(
   if (trustedAnchors == null) {
     // No root, no trusted authority. Every manifest is signed by a key it lists itself, so with no
     // anchor the relying party chose, an attacker's own manifest attesting the attacker's own
-    // credential decided (2026-09-30). The detached verifier's equivalent takes
-    // `trusted_manifests`, a set its caller vouches for by name; this function takes the manifests
-    // a presentation brought, so it trusts none of them unaided.
+    // credential decided (2026-09-30). The detached verifier decides the same way.
     return { decision: "reject", authentic: true, issuerTrusted: null,
              reason: "no trust anchors were given: a manifest vouches for nothing by itself" };
   }
@@ -1058,6 +1083,10 @@ export function verifyCrossAuthority(
   // A manifest set that is not an array is no manifests, as in the detached verifier:
   // `?? []` let `false` or an object through to `.map`, which threw (2026-09-30).
   for (const mm of (Array.isArray(manifests) ? manifests : []).map((m) => m ?? {})) {
+    // Only a federation manifest is read as one, as in the detached verifier. Another artifact
+    // signs neither `anchors` nor `attestations`, so an edge carried beside its signed fields is
+    // no authority's word, whatever key signed the rest.
+    if (mm.format !== MANIFEST_FORMAT) continue;
     const mv = verifySignedArtifact(mm, now);
     if (!(mv.authentic && mv.fresh)) continue;
     // Trusted iff the key that SIGNED the manifest (one of its own active anchors, which
@@ -1085,6 +1114,13 @@ export function verifyCrossAuthority(
   }
   if (revocationFeed != null) {
     const rf = revocationFeed ?? {};
+    // Only a revocation feed answers for revocation, as in the detached verifier. Another
+    // artifact the issuer's key signed (an epoch checkpoint, a manifest) lists nothing.
+    if (rf.format !== REVOCATION_FEED_FORMAT) {
+      return { decision: "reject", authentic: true, issuerTrusted: true, via,
+               reason: "the revocation feed is not a " + REVOCATION_FEED_FORMAT,
+               attestationSigned: signedEdge };
+    }
     const rv = verifySignedArtifact(rf, now);
     const bound = tokenKey !== null && hexText(rf.public_key_hex) === tokenKey;
     if (!(rv.authentic && rv.fresh && bound)) {
@@ -1580,6 +1616,8 @@ function exchangeAuthorities(keyHex: unknown, contextId: unknown, manifests: unk
   if (!want) return found;
   for (const raw of Array.isArray(manifests) ? manifests : []) {
     const m = raw && typeof raw === "object" ? raw : {};
+    // Only a federation manifest is read as one, as in the cross-authority decision.
+    if (m.format !== MANIFEST_FORMAT) continue;
     const mv = verifySignedArtifact(m, now ?? null, null);
     if (!(mv.authentic && mv.fresh === true)) continue;
     for (const att of Array.isArray(m.attestations) ? m.attestations : []) {

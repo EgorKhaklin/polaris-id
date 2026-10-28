@@ -130,7 +130,8 @@ def main():
     genuine = anchor(genuine, entries, sth_true, [cosign(sth_true, WITNESS)])
     doc_anchored = V.attach_ltv(doc, timestamp=genuine, manifest=manifest(T0))
     TSA_ANCHORS, WIT = [TSA_KEY], [W_KEY]
-    strict = dict(timestamp_anchors=TSA_ANCHORS, require_anchored=True, trusted_witnesses=WIT)
+    # the relying party names the log key: in this drill the authority signs its log's heads with its own key
+    strict = dict(timestamp_anchors=TSA_ANCHORS, require_anchored=True, trusted_witnesses=WIT, timestamp_log_key=TSA_KEY)
 
     # 2. the theft: a backdated timestamp under the stolen key, no anchor
     forged = timestamp(TSA, material_digest, T0, nonce="deed-1")          # same claimed instant, minted today by the thief
@@ -191,13 +192,14 @@ def main():
         ("... and the fake head against the witnessed head of the same size is a caught SPLIT VIEW (equivocation)",
          bool(V.verify_equivocation(sth_true, sth_fake, TSA_KEY).get("proven")), True),
         ("without witnesses named, an anchor alone is accepted (the log's own word): witnesses are what make the anchor evidence",
-         ltv(doc_fake_anchor, timestamp_anchors=TSA_ANCHORS, require_anchored=True)["valid_long_term"], True),
+         ltv(doc_fake_anchor, timestamp_anchors=TSA_ANCHORS, require_anchored=True, timestamp_log_key=TSA_KEY)["valid_long_term"], True),
         ("TRUST LIST: the authority's key marked compromised from an instant refuses a timestamp dated AFTER it (authority-key rule)",
          (ltv(doc_forged_after, **per_list)["valid_long_term"], "timestamp authority key not active" in (ltv(doc_forged_after, **per_list)["note"] or "")), (False, True)),
         ("... one dated BEFORE the compromise passes the trust list and is caught ONLY by the anchoring policy",
-         (ltv(doc_forged, **per_list)["valid_long_term"], ltv(doc_forged, require_anchored=True, trusted_witnesses=WIT, **per_list)["valid_long_term"]), (True, False)),
+         (ltv(doc_forged, **per_list)["valid_long_term"],
+          ltv(doc_forged, require_anchored=True, trusted_witnesses=WIT, timestamp_log_key=TSA_KEY, **per_list)["valid_long_term"]), (True, False)),
         ("the genuine anchored container passes every layer at once (trust list + anchored + witnessed)",
-         ltv(doc_anchored, require_anchored=True, trusted_witnesses=WIT, **per_list)["valid_long_term"], True),
+         ltv(doc_anchored, require_anchored=True, trusted_witnesses=WIT, timestamp_log_key=TSA_KEY, **per_list)["valid_long_term"], True),
         ("QUORUM (no retention): timestamps from TWO independent trusted authorities meet timestamp_quorum=2",
          (ltv(doc_two, timestamp_anchors=BOTH, timestamp_quorum=2)["valid_long_term"], ltv(doc_two, timestamp_anchors=BOTH, timestamp_quorum=2)["ltv"]["independent_timestamps"]), (True, 2)),
         ("... one authority does not meet a quorum of two", ltv(doc_one, timestamp_anchors=BOTH, timestamp_quorum=2)["valid_long_term"], False),

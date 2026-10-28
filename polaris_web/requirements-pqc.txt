@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --generate-hashes --no-emit-index-url --output-file=requirements-pqc.txt --strip-extras requirements-pqc.in
 #
-liboqs-python==0.16.0.1 \
-    --hash=sha256:4791212549d88094659580d9f89a31af8b2bab9adc40b0a44ccaf570279f1d18 \
-    --hash=sha256:8e7f8c9a5fd3d3a65133238c07a0c465737a48591567ed175f1f75ee40508072
+liboqs-python==0.16.0.2 \
+    --hash=sha256:7ab4dee5f84536417a8d0ff0c37238ef440ce22cd8f62d3236370320894c92e7 \
+    --hash=sha256:8e80da56cd409600a8366c5cf5099acd08eea4c031e4af225b63ba0c53433d76
     # via -r requirements-pqc.in

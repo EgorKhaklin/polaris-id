@@ -76,16 +76,18 @@ language.
 - `verifyPresentation(presentation, ...)`: a wallet presentation, or a bare pack.
 - `verifySignedArtifact(obj, now?)`: every other signed artifact of the wire spec: the epoch
   checkpoint, revocation feed, federation manifest, status bundle, transparency STH,
-  timestamp, registry, exchange request, exchange receipt, mint statement, signed document,
-  ID token and trust list (authenticity, freshness where windowed, and the artifact's
-  commitment or self-consistency).
+  timestamp, registry, exchange request, exchange receipt, mint statement, signed document
+  and trust list (authenticity, freshness where windowed, and the artifact's commitment or
+  self-consistency).
+- `verifyIdToken(tok, audience?, nonce?, now?, anchors?)`: the ID token, checked against the
+  audience, the nonce and the agency keys you pass.
 - `verifyCrossAuthority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted. By default it accepts a trust edge the attesting agency did not sign, as version 1 manifests carry; a relying party should pass `requireSignedAttestation` as `true` to require that agency's signature.
 - `verifyExchangeRequest(...)`, `verifyExchangeReceipt(...)`, `verifyExchangeMint(...)`: an
   exchange artifact in use: whether it is by the party expected, whether the requester was
   attested in its context at a stated instant (and by whom, for a receipt), and whether the
   bodies held match the commitments.
 
-The SDK passes every case of the conformance suite (281 cases, measured against the repository on 2026-10-01) and every case of the frozen
+The SDK passes every case of the conformance suite (294 cases, measured against the repository on 2026-10-28) and every case of the frozen
 version-1 set under `scripts/polaris-compat-suite.py --typescript-only`, which runs on every CI push.
 
 ## Running and building
@@ -117,7 +119,7 @@ python3 ../../conformance/run_conformance.py --verifier "node src/conformance.ts
 npm install polaris-sdk-ts@next
 ```
 
-This is release candidate 1.0.0-rc.10. Candidates are published under the `next` dist-tag; an install
+This is release candidate 1.0.0-rc.11. Candidates are published under the `next` dist-tag; an install
 without the tag resolves npm's `latest`, 0.1.0, until 1.0.0.
 
 It needs Node >= 20.19.0: the post-quantum crypto dependencies (`@noble/post-quantum` and the

@@ -111,7 +111,7 @@ def main():
             assert got[key] == value, (name, key, got)
         files[name + ".json"] = obj
         new.append({"name": name, "artifact": "timestamp-anchor",
-                    "timestamp_file": "conformance/vectors/%s.json" % name, "log_key": "sth",
+                    "timestamp_file": "conformance/vectors/%s.json" % name, "log_key": log_pk.hex(),
                     "trusted_witnesses": "cosigners", "threshold": 2, "expect": want,
                     "since": SINCE, "note": note})
 

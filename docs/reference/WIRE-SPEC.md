@@ -237,7 +237,7 @@ defines them, its `proof_hex` a list of node hashes), the log's signed head `sth
 optionally `cosignatures` (section 4) by witnesses. The authority appends the hash to its
 append-only timestamp log only for an anchored request. A verifier that relies on an anchor
 MUST check that the proof is for this timestamp's hash, that the head is an authentic head of
-the timestamp log signed by the authority, and that the proof reconstructs the head; a verifier
+the timestamp log signed by the log key the relying party names, and that the proof reconstructs the head; a verifier
 that names trusted witnesses MUST also require the head cosigned by its threshold of them, since
 a stolen authority key can sign a fresh head over a fabricated log but cannot make a witness
 have cosigned that head at the claimed time. An unanchored timestamp is authentic evidence of
