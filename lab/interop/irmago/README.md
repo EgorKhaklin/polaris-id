@@ -75,18 +75,14 @@ v0.57.0. OSV then lists one advisory against the modules in `go.sum`: GO-2026-59
 `golang.org/x/crypto/openpgp` unmaintained in every release. No openpgp package is compiled in,
 and govulncheck v1.8.0 finds no vulnerable code reachable.
 
-## What this does not establish
+## What was run
 
-- It is a wallet built here on the library, not the Yivi app. irmago is the part that speaks
-  OpenID4VP and SD-JWT VC: it made the key, checked and stored the credential, and fetched,
-  checked and answered the request. The trust anchors, the TLS trust and the consent are this
-  repository's few lines, as they are any wallet's.
-- irmago fetches the request object by GET whatever `request_uri_method` says (its code says so),
-  so this run says nothing about the POST path or a wallet nonce.
-- The app keeps irmago's holder tables in SQLCipher, a C library. irmago opens them on any GORM
-  dialector, and this wallet uses a pure Go SQLite, so the build needs no C toolchain; the
-  holder code over them is the same.
+- It is a wallet built here on the library. irmago is the part that speaks OpenID4VP and SD-JWT
+  VC: it made the key, checked and stored the credential, and fetched, checked and answered the
+  request. The trust anchors, the TLS trust and the consent are this repository's few lines.
+- irmago fetches the request object by GET whatever `request_uri_method` says (its code says so).
+- This wallet uses a pure Go SQLite for irmago's holder tables, so the build needs no C
+  toolchain; irmago opens them on any GORM dialector.
 - One credential format and one path, ES256 throughout. The credential was minted by this
   repository's issuer script, under a CA made for the run.
-- Same category as the other rows: the author drove a published library on one machine. It is not
-  an outside party using Polaris, and not a claim of interoperability in general.
+- The author drove a published library on one machine.

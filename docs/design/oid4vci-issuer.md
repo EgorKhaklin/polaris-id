@@ -161,7 +161,7 @@ Where this verifier is stricter, and why:
   `cnf`. The audit of record says which operator offered a copy of which credential, and when a
   copy was issued. It does not record where the copy went.
 
-## What it does not do
+## Scope
 
 - A wallet copy is not revoked separately from its credential. A lost phone is handled by
   revoking the credential, which flips every copy.
@@ -169,9 +169,6 @@ Where this verifier is stricter, and why:
   against the agency's issuance quota. Each offer is recorded under the operator who made it.
 - Revocation reaches a verifier that reads status. `polaris-oid4vp`'s `Verifier` reports it
   and leaves refusal to the relying party's policy, and `serve` reads no status list.
-- Nothing here is external validation. The external exercise is walt.id and Credo receiving a
-  copy from this endpoint, recorded on the scoreboard only when it has run against the product
-  and not the lab issuer.
 
 ## How it will be shown
 

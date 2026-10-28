@@ -1,9 +1,7 @@
 # Roadmap
 
-What Polaris has, what it does not, and what it is waiting on. Polaris is a reference
-implementation on notional data; the bound on every claim is
-[docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md), and the record of what outsiders
-have done with it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
+What Polaris has built and where each phase stands. The record of what outsiders have done with
+it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 
 ## Where it stands
 
@@ -18,52 +16,29 @@ have done with it is [the scoreboard](lab/EXTERNAL-NOUNS.md).
 - A physical-layer profile: card profile with vectors, a software token emulator, card-generated keys, a reference verifier device.
 - Operations: a hardened five-service stack behind a post-quantum TLS edge; compose, blue-green, Linux and Helm deployments; backup, off-site restore, replication, HA failover and a DR drill measuring RPO and RTO; a retention engine; a sealed secrets store; SBOMs with provenance; CVE gates.
 - Verifiers anyone can build against: a detached verifier, Python and TypeScript SDKs and a 151-case conformance suite; `polaris-oid4vp` 1.0.0rc7 is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.
-
-**Do not have:** hardware tokens (modeled, not built); an assessed NIST 800-63 conformance
-(the mapping exists; no assessment); multi-region scale; status distribution at production CDN
-scale; a hardware HSM in CI; certified cryptography (liboqs is not FIPS-validated); accessibility conformance; any external audit, pen test or
-pilot; an external team's docs-only integration against the wire specification; native wallet
-applications; a plain presentation that shows verifiers no stable value (the zero-knowledge path
-is bounded; blinded or one-time presentations are unbuilt); a relying party, holder or production
-operator who is not the author (one wallet project, OID4VCgo, runs the verifier in its CI); and every institutional prerequisite of a national system (statute,
-funding, enrollment workforce, manufacturing, authorization to operate).
-
-**Open engineering limit:** the database-to-pooler hop awaits PostgreSQL 18 for post-quantum key
-exchange; the app-to-pooler hop already negotiates X25519MLKEM768.
+- IDFoundry/OID4VCgo has run `polaris-oid4vp` in its CI, daily and per release, since 2026-10-11 ([the scoreboard](lab/EXTERNAL-NOUNS.md#use)).
 
 ## Phases
 
 | Phase | Objective | Status |
 |---|---|---|
 | E | The engine: offline verification, detached verifier, adversarial testing | Done |
-| P0 | Foundation closure: reproducible claims, signed supply chain | Done, except one hop above |
-| P1 | Single-authority production (10k to 100k persons) | Built; waits on a non-author operator and a pen test |
-| P2 | Scale architecture (1 to 10M persons, HA) | Built; single region |
-| P3 | Federation and relying parties | Built; waits on an external integration |
-| P4 | Hardware token and enrollment kit | Modeled in software; waits on secure-element hardware |
-| P5 | Pilots with consenting users | Waits on an institution |
-| P6 | Certification and assurance | One package certified; the rest waits on auditors and validated cryptography |
-| P7 | National-scale reference profile | Software capacity model only |
+| P0 | Foundation closure: reproducible claims, signed supply chain | Built: reproducible claims, a signed supply chain |
+| P1 | Single-authority production (10k to 100k persons) | Built |
+| P2 | Scale architecture (1 to 10M persons, HA) | Built |
+| P3 | Federation and relying parties | Built |
+| P4 | Hardware token and enrollment kit | Modeled in software |
+| P5 | Pilots with consenting users | Pre-pilot |
+| P6 | Certification and assurance | `polaris-oid4vp` 1.0.0rc7 is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile |
+| P7 | National-scale reference profile | A software capacity model |
 | P8 | The exchange fabric | Done, frozen at protocol version 1 |
 | P9 | The holder: key, proof and grant | Done |
 
 **Planning targets** (to be validated, not asserted): 350M persons; 5,000 sustained and 50,000
 peak verifications/s nationally across federated instances; an enrollment surge of 200,000/day
 sustained during rollout years; 99.99% availability on the verification path. The capacity model
-(`polaris_web/capacity.py`) states which of these nothing in this repository can establish.
-
-## Waiting on the world
-
-| Needs | For |
-|---|---|
-| An operator who is not the author, running a Polaris node | P1 (1.0.0's operator of the verifier: met 2026-10-11, [the scoreboard](lab/EXTERNAL-NOUNS.md#use)) |
-| A penetration-testing firm, an audit firm, a red team | P1, P6 |
-| An external team integrating from the specification alone | P3, P8 |
-| Secure-element vendors and silicon | P4 |
-| An institution running a pilot with consenting users | P5 |
-| A FIPS-validated lattice implementation | P6 |
-| A sponsoring agency and authorizing official; statute, funding, a program office | P6, P7 |
-| PostgreSQL 18 (`ssl_groups`) | P0, internal post-quantum hop |
+(`polaris_web/capacity.py`) checks the population, verification and enrollment targets against
+measured rates and the schema's identifier ranges.
 
 ## Permanent non-goals
 

@@ -285,8 +285,13 @@ def main():
              "would not be true" in words, True)
         _row("...and says what is kept, and that it constrains the operator too",
              "append-only" in words and "including us" in words, True)
-        _row("...and that no single organisation can revoke everyone alone",
-             "second, independent authority" in words, True)
+        _row("...and that ending it needs a second authority that issued none of the credentials",
+             "ending this pilot requires a second authority, one that issued none of the "
+             "credentials being withdrawn and is authorised to issue and verify under "
+             "their signature algorithms, to co-sign the withdrawal of every "
+             "credential." in words, True)
+        _row("...and that past a set share a second authority must co-sign",
+             "past that share, a second authority must co-sign" in words, True)
 
         # THE DPIA INPUT PACK. Facts, derived. Not a DPIA and not a template for one.
         pack = pilot.dpia_inputs(conn)

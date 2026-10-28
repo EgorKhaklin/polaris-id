@@ -909,7 +909,7 @@ and R11-6 (exit). The procedure `uc9_complete_recovery` enforces
 admin-only completion (operator initiates, admin decides) and uses
 `pg_advisory_xact_lock` on `claimed_individual_id` for C9
 correctness. See `docs/design/recovery-ceremony.md` for the adversary
-walk and the administrative-vs-operational grace-period framing.
+walk and the administrative window.
 
 ### `TokenSignature`
 

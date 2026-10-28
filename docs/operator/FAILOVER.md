@@ -279,14 +279,12 @@ retry window; running a single etcd member across hosts (no quorum to lose,
 so no protection when it is gone). `check_ha_automation` pins the first two
 and the entrypoint the third; the fourth is placement, which is yours.
 
-**What the analysis does not cover.** The single-host profile shares the
-host: a host failure takes both members and all three etcd members, and the
-answer to that is [`DR.md`](DR.md). Clock skew between hosts is bounded by
+**Host failure and retries.** The single-host profile shares the host; for
+a host failure, see [`DR.md`](DR.md). Clock skew between hosts is bounded by
 etcd's lease implementation (leases are server-side), not by the members'
-clocks. And the application's own idempotency under a retried write is a
-property of the application, not of the topology; Polaris's per-request
-transactions and append-only tables make a retry visible rather than
-silent.
+clocks. The application's idempotency under a retried write is a property of
+the application, not of the topology; Polaris's per-request transactions and
+append-only tables make a retry visible rather than silent.
 
 ---
 
@@ -309,8 +307,7 @@ $P reinit postgres2                                      # force a fresh clone o
   archive follows the leader (only the leader archives).
 - **Alerts:** `PolarisAppDown` and `PolarisHighDBLatency` still fire for what
   clients see. Patroni's REST API also serves `/metrics` on each member;
-  scraping it is the next step in [`OPERATIONS.md`](OPERATIONS.md)'s
-  observability section, not yet wired.
+  scrape it with a Prometheus job per member.
 - **Never edit `postgresql.conf` on a member.** Patroni owns it; use
   `edit-config`.
 

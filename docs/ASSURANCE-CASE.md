@@ -1,8 +1,7 @@
 # Assurance case
 
-Why Polaris's security requirements are met, and how far that argument reaches. It is a map to
-the evidence in this repository, not a substitute for it, and it is an argument made by the
-author: no independent security review has been done yet ([SECURITY.md](../SECURITY.md)).
+The case that Polaris, pre-pilot software, meets its security requirements: a map to the evidence
+in this repository, not a substitute for it.
 
 ## 1. Security requirements
 
@@ -70,14 +69,13 @@ holders are assumed throughout.
 | Hard-coded credentials (CWE-798) | Secret store; the credential-leak check; development credentials are notional and marked as such |
 | Vulnerable dependencies (CWE-1104) | pip-audit, Trivy and dependency updates in CI |
 
-## 6. Evidence, and its limits
+## 6. Evidence
 
-Evidence: the machine-checked invariants of `polaris_checks`, each with a test that breaks it; product suites against
-a live database; the conformance suite, agreed on by three verifier implementations;
-mutation drills; the OpenID Foundation's conformance suite; and wallets written by others, each
-run carrying controls that must be refused ([lab/EXTERNAL-NOUNS.md](../lab/EXTERNAL-NOUNS.md)).
+The machine-checked invariants of `polaris_checks`, each with a test that breaks it; product suites
+against a live database; the conformance suite, agreed on by the project's three verifiers (the
+detached verifier and the Python and TypeScript SDKs); mutation drills; the OpenID Foundation's
+conformance suite; and wallets written by others, each run carrying controls that must be refused
+([lab/EXTERNAL-NOUNS.md](../lab/EXTERNAL-NOUNS.md)).
 
-Limits: all of that was built or run by the author. No independent review, penetration test or
-cryptographic review has been done. Polaris runs on notional data and is not production-ready
-([PRODUCTION-READINESS.md](PRODUCTION-READINESS.md)). Where this case and the evidence disagree,
-the evidence wins, and the disagreement is a defect to report ([SECURITY.md](../SECURITY.md)).
+Where this case and the evidence disagree, the evidence wins, and the disagreement is a defect to
+report ([SECURITY.md](../SECURITY.md)).

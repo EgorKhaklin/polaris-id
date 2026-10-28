@@ -3223,8 +3223,8 @@ class TestChainAnchorRecord(unittest.TestCase):
 class TestCredentialCopyRecord(unittest.TestCase):
     """The wallet copy record obeys the credential record (docs/design/oid4vci-issuer.md).
 
-    lab/strategy/005/STEP3.md showed the rule holding in the lab issuer's code and named that
-    as its limit. Here it is the database's: uc_issue_credential_copy, the only writer of
+    lab/strategy/005/STEP3.md showed the rule holding in the lab issuer's code. Here it is the
+    database's: uc_issue_credential_copy, the only writer of
     CredentialCopy, refuses a credential that is not ACTIVE, and credential_copy_valid_indexes,
     which the status list is computed from, drops a copy the moment its credential leaves
     ACTIVE. Every test runs as polaris_app, in one transaction that is rolled back: the
@@ -4611,9 +4611,9 @@ class TestRelyingPartyDecisionsAreRecorded(_CheckBase):
 class TestDiscretionPolicyIsAppendOnly(_CheckBase):
     """A revocation bound is a decision that is kept, not edited (v9.426).
 
-    IssuerDiscretionPolicy bounds the share of its own tokens one issuing agency may
-    revoke in a rolling window: it is what stands between one authority and mass
-    revocation of the credentials it issued. agency_id was the primary key, so raising
+    IssuerDiscretionPolicy bounds the share of an issuing agency's tokens that may be
+    revoked in a rolling window: it is what stands between one authority and mass
+    revocation of an agency's credentials. agency_id was the primary key, so raising
     an agency's bound from 5% to 80% overwrote the baseline, who set it, when, and the
     reason given, while docs/operator/SECURITY-CONTROLS.md said the justification
     existed "so any loosening is auditable". Verified against a loaded database before

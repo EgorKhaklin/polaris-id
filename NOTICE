@@ -85,10 +85,8 @@ CC BY-SA 3.0 IGO
 The site's copyright line links here.
 
 The project report in its three versions (polaris_project_report.pdf,
-polaris_project_report_v2.pdf and polaris_project_report_v3.pdf), the Russian
-edition of Version 3 (polaris_project_report_v3_ru.pdf), the evidence record
-and its Russian edition (polaris_evidence_record_v3.pdf and
-polaris_evidence_record_v3_ru.pdf) and the mathematical edition
+polaris_project_report_v2.pdf and polaris_project_report_v3.pdf), the evidence
+record (polaris_evidence_record_v3.pdf) and the mathematical edition
 (polaris_math.pdf), all under docs/paper/, are part of the same release and
 inherit the same Apache 2.0 license. The report's bibliography credits
 external sources under fair-use academic citation conventions.

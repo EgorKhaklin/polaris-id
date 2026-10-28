@@ -1998,6 +1998,8 @@ def _dashboard_model():
     }
 
     # --- Attention: what needs a human -----------------------------------------------------------
+    # The duress counts are read for every role; the template shows them to admin and auditor
+    # only. Anything else that renders this model must drop them for other roles.
     duress = {
         'last_24h': population.capped(
             query, "SELECT 1 FROM DuressEvent WHERE event_timestamp >= now() - INTERVAL '24 hours' "
@@ -2809,10 +2811,9 @@ def _check_and_record_duress(token_id, context_id, requesting_agency_id, duress_
     # database directly. Both need a privilege escalation the verification surface does not
     # provide." This needed no escalation and nothing but the verification surface.
     #
-    # It matters because enrolment is opt-in. lab/duress already records that "I have no
-    # duress code" is a claim a coercer can press on and the holder cannot disprove. A
-    # coercer who can MEASURE it does not have to press: they check, and an operator who is
-    # themselves the coercer types the field and reads their own screen.
+    # It matters because enrolment is opt-in, so whether a holder enrolled is the fact that
+    # makes the signal usable; a coercer who can measure enrolment does not have to ask, and
+    # an operator who is the coercer types the field and reads their own screen.
     #
     # So the work is paid whether or not a hash is enrolled. _DURESS_TIMING_BALLAST is a
     # real scrypt hash at the same parameters as the enrolled ones; comparing against it

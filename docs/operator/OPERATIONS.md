@@ -31,7 +31,7 @@ and [../../SECURITY.md](../../SECURITY.md); the API in
 9. [Common errors](#common-errors)
 10. [Upgrades](#upgrades)
 11. [Decommissioning](#decommissioning)
-12. [What this document does NOT cover](#what-this-document-does-not-cover)
+12. [Related documents](#related-documents)
 
 ---
 
@@ -1236,8 +1236,8 @@ increment. The percentage bound on revocation velocity
 (`trg_enforce_revocation_velocity`) still applies; whichever trips first
 refuses. An uncapped agency pays one primary-key lookup per write.
 
-**Revocation bounds.** `uc8_revoke_token` caps the share of its own tokens one
-issuing agency may revoke in a rolling window: 5.00% over 30 days by default,
+**Revocation bounds.** `uc8_revoke_token` caps the share of an issuing agency's
+tokens that may be revoked in a rolling window: 5.00% over 30 days by default,
 overridable per agency. Raising an agency's ceiling is the single most consequential
 per-agency setting in the schema, so it is kept, not edited, and it is set as
 the schema owner (the application's role is refused, so a compromised application
@@ -1906,7 +1906,9 @@ If you ever need to retire a Polaris instance:
 
 ---
 
-## What this document does NOT cover
+## Related documents
+
+For each task below, see the document named.
 
 - Application code internals: [CONTRIBUTING.md](../../CONTRIBUTING.md), [DEVNOTES/](../../DEVNOTES/README.md)
 - Cryptographic algorithm choice: [PQC-POSTURE.md](../reference/PQC-POSTURE.md), [SECURITY.md](SECURITY-CONTROLS.md)
@@ -1919,8 +1921,6 @@ If you ever need to retire a Polaris instance:
 - Restore procedures by failure class: [DR.md](DR.md)
 - High availability (streaming standby, failover): [FAILOVER.md](FAILOVER.md)
 - Developer tooling (pre-commit hooks, test discipline): [CONTRIBUTING.md](../../CONTRIBUTING.md)
-- Multi-region deployment: not covered by any Polaris document
-- SOC 2 readiness checklist: not covered by any Polaris document
 
 ---
 

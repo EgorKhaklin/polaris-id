@@ -21155,7 +21155,11 @@ class PilotWindDownTests(PolarisTestCase):
         self.assertIn("cannot promise your data will be deleted", words)
         self.assertIn("would not be true", words)
         self.assertIn("including us", words)
-        self.assertIn("second, independent authority", words)
+        self.assertIn("Ending this pilot requires a second authority, one that issued none of the "
+                      "credentials being withdrawn and is authorised to issue and verify under "
+                      "their signature algorithms, to co-sign the withdrawal of every "
+                      "credential.", words)
+        self.assertIn("Past that share, a second authority must co-sign", words)
 
     def test_a_wind_down_with_no_cosigner_is_refused(self):
         pilot = self._pilot()

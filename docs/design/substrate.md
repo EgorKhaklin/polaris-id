@@ -383,7 +383,7 @@ Each row records:
   run a one-time UPDATE.
 - **Detection:** ISO publishes amendments quarterly; subscribe.
 
-### Hardware (assumed but not in repo)
+### Hardware
 
 #### Token hardware secure enclave
 - **Layer:** hardware

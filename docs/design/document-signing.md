@@ -57,12 +57,6 @@ facts and claims nothing. Since v9.341 the verifier also takes `require_anchored
 the trust list; `anchor_timestamp: true` at signing anchors the embedded timestamp. See
 [timestamp-transparency.md](timestamp-transparency.md).
 
-What the evidence does not yet do: a timestamp authority whose own key is later compromised
-could manufacture backdated timestamps. Anchoring each timestamp's SHA3-256 in an append-only
-transparency log (with witnesses) would make that visible without logging any document; it is
-recorded on the roadmap as P8.5b, with its trade-off stated (the timestamp authority would then
-retain a digest and an instant per timestamp, which today it does not).
-
 ## What runs
 
 `scripts/polaris-document-signing-drill.py` (the `pqc-real` CI job) signs a document under a

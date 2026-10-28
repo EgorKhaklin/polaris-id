@@ -89,15 +89,14 @@ Rust 1.99.0: accepted, `<- 200 authentic, claims ['cnf', 'exp', 'family_name', '
 'iat', 'iss', 'sub', 'vct']`, and the adapter returned the verifier's answer (`200`, with its
 `redirect_uri`). All three controls were refused.
 
-## What this does not establish
+## What was run
 
 - The wallet is the library's conformance adapter, a test harness: it holds one fixed credential
-  and consents to every request. It is not a wallet app. The library is the part that speaks
-  OpenID4VP: it fetched, checked and answered the request.
+  and consents to every request. The library is the part that speaks OpenID4VP: it fetched,
+  checked and answered the request.
 - The credential's issuer is a CA made by `run.sh`, which took replacing two of the adapter's
   fixtures (above); with its own certificate the verifier refused it, for the reason given there.
-- The transport was plain HTTP (above), so nothing here exercises either side's TLS.
-- The build's dependencies are resolved when it runs, not pinned (above).
+- The transport was plain HTTP (above).
+- The build's dependencies are resolved when it runs (above).
 - One credential format and one path, ES256 throughout.
-- Same category as the other walks: the author drove a published library on one machine. It is
-  not an outside party using Polaris, and not a claim of interoperability in general.
+- The author drove a published library on one machine.

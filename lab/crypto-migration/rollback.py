@@ -3,8 +3,8 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """rollback.py -- a migration cannot be reversed, and the schema is explicit about why.
 
-THE QUESTION, from README.md's unmeasured list: "`uc6_migrate_algorithm` moves a token
-forward. Nothing here measures what happens if a migration must be reversed mid-population."
+THE QUESTION: `uc6_migrate_algorithm` moves a token forward. What happens if a migration
+must be reversed mid-population?
 
 It is not a hypothetical. The reason to reverse a migration is that the algorithm you moved TO
 turned out to be the problem, which is the same event the agility claim exists for.
@@ -37,14 +37,12 @@ SO: MIGRATION IS ONE-WAY PER TOKEN, AND THE ONLY REVERSAL IS SIDEWAYS. An author
 migrated a population A -> B and then learns B is broken cannot put that population back on A.
 It can migrate it to C, which needs a C: a third algorithm, provisioned, keyed and not
 deprecated, at the moment of the emergency. `CryptographicAlgorithm` is seeded with five, so
-a C exists here; whether one exists in a deployment is an operational question this file can
-raise and cannot answer.
+a C exists here.
 
-WHETHER THAT IS A DEFECT. It is not a CORE-BUG: no published promise says a migration can be
+WHAT IT IS. A design property, not a CORE-BUG: no published promise says a migration can be
 reversed. docs/design/algorithm-migration.md and the paper describe migration as forward
 motion, and TokenSignature is named an audit-of-record, which is exactly a thing you do not
-walk back. The finding is that the reversal path an operator would reach for does not exist,
-which is a fact the design record should state and did not.
+walk back. The finding is that the reversal path an operator would reach for does not exist.
 
 This file runs the five cases against a live database rather than asserting them.
 
@@ -216,14 +214,11 @@ def main():
           "must already exist, be keyed, and not be deprecated at the moment of the "
           "emergency. ==")
     print()
-    print("WHAT THIS DOES AND DOES NOT SAY. It is one token, so it measures what the schema "
-          "PERMITS, not what reversing a migration COSTS across a population; that is the "
-          "other bullet on this list. It is not a CORE-BUG: no published promise says a "
-          "migration can be reversed, and an audit-of-record you can walk back is not one. "
-          "What it does establish is that the reversal an operator would reach for does not "
-          "exist and the design record did not say so, and that migration planning therefore "
-          "has a prerequisite nobody wrote down: a spare algorithm, provisioned before it is "
-          "needed. Nothing this file does is committed.")
+    print("SCOPE. It is one token, so it measures what the schema PERMITS. It is not a "
+          "CORE-BUG: no published promise says a migration can be reversed, and an "
+          "audit-of-record you can walk back is not one. Migration planning therefore "
+          "needs a spare algorithm, provisioned before it is needed. Nothing this file "
+          "does is committed.")
     return 0
 
 

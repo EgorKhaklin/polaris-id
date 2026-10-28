@@ -2,7 +2,7 @@
 
 **Reader:** a security engineer or assessor who needs to find one decision without reading
 nine thousand lines of application code. **Job:** name the file, the symbol and the line for
-every security decision this system makes, say which one is authoritative when a decision is
+each security decision below, say which one is authoritative when a decision is
 split across layers, and name the invariant check that pins each.
 
 This exists because `polaris_web/app.py` is large, and an outside review reasonably asked
@@ -329,31 +329,9 @@ application is the party the record describes.
 
 ---
 
-## 14. Decisions not yet made
+## Scope
 
-Behaviour found on 2026-09-24 that the code does consistently and no document settles. Each is a
-policy question for the maintainer rather than a defect, so none was changed. Recorded here so it
-is decided rather than inherited.
-
-- **Who may revoke.** `uc8_revoke_token` accepts any actor authority for any credential: it bounds
-  the revocation rate of the ISSUING authority and requires a co-signer above the bound, but under
-  the bound one authority can revoke another's credentials alone. Its own comment says the bound
-  applies to the issuer, "not necessarily the actor".
-- **What the revocation bound is a share of.** Every credential the authority has ever issued, of
-  any status, so the base does not shrink as credentials are revoked. Against live credentials
-  the share is larger (see `docs/design/issuer-discretion.md`). A live-credential base is the
-  stricter bound.
-- **Erasing a person who still holds a live credential.** `scripts/polaris-pseudonymize-individual.sh`
-  pseudonymizes whoever it is given. The pilot wind-down refuses to leave a live credential with a
-  holder nobody can name (1.0.0-rc.12); general erasure does not.
-- **The sunset's newcomer question.** `polaris_web/coexistence.py` requires
-  `legacy_still_issued_to_newcomers` and reports it, but no answer blocks a sunset.
-
----
-
-## What this document does not do
-
-It does not replace reading the code before changing it, and it is not a substitute for the
-checks. It is a map. Where it and the code disagree, the code is what runs and the
+This document is a map: read the code before changing it, and rely on the checks for
+enforcement. Where it and the code disagree, the code is what runs and the
 disagreement is a defect in this file: say so in the commit that fixes it, as
 `docs/CONVENTIONS.md` requires of every other document here.

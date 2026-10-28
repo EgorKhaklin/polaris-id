@@ -25,7 +25,7 @@ So a verdict carries three separate findings, and all three are required to acce
 **Possession alone is not acceptance.** A card that was revoked this morning still signs. The
 device says so in as many words rather than returning a bare refusal.
 
-## 2. What a signature cannot refuse
+## 2. Replay to the same device
 
 The reader's challenge and scope are both inside the card's signature, so a captured response
 **relayed to a different device** fails on the scope and one **replayed later with a fresh
@@ -97,7 +97,7 @@ practical ceiling is nearer 1,800.
 authenticity needs NFC. A QR-only device can establish possession, and authenticity only for a
 classical-only card. That is a hard constraint with a number behind it, not a preference.
 
-## 5. What the device does not do
+## 5. Scope
 
 - **It does not interpret a PIN.** Both correct PINs answer `9000` and the device cannot tell
   them apart, which is the design ([card-profile.md](card-profile.md) §4). The duress signal is

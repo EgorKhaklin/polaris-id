@@ -73,14 +73,6 @@ python3 scripts/polaris-verify.py --pqc-provider auto --issuer-anchor trusted-ke
   passes. A verifier's clock skew tolerance is a deployment choice; v1 uses the
   verifier's clock directly.
 
-## What v1 does NOT do (P3.6b)
-
-- An aggregate signed **status bundle** (many assertions in one signed object) for a
-  relying party to cache; v1 ships the per-credential assertion.
-- Holder-wallet stapling and the SDK offline-status methods (Python/TypeScript).
-- Epoch binding (tying an assertion to a `TokenStateEpoch`) for replay defense
-  independent of wall-clock time.
-
 ## How this is tested
 
 `scripts/polaris-offline-status-drill.py` signs a credential and assertions with one

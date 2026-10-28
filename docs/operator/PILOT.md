@@ -32,9 +32,11 @@ than written from what would be reassuring:
 >
 > We cannot promise your data will be deleted, because in this system that would not be true.
 >
-> Ending this pilot requires a second, independent authority to co-sign the withdrawal of every
-> credential. No single organisation running this pilot, including the one that enrolled you,
-> can revoke everyone on its own.
+> Ending this pilot requires a second authority, one that issued none of the credentials being
+> withdrawn and is authorised to issue and verify under their signature algorithms, to co-sign
+> the withdrawal of every credential. No single organisation running this pilot, including the
+> one that enrolled you, can revoke more than a set share of the credentials an authority has
+> issued within a set period on its own. Past that share, a second authority must co-sign.
 
 **Do not replace "your name is replaced" with "your data is deleted".** C1 makes the
 audit-of-record append-only and non-negotiable, so deletion is not something this system can
@@ -93,7 +95,7 @@ authority keeps its holder the way an `ACTIVE` one does. Until 1.0.0-rc.20 the w
 **It is idempotent.** A wind-down that could not be re-run is one nobody dares run the first
 time.
 
-## 4. What is still in there afterwards
+## 4. What remains afterwards
 
 `residue()` answers that, **derived from the schema rather than from a list somebody
 maintains**. A hand-written inventory of what a wind-down leaves behind stops being true the
@@ -101,7 +103,7 @@ first time a table is added, and the failure is silent: the privacy claim keeps 
 correctly while becoming false. Add a table with a foreign key to `Individual` and it appears
 in the report on the next run, whether or not anyone thought about it.
 
-Run it and put the output in your exit report. It is the honest answer to the question a
+Run it and put the output in your exit report. It answers the question a
 participant, a regulator or your successor will actually ask.
 
 ## 5. One command

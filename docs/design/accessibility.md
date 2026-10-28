@@ -1,13 +1,10 @@
 # Accessibility
 
 **Reader:** an engineer changing an operator surface, or an assessor asking what "accessible"
-means here. **Job:** what is audited, what the audit can and cannot establish, and what is not
-done.
+means here. **Job:** what is audited and what the audit establishes.
 
-An identity system a person cannot operate is one that excludes them from identity. That is the
-same failure as the trusted-referee gap named in
-[the 800-63 mapping](../reference/NIST-800-63-MAPPING.md), at a different layer, and it lands on
-the same people. So this is not a polish item.
+An identity system a person cannot operate excludes them from identity, so this is not a
+polish item.
 
 ---
 
@@ -42,12 +39,12 @@ contrast ratio, a broken ARIA reference, a control with no accessible name. It c
 - whether the language of the interface is comprehensible under stress.
 
 **So a green run is a floor, not conformance.** Polaris does not claim WCAG 2.2 AA conformance,
-and [ROADMAP.md](../../ROADMAP.md)'s "not claimed" list still carries accessibility conformance
-for that reason. What changed is that the mechanical third is now enforced rather than assumed,
-and cannot regress unnoticed.
+and `check_accessibility` refuses the claim in the README, [ROADMAP.md](../../ROADMAP.md),
+site/index.html and site/llms.txt. What changed is that the mechanical third is now
+enforced rather than assumed, and cannot regress unnoticed.
 
-Conformance requires manual testing with assistive technology, by people who use it. That has
-not been done and is not something this repository can do to itself.
+WCAG 2.2 AA conformance needs manual testing with assistive technology, a step for the deploying
+organisation.
 
 ## 3. What the first audit found
 
@@ -75,17 +72,12 @@ A page missing from the drill's list is a page nobody audits. When you add an op
 add it to `SURFACES` in
 [`scripts/polaris-accessibility-drill.py`](../../scripts/polaris-accessibility-drill.py).
 
-## 5. What is not covered
+## 5. Scope
 
 - **The public site** (`site/`) is built and deployed separately and is not driven by this
   drill.
 - **The CLI** is a different accessibility surface with different rules (screen-reader
-  behaviour in a terminal, colour as the only signal). `NO_COLOR` is honoured; nothing else is
-  audited.
-- **Section 508** is not separately mapped. It incorporates WCAG 2.0 AA by reference, which is
-  a subset of what runs here, but the procurement-facing paperwork is an authority's.
-- **Manual testing with assistive technology**, per §2. This is the largest gap and no amount
-  of automation closes it.
+  behaviour in a terminal, colour as the only signal). `NO_COLOR` is honoured.
 
 ## Proven by
 

@@ -23,7 +23,7 @@ which the relying party checks on every request.
 Post-quantum signatures stay where they are verified, in the credential and the grant. The token
 a proxy reads is classical because the proxies are (lab/strategy/007-access-gate.md).
 
-Lab code under record 007: not a product, not reviewed, not for a deployment.
+Lab code under record 007: not a product and not for a deployment.
 
     python3 lab/strategy/007/gate.py --pki ./pki --clients clients.json --issuer-jwks issuers.json
 

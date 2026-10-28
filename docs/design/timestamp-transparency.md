@@ -48,12 +48,11 @@ anchor. Two independent authorities meet a quorum of two, one does not, and two 
 the same authority count once. The two-instance drill anchors over HTTP and shows the unanchored
 request leaving no row.
 
-## Limits, stated
+## Scope
 
 - Anchor verification lives in the detached verifier. The Python and TypeScript SDKs verify a
-  timestamp's authenticity and its head as artifacts; inclusion and witnessing are not yet in
-  them (roadmap P8.5c).
+  timestamp's authenticity and its head as artifacts.
 - Witnesses are what make an anchor evidence against a stolen key. An anchor checked without
-  witnesses proves inclusion in the authority's own log and no more; the verdict says so.
+  witnesses proves inclusion in the authority's own log, and the verdict says so.
 - Retention, when chosen, is a digest and an instant per anchored timestamp: a record of volume
   and timing, never of content. The readiness ledger states it.
