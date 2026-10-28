@@ -2,9 +2,10 @@ name: Chaos drill
 
 # The standing chaos program (roadmap P2.11): weekly, and on demand, boot the
 # production stack with the blue-green overlay and induce failures under
-# traffic with paging verified. Every run appends a row to
+# traffic with paging verified. Every run on main appends a row to
 # docs/operator/CHAOS-DRILLS.md, PASS or FAIL, so the ledger is the record
-# and a missing week is visible. The per-push fail-closed harness
+# and a missing week is visible. A run dispatched on a branch tests that
+# branch and records no row: the ledger holds main's drill only. The per-push fail-closed harness
 # (polaris-chaos-test.sh) runs in ci.yml; this workflow is the stack-level
 # complement.
 
@@ -35,7 +36,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked] -- this job pushes its ledger row with the checkout's token
         with:
-          ref: main
+          # The ref the run was started on: main on the schedule, the branch on a dispatch. With
+          # `ref: main` a dispatch on a fix branch ran main's drill and proved nothing about the fix.
+          ref: ${{ github.ref }}
           persist-credentials: true
 
       - name: Build the production images
@@ -67,6 +70,7 @@ jobs:
         run: bash scripts/polaris-chaos-drill.sh --record
 
       - name: Commit the ledger row
+        if: github.ref == 'refs/heads/main'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -94,5 +98,5 @@ jobs:
       - name: Fail the run if the drill failed
         if: steps.drill.outcome == 'failure'
         run: |
-          echo "::error::the chaos drill failed; the ledger row is committed, see docs/operator/CHAOS-DRILLS.md"
+          echo "::error::the chaos drill failed; see the chaos-drill artifact (and, on main, the ledger row in docs/operator/CHAOS-DRILLS.md)"
           exit 1

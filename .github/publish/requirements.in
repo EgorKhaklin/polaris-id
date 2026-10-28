@@ -4,5 +4,5 @@
 # and installed with pip install --require-hashes; the build then runs --no-isolation, so the
 # setuptools that builds a published wheel is this pinned one, not whatever PyPI serves that day.
 build
-setuptools>=68
+setuptools>=84.2.1
 twine

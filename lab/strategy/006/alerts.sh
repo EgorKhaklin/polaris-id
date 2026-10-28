@@ -28,7 +28,7 @@ export COMPOSE_PROJECT_NAME=polaris-try POLARIS_DOMAIN=localhost
 COMPOSE=(docker compose -f "${ROOT}/polaris_web/docker-compose.prod.yml"
          -f "${ROOT}/polaris_web/docker-compose.citest.yml" -f "${HERE}/names.yml")
 NET=polaris-try_polaris-net
-PROM_IMAGE="prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
+PROM_IMAGE="prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
 BB_IMAGE="prom/blackbox-exporter@sha256:9613f2884689b6fad9f1939f6a3b0388c93a022cfaededb19545b329b5c83dea"  # v0.29.0
 PROM=polaris-alerts-drill-prometheus BB=polaris-alerts-drill-blackbox
 WORK="$(mktemp -d)"
