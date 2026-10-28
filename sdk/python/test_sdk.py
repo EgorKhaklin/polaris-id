@@ -1773,8 +1773,15 @@ class RefusalsNoTestTookTests(unittest.TestCase):
 
     @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
     def test_anchors_that_are_not_a_collection_trust_nothing(self):
-        self.assertIs(pv.verify_signed_artifact(self.artifact(), anchors=5).issuer_trusted, False)
-        self.assertIs(pv.verify_signed_artifact(self.artifact(), anchors=["AB" * 1952]).issuer_trusted, True,
+        # Trust is answered for an authentic signature only (2026-10-21), so this one is genuine.
+        import hashlib
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        sk = mldsa.MLDSA65PrivateKey.generate()
+        art = self.artifact(public_key_hex=sk.public_key().public_bytes_raw().hex())
+        art["signature_hex"] = sk.sign(hashlib.sha3_256(
+            pv._canonical(art, pv._ARTIFACT_KEYS[art["format"]])).digest()).hex()
+        self.assertIs(pv.verify_signed_artifact(art, anchors=5).issuer_trusted, False)
+        self.assertIs(pv.verify_signed_artifact(art, anchors=[art["public_key_hex"].upper()]).issuer_trusted, True,
                       "control: the signing key, in any case, is trusted")
 
     @unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to run a verification")
@@ -1823,6 +1830,38 @@ class RefusalsNoTestTookTests(unittest.TestCase):
         self.assertEqual(v.as_dict(), {"decision": "reject", "authentic": False, "issuer_trusted": None,
                                        "currently_authoritative": None, "status": None, "reasons": ["x"]})
 
+
+@unittest.skipUnless(_have_mldsa_backend(), "needs cryptography with ML-DSA to sign and verify")
+class SignedArtifactTrustNeedsAuthenticityTests(unittest.TestCase):
+    """2026-10-21: a forged signature under its signer's key as the anchor reported issuer_trusted
+    True beside authentic False, where polaris-verify reports signer_trusted None for the same
+    signed document. Trust is answered for an authentic signature only. Signed for real."""
+
+    @classmethod
+    def setUpClass(cls):
+        import hashlib
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        sk = mldsa.MLDSA65PrivateKey.generate()
+        cls.S = sk.public_key().public_bytes_raw().hex()
+        doc = {"format": "polaris-signed-document/1",
+               "document": {"name": "report.txt", "digest_algorithm": "SHA3-256",
+                            "digest_hex": hashlib.sha3_256(b"a notional report\n").hexdigest()},
+               "signer": {"agency_id": 1, "name": "Notional Authority"}, "on_behalf_of": None,
+               "purpose": "approval", "signed_at": "2026-05-01T00:00:00Z", "algorithm": "ML-DSA-65"}
+        doc["signature_hex"] = sk.sign(hashlib.sha3_256(
+            pv._canonical(doc, pv._ARTIFACT_KEYS["polaris-signed-document/1"])).digest()).hex()
+        doc["public_key_hex"] = cls.S
+        cls.doc = doc
+
+    def test_control_an_authentic_document_under_its_signers_anchor_is_trusted(self):
+        v = pv.verify_signed_artifact(self.doc, anchors=[self.S])
+        self.assertEqual((v.authentic, v.issuer_trusted), (True, True), v.note)
+
+    def test_a_forged_document_reports_no_issuer_trust_under_its_signers_anchor(self):
+        sig = self.doc["signature_hex"]
+        forged = dict(self.doc, signature_hex=("00" if sig[:2] != "00" else "01") + sig[2:])
+        v = pv.verify_signed_artifact(forged, anchors=[self.S])
+        self.assertEqual((v.authentic, v.issuer_trusted), (False, None))
 
 class AnotherProjectsOqsModule(unittest.TestCase):
     """A module named `oqs` that is not liboqs-python is absent, not a witness that refuses.

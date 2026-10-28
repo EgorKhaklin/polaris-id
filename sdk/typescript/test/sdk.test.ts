@@ -1081,6 +1081,40 @@ test("an exchange verdict says whether the edge was signed", () => {
   }
 });
 
+// 2026-10-21: a forged signature under its signer's key as the anchor reported issuerTrusted: true
+// beside authentic: false, where polaris-verify reports signer_trusted null for the same signed
+// document. Trust is answered for an authentic signature only. Signed for real.
+const signedDocument = async () => {
+  const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+  const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+  const s = ml_dsa65.keygen(new Uint8Array(32).fill(9));
+  const doc: any = { format: "polaris-signed-document/1",
+    document: { name: "report.txt", digest_algorithm: "SHA3-256",
+                digest_hex: hex(sha3_256(new TextEncoder().encode("a notional report\n"))) },
+    signer: { agency_id: 1, name: "Notional Authority" }, on_behalf_of: null,
+    purpose: "approval", signed_at: "2026-05-01T00:00:00Z", algorithm: "ML-DSA-65" };
+  const signed = Object.fromEntries(["format", "document", "signer", "on_behalf_of", "purpose", "signed_at", "algorithm"]
+    .map((k) => [k, doc[k] ?? null]));
+  doc.signature_hex = hex(ml_dsa65.sign(sha3_256(new TextEncoder().encode(__canonicalJsonForTest(signed))),
+    s.secretKey));
+  doc.public_key_hex = hex(s.publicKey);
+  return doc;
+};
+
+test("control: an authentic signed document under its signer's anchor is trusted", async () => {
+  const doc = await signedDocument();
+  const v = verifySignedArtifact(doc, null, [doc.public_key_hex]);
+  assert.deepEqual([v.authentic, v.issuerTrusted], [true, true], String(v.note));
+});
+
+test("a forged signed document reports no issuer trust under its signer's anchor", async () => {
+  const doc = await signedDocument();
+  const sig: string = doc.signature_hex;
+  const forged = { ...doc, signature_hex: (sig.startsWith("00") ? "01" : "00") + sig.slice(2) };
+  const v = verifySignedArtifact(forged, null, [doc.public_key_hex]);
+  assert.deepEqual([v.authentic, v.issuerTrusted], [false, null]);
+});
+
 // 2026-09-23: a held-out round on verifyTimestampAnchor. The published witnessed anchor covers
 // the rules a test can reach by editing unsigned fields; sdk/testdata/anchor-variants.json holds
 // genuinely signed variants for the three it cannot (a head for another log, cosignatures over

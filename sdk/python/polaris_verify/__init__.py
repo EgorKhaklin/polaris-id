@@ -840,9 +840,11 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     if fresh is None:
         fresh = _within_window(obj, now)
     # Same rule as the detached verifier: the key that signed it, lowercased, is in the
-    # anchor set. None when the caller supplied none.
+    # anchor set. None when the caller supplied none, and when the signature is not authentic:
+    # it read True beside a forged signature before this change, where the detached verifier's
+    # verify_signed_document reports signer_trusted None.
     trusted = None
-    if anchors is not None:
+    if anchors is not None and ok:
         try:
             trusted = _hex_in(obj.get("public_key_hex", ""), {_hex_text(a) for a in anchors})
         except TypeError:
@@ -1177,9 +1179,8 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
     if trusted_anchors is None:
         # No root, no trusted authority. Every manifest is signed by a key it lists itself, so
         # with no anchor the relying party chose, an attacker's own manifest attesting the
-        # attacker's own credential decided (2026-09-30). The detached verifier's equivalent takes
-        # `trusted_manifests`, a set its caller vouches for by name; this function takes the
-        # manifests a presentation brought, so it trusts none of them unaided.
+        # attacker's own credential decided (2026-09-30). The detached verifier decides the same
+        # way (2026-10-21).
         return CrossAuthorityVerdict("reject", True, None,
                                      reason="no trust anchors were given: a manifest vouches for nothing by itself")
     trusted = {_hex_text(t) for t in trusted_anchors}

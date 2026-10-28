@@ -670,8 +670,10 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   // both ends of an interval and such an artifact has only its issuance.
   const replay = withinReplayWindow(o, now);
   // Same rule as the detached verifier and the Python SDK: the key that signed it,
-  // lowercased, is in the anchor set. Null when the caller supplied none.
-  const issuerTrusted = anchors == null
+  // lowercased, is in the anchor set. Null when the caller supplied none, and when the
+  // signature is not authentic: it read true beside a forged signature before this change, where
+  // the detached verifier's verify_signed_document reports signer_trusted null.
+  const issuerTrusted = anchors == null || !ok
     ? null
     : hexIn(o.public_key_hex, anchors.map((a) => hexText(a)));
   return { authentic: ok, fresh: replay !== null ? replay : withinWindow(o, now),
@@ -1050,9 +1052,7 @@ export function verifyCrossAuthority(
   if (trustedAnchors == null) {
     // No root, no trusted authority. Every manifest is signed by a key it lists itself, so with no
     // anchor the relying party chose, an attacker's own manifest attesting the attacker's own
-    // credential decided (2026-09-30). The detached verifier's equivalent takes
-    // `trusted_manifests`, a set its caller vouches for by name; this function takes the manifests
-    // a presentation brought, so it trusts none of them unaided.
+    // credential decided (2026-09-30). The detached verifier decides the same way (2026-10-21).
     return { decision: "reject", authentic: true, issuerTrusted: null,
              reason: "no trust anchors were given: a manifest vouches for nothing by itself" };
   }

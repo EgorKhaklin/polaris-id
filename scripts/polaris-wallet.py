@@ -552,9 +552,22 @@ def cmd_prove_membership(args):
     the root and the binding, never the holder's index."""
     wallet = _wallet_dir(args)
     pack = _load_credential(wallet)
+    signed_root = None
     if getattr(args, "from_instance", None):
         import urllib.error
         import urllib.request
+        V = _load_verifier()
+        # Before this change the set was checked against no key, so one re-signed with any key passed
+        # and the line below said the issuing authority had signed it. A set nobody here ties to the
+        # authority can be any set the network chose, and its size is the holder's anonymity.
+        if not getattr(args, "issuer_anchor", None):
+            raise SystemExit("refusing to prove against a fetched anonymity set with no --issuer-anchor: "
+                             "nothing here would show the issuing authority signed it. Pass its published "
+                             "key, as `verify --issuer-anchor` takes it.")
+        try:
+            anchor = V._load_anchor(args.issuer_anchor)
+        except (OSError, ValueError) as e:
+            raise SystemExit("could not read the issuer anchor: %s" % e)
         # P9.2: fetch the PUBLISHED anonymity set and verify it before proving. Every holder
         # fetches identical bytes, so the request says nothing about which leaf is theirs;
         # the leaf is found here, on this device, and the proof is built here.
@@ -564,11 +577,21 @@ def cmd_prove_membership(args):
                 epoch = json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             raise SystemExit("could not fetch the anonymity set: HTTP %d" % e.code)
-        V = _load_verifier()
-        v = V.verify_epoch_leaves(epoch)
+        v = V.verify_epoch_leaves(epoch, anchor_keys=anchor)
         if not (v["leaves_authentic"] and v["commitment_matches"] and v["count_matches"]):
             raise SystemExit("the published anonymity set does not verify: %s" % v["note"])
-        sys.stderr.write("anonymity set: %d members, signed by the issuing authority\n" % v["leaf_count"])
+        if v["issuer_trusted"] is not True:
+            raise SystemExit("the published anonymity set is not signed by a key among your --issuer-anchor keys")
+        # The floor the authority applies, polaris.min_epoch_anonymity_set (20 unless the deployment
+        # sets another): uc11_close_epoch in polaris_sql/05_procedures.sql refuses to close a smaller
+        # epoch, and polaris_web/app.py refuses a proof against one. The detached verifier's
+        # DEFAULT_MIN_ANONYMITY_SET is the same 20.
+        if v["leaf_count"] < V.DEFAULT_MIN_ANONYMITY_SET:
+            raise SystemExit("the published anonymity set has %d members, below the minimum of %d: a proof "
+                             "in a set that small hides you among too few" % (v["leaf_count"], V.DEFAULT_MIN_ANONYMITY_SET))
+        signed_root = epoch.get("merkle_root")
+        sys.stderr.write("anonymity set: %d members, signed by key %s..., one of your --issuer-anchor keys\n"
+                         % (v["leaf_count"], str(epoch.get("public_key_hex"))[:16]))
     else:
         with open(args.epoch) as f:
             epoch = json.load(f)
@@ -608,6 +631,13 @@ def cmd_prove_membership(args):
     if proc.returncode != 0:
         raise SystemExit("proof generation failed: %s" % (proc.stderr.strip() or proc.returncode))
     bundle = json.loads(proc.stdout)
+    # The prover computes the root from the leaves; with a fetched set it must be the root the
+    # authority signed beside them, or the proof is over a tree it never published (2026-10-21).
+    if signed_root is not None:
+        proved_root = (bundle.get("public_inputs") or {}).get("epoch_root_hex")
+        if not V._same_hex(proved_root, signed_root):
+            raise SystemExit("the proof's epoch root %s is not the merkle_root the authority signed (%s); "
+                             "no proof written" % (proved_root, signed_root))
     out = json.dumps(bundle, indent=2)
     if args.out:
         with open(args.out, "w") as f:
@@ -664,6 +694,8 @@ def main(argv=None):
                         "and another verifier cannot correlate it with yours")
     p.add_argument("--from-instance", help="fetch the signed anonymity set from an instance and prove locally (P9.2)")
     p.add_argument("--epoch-id", type=int, help="which epoch to fetch with --from-instance")
+    p.add_argument("--issuer-anchor", help="the issuing authority's published verification key(s), which "
+                                           "must have signed the set fetched with --from-instance")
     p.add_argument("--context", type=int, help="context id (if not in the epoch bundle)")
     p.add_argument("--nonce", type=int, help="proof nonce (default from the bundle, or 0)")
     p.add_argument("--zk-binary", help="path to the polaris-zk binary")

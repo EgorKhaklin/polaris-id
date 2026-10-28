@@ -18681,7 +18681,9 @@ class EndToEndFlowTests(PolarisTestCase):
             r = self.client.post('/api/v1/status-assertion', json={
                 'token_value': credential.get('token_value'),
                 'signature_hex': credential.get('signature_hex')})
-            d = verify.verify_stapled(credential, r.get_json())
+            # No anchor here, as the relying party's command with none: the answer is held to the
+            # credential's own key, which the detached verifier now does only when asked (2026-10-21).
+            d = verify.verify_stapled(credential, r.get_json(), signature_only=True)
             return {'currently_authoritative': d['decision'] == 'accept', 'status': d['status']}
         return check
 

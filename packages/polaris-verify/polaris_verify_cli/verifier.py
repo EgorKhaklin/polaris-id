@@ -916,11 +916,20 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
     return v
 
 
-def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_keys=None):
+#: Why a decision is withheld when the caller named no trust anchor rather than when an artifact
+#: failed a check. The command line abstains on it and says what to pass.
+_NO_ISSUER_ANCHOR = "no anchor_keys were given, so issuer trust was not evaluated"
+#: The same, where a manifest would otherwise name the trusted authority: refused, as the SDKs do.
+_NO_TRUST_ANCHORS = "no trust anchors were given: a manifest vouches for nothing by itself"
+
+
+def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_keys=None, signature_only=False):
     """The full OFFLINE holder<->verifier decision (P3.6): the credential's
     authenticity AND a fresh, bound, ACTIVE status assertion — with no connectivity.
-    accept iff both signatures are genuine (and issuer-trusted, when anchored), the
-    assertion is bound to this credential, fresh, and ACTIVE."""
+    accept iff both signatures are genuine and issuer-trusted, the assertion is bound to this
+    credential, fresh, and ACTIVE. With no `anchor_keys` issuer trust is not evaluated and the
+    decision is abstain where it would accept, unless the caller asks for genuine signatures
+    alone (`signature_only=True`)."""
     # `verify_pack` and `verify_status_assertion` each coerce a hostile shape internally;
     # this function then dereferenced both again on the ORIGINALS and raised. 2026-09-17.
     pack = pack if isinstance(pack, dict) else {}
@@ -950,10 +959,17 @@ def verify_stapled(pack, assertion, now=None, max_window_seconds=None, anchor_ke
         reasons.append("status is %s, not ACTIVE" % s["status"])
     if s.get("issuer_trusted") is False:
         reasons.append("status assertion issuer is not trusted")
-    accept = (a["signature_valid"] and a.get("issuer_trusted") in (None, True)
-              and bound and s["status_authentic"] and s.get("issuer_trusted") in (None, True)
-              and bool(s["fresh"]) and s["status"] == "ACTIVE")
-    return {"decision": "accept" if accept else "reject",
+    # Trusted means both issuers' keys are among the anchors. `in (None, True)` read "no anchors
+    # given" as trusted before this change, so a pack and an ACTIVE assertion a stranger signed were
+    # accepted; the command line abstained on that verdict, the library did not.
+    unevaluated = a.get("issuer_trusted") is None or s.get("issuer_trusted") is None
+    if unevaluated and not signature_only:
+        reasons.append(_NO_ISSUER_ANCHOR)
+    rest = (a["signature_valid"] and a.get("issuer_trusted") is not False
+            and bound and s["status_authentic"] and s.get("issuer_trusted") is not False
+            and bool(s["fresh"]) and s["status"] == "ACTIVE")
+    decision = "reject" if not rest else ("abstain" if unevaluated and not signature_only else "accept")
+    return {"decision": decision,
             "authentic": a["signature_valid"], "status": s["status"], "fresh": s["fresh"],
             "bound": bound, "reasons": reasons, "credential": a, "status_assertion": s}
 
@@ -1217,7 +1233,8 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
     published federation manifests (P3.2). Accept iff the credential's signature is
     genuine AND some manifest the relying party trusts attests to the credential's
     signing key in the presented context. `trusted_anchors` are the anchor keys of the
-    authorities the relying party already trusts (whose manifests it will honor).
+    authorities the relying party already trusts (whose manifests it will honor); with
+    none, nothing is trusted and the decision is reject.
 
     P3.2b: if the relying party supplies the issuer's `revocation_feed`, the decision is
     fail-closed on revocation -- a genuine, fresh feed BOUND to the issuer's key must
@@ -1234,6 +1251,13 @@ def verify_cross_authority(pack, context_id, trusted_manifests, now=None,
         return {"decision": "reject", "authentic": False,
                 "reasons": ["credential is not authentic"], "via": None,
                 "revocation_checked": False, "revoked": None}
+    if trusted_anchors is None:
+        # No root, no trusted authority. Every manifest is signed by a key it lists itself, so before
+        # this change any authentic, fresh manifest named here decided with no anchor given, and one a
+        # stranger signed, attesting the stranger's own credential, was accepted where both SDKs
+        # refuse.
+        return {"decision": "reject", "authentic": True, "reasons": [_NO_TRUST_ANCHORS],
+                "via": None, "revocation_checked": False, "revoked": None, "attestation_signed": None}
     token_key = _hex_text(pack.get("public_key_hex"))
     via = None
     attestation_signed = None       # P9.5: None until an edge is found
@@ -1979,7 +2003,7 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
                               now=None, max_window_seconds=None, trusted_anchors=None,
                               expected_nonce=None, zk_binary=None, expected_scope=None,
                               seen_nullifiers=None, min_anonymity_set=DEFAULT_MIN_ANONYMITY_SET,
-                              require_signed_attestation=False):
+                              require_signed_attestation=False, signature_only=False):
     """Decide a HOLDER's zero-knowledge inclusion proof against a FOREIGN authority's epoch,
     OFFLINE (P3.2d). Accept iff: (1) the foreign epoch checkpoint is authentic and fresh, and
     signed by an authority a trusted manifest attests IN the presented context -- so the epoch
@@ -2001,7 +2025,11 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
     unavailable", as the online verifier refuses it. The size is the checkpoint's signed
     `committed_count`; a checkpoint without one is refused too, since an epoch of unknown size
     hides an unknown number of people. Before this an epoch of one member was accepted here
-    while the authority's own verifier refused it."""
+    while the authority's own verifier refused it.
+
+    With no `trusted_anchors` no authority is trusted and the decision is reject, as on the
+    credential path, unless the caller asks for the proof and its binding alone
+    (`signature_only=True`), in which case any authentic, fresh manifest named here may attest."""
     cv = verify_epoch_checkpoint(epoch_checkpoint, now=now, max_window_seconds=max_window_seconds)
     base = {"decision": "reject",
             "checkpoint_authentic": bool(cv["checkpoint_authentic"] and cv["fresh"]),
@@ -2009,6 +2037,10 @@ def verify_cross_authority_zk(proof_bundle, epoch_checkpoint, context_id, truste
             "fresh_nullifier": None, "via": None, "attestation_signed": None, "reasons": []}
     if not (cv["checkpoint_authentic"] and cv["fresh"]):
         return {**base, "reasons": ["the foreign epoch checkpoint is not authentic or not fresh"]}
+    if trusted_anchors is None and not signature_only:
+        # Before this change the trust check below was skipped with no anchor given, so any authentic,
+        # fresh manifest named here attested the checkpoint's issuer.
+        return {**base, "reasons": [_NO_TRUST_ANCHORS]}
     cp_key = _hex_text((epoch_checkpoint or {}).get("public_key_hex")) if isinstance(epoch_checkpoint, dict) else None
     if not isinstance(trusted_manifests, (list, tuple)):
         trusted_manifests = []
@@ -2803,11 +2835,11 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     from the signer anchors: valid_long_term requires the timestamp trusted AND independent of
     the signing key, so neither a stranger's timestamp nor a signer's own (backdatable) one counts.
     valid_long_term is the conjunction: it holds even after the key is rotated or retired,
-    because it is decided at the instant the evidence fixes, not now. With trusted_anchors it
-    also requires the SIGNER trusted: its key among the anchors, or active at the instant on a
-    trust list whose publisher is among them. The manifest in the container is the signer's
-    own, so without that a stranger's key with its own manifest and a trusted authority's
-    timestamp was valid long-term. No network."""
+    because it is decided at the instant the evidence fixes, not now. It also requires the
+    SIGNER trusted: its key among `trusted_anchors`, or active at the instant on a trust list
+    whose publisher is among them, so with no signer anchors it is False. The manifest in the
+    container is the signer's own, so without that a stranger's key with its own manifest and a
+    trusted authority's timestamp was valid long-term. No network."""
     if not isinstance(doc, dict):
         doc = {}
     d = doc.get("document") if isinstance(doc.get("document"), dict) else {}
@@ -2935,10 +2967,11 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
         listed_by_trusted_publisher = (tlv.get("issuer_trusted") is True
                                        and L["signer_key_status_per_trust_list"] == "active")
     # A trust anchor set names who may sign. The signer's own manifest says only that the key
-    # was active in ITS OWN view, so with anchors the signer must be one of them, or be listed
-    # active at the instant by a trust list one of them publishes.
-    signer_trust_ok = (trusted_anchors is None or v["signer_trusted"] is True
-                       or listed_by_trusted_publisher)
+    # was active in ITS OWN view, so the signer must be one of the anchors, or be listed active
+    # at the instant by a trust list one of them publishes. With no anchors that held by default
+    # before this change, so a stranger's signature with a trusted authority's timestamp was
+    # valid long-term.
+    signer_trust_ok = v["signer_trusted"] is True or listed_by_trusted_publisher
     # P8.5b (v9.341): every timestamp the container carries (ltv.timestamp, then ltv.timestamps)
     # is judged the same way; those that are authentic, bound, trusted and independent of the
     # signer count toward a QUORUM of distinct authorities. An anchored timestamp (inclusion
@@ -2994,22 +3027,31 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
                                 and (trust_list is None or L["signer_key_status_per_trust_list"] == "active")
                                 and signer_trust_ok)
     if not v["valid_long_term"]:
-        v["note"] = "long-term validation failed: " + ", ".join(
-            k for k in ("timestamp_authentic", "timestamp_binds", "timestamp_independent", "signer_key_active_at_instant") if not L[k]
-        ) + (", no trusted timestamp-authority anchors given" if L["timestamp_authority_trusted"] is None
-             else (", timestamp authority not trusted" if L["timestamp_authority_trusted"] is False else "")
-        ) + (", timestamp authority key not active at the instant per the trust list"
-             if (trust_list is not None and L["timestamp_authority_key_status_per_trust_list"] != "active") else ""
-        ) + (", timestamp quorum not met (%d of %d independent authorities)" % (L["independent_timestamps"], quorum)
-             if L["independent_timestamps"] < quorum else ""
-        ) + ((", no anchored timestamp under an anchored policy"
-              + ("" if timestamp_log_key is not None else " (no timestamp log key was named)"))
-             if (require_anchored and not L["timestamp_anchored"])
-             else (", the anchor's head is not witnessed by a trusted witness"
-                   if (require_anchored and trusted_witnesses is not None and not L["timestamp_witnessed"]) else "")
-        ) + (", " + revocation_why if L["credential_unrevoked_at_instant"] is False else ""
-        ) + (", signer not trusted: its key is not among the trusted anchors nor active on a "
-             "trust list they publish" if not signer_trust_ok else "")
+        # One list, joined once: the note read "failed: , signer not trusted" when only the trust
+        # gates failed, each clause carrying its own leading separator (before this change).
+        why = [k for k in ("timestamp_authentic", "timestamp_binds", "timestamp_independent",
+                           "signer_key_active_at_instant") if not L[k]]
+        if L["timestamp_authority_trusted"] is None:
+            why.append("no trusted timestamp-authority anchors given")
+        elif L["timestamp_authority_trusted"] is False:
+            why.append("timestamp authority not trusted")
+        if trust_list is not None and L["timestamp_authority_key_status_per_trust_list"] != "active":
+            why.append("timestamp authority key not active at the instant per the trust list")
+        if L["independent_timestamps"] < quorum:
+            why.append("timestamp quorum not met (%d of %d independent authorities)" % (L["independent_timestamps"], quorum))
+        if require_anchored and not L["timestamp_anchored"]:
+            why.append("no anchored timestamp under an anchored policy"
+                       + ("" if timestamp_log_key is not None else " (no timestamp log key was named)"))
+        elif require_anchored and trusted_witnesses is not None and not L["timestamp_witnessed"]:
+            why.append("the anchor's head is not witnessed by a trusted witness")
+        if L["credential_unrevoked_at_instant"] is False:
+            why.append(revocation_why)
+        if trusted_anchors is None:
+            why.append("no signer anchors were given, so signer trust was not evaluated")
+        elif not signer_trust_ok:
+            why.append("signer not trusted: its key is not among the trusted anchors nor active on a "
+                       "trust list they publish")
+        v["note"] = "long-term validation failed: " + ", ".join(why)
     return v
 
 
@@ -4293,7 +4335,9 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
     the anonymity set, and a set only its issuer holds is not one. This checks the authority's
     signature over the statement, that the leaves riding beside it match the committed
     leaves_root_hex, that the count agrees, freshness, and, with an epoch checkpoint, that the
-    bundle describes the same epoch root the authority published there.
+    bundle describes the same epoch root the authority published there. The checkpoint must
+    verify first, its format and its signature, under the bundle's key or one of `anchor_keys`;
+    for one that does not, `epoch_matches` is None and the note says why.
 
     It deliberately does NOT recompute the Poseidon Merkle root: that needs the proving
     library, and a verifier that required it would not be standalone. The commitment is
@@ -4344,14 +4388,26 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
         return v
     v["leaves_authentic"] = True
     _verify_window(bundle, v, now, max_window_seconds)
-    if anchor_keys is not None:
-        v["issuer_trusted"] = _hex_in(pk_hex, {_hex_text(a) for a in anchor_keys})
+    anchors = None if anchor_keys is None else {_hex_text(a) for a in anchor_keys}
+    if anchors is not None:
+        v["issuer_trusted"] = _hex_in(pk_hex, anchors)
     if isinstance(epoch_checkpoint, dict):
-        v["epoch_matches"] = (
-            _same_hex(bundle.get("merkle_root"), (epoch_checkpoint.get("epoch") or {}).get("root_hex")
-                   or epoch_checkpoint.get("merkle_root")))
-        if v["epoch_matches"] is False:
-            v["note"] = "the bundle names a different epoch root than the published checkpoint"
+        # A checkpoint is the authority's published word only once it verifies, under the key that
+        # signed the bundle or a key the caller trusts. Before this change any dict's root was compared
+        # here, so a dict of another format with a signature of 00, or a bare {merkle_root}, matched.
+        cv = verify_epoch_checkpoint(epoch_checkpoint)
+        epoch = epoch_checkpoint.get("epoch")
+        if not cv["checkpoint_authentic"]:
+            v["note"] = ("the epoch checkpoint does not verify (%s), so the bundle was not compared with it"
+                         % (cv["note"] or "its signature is invalid"))
+        elif not _hex_in(epoch_checkpoint.get("public_key_hex"), {_hex_text(pk_hex)} | (anchors or set())):
+            v["note"] = ("the epoch checkpoint is signed by neither the bundle's key nor a trust anchor, so "
+                         "the bundle was not compared with it")
+        else:
+            v["epoch_matches"] = _same_hex(bundle.get("merkle_root"),
+                                           epoch.get("root_hex") if isinstance(epoch, dict) else None)
+            if v["epoch_matches"] is False:
+                v["note"] = "the bundle names a different epoch root than the published checkpoint"
     return v
 
 
@@ -5140,7 +5196,7 @@ def _wire_text_equal(signed, expected):
 
 def verify_agent_grant(grant, binding=None, credential=None, now=None, requested_action=None,
                        revocation=None, agent_proof=None, expected_nonce=None,
-                       anchor_keys=None, verifier_scope=None, expected_context=None):
+                       anchor_keys=None, verifier_scope=None, expected_context=None, signature_only=False):
     """Decide a delegated agent grant OFFLINE (P9.8). Total on hostile input.
 
     Every link is reported separately, because a service that only sees one boolean cannot
@@ -5149,7 +5205,9 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     CHECKED: the credential's issuer signature (and, with `anchor_keys`, an issuer among
     them), the issuer's binding of the holder key, the holder's grant covering the requested
     action, no holder revocation, and the agent's proof naming this action and this
-    service's nonce, made while the grant was in force.
+    service's nonce, made while the grant was in force. With no `anchor_keys` the issuer is
+    not evaluated and the grant is not usable, unless the caller asks for genuine signatures
+    alone (`signature_only=True`).
 
     The grant's `context_id` is signed by the holder; with `expected_context` (this service's
     context) it must name that context, reported as `context_matches`, or the grant is not
@@ -5338,6 +5396,8 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
     # silently becomes an unbounded one". Read with no uses and no amount, it refuses a limit
     # that is not an object, a key it does not know and a value that is not a finite number.
     limits_ok, limits_note = grant_within_limits(grant)
+    # Trusted means the credential's issuer is among the anchors; no anchors is not evaluated.
+    trusted = v["issuer_trusted"] is True or (signature_only and v["issuer_trusted"] is None)
     v["usable"] = bool(v["grant_authentic"] and v["fresh"] is not False
                        and v["principal_bound"] is True
                        and v["action_in_scope"] is True
@@ -5345,6 +5405,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
                        and v["agent_proved"] is True
                        and expected_nonce is not None
                        and v["context_matches"] is not False
+                       and trusted
                        and limits_ok)
     if not limits_ok and v["note"] is None:
         v["note"] = limits_note
@@ -5356,6 +5417,8 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
             ("service nonce", expected_nonce is None)) if absent]
         if missing:
             v["note"] = "not usable: the chain is incomplete (no %s)" % ", no ".join(missing)
+    if not v["usable"] and v["note"] is None and not trusted and v["issuer_trusted"] is None:
+        v["note"] = _NO_ISSUER_ANCHOR
     return v
 
 
@@ -5548,12 +5611,20 @@ def _stable_cross_verifier_material(presentation, cred):
     return None
 
 
+#: Why verify_presentation withholds usable_offline when the caller left out a nonce rather than
+#: when the presentation failed a check. The command line abstains on it and says what to pass.
+_NO_HOLDER_NONCE = "no expected_nonce was given, so the holder proof was not checked against a nonce this verifier issued"
+
+
 def verify_presentation(presentation, anchor_keys=None, now=None, max_window_seconds=None, expected_context=None,
-                        expected_nonce=None, require_holder_proof=False, verifier_scope=None):
-    """Decide a presentation OFFLINE (P8.6): the credential's authenticity (and, with anchor
-    keys, issuer trust); the stapled status assertion's authenticity, freshness, ACTIVE status
-    and BINDING to this credential (same token, same issuer key); the context, if the verifier
-    expected one. usable_offline is the conjunction. The presentation code is reported present
+                        expected_nonce=None, require_holder_proof=False, verifier_scope=None, signature_only=False):
+    """Decide a presentation OFFLINE (P8.6): the credential's authenticity and issuer trust;
+    the stapled status assertion's authenticity, freshness, ACTIVE status and BINDING to this
+    credential (same token, same issuer key); the context, if the verifier expected one; a
+    holder proof, when present, held to the nonce this verifier issued (`expected_nonce`: with
+    none, it is not proved). usable_offline is the conjunction. With no `anchor_keys` issuer
+    trust is not evaluated and nothing is usable, unless the caller asks for a genuine signature
+    alone (`signature_only=True`). The presentation code is reported present
     or absent and never interpreted: a duress presentation is indistinguishable here by
     design. A ZK proof is reported present; deciding it needs the epoch root and the polaris-zk
     binary (verify_zk_against_root). Total on hostile input."""
@@ -5581,6 +5652,7 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
     if expected_context is not None:
         v["context_matches"] = _same_id(presentation.get("context_id"), expected_context)
     H_binding_key = None
+    H_no_nonce = False
     sa = presentation.get("status_assertion")
     S = v["status"]
     if isinstance(sa, dict):
@@ -5609,10 +5681,14 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
         H["proof_authentic"] = pv2["proof_authentic"]
         H["key_matches_binding"] = pv2["key_matches_binding"]
         H["nonce_matches"] = pv2["nonce_matches"]
-        H["proved"] = bool(bv["binding_authentic"] and bv["fresh"] and bv["bound_to_credential"] is not False
-                           and pv2["proof_authentic"] and pv2["fresh"]
-                           and pv2["key_matches_binding"] and pv2["nonce_matches"] is not False
-                           and pv2["context_matches"] is not False)
+        # A proof checked against no nonce is not proved: one made for another verifier replays here
+        # (WIRE-SPEC: a verifier MUST require `verifier_nonce` to equal the one it issued). `is not
+        # False` read the unchecked None as a pass before this change, as neither SDK does.
+        chained = bool(bv["binding_authentic"] and bv["fresh"] and bv["bound_to_credential"] is not False
+                       and pv2["proof_authentic"] and pv2["fresh"]
+                       and pv2["key_matches_binding"] and pv2["context_matches"] is not False)
+        H["proved"] = chained and pv2["nonce_matches"] is True
+        H_no_nonce = chained and pv2["nonce_matches"] is None
     # P9.4: the handle this verifier should key its records by, and an honest word for the
     # correlation the presentation actually permits.
     if verifier_scope is not None:
@@ -5653,7 +5729,11 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
             v["pairwise_handle"] = pairwise_handle(
                 (H_binding_key if H["present"] else None) or v["token_value"], verifier_scope)
             v["correlation"] = "exposed"
-    v["usable_offline"] = bool(v["credential_authentic"] and v["issuer_trusted"] is not False
+    # Trusted means the issuer's key is among the anchors. `is not False` read "no anchors given" as
+    # trusted before this change, so a credential and status assertion a stranger signed were usable;
+    # a caller who wants a genuine signature alone now says so.
+    trusted = v["issuer_trusted"] is True or (signature_only and v["issuer_trusted"] is None)
+    v["usable_offline"] = bool(v["credential_authentic"] and trusted
                                and S["present"] and S["authentic"] and S["fresh"] and S["active"] and S["bound"]
                                and v["context_matches"] is not False
                                and (H["proved"] if H["present"] else True)
@@ -5664,6 +5744,8 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
             why.append("credential not authentic")
         if v["issuer_trusted"] is False:
             why.append("issuer not trusted")
+        elif not trusted and anchor_keys is None:
+            why.append(_NO_ISSUER_ANCHOR)
         if not S["present"]:
             why.append("no status assertion stapled (authorization not decidable offline)")
         else:
@@ -5671,7 +5753,7 @@ def verify_presentation(presentation, anchor_keys=None, now=None, max_window_sec
         if v["context_matches"] is False:
             why.append("context mismatch")
         if H["present"] and not H["proved"]:
-            why.append("the holder proof does not chain to an issuer-signed binding")
+            why.append(_NO_HOLDER_NONCE if H_no_nonce else "the holder proof does not chain to an issuer-signed binding")
         elif require_holder_proof and not H["present"]:
             why.append("no holder proof (this verifier requires possession of the holder key, not only the file)")
         v["note"] = "; ".join(why)
@@ -5988,7 +6070,18 @@ def main(argv=None):
                                      requested_action=args.action, revocation=revocation,
                                      agent_proof=agent_proof, expected_nonce=args.service_nonce,
                                      anchor_keys=anchor, verifier_scope=args.verifier_scope,
-                                     expected_context=args.context)
+                                     expected_context=args.context, signature_only=args.signature_only)
+        # The same rule as a pack (_pack_exit): a chain can be whole and still signed by an
+        # issuer nobody here trusts, so without a trust root the run abstains. Before this change the
+        # --json verdict said usable true beside that exit 2; it now says what the exit code says.
+        held = None
+        if (verdict["usable"] or verdict["note"] == _NO_ISSUER_ANCHOR) \
+                and verdict["issuer_trusted"] is None and not args.signature_only:
+            held = ("abstain: no --issuer-anchor, so nothing here establishes that the credential "
+                    "behind this grant was issued by anyone you trust. Pass --issuer-anchor to "
+                    "decide it, or --signature-only to say that cryptographic validity alone is "
+                    "the question.")
+            verdict = dict(verdict, usable=False, note=held)
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
@@ -6006,14 +6099,8 @@ def main(argv=None):
                       % (verdict["pairwise_handle"], verdict["correlation"]))
             if verdict["note"]:
                 print("note:             %s" % verdict["note"])
-        # The same rule as a pack (_pack_exit): a chain can be whole and still signed by an
-        # issuer nobody here trusts, so without a trust root the run abstains.
-        if verdict["usable"] and verdict["issuer_trusted"] is None and not args.signature_only:
-            print("abstain: no --issuer-anchor, so nothing here establishes that the credential "
-                  "behind this grant was issued by anyone you trust. Pass --issuer-anchor to "
-                  "decide it, or --signature-only to say that cryptographic validity alone is "
-                  "the question.", file=sys.stderr)
-            return 2
+        if held:
+            print(held, file=sys.stderr)
         return 0 if verdict["usable"] else 2
     if args.presentation or args.qr_frames:
         try:
@@ -6035,27 +6122,35 @@ def main(argv=None):
         # was never held to this service's nonce here: a captured proof replayed.
         verdict = verify_presentation(presentation, anchor_keys=anchor, max_window_seconds=args.max_window,
                                       expected_context=args.context, expected_nonce=args.nonce,
-                                      verifier_scope=args.verifier_scope)
-        if args.json:
-            print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
-        else:
-            print("usable offline: %s%s" % (verdict["usable_offline"], (" (%s)" % verdict["note"]) if verdict.get("note") else ""))
+                                      verifier_scope=args.verifier_scope, signature_only=args.signature_only)
         # 2 is "not accepted" in the README's exit-code table; 1 is only for frames that do not
         # decode (above). Until 2026-09-28 an unusable presentation exited 1.
         # 2026-09-30: and until then a presentation with no --issuer-anchor exited 0, the one
         # path where a credential and status assertion signed by anybody's key were accepted
         # without the abstention the pack and stapled paths make.
-        if verdict["usable_offline"] and (verdict.get("holder") or {}).get("present") and args.nonce is None:
-            print("abstain: the presentation carries a holder proof and no --nonce was given, so "
-                  "nothing here shows the proof was made for this service rather than replayed. "
-                  "Pass the nonce this service issued with --nonce.", file=sys.stderr)
-            return 2
-        if verdict["usable_offline"] and verdict["issuer_trusted"] is None and not args.signature_only:
-            print("abstain: no --issuer-anchor, so issuer trust was NOT evaluated for this "
-                  "presentation. A genuine signature is not a trusted issuer. Pass "
-                  "--issuer-anchor to decide it, or --signature-only to say that cryptographic "
-                  "validity alone is the question.", file=sys.stderr)
-            return 2
+        # 2026-10-21: the two abstentions printed usable_offline true and exited 2. The library now
+        # withholds usable_offline for each and names it in the note; a verdict usable anyway is
+        # held here before it is printed, as on the stapled and zero-knowledge paths.
+        withheld = set() if verdict["usable_offline"] else set((verdict.get("note") or "").split("; "))
+        only_missing = verdict["usable_offline"] or withheld <= {_NO_HOLDER_NONCE, _NO_ISSUER_ANCHOR}
+        held = None
+        if only_missing and (verdict.get("holder") or {}).get("present") and args.nonce is None:
+            held = ("abstain: the presentation carries a holder proof and no --nonce was given, so "
+                    "nothing here shows the proof was made for this service rather than replayed. "
+                    "Pass the nonce this service issued with --nonce.")
+        elif only_missing and verdict["issuer_trusted"] is None and not args.signature_only:
+            held = ("abstain: no --issuer-anchor, so issuer trust was NOT evaluated for this "
+                    "presentation. A genuine signature is not a trusted issuer. Pass "
+                    "--issuer-anchor to decide it, or --signature-only to say that cryptographic "
+                    "validity alone is the question.")
+        if held and verdict["usable_offline"]:
+            verdict = dict(verdict, usable_offline=False, note=held)
+        if args.json:
+            print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
+        else:
+            print("usable offline: %s%s" % (verdict["usable_offline"], (" (%s)" % verdict["note"]) if verdict.get("note") else ""))
+        if held:
+            print(held, file=sys.stderr)
         return 0 if verdict["usable_offline"] else 2
     if args.zk_proof:
         # A value of the wrong type is an argument this run does not take: 4 before any file is
@@ -6077,13 +6172,15 @@ def main(argv=None):
         verdict = verify_cross_authority_zk(
             proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
             trusted_anchors=anchor, expected_nonce=zk_nonce, min_anonymity_set=args.min_anonymity_set,
-            require_signed_attestation=args.require_signed_attestation)
+            require_signed_attestation=args.require_signed_attestation, signature_only=args.signature_only)
         # The rules of every other path. --trusted-anchor alone reached this path, and with no
         # trust root every manifest named was trusted: a manifest is its authority's word about
         # itself (WIRE-SPEC 3.1). And a proof checked against no challenge is replayable, as a
-        # holder proof is on the presentation path (2026-10-01).
+        # holder proof is on the presentation path (2026-10-01). The library refuses a run with no
+        # trust root itself since this change; here that refusal is the abstention it always was.
         held = None
-        if verdict["decision"] == "accept" and anchor is None and not args.signature_only:
+        no_root = anchor is None and not args.signature_only
+        if no_root and (verdict["decision"] == "accept" or verdict.get("reasons") == [_NO_TRUST_ANCHORS]):
             held = ("abstain: no --trusted-anchor or --issuer-anchor, so nothing here establishes that "
                     "the authority attesting the checkpoint's issuer is one you trust. Pass a trust "
                     "root, or --signature-only to say that the proof and its binding are the question.")
@@ -6147,7 +6244,10 @@ def main(argv=None):
         except Exception as e:
             print("could not read the status assertion: %s" % e, file=sys.stderr)
             return 3
-        verdict = verify_stapled(pack, assertion, max_window_seconds=args.max_window, anchor_keys=anchor)
+        verdict = verify_stapled(pack, assertion, max_window_seconds=args.max_window, anchor_keys=anchor,
+                                 signature_only=args.signature_only)
+        # The library abstains on this itself since this change; an accept without evaluated trust is
+        # still held here, whichever verdict function produced it.
         held = verdict["decision"] == "accept" and not args.signature_only and not (
             verdict.get("credential", {}).get("trust_evaluated")
             and verdict.get("status_assertion", {}).get("trust_evaluated"))
@@ -6166,7 +6266,7 @@ def main(argv=None):
             print("bound:            %s" % verdict["bound"])
             for r in verdict["reasons"]:
                 print("  - %s" % r)
-        if held:
+        if verdict["decision"] == "abstain":
             print("abstain: no --issuer-anchor, so issuer trust was NOT evaluated for the "
                   "credential, the status assertion, or both. A genuine signature is not a "
                   "trusted issuer. Pass --issuer-anchor to decide it, or --signature-only to "
