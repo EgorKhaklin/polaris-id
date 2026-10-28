@@ -714,6 +714,11 @@ class CborRefusals(unittest.TestCase):
                            ("tag 24 over a text string", b"\xd8\x18" + _cbor("ab"))):
             with self.subTest(label), self.assertRaises(ValueError):
                 V._cbor_decode(buf)
+        # Every tag above wraps something other than a byte string, which the tag-24 guard
+        # refuses too. Over a byte string, only the refusal that names the subset is left.
+        with self.subTest("tag 2, an unsigned bignum"), \
+                self.assertRaisesRegex(ValueError, "outside the mdoc subset"):
+            V._cbor_decode(b"\xc2\x41\x01")
 
 
 class MdocTag24Refusals(unittest.TestCase):
