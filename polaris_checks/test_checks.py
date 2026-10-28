@@ -2706,7 +2706,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
               '<img src="docs/assets/rule.svg" alt="">']
     two = "Two wallets ran unmodified: Alpha and Beta."
     one = "One more library took part: the reference library (Kotlin)."
-    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\n**Not yet:** an independent security review, a pilot.\n"
+    status = "## Status\n\n**Tested against software nobody here wrote.** %s %s\n\nAn outside wallet project runs the verifier in its CI.\n"
 
     def readme(rows=badges, two=two, one=one):
         return "<div>\n\n" + "\n".join(rows) + "\n\n</div>\n\n## What it is\n\nPre-pilot.\n\n" + status % (two, one)
@@ -2739,11 +2739,11 @@ def test_claims_manifest_check_discriminates(tmp_path):
          "implementations": [{"name": "Alpha", "scoreboard": "Alpha"}, {"name": "Beta", "scoreboard": "Beta wallet"}]},
         {"id": "one", "kind": "statement", "claim": one, "surfaces": ["README.md"], "evidence": ["file:LICENSE"],
          "reproduce": "Read the scoreboard.", "implementations": [{"name": "Kotlin", "scoreboard": "lib-kt"}]},
-        {"id": "not-yet", "kind": "statement", "claim": "Not yet: an independent security review, a pilot.",
+        {"id": "outside-ci", "kind": "statement", "claim": "An outside wallet project runs the verifier in its CI.",
          "surfaces": ["README.md", "site/llms.txt"], "evidence": ["file:LICENSE"], "reproduce": "Read the scoreboard."},
     ]}
     for rel, text in (("LICENSE", "Apache License\n"), ("t/test_x.py", "class XTests:\n    pass\n"),
-                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- Not yet: an independent security\n  review, a pilot.\n")):
+                      ("scripts/walk.sh", "#!/bin/sh\n"), ("site/llms.txt", "- An outside wallet project runs\n  the verifier in its CI.\n")):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(text)
     (tmp_path / "lab").mkdir()
@@ -2791,9 +2791,9 @@ def test_claims_manifest_check_discriminates(tmp_path):
         "must FAIL on an evidence token of no known kind"
 
     # A listed sentence edited, or an older one restored, on its surface.
-    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security review.\n")
+    (tmp_path / "site" / "llms.txt").write_text("- An outside wallet project runs the verifier.\n")
     assert run() == "FAIL", "must FAIL when a claim was edited on one of its surfaces"
-    (tmp_path / "site" / "llms.txt").write_text("- Not yet: an independent security\n  review, a pilot.\n")
+    (tmp_path / "site" / "llms.txt").write_text("- An outside wallet project runs\n  the verifier in its CI.\n")
     assert run() == "OK", "must PASS again once the surface says the claim"
     assert run(rd=readme(one="One more library presented through a wallet built here: the reference library (Kotlin).")) == "FAIL", \
         "must FAIL when an older, larger sentence replaces the listed one"
@@ -2857,7 +2857,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
     assert run(edit(lambda by: by["ci"].pop("why"))) == "FAIL", \
         "must FAIL on a null reproduce with no reason"
     assert run(edit(lambda by: by["site"].update(id="ci"))) == "FAIL", "must FAIL on two entries with one id"
-    assert run(edit(lambda by: by["not-yet"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
+    assert run(edit(lambda by: by["outside-ci"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
     manifest.unlink()
     assert checks.check_claims_manifest(tmp_path)[0].level == "FAIL", "must FAIL when the manifest is missing"
 
@@ -10756,6 +10756,18 @@ def test_zk_claim_precise_check_discriminates(tmp_path):
     (tmp_path / "README.md").write_text(
         "# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\nNo boundary stated.\n")
     assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", "must FAIL without the boundary sentence"
+    # 2026-10-24: the positive definition bounds the word as tightly as the disclaimer did
+    POSITIVE = ("# POLARIS\n\n**A post-quantum, unlinkable-by-default identity system.**\n\n"
+                "Zero knowledge here means two specific things: a verification that stores no token "
+                "identifier, and a Merkle-membership proof.\n")
+    (tmp_path / "README.md").write_text(POSITIVE)
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "OK", "must PASS the positive definition"
+    (tmp_path / "README.md").write_text(POSITIVE.replace("means two specific things", "means many things"))
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition no longer bounds the word"
+    (tmp_path / "README.md").write_text(POSITIVE.split(": a verification")[0] + ".\n")
+    assert checks.check_zk_claim_precise(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the definition names neither of its two things"
 
 
 def test_no_scifi_schema_check_discriminates(tmp_path):
@@ -11026,6 +11038,31 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     # the two-witness overclaim returns
     write(readme=README + "Two independent witnesses for every cryptographic verdict.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", "must FAIL on the two-witness overclaim"
+    # a README with no comparison is honest, as long as nothing is claimed
+    write(readme="# POLARIS\n\nPre-pilot.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "OK", \
+        "must PASS a README with no comparison and nothing said about correlation"
+    write(readme="# POLARIS\n\nPre-pilot. Verification is unlinkable by default.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed with no two-sided correlation statement"
+    write(readme="# POLARIS\n\nA verifier stores a per-verifier handle.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when per-verifier handles are claimed with no two-sided correlation statement"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| Polaris | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a comparison returns, with an unbolded Polaris row, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| Polaris | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when an unbolded Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\n| System | PQ |\n|---|---|\n| **Polaris ID** | ✓ |\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the comparison's row names Polaris by a longer name, without the not-deployed column"
+    write(readme=README.replace("| **Polaris** | **✗** | **✗** | ✓ |", "| **Polaris ID** | ✓ | ✗ | ✓ |"))
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a longer-named Polaris row is awarded a deployment tick"
+    write(readme="# POLARIS\n\nRelying parties cannot link two presentations.\n")
+    assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
+        "must FAIL when unlinkability is claimed as 'cannot link' with no two-sided correlation statement"
 
 
 def test_detached_verifier_check_discriminates(tmp_path):

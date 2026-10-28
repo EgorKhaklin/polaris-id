@@ -1,7 +1,7 @@
 # Security Policy
 
 How to report a vulnerability, what is in scope, what to expect, and how to verify a release.
-Polaris is pre-pilot software on notional data; it has never held real identity data.
+Polaris is pre-pilot software.
 Related: [security controls](docs/operator/SECURITY-CONTROLS.md) · [threat model](docs/design/threat-model.md) · [red-team scope](docs/RED-TEAM-SCOPE.md) · [review packet](docs/REVIEW-PACKET.md).
 
 ---

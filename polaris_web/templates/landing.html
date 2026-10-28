@@ -6,7 +6,7 @@
 
 <section class="hero" aria-labelledby="landing-title">
     <div>
-        <p class="eyebrow">Pre-pilot software · notional data · <span class="ver">v{{ polaris_version }}</span></p>
+        <p class="eyebrow">Pre-pilot software · <span class="ver">v{{ polaris_version }}</span></p>
         <h1 id="landing-title">An identity authority anyone can check.</h1>
         <p class="lede">Polaris issues identity credentials signed with ML-DSA-65, keeps their status
            current, and publishes what a relying party needs to verify them offline, with no Polaris
@@ -60,15 +60,14 @@
             {{ ui.icon('wallet') }}
             <h3>Wallets</h3>
             <p>Copies for OpenID4VCI wallets. <span class="mono">polaris-oid4vp</span> 1.0.0rc7 is
-               OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile; Polaris as a whole
-               is not certified. The newest release runs against the OpenID Foundation's conformance
+               OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile.
+               The newest release runs against the OpenID Foundation's conformance
                suite every week in CI.</p>
         </article>
         <article class="feature">
             {{ ui.icon('eye-off') }}
             <h3>Zero-knowledge mode</h3>
-            <p>Issuer-unlinkable proofs of a valid credential. What a relying party can correlate is
-               bounded, not eliminated.</p>
+            <p>Issuer-unlinkable proofs of a valid credential.</p>
         </article>
         <article class="feature">
             {{ ui.icon('anchor') }}
@@ -82,21 +81,6 @@
             <p>Trust between authorities is explicit, signed, and never transitive.</p>
         </article>
     </div>
-</section>
-
-<section class="section" aria-labelledby="not-title">
-    <div class="section-head">
-        <h2 id="not-title">What it is not yet</h2>
-        <p>Stated here because it is true, and because a claim this page cannot back would cost more
-           than it gains.</p>
-    </div>
-    <ul class="plain-list limits">
-        <li>{{ ui.icon('circle-x') }}<span>Not piloted, not deployed, and not production-ready.</span></li>
-        <li>{{ ui.icon('circle-x') }}<span>Never held real identity data; this instance runs on notional records.</span></li>
-        <li>{{ ui.icon('circle-x') }}<span>No independent security review yet.</span></li>
-        <li>{{ ui.icon('circle-x') }}<span>Algorithm agility under an audited migration path, not settled security against a quantum adversary.</span></li>
-    </ul>
-    <p class="footnote"><a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md" rel="noopener">The readiness ledger</a> is the bound on what Polaris may claim.</p>
 </section>
 
 {% endblock %}

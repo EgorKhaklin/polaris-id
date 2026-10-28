@@ -9,7 +9,7 @@
        surface is what a coercer standing behind an operator reads, and
        test_anti_revealing_verifications_list_excludes_duress asserts the word appears nowhere in an
        operator's page. Its navigation entry is role-gated to admin and auditor in _ui.html. #}
-    <meta name="description" content="Polaris identity-credential console. Pre-pilot software on notional data.">
+    <meta name="description" content="Polaris identity-credential console. Pre-pilot software.">
     <meta name="color-scheme" content="dark light">
     {# The theme is applied before first paint by an external script (C5: no inline script). #}
     <script src="{{ url_for('static', filename='theme.js') }}?v={{ polaris_version }}"></script>
@@ -48,7 +48,7 @@
                 {% endfor %}
             </nav>
             <div class="sidebar-foot">
-                <div class="env-badge">Pre-pilot · notional data</div>
+                <div class="env-badge">Pre-pilot</div>
                 <div class="env-version">
                     v{{ polaris_version }} ·
                     {% if signing.real %}<span title="Credentials are signed with {{ signing.algorithm }}">{{ signing.algorithm }}</span>
@@ -98,10 +98,7 @@
             <footer class="page-foot">
                 <span class="foot-meta">
                     <span>Polaris {{ polaris_version }}</span><span class="sep">·</span>
-                    <span>Pre-pilot software on notional data</span>
-                </span>
-                <span class="foot-meta">
-                    <a href="https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md" rel="noopener">What it is not yet</a>
+                    <span>Pre-pilot software</span>
                 </span>
             </footer>
         </div>
@@ -127,7 +124,7 @@
         {{ self.content() }}
     </main>
     <footer class="page-foot">
-        <span class="foot-meta"><span>Polaris {{ polaris_version }}</span><span class="sep">·</span><span>Pre-pilot software on notional data</span></span>
+        <span class="foot-meta"><span>Polaris {{ polaris_version }}</span><span class="sep">·</span><span>Pre-pilot software</span></span>
         <a class="maker" href="https://github.com/EgorKhaklin" rel="noopener" aria-label="Khaklin Technologies"><span class="maker-lockup" aria-hidden="true"></span></a>
     </footer>
     {% endblock %}
