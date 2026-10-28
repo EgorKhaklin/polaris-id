@@ -24,7 +24,8 @@ credential, an optional stapled issuer-signed status assertion (fetched when con
 authorization is decidable with no connectivity at all), an optional ZK membership proof,
 the context and disclosure level presented under, and an opaque presentation code. Its
 authenticity lives entirely in the signed objects inside it. `verify_presentation` decides it
-offline: credential authentic and (with anchors) issuer trusted; assertion authentic, fresh,
+offline: credential authentic and issuer trusted (with no anchors nothing is usable, unless the
+caller asks for a genuine signature alone with `signature_only=True`); assertion authentic, fresh,
 ACTIVE and **bound** to this credential -- the same token value and the same signing key, so
 a stranger's or another credential's assertion buys nothing; the expected context, if any.
 `usable_offline` is the conjunction. The presentation code is reported present or absent

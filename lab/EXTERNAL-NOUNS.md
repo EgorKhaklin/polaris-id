@@ -13,7 +13,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. |
-| Use | 1 outside project (OID4VCgo's CI, since 2026-10-11) |
+| Use | 1 outside project: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16 |
 | Findings from outside | 2, both fixed |
 
 ## External nouns
@@ -154,6 +154,12 @@ Project Wycheproof, `testvectors_v1/mldsa_65_verify_test.json` at 613a2e44cb64: 
 both witnesses (liboqs and `cryptography`), on every push (CI job `pqc-real`). It tests the
 cryptographic primitive, not the credential protocol, and moves no row above.
 
+**liboqs-python changed after a report from here, 2026-10-28.** Open Quantum Safe published
+[GHSA-w696-4vrr-x6x3](https://github.com/open-quantum-safe/liboqs-python/security/advisories/GHSA-w696-4vrr-x6x3)
+for liboqs-python 0.16.0.1 and earlier, crediting Egor Khaklin as reporter. 0.16.0.2 is patched:
+polaris-verify's `oqs` extra requires it or later, and the server's lock
+(`polaris_web/requirements-pqc.txt`) pins it.
+
 draft-ietf-oauth-status-list-21: the byte arrays of Section 4.2, the four Appendix C test vectors (1, 2, 4 and 8 bits, 2^20 entries) and the signed example of Section 8.2 under the example key the draft's authors publish, decided by `polaris_oid4vp.status.decide`, with tokens signed by the OpenWallet Foundation's `@sd-jwt/jwt-status-list` 0.19.0 beside them (2026-10-04, [lab/interop/status-list](interop/status-list/README.md); run by the author, not every push). Every status matched. The library's 2^20-entry list at 10% revoked was refused by 1.0.0rc15 (payload over 64 KiB); the bound is fixed in the tree.
 
 ### Public distribution
@@ -202,6 +208,17 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    against polaris-oid4vp 1.0.0rc20, the presentation accepted and all four controls refused, as
    [their comment on #312](https://github.com/IDFoundry/OID4VCgo/issues/312#issuecomment-6106407596)
    reports.
+2. 2026-10-16 and 2026-10-28: OID4VCgo's CI runs this repository's negative vectors against its own
+   verifier package, on each push to main and on pull requests
+   ([polaris-vectors.yml](https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-vectors.yml)),
+   reading each file at a pinned commit and checking its SHA-256: `vectors.json` (SD-JWT VC) since
+   [PR 624](https://github.com/IDFoundry/OID4VCgo/pull/624), merged 2026-10-16, and
+   `mdoc-vectors.json` (mso_mdoc) since [PR 745](https://github.com/IDFoundry/OID4VCgo/pull/745),
+   merged 2026-10-28. Both were opened from here and merged by the maintainer. The maintainer's own
+   [PR 750](https://github.com/IDFoundry/OID4VCgo/pull/750) (merged 2026-10-28, 8485b535) requires
+   each control to be accepted and each mdoc refusal to carry a `Reason` of its vector's layer. The
+   first run on main after it ([40735536223](https://github.com/IDFoundry/OID4VCgo/actions/runs/40735536223))
+   passed both jobs.
 
 ### Findings from outside
 

@@ -37,9 +37,10 @@ signature provably existed then), and the signer's **manifest**, **epoch checkpo
 **revocation feed** as of then. `verify_signed_document` decides `valid_long_term` at that
 instant: the timestamp is authentic and binds the signature material; the manifest was
 authentic and fresh at the instant and lists the signing key as active; and, for a
-holder-authorized signature, the feed at the instant does not list the credential hash. Given
-signer anchors, it also requires the signer trusted, its key among them or active at the instant
-on a trust list one of them publishes, since the manifest in the container is the signer's own. A
+holder-authorized signature, the feed at the instant does not list the credential hash. It
+also requires the signer trusted, its key among the signer anchors or active at the instant
+on a trust list one of them publishes, since the manifest in the container is the signer's own;
+with no signer anchors nothing is valid long term. A
 container timestamped while the key was active therefore stays valid after the key is retired,
 and one whose evidence shows the key already retired at its instant does not; a re-signed
 container is not covered by the old evidence, because the timestamp binds the signature.
@@ -54,8 +55,9 @@ convenience evidence; `timestamp_agency_id` lets an operator take the timestamp 
 federated agency of the instance at signing. A verifier given no timestamp anchors reports the
 facts and claims nothing. Since v9.341 the verifier also takes `require_anchored` (with
 `trusted_witnesses`), `timestamp_quorum`, and checks the timestamp authority's key status per
-the trust list; `anchor_timestamp: true` at signing anchors the embedded timestamp. See
-[timestamp-transparency.md](timestamp-transparency.md).
+the trust list; `anchor_timestamp: true` at signing anchors the embedded timestamp. Under
+`require_anchored` it needs `timestamp_log_key`, the key that signs the log's heads: with none,
+nothing is anchored. See [timestamp-transparency.md](timestamp-transparency.md).
 
 ## What runs
 

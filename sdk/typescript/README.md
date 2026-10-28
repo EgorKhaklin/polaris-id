@@ -77,10 +77,14 @@ language.
 - `verifySignedArtifact(obj, now?)`: every other signed artifact of the wire spec: the epoch
   checkpoint, revocation feed, federation manifest, status bundle, transparency STH,
   timestamp, registry, exchange request, exchange receipt, mint statement, signed document
-  and trust list (authenticity, freshness where windowed, and the artifact's commitment or
-  self-consistency).
-- `verifyIdToken(tok, audience?, nonce?, now?, anchors?)`: the ID token, checked against the
-  audience, the nonce and the agency keys you pass.
+  and trust list (authenticity, and the artifact's commitment or self-consistency). Its
+  `fresh` comes only from fields the artifact signs: the validity window it signs, or, for the
+  holder proof, its signed `issued_at` within the format's replay window; for any other format
+  it is `null`.
+- `verifyIdToken(tok, audience?, nonce?, now?, anchors?)`: the ID token (authenticity,
+  audience, nonce, and freshness from its signed `iat` and `exp`). Whether the issuing agency
+  is one you trust is `issuerTrusted`, answered only against the agency keys you pass in
+  `anchors`; without them it is `null`.
 - `verifyCrossAuthority(...)`: the federation trust decision (accept / reject) under the relying party's trust anchors; with none, no manifest is trusted. By default it accepts a trust edge the attesting agency did not sign, as version 1 manifests carry; a relying party should pass `requireSignedAttestation` as `true` to require that agency's signature.
 - `verifyExchangeRequest(...)`, `verifyExchangeReceipt(...)`, `verifyExchangeMint(...)`: an
   exchange artifact in use: whether it is by the party expected, whether the requester was

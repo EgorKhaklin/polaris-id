@@ -436,7 +436,7 @@ function withinWindow(obj: any, now?: string | null, start = "issued_at", end = 
 /** The [start, end] fields of the validity window a format SIGNS, read from its own signed key
  * list, or null when it signs no window. The ID token signs its window as `iat` and `exp`. A
  * field outside the signed statement is anyone's to add or change, so a format that signs only
- * one end of a window, or neither, has no window to answer `fresh` from (2026-10-21). Matches
+ * one end of a window, or neither, has no window to answer `fresh` from. Matches
  * `_signed_window` in the Python SDK. */
 function signedWindow(keys: string[]): [string, string] | null {
   if (keys.includes("iat") && keys.includes("exp")) return ["iat", "exp"];
