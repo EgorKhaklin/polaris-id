@@ -1205,7 +1205,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         # No root, no trusted authority. Every manifest is signed by a key it lists itself, so
         # with no anchor the relying party chose, an attacker's own manifest attesting the
         # attacker's own credential decided (2026-09-30). The detached verifier decides the same
-        # way (2026-10-21).
+        # way.
         return CrossAuthorityVerdict("reject", True, None,
                                      reason="no trust anchors were given: a manifest vouches for nothing by itself")
     trusted = {_hex_text(t) for t in trusted_anchors}
