@@ -4837,14 +4837,16 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
         v["note"] = "the MSO's docType does not match the document's"
         return v
     if mso.get("digestAlgorithm") != "SHA-256":
-        v["note"] = "unsupported MSO digest algorithm: %r" % mso.get("digestAlgorithm")
+        # A one-tuple: the decoder returns tag 24 as a tuple, which a bare % reads as its arguments.
+        v["note"] = "unsupported MSO digest algorithm: %r" % (mso.get("digestAlgorithm"),)
         return v
 
     # DIGESTS: what an off-the-shelf reader can check for itself.
-    ns_items = (signed.get("nameSpaces") or {}).get(_MDOC_NAMESPACE)
-    committed = (mso.get("valueDigests") or {}).get(_MDOC_NAMESPACE)
+    name_spaces, value_digests = signed.get("nameSpaces"), mso.get("valueDigests")
+    ns_items = name_spaces.get(_MDOC_NAMESPACE) if isinstance(name_spaces, dict) else None
+    committed = value_digests.get(_MDOC_NAMESPACE) if isinstance(value_digests, dict) else None
     if not isinstance(ns_items, list) or not isinstance(committed, dict):
-        v["note"] = "the document's namespace or the MSO's digests are missing"
+        v["note"] = "the document's namespace or the MSO's digests are missing or malformed"
         return v
     elements, ok = {}, True
     for tagged_item in ns_items:
@@ -4888,7 +4890,11 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
         v["fresh"] = False
         v["note"] = "the MSO's validity window is not readable"
 
-    # THE SIGNATURE: what only a Polaris-aware verifier can decide.
+    # THE SIGNATURE: what only a Polaris-aware verifier can decide. A signature that is not a
+    # byte string is refused before bytes(), which reads an integer as a length to allocate.
+    if not isinstance(signature, (bytes, bytearray)):
+        v["note"] = "the COSE signature is not a byte string"
+        return v
     key_hex = unprotected.get("polaris_public_key_hex") if isinstance(unprotected, dict) else None
     alg = unprotected.get("polaris_algorithm") if isinstance(unprotected, dict) else None
     try:
@@ -4897,7 +4903,7 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
         v["note"] = "the COSE signature or public key is not usable"
         return v
     if not _accepted_alg(alg):
-        v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
+        v["note"] = "unknown or unaccepted signature algorithm: %r" % (alg,)
         return v
     ok2, ran, note = _cose_sign1_verdict(bytes(protected), bytes(payload), sig, pk, alg)
     v["witnesses"] = ran

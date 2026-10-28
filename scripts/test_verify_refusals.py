@@ -463,7 +463,11 @@ def _hdr(major, n):
         return bytes([major << 5 | n])
     if n < 256:
         return bytes([major << 5 | 24, n])
-    return bytes([major << 5 | 25]) + n.to_bytes(2, "big")
+    if n < 65536:
+        return bytes([major << 5 | 25]) + n.to_bytes(2, "big")
+    if n < 2 ** 32:
+        return bytes([major << 5 | 26]) + n.to_bytes(4, "big")
+    return bytes([major << 5 | 27]) + n.to_bytes(8, "big")
 
 
 def _cbor(x):
@@ -574,6 +578,59 @@ class MdocTag24Refusals(unittest.TestCase):
                 self.assertIs(v["issuer_authentic"], False)
                 self.assertIsNot(v["digests_match"], True)
                 self.assertIn("must wrap a byte string", json.dumps(v))
+
+
+class MdocFieldsOfAnotherType(unittest.TestCase):
+    """verify_mdoc is total on hostile input: a field the sender writes, given a CBOR type it
+    does not expect, is a verdict. No key is needed for any of them, so a hand-built document
+    reaches each with no crypto library at all."""
+
+    def document(self, name_spaces=None, value_digests=None, digest_algorithm="SHA-256",
+                 unprotected=None, signature=b"sig"):
+        mso = {"docType": V._MDOC_DOC_TYPE, "digestAlgorithm": digest_algorithm,
+               "valueDigests": {V._MDOC_NAMESPACE: {}} if value_digests is None else value_digests}
+        return _cbor({"docType": V._MDOC_DOC_TYPE,
+                      "issuerSigned": {"nameSpaces": {V._MDOC_NAMESPACE: []} if name_spaces is None else name_spaces,
+                                       "issuerAuth": [_cbor({1: -49}), unprotected or {}, _cbor(("tag24", _cbor(mso))), signature]}})
+
+    def test_the_hand_built_document_reaches_the_signature(self):
+        v = V.verify_mdoc(self.document())
+        self.assertIs(v["digests_match"], True)
+        self.assertIn("unaccepted signature algorithm", v["note"] or "")
+
+    def test_a_namespace_or_digest_map_of_another_type_is_a_verdict(self):
+        # 2026-10-28. Each raised AttributeError out of verify_mdoc: the map's .get ran on a list,
+        # an integer or a text string.
+        for label, value in (("a list", [1]), ("an integer", 5), ("a text string", "x")):
+            for field, doc in (("nameSpaces", self.document(name_spaces=value)),
+                               ("valueDigests", self.document(value_digests=value))):
+                with self.subTest(field + ", " + label):
+                    v = V.verify_mdoc(doc)
+                    self.assertIs(v["issuer_authentic"], False)
+                    self.assertIsNot(v["digests_match"], True)
+                    self.assertIn("digests are missing or malformed", v["note"] or "")
+
+    def test_a_signature_that_is_not_a_byte_string_is_a_verdict(self):
+        # 2026-10-28. bytes() read an integer signature as a length: 2**64 - 1 raised
+        # OverflowError, and a smaller one is allocated as that many zero bytes before any check.
+        for label, value in (("an integer past the index range", 2 ** 64 - 1), ("a small integer", 5),
+                             ("a list of small integers", [1, 2]), ("a text string", "ab")):
+            with self.subTest(label):
+                v = V.verify_mdoc(self.document(signature=value))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("signature is not a byte string", v["note"] or "")
+
+    def test_a_tag_24_algorithm_name_is_a_verdict(self):
+        # 2026-10-28. The decoder returns tag 24 as a tuple, and the note's bare % read it as its
+        # arguments: TypeError, for the MSO's digestAlgorithm and the unprotected polaris_algorithm.
+        tagged = ("tag24", b"\x01")
+        for label, doc, why in (("digestAlgorithm", self.document(digest_algorithm=tagged), "unsupported MSO digest algorithm"),
+                                ("polaris_algorithm", self.document(unprotected={"polaris_algorithm": tagged}),
+                                 "unaccepted signature algorithm")):
+            with self.subTest(label):
+                v = V.verify_mdoc(doc)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn(why, v["note"] or "")
 
 
 
