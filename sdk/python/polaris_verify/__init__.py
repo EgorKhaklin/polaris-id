@@ -192,7 +192,100 @@ def _verify_cryptography(digest, sig, pk, alg=ALGORITHM):
         return False
 
 
+#: PyPI's `oqs` is an unrelated project whose wheel also installs a top-level `oqs`. Uninstalling it
+#: removes the `__init__.py` both ship, so liboqs-python has to be reinstalled over it.
+_OQS_REPAIR = ("Run `pip uninstall oqs` if a distribution of that name is installed, then "
+               "`pip install --force-reinstall --no-deps liboqs-python`.")
+
+
+def _unrelated_oqs_installed():
+    """True iff a distribution named `oqs` is installed. liboqs-python's is `liboqs-python`."""
+    from importlib import metadata
+    try:
+        metadata.distribution("oqs")
+    except metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+def _liboqs_library():
+    """Find and load the liboqs shared library the way liboqs-python 0.16.0 does.
+
+    Returns (the first candidate that loads or None, the places looked). Without a library
+    that loads, `import oqs` clones liboqs from GitHub, builds it and installs it, and raises
+    SystemExit when that fails. The order is oqs/oqs.py's in liboqs-python 0.16.0:
+    `_load_liboqs` (l.255-270) takes OQS_INSTALL_PATH, else ~/_oqs, and its lib and lib64 (bin
+    on Windows); `_load_shared_obj` (l.116-161) names liboqs.dylib, oqs.dll and liboqs.dll, or
+    liboqs.so in each, puts ctypes.util.find_library("oqs") and then find_library("liboqs") in
+    front, and loads each in turn with ctypes (windll on Windows), skipping one that raises
+    OSError. A file that is there but does not load (truncated, another architecture) counts as
+    absent, as it does upstream. The same search as polaris-verify's detached verifier.
+    """
+    import ctypes
+    import ctypes.util
+    import os
+    import pathlib
+    import platform
+    system = platform.system()
+    if "OQS_INSTALL_PATH" in os.environ:
+        prefix = pathlib.Path(os.environ["OQS_INSTALL_PATH"])
+    else:
+        prefix = pathlib.Path.home() / "_oqs"
+    dirs = [prefix / "bin"] * 2 if system == "Windows" else [prefix / "lib", prefix / "lib64"]
+    files = []
+    for d in dirs:
+        if system == "Darwin":
+            files.append(d.absolute() / "liboqs.dylib")
+        elif system == "Windows":
+            files += [d.absolute() / "oqs.dll", d.absolute() / "liboqs.dll"]
+        else:
+            files.append(d.absolute() / "liboqs.so")
+    candidates = [str(f) for f in files]
+    for name in ("oqs", "liboqs"):
+        try:
+            hit = ctypes.util.find_library(name)
+        except Exception:  # noqa: BLE001 (liboqs-python ignores the same failure)
+            hit = None
+        if hit:
+            candidates.insert(0, hit)
+    places = list(dict.fromkeys(str(f) for f in files)) + ["the system library path"]
+    dll = ctypes.windll if system == "Windows" else ctypes.cdll
+    for candidate in candidates:
+        try:
+            dll.LoadLibrary(candidate)
+        except OSError:
+            continue
+        return candidate, places
+    return None, places
+
+
+class _OqsUnusable(ImportError):
+    """liboqs cannot be used here, for the reason the message names."""
+
+
+#: What the first `_import_oqs` in this process found: (the module, None, None), or (None, the
+#: class of the ImportError it raised, its message). Finding the library runs
+#: ctypes.util.find_library, which on Linux starts ldconfig for each name it is given, then gcc
+#: and then ld if the one before found nothing: once per process, not once per signature.
+_OQS_FOUND = None
+
+
 def _import_oqs():
+    """Import liboqs once per process (`_find_oqs` says how): every later call returns the same
+    module, or raises the same ImportError again, without looking a second time."""
+    global _OQS_FOUND
+    if _OQS_FOUND is None:
+        try:
+            _OQS_FOUND = (_find_oqs(), None, None)
+        except ImportError as e:   # _OqsUnusable included
+            _OQS_FOUND = (None, type(e), str(e))
+    module, error, reason = _OQS_FOUND
+    if error is not None:
+        raise error(reason)
+    return module
+
+
+def _find_oqs():
     """Import liboqs with its startup chatter kept off stdout.
 
     `import oqs` prints "liboqs-python faulthandler is disabled" to STDOUT. This module IS
@@ -204,16 +297,37 @@ def _import_oqs():
     Nothing caught it: `run_conformance.py --self` calls this SDK in-process rather than as
     a subprocess, and the CI job that drives a verifier as a subprocess drives the
     TypeScript one, which has no liboqs. Measured by running the documented command.
+
+    Importing a module runs its code, so nothing named `oqs` is imported while a distribution
+    named `oqs` is installed, or while no liboqs shared library loads from where liboqs-python
+    would load it, and an import that exits or raises is caught here: each is an ImportError, so
+    liboqs counts as absent, never as a witness, and a verify call never exits the process.
     """
     import contextlib
+    import importlib.util
     import sys as _sys
+    if _unrelated_oqs_installed():
+        raise _OqsUnusable("a distribution named `oqs` is installed, and it is not "
+                           "liboqs-python, so `oqs` is not imported. " + _OQS_REPAIR)
+    if importlib.util.find_spec("oqs") is None:   # locates without importing
+        raise ImportError("No module named 'oqs'")
+    library, places = _liboqs_library()
+    if library is None:
+        raise _OqsUnusable("liboqs-python needs the liboqs shared library, and none loads "
+                           "from %s, so `oqs` is not imported (without it, importing liboqs-python "
+                           "clones and builds liboqs). Install liboqs there, or set "
+                           "OQS_INSTALL_PATH to the prefix it is installed under."
+                           % ", ".join(places))
     with contextlib.redirect_stdout(_sys.stderr):
-        import oqs  # type: ignore
-    # PyPI's `oqs` is an unrelated project whose wheel also installs a top-level `oqs`.
-    # Imported, it is not liboqs: it counts as absent, never as a witness that refuses
-    # every credential.
+        try:
+            import oqs  # type: ignore
+        except SystemExit as e:
+            raise _OqsUnusable("importing `oqs` exited (%s)." % (e,)) from None
+        except Exception as e:  # noqa: BLE001 (a library that loads but is not liboqs: AttributeError)
+            raise _OqsUnusable("importing `oqs` failed (%s: %s)." % (type(e).__name__, e)) from None
     if not hasattr(oqs, "Signature"):
-        raise ImportError("the importable `oqs` is not liboqs-python: it has no Signature")
+        raise _OqsUnusable("the importable `oqs` is not liboqs-python: it has no "
+                           "Signature. " + _OQS_REPAIR)
     return oqs
 
 
