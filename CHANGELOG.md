@@ -54,6 +54,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp's ETSI TS 119 472-2 profile refuses a `verifier_info` with two or more `registrar_dataset` elements as this package's reading of RO-02 and RO-04, which state no count, and its vector is graded spec-implied; the `--verifier-info` example in the README and `--help` gives the certificate's `data` in RO-16's words.
 - CI's bandit gate fails the build on a high-severity finding at any confidence (`--confidence-level all`, was `medium`), as SECURITY.md states, and `check_sast_scanning` requires that flag on the gating run.
 - The container image CVE gate (Trivy, failing on a fixable critical that `.trivyignore` does not cover) now also runs weekly on main; its steps moved to `.github/workflows/image-cve-scan.yml`, which CI's `image-cve-scan` job calls, and `check_image_cve_scanning` requires a weekly run of the workflow holding the gate.
+- The Version 3 report, its evidence record and the mathematical edition in docs/paper/ are rebuilt with their revision of 28 October 2026; the evidence record's provenance appendix lists what changed in the report and the record.
 
 ### Fixed
 
