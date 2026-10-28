@@ -7570,6 +7570,137 @@ class VerificationTests(PolarisTestCase):
         self.assertHTML(r, 'Disclosure level is inconsistent')
 
 
+class ZeroKnowledgeCoercionAloneTests(PolarisTestCase):
+    """C2 on the form path holds with its CHECK gone: a leave-one-in witness for the coercion.
+
+    The form path has two walls for C2: the CHECK chk_disclosure_token_consistency (W1) and the
+    coercion in verification_routes.py that stores no token id for a ZERO_KNOWLEDGE event (W2).
+    test_zero_knowledge_with_token_rejected posts through both and reads no stored value, so it
+    cannot say which one held. Here W1 is dropped on a scratch database built the way CI builds
+    polaris_test (00_load_all.sql, then every up migration in order), never on the shared one,
+    and the stored row is read back.
+    """
+
+    CHECK_NAME = 'chk_disclosure_token_consistency'
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.env = dict(os.environ, PGUSER=_OWNER_DB_CONFIG['user'], PGPORT=str(_OWNER_DB_CONFIG['port']),
+                       PGPASSWORD=_OWNER_DB_CONFIG['password'] or '',
+                       POLARIS_DB_HOST=_OWNER_DB_CONFIG['host'])
+
+    def setUp(self):
+        # A scratch database per test, so a W1 one test could not restore reaches no other.
+        self.scratch = 'polaris_c2_%d_%s' % (os.getpid(), self._testMethodName[5:12])
+        self.addCleanup(self._discard_scratch)
+        self._build_scratch()
+        # The application, under whichever role this suite runs it, talks to the scratch database.
+        patcher = patch.dict(flask_app.DB_CONFIG, {'database': self.scratch})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        super().setUp()
+
+    def _build_scratch(self):
+        """Load the scratch database as CI loads polaris_test; a step that fails raises."""
+        import glob
+        import subprocess
+        sql = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'polaris_sql')
+        host = _OWNER_DB_CONFIG['host']
+        ups = sorted(glob.glob(os.path.join(sql, 'migrations', '*.up.sql')))
+        self.assertTrue(ups, 'no up migration was found under %s' % sql)
+        subprocess.run(['dropdb', '--if-exists', '--force', '-h', host, self.scratch],
+                       env=self.env, capture_output=True)
+        psql = ['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-q', '-h', host, '-d', self.scratch, '-f']
+        for cmd in [['createdb', '-h', host, self.scratch], psql + ['00_load_all.sql']] + [psql + [f] for f in ups]:
+            r = subprocess.run(cmd, cwd=sql, env=self.env, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError('%s failed on %s:\n%s' % (os.path.basename(cmd[-1]), self.scratch, r.stderr[-1500:]))
+
+    def _discard_scratch(self):
+        import subprocess
+        subprocess.run(['dropdb', '--if-exists', '--force', '-h', _OWNER_DB_CONFIG['host'], self.scratch],
+                       env=self.env, capture_output=True)
+        with closing(psycopg2.connect(**_OWNER_DB_CONFIG)) as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM pg_database WHERE datname = %s", (self.scratch,))
+            self.assertEqual(cur.fetchone()[0], 0, 'the scratch database %s is still there' % self.scratch)
+
+    def _owner(self):
+        return closing(psycopg2.connect(**dict(_OWNER_DB_CONFIG, database=self.scratch)))
+
+    def _w1_tables(self):
+        """Every table holding W1: VerificationEvent and each partition, which inherit it."""
+        with self._owner() as conn, conn.cursor() as cur:
+            cur.execute("SELECT conrelid::regclass::text FROM pg_constraint WHERE conname = %s "
+                        "ORDER BY 1", (self.CHECK_NAME,))
+            return [row[0] for row in cur.fetchall()]
+
+    def _post_zero_knowledge_with_a_token(self):
+        """Post ZERO_KNOWLEDGE with token 2 through the form; return the response and the rows
+        the post added to VerificationEvent, read by event id as the owner. The outcome is
+        FAILURE: the rules a SUCCESS meets first (trust, a live credential, its permitted
+        contexts) read the token, and one of them refusing would leave no row for a reason that
+        is not C2."""
+        with self._owner() as conn, conn.cursor() as cur:
+            cur.execute("SELECT coalesce(max(event_id), 0) FROM VerificationEvent")
+            before = cur.fetchone()[0]
+        r = self._post('/verifications/new', data={
+            'token_id': '2',
+            'requesting_agency_id': '5',
+            'context_id': '1',
+            'outcome': 'FAILURE',
+            'disclosure_level': 'ZERO_KNOWLEDGE',
+        }, follow_redirects=True)
+        with self._owner() as conn, conn.cursor() as cur:
+            cur.execute("SELECT event_id, token_id, disclosure_level FROM VerificationEvent "
+                        "WHERE event_id > %s ORDER BY event_id", (before,))
+            return r, cur.fetchall()
+
+    def _assert_one_zero_knowledge_row_without_a_token(self, r, rows):
+        self.assertEqual(r.status_code, 200)
+        # A missing row is a failure, never a NULL: the post must have stored exactly one.
+        said = [html.unescape(m) for m in re.findall(r'<span class="flash-text">([^<]*)</span>',
+                                                     r.get_data(as_text=True))]
+        self.assertEqual(len(rows), 1, 'the post must store exactly one event: %r (the page said %r)'
+                         % (rows, said))
+        _event_id, token_id, level = rows[0]
+        self.assertEqual(level, 'ZERO_KNOWLEDGE', 'the level must be kept, not changed instead')
+        self.assertIsNone(token_id, 'a ZERO_KNOWLEDGE event was stored with token id %r' % token_id)
+
+    def test_the_coercion_alone_stores_no_token_id(self):
+        tables = self._w1_tables()
+        self.assertIn('verificationevent', tables, 'fixture: W1 must be there to drop')
+        self.assertGreater(len(tables), 1, 'fixture: the partitions inherit W1')
+        with self._owner() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE conname = %s AND conrelid = 'verificationevent'::regclass", (self.CHECK_NAME,))
+            definition = cur.fetchone()[0]
+            cur.execute("ALTER TABLE VerificationEvent DROP CONSTRAINT " + self.CHECK_NAME)
+            conn.commit()
+        held = False
+        try:
+            self.assertEqual(self._w1_tables(), [], 'W1 must be gone from the table and every partition')
+            self._assert_one_zero_knowledge_row_without_a_token(*self._post_zero_knowledge_with_a_token())
+            held = True
+        finally:
+            # Restore W1. When W2 did not hold, the stored row breaks it: the restore is then
+            # skipped, and the cleanup discards the scratch database either way.
+            with self._owner() as conn, conn.cursor() as cur:
+                try:
+                    cur.execute("ALTER TABLE VerificationEvent ADD CONSTRAINT %s %s" % (self.CHECK_NAME, definition))
+                    conn.commit()
+                except psycopg2.errors.CheckViolation:
+                    conn.rollback()
+                    if held:
+                        raise
+        self.assertEqual(self._w1_tables(), tables, 'W1 must be back on the table and every partition')
+
+    def test_with_the_check_in_place_the_same_post_stores_no_token_id(self):
+        # The positive control: both walls standing give the same stored row.
+        self.assertIn('verificationevent', self._w1_tables())
+        self._assert_one_zero_knowledge_row_without_a_token(*self._post_zero_knowledge_with_a_token())
+
+
 # ============================================================================
 # ROUTE MODULE TESTS
 # ============================================================================
