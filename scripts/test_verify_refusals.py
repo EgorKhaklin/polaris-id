@@ -24,6 +24,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import platform
 import shutil
 import stat
 import subprocess
@@ -38,6 +39,18 @@ ROOT = HERE.parent
 _spec = importlib.util.spec_from_file_location("polaris_verify_refusals", HERE / "polaris-verify.py")
 V = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(V)
+
+# Run from a hook, git hands this process GIT_INDEX_FILE and GIT_DIR. The probes below put a stub
+# git first on PATH; whatever answers to `git` there must not inherit the commit being made.
+_HOOK_GIT_ENV = {}
+
+
+def setUpModule():
+    _HOOK_GIT_ENV.update({k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")})
+
+
+def tearDownModule():
+    os.environ.update(_HOOK_GIT_ENV)
 
 
 def _cryptography_mldsa():
@@ -317,6 +330,229 @@ class AnotherProjectsOqsModule(unittest.TestCase):
         self.assertIn("refusing to start: --pqc-provider oqs", r.stderr)
 
 
+def _loadable_library():
+    """A shared library this interpreter can load: a copy stands in for liboqs."""
+    import importlib
+    import importlib.machinery
+    for name in ("_json", "_ctypes", "select", "_socket", "math", "_struct"):
+        try:
+            path = getattr(importlib.import_module(name), "__file__", None)
+        except ImportError:
+            continue
+        if path and path.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
+            return path
+    return None
+
+
+class OqsIsImportedOnlyWhenItIsLiboqs(unittest.TestCase):
+    """Nothing named `oqs` is imported unless it is liboqs-python with its library in place.
+
+    Importing a module runs its code. The stubs keep liboqs-python's layout (the code in
+    oqs/oqs.py, which __init__.py imports) and are installed under a distribution name:
+    - named `oqs` (PyPI's unrelated project), with a `Signature` and an import that writes a
+      marker file: never imported under `auto` or `oqs`, and the refusal names the repair;
+    - named `liboqs-python`, with the liboqs library where liboqs-python looks: imported, and
+      a backend (the control), whether the library is under lib, lib64 or where
+      ctypes.util.find_library finds it (the library is a copy of one of this interpreter's
+      own extension modules, which loads);
+    - the same without its __init__.py (what `pip uninstall oqs` leaves): the same repair;
+    - `liboqs-python` without the library, whose import runs `git clone` (a stub git on PATH
+      records it) and raises SystemExit, as liboqs-python 0.16.0 does: not imported, nothing
+      fetched, `auto` goes on to cryptography and `oqs` refuses naming the library;
+    - the same with a library file that does not load (an empty one): the same as none;
+    - `liboqs-python` whose import raises SystemExit with the library in place: no backend.
+    A fresh interpreter each time, with ctypes.util.find_library answering only what the test
+    names, so no library on the machine stands in for the one the test places or withholds."""
+
+    CODE = ("import os\n"
+            "open(os.environ['POLARIS_OQS_CANARY'], 'w').write('imported')\n"
+            "class Signature:\n"
+            "    pass\n")
+    CLONE = ("import subprocess\n"
+             "subprocess.call('git clone https://github.com/open-quantum-safe/liboqs --depth 1',\n"
+             "                shell=True)\n"
+             "raise SystemExit(1)\n")
+    PROBE = (
+        "import ctypes.util, importlib.util, json, os, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "spec = importlib.util.spec_from_file_location('v', sys.argv[1])\n"
+        "V = importlib.util.module_from_spec(spec); spec.loader.exec_module(V)\n"
+        "print(json.dumps({'oqs': V._provider_available('oqs'),\n"
+        "    'mode': V.resolve_crypto_mode(sys.argv[2], False)}))\n")
+    REPAIR = "`pip install --force-reinstall --no-deps liboqs-python`"
+    LIBRARY = {"Darwin": "liboqs.dylib", "Windows": "oqs.dll"}.get(platform.system(), "liboqs.so")
+    LOADABLE = _loadable_library()
+
+    def setUp(self):
+        if self.LOADABLE is None:
+            self.skipTest("this interpreter has no extension module to stand in for liboqs")
+
+    def site(self, distribution, code=CODE, init=True, library="loads", where="lib"):
+        d = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oqs-dist-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        if code is not None:
+            (d / "oqs").mkdir()
+            (d / "oqs" / "oqs.py").write_text(code)
+            if init:
+                (d / "oqs" / "__init__.py").write_text("from .oqs import *  # noqa: F401,F403\n")
+            info = d / ("%s-0.0.0.dist-info" % distribution.replace("-", "_"))
+            info.mkdir()
+            (info / "METADATA").write_text(
+                "Metadata-Version: 2.1\nName: %s\nVersion: 0.0.0\n" % distribution)
+        lib = d / "_oqs" / ("bin" if platform.system() == "Windows" else where)
+        lib.mkdir(parents=True)
+        if library == "loads":
+            shutil.copyfile(self.LOADABLE, lib / self.LIBRARY)
+        elif library == "empty":
+            (lib / self.LIBRARY).write_bytes(b"")
+        (d / "stub-bin").mkdir()
+        git = d / "stub-bin" / "git"
+        git.write_text("#!/bin/sh\necho \"$@\" >> \"$POLARIS_GIT_MARKER\"\nexit 128\n")
+        git.chmod(0o755)
+        return d
+
+    def probe(self, site, provider, isolated=True, find_library=None):
+        """`isolated` (-S) keeps an installed liboqs-python from standing in for a stub."""
+        env = dict(os.environ, PYTHONPATH=str(site), POLARIS_OQS_CANARY=str(site / "imported"),
+                   POLARIS_GIT_MARKER=str(site / "git-called"), OQS_INSTALL_PATH=str(site / "_oqs"),
+                   PATH=str(site / "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+        env.pop("POLARIS_FIND_LIBRARY", None)
+        if find_library:
+            env["POLARIS_FIND_LIBRARY"] = find_library
+        r = subprocess.run([sys.executable] + (["-S"] if isolated else []) +
+                           ["-c", self.PROBE, str(HERE / "polaris-verify.py"), provider],
+                           env=env, cwd=str(site), capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((site / "git-called").exists(), "git ran: %s" % r.stderr[-400:])
+        return json.loads(r.stdout.strip().splitlines()[-1]), (site / "imported").exists()
+
+    def test_a_distribution_named_oqs_is_never_imported(self):
+        site = self.site("oqs")
+        for provider in ("auto", "oqs"):
+            with self.subTest(provider=provider):
+                got, imported = self.probe(site, provider)
+                self.assertIs(imported, False, "the package's code ran")
+                self.assertIs(got["oqs"], False)
+                self.assertIsNone(got["mode"][0])
+                self.assertIn("a distribution named `oqs` is installed", got["mode"][1])
+                self.assertIn(self.REPAIR, got["mode"][1])
+
+    def test_liboqs_python_with_its_library_is_imported(self):
+        got, imported = self.probe(self.site("liboqs-python"), "oqs")
+        self.assertIs(imported, True, "positive control: liboqs-python's oqs must load")
+        self.assertIs(got["oqs"], True)
+        self.assertEqual(got["mode"], ["oqs", None])
+
+    @unittest.skipIf(platform.system() == "Windows", "liboqs-python looks only in bin there")
+    def test_the_library_under_lib64_is_found(self):
+        got, imported = self.probe(self.site("liboqs-python", where="lib64"), "oqs")
+        self.assertIs(imported, True)
+        self.assertEqual(got["mode"], ["oqs", None])
+
+    def test_the_library_ctypes_finds_on_the_system_path_is_found(self):
+        site = self.site("liboqs-python", library=None)
+        got, imported = self.probe(site, "oqs", find_library=self.LOADABLE)
+        self.assertIs(imported, True)
+        self.assertEqual(got["mode"], ["oqs", None])
+
+    def test_what_uninstalling_oqs_leaves_gets_the_same_repair(self):
+        got, _ = self.probe(self.site("liboqs-python", init=False), "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("it has no Signature", got["mode"][1])
+        self.assertIn(self.REPAIR, got["mode"][1])
+
+    def test_without_the_library_nothing_is_fetched_or_imported(self):
+        site = self.site("liboqs-python", code=self.CLONE, library=None)
+        got, _ = self.probe(site, "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("liboqs-python needs the liboqs shared library", got["mode"][1])
+        self.assertIn(str(site / "_oqs"), got["mode"][1])
+        got, _ = self.probe(site, "auto", isolated=False)
+        if _cryptography_mldsa():
+            self.assertEqual(got["mode"], ["cryptography", None])
+        else:
+            self.assertIn("liboqs-python needs the liboqs shared library", got["mode"][1])
+
+    def test_a_library_file_that_does_not_load_counts_as_none(self):
+        site = self.site("liboqs-python", code=self.CLONE, library="empty")
+        got, _ = self.probe(site, "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("liboqs-python needs the liboqs shared library", got["mode"][1])
+
+    def test_an_import_that_exits_is_no_backend(self):
+        got, _ = self.probe(self.site("liboqs-python", code="raise SystemExit(1)\n"), "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("importing `oqs` exited (1)", got["mode"][1])
+
+    NOT_LIBOQS = "raise AttributeError('undefined symbol: OQS_init')\n"
+
+    def test_an_import_that_raises_is_no_backend(self):
+        # A library that loads but is not liboqs: liboqs-python's import raises AttributeError.
+        got, _ = self.probe(self.site("liboqs-python", code=self.NOT_LIBOQS), "oqs")
+        self.assertIs(got["oqs"], False)
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("importing `oqs` failed (AttributeError: undefined symbol: OQS_init)",
+                      got["mode"][1])
+
+    def test_with_no_oqs_module_the_refusal_names_the_library_once(self):
+        got, _ = self.probe(self.site("liboqs-python", code=None, library=None), "auto")
+        self.assertIsNone(got["mode"][0])
+        self.assertIn("Install one (liboqs-python with the liboqs shared library", got["mode"][1])
+        self.assertNotIn("liboqs-python needs", got["mode"][1])
+
+    REPEAT = (
+        "import ctypes.util, importlib.util, json, os, subprocess, sys\n"
+        "ctypes.util.find_library = lambda name: os.environ.get('POLARIS_FIND_LIBRARY')\n"
+        "spec = importlib.util.spec_from_file_location('v', sys.argv[1])\n"
+        "V = importlib.util.module_from_spec(spec); spec.loader.exec_module(V)\n"
+        "args = (b'd' * 32, b'\\x02' * 3309, b'\\x01' * 1952)\n"
+        "first = V._verify_liboqs(*args)\n"
+        "calls = []\n"
+        "def counted(name, f):\n"
+        "    def g(*a, **k):\n"
+        "        calls.append(name)\n"
+        "        return f(*a, **k)\n"
+        "    return g\n"
+        "V._liboqs_library = counted('_liboqs_library', V._liboqs_library)\n"
+        "V._unrelated_oqs_installed = counted('_unrelated_oqs_installed', V._unrelated_oqs_installed)\n"
+        "ctypes.util.find_library = counted('find_library', ctypes.util.find_library)\n"
+        "subprocess.Popen.__init__ = counted('Popen', subprocess.Popen.__init__)\n"
+        "later = [V._verify_liboqs(*args) for _ in range(3)] + [V._provider_available('oqs')]\n"
+        "print(json.dumps({'first': first, 'later': later, 'calls': calls}))\n")
+
+    def repeat(self, site):
+        env = dict(os.environ, PYTHONPATH=str(site), POLARIS_OQS_CANARY=str(site / "imported"),
+                   POLARIS_GIT_MARKER=str(site / "git-called"), OQS_INSTALL_PATH=str(site / "_oqs"),
+                   PATH=str(site / "stub-bin") + os.pathsep + os.environ.get("PATH", ""))
+        env.pop("POLARIS_FIND_LIBRARY", None)
+        r = subprocess.run([sys.executable, "-S", "-c", self.REPEAT, str(HERE / "polaris-verify.py")],
+                           env=env, cwd=str(site), capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((site / "git-called").exists(), "git ran: %s" % r.stderr[-400:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_liboqs_is_looked_for_once_per_process(self):
+        # Finding the library runs ctypes.util.find_library, which on Linux starts ldconfig, gcc
+        # and ld: a later signature, liboqs found, absent or failing to import, looks nowhere and
+        # starts nothing.
+        for label, site, first, later in (
+                ("found", self.site("liboqs-python"), False, [False, False, False, True]),
+                ("no library", self.site("liboqs-python", code=self.CLONE, library=None),
+                 None, [None, None, None, False]),
+                ("a library that is not liboqs", self.site("liboqs-python", code=self.NOT_LIBOQS),
+                 None, [None, None, None, False])):
+            with self.subTest(label):
+                got = self.repeat(site)
+                # The stub's Signature takes no algorithm: the witness ran and refused.
+                self.assertIs(got["first"], first)
+                self.assertEqual(got["later"], later)
+                self.assertEqual(got["calls"], [])
+
+
 class ExactSizeIsCheckedBeforeEitherWitness(unittest.TestCase):
     """2026-10-10: the detached verifier did not check an ML-DSA public key's or signature's
     length before verifying, so a missing or truncated key could come back as a valid signature
@@ -463,13 +699,20 @@ def _hdr(major, n):
         return bytes([major << 5 | n])
     if n < 256:
         return bytes([major << 5 | 24, n])
-    return bytes([major << 5 | 25]) + n.to_bytes(2, "big")
+    if n < 65536:
+        return bytes([major << 5 | 25]) + n.to_bytes(2, "big")
+    if n < 2 ** 32:
+        return bytes([major << 5 | 26]) + n.to_bytes(4, "big")
+    return bytes([major << 5 | 27]) + n.to_bytes(8, "big")
 
 
 def _cbor(x):
-    """The smallest encoder these fixtures need: ints, bytes, text, lists, maps, tag 24."""
+    """The smallest encoder these fixtures need: ints, bytes, text, lists, maps, tag 24, and
+    ("raw", bytes) spliced in as given, for an encoding the encoder does not write."""
     if isinstance(x, tuple) and x[0] == "tag24":
         return b"\xd8\x18" + _cbor(x[1])
+    if isinstance(x, tuple) and x[0] == "raw":
+        return bytes(x[1])
     if isinstance(x, bool) or x is None:
         return {False: b"\xf4", True: b"\xf5", None: b"\xf6"}[x]
     if isinstance(x, int):
@@ -498,9 +741,42 @@ class CborRefusals(unittest.TestCase):
                            ("reserved additional information", b"\x1c"),
                            ("truncated string", _hdr(2, 5) + b"ab"),
                            ("a list as a map key", _hdr(5, 1) + _cbor([1]) + _cbor(1)),
+                           ("a map that repeats a key", _hdr(5, 2) + _cbor(1) + _cbor(-7) + _cbor(1) + _cbor(-49)),
+                           ("1 and true, keys this decoder reads as one", _hdr(5, 2) + _cbor(1) + _cbor(0) + _cbor(True) + _cbor(0)),
                            ("trailing bytes", _cbor(1) + _cbor(2))):
-            with self.assertRaises(ValueError, msg=label):
+            with self.subTest(label), self.assertRaises(ValueError):
                 V._cbor_decode(buf)
+
+    def test_only_tag_24_and_four_simple_values_decode(self):
+        # The decoder's docstring names the subset and promises a ValueError for anything else.
+        # Until 2026-10-28 major type 7 handed any other value back as its raw integer (a
+        # float16 1.0 came back as 15360) and major type 6 handed back any tag at all.
+        for buf, want in ((b"\xf4", False), (b"\xf5", True), (b"\xf6", None), (b"\xf7", None)):
+            self.assertIs(V._cbor_decode(buf), want, buf.hex())
+        # A tag-24 item also carries its own bytes as they sat in the input: an element's
+        # digest is over those, never over a re-encoding of them.
+        self.assertEqual(V._cbor_decode(_cbor(("tag24", b"ab"))), ("tag", 24, b"ab", b"\xd8\x18\x42ab"))
+        for label, buf in (("float16 1.0", b"\xf9\x3c\x00"),
+                           ("float32 1.0", b"\xfa\x3f\x80\x00\x00"),
+                           ("float64 1.0", b"\xfb\x3f\xf0" + bytes(6)),
+                           ("simple value 32", b"\xf8\x20"),
+                           ("simple value 0", b"\xe0"),
+                           ("simple value 19", b"\xf3"),
+                           ("tag 0, a date-time string", b"\xc0" + _cbor("2026-01-01T00:00:00Z")),
+                           ("tag 1, epoch seconds", b"\xc1\x1a" + (1767225600).to_bytes(4, "big")),
+                           ("tag 18, a COSE_Sign1", b"\xd2" + _cbor([b"", {}, b"", b""])),
+                           ("tag 1004, a full-date", b"\xd9\x03\xec" + _cbor("2000-01-01")),
+                           ("tag 24 over a map", b"\xd8\x18" + _cbor({1: 2})),
+                           ("tag 24 over an array", b"\xd8\x18" + _cbor([1, 2])),
+                           ("tag 24 over an integer", b"\xd8\x18" + _cbor(5)),
+                           ("tag 24 over a text string", b"\xd8\x18" + _cbor("ab"))):
+            with self.subTest(label), self.assertRaises(ValueError):
+                V._cbor_decode(buf)
+        # Every tag above wraps something other than a byte string, which the tag-24 guard
+        # refuses too. Over a byte string, only the refusal that names the subset is left.
+        with self.subTest("tag 2, an unsigned bignum"), \
+                self.assertRaisesRegex(ValueError, "outside the mdoc subset"):
+            V._cbor_decode(b"\xc2\x41\x01")
 
 
 class MdocTag24Refusals(unittest.TestCase):
@@ -526,6 +802,76 @@ class MdocTag24Refusals(unittest.TestCase):
         self.assertIs(v["issuer_authentic"], False)
         self.assertIsNot(v["digests_match"], True)
         self.assertIn("tag 24", json.dumps(v))
+
+    def test_tag_24_over_anything_but_bytes_is_a_refusal(self):
+        # 2026-10-28. An MSO payload of tag 24 over the map {1: 2} raised KeyError out of
+        # verify_mdoc (the MSO path read the map as if it were bytes); a list of small integers
+        # under tag 24 was read as bytes outright. Each is a verdict now, for the MSO and for an
+        # element alike.
+        for label, inner in (("a map", {1: 2}), ("an array", [1, 2]), ("an integer", 5), ("a text string", "ab")):
+            wrapped = b"\xd8\x18" + _cbor(inner)
+            with self.subTest("the MSO, " + label):
+                v = V.verify_mdoc(self.document(wrapped, []))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("must wrap a byte string", v["note"] or "")
+            with self.subTest("an element, " + label):
+                v = V.verify_mdoc(self.document(self.mso(), [("raw", wrapped)]))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNot(v["digests_match"], True)
+                self.assertIn("must wrap a byte string", json.dumps(v))
+
+
+class MdocFieldsOfAnotherType(unittest.TestCase):
+    """verify_mdoc is total on hostile input: a field the sender writes, given a CBOR type it
+    does not expect, is a verdict. No key is needed for any of them, so a hand-built document
+    reaches each with no crypto library at all."""
+
+    def document(self, name_spaces=None, value_digests=None, digest_algorithm="SHA-256",
+                 unprotected=None, signature=b"sig"):
+        mso = {"docType": V._MDOC_DOC_TYPE, "digestAlgorithm": digest_algorithm,
+               "valueDigests": {V._MDOC_NAMESPACE: {}} if value_digests is None else value_digests}
+        return _cbor({"docType": V._MDOC_DOC_TYPE,
+                      "issuerSigned": {"nameSpaces": {V._MDOC_NAMESPACE: []} if name_spaces is None else name_spaces,
+                                       "issuerAuth": [_cbor({1: -49}), unprotected or {}, _cbor(("tag24", _cbor(mso))), signature]}})
+
+    def test_the_hand_built_document_reaches_the_signature(self):
+        v = V.verify_mdoc(self.document())
+        self.assertIs(v["digests_match"], True)
+        self.assertIn("unaccepted signature algorithm", v["note"] or "")
+
+    def test_a_namespace_or_digest_map_of_another_type_is_a_verdict(self):
+        # 2026-10-28. Each raised AttributeError out of verify_mdoc: the map's .get ran on a list,
+        # an integer or a text string.
+        for label, value in (("a list", [1]), ("an integer", 5), ("a text string", "x")):
+            for field, doc in (("nameSpaces", self.document(name_spaces=value)),
+                               ("valueDigests", self.document(value_digests=value))):
+                with self.subTest(field + ", " + label):
+                    v = V.verify_mdoc(doc)
+                    self.assertIs(v["issuer_authentic"], False)
+                    self.assertIsNot(v["digests_match"], True)
+                    self.assertIn("digests are missing or malformed", v["note"] or "")
+
+    def test_a_signature_that_is_not_a_byte_string_is_a_verdict(self):
+        # 2026-10-28. bytes() read an integer signature as a length: 2**64 - 1 raised
+        # OverflowError, and a smaller one is allocated as that many zero bytes before any check.
+        for label, value in (("an integer past the index range", 2 ** 64 - 1), ("a small integer", 5),
+                             ("a list of small integers", [1, 2]), ("a text string", "ab")):
+            with self.subTest(label):
+                v = V.verify_mdoc(self.document(signature=value))
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("signature is not a byte string", v["note"] or "")
+
+    def test_a_tag_24_algorithm_name_is_a_verdict(self):
+        # 2026-10-28. The decoder returns tag 24 as a tuple, and the note's bare % read it as its
+        # arguments: TypeError, for the MSO's digestAlgorithm and the unprotected polaris_algorithm.
+        tagged = ("tag24", b"\x01")
+        for label, doc, why in (("digestAlgorithm", self.document(digest_algorithm=tagged), "unsupported MSO digest algorithm"),
+                                ("polaris_algorithm", self.document(unprotected={"polaris_algorithm": tagged}),
+                                 "unaccepted signature algorithm")):
+            with self.subTest(label):
+                v = V.verify_mdoc(doc)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn(why, v["note"] or "")
 
 
 
@@ -717,7 +1063,7 @@ class MdocDecisions(unittest.TestCase):
         cls.other_sign, cls.other_pk = _mldsa_signer()
 
     def document(self, elements=None, mso_changes=None, unprotected=None, after=None,
-                 protected=None, prehash=False):
+                 protected=None, prehash=False, repeat=None):
         elements = elements if elements is not None else {"status": "ACTIVE", "checked_at": "2026-05-01T00:00:00Z"}
         items, digests = [], {}
         for i, (name, value) in enumerate(elements.items()):
@@ -740,9 +1086,12 @@ class MdocDecisions(unittest.TestCase):
         header.update(unprotected or {})
         if after:
             after(items)
-        return _cbor({"docType": V._MDOC_DOC_TYPE,
-                      "issuerSigned": {"nameSpaces": {V._MDOC_NAMESPACE: items},
-                                       "issuerAuth": [protected, header, payload, signature]}})
+        issuer_signed = {"nameSpaces": {V._MDOC_NAMESPACE: items},
+                         "issuerAuth": [protected, header, payload, signature]}
+        if repeat:  # (key, value): that key once more, ahead of the genuine entries
+            body = _cbor(repeat[0]) + _cbor(repeat[1]) + b"".join(_cbor(k) + _cbor(v) for k, v in issuer_signed.items())
+            issuer_signed = ("raw", _hdr(5, len(issuer_signed) + 1) + body)
+        return _cbor({"docType": V._MDOC_DOC_TYPE, "issuerSigned": issuer_signed})
 
     def test_a_genuine_document_verifies_digests_and_signature(self):
         doc = self.document()
@@ -816,6 +1165,81 @@ class MdocDecisions(unittest.TestCase):
         v = V.verify_mdoc(self.document(protected={1: -49, 4: b"kid"}), now=self.NOW)
         self.assertIs(v["issuer_authentic"], True, v["note"])
 
+    def test_a_map_that_repeats_a_key_is_refused(self):
+        # 2026-10-28. RFC 9052 s3: header labels MUST be unique, and a repeated one MUST be
+        # rejected. The decoder kept the last value of a repeated key, so each document below,
+        # genuinely signed, verified: alg -7 then -49 in the protected header was read as -49,
+        # and an issuerAuth nobody signed ahead of the genuine one was read as the genuine one.
+        decoy = [_cbor({1: -49}), {}, _cbor(("tag24", _cbor({}))), b"\x00" * 16]
+        for doc, why in ((self.document(protected=_hdr(5, 2) + _cbor(1) + _cbor(-7) + _cbor(1) + _cbor(-49)),
+                          "protected header does not decode"),
+                         (self.document(repeat=("issuerAuth", decoy)), "not decodable CBOR")):
+            with self.subTest(why):
+                v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNot(v["issuer_trusted"], True)
+                self.assertIn(why, v["note"] or "")
+                self.assertIn("repeats the key", v["note"] or "")
+
+    def test_an_element_value_outside_the_subset_is_refused(self):
+        # 2026-10-28. A genuinely signed document whose element value was a float16 1.0
+        # verified, with the value reported as 15360; a tagged value came back as a tuple. Each
+        # is now an element that does not decode, and no value is reported for it.
+        for raw, why in ((b"\xf9\x3c\x00", "float16 1.0"),
+                         (b"\xfa\x3f\x80\x00\x00", "float32 1.0"),
+                         (b"\xc0" + _cbor("2026-01-01T00:00:00Z"), "tag 0")):
+            with self.subTest(why):
+                doc = self.document(elements={"status": "ACTIVE", "credential_status": ("raw", raw)})
+                v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["digests_match"], False)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIsNone(v["elements"])
+                self.assertIn("an element does not decode", v["note"] or "")
+
+    def test_an_item_reframed_after_signing_is_refused(self):
+        # 2026-10-28. An element's digest is over the IssuerSignedItemBytes as received. It was
+        # recomputed over a minimal re-encoding of them, so the same item under a longer header,
+        # which anyone holding the document can write without a key, still matched: one signed
+        # credential, many accepted byte strings, and a reader that hashes the bytes it received
+        # refuses what this one accepted.
+        def reframe(head):
+            def after(items):
+                inner = items[0][1]
+                items[0] = ("raw", head(len(inner)) + inner)
+            return after
+        for head, why in ((lambda n: b"\xd8\x18\x59" + n.to_bytes(2, "big"), "a two-byte length"),
+                          (lambda n: b"\xd8\x18\x5a" + n.to_bytes(4, "big"), "a four-byte length"),
+                          (lambda n: b"\xd9\x00\x18\x58" + bytes([n]), "a two-byte tag number"),
+                          (lambda n: b"\xd9\x00\x18\x59" + n.to_bytes(2, "big"), "both")):
+            with self.subTest(why):
+                v = V.verify_mdoc(self.document(after=reframe(head)), anchor_keys=[self.pk.hex()], now=self.NOW)
+                self.assertIs(v["digests_match"], False)
+                self.assertIs(v["issuer_authentic"], False)
+                self.assertIn("digest does not match", v["note"] or "")
+        # The same item rebuilt by hand in the framing it was signed in still verifies: what is
+        # refused is the re-framing, not the splice.
+        v = V.verify_mdoc(self.document(after=reframe(lambda n: b"\xd8\x18\x58" + bytes([n]))),
+                          anchor_keys=[self.pk.hex()], now=self.NOW)
+        self.assertIs(v["issuer_authentic"], True, v["note"])
+
+    def test_disagreeing_witnesses_are_a_refusal(self):
+        # The two-witness DISAGREE guard had no test on this path: without it every mdoc test
+        # stayed green. Either direction is a refusal, and the note says which.
+        doc = self.document()
+        saved = (V._verify_liboqs, V._verify_cryptography)
+        try:
+            for lib, crypto in ((True, False), (False, True)):
+                V._verify_liboqs = lambda *a, _r=lib, **k: _r
+                V._verify_cryptography = lambda *a, _r=crypto, **k: _r
+                with self.subTest(liboqs=lib, cryptography=crypto):
+                    v = V.verify_mdoc(doc, anchor_keys=[self.pk.hex()], now=self.NOW)
+                    self.assertIs(v["digests_match"], True)
+                    self.assertIs(v["issuer_authentic"], False)
+                    self.assertIsNot(v["issuer_trusted"], True)
+                    self.assertIn("DISAGREE", v["note"] or "")
+        finally:
+            V._verify_liboqs, V._verify_cryptography = saved
+
     def test_an_unreadable_window_is_not_fresh(self):
         v = V.verify_mdoc(self.document(mso_changes={"validityInfo": {}}), now=self.NOW)
         self.assertIs(v["fresh"], False)
@@ -847,9 +1271,12 @@ class CoseRfc9964KnownAnswer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.vector = json.loads(_RFC9964_COSE.read_text(encoding="utf-8"))
-        tag = V._cbor_decode(bytes.fromhex(cls.vector["sign1"]))
-        assert tag[0] == "tag" and tag[1] == 18, "Figure 7's sign1 is a tagged COSE_Sign1"
-        cls.protected, cls.unprotected, cls.payload, cls.signature = tag[2]
+        sign1 = bytes.fromhex(cls.vector["sign1"])
+        # Figure 7's sign1 is COSE_Sign1_Tagged: tag 18, the one byte 0xd2. The verifier's decoder
+        # reads tag 24 only (verify_mdoc takes issuerAuth's COSE_Sign1 untagged), so the tag byte
+        # is checked here and the quadruple after it is decoded on its own.
+        assert sign1[0] == 0xD2, "Figure 7's sign1 is a tagged COSE_Sign1"
+        cls.protected, cls.unprotected, cls.payload, cls.signature = V._cbor_decode(sign1[1:])
         cls.pk = bytes.fromhex(cls.vector["raw_public_key"])
 
     def test_the_sig_structure_is_the_rfcs_to_be_signed(self):
@@ -1256,7 +1683,8 @@ class VerifyDirHoldsEveryPackToItsExpectation(unittest.TestCase):
         with unittest.mock.patch.object(V, "_verify_liboqs", return_value=None), \
                 unittest.mock.patch.object(V, "_verify_cryptography", return_value=None):
             self.assertEqual(V.verify_pack(self.GENUINE)["note"], "no ML-DSA-65 verifier available: install "
-                             "liboqs-python (and optionally cryptography>=48 for the second witness)")
+                             "liboqs-python with the liboqs shared library (and optionally "
+                             "cryptography>=48 for the second witness)")
         self.addCleanup(V.set_dev_placeholder_mode, False)
         V.set_dev_placeholder_mode(True)
         self.assertEqual(V.verify_pack(self.GENUINE)["note"], "this run declared --dev-placeholder, so no "
