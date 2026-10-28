@@ -3223,8 +3223,8 @@ class TestChainAnchorRecord(unittest.TestCase):
 class TestCredentialCopyRecord(unittest.TestCase):
     """The wallet copy record obeys the credential record (docs/design/oid4vci-issuer.md).
 
-    lab/strategy/005/STEP3.md showed the rule holding in the lab issuer's code and named that
-    as its limit. Here it is the database's: uc_issue_credential_copy, the only writer of
+    lab/strategy/005/STEP3.md showed the rule holding in the lab issuer's code. Here it is the
+    database's: uc_issue_credential_copy, the only writer of
     CredentialCopy, refuses a credential that is not ACTIVE, and credential_copy_valid_indexes,
     which the status list is computed from, drops a copy the moment its credential leaves
     ACTIVE. Every test runs as polaris_app, in one transaction that is rolled back: the

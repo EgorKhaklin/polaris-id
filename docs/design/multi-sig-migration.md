@@ -16,7 +16,7 @@ This is one of the three answers to issuer trust concentration, alongside
 federation without transitive trust in [federation.md](federation.md) and the
 revocation ceiling in [issuer-discretion.md](issuer-discretion.md).
 
-## What it does not do
+## Scope
 
 - **It does not choose algorithms.** The schema records which algorithm
   produced a signature, and the application records the one that did: the

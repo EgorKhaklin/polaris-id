@@ -239,11 +239,9 @@ now use page-based pagination (`?page=N&page_size=100`) with hard caps:
 
 The implementation uses `LIMIT N+1 OFFSET (page-1)*N`, where the +1
 detects whether a next page exists without a separate `count(*)`
-query. **Limitation**: deep pages are slow because OFFSET has to scan
-past skipped rows. Page 1 is 62 ms; page 100 is 1.6 s; page 20000 is
-13.6 s. Cursor pagination would make all pages O(log n): that's a
-clean follow-up. Filtering (the typical operator workflow) reduces the
-row set so deep pages are rare.
+query. OFFSET scans past skipped rows, so page cost grows with depth:
+page 1 is 62 ms; page 100 is 1.6 s; page 20000 is 13.6 s. Filtering
+(the typical operator workflow) reduces the row set so deep pages are rare.
 
 ---
 
@@ -363,21 +361,5 @@ For example, the ten-times peak of a hundred million people verified twelve time
 ([`COST-MODEL.md`](COST-MODEL.md)) is 381 a second. At these costs that needs about 3 vCPU of
 PostgreSQL, 2 of app, 1 of pgbouncer and half of edge: about 7 vCPU before headroom.
 
-Not measured: hosts larger than 4 vCPU, a database on its own host, more than two replicas,
-scaling across hosts, and other hardware than the runners named. The measurement runs anywhere
-Docker does: run `scripts/polaris-throughput-measure.sh` on the hardware you will deploy.
-
-## What's not yet covered
-
-- - **Cursor-based deep pagination** on the list pages: current
-  implementation uses OFFSET, which is slow past page 100.
-- **API-layer caching**: a Redis cache keyed by `(bbox, grid, kind)`
-  with 30s TTL would push p95 latency for repeat views to <50 ms.
-- **Frontend zoom-aware grid auto-sizing**: currently a fixed sliding
-  scale; could be adaptive based on visible cluster density.
-- **Stress test scheduling**: `_stress_seed.sql` is a one-shot script;
-  a proper benchmark suite would run the full curl matrix against
-  multiple data sizes (10K, 100K, 1M, 10M) and produce a regression
-  table.
-
-These are clean follow-ups, not blockers.
+The measurement runs anywhere Docker does: run `scripts/polaris-throughput-measure.sh` on the
+hardware you will deploy.

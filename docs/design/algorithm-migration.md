@@ -52,12 +52,10 @@ side by side and no proof that a verifier of one instance accepts the other's si
   exchange gateway, the trust list, the registry) runs across parameter sets; B's trust list
   reports each key under its real algorithm and B's registry advertises both.
 
-## Limits
+## Scope
 
 - The PKCS#11 and AWS KMS custody drivers remain ML-DSA-65: their parameter set is fixed at the
   key ceremony, and the drills that prove them run only that set. Widening them is a ceremony
   change, not a code change.
-- Algorithm families outside FIPS 204 (SLH-DSA) stay registered rows without a signer, as
-  recorded in [PQC-POSTURE.md](../reference/PQC-POSTURE.md).
 - Protocol versioning and negotiation (P8.8b) are separate: this record changes which
   parameter sets a `/1` artifact may carry, not the artifact formats.

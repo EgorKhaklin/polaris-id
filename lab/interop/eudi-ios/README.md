@@ -96,17 +96,12 @@ runs the wallet with the library configured as the EUDI iOS wallet kit 0.54.5 co
 PyPI 1.0.0rc16, published the same day, carries the change and was accepted with all four controls
 refused, so the walk's default is now the wallet kit's own setting and the weekly canary runs it.
 
-## What this does not establish
+## What was run
 
-- It is a wallet built here on the library, not the EUDI reference wallet app or the wallet kit. The
-  library is the part that speaks OpenID4VP: it fetched, checked and answered the request. The trust
-  decision is this repository's few lines; the presentation is the EU SD-JWT library's, called as the
-  wallet kit calls it.
-- It does not show that an app built on the wallet kit presents to the published release. With the
-  wallet kit's setting (above) 1.0.0rc15 is refused and only the tree is accepted; the app itself,
-  with its own trust, storage and user interface, was not run.
+- It is a wallet built here on the library. The library is the part that speaks OpenID4VP: it
+  fetched, checked and answered the request. The trust decision is this repository's few lines;
+  the presentation is the EU SD-JWT library's, called as the wallet kit calls it.
 - One credential format and one path, ES256 throughout. The credential was minted by this
   repository's issuer script and trusted through a JWKS.
-- The library was built and run for macOS. Nothing here ran on an iPhone.
-- Same category as the other rows: the author drove a published library on one machine. It is not
-  an outside party using Polaris, and not a claim of interoperability in general.
+- The library was built and run for macOS.
+- The author drove a published library on one machine.

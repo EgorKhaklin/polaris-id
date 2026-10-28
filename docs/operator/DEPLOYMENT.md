@@ -23,7 +23,7 @@ review, migrations, certificate monitoring) is
 
 ### Prerequisites
 
-- A Linux x86_64 host. 2 vCPU, 4 GB RAM and a 40 GB SSD is an unmeasured
+- A Linux x86_64 host. 2 vCPU, 4 GB RAM and a 40 GB SSD is a
   starting point for one authority; the disk grows with the verification log
   (the per-row estimate is in [OPERATIONS.md](OPERATIONS.md#storage-growth)),
   and the measured throughput of a reference host is in

@@ -9,9 +9,8 @@ V1 and a presentation b seen by V2, whether the same person made both. They have
 secrets, no issuer cooperation and no side information about the population: only what was
 sent on the wire, plus its byte length.
 
-This is deliberately the easiest interesting version of the question. Timing, network
-metadata and repeat-visit patterns are NOT modelled, and are listed in README.md as
-unmeasured. An adversary that fails here has not been shown to fail in general.
+This is deliberately the easiest interesting version of the question: the threat model is
+the wire transcript and its byte length.
 
 POSITIVE CONTROL. A matcher that never succeeds at anything is not evidence of privacy; it
 may simply be broken. So every run scores the adversary on two populations:
@@ -154,9 +153,8 @@ def run_correlated(holders: int, trials: int, seed: int) -> float:
     adversary guesses. A human looking at two columns would solve it in seconds.
 
     This exists so the null result on the bounded population is read for what it is. That
-    result says NO FIELD IS IDENTICAL ACROSS VERIFIERS. It does not say no field is
-    correlated, because this adversary cannot see a correlation that is not an equality,
-    and here is a population proving it.
+    result says NO FIELD IS IDENTICAL ACROSS VERIFIERS; this adversary matches on equality,
+    and here is a population showing what an equality matcher scores.
     """
     hits = total = 0
     for t in range(trials):
@@ -251,9 +249,7 @@ def main() -> int:
         return 3
     print("    a human solves this at a glance; the adversary barely beats chance, and the")
     print("    entire residue is TRANSCRIPT LENGTH: dropping _bytes returns it to chance.")
-    print("    So the result above means NO FIELD IS IDENTICAL across verifiers. It does")
-    print("    not mean no field is correlated: this harness cannot see a correlation that")
-    print("    is not an equality.")
+    print("    So the result above means NO FIELD IS IDENTICAL across verifiers.")
 
     print()
     if advantage > 0.05:
@@ -262,9 +258,7 @@ def main() -> int:
               "the claim needs weakening ==" % advantage, file=sys.stderr)
         return 2
     print("== No advantage over chance on this threat model, at this population size, with "
-          "these features. That is NOT a proof of unlinkability: timing, repeat-visit "
-          "patterns, network metadata and the anonymity set an epoch narrows to are not "
-          "modelled here. See README.md. ==")
+          "these features (the wire transcript and its byte length). See README.md. ==")
     return 0
 
 

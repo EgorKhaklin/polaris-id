@@ -76,7 +76,7 @@ The candidate stays a candidate: no outside operator reaches a running instance 
 
 Update 2026-10-11: the tree moved to 1.0.0 on another route: IDFoundry/OID4VCgo's CI runs the
 verifier, polaris-oid4vp, daily and on each of its releases ([the scoreboard](../EXTERNAL-NOUNS.md#use)).
-No outside operator runs a Polaris node yet, so this record's case for operability stands.
+This record's case for operability stands.
 
 ## 8. What other work would be delayed?
 

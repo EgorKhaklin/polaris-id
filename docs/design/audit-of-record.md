@@ -159,7 +159,7 @@ The sanctioned procedure writes exactly within that envelope, so it is
 unaffected. What changed is that it is no longer the only thing standing
 between the record and an operator with a database session.
 
-## What the principle is not
+## Scope of the principle
 
 - **Not all or nothing.** Conformance is a spectrum, and the instances sit at
   different points on it. What matters is that the position is stated.

@@ -77,7 +77,7 @@ where before it could not run at all.
 Repairing a single member is O(depth) rather than a rebuild, which is what makes a revocation
 between epochs a twenty-four-node operation instead of a sixteen-million-leaf one.
 
-## What an epoch stores, and what it does not
+## What an epoch stores
 
 An epoch stores the root, the committed count, the window, and one leaf hash per member. It
 does **not** store an inclusion path per member, and since v9.357 it does not compute one.
@@ -94,15 +94,14 @@ The column survives, nullable, so epochs closed before v9.357 keep the paths the
 Migration `011-epoch-leaf-path-optional` makes the change and its down-migration backfills an
 empty array rather than inventing a path.
 
-## The cap, and where it will have to move
+## The cap
 
 `uc11_close_epoch` refuses an epoch above 10,000 members, and `/api/v1/epoch/<id>/leaves`
-bounds the published set (C8). Both numbers are sized for the default tree depth of 14 and are
-the binding constraint on a national deployment, not the hashing. Raising them is a schema and
-bounded-read decision that belongs with the deployment that needs it: the published set is a
-public body, so its ceiling is a resource-exhaustion question as much as a capacity one, and
-the honest answer at national scale is paging or a per-context split rather than one larger
-number. Nothing here raises them.
+bounds the published set (C8). Both numbers are sized for the default tree depth of 14. Raising
+them is a schema and bounded-read decision that belongs with the deployment that needs it: the
+published set is a public body, so its ceiling is a resource-exhaustion question as much as a
+capacity one, and the answer at larger scale is paging or a per-context split rather than one
+larger number.
 
 ## Proven by
 

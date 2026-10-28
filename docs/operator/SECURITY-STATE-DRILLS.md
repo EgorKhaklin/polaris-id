@@ -33,18 +33,8 @@ and event_trigger, which a sound database may lack) fails the drill.
 | Deploy object sync: `polaris-migrate.sh --sync-objects`, which every deploy and Helm upgrade runs | A database built as production builds it (`00_load_all.sql`, then `polaris-migrate.sh --up`), before and after one sync: views and their options, triggers, routines (definition, settings, `SECURITY DEFINER`, owner), every role's privileges on tables, columns, sequences, routines and the public schema, default privileges, database settings. Read by the test itself | `test_sync_objects_parity.py` (in review, #332) | Product suite: Python suites under coverage + floor gate | fails at `1ed83cd2`, naming the DELETE on `EnrollmentCode` a sync gives back; the fix and the test are in review (#332) | |
 
 A pass says that the drill's database, built with the sample data at that commit, came through the
-procedure with the facts above as expected. It does not cover row data (except the major upgrade's
-row digests), passwords, objects outside the listed kinds, or a deployment's own database; a fresh
-install is the reference two rows compare against, not itself compared.
-
-Not yet compared:
-
-- **Physical paths.** Point-in-time recovery and the DR restore (pgBackRest), the offsite restore,
-  failover, zone loss and region evacuation copy the database's files, so the state should come back
-  unchanged. No drill compares it yet.
-- **A restore into a new database's settings.** `pg_restore` applies the database's own settings
-  (`ALTER DATABASE ... SET`) only with `--create`, which `polaris-restore.sh` does not use, so a
-  restore into a new database does not carry them. Not yet measured by a drill.
+procedure with the facts above as expected. A fresh install is the reference two rows compare
+against.
 
 A row's result changes only with a run at a commit on `main`, named in the last column. "Local run" marks one made
 on a maintainer's machine rather than in CI; the CI job's next run on `main` replaces it.

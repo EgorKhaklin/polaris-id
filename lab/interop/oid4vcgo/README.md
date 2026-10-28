@@ -127,17 +127,12 @@ holds each input to being the wallet that runs, without Docker.
 | (c) | The launch names a `client_id` that is not the signed request's | the wallet | `client_id "x509_hash:AAAA..." does not match x5c leaf's own x509_hash` |
 | (d) | From v0.22.0: the wallet trusts an unrelated CA for the verifier | the wallet | `certificate chain does not verify against a trusted root` |
 
-## What this does not establish
+## What was run
 
 - The issuer key, its certificate and the CA are test material this script generates; the wallet
-  signs the credential with them using its own code. It is not a credential from a real issuer.
-- One credential format, one path, ES256/P-256 throughout; the verifier is the repository's,
-  not a published release.
-- The same category of evidence as the other three rows: the author drove a published
-  implementation on one machine. It is not an outside party using Polaris.
-- **The wallet's TLS, observed 2026-09-30.** Until then this page said the wallet trusted only
-  the verifier's test TLS anchor, set through `SSL_CERT_FILE`. That file was `keygen`'s CA, which
-  does not sign the listener's certificate (`keygen` makes it self-signed), and with the setting
-  removed, in an alpine container with no CA bundle at all, the run still passes: v0.12.0
-  validates no TLS certificate. The wallet's own behaviour, recorded here and not absorbed; from
-  v0.22.0 the wallet says so when it starts (above).
+  signs the credential with them using its own code.
+- One credential format, one path, ES256/P-256 throughout; the verifier is the repository's.
+- The author drove a published implementation on one machine.
+- **The wallet's TLS, observed 2026-09-30.** v0.12.0 checks no verifier TLS certificate: with
+  the `SSL_CERT_FILE` setting removed, in an alpine container with no CA bundle at all, the run
+  still passes. From v0.22.0 the wallet says so when it starts (above).

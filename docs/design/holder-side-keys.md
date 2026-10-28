@@ -139,14 +139,12 @@ polaris-verify.py --pqc-provider auto --agent-grant grant.json --holder-binding 
 Each of the five links is reported separately, because "this grant was revoked" and "this
 agent does not hold the key it names" call for different responses at the service.
 
-## What the issuer still knows
+## What the issuer holds
 
-Worth collecting in one place, because the four mechanisms together can read as more than
-they are. The issuer issues the credential, derives every epoch leaf, and holds the
-authority to revoke. None of the above changes that. What changed is that a holder can prove
-without it, that relying parties cannot pool what they store, that one relying party can
-enforce one-person-once without learning who, and that an agent can act under an authority
-the person can withdraw alone.
+The issuer issues the credential, derives every epoch leaf, and holds the authority to
+revoke. The four mechanisms add that a holder can prove without it, that relying parties
+cannot pool what they store, that one relying party can enforce one-person-once without
+learning who, and that an agent can act under an authority the person can withdraw alone.
 
 The verification records the issuer keeps are covered by C2 and the redaction suite; see
 [../operator/PRIVACY.md](../operator/PRIVACY.md) and the paper's privacy section for the

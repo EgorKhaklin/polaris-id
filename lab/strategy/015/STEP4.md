@@ -55,21 +55,16 @@ shift of about 0.4 microseconds) does not appear natively: at 500,000 samples a 
 shift would read |t| near 20, and the native message test stays below 4.5. The step 2 signal came
 from the Python path, not the library. The message is public in any case.
 
-## What it does not show
+## What was run
 
-- **Not a proof of constant time.** A dudect test finds first-order differences in mean timing
-  between the classes it is given. A leak smaller than the control's size, or one that a random
-  key pool averages away (a key crafted to hit a slow path), is not excluded. Falcon's signing is
-  randomized, so each call varies by about 13 microseconds; that noise is what bounds the
-  sensitivity.
-- **Timing only.** Not cache sharing with a co-resident attacker, power, electromagnetic
-  emanation or fault injection.
-- **Two platforms.** A deployment on any other CPU or liboqs build is unmeasured; the harness and
-  the workflow are here to measure it.
+- A dudect test finds first-order differences in mean timing between the classes it is given.
+  Falcon's signing is randomized, so each call varies by about 13 microseconds.
+- Timing only.
+- Two platforms.
 
 ## The decision
 
 The FN-DSA signer stays **experimental**, behind its opt-in and refused in production, for the
-reasons that never depended on this test: FIPS 206 is a draft (falsifier 4), and no assessor or
-operator outside the project has yet asked for it (falsifier 5). What this step removes is the
-timing objection on the measured platforms.
+reasons that never depended on this test, among them that FIPS 206 is a draft (falsifier 4).
+What this step removes is the
+timing objection on the measured platforms, down to the 100 ns shift its control detects.

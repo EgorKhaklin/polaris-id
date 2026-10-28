@@ -342,7 +342,7 @@ and `rotate-wrapping`.
 
 ### 5.4 External alternatives
 
-HashiCorp Vault, GCP Secret Manager, and Azure Key Vault are not built in.
+HashiCorp Vault, GCP Secret Manager, and Azure Key Vault are external stores.
 They fit the same shape: an `unseal-if-configured` that materializes the
 secrets into `POLARIS_SECRETS_DIR` from your store before the stack starts.
 Write that hook in place of `polaris-secrets.sh` and keep the rest identical;

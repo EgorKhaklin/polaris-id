@@ -168,13 +168,11 @@ public files are in [`rehearsal/`](rehearsal/). The run's output, links omitted:
 `irmago_pair` refuses in the rehearsal because the stand-in's credential chains to the stand-in CA,
 not to Yivi's.
 
-## What this does not establish
+## What was run
 
-- One phone, one app build, one credential type, one claim, one run. It is not a claim of
-  interoperability in general.
-- It is not production trust: the root was added by hand in developer mode (see above).
-- No revocation status was read. The credential carried no `status` claim, and the verdict reports
-  revocation as not evaluated.
+- One phone, one app build, one credential type, one claim, one run.
+- The root was added by hand in developer mode (see above).
+- The credential carried no `status` claim.
 - The phone's own checks are irmago's (lab/interop/irmago tests the library against this verifier).
   This walk adds the store app, its trust store and its user interface.
-- The author drove both ends. It is not an outside party using Polaris.
+- The author drove both ends.

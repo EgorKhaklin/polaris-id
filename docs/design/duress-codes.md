@@ -1,6 +1,6 @@
 # Duress codes
 
-**Reader:** an engineer or an assessor. **Job:** The duress-aware verification path: which coercer cannot see it, and which can.
+**Reader:** an engineer or an assessor. **Job:** The duress-aware verification path: what a coercer watching the verification sees.
 
 A verification either succeeds or fails, and a coercer standing over the
 holder can read that result. So the holder under coercion has no move: refusing
@@ -11,7 +11,8 @@ something to stand on.
 
 The answer is old and comes from banking and high-security retail: a second
 credential that looks exactly like success to whoever is watching, while an
-alert goes out through a channel the watcher cannot see.
+alert goes out through a channel the watcher cannot see. The mechanism is built
+for a coercer who does not know duress codes exist.
 
 ## The four pieces
 
@@ -28,9 +29,7 @@ alert goes out through a channel the watcher cannot see.
 
 The event is written off the request thread, so the response time does not depend on whether
 the code matched. That thread is not a daemon: a worker that stops (a deploy, a recycle) waits
-for a record still being written, up to gunicorn's 30-second graceful timeout. A worker killed
-outright (an out-of-memory kill, SIGKILL) can still lose a record in the few milliseconds it
-takes to write.
+for a record still being written, up to gunicorn's 30-second graceful timeout.
 
 ## What the coercer sees
 
@@ -49,8 +48,7 @@ checks operator passwords, chosen because it is constant-time rather than
 because it is convenient. `_check_and_record_duress` performs the hash
 comparison whether or not the token has an enrolled hash, so the work is paid on
 the negative path as well as the positive one. What remains is the database write
-on a match, which is below the variance of the surrounding request. A no-op
-write on the negative path would close even that, and is not built.
+on a match, which is below the variance of the surrounding request.
 
 **That sentence used to say "whenever the token has an enrolled hash", and the
 difference was a channel.** Measured 2026-09-17
@@ -101,11 +99,10 @@ declared beside the reason it is not a holder.
 in as an operator, which is the role the property protects, and asserts the
 page never contains the word.
 
-An attacker who has compromised an admin account can see the events. That is
-inherent: the audit of record has to be readable by someone. The design
-separates the front-of-house signal from the audit signal, so compromising the
-verification surface is not enough, and reading the audit needs a privilege
-escalation that is independent of it.
+The audit of record is readable by the admin and auditor roles. The design
+separates the front-of-house signal from the audit signal, so the verification
+surface does not expose the events, and reading the audit needs a role that is
+independent of it.
 
 ## Where the alert goes
 
@@ -120,10 +117,7 @@ would add, an SMS gateway, a chat webhook, a security event stream, under a
 CHECK constraint. Only the audit-table and stderr values are wired. The column
 is there so that adding a channel is wiring rather than a migration.
 
-`oob_notified_at` is the acknowledgement field, set once when a responder
-takes the alert. Nothing sets it yet; the workflow that would is not built.
-
-## Where an adversary ends up
+## The claim and its surfaces
 
 - **The claim.** A duress code produces an appended, immutable event and an
   operator-visible outcome identical to an ordinary verification.
@@ -133,54 +127,34 @@ takes the alert. Nothing sets it yet; the workflow that would is not built.
   cosmetic.
 - **Where it settles.** The front of house cannot distinguish WHICH
   verification carried a duress code, so for that question the attacker must
-  attack the back: an admin or auditor session, or the database directly. Both
-  need a privilege escalation the verification surface does not provide. This
-  bullet was unqualified until 2026-09-17 and was false as written: a separate
-  question, whether a holder has a duress code AT ALL, was readable from the
-  front of house by timing, with no privilege of any kind. That one is closed
-  above. Enrolment is not a signal, but it is what makes a signal usable, and an
-  opt-in defence whose absence can be measured is interrogable without a word
-  being said.
-- **The next attack.** Timing. Addressed by the constant-time comparison and
-  by paying the comparison cost on both paths; what remains is one database
-  write, below the noise floor.
-- **What it costs.** A holder who enrols has a second secret to remember, and
-  enrolment is therefore optional. Not every holder will have one, and the
-  mechanism is per-token opt-in rather than universal.
+  attack the back: an admin or auditor session, the database directly, or the
+  monitoring network that `/metrics` is restricted to. Each needs access the
+  verification surface does not provide. This bullet was unqualified until
+  2026-09-17 and was false as written: a separate question, whether a holder has
+  a duress code AT ALL, was readable from the front of house by timing, with no
+  privilege of any kind. That one is closed above. Enrolment is not a signal,
+  but it is what makes a signal usable, and an opt-in defence whose absence can
+  be measured is interrogable without a word being said.
+- **Timing.** Addressed by the constant-time comparison and by paying the
+  comparison cost on both paths.
+- **Enrolment is optional.** A holder who enrols has a second secret to
+  remember, so the mechanism is per-token opt-in rather than universal.
 
 Three safeguards hold this up: the constant-time comparison with matched work
 on both paths, the omission of the events from every operator surface, and the
 role gate on the queue. Removing any one of them degrades the property.
 
-## What is deliberately not built
+## Design choices
 
-- **No holder-side panic button.** The code is typed on the verifier's
-  terminal. A holder-device signal would be a stronger mechanism and a
-  different system.
-- **No external notification channels.** The column names them; the wiring is
-  an operator integration.
-- **No defence against long-run frequency analysis, and it is sharper than "aggregate
-  rates" (corrected 2026-09-17).** Constant-time comparison covers a single call. This
-  entry used to say an attacker measuring rates over a long period could infer how often
-  duress events occur, accepted rather than solved. That much is true and is close to what
-  the alarm exists to publish; `polaris_duress_events_total` is unlabelled, so it breaks the
-  population down by nothing.
-
-  A coercer does not have to wait for rates to accumulate, because **they choose when the
-  victim presents**. Read the counter, make the holder present, read it again: if a duress
-  code was handed over, it moved by one more than the background did. `lab/duress/
-  counter_oracle.py` measures it at 91 per cent from a SINGLE forced presentation against a
-  hundred presentations a minute, and effectively certain at the volumes a coercer would
-  pick. That is not "how often duress events occur"; it is *did this person signal*, which
-  is the question the mechanism exists to make unanswerable.
-
-  It needs read access to `/metrics`, which is why that surface is restricted to the
-  monitoring network at both edges and why CI scrapes from outside to prove it. The
-  conclusion is unchanged and the reason is not: the control is access to the surface, not
-  suppression of the metric, because an unread duress signal is the coercion-cover failure
-  mode the alarm exists to prevent.
-- **No acknowledgement workflow.** The field exists; the responder-facing
-  process does not.
+- **The code is typed on the verifier's terminal.** A holder-device signal
+  would be a different system.
+- **Notification channels are an operator integration.** The column names the
+  channels; wiring one is an operator integration, not a migration.
+- **Access to `/metrics` is the control, not suppression of the metric.** The
+  surface is restricted to the monitoring network at both edges, and CI scrapes
+  from outside to prove it. An unread duress signal is the coercion-cover failure
+  mode the alarm exists to prevent, so `polaris_duress_events_total` stays
+  published.
 
 ## Reading the code
 

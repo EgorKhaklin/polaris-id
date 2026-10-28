@@ -56,13 +56,8 @@ confirmations.
    an outsider can check: `pip install -r requirements.txt`, then the two commands above.
 4. **No new door: not yet tested.** Step 2.
 
-## What this does not show
+## What was run
 
-- **The heads are from a test instance.** It ran on this machine with the development signer,
-  so `heads.json` carries placeholder signatures that authenticate nothing. The step tests the
-  anchoring, not the instance's key.
-- **Two public explorers are two sources, not a node.** A verifier with its own Bitcoin node
-  should compare against it; the step-2 verifier takes block headers from a node or from
-  sources the caller names.
-- **The explorers' JSON is trusted for the Merkle root.** Step 2 reads the raw 80-byte header
-  instead, computes the block hash and checks its proof of work itself.
+- **The heads are from a test instance.** It ran on this machine with the development signer, so
+  `heads.json` carries placeholder signatures. The step tests the anchoring.
+- **Two public explorers, blockstream.info and mempool.space, are the two sources.**

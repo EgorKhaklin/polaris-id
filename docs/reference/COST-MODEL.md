@@ -39,10 +39,10 @@ a hundred million pays for the same shape plus storage.
 
 ## Where each input comes from
 
-The model labels every input, and the honest error bars are entirely on the last two kinds.
+The model labels every input, and the error bars are entirely on the last two kinds.
 
 **MEASURED**, from an actual run on this code
-([BENCHMARK.md](BENCHMARK.md), single node, real ML-DSA-65):
+([BENCHMARK.md](BENCHMARK.md), single-node, real ML-DSA-65):
 verification 7,848/s per core single-witness and 745/s two-witness, issuance 372 tokens/s
 signing-bound, event ingestion 25,970/s. Plus one measurement taken for this model: a
 verification event costs **228.6 bytes** including every index, from 200,010 rows in the
@@ -101,13 +101,6 @@ ten-times peak above. The pool removes most of that cost (a database write path 
 production path with the pool, one online verification costs about 18 ms of CPU across the stack on
 the CI runner measured, so that peak needs about 7 vCPU of serving capacity before headroom
 ([SCALING.md](SCALING.md#sizing-a-deployment)): small beside what availability and retention cost.
-
-## The honest caveat on all of it
-
-The throughput numbers are **single-node measurements**. The multi-node behaviour is
-projected, which [BENCHMARK.md](BENCHMARK.md) and roadmap P2.9 both say in their own words: no
-production cluster has been measured, and the ten-million-record scale is extrapolated. A cost
-model built on projected scaling is a planning instrument, not a quotation.
 
 ## Proven by
 

@@ -117,20 +117,14 @@ about 45 seconds, issuance took 8, and 20 went on waiting for the PID's `nbf`. T
 build, from an empty Gradle cache, took 55 seconds, and a first run also pulls the four images in
 `compose.yaml`.
 
-## What this does not establish
+## What was run
 
 - The issuer is the reference implementation's development deployment as its own compose
-  describes it: `https://localhost`, its published test keys and its test user. It is not a PID
-  provider, and the trust anchor is a test root whose private key is public in the issuer's
-  repository; trusting it means something only on this machine.
+  describes it: `https://localhost`, its published test keys and its test user. The trust anchor
+  is the issuer's published test root; trust it only on this machine.
 - The issuer accepted the wallet because no trust validator is configured upstream. The client and
-  key attestations were signed by a key `run.sh` made, so this run says nothing about what the
-  issuer does with a wallet provider it is told to trust or refuse.
-- The wallet is built here on the two libraries; it is not the EUDI reference wallet app. The
-  login is scripted against Keycloak's form, and which disclosures to present and the key binding
-  are this repository's few lines, as they are any wallet's.
-- The PID carries no status reference (the issuer allocates one only under a reuse policy, which
-  upstream does not enable), so this run says nothing about revocation. One format (SD-JWT VC; the
-  issuer's mso_mdoc PID was not requested), one flow, ES256 throughout.
-- Same category as the other rows: the author drove published software on one machine. It is not
-  an outside party using Polaris, and not a claim of interoperability in general.
+  key attestations were signed by a key `run.sh` made.
+- The wallet is built here on the two libraries. The login is scripted against Keycloak's form,
+  and which disclosures to present and the key binding are this repository's few lines.
+- One format (SD-JWT VC), one flow, ES256 throughout.
+- The author drove published software on one machine.

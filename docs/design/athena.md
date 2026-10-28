@@ -118,7 +118,7 @@ every result with `createElement` (never `innerHTML`), so `script-src 'self'`
 stays strict (C5); `check_athena_console` pins that, and the headless-browser UI
 drill asserts the console renders in a real browser.
 
-## What is deliberately NOT built
+## Design choices
 
 No person / household / relationship object; no subject handle (opaque or not)
 stable across contexts; no ZK-subject traversal; no population segmentation or

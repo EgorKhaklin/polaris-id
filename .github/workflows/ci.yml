@@ -426,13 +426,12 @@ jobs:
       - name: Transparency report — no withheld figure is recoverable by subtraction
         run: python scripts/polaris-transparency-report-drill.py
 
-      # v9.398 — the check layer, ATTACKED. Every guarantee here is believed because a check
-      # says so, and the checks are written by the same hand as the code; the review packet's
-      # A-12 asks a reviewer to break that layer. This runs the attack on every push. For each
+      # v9.398: the check layer, ATTACKED. The review packet's A-12 asks a reviewer to break
+      # that layer; this runs the attack on every push. For each
       # check it comments out every line carrying the check's own search strings -- leaving the
       # words in the comment, which is what `# temporarily disabled: <the thing>` looks like --
       # and re-runs it. Before v9.398, 71 of 75 still passed. No database.
-      - name: Check layer — no check passes on a broken tree, or on a missing one
+      - name: "Check layer: each mutated check fails on a broken tree, and on a missing one"
         run: python scripts/polaris-check-mutation-drill.py
 
       # 2026-09-27: the constitutional constraints, one at a time. The drill deletes each of
@@ -465,14 +464,11 @@ jobs:
       - name: Moved code — a check must follow the mechanism, not the path
         run: python scripts/polaris-move-mutation-drill.py
 
-      # v9.388 (P1.18 item 8) — the external-review packet, RE-CHECKED IN BOTH DIRECTIONS.
-      # Every citation resolves and every cited check runs, which is the discipline the 800-63
-      # mapping already uses. The new half is the limitations: each carries a WITNESS, a file
-      # and a string that must still be present for the limitation to hold, so FIXING one fails
-      # the build until the entry is removed. A limitations list that can only be appended to is
-      # a confession nobody maintains, and a stale one tells a reviewer the system is weaker
-      # than it is, which nobody catches because it reads as modesty. No database.
-      - name: Review packet — every citation resolves and every limitation is still true
+      # v9.388 (P1.18 item 8): the external-review packet. Every citation resolves and every
+      # cited check runs, which is the discipline the 800-63 mapping already uses; every threat
+      # row names what does not stand in the way; and the packet claims no outside review, audit
+      # or pen test. No database.
+      - name: "Review packet: every citation resolves and passes, and it claims no outside review"
         run: python scripts/polaris-review-packet-drill.py
 
       # v9.372 (P6.2) — the 800-63 mapping, RESOLVED. A control mapping is the easiest document

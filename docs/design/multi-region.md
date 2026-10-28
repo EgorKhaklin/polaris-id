@@ -69,7 +69,7 @@ and it asserts two things that matter more than either number:
 The region is cut the way a region goes dark: the database members, the router **and** the
 lease store, all at once. Stopping only the leader is the failover drill's scenario.
 
-## What this does not solve
+## Operator decisions
 
 **Placement.** Two regions are two placements and one WAN link, and that is the operator's.
 The compose file proves the mechanism on one host; in production

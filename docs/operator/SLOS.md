@@ -30,7 +30,7 @@ references a metric the app does not emit.
 3. [Latency SLO](#3-latency-slo)
 4. [Database-latency SLO](#4-database-latency-slo)
 5. [Error budget](#5-error-budget)
-6. [What is deliberately NOT an SLO](#6-what-is-deliberately-not-an-slo)
+6. [Design choices: what is not an SLO](#6-design-choices-what-is-not-an-slo)
 7. [Cross-references](#7-cross-references)
 
 ---
@@ -190,11 +190,11 @@ multi-window rule is one block in the operator's own rule file:
 
 The availability and DB-latency alerts route to a pager only once the operator
 wires Alertmanager. Until then, the budget is a recorded series and a
-dashboard panel, not an action. Stating otherwise would overclaim what ships.
+dashboard panel, not an action.
 
 ---
 
-## 6. What is deliberately NOT an SLO
+## 6. Design choices: what is not an SLO
 
 - **`duress_events_total`** is not an availability or latency signal. A duress
   event is a person signalling coercion, not a service failure; aggregating it
@@ -220,5 +220,5 @@ dashboard panel, not an action. Stating otherwise would overclaim what ships.
 - [`RUNBOOKS.md`](RUNBOOKS.md): what to do when an alert fires (one section per alert).
 - [`DR.md`](DR.md): the SEV ladder the alert severities map to.
 - [`OPERATIONS.md`](OPERATIONS.md): the day-2 metrics reference.
-- [`../PRODUCTION-READINESS.md`](../PRODUCTION-READINESS.md): the honest gap ledger; this doc closes the "SLOs" item.
+- [`../PRODUCTION-READINESS.md`](../PRODUCTION-READINESS.md): the readiness ledger; this doc closes the "SLOs" item.
 - [`../reference/PERFORMANCE-BASELINE.md`](../reference/PERFORMANCE-BASELINE.md): the measured issuance/s, verification/s, and atlas p95 the latency SLO is judged against (v9.191).

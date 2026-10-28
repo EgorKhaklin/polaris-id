@@ -117,21 +117,17 @@ makes permanent.
 
 ---
 
-## 4. What is not validated, and stays that way
+## 4. What is measured
 
-**99.99% availability on the verification path** is 52.6 minutes of downtime a year.
-Establishing it needs a failure rate and a recovery time from a multi-region deployment under
-real traffic.
+The rolling-deploy drill holds an authenticated verification load across the transition and
+drops zero verifications. The failover drill induces four failures and demonstrates that
+verification recovers after each and keeps serving at rate. Both run on a **two-member
+topology on CI hardware**.
 
-What is measured is narrower and says so. The rolling-deploy drill holds an authenticated
-verification load across the transition and drops zero verifications. The failover drill
-induces four failures and demonstrates that verification recovers after each and keeps serving
-at rate. Both run on a **two-member topology on CI hardware**, not across regions.
-
-A 99.99% figure extrapolated from that would be an assertion wearing a measurement's clothes,
-so `validate()` reports the target `UNVALIDATED` and says what would settle it. A target
-nothing here can establish never becomes MET because its other numbers look comfortable, and
-that rule is checked by running the model rather than by finding the constant's name in it.
+`validate()` reports a target that no measurement here establishes as `UNVALIDATED` and says
+what would settle it. Such a target never becomes MET because its other numbers look
+comfortable, and that rule is checked by running the model rather than by finding the
+constant's name in it.
 
 ### What the model did not size, until 1.0.0-rc.14
 
@@ -156,16 +152,14 @@ fails the check, named.
 
 ---
 
-## 5. What the model still reports rather than decides
+## 5. The nearest 32-bit column
 
 `Individual.individual_id` and `IdentityToken.token_id` are also `SERIAL`, and last about 29
 years at the stated enrollment rate. That is outside the model's 25-year horizon rather than
 comfortably beyond it, and both are referenced by foreign keys across the schema, so widening
 them means widening every referencing column too.
 
-The model prints the nearest surviving 32-bit column on every run for that reason. A column
-that clears the horizon by four years has not been shown to be safe; it has been shown to be
-outside a window somebody chose.
+The model prints the nearest surviving 32-bit column on every run for that reason.
 
 ---
 

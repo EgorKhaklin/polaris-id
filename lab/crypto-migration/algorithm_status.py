@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
-"""algorithm_status.py -- can a verifier ever learn that an algorithm is deprecated?
+"""algorithm_status.py -- does any signed artifact carry an algorithm's deprecation?
 
 THE CLAIM UNDER TEST is the front door's: *algorithm agility under an audited migration
-path*. README.md in this directory assesses it and concludes that it is true issuer-side and
-not what the phrase implies verifier-side. That assessment was written by reading the code.
-This is the instrument, so that the day somebody publishes an algorithm status the claim can
-widen on evidence, and the day somebody removes one it fails rather than going quiet.
+path*. README.md in this directory records the result: true issuer-side. This is the
+instrument, so that the day somebody publishes an algorithm status the result is re-read on
+evidence, and the day somebody removes one it fails rather than going quiet.
 
 TWO THINGS ARE MEASURED, both against the shipped tree rather than a model.
 
 1. STRUCTURAL. `CryptographicAlgorithm` carries a `deprecation_date`. Every signed format in
    `docs/reference/WIRE-SPEC.md`, the published contract for what each one carries, is
-   searched for a field that could carry an algorithm's status to a verifier. If none does,
-   an issuer can record that an algorithm is deprecated and no verifier will ever find out.
+   searched for a field that could carry an algorithm's status to a verifier, and the count of
+   formats that carry one is printed.
 
-2. THE MIXED WINDOW, which README.md lists as unmeasured. During a migration a population is
+2. THE MIXED WINDOW. During a migration a population is
    partly re-signed, and the only lever a verifier has is its accepted-algorithm set, which
    is a hardcoded dict in the shipped verifier. So dropping the old algorithm is the only
    way a relying party can refuse credentials that a broken algorithm would forge, and this
@@ -24,9 +23,9 @@ TWO THINGS ARE MEASURED, both against the shipped tree rather than a model.
    re-signed. The curve is run through the REAL verifier's own accepted-set predicate, not
    arithmetic about it.
 
-WHAT THIS DOES NOT MEASURE. Rollback, and the cost of re-signing at scale, both of which
-README.md also lists as open. It says nothing about whether ML-DSA is sound: that is
-mathematics, and this file is about what the system can be told and when.
+SCOPE. This file is about what the system can be told and when; whether ML-DSA is sound is
+mathematics. Rollback is measured by rollback.py, and the cost of re-signing by the
+quantum-event drill (README.md).
 
 Run: python3 lab/crypto-migration/algorithm_status.py [--population N]
 """
@@ -105,7 +104,7 @@ def _status_reaches_a_signed_artifact(sections):
     Both words on the same line, and that requirement is load-bearing. Without it the
     generic term "withdrawn" matched a sentence in `polaris-holder-binding/1` about a
     revoked BINDING: the right word about the wrong subject. Per-key and per-binding status
-    do exist and README.md already accounts for them; the open question is only about the
+    do exist; this search is only about the
     algorithm.
     """
     hits = []
@@ -159,7 +158,7 @@ def main():
     out = sys.stdout
 
     print("the claim: 'algorithm agility under an audited migration path'")
-    print("the question: can a VERIFIER be told an algorithm is deprecated?\n")
+    print("the question: does any signed artifact carry an algorithm's deprecation?\n")
 
     data = _algorithm_is_data()
     if data is None:
@@ -194,26 +193,18 @@ def main():
 
     if hits:
         print("== CHANGED: a signed format now specifies a field carrying an algorithm's "
-              "standing (%d site(s) above). That is the gap README.md records as open, so "
-              "either it has been closed and the README must widen, or the search is "
+              "standing (%d site(s) above). Either the README must widen, or the search is "
               "matching something unrelated. Read the lines and decide; do not let this "
               "file decide for you ==" % len(hits), file=sys.stderr)
         return 2
 
-    print("== MEASURED, and the gap README.md describes is still open. `deprecation_date` "
-          "is a column that reaches NO signed artifact: across %d signed wire formats, no "
-          "builder puts an algorithm's standing into one. An issuer can record that an "
-          "algorithm is deprecated and no verifier will ever find out." % len(formats))
-    print("   SO THE ONLY LEVER IS THE ACCEPTED SET, and it is a hardcoded dict in the "
-          "shipped verifier: retiring an algorithm means editing it and shipping a release "
-          "to every relying party. The curve above is what that costs mid-migration. At 90 percent "
-          "re-signed, a relying party that drops the old algorithm locks out one holder in "
-          "ten; at 99 percent, one in a hundred. There is no artifact that tells it which fraction "
-          "it is at, so it cannot even choose the moment.")
-    print("   WHAT THIS DOES NOT SAY. Nothing about whether ML-DSA holds, which is "
-          "mathematics. Nothing about rollback or the cost of re-signing at scale, both "
-          "still unmeasured. And the curve is the SHAPE of the trade, not a prediction: a "
-          "real population's migration rate is a deployment fact nobody here has.")
+    print("== MEASURED. `deprecation_date` is a column of CryptographicAlgorithm; across %d "
+          "signed wire formats, no builder puts an algorithm's standing into one." % len(formats))
+    print("   The verifier's lever is its accepted set, a dict in the shipped verifier. The "
+          "curve above is what dropping the old algorithm costs mid-migration: at 90 percent "
+          "re-signed it locks out one holder in ten; at 99 percent, one in a hundred.")
+    print("   SCOPE. The curve is the SHAPE of the trade over the population measured. "
+          "Whether ML-DSA holds is mathematics.")
     return 0
 
 

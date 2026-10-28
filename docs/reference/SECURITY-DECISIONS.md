@@ -351,9 +351,9 @@ is decided rather than inherited.
 
 ---
 
-## What this document does not do
+## Scope
 
-It does not replace reading the code before changing it, and it is not a substitute for the
-checks. It is a map. Where it and the code disagree, the code is what runs and the
+This document is a map: read the code before changing it, and rely on the checks for
+enforcement. Where it and the code disagree, the code is what runs and the
 disagreement is a defect in this file: say so in the commit that fixes it, as
 `docs/CONVENTIONS.md` requires of every other document here.

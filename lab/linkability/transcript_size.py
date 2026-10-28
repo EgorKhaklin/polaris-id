@@ -359,12 +359,11 @@ def main():
               "length. It is recorded because a deploying organisation choosing that door is "
               "choosing this too."
               % (len(set(sizes_sd)), len(sizes_sd), effective))
-    print("   WHAT THIS DOES NOT SAY. It is a measurement of the shapes above at this "
-          "population size, not a proof. It holds while a bounded presentation carries no "
+    print("   SCOPE. A measurement of the shapes above at this "
+          "population size. It holds while a bounded presentation carries no "
           "per-holder variable-length field: disclosed attribute values, optional elements or "
           "a variable-length status assertion would each open the channel, and the control "
-          "shows what happens when one does. Timing, repeat visits and network metadata are "
-          "not modelled here. See README.md.")
+          "shows what happens when one does. See README.md.")
     return 0
 
 
