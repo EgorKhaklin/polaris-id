@@ -6924,9 +6924,11 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 
 # 2026-10-07 (lab record 017): the supply-chain stragglers stay closed. Everything the
 # build or CI pulls is named exactly, or held to a series on purpose: the Caddy plugin by its
-# release, etcd by apk's `~3.6`, the Calico manifest by its SHA-256 before kubectl sees it, every
-# workflow image and the Trivy scanner by digest (the wallet canary excepted: it walks the
-# wallets' latest builds by design). And Dependabot reads every manifest that pins something
+# release, etcd and gosu by their release tags and those tags' commits (2026-10-28; before,
+# etcd came from apk's `~3.6` and gosu with the postgres base), the Calico manifest by its
+# SHA-256 before kubectl sees it, every workflow image and the Trivy scanner by digest (the
+# wallet canary excepted: it walks the wallets' latest builds by design). And Dependabot
+# reads every manifest that pins something
 # (each npm lockfile, each published Python package, each Dockerfile directory, the compose
 # files, and since 2026-10-11 each Go, Gradle and Swift manifest), since a pin nothing refreshes stops
 # receiving security updates. 2026-10-24: and each directory with a .txt or .in file that pins a
@@ -7499,10 +7501,20 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
         problems.append("Dockerfile.caddy builds no --with module, so nothing backs rate_limit")
     problems += [f"Dockerfile.caddy builds {m} at whatever version resolves that day"
                  for m in mods if not re.search(r"@v\d", m)]
-    add = " ".join(re.findall(r"apk add[^\n]*", "\n".join(
-        l for l in _read(root, "polaris_web/Dockerfile.etcd").splitlines() if not l.lstrip().startswith("#"))))
-    problems += [f"Dockerfile.etcd installs {pkg} with no version constraint"
-                 for pkg in ("etcd", "etcd-ctl") if not re.search(rf'"?\b{pkg}[~=]\d', add)]
+    # etcd and gosu are compiled from their release source: the Dockerfile names the release tag
+    # and that tag's commit, and the build fails when the fetched source is another commit.
+    for path, var, tag, shape in (("polaris_web/Dockerfile.etcd", "ETCD", r"v\d+\.\d+\.\d+", "vX.Y.Z"),
+                                  ("polaris_web/Dockerfile.postgres", "GOSU", r"\d+\.\d+", "X.Y")):
+        df = "\n".join(l for l in _read(root, path).splitlines() if not l.lstrip().startswith("#"))
+        short, what = path.rsplit("/", 1)[1], var.lower()
+        if not re.search(rf"(?m)^ARG {var}_VERSION={tag}$", df):
+            problems.append(f"{short} names no {what} release tag (ARG {var}_VERSION={shape})")
+        if not re.search(rf"(?m)^ARG {var}_COMMIT=[0-9a-f]{{40}}$", df):
+            problems.append(f"{short} pins no {what} release commit (ARG {var}_COMMIT=<40 hex>)")
+        if not re.search(rf'(?m)^RUN \[ "\$\(git rev-parse HEAD\)" = "\${var}_COMMIT" \] \\\n'
+                         rf'\s*\|\| \{{ [^{{}}\n]*; exit 1; \}}$', df):
+            problems.append(f"{short} never fails the build when the {what} source it fetched "
+                            f"is not {var}_COMMIT")
     drill = _read(root, "scripts/polaris-helm-drill.sh")
     if "CALICO_MANIFEST" in drill and not (
             re.search(r"(?m)^CALICO_SHA256=[0-9a-f]{64}$", drill)
@@ -7560,7 +7572,7 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "; ".join(problems))
     commands = sum(1 for r in seen["refs"] if r[2].startswith("docker "))
     return _ok(name,
-               f"the Caddy plugin is pinned to its release, etcd to the 3.6 series, the Calico "
+               f"the Caddy plugin is pinned to its release, etcd and gosu to their release tags and commits, the Calico "
                f"manifest to its SHA-256; every workflow and compose image and Trivy run by "
                f"digest (the wallet canary excepted by design): {len(seen['refs'])} workflow image "
                f"refs, {commands} of them docker run, create or pull in run steps, each equal to "

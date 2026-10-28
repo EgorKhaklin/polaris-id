@@ -3227,8 +3227,20 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
 
     broken("polaris_web/Dockerfile.caddy", "caddy-ratelimit@v0.1.0", "caddy-ratelimit",
            "must FAIL when the Caddy plugin builds at whatever version resolves that day")
-    broken("polaris_web/Dockerfile.etcd", '"etcd~3.6" "etcd-ctl~3.6"', "etcd etcd-ctl",
-           "must FAIL when etcd is installed with no version constraint")
+    for rel, var in (("polaris_web/Dockerfile.etcd", "ETCD"), ("polaris_web/Dockerfile.postgres", "GOSU")):
+        df = (tmp_path / rel).read_text()
+        tag = re.search(rf"(?m)^ARG {var}_VERSION=\S+$", df)
+        commit = re.search(rf"(?m)^ARG {var}_COMMIT=\S+$", df)
+        tail = re.search(r"(?m); exit 1; \}$", df)
+        assert tag and commit and tail, f"the fixture drifted: {rel} no longer names {var}_VERSION and {var}_COMMIT"
+        broken(rel, tag.group(0), f"ARG {var}_VERSION=master",
+               f"{rel}: must FAIL when the source is built from a branch, not a release tag")
+        broken(rel, commit.group(0), f"ARG {var}_COMMIT=",
+               f"{rel}: must FAIL when no release commit is pinned")
+        broken(rel, f'[ "$(git rev-parse HEAD)" = "${var}_COMMIT" ]', "true",
+               f"{rel}: must FAIL when the fetched source is never checked against the pinned commit")
+        broken(rel, tail.group(0), "; exit 1; } || true",
+               f"{rel}: must FAIL when a source that is not the pinned commit still builds")
     broken("scripts/polaris-helm-drill.sh", 'kubectl apply -f "$CALICO_FILE"',
            'kubectl apply -f "$CALICO_MANIFEST"',
            "must FAIL when the Calico manifest is applied straight from its URL")

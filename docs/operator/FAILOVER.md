@@ -42,8 +42,8 @@ stack):**
   same `docker-init.sh` the single-node stack runs, clones the second member
   with `pg_basebackup`, and keeps the replica streaming with a replication
   slot.
-- A three-member etcd (`etcd1`, `etcd2`, `etcd3`, self-built from Alpine's
-  package, non-root) on an internal network only the database members join.
+- A three-member etcd (`etcd1`, `etcd2`, `etcd3`, self-built from the etcd
+  release source, non-root) on an internal network only the database members join.
   It holds the leader lease: `ttl` 20 s, renewed every `loop_wait` 5 s, with
   `retry_timeout` 5 s. It authenticates its clients: the one-shot `etcd-auth`
   makes a root user and a `patroni` user whose role reaches `/service/` alone,
