@@ -1468,3 +1468,190 @@ test("the FN-DSA family (draft FIPS 206): a genuine Falcon-padded-1024 pack veri
   // The same Falcon bytes claiming a different family must not verify.
   assert.equal(verifyAuthenticity({ ...good, algorithm: "ML-DSA-65" }).authentic, false);
 });
+
+
+// verifyCrossAuthority reads a supplied revocation feed only when its `format` is
+// polaris-revocation-feed/1, and it, verifyExchangeRequest and verifyExchangeReceipt read trust
+// edges only off a polaris-federation-manifest/1, as polaris-verify does. Every artifact here is
+// signed by an ML-DSA-65 key the test makes.
+const XA_NOW = "2026-05-01T00:00:30Z";
+const XA_ISSUED = "2026-05-01T00:00:00Z";
+const XA_EXPIRES = "2026-05-02T00:00:00Z";
+const XA_HOME = { agency_id: 1, name: "Home Authority" };
+const XA_ISSUER = { agency_id: 2, name: "Issuing Authority" };
+const XA_KEYS: Record<string, string[]> = {
+  "polaris-epoch-checkpoint/1": ["format", "authority", "epoch", "prev", "as_of", "issued_at", "expires_at", "algorithm"],
+  "polaris-revocation-feed/1": ["format", "authority", "epoch_number", "as_of", "revoked_root_hex", "revoked_count",
+    "revoked_leaves", "issued_at", "expires_at", "algorithm"],
+  "polaris-federation-manifest/1": ["format", "authority", "anchors", "attestations", "epoch", "revocation",
+    "issued_at", "expires_at", "algorithm"],
+  "polaris-trust-attestation/1": ["format", "attesting_agency_id", "attested_agency_id", "attested_public_key_hex",
+    "context_id", "attested_date", "valid_until", "algorithm"],
+  "polaris-exchange-request/1": ["format", "requester", "target", "context_id", "request_hash", "nonce", "issued_at",
+    "algorithm"],
+  "polaris-exchange-receipt/1": ["format", "requester", "responder", "context_id", "request_hash", "response_hash",
+    "authorized_via", "occurred_at", "algorithm"],
+};
+const xaHex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+const xaEnc = (x: string) => new TextEncoder().encode(x);
+const xaSha3Hex = (x: string) => xaHex(sha3_256(xaEnc(x)));
+
+async function xaKey(seed: number) {
+  const { ml_dsa65 } = await import("@noble/post-quantum/ml-dsa.js");
+  const k = ml_dsa65.keygen(new Uint8Array(32).fill(seed));
+  const pk = xaHex(k.publicKey);
+  return {
+    pk,
+    sign(body: any) {
+      const rest = { ...body };
+      delete rest.signature_hex;
+      delete rest.public_key_hex;
+      const statement = Object.fromEntries(XA_KEYS[rest.format].map((f) => [f, rest[f] ?? null]));
+      const digest = sha3_256(xaEnc(__canonicalJsonForTest(statement)));
+      return { ...rest, signature_hex: xaHex(ml_dsa65.sign(digest, k.secretKey)), public_key_hex: pk };
+    },
+    pack(tv: string) {
+      return { format: "polaris-authenticity-pack/1", token_value: tv, algorithm: "ML-DSA-65", public_key_hex: pk,
+               signature_hex: xaHex(ml_dsa65.sign(sha3_256(xaEnc(tv)), k.secretKey)) };
+    },
+  };
+}
+
+const xaCheckpoint = (authority: any) => ({
+  format: "polaris-epoch-checkpoint/1", authority,
+  epoch: { number: 7, root_hex: "ab".repeat(32), committed_count: 3, valid_until: null },
+  prev: { number: 6, root_hex: "cd".repeat(32) }, as_of: XA_ISSUED, issued_at: XA_ISSUED, expires_at: XA_EXPIRES,
+  algorithm: "ML-DSA-65" });
+
+function xaFeed(authority: any, leaves: string[], issued = XA_ISSUED, expires = XA_EXPIRES) {
+  const uniq = [...new Set(leaves.map((x) => x.toLowerCase()))].sort();
+  return { format: "polaris-revocation-feed/1", authority, epoch_number: 7, as_of: issued,
+           revoked_root_hex: xaSha3Hex(uniq.join("\n")), revoked_count: uniq.length, revoked_leaves: uniq,
+           issued_at: issued, expires_at: expires, algorithm: "ML-DSA-65" };
+}
+
+const xaManifest = (authority: any, anchorKeys: string[], attestations: any[]) => ({
+  format: "polaris-federation-manifest/1", authority,
+  anchors: anchorKeys.map((k) => ({ public_key_hex: k, status: "active" })), attestations,
+  epoch: null, revocation: null, issued_at: XA_ISSUED, expires_at: XA_EXPIRES, algorithm: "ML-DSA-65" });
+
+function xaEdge(attestedKey: string, signer?: { sign(b: any): any }) {
+  const edge = { attesting_agency_id: XA_HOME.agency_id, attested_agency_id: 9, attested_public_key_hex: attestedKey,
+                 context_id: 1 };
+  if (!signer) return edge;
+  return signer.sign({ ...edge, format: "polaris-trust-attestation/1", attested_date: "2026-04-30",
+                       valid_until: "2026-06-01T00:00:00Z", algorithm: "ML-DSA-65" });
+}
+
+test("an artifact of another format signed by the issuer is refused as the revocation feed", async () => {
+  const home = await xaKey(11), issuer = await xaKey(12);
+  const pack = issuer.pack("XA-FEED-0001");
+  const manifest = home.sign(xaManifest(XA_HOME, [home.pk], [xaEdge(issuer.pk)]));
+  const checkpoint = issuer.sign(xaCheckpoint(XA_ISSUER));
+  for (const [label, feed] of [
+    ["the issuer's epoch checkpoint", checkpoint],
+    ["the issuer's epoch checkpoint with an unsigned revoked_leaves", { ...checkpoint, revoked_leaves: [] }],
+    ["a manifest the issuer's key signed", issuer.sign(xaManifest(XA_ISSUER, [issuer.pk], []))],
+  ] as [string, any][]) {
+    assert.equal(verifySignedArtifact(feed, XA_NOW).authentic, true, label + " is authentic as itself");
+    const v = verifyCrossAuthority(pack, 1, [manifest], [home.pk], feed, XA_NOW);
+    assert.deepEqual([v.decision, v.reason], ["reject", "the revocation feed is not a polaris-revocation-feed/1"], label);
+  }
+});
+
+test("a real revocation feed decides as before", async () => {
+  const home = await xaKey(11), issuer = await xaKey(12), stranger = await xaKey(13);
+  const tv = "XA-FEED-0001";
+  const pack = issuer.pack(tv);
+  const manifest = home.sign(xaManifest(XA_HOME, [home.pk], [xaEdge(issuer.pk)]));
+  const decide = (feed: any) => verifyCrossAuthority(pack, 1, [manifest], [home.pk], feed, XA_NOW);
+  assert.equal(decide(null).decision, "accept", "no feed: the attestation decision alone");
+  assert.equal(decide(issuer.sign(xaFeed(XA_ISSUER, ["ef".repeat(32)]))).decision, "accept",
+    "the issuer's real feed listing another leaf");
+  const revoked = decide(issuer.sign(xaFeed(XA_ISSUER, [xaSha3Hex(tv)])));
+  assert.equal(revoked.decision, "reject");
+  assert.match(revoked.reason ?? "", /revoked/);
+  for (const [label, feed] of [
+    ["a feed signed by a stranger", stranger.sign(xaFeed(XA_ISSUER, []))],
+    ["an expired real feed", issuer.sign(xaFeed(XA_ISSUER, [], "2026-04-01T00:00:00Z", "2026-04-02T00:00:00Z"))],
+  ] as [string, any][]) {
+    const v = decide(feed);
+    assert.equal(v.decision, "reject", label);
+    assert.match(v.reason ?? "", /not authentic, fresh, and bound/, label);
+  }
+});
+
+async function xaManifestFixture() {
+  const home = await xaKey(21), own = await xaKey(22);
+  const unsigned = xaEdge(own.pk), signed = xaEdge(own.pk, own);
+  const ownAnchor = [{ public_key_hex: own.pk, status: "active" }];
+  const checkpoint = home.sign(xaCheckpoint(XA_HOME));
+  const feed = home.sign(xaFeed(XA_HOME, []));
+  const substitutes: [string, any][] = [
+    ["an epoch checkpoint carrying an edge", { ...checkpoint, attestations: [unsigned] }],
+    ["a revocation feed carrying an edge", { ...feed, attestations: [unsigned] }],
+    ["an epoch checkpoint carrying an anchor and an edge it signed",
+     { ...checkpoint, anchors: ownAnchor, attestations: [signed] }],
+    ["a revocation feed carrying an anchor and an edge it signed",
+     { ...feed, anchors: ownAnchor, attestations: [signed] }],
+  ];
+  const body = { account: "notional-7", ask: "balance" };
+  const request = own.sign({
+    format: "polaris-exchange-request/1", requester: { agency_id: 9, public_key_hex: own.pk },
+    target: { agency_id: 1 }, context_id: 1, request_hash: xaSha3Hex(__canonicalJsonForTest(body)),
+    nonce: "n-1", issued_at: XA_ISSUED, algorithm: "ML-DSA-65" });
+  const receipt = home.sign({
+    format: "polaris-exchange-receipt/1", requester: { agency_id: 9, public_key_hex: own.pk },
+    responder: { agency_id: 1 }, context_id: 1, request_hash: "aa".repeat(32), response_hash: "bb".repeat(32),
+    authorized_via: null, occurred_at: XA_ISSUED, algorithm: "ML-DSA-65" });
+  return { home, own, pack: own.pack("XA-MANIFEST-0001"), substitutes, request, receipt,
+           real: home.sign(xaManifest(XA_HOME, [home.pk], [unsigned])),
+           realSigned: home.sign(xaManifest(XA_HOME, [home.pk], [xaEdge(own.pk, home)])) };
+}
+
+test("another format carrying an edge is not a manifest for the cross-authority decision", async () => {
+  const f = await xaManifestFixture();
+  for (const [label, sub] of f.substitutes) {
+    assert.equal(verifySignedArtifact(sub, XA_NOW).authentic, true, label + " is authentic as itself");
+    for (const requireSigned of [false, true]) {
+      const v = verifyCrossAuthority(f.pack, 1, [sub], [f.home.pk], null, XA_NOW, requireSigned);
+      assert.deepEqual([v.decision, v.issuerTrusted, v.via ?? null], ["reject", false, null],
+        `${label}, requireSignedAttestation ${requireSigned}`);
+    }
+  }
+});
+
+test("another format carrying an edge is not a manifest for an exchange request", async () => {
+  const f = await xaManifestFixture();
+  for (const [label, sub] of f.substitutes) {
+    const v = verifyExchangeRequest(f.request, null, [sub], undefined, XA_NOW);
+    assert.equal(v.authentic, true, v.note ?? "");
+    assert.deepEqual([v.requesterAuthorized, v.attestationSigned], [false, null], label);
+  }
+});
+
+test("another format carrying an edge is not a manifest for an exchange receipt", async () => {
+  const f = await xaManifestFixture();
+  for (const [label, sub] of f.substitutes) {
+    const v = verifyExchangeReceipt(f.receipt, XA_NOW, [sub]);
+    assert.equal(v.authentic, true, v.note ?? "");
+    assert.deepEqual([v.requesterAuthorized, v.via, v.attestationSigned], [false, null, null], label);
+  }
+});
+
+test("a real federation manifest decides as before", async () => {
+  const f = await xaManifestFixture();
+  const decide = (m: any, requireSigned: boolean) =>
+    verifyCrossAuthority(f.pack, 1, [m], [f.home.pk], null, XA_NOW, requireSigned);
+  let v = decide(f.real, false);
+  assert.deepEqual([v.decision, v.via, v.attestationSigned], ["accept", XA_HOME, false]);
+  assert.equal(decide(f.real, true).decision, "reject", "an unsigned edge, a signature required");
+  v = decide(f.realSigned, true);
+  assert.deepEqual([v.decision, v.via, v.attestationSigned], ["accept", XA_HOME, true]);
+  for (const [m, signed] of [[f.real, false], [f.realSigned, true]] as [any, boolean][]) {
+    const q = verifyExchangeRequest(f.request, null, [m], undefined, XA_NOW);
+    assert.deepEqual([q.requesterAuthorized, q.attestationSigned], [true, signed]);
+    const r = verifyExchangeReceipt(f.receipt, XA_NOW, [m]);
+    assert.deepEqual([r.requesterAuthorized, r.via, r.attestationSigned], [true, XA_HOME, signed]);
+  }
+});
