@@ -956,8 +956,10 @@ instance forwards to (`404`); fresh within 300 s (`401 stale`); `request_hash` b
 and where versions are advertised); requester key known here (`401 unknown_requester`); signature two-witness (`401
 invalid_signature`); rate bound (`429`); requester authorized in the context by the trust graph
 (`403`) **before** forwarding; nonce consumed (`409 replay`); forwarded to the operator-configured
-upstream (`502` if it does not answer, or answers JSON it cannot parse; the nonce stays
-consumed); receipt minted with the
+upstream (`502` if it does not answer, or answers JSON it cannot parse; an upstream redirect
+is not followed, an answer over the request size limit is refused without being read to its end,
+and an answer shorter than its declared length is not used: each is the same `502`; the nonce
+stays consumed); receipt minted with the
 envelope's signed time and logged. No body is ever persisted. Verified offline with
 `verify_exchange_request` + `verify_exchange_receipt` + `exchange_evidence`. Specified in
 [exchange-gateway.md](../design/exchange-gateway.md); wire spec section 3.11.
