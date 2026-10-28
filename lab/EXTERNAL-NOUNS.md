@@ -169,7 +169,7 @@ become installable only when a maintainer approves them with a second factor.
 | `polaris-oid4vp` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0, 2026-10-11 (1.0.0rc7 is the certified one) |
 | `polaris-sdk-python` (PyPI) | 0.1.0, 2026-09-15 | 1.0.0rc1, 2026-09-16 | 1.0.0rc9, 2026-10-28, with `--pre` |
 | `polaris-id-cli` (PyPI) | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 | 1.0.0rc1, 2026-09-30 |
-| `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.9, 2026-10-03, under `next` |
+| `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.10, 2026-10-28, under `next` |
 
 Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). The Current column was
 measured on 2026-10-15 by installing each package into a fresh container; without `--pre`, pip
