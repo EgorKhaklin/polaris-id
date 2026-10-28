@@ -79,6 +79,15 @@ publishes under the Apache License 2.0, used unmodified. Its NOTICE reads:
 The macOS launcher (Polaris.command + polaris_mac_launch.sh) is original
 to this work.
 
+The project site's sky (site/hero/sky-*) and its star trails (site/film/trails-*)
+adapt the Milky Way of NASA's Deep Star Maps 2020
+(https://svs.gsfc.nasa.gov/4851). Credit: NASA/Goddard Space Flight Center
+Scientific Visualization Studio; Gaia DR2: ESA/Gaia/DPAC. The project placed
+the stars of the Yale Bright Star Catalogue on it and licenses the adaptations
+CC BY-SA 3.0 IGO
+(https://creativecommons.org/licenses/by-sa/3.0/igo/), as REUSE.toml records.
+The site's copyright line links here.
+
 The project report in its three versions (polaris_project_report.pdf,
 polaris_project_report_v2.pdf and polaris_project_report_v3.pdf), the Russian
 edition of Version 3 (polaris_project_report_v3_ru.pdf), the evidence record
@@ -95,10 +104,11 @@ Names and marks
 The Apache License covers this work's code, documents and image files, except
 the OpenID Certified mark (openid-certified-mark-on-white.png, in docs/assets/
 and site/), which belongs to the OpenID Foundation and is used under its
-certification terms. The license grants no right to the names and marks the
-files carry (section 6): the Polaris name, logo and star mark, the owl
-emblem, and the Khaklin Technologies name and lockup. TRADEMARKS.md says what
-that allows.
+certification terms, and the site's sky and star trails (site/hero/sky-*,
+site/film/trails-*), which are CC BY-SA 3.0 IGO as stated above. The license
+grants no right to the names and marks the files carry (section 6): the
+Polaris name, logo and star mark, the owl emblem, and the Khaklin Technologies
+name and lockup. TRADEMARKS.md says what that allows.
 
 ================================================================================
 Attribution

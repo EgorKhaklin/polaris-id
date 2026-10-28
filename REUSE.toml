@@ -15,7 +15,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # lockup. The license covers the files, not the names and marks they carry (TRADEMARKS.md).
 [[annotations]]
 path = ["site/polaris_logo_clean.png", "site/polaris_logo.webp", "site/polaris_logo_180.png", "polaris_web/static/favicon.svg",
-        "docs/assets/seal.svg", "docs/assets/hero.svg", "site/khaklin.svg", "site/og.png"]
+        "docs/assets/seal.svg", "docs/assets/hero.svg", "site/khaklin.svg", "site/og.png", "site/hero/coin-*"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin"
 SPDX-License-Identifier = "Apache-2.0"
@@ -28,9 +28,19 @@ precedence = "closest"
 SPDX-FileCopyrightText = "OpenID Foundation"
 SPDX-License-Identifier = "LicenseRef-OpenID-Certified-Mark"
 
-# The hero's sky film and its poster: rendered by the project, not marks.
+# The hero's sky and the star trails: the Milky Way of NASA's Deep Star Maps 2020 (https://svs.gsfc.nasa.gov/4851, credited as it
+# asks), with the stars of the Yale Bright Star Catalogue placed by the project. The project licenses these
+# adaptations CC BY-SA 3.0 IGO, the cautious choice for material built on Gaia data.
 [[annotations]]
-path = ["site/film/sky-1440.432d5189.mp4", "site/film/sky-960.9d90a332.mp4", "site/sky-poster.8417ef84.webp", "site/sky-poster.webp"]
+path = ["site/hero/sky-*", "site/film/trails-*"]
+precedence = "closest"
+SPDX-FileCopyrightText = "NASA/Goddard Space Flight Center Scientific Visualization Studio; Gaia DR2: ESA/Gaia/DPAC; 2026 Egor Khaklin and the Polaris contributors"
+SPDX-License-Identifier = "CC-BY-SA-3.0-IGO"
+
+# The acts' other images: the project's own renders (Blender). Their lettering is set in Cinzel and JetBrains Mono,
+# the site's fonts (SIL Open Font License).
+[[annotations]]
+path = ["site/film/iii-*", "site/film/iv-*", "site/film/vii-*"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin and the Polaris contributors"
 SPDX-License-Identifier = "Apache-2.0"

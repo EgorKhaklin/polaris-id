@@ -36,6 +36,7 @@ import sys
 import types
 from dataclasses import dataclass
 from functools import lru_cache
+from html.parser import HTMLParser
 from typing import Callable
 
 
@@ -6928,7 +6929,10 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 # wallets' latest builds by design). And Dependabot reads every manifest that pins something
 # (each npm lockfile, each published Python package, each Dockerfile directory, the compose
 # files, and since 2026-10-11 each Go, Gradle and Swift manifest), since a pin nothing refreshes stops
-# receiving security updates.
+# receiving security updates. 2026-10-24: and each directory with a .txt or .in file that pins a
+# version with `==` (requirements files and the CI tool lists alike). Dependabot raised a HIGH
+# alert on a pin in lab/strategy/013, a directory its version updates did not read, because pip
+# was required only for the published packages.
 #
 # 2026-10-21: "every workflow image" is what the check reads, and no more. It reads each `image:`,
 # `container:` and `uses: docker://` value in a workflow; each image a `docker run`, `create` or
@@ -6947,6 +6951,7 @@ def check_sbom_trivy_matches_scan(root: pathlib.Path) -> list[Finding]:
 # per branch, so the probe fails closed when either is replaced, and is moved by hand.
 _UNPINNED_BY_DESIGN = {"wallet-canary.yml"}
 _PUBLISHED_PY = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python", "polaris_cli")
+_REQUIREMENT_PIN = re.compile(r"(?m)^[A-Za-z0-9][\w.-]*(?:\[[\w.,-]*\])?\s*==")
 _WALK_PRUNE = {".git", "node_modules", "target", ".venv", "venv", "__pycache__", "dist", "build"}
 
 
@@ -7333,6 +7338,39 @@ def _dependabot_pins(root: pathlib.Path, covered: set[tuple[str, str]]) -> dict[
     return pins
 
 
+#: An image pinned by digest in a shell script, as a word of its own or a `${VAR:-...}` default.
+#: Each `:` or `/` inside the name starts a word, so `${VAR:-image}` yields the image, not `VAR:-image`.
+_SCRIPT_DIGEST_REF = re.compile(
+    r"(?:(?<=:-)|(?<![\w./:@-]))\w[\w.-]*(?:[:/]\w[\w.-]*)*@sha256:[0-9a-f]{64}(?![0-9a-f])")
+
+
+def _script_digests_off_pin(root: pathlib.Path, pins: dict[tuple[str, str], dict[str, str]]) -> tuple[list[str], int, int]:
+    """Every shell script in the tree, called by a workflow or not, read for images pinned by digest
+    under a tag: (problems, scripts read, refs whose tag a manifest Dependabot reads also pins). Such
+    a ref must carry that pin's digest, as a workflow ref must."""
+    problems: list[str] = []
+    files = twinned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _WALK_PRUNE)
+        for f in sorted(filenames):
+            if not f.endswith((".sh", ".bash")):
+                continue
+            path = pathlib.Path(dirpath) / f
+            rel, files = path.relative_to(root).as_posix(), files + 1
+            for i, line in enumerate(path.read_text(errors="replace").split("\n"), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                for m in _SCRIPT_DIGEST_REF.finditer(line):
+                    repo, tag, digest = _image_ref(m.group(0))
+                    twins = pins.get((repo, tag), {}) if tag else {}
+                    twinned += bool(twins)
+                    if twins and digest not in twins:
+                        pin, pinned_in = sorted(twins.items())[0]
+                        problems.append(f"{rel}:{i} pins {repo}:{tag} at {digest[7:19]}, but {pinned_in} "
+                                        f"pins it at {pin[7:19]}, which Dependabot refreshes")
+    return problems, files, twinned
+
+
 def _script_ref_problem(word: str, allowed: set[str]) -> tuple[str, str]:
     """How the lexical rule reads one shell word naming an image: ("", "") when it carries a digest,
     is a tag the workflows build, or is empty; ("tag", the ref) when it names an image by tag; ("run
@@ -7471,8 +7509,11 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
                         "against a pinned SHA-256 first")
     dep = _read(root, ".github/dependabot.yml")
     covered = _dependabot_coverage(dep)
-    seen = _workflow_images(root, _dependabot_pins(root, covered))
+    pins = _dependabot_pins(root, covered)
+    seen = _workflow_images(root, pins)
     problems += seen["problems"]
+    off_pin, shell_files, twinned = _script_digests_off_pin(root, pins)
+    problems += off_pin
     wfdir = root / ".github" / "workflows"
     for wf in sorted(wfdir.glob("*.yml")) if wfdir.is_dir() else ():
         text = "\n".join(l for l in wf.read_text().splitlines() if not l.lstrip().startswith("#"))
@@ -7482,12 +7523,17 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
         problems += [f"{compose.name} runs {img} by tag" for img in
                      re.findall(r"(?m)^\s*image:\s*(\S+)", compose.read_text())
                      if not img.startswith("polaris-") and "@sha256:" not in img]
-    required = set()
+    required, pinned_py = set(), set()
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _WALK_PRUNE]
         r = os.path.relpath(dirpath, root)
         rel = "/" if r == "." else "/" + r.replace(os.sep, "/")
-        if rel.startswith(("/polaris_checks", "/.github")):
+        if rel.startswith("/polaris_checks"):
+            continue
+        if any(f.endswith((".txt", ".in")) and _REQUIREMENT_PIN.search(
+                (pathlib.Path(dirpath) / f).read_text(errors="replace")) for f in filenames):
+            pinned_py.add(rel)
+        if rel.startswith("/.github"):
             continue
         if "package-lock.json" in filenames:
             required.add(("npm", rel))
@@ -7502,6 +7548,7 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
         if "Package.swift" in filenames:
             required.add(("swift", rel))
     required |= {("pip", "/" + d) for d in _PUBLISHED_PY if (root / d / "pyproject.toml").is_file()}
+    required |= {("pip", d) for d in pinned_py}
     missing = sorted(required - covered)
     if missing:
         problems.append("Dependabot reads no " + ", ".join(f"{e} manifest in {d}" for e, d in missing[:4])
@@ -7516,8 +7563,11 @@ def check_supply_chain_pins(root: pathlib.Path) -> list[Finding]:
                f"refs, {commands} of them docker run, create or pull in run steps, each equal to "
                f"the pin of its tag in a manifest Dependabot reads where one pins it, and the docker "
                f"refs and IMAGE assignments in the {len(seen['scripts'])} shell scripts run steps call, "
-               f"where {len(seen['run time'])} refs are built at run time and not read; "
-               f"Dependabot reads all {len(required)} manifests that pin something")
+               f"where {len(seen['run time'])} refs are built at run time and not read; the "
+               f"{twinned} digest pins, in {shell_files} shell scripts, of a tag such a manifest "
+               f"pins carry its digest; Dependabot reads all {len(required)} manifest directories "
+               f"that pin something, {len(pinned_py)} of them holding a .txt or .in file with a "
+               f"requirement line pinning a version with == (name==version)")
 
 
 # P0.6 — every release artifact carries a signed SLSA provenance attestation,
@@ -12015,6 +12065,93 @@ _SITE_HEADERS_FIXED = {"x-content-type-options": "nosniff", "x-frame-options": "
 _URL_WITH_ORIGIN = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*:|//)")
 
 
+#: Start tags that end an <svg> or <math> the parser is inside: it closes the drawing and reads them as HTML.
+_FOREIGN_BREAKOUT = frozenset("b big blockquote body br center code dd div dl dt em embed h1 h2 h3 h4 h5 h6 head hr "
+                              "i img li listing menu meta nobr ol p pre ruby s small span strong strike sub sup "
+                              "table tt u ul var".split())
+#: The <svg> and <math> elements whose children the parser reads as HTML again.
+_FOREIGN_HTML_POINTS = frozenset(("foreignobject", "desc", "title", "mi", "mo", "mn", "ms", "mtext", "annotation-xml"))
+#: HTML elements that take no end tag.
+_VOID_TAGS = frozenset("area base br col embed hr img input link meta source track wbr".split())
+
+
+class _TagReader(HTMLParser):
+    """Every start tag of a page with its attributes as a browser reads them (double, single or
+    no quotes, any case, character references decoded, a repeated attribute kept each time), and
+    the text of every <title> the parser makes an HTML title, wherever it sits: the <title> of an
+    inline SVG or MathML drawing names the drawing, not the page, unless it sits where the parser
+    reads HTML again (a <foreignObject>, a <desc> or <title>, MathML text, or after a tag that ends
+    the drawing). Inside a drawing a <title>, <style> or <script> holds markup, not the raw text
+    the same tag holds in HTML. A <title> in a <template> or a <noscript> is kept: a crawler or a
+    reader without scripting may take it."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[tuple[str, list[tuple[str, str]]]] = []
+        self.titles: list[str] = []
+        # the elements open inside a drawing, each with whether its children are read as HTML
+        self._foreign: list[tuple[str, bool]] = []
+        self._title: list[str] | None = None
+        self._raw_text = True  # whether the tag just read may switch the parser to raw text
+        self.feed(text)
+        self.close()
+        if self._title is not None:  # a <title> left open runs to the end of the page
+            self.titles.append("".join(self._title))
+
+    @property
+    def title(self) -> str | None:
+        """The first page <title>, or None."""
+        return self.titles[0] if self.titles else None
+
+    def _html_here(self) -> bool:
+        return not self._foreign or self._foreign[-1][1]
+
+    def _break_out(self) -> None:
+        while not self._html_here():
+            self._foreign.pop()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.append((tag, [(k, v or "") for k, v in attrs]))
+        if not self._html_here() and (tag in _FOREIGN_BREAKOUT or tag == "font" and any(
+                k in ("color", "face", "size") for k, _ in attrs)):
+            self._break_out()
+        html = self._html_here()
+        self._raw_text = html
+        if tag == "title" and html and self._title is None:
+            self._title = []
+        if tag in ("svg", "math") or not html:
+            self._foreign.append((tag, tag in _FOREIGN_HTML_POINTS))
+        elif self._foreign and tag not in _VOID_TAGS:
+            self._foreign.append((tag, True))
+
+    def set_cdata_mode(self, elem: str, **kwargs: bool) -> None:
+        # The parser passes escapable only where its Python has it (3.12.13 has it, 3.9.6 does not).
+        if self._raw_text:  # an SVG or MathML <title>, <style> or <script> holds markup
+            super().set_cdata_mode(elem, **kwargs)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title" and self._title is not None:
+            self.titles.append("".join(self._title))
+            self._title = None
+        if tag in ("br", "p") and not self._html_here():
+            self._break_out()
+        names = [name for name, _ in self._foreign]
+        if tag in names:
+            del self._foreign[len(names) - 1 - names[::-1].index(tag):]
+
+    def handle_data(self, data: str) -> None:
+        if self._title is not None:
+            self._title.append(data)
+
+    def metas(self, key: str) -> list[str]:
+        """The content of every <meta> whose property or name is `key`, compared in any case."""
+        out: list[str] = []
+        for tag, attrs in self.tags:
+            if tag == "meta" and any(k in ("property", "name") and v.lower() == key.lower() for k, v in attrs):
+                out += [v for k, v in attrs if k == "content"]
+        return out
+
+
 def _site_headers_for(text: str, pattern: str = "/*") -> dict[str, str]:
     """The headers a _headers file sets for one path pattern, names lowercased."""
     out: dict[str, str] = {}
@@ -12030,6 +12167,11 @@ def _site_headers_for(text: str, pattern: str = "/*") -> dict[str, str]:
     return out
 
 
+#: The directive a preload's `as` falls under, where its name is not the directive's own (font, style, script).
+_PRELOAD_KINDS = {"image": "img", "audio": "media", "video": "media", "track": "media", "fetch": "connect",
+                  "document": "frame"}
+
+
 def _csp_allows(directives: dict[str, list[str]], kind: str, url: str | None) -> bool:
     """Whether a policy lets a resource of this kind load; url None means inline."""
     fallback = ("child-src", "default-src") if kind == "frame" else ("default-src",)
@@ -12043,6 +12185,40 @@ def _csp_allows(directives: dict[str, list[str]], kind: str, url: str | None) ->
     return "'self'" in sources
 
 
+def _urls_as_parsed(urls: list[str]) -> list[str]:
+    """Each URL as the URL parser reads it, not as written: it drops a tab or newline anywhere,
+    strips controls and spaces at either end, and reads a backslash as a slash in an http(s) URL,
+    so " https://x", "ht&#9;tps://x" and "/\\x" all load from another origin."""
+    return [re.sub(r"[\t\n\r]", "", u).strip("".join(map(chr, range(33)))).replace("\\", "/") for u in urls]
+
+
+def _image_set_strings(css: str) -> list[str]:
+    """The URLs an image-set() or -webkit-image-set() gives as bare strings (CSS Images 4 takes
+    image-set("x.avif" 1x) as well as url()), to its matching parenthesis, quotes respected. A url()
+    inside is read with the other url()s; the string in a type() names a format, not a file."""
+    out: list[str] = []
+    for m in re.finditer(r"(?i)(?<![\w-])(?:-webkit-)?image-set\(", css):
+        depth, i, quote = 1, m.end(), ""
+        while i < len(css) and depth:
+            c = css[i]
+            if quote:
+                if c == "\\":
+                    i += 1
+                elif c == quote:
+                    quote = ""
+            elif c in "\"'":
+                quote = c
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            i += 1
+        body = re.sub(r"""(?is)(?<![\w-])(?:url|type)\(\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^)]*?)\s*\)""", "",
+                      css[m.end():i - 1])
+        out += [a or b for a, b in re.findall(r""""((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'""", body)]
+    return _urls_as_parsed(out)
+
+
 def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Finding]:
     """site/_headers sends the hardening headers, and every page renders under that policy.
 
@@ -12050,8 +12226,10 @@ def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Find
     HSTS, X-Content-Type-Options: nosniff and X-Frame-Options. The policy must start from
     default-src 'none', refuse framing, and allow no inline code and no eval; then each page and
     stylesheet is read for what it would load (inline style or script, event handlers, scripts,
-    stylesheets, images, frames, fonts, CSS url() and @import) and each load must be one the
-    policy allows. A site with no page fails too, so a moved directory cannot pass.
+    stylesheets, images and every srcset candidate, image inputs, video, audio and track sources and
+    posters, SVG images, preloads, frames, fonts, CSS url(), the bare strings of an image-set() and
+    @import), each URL as the URL parser reads it, and each load must be one the policy allows.
+    A site with no page fails too, so a moved directory cannot pass.
     """
     text = _read(root, "site/_headers")
     if not text:
@@ -12086,24 +12264,49 @@ def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Find
     for page in pages:
         html = page.read_text(encoding="utf-8", errors="replace")
         rel = f"site/{page.name}"
-        if re.search(r"(?i)<style\b", html) or re.search(r"(?i)\sstyle\s*=", html):
-            loads.append((rel, "style", None))
-        if re.search(r"(?i)\son[a-z]+\s*=", html):
-            loads.append((rel, "script", None))
-        for tag in re.finditer(r"(?is)<(script|link|img|iframe|embed|object|source)\b([^>]*)>", html):
-            name, attrs = tag.group(1).lower(), tag.group(2)
-            urls = re.findall(r'(?i)\s(?:src|href|data)\s*=\s*"([^"]*)"', attrs)
+        for name, attrs in _TagReader(html).tags:
+            # an inline style or event handler is an attribute as the parser reads it (after a slash
+            # or straight after a quote too), or a <style> element
+            if name == "style" or any(k == "style" for k, _ in attrs):
+                loads.append((rel, "style", None))
+            if any(k.startswith("on") for k, _ in attrs):
+                loads.append((rel, "script", None))
+            if name not in ("script", "link", "img", "iframe", "embed", "object", "source", "video", "audio",
+                            "track", "image", "input"):
+                continue
+            own = _urls_as_parsed([v for k, v in attrs if k in ("src", "href", "data", "xlink:href")])
+            # a srcset, or a preload's imagesrcset, lists candidates ("URL [descriptor]", comma-separated)
+            # and the browser may fetch any one of them, so each candidate is a load
+            sets = _urls_as_parsed([c.split()[0] for k, v in attrs if k in ("srcset", "imagesrcset")
+                                    for c in v.split(",") if c.split()])
+            urls = own + sets
             if name == "link":
-                rel_attr = (re.search(r'(?i)\srel\s*=\s*"([^"]*)"', attrs) or [None, ""])[1].lower()
+                rel_attr = " ".join(v for k, v in attrs if k == "rel").lower()
                 if "stylesheet" in rel_attr:
                     loads += [(rel, "style", u) for u in urls]
                     sheets.update(u for u in urls if not _URL_WITH_ORIGIN.match(u))
                 elif "icon" in rel_attr:
                     loads += [(rel, "img", u) for u in urls]
+                elif "preload" in rel_attr:
+                    # a preload fetches under the directive of what it says it is (as="font": font-src)
+                    as_attr = next((v for k, v in attrs if k == "as"), "").lower()
+                    kind = "script" if "modulepreload" in rel_attr else _PRELOAD_KINDS.get(as_attr, as_attr or "default")
+                    loads += [(rel, kind, u) for u in urls]
             elif name == "script":
                 loads += [(rel, "script", u) for u in urls] or [(rel, "script", None)]
-            elif name in ("img", "source"):
+            elif name == "source":
+                # HTML lets a <source> carry src only in a <video> or <audio>, srcset only in a <picture>
+                loads += [(rel, "media", u) for u in own] + [(rel, "img", u) for u in sets]
+            elif name in ("video", "audio", "track"):
+                posters = _urls_as_parsed([v for k, v in attrs if k == "poster"])
+                loads += [(rel, "media", u) for u in urls] + [(rel, "img", u) for u in posters]
+            elif name in ("img", "image"):
                 loads += [(rel, "img", u) for u in urls]
+            elif name == "input":
+                # an <input type="image"> is a button drawn from its src (the first type attribute
+                # counts, as the parser keeps it); any other input ignores src
+                if next((v for k, v in attrs if k == "type"), "").strip().lower() == "image":
+                    loads += [(rel, "img", u) for u in _urls_as_parsed([v for k, v in attrs if k == "src"])]
             else:
                 loads += [(rel, "frame" if name == "iframe" else "object", u) for u in urls] or [(rel, "object", None)]
     for sheet in sorted(sheets):
@@ -12117,6 +12320,8 @@ def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Find
         for url in re.findall(r"""url\(\s*['"]?([^'")]+)""", fonts):
             loads.append((f"site/{sheet}", "font", url))
         for url in re.findall(r"""url\(\s*['"]?([^'")]+)""", re.sub(r"(?s)@font-face\s*\{.*?\}", "", css)):
+            loads.append((f"site/{sheet}", "img", url))
+        for url in _image_set_strings(re.sub(r"(?s)@font-face\s*\{.*?\}", "", css)):
             loads.append((f"site/{sheet}", "img", url))
     for where, kind, url in loads:
         if not _csp_allows(directives, kind, url):
@@ -15535,37 +15740,73 @@ def check_post_quantum_claims_are_agility(root: pathlib.Path) -> list[Finding]:
                      "path writes a placeholder" % len(_OUTWARD_SURFACES))
 
 
+#: The names a browser tab or a shared card may give Polaris without a qualifier (owner, 2026-10-23).
+_BARE_NAMES = ("Polaris", "Polaris ID")
+#: What the title and the social card never call Polaris (beside 'national' and a bare 'unlinkable').
+_CARD_OVERCLAIMS = ((r"\bdeployed\b", "deployed"), (r"\bpiloted\b", "piloted"),
+                    (r"\bproduction[- ]ready\b", "production-ready"))
+
+
 def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
-    """The site title and social card must name Polaris pre-pilot
-    (not present it AS a national identity system in a browser tab or a shared
-    link); the README must not carry the retired overclaims; and the 'Where
-    Polaris sits' comparison must keep the honest 'Deployed to a real population'
-    column that marks Polaris the one system NOT deployed, so its design ticks are
-    not read as a deployment. Detection: test_checks restores a bare title and an
-    overclaim phrase."""
+    """The site title and social card must not overstate Polaris in a browser
+    tab or a shared link: each name field (every page <title>, og:title, and any og:site_name
+    or twitter:title) is the bare name (owner, 2026-10-23) or says "pre-pilot", and
+    never "certified"; no field of the card, descriptions and image text included,
+    calls Polaris national, deployed, piloted or production-ready, or unlinkable
+    without its issuer qualifier (each occurrence), in any tag of that field, however it is quoted or
+    cased; the README must not carry the retired overclaims; and the 'Where Polaris
+    sits' comparison must keep the honest 'Deployed to a real population' column
+    that marks Polaris the one system NOT deployed, so its design ticks are not read
+    as a deployment. Detection: test_checks restores each refused
+    word in each kind of field, in a second tag, in single quotes, unquoted and in upper
+    case, a longer name without "pre-pilot", a missing or empty name field, a bare
+    'unlinkable' beside a qualified one, an overclaiming <title> beside an innocent one
+    in a drawing, a template or a noscript, or after it, and an overclaim phrase."""
     readme = _read(root, "README.md")
     site = _read(root, "site/index.html")
     if not readme or not site:
         return _fail("public_claims", "README.md or site/index.html is missing")
-    title = re.search(r"<title>([^<]*)</title>", site)
-    ogt = re.search(r'og:title"\s+content="([^"]*)"', site)
-    for label, m in (("<title>", title), ("og:title", ogt)):
-        if not m or "pre-pilot" not in m.group(1).lower():
+    # What a browser tab and a shared link say Polaris is. A name field is the bare name, which
+    # claims nothing, or else says "pre-pilot"; it never says "certified", which only a scoped
+    # sentence can say (one package, one version, one profile: docs/reference/claims.json,
+    # openid-certified-scoped). Every tag of a field is read, as a crawler may take any of them, and
+    # every <title> the parser makes is a name field, as a reader with scripting and one without
+    # may take different ones.
+    page = _TagReader(site)
+    names = [("<title>", v) for v in page.titles or [None]] + [("og:title", v) for v in page.metas("og:title") or [None]]
+    names += [(k, v) for k in ("og:site_name", "twitter:title") for v in page.metas(k)]
+    texts = [(k, v) for k in ("description", "og:description", "og:image:alt", "twitter:description",
+                              "twitter:image:alt") for v in page.metas(k)]
+    for label, value in names:
+        if value is None or not value.strip():
+            return _fail("public_claims", f"the site {label} is missing or empty")
+        if value.strip() not in _BARE_NAMES and "pre-pilot" not in value.lower():
             return _fail("public_claims",
-                         f"the site {label} must name Polaris pre-pilot, not present it AS a "
-                         "national identity system in a browser tab or a shared social card")
+                         f"the site {label} ({value.strip()!r}) is neither the bare name nor qualified as "
+                         "pre-pilot; a name field that says more than the name must say what Polaris is not yet")
+        if re.search(r"\bcertified\b", value, re.I):
+            return _fail("public_claims",
+                         f"the site {label} says 'certified'; only polaris-oid4vp 1.0.0rc7 is, to one profile, "
+                         "and a name field has no room for that scope")
+    for label, value in names + texts:
+        low = value.lower()
         # The category must match the honest GitHub one (a pre-pilot identity-token
         # system): the shareable surface must not call Polaris a "national"
         # system, which reads as a deployment. Understate, do not overstate.
-        if "national" in m.group(1).lower():
+        if re.search(r"\bnational\b", low):
             return _fail("public_claims",
                          f"the site {label} calls Polaris a 'national' system; that category overstates pre-pilot "
                          "software on notional data. Drop 'national' from the title and social card.")
+        for pattern, word in _CARD_OVERCLAIMS:
+            if re.search(pattern, low):
+                return _fail("public_claims",
+                             f"the site {label} says {word!r}; Polaris has not been deployed or piloted and is not "
+                             "production-ready, so the title and social card never say so")
         # Unlinkability is issuer-side and ZK-mode-scoped. A bare "unlinkable-by-default"
         # on the shareable surface reads as covering the holder-to-verifier hop, which it
-        # does not; the qualifier must be beside the claim, so say "issuer-unlinkable".
-        low = m.group(1).lower()
-        if "unlinkable" in low and "issuer-unlinkable" not in low:
+        # does not; the qualifier must be beside the claim, so say "issuer-unlinkable". Each
+        # occurrence is held: a qualified one does not excuse a bare one in the same field.
+        if re.search(r"(?<!issuer-)unlinkable", low):
             return _fail("public_claims",
                          f"the site {label} says 'unlinkable' without the issuer qualifier; unlinkability is "
                          "issuer-side and ZK-mode-scoped, so the shareable surface must say 'issuer-unlinkable' "
@@ -15608,8 +15849,9 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
                      "does not issue at national scale, so both leading columns must be a negative (the paragraph "
                      "and the table must not argue)")
     return _ok("public_claims",
-               "the outward surfaces name Polaris pre-pilot and drop the 'national' category "
-               "(title + social card), carry no retired overclaim, and the comparison marks Polaris neither deployed "
+               "the title and social card do not overstate Polaris (each name field the bare name or 'pre-pilot', "
+               "none 'certified'; no field national, deployed, piloted, production-ready or bare 'unlinkable'), "
+               "the README carries no retired overclaim, and the comparison marks Polaris neither deployed "
                "nor issuing at national scale so its design ticks are not read as a deployment")
 
 

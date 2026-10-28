@@ -2368,16 +2368,17 @@ jobs:
           docker run -d --name pqedge --network pqnet --network-alias edge \
             -v /tmp/pqtest.Caddyfile:/etc/caddy/Caddyfile:ro polaris-caddy:ci >/dev/null
           # The client is alpine:3.24 at the Dockerfiles' pin, with curl and openssl installed at exact
-          # versions (pinned 2026-10-21). Alpine serves one build of each package per branch, so once
-          # either is replaced, apk refuses the next command and the step fails there with apk's
-          # error; the versions are then moved by hand, there and in the three client lines below.
+          # versions (pinned 2026-10-21; curl moved 2026-10-27). Alpine serves one build of each
+          # package per branch, so once either is replaced, apk refuses the next command and the step
+          # fails there with apk's error; the versions are then moved by hand, there and in the three
+          # client lines below.
           docker run --rm alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
-            apk add --no-cache curl=8.22.0-r0 openssl=3.5.9-r0 >/dev/null \
-            || { echo "::error::apk could not install curl=8.22.0-r0 and openssl=3.5.9-r0 on alpine:3.24 (its error is above): move a version Alpine no longer serves by hand; a mirror error is a flake"; exit 1; }
+            apk add --no-cache curl=8.23.0-r0 openssl=3.5.9-r0 >/dev/null \
+            || { echo "::error::apk could not install curl=8.23.0-r0 and openssl=3.5.9-r0 on alpine:3.24 (its error is above): move a version Alpine no longer serves by hand; a mirror error is a flake"; exit 1; }
           # Wait for the edge to serve TLS.
           for i in $(seq 1 30); do
             docker run --rm --network pqnet alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 sh -c \
-              'apk add --no-cache curl=8.22.0-r0 >/dev/null 2>&1; curl -sk https://edge:8443/ -o /dev/null -w "%{http_code}"' 2>/dev/null \
+              'apk add --no-cache curl=8.23.0-r0 >/dev/null 2>&1; curl -sk https://edge:8443/ -o /dev/null -w "%{http_code}"' 2>/dev/null \
               | grep -q 200 && { echo "edge serving after ${i}"; break; }
             sleep 1
           done
@@ -3921,6 +3922,12 @@ jobs:
       # not reach its last line; this holds all sixteen to it and runs the shape under /bin/bash.
       - name: The lab harnesses' EXIT traps (lab/interop/test_exit_trap.py), an early stop fails
         run: python -m unittest lab/interop/test_exit_trap.py
+      # lab/interop/waltid/setup.sh is the stranger's step 4. Run again on the same walt.id after
+      # step 3 made a new certificate, it must leave the wallet trusting the new certificate (keytool
+      # refuses an alias that exists, so the old alias goes first) and holding only the new
+      # credential (each run makes its wallet on stores of its own); any keytool or store error stops it.
+      - name: The stranger's step 4 run again trusts the new certificate and holds only the new credential (lab/interop/waltid/test_setup_rerun.py)
+        run: python -m unittest lab/interop/waltid/test_setup_rerun.py
       # lab/interop/oid4vcgo/run.sh runs in OID4VCgo's own CI, which tests a pull request before its
       # release with OID4VCGO_BIN or OID4VCGO_SRC: each input is the wallet that runs, a wrong one
       # stops the run with its reason, and the default stays the pinned version. No Docker.
@@ -4103,10 +4110,6 @@ jobs:
         run: cd sdk/typescript && npx tsc --noEmit
       - name: SDK unit tests
         run: cd sdk/typescript && node --test
-      # The site's one edge function (edge/film.js, /film/* only): ranges, refusals, and If-Range,
-      # which must never splice a slice of one file onto a cached copy of another.
-      - name: The site's film function answers byte ranges and honours If-Range (edge/film.test.mjs)
-        run: node --test edge/film.test.mjs
       - name: Conformance suite — TypeScript SDK (the same runner as the Python SDK)
         run: python3 conformance/run_conformance.py --verifier "node sdk/typescript/src/conformance.ts" --algorithm Falcon-padded-1024
 
