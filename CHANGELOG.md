@@ -53,6 +53,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp's ETSI TS 119 472-2 profile refuses a `verifier_info` with two or more `registrar_dataset` elements as this package's reading of RO-02 and RO-04, which state no count, and its vector is graded spec-implied; the `--verifier-info` example in the README and `--help` gives the certificate's `data` in RO-16's words.
 - CI's bandit gate fails the build on a high-severity finding at any confidence (`--confidence-level all`, was `medium`), as SECURITY.md states, and `check_sast_scanning` requires that flag on the gating run.
 - The container image CVE gate (Trivy, failing on a fixable critical that `.trivyignore` does not cover) now also runs weekly on main; its steps moved to `.github/workflows/image-cve-scan.yml`, which CI's `image-cve-scan` job calls, and `check_image_cve_scanning` requires a weekly run of the workflow holding the gate.
+- The Version 3 report, its evidence record and the mathematical edition in docs/paper/ are rebuilt with their revision of 28 October 2026; the evidence record's provenance appendix lists what changed in the report and the record.
 
 ### Fixed
 
@@ -69,7 +70,6 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp `serve` prints its startup lines and the `--once` launch links before it waits, and each verdict line as it happens. When stdout was not a terminal (a pipe, a file, a container log), Python's buffering held them until its buffer filled or the process exited.
 - docs/RED-TEAM-SCOPE.md said every read of an audit-tracked table must leave an `AuditAccessLog` row, wider than the review packet's A-8: a count over those tables (the dashboard's figures) returns no one's rows. Both now name the four tables and the rows a page returns, and name the tables holding one person's rows that are outside the record, `TokenStateEpochLeaf` (`/epochs`) among them.
 - polaris-oid4vp's `serve` command and its `serve()` function listen on 127.0.0.1 by default, as the 1.0.0 README said ("localhost by default"); both listened on every interface, and a caller of `serve(verifier)` now gets this machine only. `--bind 0.0.0.0`, or `serve(..., host="0.0.0.0")`, listens on every interface.
-- The Version 3 report, its evidence record and the mathematical edition in docs/paper/ are rebuilt with their revision of 28 October 2026; the evidence record's provenance table lists what it changed.
 
 ### Security
 
