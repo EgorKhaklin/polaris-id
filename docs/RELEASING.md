@@ -13,9 +13,9 @@ when something externally observable changes.
 
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
-| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
+| `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc9, 2026-10-28 | 1.0.0rc8, 2026-10-11 |
 | `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.0.0, 2026-10-11 | 1.0.0rc20, 2026-10-11 |
-| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc8, 2026-10-11 | 1.0.0rc7, 2026-10-01 |
+| `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc9, 2026-10-28 | 1.0.0rc8, 2026-10-11 |
 | `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.9, 2026-10-03 | 1.0.0-rc.8, 2026-10-01 |
 
@@ -369,6 +369,8 @@ worse state to be in than three runs.
 | 38091379847 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc18 | approved and published the same way; read back from the live registry and installed into a clean environment outside the tree; the wallet canary passes against it (run 38099791825) |
 | 38113072995 | 2026-10-11 | `polaris-oid4vp` 1.0.0rc20 | dispatched from main (84a805ff), approved and published the same way; read back from the live registry: the stranger's path, walked from empty directories outside the tree, installed 1.0.0rc20 from PyPI, and its one-minute script (with Docker and without) and its ten-minute half each answered `200 authentic`, with all three controls refused |
 | 38131929094 | 2026-10-11 | `polaris-oid4vp` 1.0.0 | dispatched from main (6f2b890a, tagged v1.0.0), approved and published the same way; read back from the live registry: a bare `pip install polaris-oid4vp` from an empty directory installs 1.0.0 (wheel sha256 34542f4d82753901303cb040a9d158a489559d5bef46059c2ab6c2c48f193afe), and the stranger's path, walked from empty directories outside the tree, installed 1.0.0 from PyPI; its one-minute script (with Docker and without) and its ten-minute half (without `--pre`) each answered `200 authentic`, with all three controls refused |
+| 40663758226 | 2026-10-28 | `polaris-verify` 1.0.0rc9 | approved by the maintainer at the environment gate, published by trusted publishing from main (4d5091a9); read back from the live registry and installed into a clean environment outside the tree |
+| 40676854791 | 2026-10-28 | `polaris-sdk-python` 1.0.0rc9 | approved by the maintainer at the environment gate, published by trusted publishing from main (b13ed828); read back from the live registry and installed into a clean environment outside the tree |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different
