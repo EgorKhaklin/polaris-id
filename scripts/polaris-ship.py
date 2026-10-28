@@ -169,6 +169,9 @@ VERIFICATION = [
     (r"^lab/interop/([^/]+/run\.sh|test_exit_trap\.py)$",
      ["python3 -m unittest lab/interop/test_exit_trap.py"],
      "a lab harness moved: its EXIT trap must still fail a run that stops early"),
+    (r"^lab/interop/waltid/(setup\.sh|test_setup_rerun\.py)$",
+     ["python3 -m unittest lab/interop/waltid/test_setup_rerun.py"],
+     "the stranger's step 4 moved: run again, the wallet must trust the new certificate and hold only the new credential"),
     (r"^lab/interop/mdoc/",
      ["python3 -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py",
       "lab/interop/mdoc/witness-eudi/run.sh if a witness, a case or verify_mdoc.py changed"],
@@ -185,6 +188,9 @@ VERIFICATION = [
     (r"^scripts/(polaris-dev-tunnel\.sh|test_dev_tunnel\.py)$",
      ["python3 -m unittest scripts/test_dev_tunnel.py"],
      "the dev tunnel moved: its passthrough and its PKI reuse must hold"),
+    (r"^scripts/(polaris-transparency-(monitor|witness)\.py|test_transparency_tools\.py)$",
+     ["python3 -m unittest scripts/test_transparency_tools.py"],
+     "the transparency monitor or witness moved: each must follow the log --log names"),
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
@@ -375,7 +381,8 @@ UNSHARDED_SUITES = {
                 "test_ci_changes", "test_ci_gate", "test_compose_parse", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
                 "test_event_partition_migration", "test_database_settings", "test_db_state", "test_db_reference",
-                "test_pgbackrest_conf", "test_db_init", "test_dev_tunnel", "test_tree_gate"],
+                "test_pgbackrest_conf", "test_db_init", "test_dev_tunnel", "test_tree_gate",
+                "test_transparency_tools"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine
@@ -395,6 +402,7 @@ UNSHARDED_SUITES = {
     "lab/interop": ["test_exit_trap"],
     "lab/interop/oid4vcgo": ["test_wallet_inputs"],
     "lab/interop/yivi": ["test_public_capture"],
+    "lab/interop/waltid": ["test_setup_rerun"],
     # Needs requirements.txt there; without it the suite skips here and CI, which installs it, runs it.
     "packages/polaris-oid4vp/examples/yivi-checkin": ["test_checkin"],
     "lab/interop/mdoc/witness-eudi": ["test_witness_eudi"],
@@ -434,6 +442,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop":              ("unittest", None),
     "lab/interop/oid4vcgo":     ("unittest", None),
     "lab/interop/yivi":         ("unittest", None),
+    "lab/interop/waltid":       ("unittest", None),
     "packages/polaris-oid4vp/examples/yivi-checkin": ("unittest", None),
     "lab/interop/mdoc/witness-eudi": ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),

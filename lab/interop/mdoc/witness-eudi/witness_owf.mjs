@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Egor Khaklin and the Polaris contributors
 //
-// @owf/mdoc 0.8.2 (OpenWallet Foundation identity-common-ts, Apache-2.0) as an mdoc witness:
+// @owf/mdoc 0.8.3 (OpenWallet Foundation identity-common-ts, Apache-2.0) as an mdoc witness:
 // Verifier.verifyDeviceResponse over each case, with every check it reports.
 //
 //   node /deps/witness_owf.mjs /in/jobs.json
