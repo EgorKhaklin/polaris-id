@@ -35,7 +35,7 @@ trust root was given (an abstention: a genuine signature is not a trusted issuer
 polaris-zk binary); 4 when it refused to start (no cryptography declared, or an argument it
 does not take). The README's exit-code table is the full list.
 
-Dependencies: `pip install liboqs-python` (primary). Optionally
+Dependencies: liboqs-python with the liboqs shared library (primary). Optionally
 `cryptography>=48` on OpenSSL 3.5+ for the independent second witness.
 """
 import argparse
@@ -190,6 +190,77 @@ _PLACEHOLDER = "DETERMINISTIC-PLACEHOLDER-SHA3-256"
 _DEV_PLACEHOLDER_MODE = False
 
 
+#: The repair for an `oqs` that is not liboqs-python. PyPI's `oqs` is an unrelated project
+#: whose wheel installs a top-level `oqs` package over liboqs-python's, and uninstalling it
+#: removes the `__init__.py` both ship, so liboqs-python has to be reinstalled over it.
+_OQS_REPAIR = ("Run `pip uninstall oqs` if a distribution of that name is installed, then "
+               "`pip install --force-reinstall --no-deps liboqs-python`.")
+
+
+class _OqsUnusable(ImportError):
+    """liboqs cannot be used here, for a reason the refusal to start names."""
+
+
+def _unrelated_oqs_installed():
+    """True iff a distribution named `oqs` is installed. liboqs-python's is `liboqs-python`."""
+    from importlib import metadata
+    try:
+        metadata.distribution("oqs")
+    except metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+def _liboqs_library():
+    """Find and load the liboqs shared library the way liboqs-python 0.16.0 does.
+
+    Returns (the first candidate that loads or None, the places looked). Without a library
+    that loads, `import oqs` clones liboqs from GitHub, builds it and installs it, and raises
+    SystemExit when that fails. The order is oqs/oqs.py's in liboqs-python 0.16.0:
+    `_load_liboqs` (l.255-270) takes OQS_INSTALL_PATH, else ~/_oqs, and its lib and lib64 (bin
+    on Windows); `_load_shared_obj` (l.116-161) names liboqs.dylib, oqs.dll and liboqs.dll, or
+    liboqs.so in each, puts ctypes.util.find_library("oqs") and then find_library("liboqs") in
+    front, and loads each in turn with ctypes (windll on Windows), skipping one that raises
+    OSError. A file that is there but does not load (truncated, another architecture) counts as
+    absent, as it does upstream.
+    """
+    import ctypes
+    import ctypes.util
+    import pathlib
+    import platform
+    system = platform.system()
+    if "OQS_INSTALL_PATH" in os.environ:
+        prefix = pathlib.Path(os.environ["OQS_INSTALL_PATH"])
+    else:
+        prefix = pathlib.Path.home() / "_oqs"
+    dirs = [prefix / "bin"] * 2 if system == "Windows" else [prefix / "lib", prefix / "lib64"]
+    files = []
+    for d in dirs:
+        if system == "Darwin":
+            files.append(d.absolute() / "liboqs.dylib")
+        elif system == "Windows":
+            files += [d.absolute() / "oqs.dll", d.absolute() / "liboqs.dll"]
+        else:
+            files.append(d.absolute() / "liboqs.so")
+    candidates = [str(f) for f in files]
+    for name in ("oqs", "liboqs"):
+        try:
+            hit = ctypes.util.find_library(name)
+        except Exception:  # noqa: BLE001 (liboqs-python ignores the same failure)
+            hit = None
+        if hit:
+            candidates.insert(0, hit)
+    places = list(dict.fromkeys(str(f) for f in files)) + ["the system library path"]
+    dll = ctypes.windll if system == "Windows" else ctypes.cdll
+    for candidate in candidates:
+        try:
+            dll.LoadLibrary(candidate)
+        except OSError:
+            continue
+        return candidate, places
+    return None, places
+
+
 def _import_oqs():
     """Import liboqs with its startup chatter kept off stdout.
 
@@ -200,15 +271,44 @@ def _import_oqs():
     startup, where before oqs was imported lazily and the placeholder path never reached it.
 
     stdout belongs to the verdict. Anything a library wants to say goes to stderr.
+
+    Importing a module runs its code, so nothing named `oqs` is imported while a distribution
+    named `oqs` is installed, or while no liboqs shared library loads from where liboqs-python
+    would load it: liboqs counts as absent, never as a witness or a backend `auto` picks.
     """
+    if _unrelated_oqs_installed():
+        raise _OqsUnusable("a distribution named `oqs` is installed, and it is not "
+                           "liboqs-python, so `oqs` is not imported. " + _OQS_REPAIR)
+    import importlib.util
+    if importlib.util.find_spec("oqs") is None:   # locates without importing
+        raise ImportError("No module named 'oqs'")
+    library, places = _liboqs_library()
+    if library is None:
+        raise _OqsUnusable("liboqs-python needs the liboqs shared library, and none loads "
+                           "from %s, so `oqs` is not imported (without it, importing liboqs-python "
+                           "clones and builds liboqs). Install liboqs there, or set "
+                           "OQS_INSTALL_PATH to the prefix it is installed under."
+                           % ", ".join(places))
     with contextlib.redirect_stdout(sys.stderr):
-        import oqs  # type: ignore
-    # PyPI's `oqs` is an unrelated project whose wheel also installs a top-level `oqs`.
-    # Imported, it is not liboqs: it counts as absent, never as a witness that refuses
-    # every credential or a backend `auto` picks.
+        try:
+            import oqs  # type: ignore
+        except SystemExit as e:
+            raise _OqsUnusable("importing `oqs` exited (%s)." % (e,)) from None
     if not hasattr(oqs, "Signature"):
-        raise ImportError("the importable `oqs` is not liboqs-python: it has no Signature")
+        raise _OqsUnusable("the importable `oqs` is not liboqs-python: it has no "
+                           "Signature. " + _OQS_REPAIR)
     return oqs
+
+
+def _oqs_note():
+    """Why liboqs cannot be used here, with a leading space, when the reason is known; else ""."""
+    try:
+        _import_oqs()
+    except _OqsUnusable as e:
+        return " " + str(e)
+    except Exception:
+        return ""
+    return ""
 
 
 def set_dev_placeholder_mode(on: bool) -> None:
@@ -318,8 +418,8 @@ def _status_of(entry):
 
 #: verify_pack's note on a pack that passed every check needing no backend when no witness could
 #: run on it: the one pack verdict that decides nothing, which --verify-dir therefore skips.
-_NOTE_NO_WITNESS = ("no ML-DSA-65 verifier available: install liboqs-python "
-                    "(and optionally cryptography>=48 for the second witness)")
+_NOTE_NO_WITNESS = ("no ML-DSA-65 verifier available: install liboqs-python with the liboqs "
+                    "shared library (and optionally cryptography>=48 for the second witness)")
 _NOTE_DEV_PLACEHOLDER = ("this run declared --dev-placeholder, so no real backend was "
                          "consulted: NOTHING here is authenticated")
 
@@ -5600,13 +5700,14 @@ def resolve_crypto_mode(provider, dev_placeholder):
             if _provider_available(name):
                 return name, None
         return None, ("refusing to start: --pqc-provider auto found no real ML-DSA backend. "
-                      "Install one (`pip install liboqs-python`, or `pip install "
-                      "'cryptography>=50'`), or run with --dev-placeholder and accept that "
-                      "nothing is authenticated.")
+                      "Install one (liboqs-python with the liboqs shared library, or `pip "
+                      "install 'cryptography>=50'`), or run with --dev-placeholder and accept "
+                      "that nothing is authenticated." + _oqs_note())
     if not _provider_available(provider):
         return None, ("refusing to start: --pqc-provider %s, but that backend is not usable "
                       "here. Install it, choose another, or run with --dev-placeholder and "
-                      "accept that nothing is authenticated." % provider)
+                      "accept that nothing is authenticated." % provider
+                      + (_oqs_note() if provider == "oqs" else ""))
     return provider, None
 
 
