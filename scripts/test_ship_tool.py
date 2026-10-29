@@ -585,6 +585,70 @@ class DrillReceiptsLiveInTheClonesGitDirectory(unittest.TestCase):
         os.makedirs(in_tree, exist_ok=True)  # what `drills --run` does first; it raised in a worktree
 
 
+class AShardedDrillRunsItsShardsAtOnce(unittest.TestCase):
+    """`drills --run` deals the SDK mutation drill across three processes started together, and
+    records its receipt only when every shard passed (2026-10-29: one process took 106 minutes)."""
+
+    SDK = "python3 scripts/polaris-sdk-mutation-drill.py"
+
+    def run_drills(self, cmd, codes):
+        import contextlib, shutil, tempfile
+        from unittest import mock
+        receipts = tempfile.mkdtemp(prefix="polaris-sharded-")
+        self.addCleanup(shutil.rmtree, receipts, True)
+        events, started, called = [], [], []
+        self.popen_kw = []
+
+        def popen(command, **kw):
+            k = len(started)
+            started.append(command)
+            self.popen_kw.append(kw)
+            events.append("start")
+            return mock.Mock(wait=lambda: (events.append("wait"), codes[k])[1])
+
+        with mock.patch.object(ship, "RECEIPTS", receipts), \
+                mock.patch.object(ship, "_drill_jobs", return_value=[(cmd, ["sdk/python/polaris_verify/__init__.py"])]), \
+                mock.patch.object(ship.subprocess, "Popen", side_effect=popen), \
+                mock.patch.object(ship.subprocess, "call", side_effect=lambda c, **kw: called.append(c) or codes[0]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = ship.drills(["--run"])
+        return rc, started, called, events, os.listdir(receipts)
+
+    def test_the_sdk_mutation_drill_runs_as_three_shards_started_together(self):
+        import sys
+        rc, started, called, events, receipts = self.run_drills(self.SDK, [0, 0, 0])
+        self.assertEqual(rc, 0)
+        self.assertEqual(called, [], "the drill ran in one process")
+        self.assertEqual(started, ["%s scripts/polaris-sdk-mutation-drill.py --shard %d/3" % (sys.executable, i)
+                                   for i in (1, 2, 3)])
+        self.assertEqual(events, ["start"] * 3 + ["wait"] * 3, "a shard was waited on before the next started")
+        self.assertEqual([kw.get("cwd") for kw in self.popen_kw], [ship.ROOT] * 3)
+        self.assertEqual(len(receipts), 1)
+
+    def test_one_failed_shard_fails_the_drill_and_writes_no_receipt(self):
+        for codes in ([0, 1, 0], [0, 0, 2], [3, 0, 0]):
+            rc, started, _, events, receipts = self.run_drills(self.SDK, codes)
+            self.assertEqual(rc, 1, codes)
+            self.assertEqual(events.count("wait"), 3, "every shard runs to its end")
+            self.assertEqual(receipts, [], codes)
+
+    def test_a_drill_that_is_not_sharded_runs_once(self):
+        rc, started, called, _, receipts = self.run_drills("python3 scripts/polaris-contract-reach-drill.py", [0])
+        self.assertEqual((rc, started, len(called), len(receipts)), (0, [], 1, 1))
+
+    def test_the_plan_names_each_sharded_drill_by_a_script_that_exists(self):
+        # The tests above hand drills() its jobs. The real plan reaches SHARDED_DRILLS only through
+        # the command _expand_drill_line makes of a row, so a script renamed in a row or on disk
+        # would leave the key behind and the drill would run whole.
+        made = [c for _, run, _ in ship.VERIFICATION for line in run for c in ship._expand_drill_line(line)]
+        self.assertTrue(made, "the plan names no drill")
+        for cmd in made:
+            self.assertTrue(os.path.isfile(os.path.join(ship.ROOT, cmd.split()[1])), cmd)
+        self.assertIn(self.SDK, ship.SHARDED_DRILLS)
+        for cmd in ship.SHARDED_DRILLS:
+            self.assertIn(cmd, made)
+
+
 class ZkProverStale(unittest.TestCase):
     """A run refuses a ZK prover built before its source last changed: ZKSnarkTests would check the
     old circuit (2026-10-10, a worktree linked to a 09-23 binary)."""
