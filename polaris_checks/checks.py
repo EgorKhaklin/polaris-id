@@ -2192,6 +2192,71 @@ def check_image_cve_scanning(root: pathlib.Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# 2026-10-28: Trivy matches a Go binary's module versions; govulncheck also reads which vulnerable
+# functions and packages are in it. The workflow that holds the Trivy gate reads every Go binary in
+# the five prod images with govulncheck v1.9.0 in binary mode, and scripts/polaris-govulncheck-gate.py
+# fails on a binary without its symbol table and on a symbol- or package-level finding that
+# vex.openvex.json does not answer for that image. The step stops on its first error, is not
+# continue-on-error, reads all five images, and fails when it did not read a binary the images
+# are known to carry (a scan that found no binaries would pass on nothing).
+# ---------------------------------------------------------------------------
+_GOVULNCHECK_STEP = (
+    (r"(?m)^set -euo pipefail$", "stops on its first error (set -euo pipefail)"),
+    (r"\bgo install golang\.org/x/vuln/cmd/govulncheck@v1\.9\.0\b", "installs govulncheck v1.9.0"),
+    (r"/govulncheck -mode=binary -format json\b", "runs govulncheck in binary mode with JSON output"),
+    (r"(?m)^for img in polaris-app polaris-caddy polaris-pgbouncer polaris-postgres polaris-etcd; do$",
+     "reads all five images"),
+    (r'(?m)^\s*\*\) echo "::error::govulncheck did not read [^\n]*"; exit 1 ;;$',
+     "fails when it did not read a binary the images carry"),
+    (r"(?m)^python3 scripts/polaris-govulncheck-gate\.py --vex vex\.openvex\.json \"\$\{triples\[@\]\}\"$",
+     "judges every report with scripts/polaris-govulncheck-gate.py against vex.openvex.json"),
+)
+_GOVULNCHECK_KNOWN = ("polaris-caddy $work/polaris-caddy/usr/bin/caddy",
+                      "polaris-etcd $work/polaris-etcd/usr/bin/etcd",
+                      "polaris-etcd $work/polaris-etcd/usr/bin/etcdctl",
+                      "polaris-postgres $work/polaris-postgres/usr/local/bin/gosu")
+
+
+def check_govulncheck_gate(root: pathlib.Path) -> list[Finding]:
+    places = _ci_and_called_workflows(root)
+    gate = next(((rel, text) for rel, text in places if _trivy_gate(text)), None)
+    if gate is None:
+        return _fail("govulncheck_gate", "no workflow that a ci.yml job runs holds the Trivy image gate, "
+                     "so there is no image scan for the govulncheck step to sit in")
+    rel, text = gate
+    blocks = [body for _, body in _workflow_run_blocks(text) if "polaris-govulncheck-gate.py" in body]
+    if len(blocks) != 1:
+        return _fail("govulncheck_gate", f"{rel} must run scripts/polaris-govulncheck-gate.py in exactly one "
+                     f"run step (found {len(blocks)}): govulncheck reads the vulnerable functions and "
+                     "packages in each Go binary, which Trivy's version match does not")
+    code = _shell_code(blocks[0])
+    for pattern, what in _GOVULNCHECK_STEP:
+        if not re.search(pattern, code):
+            return _fail("govulncheck_gate", f"{rel}: the govulncheck step never {what}")
+    if re.search(r"\bset\b[^\n;|&]*(?:\+[a-zA-Z]*[eu]|\+o\s+(?:errexit|nounset|pipefail))", code):
+        return _fail("govulncheck_gate", f"{rel}: the govulncheck step turns off set -euo pipefail, so a "
+                     "failed command no longer fails it")
+    lines = [line.strip() for line in code.splitlines() if line.strip()]
+    if not lines or not lines[-1].startswith("python3 scripts/polaris-govulncheck-gate.py "):
+        return _fail("govulncheck_gate", f"{rel}: the gate call must be the govulncheck step's last command, "
+                     "so its exit is the step's")
+    missing = [want for want in _GOVULNCHECK_KNOWN if f'"{want}"' not in code]
+    if missing:
+        return _fail("govulncheck_gate", f"{rel}: the govulncheck step does not require "
+                     + ", ".join(missing) + ", a binary the images carry")
+    at = text.find("polaris-govulncheck-gate.py")
+    start, end = text.rfind("\n      - ", 0, at), text.find("\n      - ", at)
+    if start < 0 or "continue-on-error" in text[start: end if end >= 0 else len(text)]:
+        return _fail("govulncheck_gate", f"{rel}: the govulncheck step must fail the job (no "
+                     "continue-on-error)")
+    if not (root / "scripts/polaris-govulncheck-gate.py").is_file():
+        return _fail("govulncheck_gate", "scripts/polaris-govulncheck-gate.py is missing")
+    return _ok("govulncheck_gate",
+               f"{rel} reads every Go binary in the five images with govulncheck v1.9.0 in binary mode "
+               "and gates on scripts/polaris-govulncheck-gate.py against vex.openvex.json")
+
+
+# ---------------------------------------------------------------------------
 # Static application security testing (SAST). pip-audit covers dependency CVEs;
 # bandit covers OUR source for security anti-patterns (hardcoded secrets, weak
 # crypto, world-writable files, shell=True, etc.). CI must run it and GATE on
@@ -31579,6 +31644,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_images_install_hashed_locks,
     check_cve_scanning,
     check_image_cve_scanning,
+    check_govulncheck_gate,
     check_sast_scanning,
     check_migration_timeouts,
     check_migrations_are_reversible,
