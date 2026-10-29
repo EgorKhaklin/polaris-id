@@ -471,7 +471,7 @@ class GovulncheckStepTests(unittest.TestCase):
 
     def run_step(self, files):
         """Run the step over fixture images holding files {image: {path: ELF bytes or link target}}."""
-        d = pathlib.Path(tempfile.mkdtemp())
+        d = pathlib.Path(tempfile.mkdtemp(prefix="polaris-govulncheck-step-"))  # .coveragerc omits it
         for image, entries in files.items():
             for rel, data in entries.items():
                 target = d / "images" / image / rel
