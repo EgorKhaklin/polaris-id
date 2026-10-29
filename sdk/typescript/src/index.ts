@@ -32,7 +32,8 @@ export const ALGORITHM = "ML-DSA-65";
 /** P8.8a: the accepted FIPS 204 parameter sets. ML-DSA-44 is below the floor and is rejected
  * like any unknown algorithm; a verifier never guesses a parameter set. */
 /** What a verifier needs from a signature scheme: the one call every family shares. */
-type SignatureVerifier = { verify(sig: Uint8Array, msg: Uint8Array, publicKey: Uint8Array): boolean };
+type SignatureVerifier = { verify(sig: Uint8Array, msg: Uint8Array, publicKey: Uint8Array): boolean;
+                          lengths: { publicKey?: number } };
 /** 2026-10-05: plus the FN-DSA family (draft FIPS 206), verification only. The wire name is the
  * round-3 scheme implemented here and in liboqs, Falcon-1024 with fixed-length signatures, since
  * FIPS 206 is not final; Falcon-512 (category 1) is below the floor. */
@@ -41,6 +42,19 @@ export const ACCEPTED_ALGORITHMS: Record<string, SignatureVerifier> = {
 function verifierFor(alg: unknown): SignatureVerifier | null {
   return typeof alg === "string" && Object.prototype.hasOwnProperty.call(ACCEPTED_ALGORITHMS, alg)
     ? ACCEPTED_ALGORITHMS[alg] : null;
+}
+/** The accepted parameter set a public key's length identifies, or null when none fits: for the
+ * mint statement, whose `algorithm` is not signed. Matches `_alg_for_key_length` in the Python
+ * SDK and the detached verifier. */
+function algForKeyLength(pkHex: unknown): string | null {
+  let n: number;
+  try {
+    n = hexToBytes(pkHex as string).length;
+  } catch {
+    return null;
+  }
+  for (const [name, impl] of Object.entries(ACCEPTED_ALGORITHMS)) if (impl.lengths.publicKey === n) return name;
+  return null;
 }
 export const PLACEHOLDER_LABEL = "DETERMINISTIC-PLACEHOLDER-SHA3-256";
 
@@ -433,6 +447,12 @@ function withinWindow(obj: any, now?: string | null, start = "issued_at", end = 
   return ia <= n && n < ea;
 }
 
+/** True when the caller's `now` is the current time or an instant this verifier reads.
+ * Matches `_clock_reads` in the Python SDK. */
+function clockReads(now?: string | null): boolean {
+  return now == null || isoToEpoch(now) !== null;
+}
+
 /** The [start, end] fields of the validity window a format SIGNS, read from its own signed key
  * list, or null when it signs no window. The ID token signs its window as `iat` and `exp`. A
  * field outside the signed statement is anyone's to add or change, so a format that signs only
@@ -471,7 +491,13 @@ export function verifyStatusAssertion(assertion: any, now?: string | null): Stat
   } catch (e) {
     return { authentic: false, fresh: null, active: null, status, note: "verification error: " + (e as Error).message };
   }
-  return { authentic: ok, fresh: withinWindow(a, now), active: status === "ACTIVE", status };
+  // A signed window that is not an instant is a refusal (WIRE-SPEC 2.2), as in verifySignedArtifact.
+  const fresh = withinWindow(a, now);
+  if (fresh === null && clockReads(now)) {
+    return { authentic: ok, fresh: false, active: status === "ACTIVE", status,
+             note: "the signed issued_at/expires_at are not valid instants" };
+  }
+  return { authentic: ok, fresh, active: status === "ACTIVE", status };
 }
 
 const ARTIFACT_KEYS: Record<string, string[]> = {
@@ -603,9 +629,16 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   if (o.algorithm === PLACEHOLDER_LABEL || !o.public_key_hex) {
     return { authentic: false, fresh: null, note: "placeholder -- not authenticatable offline" };
   }
-  const impl = verifierFor(o.algorithm);
+  let alg = o.algorithm;
+  if (o.format === "polaris-exchange-mint/1" && (alg === undefined || alg === null)) {
+    // WIRE-SPEC 3.8.1: the mint does not sign `algorithm`. Without one it is the accepted
+    // parameter set the key's length identifies, as the instance's mint route and the detached
+    // verifier read it; a key no set fits is refused.
+    alg = algForKeyLength(o.public_key_hex);
+  }
+  const impl = verifierFor(alg);
   if (!impl) {
-    return { authentic: false, fresh: null, note: "unknown or unaccepted signature algorithm: " + String(o.algorithm) };
+    return { authentic: false, fresh: null, note: "unknown or unaccepted signature algorithm: " + String(alg) };
   }
   let ok: boolean;
   try {
@@ -709,8 +742,19 @@ export function verifySignedArtifact(obj: any, now?: string | null,
   const issuerTrusted = anchors == null || !ok
     ? null
     : hexIn(o.public_key_hex, anchors.map((a) => hexText(a)));
-  return { authentic: ok, fresh: replay !== null ? replay : win !== null ? withinWindow(o, now, ...win) : null,
-           issuerTrusted, ...(commitmentNote ? { note: commitmentNote } : {}) };
+  let fresh = replay !== null ? replay : win !== null ? withinWindow(o, now, ...win) : null;
+  // A window the artifact SIGNS that is not an instant (null, "x", a 13th month) is a refusal
+  // (WIRE-SPEC 2.2: reject unless issued_at <= now < expires_at). Null stays for a format that
+  // signs none, and for a caller's clock that does not parse.
+  const signedEnds = win ?? (ownEntry(REPLAY_WINDOW_SECONDS, o.format) !== undefined ? ["issued_at"] : []);
+  let windowNote: string | undefined;
+  if (fresh === null && signedEnds.length > 0 && clockReads(now)) {
+    fresh = false;
+    windowNote = "the signed " + signedEnds.join("/")
+      + (signedEnds.length > 1 ? " are not valid instants" : " is not a valid instant");
+  }
+  const note = commitmentNote ?? windowNote;
+  return { authentic: ok, fresh, issuerTrusted, ...(note ? { note } : {}) };
 }
 
 // --- P9.6: timestamp anchor verification (was P8.5c) --------------------------------
@@ -1572,7 +1616,11 @@ function wireTextEqual(signed: unknown, expected: unknown): boolean {
   return t !== null && t === wireText(expected);
 }
 
-export function agentProofProves(proof: any, grant: any, action?: unknown, nonce?: unknown): boolean {
+/** Is this agent proof bound to THIS grant, this action and this service's nonce, and made
+ * inside the grant's window, not more than 60 seconds ahead of `now` (an ISO-8601 string, or
+ * null for the current time)? Matches `agent_proof_proves` in the Python SDK. */
+export function agentProofProves(proof: any, grant: any, action?: unknown, nonce?: unknown,
+                                 now?: string | null): boolean {
   if (!proof || typeof proof !== "object" || !grant || typeof grant !== "object") return false;
   if (proof.format !== "polaris-agent-proof/1") return false;
   if (!wireTextEqual(proof.grant_id, grant.grant_id)) return false;
@@ -1581,7 +1629,14 @@ export function agentProofProves(proof: any, grant: any, action?: unknown, nonce
       && proof.algorithm !== grant.agent_algorithm) return false;
   if (nonce !== undefined && nonce !== null && !wireTextEqual(proof.service_nonce, nonce)) return false;
   if (action !== undefined && action !== null && !wireTextEqual(proof.action, action)) return false;
-  return true;
+  // WIRE-SPEC 3.17: the proof is made inside the grant's window and at most 60 seconds ahead of
+  // this clock. A proof, grant window or clock that is not an instant proves nothing.
+  const made = isoToEpoch(proof.issued_at);
+  const start = isoToEpoch(grant.issued_at);
+  const end = isoToEpoch(grant.expires_at);
+  const ref = now != null ? isoToEpoch(now) : Date.now() / 1000;
+  if (made === null || start === null || end === null || ref === null) return false;
+  return start <= made && made < end && made <= ref + CLOCK_SKEW_SECONDS;
 }
 
 // --- P8.2: the exchange in use (1.0.0-rc.64) ------------------------------------------

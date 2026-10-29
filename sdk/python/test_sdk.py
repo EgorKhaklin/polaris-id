@@ -595,9 +595,11 @@ class RefusalsAreTestedTests(unittest.TestCase):
     # -- delegation: agent-proof binding ---------------------------------
 
     def test_an_agent_proof_must_bind_this_grant_action_and_nonce(self):
-        grant = {"grant_id": "g-1", "agent_public_key_hex": "AA" * 32, "agent_algorithm": "ML-DSA-65"}
+        grant = {"grant_id": "g-1", "agent_public_key_hex": "AA" * 32, "agent_algorithm": "ML-DSA-65",
+                 "issued_at": "2026-05-01T00:00:00Z", "expires_at": "2026-05-01T06:00:00Z"}
         good = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "aa" * 32,
-                "algorithm": "ML-DSA-65", "action": "read:status", "service_nonce": "n-1"}
+                "algorithm": "ML-DSA-65", "action": "read:status", "service_nonce": "n-1",
+                "issued_at": "2026-05-01T00:00:00Z"}
         self.assertTrue(pv.agent_proof_proves(good, grant, "read:status", "n-1"),
                         "the matching proof must prove the agent")
         self.assertTrue(pv.agent_proof_proves(good, grant),
@@ -1370,6 +1372,118 @@ def _xa_edge(attested_key, signer=None, attesting=_XA_HOME):
                             valid_until="2026-06-01T00:00:00Z", algorithm="ML-DSA-65"))
 
 
+class ReSignedHostileFieldsTests(unittest.TestCase):
+    """2026-10-29, a red-team pass that re-signs a hostile field under a key the verifier checks:
+    the signature verifies, so only the rule behind it can refuse. Each answer is the detached
+    verifier's, which already gave it."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not _mldsa_available():
+            raise unittest.SkipTest("cryptography lacks ML-DSA-65")
+        cls.key, cls.home, cls.issuer = _Key(), _Key(), _Key()
+
+    def window(self, **fields):
+        return dict({"issued_at": _XA_ISSUED, "expires_at": _XA_EXPIRES, "algorithm": "ML-DSA-65"}, **fields)
+
+    def test_a_signed_collection_that_is_not_a_list_is_a_refusal_not_a_raise(self):
+        pk = self.key.pk
+        for label, body, field, note in (
+                ("trust list", self.window(format="polaris-trust-list/1", publisher={"agency_id": 1},
+                                           keys=[{"agency_id": 1, "public_key_hex": pk, "status": "active"}]),
+                 "keys", "not signed by a key it lists as active"),
+                ("registry", self.window(format="polaris-registry/1", publisher={"agency_id": 1},
+                                         authorities=[{"agency_id": 1, "public_key_hex": pk, "status": "active"}]),
+                 "authorities", "not signed by the key it lists"),
+                ("manifest", _xa_manifest(_XA_HOME, [pk], []), "anchors", "not signed by one of its own")):
+            with self.subTest(artifact=label):
+                self.assertIs(pv.verify_signed_artifact(self.key.sign(body), now=_XA_NOW).authentic, True, "control")
+                for bad in (1, True, 1.5):
+                    v = pv.verify_signed_artifact(self.key.sign(dict(body, **{field: bad})), now=_XA_NOW)
+                    self.assertIs(v.authentic, False, "%s %s=%r" % (label, field, bad))
+                    self.assertIn(note, v.note or "")
+
+    def test_attestations_that_are_not_a_list_carry_no_edge(self):
+        pack = self.issuer.pack("XA-ATT-0001")
+
+        def decide(attestations):
+            m = self.home.sign(_xa_manifest(_XA_HOME, [self.home.pk], attestations))
+            return pv.verify_cross_authority(pack, 1, [m], [self.home.pk], None, now=_XA_NOW).decision
+        self.assertEqual(decide([_xa_edge(self.issuer.pk)]), "accept", "control")
+        for bad in (1, True):
+            with self.subTest(attestations=bad):
+                self.assertEqual(decide(bad), "reject")
+
+    def test_a_signed_window_that_is_not_an_instant_is_not_fresh(self):
+        body = self.window(format="polaris-trust-list/1", publisher={"agency_id": 1},
+                           keys=[{"agency_id": 1, "public_key_hex": self.key.pk, "status": "active"}])
+        self.assertIs(pv.verify_signed_artifact(self.key.sign(body), now=_XA_NOW).fresh, True, "control")
+        for field in ("issued_at", "expires_at"):
+            for bad in ("x", None, "2026-13-45T99:99:99Z"):
+                with self.subTest(field=field, value=bad):
+                    v = pv.verify_signed_artifact(self.key.sign(dict(body, **{field: bad})), now=_XA_NOW)
+                    self.assertEqual((v.authentic, v.fresh), (True, False))
+                    self.assertIn("not valid instants", v.note or "")
+        import hashlib
+        assertion = self.window(format="polaris-status-assertion/1", token_value="T", status="ACTIVE",
+                                public_key_hex=self.key.pk)
+        for bad, fresh in ((_XA_EXPIRES, True), ("x", False), (None, False)):
+            with self.subTest(status_assertion_expires_at=bad):
+                a = dict(assertion, expires_at=bad)
+                a["signature_hex"] = self.key._sk.sign(
+                    hashlib.sha3_256(pv._canonical(a, pv._STATUS_ASSERTION_KEYS)).digest()).hex()
+                v = pv.verify_status_assertion(a, now=_XA_NOW)
+                self.assertEqual((v.authentic, v.fresh), (True, fresh))
+        self.assertIsNone(pv.verify_signed_artifact(self.key.sign(body), now="not a time").fresh,
+                          "a caller's clock that does not parse is not the artifact's window")
+
+    def test_an_agent_proof_is_made_inside_its_grant_and_not_ahead_of_the_clock(self):
+        grant = {"grant_id": "g-1", "agent_public_key_hex": "ab", "agent_algorithm": "ML-DSA-65",
+                 "issued_at": _XA_ISSUED, "expires_at": _XA_EXPIRES}
+        proof = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab",
+                 "algorithm": "ML-DSA-65", "action": "read", "service_nonce": "n", "issued_at": _XA_NOW}
+        self.assertIs(pv.agent_proof_proves(proof, grant, "read", "n", now=_XA_NOW), True, "control")
+        for label, made in (("made as the grant opens", _XA_ISSUED),
+                            ("60 seconds ahead of the clock", "2026-05-01T00:01:30Z")):
+            with self.subTest(case=label):
+                self.assertIs(pv.agent_proof_proves(dict(proof, issued_at=made), grant, "read", "n", now=_XA_NOW), True)
+        for label, made, now in (("a second before the grant", "2026-04-30T23:59:59Z", _XA_NOW),
+                                 ("as the grant lapses", _XA_EXPIRES, _XA_EXPIRES),
+                                 ("after the grant", "2099-01-01T00:00:00Z", "2099-01-01T00:00:00Z"),
+                                 ("61 seconds ahead of the clock", "2026-05-01T00:01:31Z", _XA_NOW),
+                                 ("not an instant", "x", _XA_NOW),
+                                 ("absent", None, _XA_NOW)):
+            with self.subTest(case=label):
+                self.assertIs(pv.agent_proof_proves(dict(proof, issued_at=made), grant, "read", "n", now=now), False)
+        self.assertIs(pv.agent_proof_proves(proof, dict(grant, expires_at="x"), "read", "n", now=_XA_NOW), False,
+                      "a grant window that is not an instant")
+        self.assertIs(pv.agent_proof_proves(proof, grant, "read", "n", now="not a time"), False)
+
+    def test_a_mint_without_algorithm_is_the_set_its_key_length_identifies(self):
+        import hashlib
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        body = {"format": "polaris-exchange-mint/1", "requester_public_key_hex": "ab" * 1952, "context_id": 1,
+                "request_hash": "cd" * 32, "response_hash": "ef" * 32, "responder_agency_id": 1,
+                "occurred_at": _XA_ISSUED}
+        mint = self.key.sign(body)
+        self.assertNotIn("algorithm", mint)
+        self.assertIs(pv.verify_exchange_mint(mint, self.key.pk).authentic, True, "control: no label, an ML-DSA-65 key")
+        self.assertIs(pv.verify_signed_artifact(dict(mint, algorithm=None)).authentic, True, "null is no label")
+        if not hasattr(mldsa, "MLDSA87PrivateKey"):
+            self.skipTest("cryptography without ML-DSA-87: the 87 case is not measured here")
+        sk87 = mldsa.MLDSA87PrivateKey.generate()
+        m87 = dict(body, public_key_hex=sk87.public_key().public_bytes_raw().hex(), signature_hex=sk87.sign(
+            hashlib.sha3_256(pv._canonical(body, pv._ARTIFACT_KEYS[body["format"]])).digest()).hex())
+        self.assertIs(pv.verify_exchange_mint(m87).authentic, True, "no label, an ML-DSA-87 key")
+        for label, bad in (("a label outside the accepted set", dict(mint, algorithm="ML-DSA-44")),
+                           ("a label the key does not fit", dict(mint, algorithm="ML-DSA-87")),
+                           ("a key no accepted set fits", dict(mint, public_key_hex="ab" * 1000))):
+            with self.subTest(case=label):
+                v = pv.verify_exchange_mint(bad)
+                self.assertIs(v.authentic, False)
+                self.assertTrue(v.note, label)
+
+
 class OnlyARevocationFeedAnswersForRevocationTests(unittest.TestCase):
     """verify_cross_authority reads a supplied revocation feed only when its `format` is
     polaris-revocation-feed/1, as polaris-verify's verify_revocation_feed does. Another artifact
@@ -2053,9 +2167,10 @@ class ParityWithTheTypeScriptSdkTests(unittest.TestCase):
     """2026-10-01: inputs on which the two reference SDKs answered differently, each pinned to
     the answer both now give."""
 
-    GRANT = {"grant_id": "g-1", "agent_public_key_hex": "ab"}
+    GRANT = {"grant_id": "g-1", "agent_public_key_hex": "ab",
+             "issued_at": "2026-05-01T00:00:00Z", "expires_at": "2026-05-01T06:00:00Z"}
     PROOF = {"format": "polaris-agent-proof/1", "grant_id": "g-1", "public_key_hex": "ab",
-             "service_nonce": 0, "action": "read"}
+             "service_nonce": 0, "action": "read", "issued_at": "2026-05-01T00:00:00Z"}
 
     def test_an_agent_proofs_nonce_action_and_grant_id_are_text_and_must_be_named(self):
         self.assertIs(pv.agent_proof_proves(self.PROOF, self.GRANT, "read", 0), True, "nonce 0 is a nonce")
@@ -2421,8 +2536,8 @@ class RefusalsNoTestTookTests(unittest.TestCase):
         issued = self.artifact(issued_at="2026-09-30T00:00:00Z")
         self.assertTrue(pv.verify_signed_artifact(issued, now="2026-09-30T00:01:00Z").fresh, "control: 60 s old")
         self.assertFalse(pv.verify_signed_artifact(issued, now="2026-09-30T00:06:00Z").fresh, "past 300 s")
-        self.assertIsNone(pv.verify_signed_artifact(self.artifact(issued_at=None), now="2026-09-30T00:01:00Z").fresh,
-                          "no readable issuance: not fresh, not stale")
+        self.assertIs(pv.verify_signed_artifact(self.artifact(issued_at=None), now="2026-09-30T00:01:00Z").fresh,
+                      False, "a signed issuance that is not an instant is not fresh, as in the detached verifier")
         self.assertIsNone(pv.verify_signed_artifact(issued, now="not a time").fresh,
                           "an unreadable clock decides nothing")
 

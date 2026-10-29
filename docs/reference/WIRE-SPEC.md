@@ -222,6 +222,9 @@ from the addressed agency, MUST reject an `occurred_at` outside a freshness wind
 300 seconds), and MUST carry the signed `occurred_at` into the receipt unchanged, so that a
 captured request can only re-mint an identical receipt and never re-time the exchange. An
 instance without real ML-DSA-65 MUST refuse: a placeholder signature is not authentication.
+`algorithm` is not signed: a mint without it is under the accepted algorithm whose public-key
+length its key has, and a verifier MUST refuse a declared algorithm outside the accepted set or
+a key whose length matches none.
 The receipt it yields is section 3.8, unchanged; `request_hash` and `response_hash` obey the
 same hash-only rule.
 
@@ -488,7 +491,9 @@ Signed fields: format, grant_id, action, service_nonce, issued_at, algorithm
 
 Without it a grant is a bearer token and whoever copies it in transit becomes the agent. The
 proof names the action and the service's own nonce, so a captured proof replays neither to a
-second service nor to a second action at the first.
+second service nor to a second action at the first. A verifier MUST refuse a proof whose
+`issued_at` is not an instant, falls outside the grant's `[issued_at, expires_at)`, or is more
+than 60 seconds ahead of the verifier's clock.
 
 The detached verifier decides the whole chain from the command line, so a service does not
 have to write code to check an agent's authority:

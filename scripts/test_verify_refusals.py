@@ -4233,6 +4233,48 @@ class AnEpochCheckpointIsComparedOnlyOnceItVerifies(unittest.TestCase):
                       "a checkpoint under a key the caller trusts")
 
 
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class AMintIsUnderTheSetItsKeyLengthIdentifies(unittest.TestCase):
+    """WIRE-SPEC 3.8.1: the mint statement does not sign `algorithm`. Present, it must name an
+    accepted set; absent, the mint is under the accepted set whose public-key length its key
+    has, as the instance's mint route reads it (scripts/polaris-federation-instances-drill.py
+    mints with no `algorithm`)."""
+
+    BODY = {"format": "polaris-exchange-mint/1", "requester_public_key_hex": "ab" * 1952, "context_id": 1,
+            "request_hash": "cd" * 32, "response_hash": "ef" * 32, "responder_agency_id": 1,
+            "occurred_at": "2026-05-01T00:00:00Z"}
+
+    @classmethod
+    def mint(cls, sk):
+        out = dict(cls.BODY)
+        out["signature_hex"] = sk.sign(hashlib.sha3_256(V._exchange_mint_canonical(out)).digest()).hex()
+        out["public_key_hex"] = sk.public_key().public_bytes_raw().hex()
+        return out
+
+    def test_no_label_is_the_set_the_key_length_identifies(self):
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        m65 = self.mint(mldsa.MLDSA65PrivateKey.generate())
+        self.assertNotIn("algorithm", m65)
+        v = V.verify_exchange_mint(m65)
+        self.assertIs(v["mint_authentic"], True, v["note"])
+        self.assertIs(V.verify_exchange_mint(dict(m65, algorithm=None))["mint_authentic"], True, "null is no label")
+        if not hasattr(mldsa, "MLDSA87PrivateKey"):
+            self.skipTest("cryptography without ML-DSA-87: the 87 case is not measured here")
+        v = V.verify_exchange_mint(self.mint(mldsa.MLDSA87PrivateKey.generate()))
+        self.assertIs(v["mint_authentic"], True, v["note"])
+
+    def test_a_label_outside_the_set_or_a_key_no_set_fits_refuses(self):
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        m65 = self.mint(mldsa.MLDSA65PrivateKey.generate())
+        for label, bad in (("a label outside the accepted set", dict(m65, algorithm="ML-DSA-44")),
+                           ("a label the key does not fit", dict(m65, algorithm="ML-DSA-87")),
+                           ("a key no accepted set fits", dict(m65, public_key_hex="ab" * 1000))):
+            with self.subTest(label):
+                v = V.verify_exchange_mint(bad)
+                self.assertIs(v["mint_authentic"], False)
+                self.assertTrue(v["note"], label)
+
+
 if __name__ == "__main__":
     unittest.main()
 

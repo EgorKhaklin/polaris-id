@@ -116,7 +116,7 @@ def decide(case):
         if proof is not None:
             verdict["agent_proved"] = bool(verify_signed_artifact(proof, now=now, anchors=None).authentic
                                            and agent_proof_proves(proof, grant, action,
-                                                                  case.get("expected_nonce")))
+                                                                  case.get("expected_nonce"), now))
         return verdict
     if artifact == "exchange-use":
         # 1.0.0-rc.64: an exchange artifact IN USE. The signed-artifact cases ask only whether
