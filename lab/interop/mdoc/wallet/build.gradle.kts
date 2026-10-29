@@ -17,7 +17,7 @@ repositories {
 }
 
 dependencies {
-    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:0.14.1")
+    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:0.15.0")
     implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vp-kt:0.16.2")
     implementation("id.walt.mdoc-credentials:waltid-mdoc-credentials-jvm:0.11.0")
     implementation("com.augustcellars.cose:cose-java:1.1.0") // walt.id's COSE, at its version; the wallet names its AlgorithmID

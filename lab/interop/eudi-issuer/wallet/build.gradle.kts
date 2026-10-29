@@ -10,7 +10,7 @@ plugins {
 repositories { mavenCentral() }
 
 dependencies {
-    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:0.14.1")
+    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:0.15.0")
     implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vp-kt:0.16.2")
     implementation("io.ktor:ktor-client-okhttp:3.6.0")
     implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
