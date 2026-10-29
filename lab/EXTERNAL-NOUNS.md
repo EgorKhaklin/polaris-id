@@ -13,7 +13,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. |
-| Use | 1 outside project: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16 |
+| Use | 2 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier |
 | Findings from outside | 2, both fixed |
 
 ## External nouns
@@ -197,7 +197,7 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
 
 ### Use
 
-    Outside projects running it:   1 (IDFoundry/OID4VCgo's CI, since 2026-10-11)
+    Outside projects running it:   2 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28)
 
 1. 2026-10-11: IDFoundry/OID4VCgo (maintainer osanderson) added
    [polaris-interop.yml](https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml):
@@ -219,6 +219,12 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    each control to be accepted and each mdoc refusal to carry a `Reason` of its vector's layer. The
    first run on main after it ([40735536223](https://github.com/IDFoundry/OID4VCgo/actions/runs/40735536223))
    passed both jobs.
+3. 2026-10-28: 20 of this repository's SD-JWT VC negative vectors are externally exercised in
+   vouchkit/vouchkit's CI, against its verifier, on each push to main and on pull requests;
+   vouchkit's CI reads a copy of the file from a pinned commit and checks its SHA-256, since [PR 17](https://github.com/vouchkit/vouchkit/pull/17),
+   opened from here and merged by the maintainer on 2026-10-28 (b587ce4a). Its CI's test count went
+   from 123 to 144; the first run on main with them ([40770905494](https://github.com/vouchkit/vouchkit/actions/runs/40770905494))
+   passed on Python 3.11, 3.12 and 3.13.
 
 ### Findings from outside
 
