@@ -20,7 +20,7 @@
 # The pin moves by hand to each v3.6 patch release etcd publishes; the weekly
 # image scan fails on a fixable critical CVE in the pinned release.
 # ============================================================================
-FROM golang:1.26.10-alpine3.24@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS compile
+FROM golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS compile
 ARG ETCD_VERSION=v3.6.16
 ARG ETCD_COMMIT=0b065e61c679ea81f6862bb24c9815f7fc673966
 RUN apk add --no-cache bash git jq
