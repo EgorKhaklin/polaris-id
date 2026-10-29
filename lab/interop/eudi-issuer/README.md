@@ -64,7 +64,7 @@ no `--claim`.
 | Issuer | eudi-srv-pid-issuer v0.11.1, `ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:v0.11.1` (`sha256:2e6176a00f3bea3266d79cdf8182c2fcad96436f5a7a463ad504eb533a6e06f2`, linux/amd64 only), Apache-2.0; its `docker-compose/` files at commit `9177177071157b20724b04eed619049e40679bbb` |
 | Authorization server | Keycloak 26.6.2, `quay.io/keycloak/keycloak:26.6.2-2` (`sha256:f9ba7b2af90db8dc749a57ca9aedca51e840cb9224441ab546a968da941da900`), with `eu.europa.ec.eudi:abca-keycloak-ext` 0.2.0 from Maven Central (`sha256:4b10222577445f936ead647980b22e672ee9e38e0c1e5b8ac8dab60dd5ea8a86`) |
 | Around them | `postgres:18.4-alpine3.24` (`sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15`), `haproxy:2.8.3` (`sha256:fdd14bba61bed25638503b51a9d59ee31082d71a461ec28eddb29ad522156c67`) |
-| Wallet | `eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt` 0.14.1 and `eudi-lib-jvm-openid4vp-kt` 0.16.2, Ktor 3.3.3 (OkHttp), Kotlin 2.4.21, Bouncy Castle 1.86, on JDK 21 in `gradle:8.14.3-jdk21` (`sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7`) |
+| Wallet | `eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt` 0.15.0 and `eudi-lib-jvm-openid4vp-kt` 0.16.2, Ktor 3.6.0 (OkHttp), Kotlin 2.4.21, Bouncy Castle 1.86, on JDK 21 in `gradle:8.14.3-jdk21` (`sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7`) |
 | Verifier | `polaris-oid4vp` 1.0.0rc15 from PyPI, in a fresh venv |
 | Runtime | Python 3.12.13, Docker 29.8.1, macOS 26.3 (Darwin 25.3.0, arm64; the issuer image ran under emulation) |
 
