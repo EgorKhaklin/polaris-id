@@ -1437,6 +1437,53 @@ class ReSignedHostileFieldsTests(unittest.TestCase):
         self.assertIsNone(pv.verify_signed_artifact(self.key.sign(body), now="not a time").fresh,
                           "a caller's clock that does not parse is not the artifact's window")
 
+    def test_a_signed_id_token_window_that_is_not_an_instant_is_not_fresh(self):
+        tok = {"format": "polaris-id-token/1", "iss": "https://issuer.example", "sub": "ab" * 32,
+               "aud": "rp-1", "nonce": "n-1", "context_id": 1, "disclosure_level": 1,
+               "acr": "urn:polaris:acr:1", "enrollment": None, "auth_time": _XA_ISSUED,
+               "iat": _XA_ISSUED, "exp": _XA_EXPIRES, "algorithm": "ML-DSA-65"}
+        self.assertIs(pv.verify_id_token(self.key.sign(tok), now=_XA_NOW).fresh, True, "control")
+        self.assertIs(pv.verify_id_token(self.key.sign(dict(tok, exp=_XA_ISSUED)), now=_XA_NOW).fresh, False,
+                      "expired")
+        for field, bad in (("exp", None), ("exp", "x"), ("exp", 5), ("iat", None), ("iat", "x")):
+            with self.subTest(field=field, value=bad):
+                v = pv.verify_id_token(self.key.sign(dict(tok, **{field: bad})), now=_XA_NOW)
+                self.assertEqual((v.authentic, v.fresh), (True, False))
+                self.assertIn("not valid instants", v.note or "")
+        self.assertIsNone(pv.verify_id_token(self.key.sign(dict(tok, exp=None)), now="not a time").fresh,
+                          "a caller's clock that does not parse is not the token's window")
+
+    def test_a_signed_statement_that_is_not_json_is_refused_not_raised(self):
+        import hashlib
+        import json
+        import sys
+        tok = {"format": "polaris-id-token/1", "iss": "https://issuer.example", "sub": "ab" * 32,
+               "aud": "rp-1", "nonce": "n-1", "context_id": 1, "disclosure_level": 1,
+               "acr": "urn:polaris:acr:1", "enrollment": None, "auth_time": _XA_ISSUED,
+               "iat": _XA_ISSUED, "exp": _XA_EXPIRES, "algorithm": "ML-DSA-65"}
+
+        def signed(body):
+            # The bytes Python's json writes by default, NaN and Infinity included, with no limit
+            # on an integer's digits: what a signer outside JSON would sign.
+            limit = sys.get_int_max_str_digits()
+            sys.set_int_max_str_digits(0)
+            try:
+                text = json.dumps({k: body.get(k) for k in pv._ARTIFACT_KEYS[body["format"]]},
+                                  sort_keys=True, separators=(",", ":"))
+            finally:
+                sys.set_int_max_str_digits(limit)
+            return dict(body, signature_hex=self.key._sk.sign(hashlib.sha3_256(text.encode()).digest()).hex(),
+                        public_key_hex=self.key.pk)
+        self.assertIs(pv.verify_id_token(signed(tok), now=_XA_NOW).authentic, True, "control")
+        for value in (float("nan"), float("inf"), float("-inf"), 10 ** 4999):
+            with self.subTest(context_id=type(value).__name__ + ("" if isinstance(value, int) else repr(value))):
+                v = pv.verify_id_token(signed(dict(tok, context_id=value)), now=_XA_NOW)
+                self.assertIs(v.authentic, False)
+                self.assertEqual(v.note, pv._NOT_JSON)
+        for text in ('{"a": NaN}', '{"a": Infinity}', '{"a": -Infinity}'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                pv._json_loads(text)
+
     def test_an_agent_proof_is_made_inside_its_grant_and_not_ahead_of_the_clock(self):
         grant = {"grant_id": "g-1", "agent_public_key_hex": "ab", "agent_algorithm": "ML-DSA-65",
                  "issued_at": _XA_ISSUED, "expires_at": _XA_EXPIRES}

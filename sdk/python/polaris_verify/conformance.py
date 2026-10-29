@@ -26,6 +26,7 @@ import sys
 from . import (agent_proof_proves, verify_exchange_mint, verify_exchange_receipt, verify_exchange_request, grant_covers, grant_principal_bound, pairwise_handle, revocation_ends_grant, verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
                verify_id_token,
                verify_signed_artifact, verify_status_assertion, verify_timestamp_anchor)
+from . import _json_loads
 
 _SIGNED_ARTIFACTS = {"epoch-checkpoint", "revocation-feed", "federation-manifest",
                      "federation-status-bundle", "transparency-sth", "timestamp", "registry", "exchange-request", "signed-document", "id-token", "trust-list", "exchange-receipt", "exchange-mint", "holder-binding", "holder-proof", "epoch-leaves",
@@ -166,7 +167,7 @@ def decide(case):
 
 def main(argv=None):
     try:
-        case = json.load(sys.stdin)
+        case = _json_loads(sys.stdin.read())
     except Exception as e:
         print(json.dumps({"error": "could not read case: %s" % e}))
         return 2

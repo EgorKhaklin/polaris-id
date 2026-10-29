@@ -610,9 +610,15 @@ export function verifyIdToken(tok: any, audience?: string | null, nonce?: string
   const ia = isoToEpoch(t.iat), ea = isoToEpoch(t.exp);
   const n = now != null ? isoToEpoch(now) : Date.now() / 1000;
   const fresh = ia !== null && ea !== null && n !== null ? ia <= n && n < ea : null;
-  return { authentic: true, audienceMatches: audience != null ? t.aud === audience : null,
-           nonceMatches: nonce != null ? t.nonce === nonce : null, fresh, sub: t.sub ?? null,
-           acr: t.acr ?? null, issuerTrusted: base.issuerTrusted ?? null };
+  const verdict: IdTokenVerdict = {
+    authentic: true, audienceMatches: audience != null ? t.aud === audience : null,
+    nonceMatches: nonce != null ? t.nonce === nonce : null, fresh, sub: t.sub ?? null,
+    acr: t.acr ?? null, issuerTrusted: base.issuerTrusted ?? null };
+  // A signed iat or exp that is not an instant is a refusal (WIRE-SPEC 2.2), as in verifySignedArtifact.
+  if (fresh === null && clockReads(now)) {
+    return { ...verdict, fresh: false, note: "the signed iat/exp are not valid instants" };
+  }
+  return verdict;
 }
 
 export function verifySignedArtifact(obj: any, now?: string | null,

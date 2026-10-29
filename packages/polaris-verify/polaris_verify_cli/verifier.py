@@ -606,16 +606,16 @@ def verify_dir(dir_path) -> int:
         name = os.path.basename(p)
         try:
             with open(p) as fh:
-                pack = json.load(fh)
+                pack = _json_loads(fh.read())
         except Exception as e:
-            print("%-34s UNREADABLE (%s)" % (name, e))
+            print("%-34s UNREADABLE (%s)" % (_echo(name), _echo(e)))
             unreadable += 1
             continue
         # A vector that is not an object (the conformance set has a bare `true`) raised
         # AttributeError out of the next line: a traceback and exit 1, a code the docstring
         # above does not define. It is reported and counted as a disagreement instead.
         if not isinstance(pack, dict):
-            print("%-34s NOT A PACK (a JSON %s, not an object)" % (name, type(pack).__name__))
+            print("%-34s NOT A PACK (a JSON %s, not an object)" % (_echo(name), type(pack).__name__))
             not_objects += 1
             continue
         # Another signed artifact is not a pack, by the rule --pack applies (a trust list, an ID
@@ -626,7 +626,7 @@ def verify_dir(dir_path) -> int:
         if isinstance(fmt, str) and fmt != "polaris-authenticity-pack/1":
             flag = _FLAG_FOR_FORMAT.get(fmt)
             print("%-34s SKIPPED (a %s, not an authenticity pack: %s)"
-                  % (name, fmt, "check it with " + flag if flag else "no flag checks it, see the README"))
+                  % (_echo(name), _echo(fmt), "check it with " + flag if flag else "no flag checks it, see the README"))
             skipped["not an authenticity pack"] = skipped.get("not an authenticity pack", 0) + 1
             continue
         # Nor is an object with none of a pack's fields (an expectation alone, a note): nothing in
@@ -634,7 +634,7 @@ def verify_dir(dir_path) -> int:
         # `{"_vector": {"expect": "invalid"}}` beside a genuine pack let the run exit 0.
         if not any(field in pack for field in _PACK_FIELDS):
             print("%-34s SKIPPED (not an authenticity pack: no %s or %s)"
-                  % (name, ", ".join(_PACK_FIELDS[:-1]), _PACK_FIELDS[-1]))
+                  % (_echo(name), ", ".join(_PACK_FIELDS[:-1]), _PACK_FIELDS[-1]))
             skipped["not an authenticity pack"] = skipped.get("not an authenticity pack", 0) + 1
             continue
         meta = pack.get("_vector") if isinstance(pack.get("_vector"), dict) else {}
@@ -654,7 +654,7 @@ def verify_dir(dir_path) -> int:
         else:
             why = None
         if why:
-            print("%-34s SKIPPED (%s)" % (name, why))
+            print("%-34s SKIPPED (%s)" % (_echo(name), _echo(why)))
             skipped[why] = skipped.get(why, 0) + 1
             continue
         got = "valid" if verdict["signature_valid"] else "invalid"
@@ -663,7 +663,7 @@ def verify_dir(dir_path) -> int:
         ok = (got == expect)
         matched += ok
         mismatched += not ok
-        print("%-34s expect=%-8s got=%-8s %s" % (name, expect, got, "OK" if ok else "MISMATCH"))
+        print("%-34s expect=%-8s got=%-8s %s" % (_echo(name), _echo(expect), got, "OK" if ok else "MISMATCH"))
     # The closing lines say what the exit code says. Until 2026-10-10 a run printed "verified
     # with the app's real witnesses" beside a SKIPPED or MISMATCH row. A row as expected is not
     # an authentic pack (a refused forgery is as expected), so the count says "as expected", and
@@ -788,13 +788,13 @@ _STATUS_ASSERTION_FORMAT = "polaris-status-assertion/1"
 def _status_assertion_canonical(assertion):
     """The canonical bytes the issuer signed — MUST match app.py's
     _status_assertion_statement: sorted-keys compact JSON of exactly five fields."""
-    return json.dumps({
+    return _canonical_json({
         "format": assertion.get("format"),
         "token_value": assertion.get("token_value"),
         "status": assertion.get("status"),
         "issued_at": assertion.get("issued_at"),
         "expires_at": assertion.get("expires_at"),
-    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    })
 
 
 # ASCII digits only: Python's `\d` also matches Arabic-Indic and every other script's digits,
@@ -884,7 +884,10 @@ def verify_status_assertion(assertion, now=None, max_window_seconds=None, anchor
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_status_assertion_canonical(assertion)).digest()
+    digest = _canonical_digest(_status_assertion_canonical, assertion)
+    if digest is None:
+        v["note"] = _NOT_JSON
+        return v
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
@@ -999,7 +1002,7 @@ def _manifest_canonical(manifest):
     statement = {k: manifest.get(k) for k in
                  ("format", "authority", "anchors", "attestations", "epoch",
                   "revocation", "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors=None):
@@ -1038,7 +1041,10 @@ def verify_manifest(manifest, now=None, max_window_seconds=None, trusted_anchors
     if pk_hex.lower() not in active:
         v["note"] = "the manifest is not signed by one of its own declared active anchors"
         return v
-    digest = hashlib.sha3_256(_manifest_canonical(manifest)).digest()
+    digest = _canonical_digest(_manifest_canonical, manifest)
+    if digest is None:
+        v["note"] = _NOT_JSON
+        return v
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
@@ -1105,7 +1111,7 @@ def _attestation_canonical(att):
                  ("format", "attesting_agency_id", "attested_agency_id",
                   "attested_public_key_hex", "context_id", "attested_date",
                   "valid_until", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _attestation_window_open(att, now=None):
@@ -1165,7 +1171,7 @@ def verify_attestation(att, attesting_agency_id=None, expected_key=None, now=Non
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    ok, ran, note = _two_witness_verify(hashlib.sha3_256(_attestation_canonical(att)).digest(), sig, pk, alg)
+    ok, ran, note = _two_witness_verify(_canonical_digest(_attestation_canonical, att), sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -1397,7 +1403,7 @@ def _epoch_checkpoint_canonical(cp):
     statement = {k: cp.get(k) for k in
                  ("format", "authority", "epoch", "prev", "as_of",
                   "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _revocation_feed_canonical(feed):
@@ -1407,7 +1413,7 @@ def _revocation_feed_canonical(feed):
     statement = {k: feed.get(k) for k in
                  ("format", "authority", "epoch_number", "as_of", "revoked_root_hex",
                   "revoked_count", "revoked_leaves", "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _leaves_are_hex(leaves):
@@ -1438,11 +1444,49 @@ def revocation_leaf(token_value):
     return hashlib.sha3_256(token_value.encode("utf-8")).hexdigest()
 
 
+#: WIRE-SPEC section 1: every artifact is a UTF-8 JSON object, and JSON (RFC 8259 section 6)
+#: has no NaN or Infinity. Python's json reads and writes both, so a statement signed with one
+#: re-canonicalised to its own signed bytes here while a JavaScript verifier could not parse it.
+#: An integer too long for Python to write (over 4300 digits) is refused the same way.
+_NOT_JSON = "the statement is not JSON: it holds NaN, Infinity or an integer too long to write"
+
+
+def _refuse_constant(name):
+    raise ValueError("%s is not JSON (RFC 8259 section 6)" % name)
+
+
+def _json_loads(text):
+    """json.loads that refuses NaN, Infinity and -Infinity, which are not JSON."""
+    return json.loads(text, parse_constant=_refuse_constant)
+
+
+def _canonical_json(statement):
+    """Sorted-keys compact JSON of a statement. Raises ValueError on a value JSON cannot hold."""
+    return json.dumps(statement, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _canonical_or_none(canonical, obj):
+    """canonical(obj), or None when the statement is not JSON (_NOT_JSON)."""
+    try:
+        return canonical(obj)
+    except ValueError:
+        return None
+
+
+def _canonical_digest(canonical, obj):
+    """SHA3-256 of canonical(obj), or None when the statement is not JSON (_NOT_JSON)."""
+    data = _canonical_or_none(canonical, obj)
+    return None if data is None else hashlib.sha3_256(data).digest()
+
+
 def _two_witness_verify(digest, sig, pk, alg=_ALG):
     """Shared ML-DSA-65 two-witness check (liboqs primary, cryptography second). Returns
     (ok, ran, note): ok is True/False, or None when no verifier is available or the two
     witnesses disagree -- in which case `note` says which. A key or signature of the wrong
-    length is (False, [], why), decided before either witness runs."""
+    length is (False, [], why), decided before either witness runs. A digest of None is a
+    statement that is not JSON."""
+    if digest is None:
+        return None, [], _NOT_JSON
     if not _accepted_alg(alg):
         return None, [], "unknown or unaccepted signature algorithm: %r" % alg
     size_problem = _size_problem(alg, pk, sig)   # before either witness runs: see _size_problem
@@ -1509,7 +1553,7 @@ def verify_epoch_checkpoint(cp, now=None, max_window_seconds=None, issuer_key=No
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_epoch_checkpoint_canonical(cp)).digest()
+    digest = _canonical_digest(_epoch_checkpoint_canonical, cp)
     ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
@@ -1627,7 +1671,7 @@ def verify_revocation_feed(feed, now=None, max_window_seconds=None, issuer_key=N
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_revocation_feed_canonical(feed)).digest()
+    digest = _canonical_digest(_revocation_feed_canonical, feed)
     ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
@@ -1738,7 +1782,7 @@ def _status_bundle_canonical(bundle):
     statement = {k: bundle.get(k) for k in
                  ("format", "publisher", "members_root_hex", "member_count",
                   "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def bundle_members_root(members):
@@ -1749,8 +1793,7 @@ def bundle_members_root(members):
     member changes the root. MUST match app.py's _bundle_members_root."""
     if not isinstance(members, (list, tuple)):
         members = []
-    digs = sorted(hashlib.sha3_256(
-        json.dumps(m, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    digs = sorted(hashlib.sha3_256(_canonical_json(m)).hexdigest()
         for m in members)
     return hashlib.sha3_256("\n".join(digs).encode("utf-8")).hexdigest()
 
@@ -1785,14 +1828,15 @@ def verify_status_bundle(bundle, now=None, max_window_seconds=None, publisher_ke
     # member_count is an integer, not a boolean, and not absent: `(x or 0)` read an absent
     # count as 0 and Python's `True == 1` read `true` as one member (WIRE-SPEC 3.4).
     member_count = bundle.get("member_count")
-    v["commitment_ok"] = (bundle_members_root(members) == _hex_text(bundle.get("members_root_hex"))
+    root = _canonical_or_none(bundle_members_root, members)
+    v["commitment_ok"] = (root is not None and root == _hex_text(bundle.get("members_root_hex"))
                           and _signed_count(member_count) and member_count == len(members))
     try:
         sig, pk = _unhex(sig_hex), _unhex(pk_hex)
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_status_bundle_canonical(bundle)).digest()
+    digest = _canonical_digest(_status_bundle_canonical, bundle)
     ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
@@ -2133,7 +2177,7 @@ def _exchange_receipt_canonical(receipt):
     statement = {k: receipt.get(k) for k in
                  ("format", "requester", "responder", "context_id", "request_hash",
                   "response_hash", "authorized_via", "occurred_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 _EXCHANGE_MINT_FORMAT = "polaris-exchange-mint/1"
@@ -2149,7 +2193,7 @@ def _exchange_mint_canonical(m):
     statement = {k: m.get(k) for k in
                  ("format", "requester_public_key_hex", "context_id", "request_hash",
                   "response_hash", "responder_agency_id", "occurred_at")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 _TIMESTAMP_FORMAT = "polaris-timestamp/1"
@@ -2163,7 +2207,7 @@ def _timestamp_canonical(t):
     statement = {k: t.get(k) for k in
                  ("format", "authority", "digest_hex", "digest_algorithm", "nonce",
                   "issued_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def verify_timestamp(ts, now=None, anchor_keys=None):
@@ -2188,7 +2232,10 @@ def verify_timestamp(ts, now=None, anchor_keys=None):
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_timestamp_canonical(ts)).digest()
+    digest = _canonical_digest(_timestamp_canonical, ts)
+    if digest is None:
+        v["note"] = _NOT_JSON
+        return v
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
@@ -2284,7 +2331,10 @@ def verify_timestamp_anchor(ts, log_key=None, trusted_witnesses=None, threshold=
     if not isinstance(proof, dict) or not isinstance(sth, dict):
         v["note"] = "anchor.proof and anchor.sth must be objects"
         return v
-    h = timestamp_hash(ts)
+    h = _canonical_or_none(timestamp_hash, ts)
+    if h is None:
+        v["note"] = _NOT_JSON
+        return v
     v["timestamp_hash"] = h
     if _hex_text(proof.get("entry_hex")) != h:
         v["note"] = "the proof is not for this timestamp"
@@ -2400,7 +2450,7 @@ def _registry_canonical(r):
     statement = {k: r.get(k) for k in
                  ("format", "publisher", "instance", "authorities", "contexts", "trust",
                   "relying_parties", "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 #: The largest integer both languages hold exactly. JavaScript reads a larger one as the nearest
@@ -2482,7 +2532,10 @@ def verify_registry(reg, now=None, max_window_seconds=None, trusted_anchors=None
     if listed is None or listed != _hex_text(pk_hex):
         v["note"] = "the registry is not signed by the key it lists for its own publisher"
         return v
-    digest = hashlib.sha3_256(_registry_canonical(reg)).digest()
+    digest = _canonical_digest(_registry_canonical, reg)
+    if digest is None:
+        v["note"] = _NOT_JSON
+        return v
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
@@ -2609,13 +2662,13 @@ def _exchange_request_canonical(e):
     statement = {k: e.get(k) for k in
                  ("format", "requester", "target", "context_id", "request_hash", "nonce",
                   "issued_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def canonical_body_hash(obj):
     """SHA3-256 hex of a JSON body in canonical form (sorted keys, compact) -- what an exchange
     envelope's request_hash and a receipt's response_hash bind."""
-    return hashlib.sha3_256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return hashlib.sha3_256(_canonical_json(obj)).hexdigest()
 
 
 def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None, body=None, now=None):
@@ -2655,7 +2708,10 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_exchange_request_canonical(envelope)).digest()
+    digest = _canonical_digest(_exchange_request_canonical, envelope)
+    if digest is None:
+        v["note"] = _NOT_JSON
+        return v
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
@@ -2705,7 +2761,8 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
                 break
         v["requester_authorized"] = authorized
     if body is not None:
-        v["body_bound"] = (canonical_body_hash(body) == _hex_text(envelope.get("request_hash")))
+        h = _canonical_or_none(canonical_body_hash, body)
+        v["body_bound"] = h is not None and h == _hex_text(envelope.get("request_hash"))
     return v
 
 
@@ -2751,7 +2808,7 @@ def verify_exchange_mint(mint, responder_key=None):
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_exchange_mint_canonical(mint)).digest()
+    digest = _canonical_digest(_exchange_mint_canonical, mint)
     ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is not True:
@@ -2788,7 +2845,7 @@ def _signed_document_canonical(d):
     statement = {k: d.get(k) for k in
                  ("format", "document", "signer", "on_behalf_of", "purpose", "signed_at",
                   "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def document_signature_material(doc):
@@ -2797,7 +2854,10 @@ def document_signature_material(doc):
     MUST match polaris_web/app.py's _document_signature_material."""
     if not isinstance(doc, dict):
         return b""
-    return _signed_document_canonical(doc) + b"\n" + str(doc.get("signature_hex") or "").lower().encode("utf-8")
+    canonical = _canonical_or_none(_signed_document_canonical, doc)
+    if canonical is None:
+        return None   # not JSON: it binds nothing, and timestamp_binds answers None
+    return canonical + b"\n" + str(doc.get("signature_hex") or "").lower().encode("utf-8")
 
 
 def is_revoked_leaf(feed, leaf_hex):
@@ -2880,7 +2940,10 @@ def verify_signed_document(doc, now=None, trusted_anchors=None, document_bytes=N
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_signed_document_canonical(doc)).digest()
+    digest = _canonical_digest(_signed_document_canonical, doc)
+    if digest is None:
+        v["note"] = _NOT_JSON
+        return v
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
@@ -3081,7 +3144,7 @@ def _id_token_canonical(t):
     statement = {k: t.get(k) for k in
                  ("format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr",
                   "enrollment", "auth_time", "iat", "exp", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=None):
@@ -3108,7 +3171,10 @@ def verify_id_token(tok, audience=None, nonce=None, now=None, trusted_anchors=No
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_id_token_canonical(tok)).digest()
+    digest = _canonical_digest(_id_token_canonical, tok)
+    if digest is None:
+        v["note"] = _NOT_JSON
+        return v
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
@@ -3164,7 +3230,7 @@ def _trust_list_canonical(t):
     if not isinstance(t, dict):
         t = {}
     statement = {k: t.get(k) for k in ("format", "publisher", "keys", "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _trust_list_publisher_key(tl):
@@ -3199,7 +3265,10 @@ def verify_trust_list(tl, now=None, max_window_seconds=None, trusted_anchors=Non
     if not _hex_in(pk_hex, set(_trust_list_publisher_key(tl))):
         v["note"] = "the trust list is not signed by a key it lists as active for its own publisher"
         return v
-    digest = hashlib.sha3_256(_trust_list_canonical(tl)).digest()
+    digest = _canonical_digest(_trust_list_canonical, tl)
+    if digest is None:
+        v["note"] = _NOT_JSON
+        return v
     if not _accepted_alg(alg):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
@@ -3336,7 +3405,7 @@ def verify_exchange_receipt(receipt, now=None, trusted_manifests=None, responder
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_exchange_receipt_canonical(receipt)).digest()
+    digest = _canonical_digest(_exchange_receipt_canonical, receipt)
     ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
@@ -3559,7 +3628,7 @@ def _sth_canonical(sth):
     _sth_statement: sorted-keys compact JSON of exactly these fields."""
     statement = {k: sth.get(k) for k in
                  ("format", "log_id", "tree_size", "root_hash_hex", "timestamp")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def verify_sth(sth, issuer_key=None):
@@ -3592,7 +3661,7 @@ def verify_sth(sth, issuer_key=None):
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_sth_canonical(sth)).digest()
+    digest = _canonical_digest(_sth_canonical, sth)
     ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
@@ -3677,7 +3746,7 @@ def _cosignature_canonical(cosig):
     """The canonical bytes a witness signs to cosign a log head. MUST match the witness's
     signer: sorted-keys compact JSON of exactly these fields."""
     statement = {k: cosig.get(k) for k in ("format", "log_id", "tree_size", "root_hash_hex")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def verify_cosignature(cosig, witness_key=None):
@@ -3711,7 +3780,7 @@ def verify_cosignature(cosig, witness_key=None):
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    digest = hashlib.sha3_256(_cosignature_canonical(cosig)).digest()
+    digest = _canonical_digest(_cosignature_canonical, cosig)
     ok, ran, note = _two_witness_verify(digest, sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
@@ -3904,8 +3973,7 @@ def chain_checkpoint(heads):
     head as the log serves it, so the anchor covers the instance's signature too; a head of
     only the five statement fields is a checkpoint as well (013 step 1 anchored one)."""
     heads = sorted((dict(h) for h in heads), key=lambda h: str(h.get("log_id")))
-    return json.dumps({"format": _CHAIN_CHECKPOINT_FORMAT, "heads": heads},
-                      sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json({"format": _CHAIN_CHECKPOINT_FORMAT, "heads": heads})
 
 
 class _OtsReader:
@@ -4034,7 +4102,7 @@ def _checkpoint_heads(text):
     """The heads of a checkpoint given as text, or (None, why). The text must be exactly the
     canonical bytes, so the heads read back are the ones that were hashed."""
     try:
-        doc = json.loads(text)
+        doc = _json_loads(text)
     except ValueError:
         return None, "the checkpoint is not JSON"
     if not isinstance(doc, dict) or doc.get("format") != _CHAIN_CHECKPOINT_FORMAT:
@@ -4181,7 +4249,7 @@ def _pack_exit(verdict, signature_only):
 
 def _load_anchor(path):
     with open(path) as f:
-        data = json.load(f)
+        data = _json_loads(f.read())
     if isinstance(data, list):
         return [str(x) for x in data]
     if not isinstance(data, dict):
@@ -4358,7 +4426,7 @@ def decode_presentation_frames(frames):
         raw = d.decompress(data, _QR_MAX_DECOMPRESSED)
         if d.unconsumed_tail or not d.eof:
             return None, "payload exceeds the decompressed-size bound (%d bytes): refused before inflating further" % _QR_MAX_DECOMPRESSED
-        obj = json.loads(raw.decode("utf-8"))
+        obj = _json_loads(raw.decode("utf-8"))
     except Exception as e:  # noqa: BLE001 -- any decoding failure (incl. recursion depth) is a clean refusal
         return None, "undecodable payload: %s" % type(e).__name__
     if not isinstance(obj, dict) or obj.get("format") != _PRESENTATION_FORMAT:
@@ -4377,7 +4445,7 @@ def _epoch_leaves_canonical(b):
     statement = {k: b.get(k) for k in
                  ("format", "authority", "epoch_id", "context_id", "merkle_root",
                   "leaf_count", "leaves_root_hex", "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _leaves_root(leaves):
@@ -4417,7 +4485,7 @@ def verify_epoch_leaves(bundle, now=None, max_window_seconds=None, anchor_keys=N
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    ok, ran, note = _two_witness_verify(hashlib.sha3_256(_epoch_leaves_canonical(bundle)).digest(), sig, pk, alg)
+    ok, ran, note = _two_witness_verify(_canonical_digest(_epoch_leaves_canonical, bundle), sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -4498,7 +4566,7 @@ def _holder_binding_canonical(b):
     statement = {k: b.get(k) for k in
                  ("format", "token_value", "holder_public_key_hex", "holder_algorithm",
                   "bound_at", "status", "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _holder_proof_canonical(pr):
@@ -4512,7 +4580,7 @@ def _holder_proof_canonical(pr):
         pr = {}
     statement = {k: pr.get(k) for k in
                  ("format", "token_value", "context_id", "verifier_nonce", "issued_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def verify_holder_binding(binding, credential=None, now=None, max_window_seconds=None, anchor_keys=None):
@@ -4538,7 +4606,7 @@ def verify_holder_binding(binding, credential=None, now=None, max_window_seconds
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    ok, ran, note = _two_witness_verify(hashlib.sha3_256(_holder_binding_canonical(binding)).digest(), sig, pk, alg)
+    ok, ran, note = _two_witness_verify(_canonical_digest(_holder_binding_canonical, binding), sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -4582,7 +4650,7 @@ def verify_holder_proof(proof, binding=None, expected_nonce=None, expected_conte
     except (ValueError, TypeError):
         v["note"] = "signature_hex/public_key_hex are not valid hex"
         return v
-    ok, ran, note = _two_witness_verify(hashlib.sha3_256(_holder_proof_canonical(proof)).digest(), sig, pk, alg)
+    ok, ran, note = _two_witness_verify(_canonical_digest(_holder_proof_canonical, proof), sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -4683,7 +4751,7 @@ def _agent_grant_canonical(g):
     statement = {k: g.get(k) for k in
                  ("format", "grant_id", "agent_public_key_hex", "agent_algorithm", "actions",
                   "limits", "context_id", "issued_at", "expires_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _grant_revocation_canonical(r):
@@ -4696,7 +4764,7 @@ def _grant_revocation_canonical(r):
     if not isinstance(r, dict):
         r = {}
     statement = {k: r.get(k) for k in ("format", "grant_id", "revoked_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _agent_proof_canonical(pr):
@@ -4707,12 +4775,15 @@ def _agent_proof_canonical(pr):
         pr = {}
     statement = {k: pr.get(k) for k in
                  ("format", "grant_id", "action", "service_nonce", "issued_at", "algorithm")}
-    return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_json(statement)
 
 
 def _signed_by(obj, canonical, key_hex, alg):
     """Two-witness signature check over a canonical statement. Returns (ok, witnesses, note)
-    with ok None when no verifier is installed, so a caller abstains rather than accepting."""
+    with ok None when no verifier is installed, so a caller abstains rather than accepting.
+    A canonical of None is a statement that is not JSON."""
+    if canonical is None:
+        return None, [], _NOT_JSON
     try:
         sig, pk = _unhex(str(obj.get("signature_hex") or "")), _unhex(str(key_hex or ""))
     except (ValueError, TypeError):
@@ -4736,7 +4807,7 @@ def _verify_standalone(obj, fmt, canonical, key):
     if not isinstance(obj, dict) or obj.get("format") != fmt:
         v["note"] = "not a %s" % fmt
         return v
-    ok, ran, note = _signed_by(obj, canonical(obj), obj.get("public_key_hex"), obj.get("algorithm"))
+    ok, ran, note = _signed_by(obj, _canonical_or_none(canonical, obj), obj.get("public_key_hex"), obj.get("algorithm"))
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -4794,7 +4865,7 @@ def _vc_canonical(document):
     polaris_web/vc.py's canonical_bytes."""
     body = {k: v for k, v in document.items() if k != "proof"}
     return json.dumps(body, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False).encode("utf-8")
+                      ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def verify_verifiable_credential(document, anchor_keys=None, now=None):
@@ -4809,7 +4880,7 @@ def verify_verifiable_credential(document, anchor_keys=None, now=None):
          "witnesses": [], "note": None}
     if isinstance(document, (bytes, bytearray)):
         try:
-            document = json.loads(document.decode("utf-8"))
+            document = _json_loads(document.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             v["note"] = "the credential is not decodable JSON"
             return v
@@ -4866,7 +4937,7 @@ def verify_verifiable_credential(document, anchor_keys=None, now=None):
         v["note"] = "unknown or unaccepted signature algorithm: %r" % alg
         return v
     ok, ran, note = _two_witness_verify(
-        hashlib.sha3_256(_vc_canonical(document)).digest(), sig, pk, alg)
+        _canonical_digest(_vc_canonical, document), sig, pk, alg)
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -5283,7 +5354,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         v["note"] = "not a %s" % _AGENT_GRANT_FORMAT
         return v
     holder_key = grant.get("public_key_hex")
-    ok, ran, note = _signed_by(grant, _agent_grant_canonical(grant), holder_key, grant.get("algorithm"))
+    ok, ran, note = _signed_by(grant, _canonical_or_none(_agent_grant_canonical, grant), holder_key, grant.get("algorithm"))
     v["witnesses"] = ran
     if ok is None:
         v["note"] = note
@@ -5374,7 +5445,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
         elif not _wire_text_equal(revocation.get("grant_id"), grant.get("grant_id")):
             v["note"] = "the revocation names a different grant"
         else:
-            rok, rran, rnote = _signed_by(revocation, _grant_revocation_canonical(revocation),
+            rok, rran, rnote = _signed_by(revocation, _canonical_or_none(_grant_revocation_canonical, revocation),
                                           revocation.get("public_key_hex"), revocation.get("algorithm"))
             if rok is None:
                 v["note"] = rnote
@@ -5417,7 +5488,7 @@ def verify_agent_grant(grant, binding=None, credential=None, now=None, requested
                          "holder authorized in the grant (%r)"
                          % (agent_proof.get("algorithm"), grant.get("agent_algorithm")))
         else:
-            aok, aran, anote = _signed_by(agent_proof, _agent_proof_canonical(agent_proof),
+            aok, aran, anote = _signed_by(agent_proof, _canonical_or_none(_agent_proof_canonical, agent_proof),
                                           agent_proof.get("public_key_hex"),
                                           grant.get("agent_algorithm") or agent_proof.get("algorithm"))
             if aok is None:
@@ -5921,6 +5992,15 @@ def _anchor_keys(args):
     return keys or None
 
 
+def _echo(value):
+    """A value from the input as printable text. C0 controls (ESC among them), DEL, C1 controls and
+    lone surrogates are backslash-escaped, so an echoed field cannot move the terminal's cursor,
+    rewrite an earlier line, or stop the output with an encoding error."""
+    text = value if isinstance(value, str) else str(value)
+    return "".join(ch if " " <= ch < "\x7f" or ("\x9f" < ch and not "\ud800" <= ch <= "\udfff")
+                   else ("\\x%02x" % ord(ch) if ord(ch) < 0x100 else "\\u%04x" % ord(ch)) for ch in text)
+
+
 def _tri(value):
     """A verdict link as the CLI prints it: the literal True, False or None."""
     return "True" if value is True else "False" if value is False else "None"
@@ -6019,6 +6099,12 @@ def _given(ap, argv):
 
 
 def main(argv=None):
+    # A character the output stream cannot encode is written as a backslash escape: a lone
+    # surrogate in an echoed field raised UnicodeEncodeError out of print, a traceback and exit 1,
+    # which the README gives to --qr-frames alone. A test's StringIO has no reconfigure.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     ap = _Parser(description="Detached authenticity verifier for a Polaris credential.")
     ap.add_argument("--pack", help="authenticity pack JSON file (default: stdin)")
     ap.add_argument("--presentation", help="a polaris-presentation/1 JSON file (P8.6): the credential with a stapled status "
@@ -6116,14 +6202,14 @@ def main(argv=None):
         # reported, because "this grant was revoked" and "this agent does not hold the key it
         # names" call for different responses at the service.
         try:
-            grant = json.loads(open(args.agent_grant).read())
-            binding = json.loads(open(args.holder_binding).read()) if args.holder_binding else None
-            credential = json.loads(open(args.credential).read()) if args.credential else None
-            revocation = json.loads(open(args.grant_revocation).read()) if args.grant_revocation else None
-            agent_proof = json.loads(open(args.agent_proof).read()) if args.agent_proof else None
+            grant = _json_loads(open(args.agent_grant).read())
+            binding = _json_loads(open(args.holder_binding).read()) if args.holder_binding else None
+            credential = _json_loads(open(args.credential).read()) if args.credential else None
+            revocation = _json_loads(open(args.grant_revocation).read()) if args.grant_revocation else None
+            agent_proof = _json_loads(open(args.agent_proof).read()) if args.agent_proof else None
             anchor = _anchor_keys(args)
         except (OSError, ValueError) as e:
-            print("could not read the grant / binding / credential / revocation / proof: %s" % e,
+            print("could not read the grant / binding / credential / revocation / proof: %s" % _echo(e),
                   file=sys.stderr)
             return 3
         verdict = verify_agent_grant(grant, binding=binding, credential=credential,
@@ -6156,9 +6242,9 @@ def main(argv=None):
                 print("%-18s%s" % (label + ":", _tri(verdict.get(key))))
             if verdict["pairwise_handle"]:
                 print("handle:           %s (correlation: %s)"
-                      % (verdict["pairwise_handle"], verdict["correlation"]))
+                      % (_echo(verdict["pairwise_handle"]), _echo(verdict["correlation"])))
             if verdict["note"]:
-                print("note:             %s" % verdict["note"])
+                print("note:             %s" % _echo(verdict["note"]))
         if held:
             print(held, file=sys.stderr)
         return 0 if verdict["usable"] else 2
@@ -6173,10 +6259,10 @@ def main(argv=None):
                     return 1
             else:
                 with open(args.presentation) as fh:
-                    presentation = json.loads(fh.read())
+                    presentation = _json_loads(fh.read())
             anchor = _anchor_keys(args)
         except (OSError, ValueError) as e:
-            print("could not read the presentation / anchor: %s" % e, file=sys.stderr)
+            print("could not read the presentation / anchor: %s" % _echo(e), file=sys.stderr)
             return 3
         # 2026-09-30: --nonce and --verifier-scope reached only other paths, so a holder proof
         # was never held to this service's nonce here: a captured proof replayed.
@@ -6208,7 +6294,7 @@ def main(argv=None):
         if args.json:
             print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
         else:
-            print("usable offline: %s%s" % (verdict["usable_offline"], (" (%s)" % verdict["note"]) if verdict.get("note") else ""))
+            print("usable offline: %s%s" % (verdict["usable_offline"], (" (%s)" % _echo(verdict["note"])) if verdict.get("note") else ""))
         if held:
             print(held, file=sys.stderr)
         return 0 if verdict["usable_offline"] else 2
@@ -6222,12 +6308,12 @@ def main(argv=None):
                   file=sys.stderr)
             return 4
         try:
-            proof = json.loads(open(args.zk_proof).read())
-            checkpoint = json.loads(open(args.epoch_checkpoint).read()) if args.epoch_checkpoint else {}
-            manifests = [json.loads(open(m).read()) for m in (args.trusted_manifest or [])]
+            proof = _json_loads(open(args.zk_proof).read())
+            checkpoint = _json_loads(open(args.epoch_checkpoint).read()) if args.epoch_checkpoint else {}
+            manifests = [_json_loads(open(m).read()) for m in (args.trusted_manifest or [])]
             anchor = _anchor_keys(args)
         except Exception as e:
-            print("could not read the ZK proof / checkpoint / manifest / anchor: %s" % e, file=sys.stderr)
+            print("could not read the ZK proof / checkpoint / manifest / anchor: %s" % _echo(e), file=sys.stderr)
             return 3
         verdict = verify_cross_authority_zk(
             proof, checkpoint, args.context, manifests, max_window_seconds=args.max_window,
@@ -6255,7 +6341,7 @@ def main(argv=None):
         else:
             print("decision: %s" % verdict["decision"])
             for r in verdict.get("reasons", []):
-                print("  - %s" % r)
+                print("  - %s" % _echo(r))
             # WIRE-SPEC 3.14: a verifier that accepts an unsigned edge MUST report that it did.
             if verdict.get("attestation_signed") is False:
                 print("  - the trust edge is unsigned (version 1): the manifest's signature carries "
@@ -6266,16 +6352,16 @@ def main(argv=None):
         # The verifier's own abstain is the one decision a missing polaris-zk binary makes: the
         # check could not run (3), not a proof that failed (2), which it exited until 2026-10-01.
         if verdict["decision"] == "abstain":
-            print("abstain: %s" % "; ".join(verdict.get("reasons") or ["the proof could not be checked"]),
+            print("abstain: %s" % "; ".join(_echo(r) for r in verdict.get("reasons") or ["the proof could not be checked"]),
                   file=sys.stderr)
             return 3
         return 0 if verdict["decision"] == "accept" else 2
 
     try:
         raw = open(args.pack).read() if args.pack else sys.stdin.read()
-        pack = json.loads(raw)
+        pack = _json_loads(raw)
     except Exception as e:
-        print("could not read the authenticity pack: %s" % e, file=sys.stderr)
+        print("could not read the authenticity pack: %s" % _echo(e), file=sys.stderr)
         return 3
     # Another signed artifact handed to --pack was reported as a signature that did not verify. It
     # is not a pack, which the README's exit 2 names; the library verifies it (2026-10-01). The
@@ -6294,15 +6380,15 @@ def main(argv=None):
     try:
         anchor = _anchor_keys(args)
     except Exception as e:
-        print("could not read the issuer anchor: %s" % e, file=sys.stderr)
+        print("could not read the issuer anchor: %s" % _echo(e), file=sys.stderr)
         return 3
 
     # P3.6: with a stapled status assertion, decide the whole thing OFFLINE.
     if args.status_assertion:
         try:
-            assertion = json.loads(open(args.status_assertion).read())
+            assertion = _json_loads(open(args.status_assertion).read())
         except Exception as e:
-            print("could not read the status assertion: %s" % e, file=sys.stderr)
+            print("could not read the status assertion: %s" % _echo(e), file=sys.stderr)
             return 3
         verdict = verify_stapled(pack, assertion, max_window_seconds=args.max_window, anchor_keys=anchor,
                                  signature_only=args.signature_only)
@@ -6321,11 +6407,11 @@ def main(argv=None):
         else:
             print("decision:         %s" % verdict["decision"].upper())
             print("authentic:        %s" % verdict["authentic"])
-            print("status:           %s" % verdict["status"])
+            print("status:           %s" % _echo(verdict["status"]))
             print("fresh:            %s" % verdict["fresh"])
             print("bound:            %s" % verdict["bound"])
             for r in verdict["reasons"]:
-                print("  - %s" % r)
+                print("  - %s" % _echo(r))
         if verdict["decision"] == "abstain":
             print("abstain: no --issuer-anchor, so issuer trust was NOT evaluated for the "
                   "credential, the status assertion, or both. A genuine signature is not a "
@@ -6338,8 +6424,8 @@ def main(argv=None):
         print(json.dumps(stamp_crypto(verdict, _mode), indent=2))
     else:
         print("crypto:           %s" % _mode)
-        print("token:            %s" % verdict["token_value"])
-        print("algorithm:        %s" % verdict["algorithm"])
+        print("token:            %s" % _echo(verdict["token_value"]))
+        print("algorithm:        %s" % _echo(verdict["algorithm"]))
         print("signature_valid:  %s" % verdict["signature_valid"])
         if verdict["witnesses"]:
             print("witnesses:        %s" % ", ".join(verdict["witnesses"]))
@@ -6348,7 +6434,7 @@ def main(argv=None):
         else:
             print("issuer_trusted:   null (trust was NOT evaluated: no --issuer-anchor)")
         if verdict["note"]:
-            print("note:             %s" % verdict["note"])
+            print("note:             %s" % _echo(verdict["note"]))
     return _pack_exit(verdict, args.signature_only)
 
 

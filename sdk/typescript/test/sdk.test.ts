@@ -1800,6 +1800,8 @@ const XA_KEYS: Record<string, string[]> = {
   "polaris-registry/1": ["format", "publisher", "instance", "authorities", "contexts", "trust", "relying_parties",
     "issued_at", "expires_at", "algorithm"],
   "polaris-status-assertion/1": ["format", "token_value", "status", "issued_at", "expires_at"],
+  "polaris-id-token/1": ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr",
+    "enrollment", "auth_time", "iat", "exp", "algorithm"],
 };
 const xaHex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const xaEnc = (x: string) => new TextEncoder().encode(x);
@@ -2013,6 +2015,22 @@ test("a signed window that is not an instant is not fresh", async () => {
   }
   assert.equal(verifySignedArtifact(k.sign(body), "not a time").fresh, null,
     "a caller's clock that does not parse is not the artifact's window");
+});
+
+test("a signed ID token window that is not an instant is not fresh", async () => {
+  const k = await xaKey(35);
+  const tok = { format: "polaris-id-token/1", iss: "https://issuer.example", sub: "ab".repeat(32), aud: "rp-1",
+                nonce: "n-1", context_id: 1, disclosure_level: 1, acr: "urn:polaris:acr:1", enrollment: null,
+                auth_time: XA_ISSUED, iat: XA_ISSUED, exp: XA_EXPIRES, algorithm: "ML-DSA-65" };
+  assert.equal(verifyIdToken(k.sign(tok), null, null, XA_NOW).fresh, true, "control");
+  assert.equal(verifyIdToken(k.sign({ ...tok, exp: XA_ISSUED }), null, null, XA_NOW).fresh, false, "expired");
+  for (const [field, bad] of [["exp", null], ["exp", "x"], ["exp", 5], ["iat", null], ["iat", "x"]] as [string, unknown][]) {
+    const v = verifyIdToken(k.sign({ ...tok, [field]: bad }), null, null, XA_NOW);
+    assert.deepEqual([v.authentic, v.fresh], [true, false], `${field}=${bad}`);
+    assert.match(v.note ?? "", /not valid instants/);
+  }
+  assert.equal(verifyIdToken(k.sign({ ...tok, exp: null }), null, null, "not a time").fresh, null,
+    "a caller's clock that does not parse is not the token's window");
 });
 
 test("an agent proof is made inside its grant and not ahead of the clock", () => {

@@ -429,15 +429,44 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
 _STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"]
 
 
+#: WIRE-SPEC section 1: every artifact is a UTF-8 JSON object, and JSON (RFC 8259 section 6)
+#: has no NaN or Infinity. Python's json reads and writes both, so a statement signed with one
+#: re-canonicalised to its own signed bytes here while the TypeScript SDK could not parse it.
+#: An integer too long for Python to write (over 4300 digits) is refused the same way.
+_NOT_JSON = "the statement is not JSON: it holds NaN, Infinity or an integer too long to write"
+
+
+def _refuse_constant(name):
+    raise ValueError("%s is not JSON (RFC 8259 section 6)" % name)
+
+
+def _json_loads(text):
+    """json.loads that refuses NaN, Infinity and -Infinity, which are not JSON."""
+    return json.loads(text, parse_constant=_refuse_constant)
+
+
 def _canonical(obj: dict, keys) -> bytes:
-    return json.dumps({k: obj.get(k) for k in keys}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """Sorted-keys compact JSON of the signed fields. Raises ValueError on a value JSON cannot hold."""
+    return json.dumps({k: obj.get(k) for k in keys}, sort_keys=True, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8")
+
+
+def _statement_digest(obj: dict, keys):
+    """SHA3-256 of the canonical statement, or None when it is not JSON (_NOT_JSON)."""
+    try:
+        return hashlib.sha3_256(_canonical(obj, keys)).digest()
+    except ValueError:
+        return None
 
 
 def _verify_over_digest(digest, sig_hex, pk_hex, alg=ALGORITHM):
     """Dual-witness ML-DSA verify over a digest under `alg` (an accepted parameter set).
     Returns (ok, witnesses, note); ok is None when no verifier is available, the witnesses
     disagree, or the algorithm is not accepted. A key or signature of the wrong length is
-    (False, [], why), decided before either witness runs."""
+    (False, [], why), decided before either witness runs. A digest of None is a statement that
+    is not JSON."""
+    if digest is None:
+        return None, [], _NOT_JSON
     if not _accepted(alg):
         return None, [], "unknown or unaccepted signature algorithm: %r" % (alg,)
     try:
@@ -614,7 +643,7 @@ def verify_status_assertion(assertion: dict, now=None) -> StatusAssertionVerdict
         return StatusAssertionVerdict(False, None, None, status, "placeholder -- not authenticatable offline")
     if assertion.get("format") != "polaris-status-assertion/1":
         return StatusAssertionVerdict(False, None, None, status, "not a polaris-status-assertion/1")
-    digest = hashlib.sha3_256(_canonical(assertion, _STATUS_ASSERTION_KEYS)).digest()
+    digest = _statement_digest(assertion, _STATUS_ASSERTION_KEYS)
     ok, ran, note = _verify_over_digest(digest, assertion.get("signature_hex"), assertion.get("public_key_hex"),
                                     assertion.get("algorithm"))
     if ok is None:
@@ -739,7 +768,8 @@ def _wire_path(p) -> list:
 def _members_root(members) -> str:
     if not isinstance(members, list):
         members = []
-    digs = sorted(hashlib.sha3_256(json.dumps(m, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    digs = sorted(hashlib.sha3_256(json.dumps(m, sort_keys=True, separators=(",", ":"),
+                                              allow_nan=False).encode("utf-8")).hexdigest()
                   for m in members)
     return hashlib.sha3_256("\n".join(digs).encode("utf-8")).hexdigest()
 
@@ -777,11 +807,16 @@ def verify_id_token(tok: dict, audience=None, nonce=None, now=None,
     ia, ea = _iso_to_epoch(tok.get("iat")), _iso_to_epoch(tok.get("exp"))
     n = _iso_to_epoch(now) if now is not None else time.time()
     fresh = (ia <= n < ea) if (ia is not None and ea is not None and n is not None) else None
+    note = None
+    if fresh is None and _clock_reads(now):
+        # A signed iat or exp that is not an instant is a refusal (WIRE-SPEC 2.2), as in
+        # verify_signed_artifact.
+        fresh, note = False, "the signed iat/exp are not valid instants"
     # Compared as the TypeScript SDK's `===` compares them (_same_id): `==` let a signed
     # "aud": true match audience 1, and a nonce of 1.0 match 1 (2026-10-15).
     return IdTokenVerdict(True, bool(_same_id(tok.get("aud"), audience)) if audience is not None else None,
                           bool(_same_id(tok.get("nonce"), nonce)) if nonce is not None else None, fresh,
-                          tok.get("sub"), tok.get("acr"), None, base.issuer_trusted)
+                          tok.get("sub"), tok.get("acr"), note, base.issuer_trusted)
 
 
 def _status_of(entry):
@@ -823,7 +858,7 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # parameter set the key's length identifies, as the instance's mint route and the
         # detached verifier read it; a key no set fits is refused.
         alg = _alg_for_key_length(obj.get("public_key_hex"))
-    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(obj, keys)).digest(),
+    ok, ran, note = _verify_over_digest(_statement_digest(obj, keys),
                                         obj.get("signature_hex"), obj.get("public_key_hex"), alg)
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
@@ -875,7 +910,11 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # only the detached verifier checked it: a bundle whose signed count and listed
         # members disagreed was authentic here and in the TypeScript SDK.
         members = obj.get("members") if isinstance(obj.get("members"), list) else []
-        ok = (_members_root(members) == _hex_text(obj.get("members_root_hex"))
+        try:
+            root = _members_root(members)
+        except ValueError:   # a member that is not JSON (_NOT_JSON) commits to nothing
+            root = None
+        ok = (root is not None and root == _hex_text(obj.get("members_root_hex"))
               and _count_is(obj.get("member_count"), len(members)))
         note = None if ok else "the status bundle's members_root or member_count does not match its members"
     elif ok and fmt == "polaris-federation-manifest/1":
@@ -1001,7 +1040,7 @@ def verify_cosignature(cosig: dict, witness_key=None) -> ArtifactVerdict:
     # algorithm, as in polaris-sdk-ts, so each of those keeps its own refusal.
     if _accepted(c.get("algorithm")) and not _signed_count(c.get("tree_size")):
         return ArtifactVerdict(False, None, "the cosignature's tree_size is not an integer from 0 to 2**53 - 1")
-    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(c, _COSIGNATURE_KEYS)).digest(),
+    ok, ran, note = _verify_over_digest(_statement_digest(c, _COSIGNATURE_KEYS),
                                         c.get("signature_hex"), c.get("public_key_hex"), c.get("algorithm"))
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
@@ -1043,7 +1082,11 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
     if not isinstance(proof, dict) or not isinstance(sth, dict):
         v.note = "anchor.proof and anchor.sth must be objects"
         return v
-    v.timestamp_hash = timestamp_hash(ts)
+    try:
+        v.timestamp_hash = timestamp_hash(ts)
+    except ValueError:
+        v.note = _NOT_JSON
+        return v
     if _hex_text(proof.get("entry_hex")) != v.timestamp_hash:
         v.note = "the proof is not for this timestamp"
         return v
@@ -1173,7 +1216,7 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     v.bound_to_credential = (_wire_text_equal(b.get("token_value"), cred.get("token_value"))
                              and _same_hex(b.get("public_key_hex"), cred.get("public_key_hex")))
     keys = _ARTIFACT_KEYS["polaris-holder-proof/1"]
-    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(pr, keys)).digest(),
+    ok, ran, note = _verify_over_digest(_statement_digest(pr, keys),
                                         pr.get("signature_hex"), pr.get("public_key_hex"), pr.get("algorithm"))
     v.proof_authentic = None if ok is None else bool(ok)
     if ok is None:
@@ -1231,7 +1274,7 @@ def verify_attestation(att: dict, attesting_agency_id=None, expected_key=None) -
     if a.get("algorithm") == PLACEHOLDER_LABEL:
         return ArtifactVerdict(False, None, "placeholder attestation signature -- not authenticatable offline")
     keys = _ARTIFACT_KEYS["polaris-trust-attestation/1"]
-    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(a, keys)).digest(),
+    ok, ran, note = _verify_over_digest(_statement_digest(a, keys),
                                         a.get("signature_hex"), a.get("public_key_hex"), a.get("algorithm"))
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
@@ -1390,7 +1433,7 @@ class PolarisVerifier:
             headers={"Authorization": "Basic " + creds,
                      "Content-Type": "application/x-www-form-urlencoded"})
         with self._urlopen(req) as r:
-            body = json.loads(r.read())
+            body = _json_loads(r.read())
         self._bearer = body["access_token"]
         self._bearer_exp = time.time() + _expires_in(body.get("expires_in"))
         return self._bearer
@@ -1403,7 +1446,7 @@ class PolarisVerifier:
             headers={"Authorization": "Bearer " + self._access_token(),
                      "Content-Type": "application/json"})
         with self._urlopen(req) as r:
-            return json.loads(r.read())
+            return _json_loads(r.read())
 
     def verify_presentation(self, presentation) -> Verdict:
         """Decide accept / reject / provisional for a holder's presentation (a
@@ -1900,8 +1943,11 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
         v.requester_authorized = bool(found)
         v.attestation_signed = found[0][1] if found else None
     if body is not None:
-        canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
-        v.body_bound = _sha3_hex(canon) == _hex_text(e.get("request_hash"))
+        try:
+            canon = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        except ValueError:   # a body that is not JSON (_NOT_JSON) binds nothing
+            canon = None
+        v.body_bound = canon is not None and _sha3_hex(canon) == _hex_text(e.get("request_hash"))
     return v
 
 
