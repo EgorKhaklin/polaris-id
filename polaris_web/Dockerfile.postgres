@@ -73,9 +73,12 @@ RUN apk upgrade --no-cache \
     && chown -R postgres:postgres /var/lib/pgbackrest /etc/pgbackrest /var/log/pgbackrest \
     && rm -rf /var/cache/apk/*
 
-# The rebuilt gosu replaces the base's copy at the same path; the base's su-exec is a link to it.
+# The rebuilt gosu replaces the base's copy at the same path. A base's su-exec, where it has one
+# (16-alpine does, 17-alpine does not), must be a link to gosu, so it runs the rebuilt binary too.
 COPY --from=compile /src/gosu /usr/local/bin/gosu
-RUN [ "$(readlink /usr/local/bin/su-exec)" = gosu ] \
+RUN { { [ ! -e /usr/local/bin/su-exec ] && [ ! -L /usr/local/bin/su-exec ]; } \
+        || [ "$(readlink /usr/local/bin/su-exec)" = gosu ] \
+        || { echo "/usr/local/bin/su-exec is not a link to gosu" >&2; exit 1; }; } \
     && gosu --version \
     && gosu postgres true
 
