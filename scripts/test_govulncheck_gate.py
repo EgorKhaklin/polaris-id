@@ -3,7 +3,7 @@
 """Tests for polaris-govulncheck-gate.py.
 
 The reports in fixtures/govulncheck/ are govulncheck v1.9.0 -mode=binary -format json output cut
-to its config and finding messages (fixtures/govulncheck/README.md names each binary). The
+to its config, SBOM and finding messages (fixtures/govulncheck/README.md names each binary). The
 binaries are built here as minimal ELF files with the section names the real binaries carry,
 since the gate reads only the section table. The step tests run the workflow step as written,
 with a stand-in docker command that serves files from a fixture tree.
@@ -75,6 +75,15 @@ def report(name):
     return (FIX / name).read_text()
 
 
+def caddy_with_sbom(change):
+    """The shipped Caddy report with change(sbom) applied to its SBOM message (line 2)."""
+    lines = report("caddy-shipped.json").splitlines()
+    msg = json.loads(lines[1])
+    change(msg["SBOM"])
+    lines[1] = json.dumps(msg, separators=(",", ":"))
+    return "\n".join(lines) + "\n"
+
+
 def rules(failures):
     """The rule each failure line names: '<image> <binary>: <rule>: <detail>'."""
     return [f.split(": ")[1] for f in failures]
@@ -126,11 +135,17 @@ class GovulncheckGateTests(unittest.TestCase):
         self.assertTrue(gate.has_symbol_table(gate.elf_sections(elf(CADDY_SHIPPED))))
         self.assertTrue(gate.has_symbol_table(gate.elf_sections(elf(GOSU_PRE))))
         self.assertFalse(gate.has_symbol_table(gate.elf_sections(elf(CADDY_STRIPPED))))
-        config, levels = gate.read_report(report("caddy-shipped.json"))
+        config, sbom, levels = gate.read_report(report("caddy-shipped.json"))
         self.assertEqual((config["scanner_version"], config["scan_mode"], config["scan_level"]),
                          ("v1.9.0", "binary", "symbol"))
         self.assertEqual({k: v[0] for k, v in levels.items()}, {"GO-2026-6094": 1, "GO-2026-5932": 2})
-        _, levels = gate.read_report(report("gosu-pre.json"))
+        self.assertEqual((sbom["roots"], len(sbom["modules"])), (["caddy"], 146))
+        self.assertIn({"path": "caddy", "version": "(devel)"}, sbom["modules"])
+        self.assertIn({"path": "stdlib", "version": "go1.26.10"}, sbom["modules"])
+        self.assertEqual(gate.not_looked_up(sbom), [])
+        _, sbom, levels = gate.read_report(report("gosu-pre.json"))
+        self.assertEqual((sbom["roots"], len(sbom["modules"])), (["github.com/tianon/gosu"], 4))
+        self.assertEqual(gate.not_looked_up(sbom), [])
         by_level = [sorted(k for k, v in levels.items() if v[0] == n) for n in (0, 1, 2)]
         self.assertEqual(by_level[0], ["GO-2026-6686"])
         self.assertEqual(by_level[1], ["GO-2026-4602", "GO-2026-4864", "GO-2026-4970"])
@@ -259,6 +274,48 @@ class GovulncheckGateTests(unittest.TestCase):
             failures, _ = self.judge(vex(), "polaris-caddy", elf(CADDY_SHIPPED), bad)
             self.assertEqual(rules(failures), ["not a govulncheck binary report"], old)
 
+    def test_a_module_the_database_is_not_queried_for_fails_by_name(self):
+        def add(*modules):
+            return lambda sbom: sbom["modules"].extend({"path": p, "version": v} for p, v in modules)
+
+        def stdlib(version):
+            return lambda sbom: [m.update(version=version) for m in sbom["modules"] if m["path"] == "stdlib"]
+
+        def root(path, version):
+            def change(sbom):
+                [m.update(path=path, version=version) for m in sbom["modules"] if m["path"] == "caddy"]
+                sbom["roots"] = [path]
+            return change
+
+        cases = (
+            # etcd's sibling modules as govulncheck reads them through a replace to a directory
+            (add(("../api", "(devel)"), ("../client/pkg", "(devel)")),
+             ["not looked up: ../api (devel)", "not looked up: ../client/pkg (devel)"]),
+            (add(("go.etcd.io/etcd/api/v3", "(devel)")), ["not looked up: go.etcd.io/etcd/api/v3 (devel)"]),
+            (add(("/src/api", "v3.6.16")), ["not looked up: /src/api v3.6.16"]),
+            (add(("go.etcd.io/etcd/api/v3", "3.6.16")), ["not looked up: go.etcd.io/etcd/api/v3 3.6.16"]),
+            (add(("go.etcd.io/etcd/api/v3", "v3.6.16 (devel)")),
+             ["not looked up: go.etcd.io/etcd/api/v3 v3.6.16 (devel)"]),
+            # a root with a dot in its first path element can be named by an advisory, so it needs a
+            # version too; a dotless one is exempt only as a root
+            (root("go.etcd.io/etcd/server/v3", "(devel)"), ["not looked up: go.etcd.io/etcd/server/v3 (devel)"]),
+            (root("go.etcd.io/etcd/server/v3", "v3.6.16+dirty"), []),
+            (root("/src/server", "(devel)"), ["not looked up: /src/server (devel)"]),
+            (stdlib("go1.26.10 (devel)"), ["not looked up: stdlib go1.26.10 (devel)"]),
+            (add(("caddyx", "(devel)")), ["not looked up: caddyx (devel)"]),
+            (lambda sbom: sbom["modules"].append({"path": "example.com/m"}), ["not looked up: example.com/m "]),
+            (stdlib("v1.26.10"), ["not looked up: stdlib v1.26.10"]),
+            (lambda sbom: sbom.pop("roots"), ["not looked up: caddy (devel)"]),
+            (lambda sbom: sbom.update(roots=["stdlib"]), ["not looked up: caddy (devel)"]),
+            (add(("go.etcd.io/etcd/api/v3", "v3.6.16"), ("golang.org/x/m", "v0.0.0-20260101000000-0123456789ab"),
+                 ("github.com/m/n", "v2.0.0+incompatible")), []),
+            (stdlib("go1.21rc2"), []),
+        )
+        for change, want in cases:
+            with self.subTest(want):
+                failures, _ = self.judge(vex(), "polaris-caddy", elf(CADDY_SHIPPED), caddy_with_sbom(change))
+                self.assertEqual([f.split(": ", 1)[1] for f in failures], want)
+
     def test_main_exits_1_on_a_failure_and_0_on_none(self):
         d = pathlib.Path(tempfile.mkdtemp())
         (d / "caddy").write_bytes(elf(CADDY_SHIPPED))
@@ -342,7 +399,24 @@ class GovulncheckGateTests(unittest.TestCase):
                            "not a govulncheck binary report: a finding without a string osv id and a trace"),
                           (text + '\n{"finding": {"osv": "GO-2026-0002", "trace": ["m"]}}',
                            "not a govulncheck binary report: a finding without a string osv id and a trace"),
-                          ('{"config": ["v1.9.0"]}', 'not a govulncheck binary report: config ["v1.9.0"]')):
+                          ('{"config": ["v1.9.0"]}\n' + text.splitlines(keepends=True)[1],
+                           'not a govulncheck binary report: config ["v1.9.0"]'),
+                          ("".join(line for line in text.splitlines(keepends=True) if '"SBOM"' not in line),
+                           "not a govulncheck binary report: no SBOM message"),
+                          (text + text.splitlines(keepends=True)[1],
+                           "not a govulncheck binary report: more than one SBOM message")) + tuple(
+                          (caddy_with_sbom(change), "not a govulncheck binary report: an SBOM message without a "
+                                                    "modules array of objects with string paths")
+                          for change in (lambda sbom: sbom.pop("modules"), lambda sbom: sbom.update(modules=[]),
+                                         lambda sbom: sbom.update(modules={"path": "stdlib"}),
+                                         lambda sbom: sbom["modules"].append("stdlib"),
+                                         lambda sbom: sbom["modules"].append({"version": "v1.0.0"}),
+                                         lambda sbom: sbom["modules"].append({"path": "", "version": "v1.0.0"}),
+                                         lambda sbom: sbom["modules"].append({"path": "m", "version": 1}))) + tuple(
+                          (caddy_with_sbom(change), "not a govulncheck binary report: an SBOM message whose roots "
+                                                    "are not an array of strings")
+                          for change in (lambda sbom: sbom.update(roots="caddy"),
+                                         lambda sbom: sbom.update(roots=[["caddy"]]))):
             with self.subTest(line):
                 code, out = self.run_main(json.dumps(vex()), bad)
                 self.assertEqual(code, 1)
@@ -411,8 +485,8 @@ class GovulncheckStepTests(unittest.TestCase):
         (bindir / "docker").write_text(f"#!{sys.executable}\n{DOCKER}")
         (bindir / "docker").chmod(0o755)
         os.symlink(sys.executable, bindir / "python3")
-        config, _ = gate.read_report(report("caddy-shipped.json"))
-        (d / "clean.json").write_text(json.dumps({"config": config}))
+        config, sbom, _ = gate.read_report(report("caddy-shipped.json"))
+        (d / "clean.json").write_text(json.dumps({"config": config}) + "\n" + json.dumps({"SBOM": sbom}))
         (d / "step.sh").write_text(step_script())
         env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", GO_IMAGE="golang:test",
                    GV_FIXTURES=str(d / "images"), GV_CADDY=str(FIX / "caddy-shipped.json"),

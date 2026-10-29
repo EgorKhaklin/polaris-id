@@ -1,7 +1,9 @@
 # govulncheck reports for scripts/test_govulncheck_gate.py
 
-Each file is govulncheck v1.9.0 `-mode=binary -format json` output, cut to its `config` and
-`finding` messages, read against vuln.go.dev's database as modified 2026-10-27T21:16:18Z.
+Each file is govulncheck v1.9.0 `-mode=binary -format json` output, cut to its `config`, `SBOM` and
+`finding` messages, read against vuln.go.dev's database as modified 2026-10-27T21:16:18Z. The
+`SBOM` line comes from a second run on the same binary (same sha256, same database), whose
+findings were the same set.
 
 | File | Binary |
 |---|---|

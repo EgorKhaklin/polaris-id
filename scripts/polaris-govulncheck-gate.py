@@ -28,6 +28,11 @@ Every failure line names the rule that fired:
   no justification            the statement is not_affected with no justification
   justification refused at symbol level, justification refused at package level
                               the justification is not on that level's list
+  not looked up               a module in the report's SBOM has a filesystem path (a replace to a
+                              directory) or a version that is not semver (for stdlib: not a Go
+                              release), so no advisory against it can match; a root (the binary's
+                              main module) is exempt only when the first element of its path has
+                              no dot (xcaddy's "caddy" at (devel)), as no database entry can name it
 
 A line that read statements names each one by its place in the file, with its status and
 justification. Module-level findings are printed and never fail.
@@ -38,8 +43,10 @@ fails it: a file that is not JSON, not an object, or whose statements are not an
 name is not a string, whose aliases are present and not an array of strings, whose products are
 not an array, or a products entry that is not an object with a string @id, fails as
 "malformed VEX statement N" (N its place in the file), naming the field and what it is. A report
-that is not JSON, or not a govulncheck v1.9.0 binary-mode report at symbol scan level, fails as
-"not a govulncheck binary report".
+that is not JSON, not a govulncheck v1.9.0 binary-mode report at symbol scan level, or without
+exactly one SBOM message whose modules are a non-empty array of objects with a string path (and a
+string version where present) and whose roots, where present, are an array of strings, fails as
+"not a govulncheck binary report", naming the field.
 
 Usage:
   polaris-govulncheck-gate.py --vex vex.openvex.json IMAGE BINARY REPORT [IMAGE BINARY REPORT ...]
@@ -50,6 +57,7 @@ Exit 0 when nothing failed, 1 when a rule fired, 2 on a usage error.
 """
 import argparse
 import json
+import re
 import struct
 import sys
 
@@ -59,6 +67,10 @@ SHT_SYMTAB = 2
 ALLOWED = ({"vulnerable_code_not_in_execute_path", "vulnerable_code_cannot_be_controlled_by_adversary",
             "inline_mitigations_already_exist"},)
 ALLOWED += (ALLOWED[0] | {"vulnerable_code_not_present"},)
+SEMVER = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+                    r"(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?")
+GO_RELEASE = re.compile(r"go1\.(0|[1-9]\d*)(\.(0|[1-9]\d*)|(rc|beta)[1-9]\d*)?")
+FS_PATH = re.compile(r"\.\.?(/.*)?|/.*|[A-Za-z]:.*|.*\\.*")
 
 
 def product_purl(image):
@@ -96,10 +108,23 @@ def has_symbol_table(sections):
     return symtab is not None and symtab[2] > 0
 
 
+def sbom_problem(sbom):
+    """What is wrong with the shape of an SBOM message, or None."""
+    modules = sbom.get("modules") if isinstance(sbom, dict) else None
+    if not isinstance(modules, list) or not modules or not all(
+            isinstance(m, dict) and isinstance(m.get("path"), str) and m["path"]
+            and isinstance(m.get("version", ""), str) for m in modules):
+        return "an SBOM message without a modules array of objects with string paths"
+    roots = sbom.get("roots", [])
+    if not isinstance(roots, list) or not all(isinstance(r, str) for r in roots):
+        return "an SBOM message whose roots are not an array of strings"
+    return None
+
+
 def read_report(text):
-    """(config, {osv id: (level, module, version, function)}) from a govulncheck JSON stream.
-    Each id keeps its most precise level across its findings."""
-    dec, i, config, levels = json.JSONDecoder(), 0, None, {}
+    """(config, SBOM, {osv id: (level, module, version, function)}) from a govulncheck JSON
+    stream. Each id keeps its most precise level across its findings."""
+    dec, i, config, sbom, levels = json.JSONDecoder(), 0, None, None, {}
     while True:
         while i < len(text) and text[i].isspace():
             i += 1
@@ -113,6 +138,13 @@ def read_report(text):
             raise ValueError(f"a message is {kind(obj)}")
         if "config" in obj:
             config = obj["config"]
+        if "SBOM" in obj:
+            if sbom is not None:
+                raise ValueError("more than one SBOM message")
+            problem = sbom_problem(obj["SBOM"])
+            if problem:
+                raise ValueError(problem)
+            sbom = obj["SBOM"]
         finding = obj.get("finding")
         if not finding:
             continue
@@ -125,7 +157,25 @@ def read_report(text):
         osv = finding["osv"]
         if osv not in levels or level < levels[osv][0]:
             levels[osv] = (level, frame.get("module"), frame.get("version"), frame.get("function"))
-    return config, levels
+    if sbom is None:
+        raise ValueError("no SBOM message")
+    return config, sbom, levels
+
+
+def not_looked_up(sbom):
+    """(path, version) of each SBOM module that no advisory can match."""
+    roots, out = set(sbom.get("roots", [])), []
+    for m in sbom["modules"]:
+        path, version = m["path"], m.get("version", "")
+        if path == "stdlib":
+            known = GO_RELEASE.fullmatch(version)
+        elif path in roots and "." not in path.split("/")[0] and not FS_PATH.fullmatch(path):
+            known = True
+        else:
+            known = SEMVER.fullmatch(version) and not FS_PATH.fullmatch(path)
+        if not known:
+            out.append((path, version))
+    return out
 
 
 def kind(value):
@@ -215,7 +265,7 @@ def gate(vex, image, binary_name, binary, report):
         failures.append(f"{image} {binary_name}: no symbol table: govulncheck would report it at "
                         f"go.mod precision")
     try:
-        config, levels = read_report(report)
+        config, sbom, levels = read_report(report)
     except ValueError as e:
         failures.append(f"{image} {binary_name}: not a govulncheck binary report: {e}")
         return failures
@@ -224,6 +274,8 @@ def gate(vex, image, binary_name, binary, report):
         failures.append(f"{image} {binary_name}: not a govulncheck binary report: config "
                         f"{json.dumps(config, sort_keys=True)}")
         return failures
+    for path, version in not_looked_up(sbom):
+        failures.append(f"{image} {binary_name}: not looked up: {path} {version}")
     product = product_purl(image)
     counts = [0, 0, 0]
     for osv in sorted(levels):
