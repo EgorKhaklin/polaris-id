@@ -26,13 +26,13 @@
 # ============================================================================
 
 # gosu, the base image's privilege-drop helper, is rebuilt from gosu's release source with
-# Go 1.26.10 and replaces the base's copy (gosu 1.19, built with Go 1.24.6). The source is named
+# Go 1.27.3 and replaces the base's copy (gosu 1.19, built with Go 1.24.6). The source is named
 # by its release tag and checked against that tag's commit; the build flags are gosu's own
 # (its Dockerfile's BUILD_FLAGS), and the module versions come from its go.mod, verified against
 # its go.sum. gosu's release tags are not semver, so a local v<tag>.0 tag stamps the version into
 # the binary the way gosu's own build does. The pin moves by hand to each 1.x release gosu
 # publishes; the weekly image scan fails on a fixable critical CVE in the pinned release.
-FROM golang:1.26.10-alpine3.24@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS compile
+FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS compile
 ARG GOSU_VERSION=1.20
 ARG GOSU_COMMIT=29b939aa5bd4dc588af765b8248f6e39150d2565
 RUN apk add --no-cache git
@@ -43,11 +43,11 @@ RUN [ "$(git rev-parse HEAD)" = "$GOSU_COMMIT" ] \
 RUN git tag "v$GOSU_VERSION.0" \
     && CGO_ENABLED=0 go build -v -trimpath -ldflags '-d -w' -buildvcs=true -o /src/gosu github.com/tianon/gosu
 # gosu's go.mod requires only go 1.20, so an older Go here would compile it without complaint:
-# fail the build unless the binary reports go1.26.10 or a later release.
+# fail the build unless the binary reports go1.27.3 or a later release.
 RUN v=$(go version /src/gosu | sed 's/^.*: go//'); \
     case "$v" in \
-        1.26.1[0-9]|1.26.[2-9][0-9]|1.2[7-9].[0-9]*|1.[3-9][0-9].[0-9]*) echo "gosu: go$v" ;; \
-        *) echo "gosu reports go$v, older than go1.26.10" >&2; exit 1 ;; \
+        1.27.[3-9]|1.27.[1-9][0-9]|1.2[89].[0-9]*|1.[3-9][0-9].[0-9]*) echo "gosu: go$v" ;; \
+        *) echo "gosu reports go$v, older than go1.27.3" >&2; exit 1 ;; \
     esac
 
 FROM postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
