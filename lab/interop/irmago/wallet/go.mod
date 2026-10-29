@@ -7,14 +7,14 @@ toolchain go1.27.1
 require (
 	github.com/lestrrat-go/jwx/v4 v4.5.0
 	github.com/ncruces/go-sqlite3/gormlite v0.34.0
-	github.com/privacybydesign/irmago v1.4.2
+	github.com/privacybydesign/irmago v1.4.3
 	github.com/sirupsen/logrus v1.10.2
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.6 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect

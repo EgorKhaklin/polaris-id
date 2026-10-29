@@ -5550,6 +5550,86 @@ def test_image_cve_scanning_requires_a_weekly_run_of_the_gate(tmp_path):
             and "no weekly schedule" in found.message, found.message
 
 
+def test_govulncheck_gate_check_discriminates(tmp_path):
+    for rel in (".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml",
+                "scripts/polaris-govulncheck-gate.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    wf = tmp_path / ".github" / "workflows"
+    scan = (wf / "image-cve-scan.yml").read_text()
+    base = checks.check_govulncheck_gate(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+
+    def broken(old, new, expect):
+        assert scan.count(old) == 1, old
+        (wf / "image-cve-scan.yml").write_text(scan.replace(old, new))
+        found = checks.check_govulncheck_gate(tmp_path)[0]
+        (wf / "image-cve-scan.yml").write_text(scan)
+        assert found.level == "FAIL" and expect in found.message, (old, found.message)
+
+    broken("          set -euo pipefail\n          work=", "          work=", "stops on its first error")
+    broken("govulncheck@v1.9.0", "govulncheck@latest", "installs govulncheck v1.9.0")
+    broken("-mode=binary -format json", "-mode=source -format json", "binary mode")
+    broken("for img in polaris-app polaris-caddy polaris-pgbouncer polaris-postgres polaris-etcd; do",
+           "for img in polaris-app polaris-caddy polaris-pgbouncer polaris-postgres; do", "reads all five images")
+    broken('in ${want%% *}"; exit 1 ;;', 'in ${want%% *}" ;;', "fails when it did not read a binary")
+    broken('--vex vex.openvex.json "${triples[@]}"', '--vex vex.openvex.json "${triples[@]}" || true',
+           "judges every report")
+    broken("          set -euo pipefail\n          work=", "          set -euo pipefail\n          set +e\n          work=",
+           "turns off set -euo pipefail")
+    broken("          set -euo pipefail\n          work=", "          set -euo pipefail\n          set -u +o errexit\n"
+           "          work=", "turns off set -euo pipefail")
+    broken('--vex vex.openvex.json "${triples[@]}"\n', '--vex vex.openvex.json "${triples[@]}"\n          true\n',
+           "the gate call must be the govulncheck step's last command")
+    broken('"polaris-etcd $work/polaris-etcd/usr/bin/etcdctl" \\\n', "",
+           "polaris-etcd $work/polaris-etcd/usr/bin/etcdctl, a binary the images carry")
+    broken("      - name: govulncheck GATE over the Go binaries in the images\n",
+           "      - name: govulncheck GATE over the Go binaries in the images\n        continue-on-error: true\n",
+           "no continue-on-error")
+    broken("python3 scripts/polaris-govulncheck-gate.py", "# python3 scripts/polaris-govulncheck-gate.py",
+           "exactly one run step (found 0)")
+    (tmp_path / "scripts/polaris-govulncheck-gate.py").unlink()
+    found = checks.check_govulncheck_gate(tmp_path)[0]
+    assert found.level == "FAIL" and "polaris-govulncheck-gate.py is missing" in found.message, found.message
+
+
+def test_go_builder_pin_check_discriminates(tmp_path):
+    builders = ("polaris_web/Dockerfile.etcd", "polaris_web/Dockerfile.postgres")  # named here, not read from checks
+    for rel in (".github/workflows/ci.yml", ".github/workflows/image-cve-scan.yml", *builders):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+    wf = tmp_path / ".github" / "workflows" / "image-cve-scan.yml"
+    scan = wf.read_text()
+    base = checks.check_go_builder_pin(tmp_path)[0]
+    assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
+    go_image = re.search(r"(?m)^\s*GO_IMAGE: (golang:\S+)$", scan).group(1)
+    assert f"GO_IMAGE {go_image.split('@')[0]} by digest" in base.message, base.message
+    # GO_IMAGE left on another golang image than the builders compile with: the #470 pin.
+    stale = "golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d"
+    assert stale != go_image
+
+    def broken(path, old, new, expect):
+        text = path.read_text()
+        assert text.count(old) == 1, (path, old)
+        path.write_text(text.replace(old, new))
+        found = checks.check_go_builder_pin(tmp_path)[0]
+        path.write_text(text)
+        assert found.level == "FAIL" and expect in found.message, (path, new, found.message)
+
+    broken(wf, f"GO_IMAGE: {go_image}\n", f"GO_IMAGE: {stale}\n",
+           f"runs GO_IMAGE {stale}, but polaris_web/Dockerfile.etcd compiles with {go_image}")
+    broken(wf, f"GO_IMAGE: {go_image}\n", f"GO_IMG: {go_image}\n", "once as GO_IMAGE (found 0)")
+    broken(wf, f"GO_IMAGE: {go_image}\n", f"GO_IMAGE: {go_image}\n          GO_IMAGE: {go_image}\n",
+           "once as GO_IMAGE (found 2)")
+    broken(wf, "python3 scripts/polaris-govulncheck-gate.py", "python3 scripts/other.py",
+           "must hold the govulncheck step (found 0)")
+    for df in builders:
+        broken(tmp_path / df, f"FROM {go_image} AS compile\n", f"FROM {stale} AS compile\n",
+               f"but {df} compiles with {stale}")
+        broken(tmp_path / df, f"FROM {go_image} AS compile\n", f"# FROM {go_image} AS compile\n",
+               f"{df} must compile in one golang stage named compile (found 0)")
+
+
 def test_migration_timeouts_check_discriminates(tmp_path):
     scripts = tmp_path / "scripts"
     scripts.mkdir()

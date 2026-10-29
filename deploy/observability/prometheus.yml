@@ -30,7 +30,8 @@ scrape_configs:
     scheme: http
     # Lab record 017 (gate row OP-15): every app container on the network, found by its compose
     # service name, blue-green colour included. A name that does not resolve (no app-green
-    # without the blue-green overlay) yields no target, so it never reads as an app that is down.
+    # without the blue-green overlay) yields no target, so one missing colour never reads as an
+    # app that is down; no target at all does (PolarisAppDown's absent() branch).
     dns_sd_configs:
       - names: ['app', 'app-green']
         type: A
