@@ -34,7 +34,7 @@
 
 services:
   prometheus:
-    image: prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    image: prom/prometheus@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
     container_name: polaris-prometheus
     restart: unless-stopped
     command:
@@ -57,7 +57,7 @@ services:
   # domain, for PolarisCertificateExpiring. The image's own shell fills POLARIS_DOMAIN into
   # blackbox.yml at start; it runs as nobody on a read-only root.
   blackbox:
-    image: prom/blackbox-exporter@sha256:9613f2884689b6fad9f1939f6a3b0388c93a022cfaededb19545b329b5c83dea  # v0.29.0
+    image: prom/blackbox-exporter@sha256:ea1c7aa3ef3f307cd03e85f34abb604478ccb90b567fc690da0cd9776da76b13  # v0.29.0
     container_name: polaris-blackbox
     restart: unless-stopped
     user: "65534:65534"
