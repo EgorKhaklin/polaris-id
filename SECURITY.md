@@ -175,7 +175,7 @@ status list server sends are fuzzed, coverage-guided, on every change to that pa
 nightly; an input that breaks a function's documented promise fails the job. Every change is also scanned by OSV-Scanner for malicious packages (the OpenSSF Malicious Packages
 data) and known vulnerabilities, in the Python sets the images install and in the npm and Rust
 lockfiles; any finding blocks the merge unless it is declared, with its reason, in
-`osv-scanner.toml`. No release is cut while any of these jobs fails. A finding that does not affect Polaris is declared, with the reason, in
+`osv-scanner.toml`. Every Go binary in the images is also read by govulncheck at symbol level: the build fails on a binary without its symbol table, and on a vulnerable function or package in a binary that no `vex.openvex.json` statement answers for that image. No release is cut while any of these jobs fails. A finding that does not affect Polaris is declared, with the reason, in
 [vex.openvex.json](vex.openvex.json) and, for the image scan, in `.trivyignore`.
 
 ---

@@ -105,7 +105,7 @@ STAGES = {
                  "test_pin_chart_images", "test_chain_anchor_tool", "test_migrate_runner",
                  "test_coverage_script", "test_trigger_drill", "test_operator_env",
                  "test_key_event", "test_doctor", "test_evaluate", "test_db_init",
-                 "test_tree_gate"],
+                 "test_tree_gate", "test_govulncheck_gate"],
         "scrub_git": True,
         "files": r"^scripts/",
         "summary": r"(Ran \d+ tests?) in [^\n]*\n+\s*(OK[^\n]*)",
