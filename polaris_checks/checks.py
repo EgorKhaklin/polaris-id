@@ -2256,6 +2256,36 @@ def check_govulncheck_gate(root: pathlib.Path) -> list[Finding]:
                "and gates on scripts/polaris-govulncheck-gate.py against vex.openvex.json")
 
 
+# 2026-10-29: the govulncheck step runs govulncheck and `go version` in GO_IMAGE, the golang image
+# the etcd and gosu builds compile with, so a builder pin cannot move without it. A check of its
+# own: govulncheck_gate's inputs stay ones the check-mutation drill can comment out.
+_GO_BUILDERS = ("polaris_web/Dockerfile.etcd", "polaris_web/Dockerfile.postgres")
+
+
+def check_go_builder_pin(root: pathlib.Path) -> list[Finding]:
+    places = [(rel, text) for rel, text in _ci_and_called_workflows(root)
+              if "polaris-govulncheck-gate.py" in text]
+    if len(places) != 1:
+        return _fail("go_builder_pin", "exactly one workflow that a ci.yml job runs must hold the govulncheck "
+                     f"step (found {len(places)})")
+    rel, text = places[0]
+    go_image = re.findall(r"(?m)^\s*GO_IMAGE:\s*(\S+)\s*$", text)
+    if len(go_image) != 1:
+        return _fail("go_builder_pin", f"{rel} must name the golang image of the govulncheck step once "
+                     f"as GO_IMAGE (found {len(go_image)})")
+    for df in _GO_BUILDERS:
+        builder = re.findall(r"(?m)^FROM (golang:\S+) AS compile$", _read(root, df))
+        if len(builder) != 1:
+            return _fail("go_builder_pin", f"{df} must compile in one golang stage named compile "
+                         f"(found {len(builder)})")
+        if builder[0] != go_image[0]:
+            return _fail("go_builder_pin", f"{rel} runs GO_IMAGE {go_image[0]}, but {df} compiles with "
+                         f"{builder[0]}: the two move together")
+    return _ok("go_builder_pin",
+               f"{rel} runs govulncheck in GO_IMAGE {go_image[0].split('@')[0]} by digest, the golang "
+               "image Dockerfile.etcd and Dockerfile.postgres compile etcd and gosu with")
+
+
 # ---------------------------------------------------------------------------
 # Static application security testing (SAST). pip-audit covers dependency CVEs;
 # bandit covers OUR source for security anti-patterns (hardcoded secrets, weak
@@ -31649,6 +31679,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_cve_scanning,
     check_image_cve_scanning,
     check_govulncheck_gate,
+    check_go_builder_pin,
     check_sast_scanning,
     check_migration_timeouts,
     check_migrations_are_reversible,

@@ -14,13 +14,13 @@
 # scanned by the same CVE job. Only the HA profile (docker-compose.ha.yml) uses
 # it. The source is one etcd release, named by its tag and checked against that
 # tag's commit, so a new release or a new series is taken on purpose by editing
-# both (lab record 017). etcd's own scripts/build.sh compiles it, with the Go
-# release its go.mod names (the toolchain line) and the module versions it
-# pins, verified against its go.sum.
+# both (lab record 017). etcd's own scripts/build.sh compiles it, with the
+# builder's Go (GOTOOLCHAIN=local) and the module versions it pins, verified
+# against its go.sum.
 # The pin moves by hand to each v3.6 patch release etcd publishes; the weekly
 # image scan fails on a fixable critical CVE in the pinned release.
 # ============================================================================
-FROM golang:1.26.10-alpine3.24@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS compile
+FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS compile
 ARG ETCD_VERSION=v3.6.16
 ARG ETCD_COMMIT=0b065e61c679ea81f6862bb24c9815f7fc673966
 RUN apk add --no-cache bash git jq
@@ -74,14 +74,14 @@ RUN for m in server etcdctl etcdutl; do \
         [ "$left" = 0 ] || { echo "$m: $left replace directive(s) to a sibling directory left" >&2; exit 1; }; \
     done
 RUN CGO_ENABLED=0 ./scripts/build.sh
-# etcd v3.6.16's go.mod names go1.26.10 as its toolchain but requires only go 1.26.0, so an older
-# Go here would compile it without complaint: fail the build unless both binaries report go1.26.10
-# or a later release.
+# etcd v3.6.16's go.mod requires only go 1.26.0, so an older Go here would compile it without
+# complaint: fail the build unless both binaries report go1.27.3 or a later release (Go 1.27.0
+# to 1.27.2 lack the crypto/x509 fix for CVE-2026-111943 that 1.27.3 carries).
 RUN for b in bin/etcd bin/etcdctl; do \
         v=$(go version "$b" | sed 's/^.*: go//'); \
         case "$v" in \
-            1.26.1[0-9]|1.26.[2-9][0-9]|1.2[7-9].[0-9]*|1.[3-9][0-9].[0-9]*) echo "$b: go$v" ;; \
-            *) echo "$b reports go$v, older than go1.26.10" >&2; exit 1 ;; \
+            1.27.[3-9]|1.27.[1-9][0-9]|1.2[89].[0-9]*|1.[3-9][0-9].[0-9]*) echo "$b: go$v" ;; \
+            *) echo "$b reports go$v, older than go1.27.3" >&2; exit 1 ;; \
         esac; \
     done
 # Every module in both binaries carries a version, and none is replaced.

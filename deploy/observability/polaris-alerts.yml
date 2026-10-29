@@ -15,14 +15,18 @@ groups:
     rules:
       # SEV-1: the app is unreachable to the scraper (target down) or the
       # process is up but not reporting its info gauge.
+      # The absent() branch is the outage DNS discovery hides: with no app container running,
+      # neither colour's name resolves, discovery drops both targets, and up{job="polaris"}
+      # goes stale instead of 0. absent() copies the job matcher, so this alert keeps the job
+      # label Alertmanager's inhibit rule matches on.
       - alert: PolarisAppDown
-        expr: up{job="polaris"} == 0
+        expr: up{job="polaris"} == 0 or absent(up{job="polaris"})
         for: 2m
         labels:
           severity: sev1
         annotations:
           summary: "Polaris target is down (scrape failing for 2m)"
-          description: "Prometheus cannot scrape the polaris job; the app is unreachable or crashed."
+          description: "Prometheus cannot scrape the polaris job, or finds no app target to scrape; the app is unreachable or crashed."
 
       # The job matcher is what gives the alert its job label (absent() copies equality
       # matchers), and Alertmanager's inhibit rule mutes it under PolarisAppDown only for an
