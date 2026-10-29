@@ -2,47 +2,51 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://github.com/EgorKhaklin/polaris-id/blob/main/vex.openvex.json",
   "author": "Egor Khaklin",
-  "timestamp": "2026-10-28T21:55:24Z",
-  "version": 2,
+  "timestamp": "2026-10-28T22:46:05Z",
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
-        "name": "CVE-2025-68121",
-        "description": "Go crypto/tls: incorrect certificate validation during TLS session resumption"
+        "name": "GO-2026-6094",
+        "aliases": [
+          "GHSA-gcjh-h69q-9w9g"
+        ],
+        "description": "github.com/google/cel-go: JSON private fields exposed via NativeTypes and ParseStructTag"
       },
-      "timestamp": "2026-09-28T21:45:00Z",
+      "timestamp": "2026-10-28T22:46:05Z",
       "products": [
         {
-          "@id": "pkg:docker/library/postgres@16-alpine",
+          "@id": "pkg:oci/polaris-caddy?repository_url=ghcr.io/egorkhaklin/polaris-caddy",
           "subcomponents": [
             {
-              "@id": "pkg:golang/github.com/tianon/gosu"
-            }
-          ]
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "gosu, the postgres image's privilege-drop helper, opens no TLS connection, so the vulnerable session-resumption path is never reached. It cannot be patched by apk or a base bump; re-evaluate when the postgres base ships gosu built with Go 1.24.13 or later. The image scan's matching exception is in .trivyignore."
-    },
-    {
-      "vulnerability": {
-        "name": "CVE-2026-56857",
-        "description": "Go os: Root.Mkdir and Root.MkdirAll can follow junctions out of the root on Windows (GO-2026-6604)"
-      },
-      "products": [
-        {
-          "@id": "pkg:docker/library/postgres@16-alpine",
-          "subcomponents": [
-            {
-              "@id": "pkg:golang/github.com/tianon/gosu"
+              "@id": "pkg:golang/github.com/google/cel-go"
             }
           ]
         }
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_present",
-      "impact_statement": "The Go vulnerability database (GO-2026-6604) limits every vulnerable symbol, in os and internal/syscall/windows, to GOOS windows, and gosu in the postgres image is built for linux and links no os.Root symbol, so the vulnerable code is not in it. gosu cannot be patched by apk; re-evaluate when the postgres base ships gosu built with Go 1.26.9 or later. The image scan's matching exception is in .trivyignore."
+      "impact_statement": "Caddy compiles github.com/google/cel-go/ext into polaris-caddy, but neither function the advisory names, ext.NativeTypes or ext.ParseStructTag, is in the binary: its function names, read from the symbol table the build keeps, include other cel-go/ext functions and neither of these."
+    },
+    {
+      "vulnerability": {
+        "name": "GO-2026-5932",
+        "description": "The golang.org/x/crypto/openpgp package is unmaintained and has known security issues"
+      },
+      "timestamp": "2026-10-28T22:46:05Z",
+      "products": [
+        {
+          "@id": "pkg:oci/polaris-caddy?repository_url=ghcr.io/egorkhaklin/polaris-caddy",
+          "subcomponents": [
+            {
+              "@id": "pkg:golang/golang.org/x/crypto"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "No golang.org/x/crypto/openpgp package is in the polaris-caddy build: go mod why reports that the main module does not need any openpgp package, and the binary's function names, read from the symbol table the build keeps, include none from openpgp."
     }
   ]
 }

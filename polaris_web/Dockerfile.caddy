@@ -28,7 +28,7 @@
 # ============================================================================
 FROM caddy:2.11.4-builder-alpine@sha256:0aa610043dab5da82ad0a0268e46bb852785e6f5160f12f1c6fe3f42903d7e1b AS builder
 
-# The Go toolchain has a FLOOR, as x/crypto does below. This builder digest ships
+# The Go toolchain has a FLOOR, as the modules below do. This builder digest ships
 # Go 1.26.8, and the Go standard library is compiled into the binary: CVE-2026-56857
 # (CRITICAL, os.Root's Mkdir and MkdirAll can follow junctions out of the root) is
 # fixed in Go 1.26.9, and Trivy gates on fixable CRITICAL. GOTOOLCHAIN makes the go
@@ -42,23 +42,43 @@ RUN case "$GOLANG_VERSION" in 1.26.[0-9]) ;; *) echo "builder ships Go $GOLANG_V
 
 # Compile the edge rate-limiter into the binary. Add future --with plugins here.
 #
-# The --replace line is a dependency FLOOR, not a plugin. Caddy 2.11.4's module
-# graph pulls golang.org/x/crypto below v0.55.0, which carries CVE-2026-56854
-# (CRITICAL) in golang.org/x/crypto/ssh, and Trivy gates on fixable CRITICAL.
-# Three things were checked before choosing this fix:
-#   1. `apk upgrade` below cannot reach it: the dependency is compiled into the
-#      Go binary, not installed as an apk package.
-#   2. Bumping the base does not fix it. The newest published builder tag
-#      (caddy:2.11-builder-alpine) still resolves x/crypto to a vulnerable
-#      version, so there is no upstream image to move to yet.
-#   3. It is NOT unreachable, so .trivyignore would have been dishonest:
-#      `strings` finds 227 golang.org/x/crypto/ssh references in the built
-#      binary, more than chacha20 (58), which Caddy demonstrably uses. The ssh
-#      package is genuinely linked in.
-# --with cannot express this (x/crypto has no importable root package, so it
-# fails with "cannot find module providing package"); --replace writes a plain
-# replace directive to go.mod, which is what xcaddy documents for exactly this
-# case. Remove it once the pinned base resolves x/crypto >= 0.55.0 on its own.
+# The --replace lines are dependency FLOORS, not plugins. Caddy 2.11.4's module
+# graph resolves each of these modules below the release that fixes an advisory
+# against it, in Go's vulnerability database or in Trivy's report for the image.
+# Each floor is that release, or the release another floor's module graph requires
+# (x/net v0.62.0 requires x/crypto v0.58.0, otel/sdk v1.45.0 requires otel v1.45.0, and
+# autoexport v0.70.0 brings compress v1.19.1), so no floor undercuts another:
+#   golang.org/x/crypto            v0.58.0  GO-2026-6354, 6355 (ssh)
+#   golang.org/x/net               v0.62.0  GO-2026-6603, 6610, 6611, 6612, 6617 (http2), 6860, 6866 (html)
+#   google.golang.org/grpc         v1.83.2  GO-2026-6061, 6348, 6441, 6443; CVE-2026-84445
+#   github.com/go-chi/chi/v5       v5.3.0   GO-2026-5774, 5775, 5777
+#   github.com/klauspost/compress  v1.19.1  GO-2026-5841 (fixed in v1.18.7)
+#   github.com/go-jose/go-jose/v4  v4.1.6   CVE-2026-116587
+#   go.opentelemetry.io/otel       v1.45.0  GO-2026-5158
+#   go.opentelemetry.io/otel/sdk   v1.45.0  GO-2026-6505
+#   go.opentelemetry.io/otel/sdk/log                             v0.21.0  GO-2026-6615
+#   go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc  v0.21.0  GO-2026-6508
+#   go.opentelemetry.io/contrib/exporters/autoexport             v0.70.0  (the release built
+#     for otel v1.45.0 and otel/log v0.21.0: 2.11.4's v0.68.0 keeps its stdout log exporter at
+#     v0.19.0, which does not compile against otel/log v0.21.0)
+# Each floor only raises its module: go version -m prints "dep <module> <resolved>"
+# then "=> <module> <floor>", with the floor at or above the resolved version.
+# x/crypto's floor first answered CVE-2026-56854 (CRITICAL, x/crypto/ssh), which
+# `apk upgrade` cannot reach (the module is compiled into the binary) and which was
+# linked in (227 x/crypto/ssh references in the binary), so .trivyignore was no
+# answer. --with cannot express a floor for a module with no importable root package
+# (x/crypto, x/net fail with "cannot find module providing package"); --replace
+# writes a plain replace directive to go.mod, which is what xcaddy documents for
+# this case. Remove the floors at the first Caddy release that carries
+# caddyserver/caddy#8178 (c31d9a71) and passes scripts/polaris-edge-limits-drill.sh;
+# the caddy entry in .github/dependabot.yml's ignore list says why the edge stays on
+# 2.11.4 until then. A floor moves by hand to each module release that fixes an advisory
+# against it; the weekly image scan fails on a fixable critical CVE in the binary.
+# The binary keeps its symbol table, so govulncheck reads it at symbol level: xcaddy's
+# default go build flags strip it (-ldflags "-w -s"), and XCADDY_GO_BUILD_FLAGS replaces
+# all of them, so it restates the rest of xcaddy v0.4.5's defaults (-trimpath and its
+# -tags list) and drops only -s.
+ENV XCADDY_GO_BUILD_FLAGS="-ldflags=-w -trimpath -tags=nobadger,nomysql,nopgx"
 # v9.342: the build fetches Go modules and verifies every one against the checksum
 # database; that verification is never skipped (GOSUMDB stays on, GOFLAGS is not set).
 # But the checksum database answered two CI builds in one day with an HTTP/2 stream
@@ -68,7 +88,17 @@ RUN case "$GOLANG_VERSION" in 1.26.[0-9]) ;; *) echo "builder ships Go $GOLANG_V
 RUN for attempt in 1 2 3 4; do \
         xcaddy build \
             --with github.com/mholt/caddy-ratelimit@v0.1.0 \
-            --replace golang.org/x/crypto=golang.org/x/crypto@v0.55.0 \
+            --replace golang.org/x/crypto=golang.org/x/crypto@v0.58.0 \
+            --replace golang.org/x/net=golang.org/x/net@v0.62.0 \
+            --replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2 \
+            --replace github.com/go-chi/chi/v5=github.com/go-chi/chi/v5@v5.3.0 \
+            --replace github.com/klauspost/compress=github.com/klauspost/compress@v1.19.1 \
+            --replace github.com/go-jose/go-jose/v4=github.com/go-jose/go-jose/v4@v4.1.6 \
+            --replace go.opentelemetry.io/otel=go.opentelemetry.io/otel@v1.45.0 \
+            --replace go.opentelemetry.io/otel/sdk=go.opentelemetry.io/otel/sdk@v1.45.0 \
+            --replace go.opentelemetry.io/otel/sdk/log=go.opentelemetry.io/otel/sdk/log@v0.21.0 \
+            --replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0 \
+            --replace go.opentelemetry.io/contrib/exporters/autoexport=go.opentelemetry.io/contrib/exporters/autoexport@v0.70.0 \
         && break; \
         if [ "$attempt" = 4 ]; then echo "xcaddy build failed 4 times; giving up" >&2; exit 1; fi; \
         echo "xcaddy build attempt $attempt failed (a module fetch or a checksum-database stream error); retrying in $((attempt * 20))s" >&2; \

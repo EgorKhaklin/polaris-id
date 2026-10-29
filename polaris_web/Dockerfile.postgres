@@ -24,6 +24,32 @@
 #
 # Build context is the REPOSITORY ROOT (see docker-compose.prod.yml).
 # ============================================================================
+
+# gosu, the base image's privilege-drop helper, is rebuilt from gosu's release source with
+# Go 1.26.10 and replaces the base's copy (gosu 1.19, built with Go 1.24.6). The source is named
+# by its release tag and checked against that tag's commit; the build flags are gosu's own
+# (its Dockerfile's BUILD_FLAGS), and the module versions come from its go.mod, verified against
+# its go.sum. gosu's release tags are not semver, so a local v<tag>.0 tag stamps the version into
+# the binary the way gosu's own build does. The pin moves by hand to each 1.x release gosu
+# publishes; the weekly image scan fails on a fixable critical CVE in the pinned release.
+FROM golang:1.26.10-alpine3.24@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS compile
+ARG GOSU_VERSION=1.20
+ARG GOSU_COMMIT=29b939aa5bd4dc588af765b8248f6e39150d2565
+RUN apk add --no-cache git
+WORKDIR /src
+RUN git clone --quiet --depth 1 --branch "$GOSU_VERSION" https://github.com/tianon/gosu.git .
+RUN [ "$(git rev-parse HEAD)" = "$GOSU_COMMIT" ] \
+    || { echo "gosu $GOSU_VERSION is commit $(git rev-parse HEAD), not $GOSU_COMMIT" >&2; exit 1; }
+RUN git tag "v$GOSU_VERSION.0" \
+    && CGO_ENABLED=0 go build -v -trimpath -ldflags '-d -w' -buildvcs=true -o /src/gosu github.com/tianon/gosu
+# gosu's go.mod requires only go 1.20, so an older Go here would compile it without complaint:
+# fail the build unless the binary reports go1.26.10 or a later release.
+RUN v=$(go version /src/gosu | sed 's/^.*: go//'); \
+    case "$v" in \
+        1.26.1[0-9]|1.26.[2-9][0-9]|1.2[7-9].[0-9]*|1.[3-9][0-9].[0-9]*) echo "gosu: go$v" ;; \
+        *) echo "gosu reports go$v, older than go1.26.10" >&2; exit 1 ;; \
+    esac
+
 FROM postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
 
 # Every Polaris image carries the same provenance labels; the version is
@@ -37,9 +63,8 @@ LABEL org.opencontainers.image.version="${POLARIS_VERSION}"
 
 
 # v9.138 — apk upgrade pulls patched apk packages on top of the pinned base
-# (clears fixable apk-package CVEs; the one residual fixable CRITICAL is a Go
-# stdlib CVE inside the base image's gosu binary, which does no TLS, so it is
-# unreachable and .trivyignore'd). pgbackrest is in the distro package set; the
+# (clears fixable apk-package CVEs; gosu is not an apk package, so the compile
+# stage above rebuilds it). pgbackrest is in the distro package set; the
 # dirs are owned by the postgres user so the archive_command (run as postgres)
 # and stanza ops can write them.
 RUN apk upgrade --no-cache \
@@ -47,6 +72,15 @@ RUN apk upgrade --no-cache \
     && mkdir -p /var/lib/pgbackrest /etc/pgbackrest/conf.d /var/log/pgbackrest \
     && chown -R postgres:postgres /var/lib/pgbackrest /etc/pgbackrest /var/log/pgbackrest \
     && rm -rf /var/cache/apk/*
+
+# The rebuilt gosu replaces the base's copy at the same path. A base's su-exec, where it has one
+# (16-alpine does, 17-alpine does not), must be a link to gosu, so it runs the rebuilt binary too.
+COPY --from=compile /src/gosu /usr/local/bin/gosu
+RUN { { [ ! -e /usr/local/bin/su-exec ] && [ ! -L /usr/local/bin/su-exec ]; } \
+        || [ "$(readlink /usr/local/bin/su-exec)" = gosu ] \
+        || { echo "/usr/local/bin/su-exec is not a link to gosu" >&2; exit 1; }; } \
+    && gosu --version \
+    && gosu postgres true
 
 # v9.243 (roadmap P2.7) — the HA supervisor lives in this image, so the HA
 # profile (docker-compose.ha.yml) runs the SAME database image with a different
