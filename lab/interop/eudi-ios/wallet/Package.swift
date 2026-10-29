@@ -11,7 +11,7 @@ let package = Package(
   name: "polaris-eudi-ios-wallet",
   platforms: [.macOS(.v14)],
   dependencies: [
-    .package(url: "https://github.com/eu-digital-identity-wallet/eudi-lib-ios-openid4vp-swift.git", exact: "0.43.2"),
+    .package(url: "https://github.com/eu-digital-identity-wallet/eudi-lib-ios-openid4vp-swift.git", exact: "0.43.3"),
     .package(url: "https://github.com/eu-digital-identity-wallet/eudi-lib-sdjwt-swift.git", exact: "0.14.7"),
     .package(url: "https://github.com/beatt83/jose-swift.git", from: "6.0.5"),
     .package(url: "https://github.com/SwiftyJSON/SwiftyJSON.git", from: "5.0.1"),
