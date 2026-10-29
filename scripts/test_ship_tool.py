@@ -761,9 +761,6 @@ class ZkProverStale(unittest.TestCase):
         self.assertIsNotNone(why)
         self.assertIn("could not be read", why)
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class VerificationSelectionTests(unittest.TestCase):
     """`plan` decides what a ship has to verify. Until v9.379 that decision was untested.
@@ -1286,3 +1283,7 @@ class AHookIndexIsLeftAlone(unittest.TestCase):
             after = f.read()
         self.assertEqual(after, before, "a scratch repository wrote into the index of the commit being made")
         self.assertEqual(r.returncode, 0, "the suites failed under a hook's environment:\n" + r.stderr[-3000:])
+
+
+if __name__ == "__main__":
+    unittest.main()
