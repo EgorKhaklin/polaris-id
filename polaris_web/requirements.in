@@ -38,7 +38,7 @@ webauthn==3.0.1
 cbor2==6.1.5
 cryptography==50.0.2
 pyOpenSSL==26.4.0
-pyasn1==0.6.4
+pyasn1==0.6.5
 pyasn1-modules==0.4.2
 cffi==2.1.1
 pycparser==3.11
