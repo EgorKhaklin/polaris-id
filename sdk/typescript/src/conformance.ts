@@ -14,7 +14,7 @@
  */
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { agentProofProves, verifyExchangeMint, verifyExchangeReceipt, verifyExchangeRequest, grantCovers, grantPrincipalBound, pairwiseHandle, revocationEndsGrant, verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
+import { agentProofProves, grantInContext, verifyExchangeMint, verifyExchangeReceipt, verifyExchangeRequest, grantCovers, grantPrincipalBound, pairwiseHandle, revocationEndsGrant, verifyAttestation, verifyAuthenticity, verifyIdToken, verifyStatusAssertion, verifySignedArtifact, verifyCrossAuthority,
   verifyTimestampAnchor, verifyHolder, type Pack } from "./index.ts";
 
 const SIGNED_ARTIFACTS = new Set([
@@ -66,7 +66,7 @@ export function decide(caseObj: any): Record<string, unknown> {
     // `fresh` is the grant's own window (WIRE-SPEC 2.2); see the Python SDK's conformance CLI.
     const verdict: Record<string, boolean | string | null> = {
       authentic, fresh: gv.fresh, action_in_scope: null, revoked: null, agent_proved: null,
-      principal_bound: null, pairwise_handle: null, correlation: null };
+      principal_bound: null, pairwise_handle: null, correlation: null, context_matches: null };
     const binding = caseObj.binding ?? null;
     if (authentic && binding !== null) {
       verdict.principal_bound = grantPrincipalBound(grant, binding, caseObj.credential ?? {}, now);
@@ -81,6 +81,10 @@ export function decide(caseObj: any): Record<string, unknown> {
     }
     // A grant the holder did not sign grants nothing, so no later question is answered.
     if (authentic && action !== null) verdict.action_in_scope = grantCovers(grant, action);
+    // The context the holder signed, against this service's own, when the case names one.
+    if (authentic && caseObj.expected_context !== undefined && caseObj.expected_context !== null) {
+      verdict.context_matches = grantInContext(grant, caseObj.expected_context);
+    }
     if (authentic && caseObj.revocation !== undefined && caseObj.revocation !== null) {
       verdict.revoked = Boolean(verifySignedArtifact(caseObj.revocation, now, null).authentic
         && revocationEndsGrant(caseObj.revocation, grant));

@@ -181,12 +181,12 @@ def _verdict_for(case):
             expected_nonce=case.get("expected_nonce"),
             binding=_load(case["binding_file"]) if "binding_file" in case else None,
             credential=_load(case["credential_file"]) if "credential_file" in case else None,
-            verifier_scope=case.get("verifier_scope"))
+            verifier_scope=case.get("verifier_scope"), expected_context=case.get("expected_context"))
         return {"authentic": v["grant_authentic"], "fresh": v["fresh"],
                 "action_in_scope": v["action_in_scope"],
                 "revoked": v["revoked"], "agent_proved": v["agent_proved"],
                 "principal_bound": v["principal_bound"], "pairwise_handle": v["pairwise_handle"],
-                "correlation": v["correlation"]}
+                "correlation": v["correlation"], "context_matches": v["context_matches"]}
 
     if artifact == "exchange-use":
         # 1.0.0-rc.64: the exchange in use, each question answered as the detached verifier

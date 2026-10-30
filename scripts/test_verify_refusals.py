@@ -2470,6 +2470,16 @@ class AgentGrantContextAndProofTime(unittest.TestCase):
                 v = self.decide(expected_context=other)
                 self.assertIs(v["context_matches"], False)
                 self.assertIs(v["usable"], False)
+        # A grant that names no context is usable in none (WIRE-SPEC 3.17). The statement signs an
+        # absent context_id as null, so both grants are genuine and only the context refuses them.
+        null = self.grant(context_id=None)
+        absent = {k: val for k, val in null.items() if k != "context_id"}
+        for label, grant in (("null", null), ("absent", absent)):
+            with self.subTest(context_id=label):
+                v = self.decide(grant=grant, expected_context=7)
+                self.assertIs(v["grant_authentic"], True, v["note"])
+                self.assertIs(v["context_matches"], False)
+                self.assertIs(v["usable"], False)
 
     def test_a_proof_made_outside_the_grant_or_ahead_of_the_clock_proves_nothing(self):
         for label, issued_at, why in (

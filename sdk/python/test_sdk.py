@@ -1504,6 +1504,8 @@ class ReSignedHostileFieldsTests(unittest.TestCase):
                 self.assertIs(pv.agent_proof_proves(dict(proof, issued_at=made), grant, "read", "n", now=now), False)
         self.assertIs(pv.agent_proof_proves(proof, dict(grant, expires_at="x"), "read", "n", now=_XA_NOW), False,
                       "a grant window that is not an instant")
+        self.assertIs(pv.agent_proof_proves(proof, dict(grant, issued_at="x"), "read", "n", now=_XA_NOW), False,
+                      "a grant start that is not an instant")
         self.assertIs(pv.agent_proof_proves(proof, grant, "read", "n", now="not a time"), False)
 
     def test_a_mint_without_algorithm_is_the_set_its_key_length_identifies(self):
@@ -2184,6 +2186,27 @@ class GrantCoverageTests(unittest.TestCase):
         for action in ("transfer:funds", "READ:STATUS", "read:status ", "read"):
             with self.subTest(action=action):
                 self.assertFalse(pv.grant_covers(self.GRANT, action))
+
+
+class GrantContextTests(unittest.TestCase):
+    """2026-10-15: the holder signs the grant's `context_id`, and no SDK function read it, so a
+    grant scoped to one context was usable at a service in another. A context is an id: the
+    text "1" and true do not name context 1."""
+
+    GRANT = {"actions": ["read:status"], "context_id": 1}
+
+    def test_the_signed_context_matches(self):
+        self.assertTrue(pv.grant_in_context(self.GRANT, 1))
+
+    def test_another_context_or_another_type_does_not(self):
+        for ctx in (2, "1", True, 1.5, None):
+            with self.subTest(ctx=ctx):
+                self.assertFalse(pv.grant_in_context(self.GRANT, ctx))
+
+    def test_a_grant_that_is_not_an_object_names_no_context(self):
+        for grant in (None, [], "1", {"actions": ["read:status"]}):
+            with self.subTest(grant=grant):
+                self.assertFalse(pv.grant_in_context(grant, 1))
 
 
 class GrantLimitsThatAreNotAnObjectTests(unittest.TestCase):

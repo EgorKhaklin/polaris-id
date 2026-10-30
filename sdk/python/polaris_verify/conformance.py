@@ -23,7 +23,7 @@ drives it over the published cases and checks every verdict. See conformance/SPE
 import json
 import sys
 
-from . import (agent_proof_proves, verify_exchange_mint, verify_exchange_receipt, verify_exchange_request, grant_covers, grant_principal_bound, pairwise_handle, revocation_ends_grant, verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
+from . import (agent_proof_proves, grant_in_context, verify_exchange_mint, verify_exchange_receipt, verify_exchange_request, grant_covers, grant_principal_bound, pairwise_handle, revocation_ends_grant, verify_attestation, verify_authenticity, verify_cross_authority, verify_holder,
                verify_id_token,
                verify_signed_artifact, verify_status_assertion, verify_timestamp_anchor)
 from . import _json_loads
@@ -88,13 +88,16 @@ def decide(case):
         # a year old came back in scope and proved (2026-09-30).
         verdict = {"authentic": g.authentic, "fresh": g.fresh, "action_in_scope": None, "revoked": None,
                    "agent_proved": None, "principal_bound": None, "pairwise_handle": None,
-                   "correlation": None}
+                   "correlation": None, "context_matches": None}
         if not g.authentic:
             # A grant the holder did not sign grants nothing, so no later question is answered:
             # reading the scope of a forged grant would honour the forger's own actions.
             return verdict
         if action is not None:
             verdict["action_in_scope"] = grant_covers(grant, action)
+        # The context the holder signed, against this service's own, when the case names one.
+        if case.get("expected_context") is not None:
+            verdict["context_matches"] = grant_in_context(grant, case["expected_context"])
         binding = case.get("binding")
         if binding is not None:
             verdict["principal_bound"] = grant_principal_bound(grant, binding, case.get("credential") or {}, now)

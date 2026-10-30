@@ -325,7 +325,7 @@ def main():
             dv = V.verify_agent_grant(g, now=c["now"], requested_action=c["requested_action"], agent_proof=pr,
                                       expected_nonce=c["expected_nonce"])
             s = bool(P.verify_signed_artifact(pr, now=c["now"]).authentic
-                     and P.agent_proof_proves(pr, g, c["requested_action"], c["expected_nonce"]))
+                     and P.agent_proof_proves(pr, g, c["requested_action"], c["expected_nonce"], c["now"]))
             got, want = (dv["agent_proved"] is True, s), (e["agent_proved"],) * 2
         if got != want:
             print("a verifier disagrees with %s: detached, sdk = %r, expected %r" % (c["name"], got, want),

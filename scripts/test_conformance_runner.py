@@ -25,6 +25,7 @@ import importlib.util
 import io
 import json
 import os
+import pathlib
 import shlex
 import sys
 import tempfile
@@ -173,6 +174,31 @@ class TheCompatSuiteOrdersVersionsAsReleased(unittest.TestCase):
         self.assertIn("1.1.0", since)
         newer = {s for s in since if self.C._vkey(s) > self.C._vkey("9.317")}
         self.assertIn("1.1.0", newer, "a 1.1.0 case must be newer than the pinned v9.317")
+
+
+class TheProofTimeMinterNeverReSigns(unittest.TestCase):
+    """conformance/make_agent_proof_time_cases.py signs with fresh keys, so a rerun over its
+    published vectors would replace every key and signature in them. Run over a copy of the
+    published files, it exits 2 and changes no byte, with or without liboqs."""
+
+    def test_a_rerun_over_the_published_vectors_writes_nothing(self):
+        spec = importlib.util.spec_from_file_location(
+            "make_agent_proof_time_cases", os.path.join(_ROOT, "conformance", "make_agent_proof_time_cases.py"))
+        M = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(M)
+        published = sorted(M.OUT.glob("agent-proof-time-*.json")) + [M.CASES]
+        self.assertEqual(len(published), 7, "the six published vectors and cases.json")
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            for p in published:
+                (tmp / p.name).write_bytes(p.read_bytes())
+            M.OUT, M.CASES = tmp, tmp / "cases.json"
+            before = {p.name: p.read_bytes() for p in tmp.iterdir()}
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(M.main(), 2)
+            self.assertIn("refusing: 6 of these vectors are published", err.getvalue())
+            self.assertEqual({p.name: p.read_bytes() for p in tmp.iterdir()}, before)
 
 
 if __name__ == "__main__":

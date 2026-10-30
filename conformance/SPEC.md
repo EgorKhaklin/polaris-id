@@ -99,10 +99,11 @@ key the case's expected verdict names; the verifier may report additional keys.
   "binding": { "...": "a polaris-holder-binding/1, with the credential it binds" },
   "credential": { "...": "the credential's polaris-authenticity-pack/1" },
   "verifier_scope": "<this relying party's scope>",
+  "expected_context": "<this service's context id>",
   "now": "2026-05-01T00:00:30Z" }
    -> { "authentic": true, "fresh": true, "action_in_scope": true, "revoked": false,
         "agent_proved": true, "principal_bound": true, "pairwise_handle": "<hex>",
-        "correlation": "exposed" }
+        "correlation": "exposed", "context_matches": true }
 
 { "artifact": "exchange-use",
   "object": { "...": "a polaris-exchange-request/1, polaris-exchange-receipt/1 or polaris-exchange-mint/1" },
@@ -131,13 +132,19 @@ case did not supply what the question needs:
   grant. A genuine revocation by any other key ends nothing.
 - `agent_proved`: the proof is genuine AND signed by the agent key the grant names, under the
   algorithm the holder authorized, naming this grant, the requested action and this
-  service's nonce. Anything else is a copied grant or a replay.
+  service's nonce. Anything else is a copied grant or a replay. Since 1.1.0 the proof's
+  signed `issued_at` also falls inside the grant's window, `[issued_at, expires_at)`, and is
+  at most 60 seconds ahead of `now`: a proof made before the grant, at or after its
+  `expires_at`, or further ahead of the clock proves nothing.
 - `principal_bound`: the grant is signed by the holder key the credential's issuer bound to
   it, under a binding that is genuine, fresh and `active`. A revoked binding speaks for nobody, and
   neither does a genuine issuer-signed object of another type carrying a binding's fields.
 - `pairwise_handle`, `correlation`: with `verifier_scope`, the handle this relying party keys
   the principal by (`pairwise_handle` of the bound holder key) and `"exposed"`, because a
   grant's handle is a stable value the relying party can store.
+- `context_matches` (since 1.1.0): with `expected_context`, the grant's signed `context_id`
+  names this service's context. Ids compare as ids, so the text `"1"` is not context 1. A
+  grant its holder scoped to another context grants nothing here.
 
 For an exchange in use (since 1.0.0-rc.64) the verifier dispatches on the object's `format`.
 Each question is answered only when the case supplies what it needs (`null` otherwise), and
@@ -378,8 +385,8 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 
 A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
 rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
-records which of the reference SDK's public functions actually execute: **the 299 cases enter
-20 of the SDK's 23 public functions.** Three are never entered by any case, which means an
+records which of the reference SDK's public functions actually execute: **the 307 cases enter
+21 of the SDK's 24 public functions.** Three are never entered by any case, which means an
 implementation can get them wrong, or omit them, and still pass every case here.
 
 | never entered | why the contract does not ask |
@@ -397,7 +404,7 @@ runs it with collection disabled and requires that refusal.
 
 **The same gap, between the implementations.** Three verifiers here check these artifacts:
 the detached verifier a relying party installs, and the two reference SDKs. All three pass all
-299 cases, and a case constrains only the keys it names, so on every other key they could
+307 cases, and a case constrains only the keys it names, so on every other key they could
 differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py` compares them
 to EACH OTHER, key for key, on every case, and CI runs it.
 
@@ -426,8 +433,8 @@ them**. The known ones stay visible rather than being buried in a count.
 
 **The same question on hostile input.** A presenter does not send published cases.
 `scripts/polaris-hostile-agreement-drill.py` takes every case, replaces each node of what a
-presenter supplies with a value of the wrong JSON type or deletes it (192,174 inputs from the
-299 cases, measured 2026-10-28), and has
+presenter supplies with a value of the wrong JSON type or deletes it (196,307 inputs from the
+307 cases, measured 2026-10-30), and has
 all three verifiers decide each one. It fails on a verifier that raises, on any disagreement
 about the primary decision, and on any other disagreement that is not between two refusals or
 one of the conventions it names with its reason; `--prove-control` requires an inverted verdict

@@ -102,11 +102,6 @@ SURVIVORS_EXPECTED = (
     # anchors) there), so no case can constrain it. The detached verifier's refusal is pinned
     # by its own suite (AgentGrantChainsToTheTrustedIssuer, the CLI exit rows).
     "verify_agent_grant.issuer_trusted",
-    # 2026-10-15: whether the grant names the context it is used in. The published contract
-    # carries no expected context for a grant in use and neither SDK has the field, so no case
-    # can constrain it; the detached verifier's refusal is pinned by its own suite
-    # (AgentGrantContextAndProofTime).
-    "verify_agent_grant.context_matches",
     "verify_agent_grant.limits",
     # 2026-09-17: `valid_until` was added to the attestation verdict when the trust edge's
     # own window started being enforced, and it is the window ECHOED BACK, not a decision.

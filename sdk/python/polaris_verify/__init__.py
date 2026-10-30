@@ -1599,6 +1599,17 @@ def grant_covers(grant, action) -> bool:
     return want is not None and any(_wire_text(a) == want for a in actions)
 
 
+def grant_in_context(grant, context_id) -> bool:
+    """Does this grant name the context of the service it is being used at?
+
+    The holder signs `context_id` to scope the grant, so a grant scoped to one context is not
+    usable at a service in another. Ids compare as they do everywhere here: string with string,
+    or integers both languages hold exactly, so "7" and true do not name context 7. The
+    detached verifier asks the same question with `expected_context` (2026-10-15).
+    """
+    return isinstance(grant, dict) and bool(_same_id(grant.get("context_id"), context_id))
+
+
 def grant_within_limits(grant, uses_so_far: int = 0, amount=None):
     """Are the grant's stated limits still satisfied? Returns (ok, note).
 

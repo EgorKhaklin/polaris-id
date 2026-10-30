@@ -11,6 +11,9 @@ never asked them conformed:
     does this revocation END this grant (the holder's key, naming this grant)?
     does this agent proof bind this grant, this action and this service's nonce?
 
+and, from 1.1.0, one the holder's signature already carried: is the grant scoped to this
+service's context?
+
 No new vectors: every case reuses the frozen 9.354 files, and the answers each case expects
 are first checked against the detached verifier, so a case that ships is one this
 implementation already agrees with.
@@ -27,6 +30,7 @@ CASES = ROOT / "conformance" / "cases.json"
 VEC = "conformance/vectors/"
 NOW = "2026-05-01T00:00:30Z"
 SINCE = "1.0.0-rc.63"
+SINCE_CONTEXT = "1.1.0"
 
 
 def main():
@@ -68,30 +72,43 @@ def main():
                                             "requested_action": "read:status", "expected_nonce": "svc-nonce-2"},
          {"authentic": True, "agent_proved": False},
          "The agent's genuine proof, presented to a service that issued a different nonce: a replay."),
+        ("agent-grant-use-context-matches", {"expected_context": 1},
+         {"authentic": True, "context_matches": True},
+         "The grant names this service's context, inside the statement the holder signed.",
+         SINCE_CONTEXT),
+        ("agent-grant-use-context-other", {"expected_context": 2},
+         {"authentic": True, "context_matches": False},
+         "A genuine grant the holder scoped to another context grants nothing at this service.",
+         SINCE_CONTEXT),
+        ("agent-grant-use-context-as-text", {"expected_context": "1"},
+         {"authentic": True, "context_matches": False},
+         "A context is an id, so the text \"1\" is not context 1.", SINCE_CONTEXT),
     ]
     new = []
-    for name, extra, expect, note in cases:
+    for name, extra, expect, note, *since in cases:
         c = {"name": name, "artifact": "agent-grant-use", "grant_file": grant, "now": NOW}
         c.update(extra)
         gfile = c["grant_file"][len(VEC):]
-        c.update({"expect": expect, "since": SINCE, "note": note})
+        c.update({"expect": expect, "since": since[0] if since else SINCE, "note": note})
         v = V.verify_agent_grant(
             load(gfile), now=V._parse_iso(NOW),
             requested_action=c.get("requested_action"),
             revocation=load(c["revocation_file"][len(VEC):]) if "revocation_file" in c else None,
             agent_proof=load(c["proof_file"][len(VEC):]) if "proof_file" in c else None,
-            expected_nonce=c.get("expected_nonce"))
+            expected_nonce=c.get("expected_nonce"), expected_context=c.get("expected_context"))
         got = {"authentic": v["grant_authentic"], "action_in_scope": v["action_in_scope"],
-               "revoked": v["revoked"], "agent_proved": v["agent_proved"]}
+               "revoked": v["revoked"], "agent_proved": v["agent_proved"],
+               "context_matches": v["context_matches"]}
         wrong = {k: (got[k], e) for k, e in expect.items() if got[k] != e}
         if wrong:
             print("the detached verifier disagrees with %s: %s" % (name, wrong), file=sys.stderr)
             return 1
         new.append(c)
     doc = json.loads(CASES.read_text(encoding="utf-8"))
-    # These cases are this generator's own, so a rerun replaces them in place.
-    mine = {c["name"] for c in new}
-    doc["cases"] = [c for c in doc["cases"] if c.get("name") not in mine] + new
+    # These cases are this generator's own, so a rerun replaces them where they stand and
+    # appends the ones the file does not hold yet.
+    mine = {c["name"]: c for c in new}
+    doc["cases"] = [mine.pop(c.get("name"), c) for c in doc["cases"]] + [c for c in new if c["name"] in mine]
     CASES.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     print("%d grant-in-use cases (total %d)" % (len(new), len(doc["cases"])))
     return 0
