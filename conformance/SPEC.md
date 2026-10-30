@@ -132,7 +132,10 @@ case did not supply what the question needs:
   grant. A genuine revocation by any other key ends nothing.
 - `agent_proved`: the proof is genuine AND signed by the agent key the grant names, under the
   algorithm the holder authorized, naming this grant, the requested action and this
-  service's nonce. Anything else is a copied grant or a replay.
+  service's nonce. Anything else is a copied grant or a replay. Since 1.1.0 the proof's
+  signed `issued_at` also falls inside the grant's window, `[issued_at, expires_at)`, and is
+  at most 60 seconds ahead of `now`: a proof made before the grant, at or after its
+  `expires_at`, or further ahead of the clock proves nothing.
 - `principal_bound`: the grant is signed by the holder key the credential's issuer bound to
   it, under a binding that is genuine, fresh and `active`. A revoked binding speaks for nobody, and
   neither does a genuine issuer-signed object of another type carrying a binding's fields.
@@ -382,7 +385,7 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 
 A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
 rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
-records which of the reference SDK's public functions actually execute: **the 302 cases enter
+records which of the reference SDK's public functions actually execute: **the 307 cases enter
 21 of the SDK's 24 public functions.** Three are never entered by any case, which means an
 implementation can get them wrong, or omit them, and still pass every case here.
 
@@ -401,7 +404,7 @@ runs it with collection disabled and requires that refusal.
 
 **The same gap, between the implementations.** Three verifiers here check these artifacts:
 the detached verifier a relying party installs, and the two reference SDKs. All three pass all
-302 cases, and a case constrains only the keys it names, so on every other key they could
+307 cases, and a case constrains only the keys it names, so on every other key they could
 differ and the suite would stay green. `scripts/polaris-sdk-agreement-drill.py` compares them
 to EACH OTHER, key for key, on every case, and CI runs it.
 
@@ -430,8 +433,8 @@ them**. The known ones stay visible rather than being buried in a count.
 
 **The same question on hostile input.** A presenter does not send published cases.
 `scripts/polaris-hostile-agreement-drill.py` takes every case, replaces each node of what a
-presenter supplies with a value of the wrong JSON type or deletes it (193,302 inputs from the
-302 cases, measured 2026-10-30), and has
+presenter supplies with a value of the wrong JSON type or deletes it (196,307 inputs from the
+307 cases, measured 2026-10-30), and has
 all three verifiers decide each one. It fails on a verifier that raises, on any disagreement
 about the primary decision, and on any other disagreement that is not between two refusals or
 one of the conventions it names with its reason; `--prove-control` requires an inverted verdict

@@ -168,7 +168,7 @@ def main():
             dv = V.verify_agent_grant(g, now=c["now"], requested_action=c["requested_action"], agent_proof=p,
                                       expected_nonce=c["expected_nonce"])
             s = bool(P.verify_signed_artifact(p, now=c["now"]).authentic
-                     and P.agent_proof_proves(p, g, c["requested_action"], c["expected_nonce"]))
+                     and P.agent_proof_proves(p, g, c["requested_action"], c["expected_nonce"], c["now"]))
             got, want = (dv["agent_proved"] is True, s), (e["agent_proved"],) * 2
         elif a == "holder-chain":
             s = P.verify_holder(obj(c["credential_file"]), obj(c["binding_file"]), obj(c["proof_file"]),

@@ -3891,6 +3891,91 @@
       },
       "since": "1.1.0",
       "note": "A context is an id, so the text \"1\" is not context 1."
+    },
+    {
+      "name": "agent-grant-use-proof-window-start",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-proof-time-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/agent-proof-time-window-start.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-proof-time-1",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "action_in_scope": true,
+        "agent_proved": true
+      },
+      "since": "1.1.0",
+      "note": "The positive control: a proof made at the instant the grant begins. The window includes its start."
+    },
+    {
+      "name": "agent-grant-use-proof-skew-limit",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-proof-time-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/agent-proof-time-skew-limit.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-proof-time-1",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "action_in_scope": true,
+        "agent_proved": true
+      },
+      "since": "1.1.0",
+      "note": "A proof dated 60 seconds ahead of this verifier's clock, the skew a verifier allows: it proves."
+    },
+    {
+      "name": "agent-grant-use-proof-ahead-of-clock",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-proof-time-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/agent-proof-time-ahead-of-clock.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-proof-time-1",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.1.0",
+      "note": "A proof dated 61 seconds ahead of this verifier's clock proves nothing. The case's now is the clock: a verifier reading its own machine's clock instead accepts it."
+    },
+    {
+      "name": "agent-grant-use-proof-before-grant",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-proof-time-grant.json",
+      "now": "2026-05-01T00:00:30Z",
+      "proof_file": "conformance/vectors/agent-proof-time-before-grant.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-proof-time-1",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.1.0",
+      "note": "A proof made one second before the grant existed proves nothing: a grant authorizes what the agent does inside its window."
+    },
+    {
+      "name": "agent-grant-use-proof-at-lapse",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-proof-time-grant.json",
+      "now": "2026-05-01T05:59:30Z",
+      "proof_file": "conformance/vectors/agent-proof-time-at-lapse.json",
+      "requested_action": "read:status",
+      "expected_nonce": "svc-proof-time-1",
+      "expect": {
+        "authentic": true,
+        "fresh": true,
+        "action_in_scope": true,
+        "agent_proved": false
+      },
+      "since": "1.1.0",
+      "note": "A proof made at the grant's expires_at, while the grant is still fresh at this clock. The window is [issued_at, expires_at), so a proof made at its end proves nothing."
     }
   ]
 }

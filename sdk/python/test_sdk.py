@@ -1504,6 +1504,8 @@ class ReSignedHostileFieldsTests(unittest.TestCase):
                 self.assertIs(pv.agent_proof_proves(dict(proof, issued_at=made), grant, "read", "n", now=now), False)
         self.assertIs(pv.agent_proof_proves(proof, dict(grant, expires_at="x"), "read", "n", now=_XA_NOW), False,
                       "a grant window that is not an instant")
+        self.assertIs(pv.agent_proof_proves(proof, dict(grant, issued_at="x"), "read", "n", now=_XA_NOW), False,
+                      "a grant start that is not an instant")
         self.assertIs(pv.agent_proof_proves(proof, grant, "read", "n", now="not a time"), False)
 
     def test_a_mint_without_algorithm_is_the_set_its_key_length_identifies(self):

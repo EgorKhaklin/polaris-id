@@ -2060,6 +2060,7 @@ test("an agent proof is made inside its grant and not ahead of the clock", () =>
     assert.equal(proves(made, now), false, label);
   }
   assert.equal(proves(XA_NOW, XA_NOW, { ...grant, expires_at: "x" }), false, "a grant window that is not an instant");
+  assert.equal(proves(XA_NOW, XA_NOW, { ...grant, issued_at: "x" }), false, "a grant start that is not an instant");
   assert.equal(proves(XA_NOW, "not a time"), false, "a clock that is not an instant");
 });
 
