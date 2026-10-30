@@ -19,7 +19,7 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** This release, 1.0.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
+**Status:** This release, 1.1.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
 The newest release runs against the OpenID Foundation's conformance suite every week in CI. It is re-run weekly against the outside implementations in the table
 below. One outside project, IDFoundry/OID4VCgo, runs it in its CI, daily and on each of its
 releases, since 2026-10-11.
@@ -178,8 +178,9 @@ issuers to named `iss` values. An anchor that certifies several issuers accepts 
 accept only some, check after an authentic verdict that `iss_bound` is `True` and `claims["iss"]`
 is one you name, and never pin on `unbound_iss` or `issuer_subject`.
 
-This is a separate package from `polaris-verify` because it listens on a socket and depends on
-`cryptography`; `polaris-verify` does neither.
+This is a separate package from `polaris-verify` because it listens on a socket and requires
+`cryptography`; `polaris-verify` listens on nothing and takes `cryptography` only as an optional
+backend.
 
 ## Verifying a presentation
 
