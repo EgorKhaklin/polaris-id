@@ -451,6 +451,15 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         _, seen, _, _ = self._serve("--bind", "0.0.0.0")
         self.assertEqual(seen["kwargs"]["host"], "0.0.0.0")
 
+    def test_an_empty_bind_address_is_refused_before_the_listener(self):
+        """An empty --bind would listen on every interface; every interface is named, never
+        reached by leaving the address out."""
+        rc, seen, _, err = self._serve("--bind", "")
+        self.assertEqual(rc, 2)
+        self.assertNotIn("kwargs", seen, "no listener may start on an empty address")
+        self.assertIn("--bind", err)
+        self.assertIn("0.0.0.0", err)
+
     def test_an_unreadable_trust_anchor_file_is_refused(self):
         bad = self.tmp / "not-a-cert.pem"
         bad.write_text("hello")
@@ -675,6 +684,40 @@ class ServeResultFileTests(unittest.TestCase):
         self.assertEqual({k: v for k, v in self._read().items() if k != "responses"},
                          {k: v for k, v in doc.items() if k != "responses"})
         self.assertEqual(self._read()["responses"], 2)
+
+    def test_a_response_after_the_request_expired_leaves_the_record_as_it_was(self):
+        seen, session, _ = self._started()
+        jar = seen["verifier"].request_object(session.state)
+        form = self.wallet.respond(jar, nonce="wrong")
+        self.assertEqual(self._answer(seen, form)[1].code, "nonce")
+        # Still open: a stranger's response is the latest, and the record says so.
+        status, verdict, _ = self._answer(seen, {"response": "not.a.compact.jwe.token"})
+        self.assertEqual((status, verdict.code, self._read()["check"]),
+                         (400, "invalid_request", "invalid_request"))
+        self._answer(seen, form)
+        doc = self._read()
+        self.assertEqual(doc["check"], "nonce")
+        session.created -= seen["verifier"].request_ttl_seconds + 1
+        for stranger in ({"response": "not.a.compact.jwe.token"}, form):
+            status, verdict, _ = self._answer(seen, stranger)
+            self.assertEqual((status, verdict.code), (400, "invalid_request"))
+        self.assertEqual({k: v for k, v in self._read().items() if k != "responses"},
+                         {k: v for k, v in doc.items() if k != "responses"},
+                         "a response after the request expired overwrote what became of it")
+        self.assertEqual(self._read()["responses"], 5)
+
+    def test_an_acceptance_is_recorded_though_the_lifetime_ends_before_the_record(self):
+        import contextlib
+        import io
+        seen, session, _ = self._started()
+        form = self.wallet.respond(seen["verifier"].request_object(session.state))
+        status, body, verdict = seen["verifier"].handle_direct_post(form)
+        self.assertTrue(verdict.authentic)
+        session.created -= seen["verifier"].request_ttl_seconds + 1
+        with contextlib.redirect_stdout(io.StringIO()):
+            seen["kwargs"]["on_verdict"](status, body, verdict)
+        self.assertEqual((self._read()["outcome"], self._read()["claims"]),
+                         ("accepted", sorted(verdict.claims)))
 
     def test_a_wallet_error_is_neither_an_acceptance_nor_a_refusal(self):
         seen, session, _ = self._started()

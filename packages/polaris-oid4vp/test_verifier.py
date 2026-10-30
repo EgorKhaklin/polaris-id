@@ -95,7 +95,8 @@ class Wallet:
 
     def respond(self, jar, *, nonce=None, audience=None, iat=None, sd_hash=None,
                 corrupt_issuer_sig=False, corrupt_kb_sig=False, extra_disclosure=None,
-                state=None, enc="A128GCM", vp_token=None, vct=None, status=None, kb=None):
+                state=None, enc="A128GCM", vp_token=None, vct=None, status=None, kb=None,
+                withhold=()):
         _, claims = self.read_request(jar)
         enc_jwk = claims["client_metadata"]["jwks"]["keys"][0]
         enc_public = ec.EllipticCurvePublicNumbers(
@@ -108,7 +109,8 @@ class Wallet:
             audience=claims["client_id"] if audience is None else audience,
             iat=iat, sd_hash=sd_hash, corrupt_issuer_sig=corrupt_issuer_sig,
             corrupt_kb_sig=corrupt_kb_sig, extra_disclosure=extra_disclosure, vct=vct,
-            status=status, **({"kb_extra": bound} if bound else {}))
+            status=status, **({"kb_extra": bound} if bound else {}),
+            **({"withhold": withhold} if withhold else {}))
         # Keyed by the id the request's credential query names, as section 8.1 has it.
         query_id = claims["dcql_query"]["credentials"][0]["id"]
         body = {"state": claims["state"] if state is None else state,
@@ -158,10 +160,12 @@ class Wallet:
         return out
 
     def _presentation(self, *, nonce, audience, iat, sd_hash, corrupt_issuer_sig,
-                      corrupt_kb_sig, extra_disclosure, vct=None, status=None, kb_extra=None):
+                      corrupt_kb_sig, extra_disclosure, vct=None, status=None, kb_extra=None,
+                      withhold=()):
         disclosures = [
             b64u_encode(json.dumps([s, n, v], separators=(",", ":")).encode())
-            for s, n, v in (("s0", "given_name", "Jean"), ("s1", "family_name", "Dupont"))]
+            for s, n, v in (("s0", "given_name", "Jean"), ("s1", "family_name", "Dupont"))
+            if n not in withhold]
         digests = [b64u_encode(hashlib.sha256(d.encode("ascii")).digest())
                    for d in disclosures]
         payload = {"iss": "https://issuer.example",
@@ -1480,7 +1484,7 @@ class OnlyTheHolderClosesTheRequestTests(VerifierTestCase):
     2026-10-15 a response was judged after the request was closed, so an onlooker's encrypted
     `{"state": s}`, or one with a garbage vp_token, was refused and used the request up, and the
     holder's genuine presentation, arriving second, was refused as a replay. A request now closes
-    only on an authentic presentation."""
+    only on a presentation it accepts."""
 
     def _onlooker(self, jar, body):
         """What anyone who fetched `jar` can post: `body` with the request's state, encrypted to
@@ -1493,10 +1497,12 @@ class OnlyTheHolderClosesTheRequestTests(VerifierTestCase):
         body = dict(body, state=claims["state"])
         return {"response": [encrypt_compact(json.dumps(body).encode(), public)]}
 
-    def _first_refused_then_genuine_accepted(self, first):
+    def _first_refused_then_genuine_accepted(self, first, code=None):
         session, jar = self.verifier.new_request()
-        status, body, _ = self.verifier.handle_direct_post(first(jar))
+        status, body, refused = self.verifier.handle_direct_post(first(jar))
         self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        if code is not None:
+            self.assertEqual(refused.code, code, refused.reason)
         self.assertIs(self.verifier._sessions.get(session.state), session, "the request was closed")
         status, body, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
         self.assertEqual(status, 200, verdict.reason)
@@ -1518,6 +1524,24 @@ class OnlyTheHolderClosesTheRequestTests(VerifierTestCase):
         """A forged key binding signature: well formed, and not authentic."""
         self._first_refused_then_genuine_accepted(
             lambda jar: self.wallet.respond(jar, corrupt_kb_sig=True))
+
+    def test_another_holders_authentic_presentation_refused_for_its_claims_does_not_close_it(self):
+        """Another holder of a credential from the same issuer, who discloses given_name and not
+        family_name, is refused as `claims`. Until 2026-10-30 the request closed before the claims
+        were judged, and the holder's own presentation, arriving second, was refused as a replay."""
+        other = Wallet()
+        other.issuer_key, other.issuer_jwk = self.wallet.issuer_key, self.wallet.issuer_jwk
+        self._first_refused_then_genuine_accepted(
+            lambda jar: other.respond(jar, withhold=("family_name",)), code="claims")
+
+    def test_an_authentic_presentation_refused_as_revoked_does_not_close_the_request(self):
+        """A credential the issuer's status list gives INVALID is authentic and refused as
+        `revoked`; the request stays open for the holder's own."""
+        self.verifier.status_resolver = lambda *, uri, idx, issuer: (
+            {"checked": True, "status": 1, "meaning": "INVALID"} if idx == 5 else None)
+        revoked = {"status_list": {"uri": "https://issuer.example/sl/1", "idx": 5}}
+        self._first_refused_then_genuine_accepted(
+            lambda jar: self.wallet.respond(jar, status=revoked), code="revoked")
 
     def test_a_replay_is_still_refused(self):
         _, jar = self.verifier.new_request()
@@ -1863,6 +1887,29 @@ class TheRedirectCarriesAResponseCodeTests(VerifierTestCase):
         _, second, _ = self.accept()
         self.assertNotEqual(first, second)
 
+    def test_the_code_is_drawn_from_the_operating_systems_random_source(self):
+        """`secrets.token_urlsafe` of RESPONSE_CODE_BYTES, and nothing derived from the request:
+        a code computed from the state, or drawn from `random`, kept every other test here green
+        (2026-10-30). The draw is stood in for, and the redirect must carry exactly it."""
+        from unittest import mock
+
+        from polaris_oid4vp import verifier as module
+        drawn = []
+
+        def token_urlsafe(n):
+            drawn.append(n)
+            return "c3RhbmQtaW4tY29kZS0xMjM0NTY"
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        with mock.patch.object(module.secrets, "token_urlsafe", token_urlsafe):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 200, verdict.reason)
+        code = assert_redirect_with_code(self, body, self.verifier.redirect_uri)
+        self.assertEqual(drawn, [module.RESPONSE_CODE_BYTES])
+        self.assertEqual(module.RESPONSE_CODE_BYTES, 16)
+        self.assertEqual((code, verdict.response_code), ("c3RhbmQtaW4tY29kZS0xMjM0NTY",) * 2)
+        self.assertIs(self.verifier.redeem(code, state=session.state), verdict)
+
     def test_the_code_fetches_its_own_result_once(self):
         session, code, verdict = self.accept()
         self.assertEqual(verdict.response_code, code)
@@ -1871,6 +1918,16 @@ class TheRedirectCarriesAResponseCodeTests(VerifierTestCase):
         self.assertTrue(fetched.authentic)
         self.assertEqual(fetched.claims["given_name"], "Jean")
         self.assertIsNone(self.verifier.redeem(code, state=session.state), "a reused code fetched again")
+
+    def test_a_code_that_is_not_ascii_fetches_nothing_and_raises_nothing(self):
+        """A lone surrogate cannot be encoded as UTF-8, and until 2026-10-30 `redeem` raised
+        UnicodeEncodeError on one; "\u00e9t\u00e9" and the Kelvin sign got None then too."""
+        session, code, verdict = self.accept()
+        for junk in ("\ud800", code[:-1] + "\ud800", "\u00e9t\u00e9", "\u212a"):
+            with self.subTest(code=ascii(junk)):
+                self.assertIsNone(self.verifier.redeem(junk))
+                self.assertIsNone(self.verifier.redeem(junk, state=session.state))
+        self.assertIs(self.verifier.redeem(code, state=session.state), verdict)
 
     def test_a_wrong_code_fetches_nothing_and_spends_nothing(self):
         session, code, verdict = self.accept()
@@ -1927,6 +1984,38 @@ class TheRedirectCarriesAResponseCodeTests(VerifierTestCase):
     def test_the_code_stays_out_of_as_dict(self):
         _, code, verdict = self.accept()
         self.assertNotIn(code, json.dumps(verdict.as_dict()))
+
+
+class ATokenTooLongIsMeasuredOnceTests(VerifierTestCase):
+    """`handle_direct_post` tries a response under each open request's key. Until 2026-10-30 a
+    token of any length was decoded and decrypted under every one of them before a limit applied
+    (one 64 MiB token with 50 requests open: 3.2 GiB of AES-GCM, 27 s), on this path as an
+    integrator's own framework calls it; `serve` holds its body to 1 MiB first. The length is now
+    checked once, before any key is tried."""
+
+    def test_a_token_longer_than_any_response_is_refused_before_any_key_is_tried(self):
+        from unittest import mock
+
+        from polaris_oid4vp import verifier as module
+        from polaris_oid4vp.jwe import MAX_COMPACT_CHARS
+        jars = [self.verifier.new_request()[1] for _ in range(5)]
+        head, _, rest = self.wallet.respond(jars[0])["response"][0].partition(".")
+        token = head + "." + rest + "A" * MAX_COMPACT_CHARS
+        tried, real = [], module.decrypt_response
+
+        def counted(token, key):
+            tried.append(key)
+            return real(token, key)
+        with mock.patch.object(module, "decrypt_response", counted):
+            status, body, verdict = self.verifier.handle_direct_post({"response": [token]})
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertIn("over the %d" % MAX_COMPACT_CHARS, verdict.reason)
+        self.assertEqual(len(tried), 0, "the token was tried under %d keys" % len(tried))
+
+    def test_the_control_a_response_at_its_length_is_tried_and_accepted(self):
+        _, jar = self.verifier.new_request()
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual(status, 200, verdict.reason)
 
 
 class TheResponsePathReturnsRatherThanRaisesTests(VerifierTestCase):

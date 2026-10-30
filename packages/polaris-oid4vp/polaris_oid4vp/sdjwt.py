@@ -673,6 +673,18 @@ def _not_an_issuer_leaf(leaf):
     if unread_critical:
         return ("the x5c leaf carries a critical extension this verifier does not process (%s), "
                 "and RFC 5280 section 4.2 refuses such a certificate" % ", ".join(unread_critical))
+    # A DNS name is an IA5String, so no CA may issue a leaf naming a non-ASCII one (an
+    # internationalized name is written as an A-label). `_leaf_names` refuses it when the
+    # credential carries `iss`, and until 2026-10-30 a credential without one, signed under a leaf
+    # naming "\u212aent.edu" (the Kelvin sign), verified.
+    try:
+        hosts = leaf.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+    except Exception:  # noqa: BLE001  no subjectAltName: the loop above has parsed the extensions
+        hosts = []
+    if not all(h.isascii() for h in hosts):
+        return ("the x5c leaf names a DNS host that is not ASCII (%s), which no CA may issue: a "
+                "DNS name is an IA5String" % ", ".join(repr(h) for h in hosts if not h.isascii()))
     if not _self_signed(leaf):
         return ""
     return ("the x5c leaf is self-signed, so it is a trust anchor and not an issuer's "

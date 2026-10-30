@@ -314,7 +314,9 @@ class _ResultFile:
     by the time the wallet has its answer. The process is usually stopped by a signal, so
     nothing waits for an exit to write. Until a response arrives the outcome is
     `nothing_received`, which a refusal never reads as. Then it is the latest response's:
-    `accepted`, `refused` or `wallet_error`; an acceptance closes the request, so it stays.
+    `accepted`, `refused` or `wallet_error`, until the request closes, on its acceptance or at
+    the end of its lifetime. Then it stays: a later response is counted and changes nothing
+    else, so a stranger's POST after the close cannot overwrite what became of the request.
 
     A file that cannot be written at startup stops the command before it listens. One that
     cannot be rewritten later is removed and the failure said on stderr: a document left saying
@@ -329,11 +331,13 @@ class _ResultFile:
         self._fetches = {"served": 0, "refused": 0}
         self._responses = 0
         self._latest = {"outcome": "nothing_received"}
+        self._open = lambda: True
         self._write()
 
-    def request(self, state):
+    def request(self, state, is_open):
         with self._lock:
             self._state = state
+            self._open = is_open
             self._rewrite()
 
     def request_object(self, status):
@@ -344,7 +348,10 @@ class _ResultFile:
     def verdict(self, status, verdict):
         with self._lock:
             self._responses += 1
-            if self._latest["outcome"] != "accepted":
+            # An acceptance is never judged after the close (the verifier refuses it), so one is
+            # recorded even when the lifetime ends before this line runs.
+            accepted = verdict is not None and verdict.authentic
+            if self._latest["outcome"] != "accepted" and (accepted or self._open()):
                 self._latest = _result_of(status, verdict)
             self._rewrite()
 
@@ -374,6 +381,12 @@ class _ResultFile:
 
 
 def _cmd_serve(args) -> int:
+    # An empty address binds every interface, which only an address that names it may do.
+    if not args.bind:
+        print("polaris-oid4vp: --bind is empty, which would listen on every interface; name the "
+              "address: 127.0.0.1 for this machine only, 0.0.0.0 for every interface",
+              file=sys.stderr)
+        return 2
     pki = pathlib.Path(args.pki)
     missing = [name for name in FILES.values() if not (pki / name).is_file()]
     if missing:
@@ -494,7 +507,9 @@ def _cmd_serve(args) -> int:
     if args.once:
         session, _ = verifier.new_request(transaction_data=transaction_data)
         if result is not None:
-            result.request(session.state)
+            # Open while inside its lifetime, the verifier's own test (Verifier._expire_locked).
+            result.request(session.state, lambda: time.time() - session.created
+                           <= verifier.request_ttl_seconds)
         params = verifier.authorization_request_params(session)
         print("\nauthorization request parameters:")
         for key, value in params.items():
@@ -621,7 +636,8 @@ and one that judges a response already captured:
     s.add_argument("--host", default="localhost", help="the name a wallet reaches this by")
     s.add_argument("--bind", default="127.0.0.1",
                    help="the address to listen on: 127.0.0.1, this machine only, by default; "
-                        "0.0.0.0 for every interface, as a wallet or suite elsewhere needs")
+                        "0.0.0.0 for every interface, as a wallet or suite elsewhere needs; "
+                        "an empty one is refused")
     s.add_argument("--port", type=int, default=9443)
     s.add_argument("--public-base-url", default=None, metavar="URL",
                    help="the HTTPS origin a wallet reaches this verifier by when it is behind a "

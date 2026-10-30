@@ -48,8 +48,8 @@ except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
 from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, JweError, _loads_depth_bounded,
-                  _public_key_from_jwk, b64u_decode, b64u_encode, decrypt_response,
-                  encrypt_compact)
+                  _public_key_from_jwk, b64u_decode, b64u_encode, check_compact_length,
+                  decrypt_response, encrypt_compact)
 from .sdjwt import (ALL_ENTRIES, PER_CREDENTIAL, TRANSACTION_DATA_HASH_ALGS,
                     TRANSACTION_DATA_SCOPES, JtiMemory, TransactionDataBinding,
                     TransactionDataEntry, Verdict, verify_presentation)
@@ -1052,10 +1052,11 @@ class Verifier:
         it, encrypted or in the clear, closes the request: anyone who saw the request could
         have sent either.
 
-        Only an authentic presentation closes the request (`verify_presentation` found it
-        signed by a trusted issuer and bound to this request's nonce by the holder's key). Any
-        other response is refused and leaves the request open until it expires, because
-        anyone who saw the request can encrypt one to its key.
+        Only a presentation this verifier accepts closes the request: authentic
+        (`verify_presentation` found it signed by a trusted issuer and bound to this request's
+        nonce by the holder's key), disclosing the claims the request asked for and none it did
+        not select, and not revoked by its issuer's status list. Any other response is refused
+        and leaves the request open until it expires.
         """
         # An error response sent in the clear: `error` and `state` as form parameters, where a
         # wallet that can encrypt sends `response` (section 8.3.1).
@@ -1071,7 +1072,12 @@ class Verifier:
         # finding the key that opens it. Trying each outstanding one is deliberate: the
         # `state` that would let us look it up directly is INSIDE the ciphertext, and
         # trusting an unauthenticated state parameter to pick a decryption key is how a
-        # verifier gets steered onto the wrong session.
+        # verifier gets steered onto the wrong session. Its length is checked once, first, so a
+        # token too long to be a response is not decoded and decrypted once per open request.
+        try:
+            check_compact_length(token)
+        except JweError as exc:
+            return self._error("invalid_request", str(exc))
         with self._lock:
             self._expire_locked()
             candidates = list(self._sessions.values())
@@ -1146,21 +1152,6 @@ class Verifier:
             # gets the same constant refusal every other cause gets. The request stays open.
             return self._error(verdict.code, verdict.reason)
 
-        # Authentic: the holder answered, and the request closes whatever is decided below, as it
-        # always did for an authentic presentation. Under the lock, so that of two authentic
-        # responses to one request (a replay racing the original) exactly one closes it and the
-        # other is refused; a request that expired while this one was being judged is not
-        # answered either.
-        with self._lock:
-            if session.answered or self._sessions.get(session.state) is not session:
-                return self._error("invalid_request",
-                                   "this request has already been answered, or expired while "
-                                   "this response was judged; a second presentation for the "
-                                   "same nonce is a replay")
-            session.answered = True
-            self._sessions.pop(session.state, None)
-            self._by_request.pop(session.state, None)
-
         # The claims the DCQL query above asked for. Every one is required (it names no
         # `claim_sets`), and a presentation that discloses fewer does not answer the request;
         # until 2026-10-01 a wallet that withheld one got the same 200 as one that did not.
@@ -1206,6 +1197,22 @@ class Verifier:
                 False, "revoked", "the issuer's status list gives this credential the value %r, "
                                   "not VALID (0)" % (rev.get("status"),), revocation=rev)
 
+        # Accepted: the request closes here, after the last refusal, so a response refused for
+        # its claims, its over-disclosure or its status leaves it open for the holder's own
+        # (until 2026-10-30 it closed before those three, and another holder's authentic
+        # credential used the request up). Under the lock, so that of two accepted responses to
+        # one request (a replay racing the original) exactly one closes it and the other is
+        # refused; a request that expired while this one was being judged is not answered either.
+        with self._lock:
+            if session.answered or self._sessions.get(session.state) is not session:
+                return self._error("invalid_request",
+                                   "this request has already been answered, or expired while "
+                                   "this response was judged; a second presentation for the "
+                                   "same nonce is a replay")
+            session.answered = True
+            self._sessions.pop(session.state, None)
+            self._by_request.pop(session.state, None)
+
         # OpenID4VP 1.0 section 8.2: the redirect carries a fresh value only its receiver holds,
         # and this request's result is fetched with it, once (`redeem`). Until 2026-10-14 every
         # accepted response was sent to the same fixed URI, so in a same-device flow nothing
@@ -1235,11 +1242,13 @@ class Verifier:
         on the screen that showed the request, and section 14.2 calls that flow susceptible to
         a relayed request; its result reaches the operator through the returned verdict.
         """
-        if not isinstance(response_code, str) or not response_code:
+        # A code this verifier issued is base64url, so ASCII. Until 2026-10-30 a lone surrogate
+        # ("\ud800") raised UnicodeEncodeError here, where every other string got None.
+        if not isinstance(response_code, str) or not response_code or not response_code.isascii():
             return None
         if state is not None and not isinstance(state, str):
             return None
-        key = _sha256(response_code.encode("utf-8"))
+        key = _sha256(response_code.encode("ascii"))
         with self._lock:
             self._expire_locked()
             entry = self._results.get(key)

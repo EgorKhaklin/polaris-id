@@ -2179,6 +2179,22 @@ class IssuerBindingIsAsciiTests(unittest.TestCase):
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "issuer_key", v.reason)
 
+    def test_a_kelvin_dns_name_is_refused_when_the_credential_carries_no_iss(self):
+        # Without `iss` nothing asks the leaf's names to bind one, and until 2026-10-30 such a
+        # credential verified under a leaf no CA may issue. The control: the same credential
+        # under an ASCII leaf verifies, its iss unbound.
+        for host, refused in ((self.KELVIN, True), ("kent.example", False)):
+            with self.subTest(host=host):
+                ca, leaf, leaf_key = self._chain(host)
+                v = verify_presentation(_x5c_presentation(leaf, leaf_key), expected_nonce=NONCE,
+                                        expected_audience=AUDIENCE, trust_anchors=[ca])
+                if refused:
+                    self.assertFalse(v.authentic)
+                    self.assertEqual(v.code, "issuer_key", v.reason)
+                    self.assertIn("not ASCII", v.reason)
+                else:
+                    self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
     def test_an_ascii_dns_name_does_not_bind_a_kelvin_iss(self):
         v = self._verify("kent.example", "https://\u212aent.example")
         self.assertFalse(v.authentic)

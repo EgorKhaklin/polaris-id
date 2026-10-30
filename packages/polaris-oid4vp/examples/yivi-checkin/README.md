@@ -2,9 +2,10 @@
 
 A door check-in built on polaris-oid4vp's public `Verifier`. The desk shows a QR code. The Yivi app
 presents its email credential with one claim disclosed, `domain`. If that domain is on the
-allow-list, the desk shows "Checked in" and the domain. When an authentic presentation is refused
-(its domain off the list, another issuer, a claim withheld), it shows "Not checked in" and the
-reason. A presentation that is not authentic leaves the desk waiting. [`app.py`](app.py) is the
+allow-list, the desk shows "Checked in" and the domain. When the desk refuses a presentation
+polaris-oid4vp accepted (its domain off the list, another issuer), it shows "Not checked in" and the
+reason. A presentation polaris-oid4vp refuses (a claim withheld, a revoked credential, one that does
+not verify) leaves the desk waiting. [`app.py`](app.py) is the
 whole app.
 
 This runs in developer mode, not production. The phone trusts this verifier only because its root
@@ -65,7 +66,7 @@ site's colours, from `site/tokens.css`.
   address and the `Host` header. Through the tunnel, only the wallet's paths answer: `/request/<id>` and `/response/<id>`.
   An accepted wallet gets no redirect: the desk shows the result.
 - Someone who sees the QR code can fetch the request and post to `/response/<id>`. So a
-  presentation that is not authentic changes nothing: the wallet is refused, the request stays
+  presentation polaris-oid4vp refuses changes nothing: the wallet is refused, the request stays
   open and the desk keeps waiting. A post after the request has closed, answered or expired,
   changes nothing either.
 
