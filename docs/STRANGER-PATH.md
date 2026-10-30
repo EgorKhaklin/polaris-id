@@ -5,12 +5,12 @@ asking anyone a question.** If you cannot, that is the bug and we want to hear i
 [open a report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-10-24 against `polaris-oid4vp`
-1.0.0 installed from the registry, with the system Python 3.9.6 on macOS and both wallets' images
-already pulled. In the first minute, eudi-dev v2.3.7's image presented a credential, the verifier
-answered `200 authentic`, and all three controls were refused. In the ten minutes, walt.id's wallet
-presented from an empty directory and the verifier answered `200 authentic`, 45 seconds after the
-wallet started. Nothing here is from memory.
+package on PyPI rather than a working copy. Last walked 2026-10-30 against `polaris-oid4vp`
+1.1.0 installed from the registry, with the system Python 3.9.6 on macOS. In the first minute,
+eudi-dev v2.3.7's image presented a credential, the verifier answered 200 and accepted it, and all
+three controls were refused; the wallet's own binary did the same without Docker. In the ten
+minutes, walt.id's wallet presented from an empty directory and the verifier answered `200
+authentic`, 13 seconds after the wallet started. Nothing here is from memory.
 
 ## One minute first
 
@@ -36,10 +36,10 @@ the hashes in `requirements.txt`, lets the wallet generate its own
 key, mints one credential bound to it, has the wallet present it with HAIP enforced, then runs
 three controls that must each be refused ([what they are](../lab/interop/eudi-dev/README.md)). It
 does every step for you, so it shows THAT the path works; the ten minutes below show what each
-step is. Walked 2026-10-24 as written, from an empty directory outside the repository, with the
-system Python 3.9.6 on macOS: it installed 1.0.0, the wallet presented and the verifier
-answered `200 authentic` with all three controls refused, in 17 seconds with Docker running.
-Without Docker (`EUDI_NATIVE=1`) it was last walked 2026-10-11.
+step is. Walked 2026-10-30 as written, from an empty directory outside the repository, with the
+system Python 3.9.6 on macOS: it installed 1.1.0, pulled the wallet's image, and the wallet
+presented and the verifier accepted with all three controls refused, in 17 seconds with Docker
+running; without Docker (`EUDI_NATIVE=1`), the same in 14 seconds.
 
 ## 0. Prerequisites
 
