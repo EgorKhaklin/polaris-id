@@ -13100,6 +13100,21 @@ def test_canonical_equivalence_check_discriminates(tmp_path):
     # 4. the oracle is not wired into CI
     write({"scripts/polaris-coverage.sh": "run polaris_web unittest test_app\n"})
     assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL if the oracle does not run in CI"
+    # 5. verify builders that return through the shared _canonical_json helper are held to its body
+    ver = "packages/polaris-verify/polaris_verify_cli/verifier.py"
+    stripped = verify.replace("json.dumps(", "_canonical_json(").replace(
+        ', sort_keys=True, separators=(",", ":")).encode()', ")")
+    assert "sort_keys" not in stripped and stripped.count("return _canonical_json(") == 5, stripped
+    helper = ("def _canonical_json(statement):\n"
+              '    return json.dumps(statement, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()\n')
+    write({ver: stripped + helper})
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "OK", "must PASS through a compact sorted helper"
+    write({ver: stripped + helper.replace("sort_keys=True", "sort_keys=False")})
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL when the helper drops sort_keys"
+    write({ver: stripped + helper.replace('separators=(",", ":")', 'separators=(", ", ": ")')})
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL when the helper is not compact"
+    write({ver: stripped})
+    assert checks.check_canonical_equivalence(tmp_path)[0].level == "FAIL", "must FAIL when the helper is missing"
 
 
 def test_transparency_log_check_discriminates(tmp_path):

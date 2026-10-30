@@ -26,6 +26,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- The Python SDK refuses a trust list, registry or federation manifest whose signed key collection is not a list, and `verify_cross_authority` reads a manifest whose `attestations` is not a list as naming no edge, as the TypeScript SDK does.
+- Both reference SDKs answer `fresh` false, with a note, for an artifact, status assertion or ID token whose signed `issued_at` or `expires_at` (the ID token's `iat` or `exp`) is not an instant (WIRE-SPEC 2.2). `fresh` stays null for a format that signs no window and for a caller's clock that does not parse.
+- `agent_proof_proves` (Python) and `agentProofProves` (TypeScript) take `now` and prove an agent only by a proof whose `issued_at` falls inside the grant's `[issued_at, expires_at)` and at most 60 seconds ahead of that clock (WIRE-SPEC 3.17).
+- Both reference SDKs verify a `polaris-exchange-mint/1` statement without `algorithm` under the accepted parameter set its public-key length identifies, as the instance's mint route and polaris-verify do (WIRE-SPEC 3.8.1).
+- polaris-verify and the Python SDK refuse, with a note, a signed statement that is not JSON (WIRE-SPEC section 1, RFC 8259 section 6): one holding NaN, Infinity or an integer too long to write. polaris-verify's command line reads a file holding NaN or Infinity as input that is not JSON, as it reads any file that does not parse.
+- polaris-verify's text output escapes control characters and lone surrogates in echoed fields, and writes a character its output cannot encode as a backslash escape, so such a field keeps the exit code the README gives.
+
 - `PolarisAppDown` also fires when Prometheus finds no app target for two minutes, as when DNS discovery resolves neither colour. The new branch keeps the `job` label, so Alertmanager still mutes `PolarisAppInfoAbsent` under it.
 - The stranger path's `lab/interop/waltid/setup.sh` can be run again on the same walt.id container after `polaris-oid4vp keygen` made new certificates. A second run left walt.id trusting the first TLS certificate (keytool refuses an alias that exists, and the error was discarded) and made its wallet on the first run's stores, so the wallet also held the first credential (with the certificate fixed, walt.id presented that one, and the verifier refused it under the new issuer key). Each run now replaces the trusted certificate and makes its wallet on stores of its own; a keytool or store error stops the run. docs/STRANGER-PATH.md is unchanged: removing the container before a second run stays the path it gives.
 

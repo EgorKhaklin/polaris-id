@@ -65,6 +65,19 @@ def _accepted(alg):
     return isinstance(alg, str) and alg in ACCEPTED_ALGORITHMS
 
 
+def _alg_for_key_length(pk_hex):
+    """The accepted parameter set a public key's length identifies, or None when none fits: for
+    the mint statement, whose `algorithm` is not signed. As in the detached verifier."""
+    try:
+        n = len(_unhex(pk_hex))
+    except (ValueError, TypeError):
+        return None
+    for name, (pk_len, _sig_len) in ALGORITHM_SIZES.items():
+        if n == pk_len and _accepted(name):
+            return name
+    return None
+
+
 def _size_problem(alg, pk, sig):
     """Why `pk` and `sig` cannot be a public key and a signature of `alg`, or None when each is
     exactly its ALGORITHM_SIZES length.
@@ -416,15 +429,44 @@ def verify_authenticity(pack: dict, anchors=None) -> AuthenticityVerdict:
 _STATUS_ASSERTION_KEYS = ["format", "token_value", "status", "issued_at", "expires_at"]
 
 
+#: WIRE-SPEC section 1: every artifact is a UTF-8 JSON object, and JSON (RFC 8259 section 6)
+#: has no NaN or Infinity. Python's json reads and writes both, so a statement signed with one
+#: re-canonicalised to its own signed bytes here while the TypeScript SDK could not parse it.
+#: An integer too long for Python to write (over 4300 digits) is refused the same way.
+_NOT_JSON = "the statement is not JSON: it holds NaN, Infinity or an integer too long to write"
+
+
+def _refuse_constant(name):
+    raise ValueError("%s is not JSON (RFC 8259 section 6)" % name)
+
+
+def _json_loads(text):
+    """json.loads that refuses NaN, Infinity and -Infinity, which are not JSON."""
+    return json.loads(text, parse_constant=_refuse_constant)
+
+
 def _canonical(obj: dict, keys) -> bytes:
-    return json.dumps({k: obj.get(k) for k in keys}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """Sorted-keys compact JSON of the signed fields. Raises ValueError on a value JSON cannot hold."""
+    return json.dumps({k: obj.get(k) for k in keys}, sort_keys=True, separators=(",", ":"),
+                      allow_nan=False).encode("utf-8")
+
+
+def _statement_digest(obj: dict, keys):
+    """SHA3-256 of the canonical statement, or None when it is not JSON (_NOT_JSON)."""
+    try:
+        return hashlib.sha3_256(_canonical(obj, keys)).digest()
+    except ValueError:
+        return None
 
 
 def _verify_over_digest(digest, sig_hex, pk_hex, alg=ALGORITHM):
     """Dual-witness ML-DSA verify over a digest under `alg` (an accepted parameter set).
     Returns (ok, witnesses, note); ok is None when no verifier is available, the witnesses
     disagree, or the algorithm is not accepted. A key or signature of the wrong length is
-    (False, [], why), decided before either witness runs."""
+    (False, [], why), decided before either witness runs. A digest of None is a statement that
+    is not JSON."""
+    if digest is None:
+        return None, [], _NOT_JSON
     if not _accepted(alg):
         return None, [], "unknown or unaccepted signature algorithm: %r" % (alg,)
     try:
@@ -559,6 +601,11 @@ def _within_window(obj: dict, now=None, start="issued_at", end="expires_at"):
     return ia <= n < ea
 
 
+def _clock_reads(now):
+    """True when the caller's `now` is the current time or an instant this verifier reads."""
+    return now is None or _iso_to_epoch(now) is not None
+
+
 def _signed_window(keys):
     """The (start, end) fields of the validity window a format SIGNS, read from its own signed
     key list, or None when it signs no window. The ID token signs its window as `iat` and
@@ -596,13 +643,17 @@ def verify_status_assertion(assertion: dict, now=None) -> StatusAssertionVerdict
         return StatusAssertionVerdict(False, None, None, status, "placeholder -- not authenticatable offline")
     if assertion.get("format") != "polaris-status-assertion/1":
         return StatusAssertionVerdict(False, None, None, status, "not a polaris-status-assertion/1")
-    digest = hashlib.sha3_256(_canonical(assertion, _STATUS_ASSERTION_KEYS)).digest()
+    digest = _statement_digest(assertion, _STATUS_ASSERTION_KEYS)
     ok, ran, note = _verify_over_digest(digest, assertion.get("signature_hex"), assertion.get("public_key_hex"),
                                     assertion.get("algorithm"))
     if ok is None:
         return StatusAssertionVerdict(False, None, None, status, note, ran)
-    return StatusAssertionVerdict(bool(ok), _within_window(assertion, now), status == "ACTIVE", status,
-                                  note, witnesses=ran)
+    fresh = _within_window(assertion, now)
+    if fresh is None and _clock_reads(now):
+        # A signed window that is not an instant is a refusal (WIRE-SPEC 2.2), as in
+        # verify_signed_artifact.
+        fresh, note = False, note or "the signed issued_at/expires_at are not valid instants"
+    return StatusAssertionVerdict(bool(ok), fresh, status == "ACTIVE", status, note, witnesses=ran)
 
 
 # The signed-field list per artifact format (wire spec section 3). One generic verifier covers
@@ -717,7 +768,8 @@ def _wire_path(p) -> list:
 def _members_root(members) -> str:
     if not isinstance(members, list):
         members = []
-    digs = sorted(hashlib.sha3_256(json.dumps(m, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    digs = sorted(hashlib.sha3_256(json.dumps(m, sort_keys=True, separators=(",", ":"),
+                                              allow_nan=False).encode("utf-8")).hexdigest()
                   for m in members)
     return hashlib.sha3_256("\n".join(digs).encode("utf-8")).hexdigest()
 
@@ -755,11 +807,16 @@ def verify_id_token(tok: dict, audience=None, nonce=None, now=None,
     ia, ea = _iso_to_epoch(tok.get("iat")), _iso_to_epoch(tok.get("exp"))
     n = _iso_to_epoch(now) if now is not None else time.time()
     fresh = (ia <= n < ea) if (ia is not None and ea is not None and n is not None) else None
+    note = None
+    if fresh is None and _clock_reads(now):
+        # A signed iat or exp that is not an instant is a refusal (WIRE-SPEC 2.2), as in
+        # verify_signed_artifact.
+        fresh, note = False, "the signed iat/exp are not valid instants"
     # Compared as the TypeScript SDK's `===` compares them (_same_id): `==` let a signed
     # "aud": true match audience 1, and a nonce of 1.0 match 1 (2026-10-15).
     return IdTokenVerdict(True, bool(_same_id(tok.get("aud"), audience)) if audience is not None else None,
                           bool(_same_id(tok.get("nonce"), nonce)) if nonce is not None else None, fresh,
-                          tok.get("sub"), tok.get("acr"), None, base.issuer_trusted)
+                          tok.get("sub"), tok.get("acr"), note, base.issuer_trusted)
 
 
 def _status_of(entry):
@@ -795,8 +852,14 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         return ArtifactVerdict(False, None, "tree_size is not an integer from 0 to 2**53 - 1")
     if obj.get("algorithm") == PLACEHOLDER_LABEL or not obj.get("public_key_hex"):
         return ArtifactVerdict(False, None, "placeholder -- not authenticatable offline")
-    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(obj, keys)).digest(),
-                                        obj.get("signature_hex"), obj.get("public_key_hex"), obj.get("algorithm"))
+    alg = obj.get("algorithm")
+    if fmt == "polaris-exchange-mint/1" and alg is None:
+        # WIRE-SPEC 3.8.1: the mint does not sign `algorithm`. Without one it is the accepted
+        # parameter set the key's length identifies, as the instance's mint route and the
+        # detached verifier read it; a key no set fits is refused.
+        alg = _alg_for_key_length(obj.get("public_key_hex"))
+    ok, ran, note = _verify_over_digest(_statement_digest(obj, keys),
+                                        obj.get("signature_hex"), obj.get("public_key_hex"), alg)
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
     ok = bool(ok)
@@ -847,24 +910,31 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
         # only the detached verifier checked it: a bundle whose signed count and listed
         # members disagreed was authentic here and in the TypeScript SDK.
         members = obj.get("members") if isinstance(obj.get("members"), list) else []
-        ok = (_members_root(members) == _hex_text(obj.get("members_root_hex"))
+        try:
+            root = _members_root(members)
+        except ValueError:   # a member that is not JSON (_NOT_JSON) commits to nothing
+            root = None
+        ok = (root is not None and root == _hex_text(obj.get("members_root_hex"))
               and _count_is(obj.get("member_count"), len(members)))
         note = None if ok else "the status bundle's members_root or member_count does not match its members"
     elif ok and fmt == "polaris-federation-manifest/1":
-        active = {_hex_text(a.get("public_key_hex", "")) for a in (obj.get("anchors") or [])
+        own_anchors = obj.get("anchors") if isinstance(obj.get("anchors"), list) else []
+        active = {_hex_text(a.get("public_key_hex", "")) for a in own_anchors
                   if isinstance(a, dict) and _status_of(a) == "active"}
         ok = _hex_in(obj.get("public_key_hex"), active)
         note = None if ok else "the manifest is not signed by one of its own active anchors"
     elif ok and fmt == "polaris-registry/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
-        listed = [_hex_text(a.get("public_key_hex")) for a in (obj.get("authorities") or [])
+        authorities = obj.get("authorities") if isinstance(obj.get("authorities"), list) else []
+        listed = [_hex_text(a.get("public_key_hex")) for a in authorities
                   if isinstance(a, dict) and _same_id(a.get("agency_id"), pub.get("agency_id"))
                   and _status_of(a) == "active"]
         ok = _hex_in(obj.get("public_key_hex"), listed)
         note = None if ok else "the registry is not signed by the key it lists for its own publisher"
     elif ok and fmt == "polaris-trust-list/1":
         pub = obj.get("publisher") if isinstance(obj.get("publisher"), dict) else {}
-        active = [_hex_text(k.get("public_key_hex")) for k in (obj.get("keys") or [])
+        listed_keys = obj.get("keys") if isinstance(obj.get("keys"), list) else []
+        active = [_hex_text(k.get("public_key_hex")) for k in listed_keys
                   if isinstance(k, dict) and _same_id(k.get("agency_id"), pub.get("agency_id")) and k.get("status") == "active"]
         ok = _hex_in(obj.get("public_key_hex"), active)
         note = None if ok else "the trust list is not signed by a key it lists as active for its own publisher"
@@ -875,6 +945,15 @@ def verify_signed_artifact(obj: dict, now=None, anchors=None) -> ArtifactVerdict
     win = _signed_window(keys)
     if fresh is None and win is not None:
         fresh = _within_window(obj, now, *win)
+    # A window the artifact SIGNS that is not an instant (null, "x", a 13th month) is a
+    # refusal (WIRE-SPEC 2.2: reject unless issued_at <= now < expires_at). None stays for a
+    # format that signs none, and for a caller's clock that does not parse.
+    signed_ends = win or (("issued_at",) if obj.get("format") in _REPLAY_WINDOW_SECONDS else ())
+    if fresh is None and signed_ends and _clock_reads(now):
+        fresh = False
+        note = note or "the signed %s %s" % ("/".join(signed_ends),
+                                               "are not valid instants" if len(signed_ends) > 1
+                                               else "is not a valid instant")
     # Same rule as the detached verifier: the key that signed it, lowercased, is in the
     # anchor set. None when the caller supplied none, and when the signature is not authentic:
     # it read True beside a forged signature before this change, where the detached verifier's
@@ -961,7 +1040,7 @@ def verify_cosignature(cosig: dict, witness_key=None) -> ArtifactVerdict:
     # algorithm, as in polaris-sdk-ts, so each of those keeps its own refusal.
     if _accepted(c.get("algorithm")) and not _signed_count(c.get("tree_size")):
         return ArtifactVerdict(False, None, "the cosignature's tree_size is not an integer from 0 to 2**53 - 1")
-    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(c, _COSIGNATURE_KEYS)).digest(),
+    ok, ran, note = _verify_over_digest(_statement_digest(c, _COSIGNATURE_KEYS),
                                         c.get("signature_hex"), c.get("public_key_hex"), c.get("algorithm"))
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
@@ -1003,7 +1082,11 @@ def verify_timestamp_anchor(ts: dict, log_key=None, trusted_witnesses=None, thre
     if not isinstance(proof, dict) or not isinstance(sth, dict):
         v.note = "anchor.proof and anchor.sth must be objects"
         return v
-    v.timestamp_hash = timestamp_hash(ts)
+    try:
+        v.timestamp_hash = timestamp_hash(ts)
+    except ValueError:
+        v.note = _NOT_JSON
+        return v
     if _hex_text(proof.get("entry_hex")) != v.timestamp_hash:
         v.note = "the proof is not for this timestamp"
         return v
@@ -1133,7 +1216,7 @@ def verify_holder(credential: dict, binding: dict, proof: dict, expected_nonce=N
     v.bound_to_credential = (_wire_text_equal(b.get("token_value"), cred.get("token_value"))
                              and _same_hex(b.get("public_key_hex"), cred.get("public_key_hex")))
     keys = _ARTIFACT_KEYS["polaris-holder-proof/1"]
-    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(pr, keys)).digest(),
+    ok, ran, note = _verify_over_digest(_statement_digest(pr, keys),
                                         pr.get("signature_hex"), pr.get("public_key_hex"), pr.get("algorithm"))
     v.proof_authentic = None if ok is None else bool(ok)
     if ok is None:
@@ -1191,7 +1274,7 @@ def verify_attestation(att: dict, attesting_agency_id=None, expected_key=None) -
     if a.get("algorithm") == PLACEHOLDER_LABEL:
         return ArtifactVerdict(False, None, "placeholder attestation signature -- not authenticatable offline")
     keys = _ARTIFACT_KEYS["polaris-trust-attestation/1"]
-    ok, ran, note = _verify_over_digest(hashlib.sha3_256(_canonical(a, keys)).digest(),
+    ok, ran, note = _verify_over_digest(_statement_digest(a, keys),
                                         a.get("signature_hex"), a.get("public_key_hex"), a.get("algorithm"))
     if ok is None:
         return ArtifactVerdict(False, None, note, ran)
@@ -1253,7 +1336,7 @@ def verify_cross_authority(pack: dict, context_id, manifests, trusted_anchors=No
         # relying party's anchor beside the attacker's own root was trusted (WIRE-SPEC section 4).
         if not _hex_in(m.get("public_key_hex"), trusted):
             continue   # the relying party does not trust this manifest's signer
-        for att in (m.get("attestations") or []):
+        for att in (m.get("attestations") if isinstance(m.get("attestations"), list) else []):
             if not isinstance(att, dict):
                 continue
             if (token_key is not None and _hex_text(att.get("attested_public_key_hex")) == token_key
@@ -1350,7 +1433,7 @@ class PolarisVerifier:
             headers={"Authorization": "Basic " + creds,
                      "Content-Type": "application/x-www-form-urlencoded"})
         with self._urlopen(req) as r:
-            body = json.loads(r.read())
+            body = _json_loads(r.read())
         self._bearer = body["access_token"]
         self._bearer_exp = time.time() + _expires_in(body.get("expires_in"))
         return self._bearer
@@ -1363,7 +1446,7 @@ class PolarisVerifier:
             headers={"Authorization": "Bearer " + self._access_token(),
                      "Content-Type": "application/json"})
         with self._urlopen(req) as r:
-            return json.loads(r.read())
+            return _json_loads(r.read())
 
     def verify_presentation(self, presentation) -> Verdict:
         """Decide accept / reject / provisional for a holder's presentation (a
@@ -1684,7 +1767,7 @@ def _wire_text_equal(signed, expected):
     return t is not None and t == _wire_text(expected)
 
 
-def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
+def agent_proof_proves(proof, grant, action=None, nonce=None, now=None) -> bool:
     """Is this agent proof bound to THIS grant, this action and this service's nonce?
 
     Signature verification is the caller's `verify_signed_artifact` step; this is the binding
@@ -1692,6 +1775,8 @@ def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
     be signed by the agent key the grant names, under the algorithm the HOLDER authorized (the
     proof's own `algorithm` is the agent's unsigned word about itself), and, when the service
     supplies them, name the requested action and the service's nonce (a replay names another).
+    It must have been made inside the grant's window and not more than 60 seconds ahead of
+    `now` (an ISO-8601 string, or None for the current time).
     """
     if not isinstance(proof, dict) or not isinstance(grant, dict):
         return False
@@ -1707,7 +1792,14 @@ def agent_proof_proves(proof, grant, action=None, nonce=None) -> bool:
         return False
     if action is not None and not _wire_text_equal(proof.get("action"), action):
         return False
-    return True
+    # WIRE-SPEC 3.17: the proof is made inside the grant's window and at most 60 seconds
+    # ahead of this clock. A proof, grant window or clock that is not an instant proves nothing.
+    made = _iso_to_epoch(proof.get("issued_at"))
+    start, end = _iso_to_epoch(grant.get("issued_at")), _iso_to_epoch(grant.get("expires_at"))
+    ref = _iso_to_epoch(now) if now is not None else time.time()
+    if made is None or start is None or end is None or ref is None:
+        return False
+    return start <= made < end and made <= ref + _CLOCK_SKEW_SECONDS
 
 
 # --- P8.2: the exchange in use (1.0.0-rc.64) -----------------------------------------
@@ -1851,8 +1943,11 @@ def verify_exchange_request(envelope, requester_key=None, trusted_manifests=None
         v.requester_authorized = bool(found)
         v.attestation_signed = found[0][1] if found else None
     if body is not None:
-        canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
-        v.body_bound = _sha3_hex(canon) == _hex_text(e.get("request_hash"))
+        try:
+            canon = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        except ValueError:   # a body that is not JSON (_NOT_JSON) binds nothing
+            canon = None
+        v.body_bound = canon is not None and _sha3_hex(canon) == _hex_text(e.get("request_hash"))
     return v
 
 

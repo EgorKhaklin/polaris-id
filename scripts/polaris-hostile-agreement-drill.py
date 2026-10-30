@@ -83,12 +83,6 @@ PRIMARY = ("authentic", "decision", "anchored", "proved")
 #: Disagreements that are conventions, not defects, each with the reason it is one.
 #: (artifact or case-name prefix, mutated path or "*", key or "*") -> reason.
 ACCOUNTED = {
-    ("exchange-mint", "object/algorithm", "*"):
-        "`algorithm` is not a signed field of polaris-exchange-mint/1 (WIRE-SPEC 3.8.1). With it "
-        "absent the detached verifier takes the parameter set the key's length identifies, as the "
-        "product's mint route does; the SDKs require the label. A design difference, recorded.",
-    ("exchange-use-mint", "object/algorithm", "*"):
-        "the same mint, decided in use",
     ("cross-authority", "*", "issuer_trusted"):
         "the detached adapter derives issuer_trusted from key_status, a different question "
         "(the agreement drill accounts for it the same way)",

@@ -68,8 +68,10 @@ test("every limit value that is present is a finite number, read alone", () => {
 });
 
 test("an agent proof's nonce, action and grant id are read as text, and must be named", () => {
-  const grant = { grant_id: "g-1", agent_public_key_hex: "ab" };
-  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", service_nonce: 0, action: "read" };
+  const grant = { grant_id: "g-1", agent_public_key_hex: "ab",
+                  issued_at: "2026-05-01T00:00:00Z", expires_at: "2026-05-01T06:00:00Z" };
+  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", service_nonce: 0, action: "read",
+                  issued_at: "2026-05-01T00:00:00Z" };
   assert.equal(agentProofProves(proof, grant, "read", 0), true, "nonce 0 is a nonce");
   assert.equal(agentProofProves(proof, grant, "read", "0"), true, "and its text is 0");
   assert.equal(agentProofProves({ ...proof, service_nonce: 1.5 }, grant, "read", "1.5"), false, "a fraction is not text");
@@ -93,8 +95,10 @@ test("a use count is a finite number whether or not the grant limits uses", () =
 });
 
 test("a value with no wire text matches nothing, and nor does an integer beyond 2**53", () => {
-  const grant = { grant_id: "g-1", agent_public_key_hex: "ab" };
-  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", action: "read" };
+  const grant = { grant_id: "g-1", agent_public_key_hex: "ab",
+                  issued_at: "2026-05-01T00:00:00Z", expires_at: "2026-05-01T06:00:00Z" };
+  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", action: "read",
+                  issued_at: "2026-05-01T00:00:00Z" };
   for (const nonce of [1.5, true, [1], {}]) {
     assert.equal(agentProofProves(proof, grant, "read", nonce), false, JSON.stringify(nonce));
   }
@@ -114,8 +118,10 @@ test("a value with no hex text is in no collection, even one holding null", () =
 });
 
 test("a key is hex text: a key held in a list is not the key", () => {
-  const grant = { grant_id: "g-1", agent_public_key_hex: "ab" };
-  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", action: "read" };
+  const grant = { grant_id: "g-1", agent_public_key_hex: "ab",
+                  issued_at: "2026-05-01T00:00:00Z", expires_at: "2026-05-01T06:00:00Z" };
+  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", action: "read",
+                  issued_at: "2026-05-01T00:00:00Z" };
   assert.equal(agentProofProves(proof, { ...grant, agent_public_key_hex: ["ab"] }, "read"), false);
   assert.equal(agentProofProves(proof, { ...grant, agent_public_key_hex: "AB" }, "read"), true, "case is not a key");
   const rev = { format: "polaris-grant-revocation/1", grant_id: "g-1" };
@@ -373,9 +379,10 @@ test("an exchange mint answers whose it is", () => {
 });
 
 test("an agent proof must bind this grant, this action and this nonce", () => {
-  const grant = { grant_id: "g1", agent_public_key_hex: "AA".repeat(32), agent_algorithm: "ML-DSA-65" };
+  const grant = { grant_id: "g1", agent_public_key_hex: "AA".repeat(32), agent_algorithm: "ML-DSA-65",
+                  issued_at: "2026-05-01T00:00:00Z", expires_at: "2026-05-01T06:00:00Z" };
   const good = { format: "polaris-agent-proof/1", grant_id: "g1", public_key_hex: "aa".repeat(32),
-                 algorithm: "ML-DSA-65", action: "read:status", service_nonce: "n-1" };
+                 algorithm: "ML-DSA-65", action: "read:status", service_nonce: "n-1", issued_at: "2026-05-01T00:00:00Z" };
   assert.equal(agentProofProves(good, grant, "read:status", "n-1"), true, "the matching proof proves the agent");
   assert.equal(agentProofProves(good, grant), true);
   assert.equal(agentProofProves({ ...good, format: "polaris-grant-revocation/1" }, grant), false);
@@ -1787,6 +1794,14 @@ const XA_KEYS: Record<string, string[]> = {
     "algorithm"],
   "polaris-exchange-receipt/1": ["format", "requester", "responder", "context_id", "request_hash", "response_hash",
     "authorized_via", "occurred_at", "algorithm"],
+  "polaris-exchange-mint/1": ["format", "requester_public_key_hex", "context_id", "request_hash", "response_hash",
+    "responder_agency_id", "occurred_at"],
+  "polaris-trust-list/1": ["format", "publisher", "keys", "issued_at", "expires_at", "algorithm"],
+  "polaris-registry/1": ["format", "publisher", "instance", "authorities", "contexts", "trust", "relying_parties",
+    "issued_at", "expires_at", "algorithm"],
+  "polaris-status-assertion/1": ["format", "token_value", "status", "issued_at", "expires_at"],
+  "polaris-id-token/1": ["format", "iss", "sub", "aud", "nonce", "context_id", "disclosure_level", "acr",
+    "enrollment", "auth_time", "iat", "exp", "algorithm"],
 };
 const xaHex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const xaEnc = (x: string) => new TextEncoder().encode(x);
@@ -1949,5 +1964,118 @@ test("a real federation manifest decides as before", async () => {
     assert.deepEqual([q.requesterAuthorized, q.attestationSigned], [true, signed]);
     const r = verifyExchangeReceipt(f.receipt, XA_NOW, [m]);
     assert.deepEqual([r.requesterAuthorized, r.via, r.attestationSigned], [true, XA_HOME, signed]);
+  }
+});
+
+// 2026-10-29: a red-team pass re-signed a hostile field under a key the verifier checks, so the
+// signature verifies and only the rule behind it can refuse. Each answer is the detached
+// verifier's, which already gave it; the Python SDK carries the same cases
+// (ReSignedHostileFieldsTests).
+const rsWindow = { issued_at: XA_ISSUED, expires_at: XA_EXPIRES, algorithm: "ML-DSA-65" };
+
+test("a signed collection that is not a list refuses rather than throws", async () => {
+  const k = await xaKey(31);
+  for (const [label, body, field] of [
+    ["trust list", { format: "polaris-trust-list/1", publisher: { agency_id: 1 },
+                     keys: [{ agency_id: 1, public_key_hex: k.pk, status: "active" }], ...rsWindow }, "keys"],
+    ["registry", { format: "polaris-registry/1", publisher: { agency_id: 1 },
+                   authorities: [{ agency_id: 1, public_key_hex: k.pk, status: "active" }], ...rsWindow }, "authorities"],
+    ["manifest", xaManifest(XA_HOME, [k.pk], []), "anchors"],
+  ] as [string, any, string][]) {
+    assert.equal(verifySignedArtifact(k.sign(body), XA_NOW).authentic, true, label + ": control");
+    for (const bad of [1, true, 1.5]) {
+      assert.equal(verifySignedArtifact(k.sign({ ...body, [field]: bad }), XA_NOW).authentic, false,
+        `${label} ${field}=${bad}`);
+    }
+  }
+  const home = await xaKey(32), issuer = await xaKey(33);
+  const pack = issuer.pack("XA-ATT-0001");
+  const decide = (attestations: any) => verifyCrossAuthority(
+    pack, 1, [home.sign(xaManifest(XA_HOME, [home.pk], attestations))], [home.pk], null, XA_NOW).decision;
+  assert.equal(decide([xaEdge(issuer.pk)]), "accept", "control");
+  for (const bad of [1, true]) assert.equal(decide(bad), "reject", `attestations=${bad}`);
+});
+
+test("a signed window that is not an instant is not fresh", async () => {
+  const k = await xaKey(34);
+  const body = { format: "polaris-trust-list/1", publisher: { agency_id: 1 },
+                 keys: [{ agency_id: 1, public_key_hex: k.pk, status: "active" }], ...rsWindow };
+  assert.equal(verifySignedArtifact(k.sign(body), XA_NOW).fresh, true, "control");
+  for (const field of ["issued_at", "expires_at"]) {
+    for (const bad of ["x", null, "2026-13-45T99:99:99Z"]) {
+      const v = verifySignedArtifact(k.sign({ ...body, [field]: bad }), XA_NOW);
+      assert.deepEqual([v.authentic, v.fresh], [true, false], `${field}=${bad}`);
+      assert.match(v.note ?? "", /not valid instants/);
+    }
+  }
+  const assertion = { format: "polaris-status-assertion/1", token_value: "T", status: "ACTIVE", ...rsWindow };
+  for (const [bad, fresh] of [[XA_EXPIRES, true], ["x", false], [null, false]] as [string | null, boolean][]) {
+    const v = verifyStatusAssertion(k.sign({ ...assertion, expires_at: bad }), XA_NOW);
+    assert.deepEqual([v.authentic, v.fresh], [true, fresh], `status assertion expires_at=${bad}`);
+  }
+  assert.equal(verifySignedArtifact(k.sign(body), "not a time").fresh, null,
+    "a caller's clock that does not parse is not the artifact's window");
+});
+
+test("a signed ID token window that is not an instant is not fresh", async () => {
+  const k = await xaKey(35);
+  const tok = { format: "polaris-id-token/1", iss: "https://issuer.example", sub: "ab".repeat(32), aud: "rp-1",
+                nonce: "n-1", context_id: 1, disclosure_level: 1, acr: "urn:polaris:acr:1", enrollment: null,
+                auth_time: XA_ISSUED, iat: XA_ISSUED, exp: XA_EXPIRES, algorithm: "ML-DSA-65" };
+  assert.equal(verifyIdToken(k.sign(tok), null, null, XA_NOW).fresh, true, "control");
+  assert.equal(verifyIdToken(k.sign({ ...tok, exp: XA_ISSUED }), null, null, XA_NOW).fresh, false, "expired");
+  for (const [field, bad] of [["exp", null], ["exp", "x"], ["exp", 5], ["iat", null], ["iat", "x"]] as [string, unknown][]) {
+    const v = verifyIdToken(k.sign({ ...tok, [field]: bad }), null, null, XA_NOW);
+    assert.deepEqual([v.authentic, v.fresh], [true, false], `${field}=${bad}`);
+    assert.match(v.note ?? "", /not valid instants/);
+  }
+  assert.equal(verifyIdToken(k.sign({ ...tok, exp: null }), null, null, "not a time").fresh, null,
+    "a caller's clock that does not parse is not the token's window");
+});
+
+test("an agent proof is made inside its grant and not ahead of the clock", () => {
+  const grant = { grant_id: "g-1", agent_public_key_hex: "ab", agent_algorithm: "ML-DSA-65",
+                  issued_at: XA_ISSUED, expires_at: XA_EXPIRES };
+  const proof = { format: "polaris-agent-proof/1", grant_id: "g-1", public_key_hex: "ab", algorithm: "ML-DSA-65",
+                  action: "read", service_nonce: "n", issued_at: XA_NOW };
+  const proves = (made: unknown, now: string = XA_NOW, g: any = grant) =>
+    agentProofProves({ ...proof, issued_at: made }, g, "read", "n", now);
+  assert.equal(proves(XA_NOW), true, "control");
+  assert.equal(proves(XA_ISSUED), true, "made as the grant opens");
+  assert.equal(proves("2026-05-01T00:01:30Z"), true, "60 seconds ahead of the clock");
+  for (const [label, made, now] of [
+    ["61 seconds ahead of the clock", "2026-05-01T00:01:31Z", XA_NOW],
+    ["a second before the grant", "2026-04-30T23:59:59Z", XA_NOW],
+    ["as the grant lapses", XA_EXPIRES, XA_EXPIRES],
+    ["not an instant", "x", XA_NOW],
+    ["absent", undefined, XA_NOW],
+  ] as [string, unknown, string][]) {
+    assert.equal(proves(made, now), false, label);
+  }
+  assert.equal(proves(XA_NOW, XA_NOW, { ...grant, expires_at: "x" }), false, "a grant window that is not an instant");
+  assert.equal(proves(XA_NOW, "not a time"), false, "a clock that is not an instant");
+});
+
+test("a mint without algorithm is under the set its key length identifies", async () => {
+  const k = await xaKey(35);
+  const body = { format: "polaris-exchange-mint/1", requester_public_key_hex: "ab".repeat(1952), context_id: 1,
+                 request_hash: "cd".repeat(32), response_hash: "ef".repeat(32), responder_agency_id: 1,
+                 occurred_at: XA_ISSUED };
+  const mint = k.sign(body);
+  assert.equal("algorithm" in mint, false);
+  assert.equal(verifyExchangeMint(mint, k.pk).authentic, true, "control: no label, an ML-DSA-65 key");
+  assert.equal(verifySignedArtifact({ ...mint, algorithm: null }).authentic, true, "null is no label");
+  const { ml_dsa87 } = await import("@noble/post-quantum/ml-dsa.js");
+  const k87 = ml_dsa87.keygen(new Uint8Array(32).fill(36));
+  const statement = Object.fromEntries(XA_KEYS[body.format].map((f) => [f, (body as any)[f] ?? null]));
+  const m87 = { ...body, public_key_hex: xaHex(k87.publicKey),
+                signature_hex: xaHex(ml_dsa87.sign(sha3_256(xaEnc(__canonicalJsonForTest(statement))), k87.secretKey)) };
+  assert.equal(verifyExchangeMint(m87).authentic, true, "no label, an ML-DSA-87 key");
+  for (const [label, bad] of [
+    ["a label outside the accepted set", { ...mint, algorithm: "ML-DSA-44" }],
+    ["a label the key does not fit", { ...mint, algorithm: "ML-DSA-87" }],
+    ["a key no accepted set fits", { ...mint, public_key_hex: "ab".repeat(1000) }],
+  ] as [string, any][]) {
+    assert.equal(verifyExchangeMint(bad).authentic, false, label);
   }
 });

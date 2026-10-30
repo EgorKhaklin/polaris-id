@@ -17591,12 +17591,16 @@ def check_canonical_equivalence(root: pathlib.Path) -> list[Finding]:
                          f"the {name} signed key list differs between the app and the verifier: "
                          f"app {app_fn}={a_keys} vs verify {ver_fn}={v_keys} -- an app signature would "
                          "fail every offline verification")
-        # Both sides must produce the compact, sorted-key form.
+        # Both sides must produce the compact, sorted-key form. A builder that returns through the
+        # shared _canonical_json helper is held to the helper's own body.
         for label, src, fn in (("app", app, app_fn), ("verify", v, ver_fn)):
             block = _fn_block(src, fn) or ""
+            via = ""
+            if re.search(r"\breturn _canonical_json\(", block):
+                block, via = _fn_block(src, "_canonical_json") or "", " (through _canonical_json)"
             if "sort_keys=True" not in block or re.search(r"separators=\(['\"],['\"],\s*['\"]:['\"]\)", block) is None:
                 return _fail("canonical_equivalence",
-                             f"the {label} {name} builder must serialize with sort_keys=True and "
+                             f"the {label} {name} builder{via} must serialize with sort_keys=True and "
                              "separators=(',', ':') (the canonical compact form)")
     # The runtime oracle must exist and run in CI.
     oracle = _read(root, "polaris_web/test_canonical_equivalence.py")
