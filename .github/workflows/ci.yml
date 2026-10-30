@@ -2559,12 +2559,19 @@ jobs:
         env:
           POLARIS_DOMAIN: localhost
           POLARIS_COMPOSE_EXTRA: "-f docker-compose.citest.yml"
-        # The clock for gate row OP-2 starts here (the drill below reads it).
+        # The clock for gate row OP-2 starts here (the drill below reads it). sudo carries only the
+        # variables it names (Ubuntu 26.04's sudo-rs ignores a bare -E): the installer's inputs. The
+        # env file it writes must then hold the two set here, or the step fails.
         run: |
           set -o pipefail
           date +%s > /tmp/op2-install-start
-          sudo -E bash deploy/linux/install.sh --source "$PWD" | tee /tmp/op2-install.out
+          sudo --preserve-env=POLARIS_DOMAIN,POLARIS_COMPOSE_EXTRA,POLARIS_ENV_FILE,POLARIS_INSTALL_DIR,POLARIS_SOURCE,POLARIS_SYSTEMD_DIR \
+            bash deploy/linux/install.sh --source "$PWD" | tee /tmp/op2-install.out
           date +%s > /tmp/op2-install-end
+          if ! sudo grep -qxF "POLARIS_DOMAIN=$POLARIS_DOMAIN" /etc/polaris/polaris.env \
+              || ! sudo grep -qxF "POLARIS_COMPOSE_EXTRA=$POLARIS_COMPOSE_EXTRA" /etc/polaris/polaris.env; then
+            echo "::error::the installer under sudo did not receive POLARIS_DOMAIN and POLARIS_COMPOSE_EXTRA"; exit 1
+          fi
 
       - name: systemd owns the stack (active, timers scheduled, backup runs, restart survives)
         run: |
@@ -4354,13 +4361,19 @@ jobs:
           grep -i "public key:" /tmp/keygen.out | sed 's/.*: *//' > /tmp/ci-age.recipients
           export POLARIS_SECRETS_BACKEND=age POLARIS_SECRETS_AGE_RECIPIENTS=/tmp/ci-age.recipients \
                  POLARIS_SECRETS_AGE_IDENTITY=/tmp/ci-age.identity POLARIS_SECRETS_DIR=/run/polaris/secrets
+          # sudo carries only the variables it names (Ubuntu 26.04's sudo-rs ignores a bare -E): the
+          # names polaris-secrets.sh, polaris-rotate-secret.sh, polaris-env.sh and secretstore.py take
+          # from their caller, and what compose interpolates. The rotation step below keeps the same list.
+          keep=POLARIS_DOMAIN,POLARIS_COMPOSE_EXTRA,POLARIS_ROOT,POLARIS_ENV_FILE,POLARIS_PYTHON,POLARIS_SECRETS_DIR,POLARIS_SECRETS_BACKEND,POLARIS_SECRETS_PLAIN_DIR,POLARIS_SECRETS_SEALED_DIR,POLARIS_SECRETS_AGE_RECIPIENTS,POLARIS_SECRETS_AGE_IDENTITY,POLARIS_SECRETS_AWSKMS_KEY_ID,POLARIS_SECRETS_AWSKMS_REGION,POLARIS_SECRETS_AWSKMS_ENDPOINT_URL
           bash scripts/polaris-secrets.sh seal
           bash scripts/polaris-secrets.sh status
           rm -rf polaris_web/secrets && echo "plaintext secrets directory deleted"
-          sudo -E bash scripts/polaris-secrets.sh unseal-if-configured
+          st=$(sudo --preserve-env="$keep" bash scripts/polaris-secrets.sh status)
+          case "$st" in *'"backend": "age"'*) ;; *) echo "::error::the secrets scripts under sudo did not receive the age backend: $st"; exit 1 ;; esac
+          sudo --preserve-env="$keep" bash scripts/polaris-secrets.sh unseal-if-configured
           mount | grep -q "/run/polaris/secrets" && echo "tmpfs confirmed at /run/polaris/secrets"
           sudo ls -la /run/polaris/secrets
-          sudo -E bash scripts/polaris-secrets.sh verify
+          sudo --preserve-env="$keep" bash scripts/polaris-secrets.sh verify
 
       - name: Boot the full prod stack (prod + citest override) from the sealed store
         working-directory: polaris_web
@@ -4468,9 +4481,12 @@ jobs:
           POLARIS_SECRETS_AGE_IDENTITY: /tmp/ci-age.identity
         run: |
           set -e
+          keep=POLARIS_DOMAIN,POLARIS_COMPOSE_EXTRA,POLARIS_ROOT,POLARIS_ENV_FILE,POLARIS_PYTHON,POLARIS_SECRETS_DIR,POLARIS_SECRETS_BACKEND,POLARIS_SECRETS_PLAIN_DIR,POLARIS_SECRETS_SEALED_DIR,POLARIS_SECRETS_AGE_RECIPIENTS,POLARIS_SECRETS_AGE_IDENTITY,POLARIS_SECRETS_AWSKMS_KEY_ID,POLARIS_SECRETS_AWSKMS_REGION,POLARIS_SECRETS_AWSKMS_ENDPOINT_URL
+          st=$(sudo --preserve-env="$keep" bash ../scripts/polaris-secrets.sh status)
+          case "$st" in *'"backend": "age"'*) ;; *) echo "::error::the secrets scripts under sudo did not receive the age backend: $st"; exit 1 ;; esac
           before=$(sudo sha256sum /run/polaris/secrets/polaris_db_password | cut -c1-16)
-          sudo -E bash ../scripts/polaris-rotate-secret.sh polaris_db_password
-          sudo -E bash ../scripts/polaris-rotate-secret.sh polaris_secret_key
+          sudo --preserve-env="$keep" bash ../scripts/polaris-rotate-secret.sh polaris_db_password
+          sudo --preserve-env="$keep" bash ../scripts/polaris-rotate-secret.sh polaris_secret_key
           after=$(sudo sha256sum /run/polaris/secrets/polaris_db_password | cut -c1-16)
           [ "$before" != "$after" ] || { echo "::error::db password did not change"; exit 1; }
           code=""; app=""
@@ -4484,9 +4500,9 @@ jobs:
           # Fetched, then parsed from argv: a fetch piped into an interpreter reads as code being run.
           health=$(docker exec polaris-app curl -s http://localhost:8000/api/health)
           python3 -c "import sys,json; d=json.loads(sys.argv[1]); assert d['checks']['database']['status']=='healthy', d['checks']['database']; print('healthy after rotating polaris_db_password + polaris_secret_key')" "$health"
-          sudo -E bash ../scripts/polaris-secrets.sh verify
+          sudo --preserve-env="$keep" bash ../scripts/polaris-secrets.sh verify
           echo "sealed store matches the live tmpfs after rotation (write-through holds)"
-          sudo -E bash ../scripts/polaris-secrets.sh unseal --dst /tmp/reunseal >/dev/null
+          sudo --preserve-env="$keep" bash ../scripts/polaris-secrets.sh unseal --dst /tmp/reunseal >/dev/null
           [ "$(sudo sha256sum /tmp/reunseal/polaris_db_password | cut -c1-16)" = "$after" ] && echo "re-unseal returns the rotated password"
 
       - name: Tear down
