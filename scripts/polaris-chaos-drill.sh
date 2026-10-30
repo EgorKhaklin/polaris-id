@@ -78,7 +78,7 @@ compose() { (cd "$ROOT/polaris_web" && docker compose -f docker-compose.prod.yml
 WORK="$(mktemp -d)"
 [[ -n "$OUT" ]] || OUT="$WORK/chaos.json"
 OBS="$ROOT/deploy/observability"
-PROM_IMAGE="prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
+PROM_IMAGE="prom/prometheus@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2"
 AM_IMAGE="prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a"
 PY_IMAGE="python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
 SINK=polaris-chaos-sink; AM=polaris-chaos-alertmanager; PROM=polaris-chaos-prometheus

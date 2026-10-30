@@ -51,8 +51,14 @@ build_one() {
     local attempt=1 wait="${BACKOFF}"
     while :; do
         echo "── docker build -f ${dockerfile} -t ${tag} ${context}  (attempt ${attempt}/${ATTEMPTS})"
+        # No default attestations. BuildKit adds a provenance attestation to each build, new every
+        # time, and on the containerd image store (the GitHub ubuntu-26.04 runner, Docker Desktop) the
+        # index that holds it is the image ID. A rebuild from cache then gave every image a new ID,
+        # and polaris-deploy.sh recreated postgres, pgbouncer and the edge under traffic (2026-10-29:
+        # 28 requests dropped in the rolling drill). These images stay on this host; the released ones
+        # are built and attested by release-images.yml.
         # shellcheck disable=SC2086
-        if docker build \
+        if BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker build \
                 --build-arg "POLARIS_VERSION=$(version)" \
                 ${POLARIS_BUILD_ARGS:-} \
                 -f "${dockerfile}" -t "${tag}" "${context}"; then

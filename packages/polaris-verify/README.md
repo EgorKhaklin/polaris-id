@@ -76,9 +76,6 @@ What a script built on this command can rely on, measured on 2026-10-01 against 
 | 4 | refused to start: no cryptography declared, the declared backend is not usable here, or an argument it does not take (an unknown flag, a value of the wrong type, a flag that takes a value given twice, or a flag the chosen mode would not read); your files are not read |
 | 1 | `--qr-frames` that do not decode into a presentation |
 
-The last row is the one inconsistency: every other unreadable input exits 3. It is recorded
-rather than changed, because a script may already depend on it.
-
 ## Offline means it cannot reach a network
 
 Not "does not today". The verifier contains no networking code at all: zero references to

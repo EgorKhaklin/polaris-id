@@ -28,6 +28,8 @@ omit =
     */polaris-tree-*/*
     */tmp*/worker.py
     */polaris-oqs-stub-*/*
+    # The govulncheck step tests' stand-in `docker`.
+    */polaris-govulncheck-step-*/*
     # Test infrastructure, not product code (P1.2/P1.3).
     */kms_standin.py
     # Third-party code. The standalone suites under scripts/ measure without --source (see

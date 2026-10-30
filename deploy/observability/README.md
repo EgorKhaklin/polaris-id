@@ -103,7 +103,7 @@ build if either edge stops refusing.
 
 | Alert | Severity | Fires when | Route |
 |---|---|---|---|
-| `PolarisAppDown` | SEV-1 | the scrape target is down for 2m | immediate, re-page hourly |
+| `PolarisAppDown` | SEV-1 | the scrape target is down, or no app target is found, for 2m | immediate, re-page hourly |
 | `PolarisAppInfoAbsent` | SEV-1 | `polaris_app_info` is absent for 5m | immediate (inhibited while AppDown fires) |
 | `PolarisDuressEvent` | SEV-1 | a duress-code match recorded a `DuressEvent` (fires immediately) | no wait, re-page every 15m |
 | `PolarisHigh5xx` | SEV-2 | the 5xx share of requests exceeds 1% for 10m | batched 30s, re-page 4h |

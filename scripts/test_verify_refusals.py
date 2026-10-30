@@ -3390,8 +3390,13 @@ class SignedTreeHeadDecisions(unittest.TestCase):
                 "timestamp": "2026-09-30T00:00:00Z", "algorithm": V._ALG}
         head.update(over)
         head["public_key_hex"] = (pk or self.pk).hex()
-        head["signature_hex"] = (sign or self.sign)(
-            __import__("hashlib").sha3_256(V._sth_canonical(head)).digest()).hex()
+        # A head holding a value JSON cannot write (an infinite size) is signed over the lax
+        # form, so the verifier, not the signer, decides it.
+        def lax(st):
+            return __import__("json").dumps(st, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        with unittest.mock.patch.object(V, "_canonical_json", lax):
+            canonical = V._sth_canonical(head)
+        head["signature_hex"] = (sign or self.sign)(__import__("hashlib").sha3_256(canonical).digest()).hex()
         return head
 
     def proof(self, m, n):
@@ -4231,6 +4236,194 @@ class AnEpochCheckpointIsComparedOnlyOnceItVerifies(unittest.TestCase):
         _, other = self.signed(sign, pk, bundle_root=b["merkle_root"])
         self.assertIs(self.compared(b, other, anchor_keys=[pk.hex()])["epoch_matches"], True,
                       "a checkpoint under a key the caller trusts")
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class AMintIsUnderTheSetItsKeyLengthIdentifies(unittest.TestCase):
+    """WIRE-SPEC 3.8.1: the mint statement does not sign `algorithm`. Present, it must name an
+    accepted set; absent, the mint is under the accepted set whose public-key length its key
+    has, as the instance's mint route reads it (scripts/polaris-federation-instances-drill.py
+    mints with no `algorithm`)."""
+
+    BODY = {"format": "polaris-exchange-mint/1", "requester_public_key_hex": "ab" * 1952, "context_id": 1,
+            "request_hash": "cd" * 32, "response_hash": "ef" * 32, "responder_agency_id": 1,
+            "occurred_at": "2026-05-01T00:00:00Z"}
+
+    @classmethod
+    def mint(cls, sk):
+        out = dict(cls.BODY)
+        out["signature_hex"] = sk.sign(hashlib.sha3_256(V._exchange_mint_canonical(out)).digest()).hex()
+        out["public_key_hex"] = sk.public_key().public_bytes_raw().hex()
+        return out
+
+    def test_no_label_is_the_set_the_key_length_identifies(self):
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        m65 = self.mint(mldsa.MLDSA65PrivateKey.generate())
+        self.assertNotIn("algorithm", m65)
+        v = V.verify_exchange_mint(m65)
+        self.assertIs(v["mint_authentic"], True, v["note"])
+        self.assertIs(V.verify_exchange_mint(dict(m65, algorithm=None))["mint_authentic"], True, "null is no label")
+        if not hasattr(mldsa, "MLDSA87PrivateKey"):
+            self.skipTest("cryptography without ML-DSA-87: the 87 case is not measured here")
+        v = V.verify_exchange_mint(self.mint(mldsa.MLDSA87PrivateKey.generate()))
+        self.assertIs(v["mint_authentic"], True, v["note"])
+
+    def test_a_label_outside_the_set_or_a_key_no_set_fits_refuses(self):
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        m65 = self.mint(mldsa.MLDSA65PrivateKey.generate())
+        for label, bad in (("a label outside the accepted set", dict(m65, algorithm="ML-DSA-44")),
+                           ("a label the key does not fit", dict(m65, algorithm="ML-DSA-87")),
+                           ("a key no accepted set fits", dict(m65, public_key_hex="ab" * 1000))):
+            with self.subTest(label):
+                v = V.verify_exchange_mint(bad)
+                self.assertIs(v["mint_authentic"], False)
+                self.assertTrue(v["note"], label)
+
+
+@unittest.skipUnless(_cryptography_mldsa(), "cryptography without ML-DSA")
+class AStatementThatIsNotJsonAndAnEchoedField(unittest.TestCase):
+    """WIRE-SPEC section 1: an artifact is a JSON object, and JSON (RFC 8259 section 6) has no NaN
+    or Infinity. A statement signed with one is refused, not raised, at the three signature paths
+    (a direct witness check, the shared two-witness check, a delegation artifact's), as is an
+    integer too long to write; the CLI refuses such a file before it verifies anything (exit 3).
+    The text output escapes control characters and lone surrogates in every field it echoes, and
+    writes a character its stream cannot encode as an escape, so the README's exit codes hold."""
+
+    ID_TOKEN = {"format": "polaris-id-token/1", "iss": "https://issuer.example", "sub": "ab" * 32, "aud": "rp-1",
+                "nonce": "n-1", "context_id": 1, "disclosure_level": 1, "acr": "urn:polaris:acr:1",
+                "enrollment": None, "auth_time": "2026-05-01T00:00:00Z", "iat": "2026-05-01T00:00:00Z",
+                "exp": "2026-05-02T00:00:00Z", "algorithm": "ML-DSA-65"}
+    NOW = "2026-05-01T00:00:30Z"
+    HOSTILE = ((float("nan"), "NaN"), (float("inf"), "Infinity"), (float("-inf"), "-Infinity"),
+               (10 ** 4999, "a 5000-digit integer"))
+
+    @classmethod
+    def setUpClass(cls):
+        from cryptography.hazmat.primitives.asymmetric import mldsa
+        cls.sk = mldsa.MLDSA65PrivateKey.generate()
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-not-json-"))
+        cls.valid = json.loads((ROOT / "vectors" / "ml-dsa-65-valid.json").read_text())
+        cls.pack = cls.tmp / "pack.json"
+        cls.pack.write_text(json.dumps(cls.valid))
+
+    def signed(self, canonical, obj):
+        """Signed over the bytes Python's json writes by default, NaN and Infinity included, with
+        no limit on an integer's digits."""
+        def lax(statement):
+            return json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        limit = sys.get_int_max_str_digits()
+        sys.set_int_max_str_digits(0)
+        try:
+            with unittest.mock.patch.object(V, "_canonical_json", lax):
+                digest = hashlib.sha3_256(canonical(obj)).digest()
+        finally:
+            sys.set_int_max_str_digits(limit)
+        return dict(obj, signature_hex=self.sk.sign(digest).hex(),
+                    public_key_hex=self.sk.public_key().public_bytes_raw().hex())
+
+    def test_a_signed_statement_that_is_not_json_is_refused_not_raised(self):
+        cases = (
+            ("id token", V._id_token_canonical, self.ID_TOKEN, "context_id",
+             lambda o: V.verify_id_token(o, now=self.NOW), "token_authentic"),
+            ("trust attestation", V._attestation_canonical,
+             {"format": "polaris-trust-attestation/1", "attesting_agency_id": 1, "attested_agency_id": 2,
+              "attested_public_key_hex": "ab" * 1952, "context_id": 1, "attested_date": "2026-05-01",
+              "valid_until": "2027-05-01", "algorithm": "ML-DSA-65"}, "context_id",
+             lambda o: V.verify_attestation(o), "attestation_authentic"),
+            ("grant revocation", V._grant_revocation_canonical,
+             {"format": "polaris-grant-revocation/1", "grant_id": "g-1", "revoked_at": "2026-05-01T00:00:00Z",
+              "algorithm": "ML-DSA-65"}, "grant_id", lambda o: V.verify_grant_revocation(o), "authentic"))
+        for label, canonical, body, field, verify, key in cases:
+            with self.subTest(label):
+                control = verify(self.signed(canonical, body))
+                self.assertIs(control[key], True, control["note"])
+                for value, name in self.HOSTILE:
+                    v = verify(self.signed(canonical, dict(body, **{field: value})))
+                    self.assertIs(v[key], False, name)
+                    self.assertEqual(v["note"], V._NOT_JSON, name)
+
+    def main(self, *argv, encoding="utf-8"):
+        import contextlib
+        import io
+        self.addCleanup(V.set_dev_placeholder_mode, False)
+        raw = io.BytesIO()
+        out = io.TextIOWrapper(raw, encoding=encoding, errors="strict")
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = V.main(list(argv))
+        out.flush()
+        return code, raw.getvalue()
+
+    def test_a_vector_set_cannot_rewrite_the_terminal(self):
+        import json
+        import tempfile
+        d = tempfile.mkdtemp()
+        esc = "\x1b[1A\x1b[2K"
+        with open(os.path.join(d, "n%s.json" % esc), "w") as f:
+            json.dump({"neither": "a pack"}, f)
+        with open(os.path.join(d, "f.json"), "w") as f:
+            json.dump({"format": "polaris-status-assertion/1" + esc}, f)
+        with open(os.path.join(d, "e.json"), "w") as f:
+            json.dump(dict(self.valid, signature_hex="ab", _vector={"expect": "invalid" + esc}), f)
+        code, out = self.main("--dev-placeholder", "--verify-dir", d)
+        self.assertNotIn(b"\x1b", out)
+        self.assertIn(b"\\x1b[1A\\x1b[2K", out)
+        self.assertIn(b"expect=invalid\\x1b[1A\\x1b[2K got=invalid", out)
+        self.assertNotEqual(code, 0)
+
+    def assertion(self, status):
+        path = self.tmp / "assertion.json"
+        path.write_text(json.dumps({"format": "polaris-status-assertion/1", "status": status,
+                                    "token_value": self.valid.get("token_value"), "algorithm": "ML-DSA-65",
+                                    "issued_at": "2026-10-29T05:24:02Z", "expires_at": "2026-10-29T06:24:02Z"}))
+        return str(path)
+
+    MODES = (("--dev-placeholder",), ("--pqc-provider", "auto"))
+
+    def test_the_cli_refuses_a_file_that_is_not_json(self):
+        path = self.tmp / "nan.json"
+        for literal in ("NaN", "Infinity", "-Infinity"):
+            path.write_text('{"format": "polaris-status-assertion/1", "status": "ACTIVE", "issued_at": %s}' % literal)
+            for mode in self.MODES:
+                with self.subTest(literal=literal, mode=mode):
+                    self.assertEqual(self.main(*mode, "--pack", str(self.pack), "--status-assertion", str(path))[0], 3)
+
+    def test_an_echoed_field_cannot_rewrite_the_terminal(self):
+        hostile = "ACTIVE\x1b[3A\x1b[2Kdecision:         ACCEPT\x1b[3B"
+        pack = self.tmp / "pack-escape.json"
+        pack.write_text(json.dumps(dict(self.valid, token_value=hostile)))
+        for mode in self.MODES:
+            with self.subTest(mode=mode, field="status"):
+                code, out = self.main(*mode, "--pack", str(self.pack), "--status-assertion", self.assertion(hostile))
+                self.assertEqual(code, 2)
+                self.assertNotIn(b"\x1b", out)
+                decisions = [line for line in out.decode("utf-8").splitlines() if line.startswith("decision:")]
+                self.assertEqual(decisions, ["decision:         REJECT"])
+            with self.subTest(mode=mode, field="token_value"):
+                code, out = self.main(*mode, "--pack", str(pack))
+                self.assertEqual(code, 2)
+                self.assertNotIn(b"\x1b", out)
+
+    def test_an_echoed_field_that_is_not_unicode_keeps_the_documented_exit(self):
+        for mode in self.MODES:
+            with self.subTest(mode=mode, field="status"):
+                code, out = self.main(*mode, "--pack", str(self.pack), "--status-assertion", self.assertion("\ud800"))
+                self.assertEqual(code, 2)
+                self.assertIn(b"status:           \\ud800", out)
+            for field in ("token_value", "algorithm"):
+                with self.subTest(mode=mode, field=field):
+                    pack = self.tmp / ("pack-%s.json" % field)
+                    pack.write_text(json.dumps(dict(self.valid, **{field: "\ud800"})))
+                    code, out = self.main(*mode, "--pack", str(pack))
+                    self.assertEqual(code, 2)
+                    self.assertIn(b"\\ud800", out)
+
+    def test_a_character_the_output_cannot_encode_is_written_as_an_escape(self):
+        for mode in self.MODES:
+            with self.subTest(mode=mode):
+                code, out = self.main(*mode, "--pack", str(self.pack), "--status-assertion",
+                                      self.assertion("ACTIV\u00c9"), encoding="ascii")
+                self.assertEqual(code, 2)
+                self.assertIn(b"status:           ACTIV\\xc9", out)
 
 
 if __name__ == "__main__":
