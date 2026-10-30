@@ -1661,6 +1661,26 @@ def _with_this_interpreter(cmd):
     return (sys.executable + cmd[len("python3"):]) if cmd.startswith("python3 ") else cmd
 
 
+#: Drills `--run` deals across processes that run at once, one per `--shard I/N` (2026-10-29).
+#: The SDK mutation drill inverts the refusals of three verifiers one at a time, each against
+#: full suites: on the merge export of a change to the detached verifier it took 106 minutes in
+#: one process (259 refusals), the slowest step before that change's push. Each shard copies the
+#: tree into a temporary directory of its own and none touches a database, so they share nothing.
+SHARDED_DRILLS = {"python3 scripts/polaris-sdk-mutation-drill.py": 3}
+
+
+def _run_drill(cmd):
+    """Run one drill and return its exit code. A drill in SHARDED_DRILLS starts all its shards
+    before waiting on any, and fails when any shard does."""
+    n = SHARDED_DRILLS.get(cmd, 1)
+    if n == 1:
+        return subprocess.call(_with_this_interpreter(cmd), shell=True, cwd=ROOT)
+    procs = [subprocess.Popen("%s --shard %d/%d" % (_with_this_interpreter(cmd), i, n), shell=True, cwd=ROOT)
+             for i in range(1, n + 1)]
+    codes = [p.wait() for p in procs]
+    return next((rc for rc in codes if rc != 0), 0)
+
+
 def drills(argv):
     """List, run, or verify the drills this change needs."""
     check = "--check" in argv
@@ -1680,7 +1700,7 @@ def drills(argv):
         failed = []
         for cmd, paths in jobs:
             print("── %s" % cmd, flush=True)
-            rc = subprocess.call(_with_this_interpreter(cmd), shell=True, cwd=ROOT)
+            rc = _run_drill(cmd)
             if rc != 0:
                 failed.append(cmd)
                 print("   FAILED (exit %d); no receipt written" % rc, flush=True)
