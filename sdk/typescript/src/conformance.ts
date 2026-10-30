@@ -87,7 +87,7 @@ export function decide(caseObj: any): Record<string, unknown> {
     }
     if (authentic && caseObj.agent_proof !== undefined && caseObj.agent_proof !== null) {
       verdict.agent_proved = Boolean(verifySignedArtifact(caseObj.agent_proof, now, null).authentic
-        && agentProofProves(caseObj.agent_proof, grant, action, caseObj.expected_nonce ?? null));
+        && agentProofProves(caseObj.agent_proof, grant, action, caseObj.expected_nonce ?? null, now));
     }
     return verdict;
   } else if (artifact === "exchange-use") {

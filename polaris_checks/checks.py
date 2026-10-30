@@ -2192,6 +2192,101 @@ def check_image_cve_scanning(root: pathlib.Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# 2026-10-28: Trivy matches a Go binary's module versions; govulncheck also reads which vulnerable
+# functions and packages are in it. The workflow that holds the Trivy gate reads every Go binary in
+# the five prod images with govulncheck v1.9.0 in binary mode, and scripts/polaris-govulncheck-gate.py
+# fails on a binary without its symbol table and on a symbol- or package-level finding that
+# vex.openvex.json does not answer for that image. The step stops on its first error, is not
+# continue-on-error, reads all five images, and fails when it did not read a binary the images
+# are known to carry (a scan that found no binaries would pass on nothing).
+# ---------------------------------------------------------------------------
+_GOVULNCHECK_STEP = (
+    (r"(?m)^set -euo pipefail$", "stops on its first error (set -euo pipefail)"),
+    (r"\bgo install golang\.org/x/vuln/cmd/govulncheck@v1\.9\.0\b", "installs govulncheck v1.9.0"),
+    (r"/govulncheck -mode=binary -format json\b", "runs govulncheck in binary mode with JSON output"),
+    (r"(?m)^for img in polaris-app polaris-caddy polaris-pgbouncer polaris-postgres polaris-etcd; do$",
+     "reads all five images"),
+    (r'(?m)^\s*\*\) echo "::error::govulncheck did not read [^\n]*"; exit 1 ;;$',
+     "fails when it did not read a binary the images carry"),
+    (r"(?m)^python3 scripts/polaris-govulncheck-gate\.py --vex vex\.openvex\.json \"\$\{triples\[@\]\}\"$",
+     "judges every report with scripts/polaris-govulncheck-gate.py against vex.openvex.json"),
+)
+_GOVULNCHECK_KNOWN = ("polaris-caddy $work/polaris-caddy/usr/bin/caddy",
+                      "polaris-etcd $work/polaris-etcd/usr/bin/etcd",
+                      "polaris-etcd $work/polaris-etcd/usr/bin/etcdctl",
+                      "polaris-postgres $work/polaris-postgres/usr/local/bin/gosu")
+
+
+def check_govulncheck_gate(root: pathlib.Path) -> list[Finding]:
+    places = _ci_and_called_workflows(root)
+    gate = next(((rel, text) for rel, text in places if _trivy_gate(text)), None)
+    if gate is None:
+        return _fail("govulncheck_gate", "no workflow that a ci.yml job runs holds the Trivy image gate, "
+                     "so there is no image scan for the govulncheck step to sit in")
+    rel, text = gate
+    blocks = [body for _, body in _workflow_run_blocks(text) if "polaris-govulncheck-gate.py" in body]
+    if len(blocks) != 1:
+        return _fail("govulncheck_gate", f"{rel} must run scripts/polaris-govulncheck-gate.py in exactly one "
+                     f"run step (found {len(blocks)}): govulncheck reads the vulnerable functions and "
+                     "packages in each Go binary, which Trivy's version match does not")
+    code = _shell_code(blocks[0])
+    for pattern, what in _GOVULNCHECK_STEP:
+        if not re.search(pattern, code):
+            return _fail("govulncheck_gate", f"{rel}: the govulncheck step never {what}")
+    if re.search(r"\bset\b[^\n;|&]*(?:\+[a-zA-Z]*[eu]|\+o\s+(?:errexit|nounset|pipefail))", code):
+        return _fail("govulncheck_gate", f"{rel}: the govulncheck step turns off set -euo pipefail, so a "
+                     "failed command no longer fails it")
+    lines = [line.strip() for line in code.splitlines() if line.strip()]
+    if not lines or not lines[-1].startswith("python3 scripts/polaris-govulncheck-gate.py "):
+        return _fail("govulncheck_gate", f"{rel}: the gate call must be the govulncheck step's last command, "
+                     "so its exit is the step's")
+    missing = [want for want in _GOVULNCHECK_KNOWN if f'"{want}"' not in code]
+    if missing:
+        return _fail("govulncheck_gate", f"{rel}: the govulncheck step does not require "
+                     + ", ".join(missing) + ", a binary the images carry")
+    at = text.find("polaris-govulncheck-gate.py")
+    start, end = text.rfind("\n      - ", 0, at), text.find("\n      - ", at)
+    if start < 0 or "continue-on-error" in text[start: end if end >= 0 else len(text)]:
+        return _fail("govulncheck_gate", f"{rel}: the govulncheck step must fail the job (no "
+                     "continue-on-error)")
+    if not (root / "scripts/polaris-govulncheck-gate.py").is_file():
+        return _fail("govulncheck_gate", "scripts/polaris-govulncheck-gate.py is missing")
+    return _ok("govulncheck_gate",
+               f"{rel} reads every Go binary in the five images with govulncheck v1.9.0 in binary mode "
+               "and gates on scripts/polaris-govulncheck-gate.py against vex.openvex.json")
+
+
+# 2026-10-29: the govulncheck step runs govulncheck and `go version` in GO_IMAGE, the golang image
+# the etcd and gosu builds compile with, so a builder pin cannot move without it. A check of its
+# own: govulncheck_gate's inputs stay ones the check-mutation drill can comment out.
+_GO_BUILDERS = ("polaris_web/Dockerfile.etcd", "polaris_web/Dockerfile.postgres")
+
+
+def check_go_builder_pin(root: pathlib.Path) -> list[Finding]:
+    places = [(rel, text) for rel, text in _ci_and_called_workflows(root)
+              if "polaris-govulncheck-gate.py" in text]
+    if len(places) != 1:
+        return _fail("go_builder_pin", "exactly one workflow that a ci.yml job runs must hold the govulncheck "
+                     f"step (found {len(places)})")
+    rel, text = places[0]
+    go_image = re.findall(r"(?m)^\s*GO_IMAGE:\s*(\S+)\s*$", text)
+    if len(go_image) != 1:
+        return _fail("go_builder_pin", f"{rel} must name the golang image of the govulncheck step once "
+                     f"as GO_IMAGE (found {len(go_image)})")
+    for df in _GO_BUILDERS:
+        builder = re.findall(r"(?m)^FROM (golang:\S+) AS compile$", _read(root, df))
+        if len(builder) != 1:
+            return _fail("go_builder_pin", f"{df} must compile in one golang stage named compile "
+                         f"(found {len(builder)})")
+        if builder[0] != go_image[0]:
+            return _fail("go_builder_pin", f"{rel} runs GO_IMAGE {go_image[0]}, but {df} compiles with "
+                         f"{builder[0]}: the two move together")
+    return _ok("go_builder_pin",
+               f"{rel} runs govulncheck in GO_IMAGE {go_image[0].split('@')[0]} by digest, the golang "
+               "image Dockerfile.etcd and Dockerfile.postgres compile etcd and gosu with")
+
+
+# ---------------------------------------------------------------------------
 # Static application security testing (SAST). pip-audit covers dependency CVEs;
 # bandit covers OUR source for security anti-patterns (hardcoded secrets, weak
 # crypto, world-writable files, shell=True, etc.). CI must run it and GATE on
@@ -17496,12 +17591,16 @@ def check_canonical_equivalence(root: pathlib.Path) -> list[Finding]:
                          f"the {name} signed key list differs between the app and the verifier: "
                          f"app {app_fn}={a_keys} vs verify {ver_fn}={v_keys} -- an app signature would "
                          "fail every offline verification")
-        # Both sides must produce the compact, sorted-key form.
+        # Both sides must produce the compact, sorted-key form. A builder that returns through the
+        # shared _canonical_json helper is held to the helper's own body.
         for label, src, fn in (("app", app, app_fn), ("verify", v, ver_fn)):
             block = _fn_block(src, fn) or ""
+            via = ""
+            if re.search(r"\breturn _canonical_json\(", block):
+                block, via = _fn_block(src, "_canonical_json") or "", " (through _canonical_json)"
             if "sort_keys=True" not in block or re.search(r"separators=\(['\"],['\"],\s*['\"]:['\"]\)", block) is None:
                 return _fail("canonical_equivalence",
-                             f"the {label} {name} builder must serialize with sort_keys=True and "
+                             f"the {label} {name} builder{via} must serialize with sort_keys=True and "
                              "separators=(',', ':') (the canonical compact form)")
     # The runtime oracle must exist and run in CI.
     oracle = _read(root, "polaris_web/test_canonical_equivalence.py")
@@ -31579,6 +31678,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_images_install_hashed_locks,
     check_cve_scanning,
     check_image_cve_scanning,
+    check_govulncheck_gate,
+    check_go_builder_pin,
     check_sast_scanning,
     check_migration_timeouts,
     check_migrations_are_reversible,

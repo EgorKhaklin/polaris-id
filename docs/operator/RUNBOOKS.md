@@ -53,9 +53,11 @@ edit either file.
 
 ## PolarisAppDown
 
-**Severity:** SEV-1 · **Expression:** `up{job="polaris"} == 0` · **For:** 2m
+**Severity:** SEV-1 · **Expression:** `up{job="polaris"} == 0 or absent(up{job="polaris"})` · **For:** 2m
 
-**Trigger.** Prometheus has failed to scrape the `polaris` job for 2 minutes.
+**Trigger.** Prometheus has failed to scrape the `polaris` job for 2 minutes, or
+has found no app target to scrape for 2 minutes (with no app container running,
+neither colour's name resolves and DNS discovery returns none).
 The target is down: the app is unreachable or the process has crashed.
 
 **Likely cause.**
