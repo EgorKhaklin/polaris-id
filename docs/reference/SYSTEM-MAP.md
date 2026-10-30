@@ -57,7 +57,7 @@ polaris/
 ├── polaris_checks/     ← the flat invariant layer that gates CI (README.md indexes it)
 ├── polaris_sim/        ← the national simulation and benchmark harness (a synthetic USA through the real pipeline)
 ├── polaris_card/       ← the physical token: the card profile as a normative encoding, its dependency-free reference codec, the software token emulator (ISO 7816-4 APDUs), and the published vectors an applet and a reader are written against
-├── packages/           ← the PRODUCT artifacts, versioned independently of the tree (polaris-oid4vp at 1.0.0, the rest release candidates; docs/RELEASING.md has each version)
+├── packages/           ← the PRODUCT artifacts, versioned independently of the tree (polaris-oid4vp at 1.1.0, the rest release candidates; docs/RELEASING.md has each version)
 │   ├── polaris-verify/ ← the primary external door: `pip install --pre polaris-verify`, a console command that
 │   │                     refuses to start until the run declares --pqc-provider or --dev-placeholder.
 │   │                     Canonical home of the detached verifier; scripts/polaris-verify.py is a shim onto it

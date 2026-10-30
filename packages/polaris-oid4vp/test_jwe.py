@@ -17,13 +17,15 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 
 from polaris_oid4vp.jwe import (  # noqa: E402
-    JweError, b64u_encode, decrypt_compact, decrypt_response, encrypt_compact,
+    MAX_COMPACT_CHARS, MAX_PROTECTED_HEADER_BYTES, MAX_RESPONSE_BYTES, JweError,
+    _loads_depth_bounded, b64u_encode, decrypt_compact, decrypt_response, encrypt_compact,
 )
 
 BODY = {"vp_token": {"pid": ["eyJ...~~kb"]}, "state": "0bf2c1"}
@@ -321,6 +323,70 @@ class TagLengthTests(unittest.TestCase):
                             b64u_encode(ct_raw[-4:] + tag_raw)))
             with self.assertRaises(JweError):
                 decrypt_compact(bad, key)
+
+class TheSegmentsAreMeasuredBeforeTheyAreDecodedTests(unittest.TestCase):
+    """Until 2026-10-30 the size limits were applied to what a segment decoded to, after the
+    base64 decode and the AES-GCM pass, so a token of any length cost both in full. Each segment
+    is now held to the base64url length of its limit first."""
+
+    def test_the_document_reader_refuses_past_its_limit_before_it_decodes(self):
+        # Both documents pass the segment limits first, so through decrypt_compact this bound is
+        # never the one that refuses; it is held here, on its own, as the reader's contract.
+        for raw in (b'"' + b"\xff" * 20 + b'"', '"' + "a" * 20 + '"'):
+            with self.subTest(kind=type(raw).__name__):
+                with self.assertRaisesRegex(ValueError, "is 22 bytes, over the 21 byte limit"):
+                    _loads_depth_bounded(raw, "document", limit=21)
+        self.assertEqual(_loads_depth_bounded('"' + "a" * 20 + '"', "document", limit=22), "a" * 20)
+
+    def _over(self, segment_index, extra):
+        key = ec.generate_private_key(ec.SECP256R1())
+        parts = encrypt_compact(json.dumps(BODY).encode(), key.public_key()).split(".")
+        limit = {0: MAX_PROTECTED_HEADER_BYTES, 3: MAX_RESPONSE_BYTES}[segment_index]
+        parts[segment_index] = "A" * ((4 * limit + 2) // 3 + extra)
+        return ".".join(parts), key
+
+    def _refused_undecoded(self, token, key, fragment):
+        from polaris_oid4vp import jwe
+        decoded, real = [], jwe.b64u_decode
+
+        def measured(value):
+            decoded.append(len(value))
+            return real(value)
+
+        class NoAesGcm:
+            def __init__(self, key):
+                raise AssertionError("AES-GCM was set up for a token over the limit")
+        with mock.patch.object(jwe, "b64u_decode", measured), \
+                mock.patch.object(jwe, "AESGCM", NoAesGcm):
+            with self.assertRaises(JweError) as caught:
+                decrypt_compact(token, key)
+        self.assertIn(fragment, str(caught.exception))
+        self.assertEqual(decoded, [], "a segment was decoded before the length refused it")
+
+    def test_a_ciphertext_longer_than_a_response_within_the_limit_is_refused_undecoded(self):
+        token, key = self._over(3, 4)
+        self._refused_undecoded(token, key, "the ciphertext is over the %d byte limit"
+                                % MAX_RESPONSE_BYTES)
+
+    def test_a_protected_header_longer_than_its_limit_is_refused_undecoded(self):
+        token, key = self._over(0, 4)
+        self._refused_undecoded(token, key, "the protected header is over the %d byte limit"
+                                % MAX_PROTECTED_HEADER_BYTES)
+
+    def test_a_token_longer_than_any_response_is_refused_undecoded(self):
+        token, key = self._over(3, 4)
+        token = token + "A" * MAX_COMPACT_CHARS
+        self._refused_undecoded(token, key, "over the %d a response within this module's limits "
+                                "takes" % MAX_COMPACT_CHARS)
+
+    def test_the_control_a_ciphertext_at_the_limit_is_decrypted(self):
+        """At the length of exactly MAX_RESPONSE_BYTES the segment is decoded and decrypted (and
+        its tag, made for other bytes, does not authenticate)."""
+        token, key = self._over(3, 0)
+        with self.assertRaises(JweError) as caught:
+            decrypt_compact(token, key)
+        self.assertIn("does not authenticate", str(caught.exception))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

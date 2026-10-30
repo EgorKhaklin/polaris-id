@@ -19,7 +19,7 @@ version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAI
 2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** This release, 1.0.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
+**Status:** This release, 1.1.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
 The newest release runs against the OpenID Foundation's conformance suite every week in CI. It is re-run weekly against the outside implementations in the table
 below. One outside project, IDFoundry/OID4VCgo, runs it in its CI, daily and on each of its
 releases, since 2026-10-11.
@@ -120,7 +120,7 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
   says it is not for ES256 signatures; list one issuer's keys per verifier.
 - `--bind` is the address the listener binds: 127.0.0.1 by default, this machine only. A wallet on
   another device needs `--bind 0.0.0.0` (every interface), or a reverse proxy or tunnel on this
-  machine (`--public-base-url`, below).
+  machine (`--public-base-url`, below). An empty `--bind` is refused (exit 2).
 - `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
   verifier by when it runs behind a reverse proxy or a tunnel, where the public URL differs
   from the local `--bind`/`--port`. It is used for the `request_uri` and `response_uri`;
@@ -142,11 +142,12 @@ polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 - `serve --once --result FILE` keeps FILE a JSON object saying what became of the request
   `--once` started, apart from the log on stdout. `outcome` is `nothing_received` until a
   response arrives, then that response's: `accepted` (with `claims`, the names), `refused` (with
-  `check` and `reason`, the code and text its `<-` line prints) or `wallet_error`; an acceptance
-  closes the request and stays. `response.status_code` is the HTTP status the wallet was
-  answered, `request_object` counts the fetches `served` and `refused`, and `responses` the
-  responses received. The file is replaced whole at startup and before each answer goes out;
-  without `--once` it is refused (exit 2).
+  `check` and `reason`, the code and text its `<-` line prints) or `wallet_error`. Once the
+  request closes, on its acceptance or at the end of its lifetime, the outcome stays: a later
+  response is counted and changes nothing else. `response.status_code` is the HTTP status the
+  wallet was answered, `request_object` counts the fetches `served` and `refused`, and
+  `responses` the responses received. The file is replaced whole at startup and before each
+  answer goes out; without `--once` it is refused (exit 2).
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
@@ -178,8 +179,9 @@ issuers to named `iss` values. An anchor that certifies several issuers accepts 
 accept only some, check after an authentic verdict that `iss_bound` is `True` and `claims["iss"]`
 is one you name, and never pin on `unbound_iss` or `issuer_subject`.
 
-This is a separate package from `polaris-verify` because it listens on a socket and depends on
-`cryptography`; `polaris-verify` does neither.
+This is a separate package from `polaris-verify` because it listens on a socket and requires
+`cryptography`; `polaris-verify` listens on nothing and takes `cryptography` only as an optional
+backend.
 
 ## Verifying a presentation
 
@@ -230,19 +232,17 @@ for an issuer key configured with `issuer_jwks`, and for a refusal.
 Recursive disclosures (SD-JWT 4.2.4.1) are supported.
 
 **Refusal codes are for the operator and never go on the wire.** Every refused presentation gets
-one constant body, so the verifier is not a per-check oracle:
+one constant body, which names no check:
 
 ```json
 {"error": "invalid_request", "error_description": "the presentation was not accepted"}
 ```
 
-**Open:** response timing still differs by which check refused; this is not measured.
-
 The response JWE (`jwe.py`) accepts only ECDH-ES over P-256 with A128GCM or A256GCM, with a
 fresh encryption key per request. The listener (`verifier.py`, `serve.py`) is standard library
-only. A request closes only on an authentic presentation; any other response, which anyone who
-fetched the request object can encrypt to its key, is refused and leaves the request open until
-it expires. A second authentic presentation for the same request is refused as a replay.
+only. A request closes only on a presentation it accepts; a response it refuses, for any reason,
+leaves the request open until it expires. A second presentation for an answered request is refused
+as a replay.
 
 ## Who sees the result
 
@@ -401,13 +401,13 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 663 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 678 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 176 refusals accept and requires a
-  test to fail: 172 are caught, and the 4 survivors are declared with their reasons. It also makes
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 179 refusals accept and requires a
+  test to fail: 175 are caught, and the 4 survivors are declared with their reasons. It also makes
   19 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes), each of which a test
-  must catch (all 19 are; measured 2026-10-15; CI runs it on every push).
+  must catch (all 19 are; measured 2026-10-30; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

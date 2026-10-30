@@ -4,8 +4,8 @@
 
 The desk shows a QR code. The Yivi app scans it and presents its email credential with the
 `domain` claim disclosed and the address withheld. The desk then shows "Checked in" and the domain
-when that domain is on the list, or why an authentic presentation was refused. A presentation
-that is not authentic leaves the desk waiting.
+when that domain is on the list, or why it refused a presentation polaris-oid4vp accepted. A
+presentation polaris-oid4vp refuses leaves the desk waiting.
 
 Configuration, from the environment:
 
@@ -194,11 +194,7 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
         attempt, form = attempts.get(aid), await _form(request)
         if attempt is None or form is None:
             return JSONResponse(dict(Verifier.REFUSAL_BODY), 400)
-        verifier, state = attempt[0], attempt[1].state
-        # Whether THIS post finds the request open. Sound because response() is async and nothing
-        # below awaits, so posts are judged one at a time; as a plain def (a thread pool) they
-        # could interleave.
-        was_open = verifier.request_object(state) is not None
+        verifier = attempt[0]
         try:
             status, body, verdict = verifier.handle_direct_post(form)
         except Exception:  # noqa: BLE001  never a 5xx to a wallet: see serve.py
@@ -220,12 +216,10 @@ def create_app(public_url, client_cert_pem, client_key_pem, allowed, issuer_anch
             else:
                 attempt[3] = (False, "%s is not on the list for this check-in." % domain)
                 status, body = 400, dict(Verifier.REFUSAL_BODY)
-        elif status != 200 and was_open and verifier.request_object(state) is None:
-            # polaris-oid4vp closes a request only on an authentic presentation, so a refusal
-            # that closed it is the holder's (a claim withheld, a revoked credential): shown.
-            # A post that is not authentic could come from anyone who saw the QR code and leaves
-            # the request open; one after it closed, answered or expired, changes nothing.
-            attempt[3] = (False, "refused: %s" % (verdict.code if verdict else "invalid_request"))
+        # polaris-oid4vp closes a request only on a presentation it accepts. One it refuses (a
+        # claim withheld, a revoked credential, one that does not verify) leaves the request
+        # open and the desk waiting: another holder, or anyone who saw the QR code, could have
+        # sent it. A post after the request closed, answered or expired, changes nothing.
         return JSONResponse(body, status)
 
     @app.get("/logo.webp")

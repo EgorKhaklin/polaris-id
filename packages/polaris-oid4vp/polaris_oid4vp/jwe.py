@@ -67,6 +67,25 @@ MAX_PROTECTED_HEADER_BYTES = MAX_JSON_BYTES
 MAX_RESPONSE_BYTES = 1024 * 1024
 
 
+def _encoded_length(n):
+    """The length of `n` bytes in unpadded base64url."""
+    return (4 * n + 2) // 3
+
+
+#: The most bytes each segment of a compact JWE may decode to: the protected header and the
+#: ciphertext of a response within the limits above (AES-GCM's ciphertext is as long as its
+#: plaintext); the iv and the tag, whose exact lengths are refused below with their reasons, get
+#: room to be wrong; the encrypted key is empty for ECDH-ES. Each segment is held to the base64url
+#: length of its limit before any is decoded, so a token over one costs a comparison, not a
+#: decode and an AES-GCM pass. Until 2026-10-30 the limits were applied after both, and
+#: `Verifier.handle_direct_post`, which tries a token under each open request's key, did that once
+#: per open request (one 64 MiB token with 50 requests open: 3.2 GiB of AES-GCM).
+MAX_SEGMENT_BYTES = {"protected header": MAX_PROTECTED_HEADER_BYTES, "encrypted key": 0,
+                     "iv": 256, "ciphertext": MAX_RESPONSE_BYTES, "tag": 256}
+#: The whole token, in characters: the five segments at their limits and the four dots.
+MAX_COMPACT_CHARS = sum(_encoded_length(n) for n in MAX_SEGMENT_BYTES.values()) + 4
+
+
 def _loads_depth_bounded(raw, what, limit=None, finite=False):
     """`json.loads`, refusing before parsing a document nested deeper than `sdjwt.py` allows.
 
@@ -164,6 +183,17 @@ def _public_key_from_jwk(jwk):
         raise JweError("the ephemeral public key is not a valid P-256 point: %s" % exc) from exc
 
 
+def check_compact_length(token):
+    """Raise JweError unless `token` is a string no longer than a compact JWE this module opens
+    (`MAX_COMPACT_CHARS`). A comparison, so a caller about to try one token under many keys
+    asks it once, first."""
+    if not isinstance(token, str):
+        raise JweError("a compact JWE is a string")
+    if len(token) > MAX_COMPACT_CHARS:
+        raise JweError("the token is %d characters, over the %d a response within this module's "
+                       "limits takes" % (len(token), MAX_COMPACT_CHARS))
+
+
 def decrypt_compact(token, private_key):
     """Decrypt a compact JWE under ECDH-ES. Returns the plaintext bytes.
 
@@ -173,11 +203,15 @@ def decrypt_compact(token, private_key):
     """
     if not _HAVE_CRYPTO:
         raise JweError("the cryptography package is not installed")
-    if not isinstance(token, str):
-        raise JweError("a compact JWE is a string")
+    check_compact_length(token)
     parts = token.strip().split(".")
     if len(parts) != 5:
         raise JweError("a compact JWE has five dot-separated parts, this has %d" % len(parts))
+    for (name, most), segment in zip(MAX_SEGMENT_BYTES.items(), parts):
+        # The encrypted key is refused below whatever its length, with the reason.
+        if name != "encrypted key" and len(segment) > _encoded_length(most):
+            raise JweError("the %s is over the %d byte limit (%d base64url characters)"
+                           % (name, most, len(segment)))
     protected_b64, encrypted_key, iv_b64, ciphertext_b64, tag_b64 = parts
 
     try:
