@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { sha3_256 } from "@noble/hashes/sha3.js";
 import { verifyAuthenticity, PolarisVerifier, pairwiseHandle, handlesLink,
-         nullifiersLink, grantCovers, grantWithinLimits, revocationEndsGrant, agentProofProves, grantPrincipalBound,
+         nullifiersLink, grantCovers, grantInContext, grantWithinLimits, revocationEndsGrant, agentProofProves, grantPrincipalBound,
          verifyExchangeRequest, verifyExchangeReceipt, verifyExchangeMint,
          verifyInclusion, verifyStatusAssertion, verifyIdToken, verifyHolder, verifyTimestampAnchor,
          verifySignedArtifact, verifyCosignature,
@@ -246,6 +246,13 @@ test("a grant naming no actions grants nothing, not everything", () => {
   assert.equal(grantCovers({ ...GRANT, actions: [] }, "read:status"), false);
   assert.equal(grantCovers({ ...GRANT, actions: undefined }, "read:status"), false);
   assert.equal(grantCovers(null, "read:status"), false);
+});
+
+test("a grant is usable only in the context its holder signed", () => {
+  const scoped = { ...GRANT, context_id: 1 };
+  assert.equal(grantInContext(scoped, 1), true);
+  for (const ctx of [2, "1", true, 1.5, null]) assert.equal(grantInContext(scoped, ctx), false, String(ctx));
+  for (const g of [null, [], "1", GRANT]) assert.equal(grantInContext(g, 1), false, JSON.stringify(g));
 });
 
 test("limits are enforced, and unknown limits are refused rather than ignored", () => {

@@ -469,6 +469,9 @@ constraints on them. Both are INSIDE the signed statement: a grant whose scope o
 could be edited in transit would be the unbounded credential hand-over that grants exist to
 replace. An absent or empty `actions` grants NOTHING; a verifier MUST NOT read it as
 unrestricted. `grant_id` is the revocation handle, and it names this grant alone.
+`context_id` is the context the holder authorized the agent in: a verifier given its own context
+MUST NOT honour a grant whose `context_id` does not name that context, compared as ids (the text
+`"1"` does not name context 1).
 
 A verifier MUST refuse a limit key it does not understand rather than ignoring it: a grant
 that says `max_transfers: 3` to a service that has never heard of `max_transfers` must not be

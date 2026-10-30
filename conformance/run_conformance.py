@@ -101,7 +101,7 @@ def _load_cases():
             # A binding may arrive without its credential (1.0.0-rc.68), and it then binds nothing.
             if "credential_file" in c:
                 payload["credential"] = _load_file(c["credential_file"])
-            for k in ("requested_action", "expected_nonce", "verifier_scope", "now"):
+            for k in ("requested_action", "expected_nonce", "expected_context", "verifier_scope", "now"):
                 if k in c:
                     payload[k] = c[k]
         elif artifact == "exchange-use":

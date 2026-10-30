@@ -1465,6 +1465,19 @@ export function grantCovers(grant: any, action: unknown): boolean {
 }
 
 /**
+ * Does this grant name the context of the service it is being used at?
+ *
+ * The holder signs `context_id` to scope the grant, so a grant scoped to one context is not
+ * usable at a service in another. Ids compare as they do everywhere here: string with string,
+ * or integers held exactly, so "7" and true do not name context 7. The detached verifier asks
+ * the same question with `expected_context` (2026-10-15).
+ */
+export function grantInContext(grant: any, contextId: unknown): boolean {
+  if (!grant || typeof grant !== "object") return false;
+  return sameId((grant as any).context_id, contextId);
+}
+
+/**
  * Are the grant's stated limits still satisfied? Returns `[ok, note]`.
  *
  * Unknown limit keys are REFUSED, not ignored. A grant that says `max_transfers: 3`

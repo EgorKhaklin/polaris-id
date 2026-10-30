@@ -3852,6 +3852,45 @@
       "since": "1.1.0",
       "note": "A signed count is an integer, and the signer wrote 1.0 (WIRE-SPEC section 1). JavaScript reads it as 1, so a JavaScript verifier's canonical bytes say 1 and the signature over the bytes the signer wrote fails there. Before this case the Python SDK accepted it; the detached verifier refused it.",
       "now": "2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "agent-grant-use-context-matches",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expected_context": 1,
+      "expect": {
+        "authentic": true,
+        "context_matches": true
+      },
+      "since": "1.1.0",
+      "note": "The grant names this service's context, inside the statement the holder signed."
+    },
+    {
+      "name": "agent-grant-use-context-other",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expected_context": 2,
+      "expect": {
+        "authentic": true,
+        "context_matches": false
+      },
+      "since": "1.1.0",
+      "note": "A genuine grant the holder scoped to another context grants nothing at this service."
+    },
+    {
+      "name": "agent-grant-use-context-as-text",
+      "artifact": "agent-grant-use",
+      "grant_file": "conformance/vectors/agent-grant-valid.json",
+      "now": "2026-05-01T00:00:30Z",
+      "expected_context": "1",
+      "expect": {
+        "authentic": true,
+        "context_matches": false
+      },
+      "since": "1.1.0",
+      "note": "A context is an id, so the text \"1\" is not context 1."
     }
   ]
 }
