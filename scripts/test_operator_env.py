@@ -1020,6 +1020,21 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
                       "the inotify report must run and say what it could not read")
         self.assertIn("REACHED THE FAIL", r.stdout, r.stdout + r.stderr)
 
+    def test_the_zone_loss_kube_proxy_lookup_may_fail(self):
+        # A kubectl that cannot list the node's kube-proxy must not end the drill, and no log is asked for.
+        bin_dir = pathlib.Path(self.tmp.name)
+        (bin_dir / "docker").write_text("#!/bin/bash\nexit 1\n")
+        (bin_dir / "docker").chmod(0o755)
+        kubectl = bin_dir / "kubectl"
+        kubectl.write_text(kubectl.read_text().replace(
+            'case "$*" in\n', 'case "$*" in\n  *k8s-app=kube-proxy*) echo "Unable to connect to the server" >&2; exit 1 ;;\n', 1))
+        r = self.run_block("CLUSTER=polaris-zones; RESTARTED=polaris-zones-worker2; RESTART_AT=0\n"
+                           + self.function("scripts/polaris-zone-loss-drill.sh", "inotify_report") + "\n"
+                           + self.diagnose("scripts/polaris-zone-loss-drill.sh"))
+        self.assertNotIn("the last lines of its previous run", r.stderr, r.stderr)
+        self.assertIn("[polaris-zones-worker2] inotify instances held", r.stderr, "the block must go on past the lookup")
+        self.assertIn("REACHED THE FAIL", r.stdout, r.stdout + r.stderr)
+
     def test_the_install_diagnostics_reach_the_pending_member(self):
         text = (ROOT / "scripts/polaris-helm-drill.sh").read_text()
         block = text.split("--wait --timeout 12m >/dev/null || {\n", 1)[1].split("\n    }\n", 1)[0]
