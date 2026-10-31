@@ -37,7 +37,7 @@ every sample in `results/offline_verify_latency.csv.gz`.
 - A relying party gets a tenth of that: the SDK's one declared dependency is `cryptography`
   (1.21 ms), and the detached verifier runs both witnesses (1.33 ms).
 - A refusal costs the same as an accept, to within 3 us: at this layer the verdict is not a
-  timing oracle. The HTTP verifiers' timing by refusal reason is not measured.
+  timing oracle.
 - Not measured: more than one core or process, a network. Throughput is 1/p50 on one core.
 
 Re-run: `python3 lab/evaluation/offline_verify_latency.py --n 2000 --reps 5`.

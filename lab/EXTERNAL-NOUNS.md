@@ -164,10 +164,9 @@ draft-ietf-oauth-status-list-21: the byte arrays of Section 4.2, the four Append
 
 ### Public distribution
 
-All four packages are published by trusted publishing over OIDC (no long-lived token; npm's
-first 0.1.0 used a bootstrap token, revoked at once), and each version was installed from the
-live registry into a clean environment before being recorded. npm publishes are staged and
-become installable only when a maintainer approves them with a second factor.
+All five packages are published by trusted publishing over OIDC (no long-lived token; npm's
+first 0.1.0 used a bootstrap token, revoked at once). npm publishes are staged and become
+installable only when a maintainer approves them with a second factor.
 
 | Package | First | Release candidate | Current |
 |---|---|---|---|
@@ -178,9 +177,12 @@ become installable only when a maintainer approves them with a second factor.
 | `polaris-sdk-ts` (npm) | 0.1.0, 2026-09-15 | 1.0.0-rc.1, 2026-09-16, under `next` | 1.0.0-rc.11, 2026-10-28, under `next` |
 
 Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). The Current column was
-measured on 2026-10-15 by installing each package into a fresh container, and each 2026-10-28
-and 2026-10-30 entry again when it was published; without `--pre`, pip installs 0.1.0 of `polaris-verify` and
-`polaris-sdk-python`. Being installable is not external use: a download count is not a person.
+measured on 2026-10-15 by installing each package into a fresh container. Since then,
+`polaris-verify` 1.0.0rc10, `polaris-sdk-python` 1.0.0rc10 and `polaris-oid4vp` 1.1.0 were
+installed from the live registry into a clean environment when they were published, and
+`polaris-sdk-ts` 1.0.0-rc.11 was read back from the live registry under `next`. Without `--pre`,
+pip installs 0.1.0 of `polaris-verify` and `polaris-sdk-python`. Being installable is not
+external use: a download count is not a person.
 
 Listed by outside parties: eudi-dev's maintainer merged `polaris-oid4vp` into its README's
 comparison of EUDI developer tools (eudi-dev/eudi-dev#22, 2026-10-04), and the IETF OAuth
