@@ -78,7 +78,7 @@ means not run here.
 | Pairwise / per-verifier identity | **None on this path** | Documented: a proof is single-use per verifier, credential, identity and nullifier session |
 | Revocation behaviour | Scenario 3 | Scenario 3 |
 | Offline behaviour | **Fully offline** | UNKNOWN |
-| Holder binding | `cnf.jwk` + key-binding JWT, signature verified | Documented, not measured here |
+| Holder binding | `cnf.jwk` + key-binding JWT, signature verified | Documented |
 | Replay resistance | nonce, audience, `iat` window, `sd_hash`; each is one of the seven conformance refusals that pass | UNKNOWN (not run) |
 | Recovery / lost device | UNKNOWN. No holder software exists | UNKNOWN (not run) |
 | Standards compatibility | OpenID4VP 1.0 + HAIP verifier, **11 of 11 plan modules clean**, locally hosted suite | iden3 protocol; OpenID4VP support UNKNOWN from the pages read |

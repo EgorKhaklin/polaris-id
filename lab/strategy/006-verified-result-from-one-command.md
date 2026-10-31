@@ -144,8 +144,9 @@ What stood in the way:
 - **Open:** the production compose shares a project name and one container name with the laptop
   stack. Running both needs a project name and reset container names, which the one command must
   set.
-- **Open:** the build time on a clean machine is not measured, because this cache was warm. liboqs
-  compiles every algorithm family, including those the product does not use.
+- **Closed in step 2:** the build time from a clean cache (397 s with `--no-cache`); this walk's
+  build took 277 s on a warm layer cache. liboqs compiles every algorithm family, including those
+  the product does not use.
 
 No falsifier fired:
 - Once the defects were fixed, nothing in the product needed editing.

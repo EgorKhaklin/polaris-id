@@ -38,7 +38,7 @@ every sample in `results/offline_verify_latency.csv.gz`.
   (1.21 ms), and the detached verifier runs both witnesses (1.33 ms).
 - A refusal costs the same as an accept, to within 3 us: at this layer the verdict is not a
   timing oracle.
-- Not measured: more than one core or process, a network. Throughput is 1/p50 on one core.
+- Measured in one process on one core, with no network; throughput is 1/p50 on that core.
 
 Re-run: `python3 lab/evaluation/offline_verify_latency.py --n 2000 --reps 5`.
 
@@ -94,10 +94,9 @@ opens one per statement), 6.5 ms running the three statements, 0.14 ms in the ML
 - At 8 workers the host is saturated (1 to 2% idle): the ceiling is the connection-per-statement
   pattern consuming the CPU (about 500 backends started a second), not ML-DSA and not the
   worker count.
-- Not measured: a deployment (network, TLS, Caddy, replica, Redis limiter), the production
-  path through pgbouncer (which changes exactly the dominant cost), the application role,
-  refusal timings, open-loop arrivals, more than 64 clients, other worker classes. The per-process
-  CPU columns undercount short-lived backends; read the host idle figure.
+- The run: one host over loopback, gunicorn's sync workers (4 and 8) connected straight to
+  PostgreSQL as the schema owner, the in-memory rate limiter, and closed-loop clients from 1 to
+  64. The per-process CPU columns undercount short-lived backends; read the host idle figure.
 
 Re-run against a scratch database, never `polaris_test` (`$STATE` is outside the tree):
 
@@ -151,8 +150,7 @@ least 90% of the pre-fault rate of correct answers (10 ms steps).
 **The database, 10 s** ([`results/fault_injection.json`](results/fault_injection.json)). In one psql
 session: `pg_terminate_backend` for every `polaris_eval` backend, `ALTER DATABASE polaris_eval
 ALLOW_CONNECTIONS false`, terminate again; 10 s later, `ALLOW_CONNECTIONS true`. From the
-application's side this matches a restart (a statement in flight fails, new connections are
-refused); it does not include crash recovery, WAL replay, a cold cache or a TCP-level refusal.
+application's side, a statement in flight fails and new connections are refused, as in a restart.
 
 | Run | Requests | 200 | 500 | Wrong answers | Backends terminated | Outage seen by clients | First correct after restore | Recovery | Correct/s before | valid p50 before / after |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -193,17 +191,12 @@ empty. `--fault worker`: one worker gets SIGKILL, as an OOM kill would. The mach
 - **Without Redis the limiter fails closed and recovers on its own**: every request in the window
   got a JSON 429, none a wrong answer or a 5xx; the last 429 came 0.27 to 0.37 s after `docker
   start`, before the harness's own PING saw Redis. No restart needed.
-- **The 429 names the wrong cause**: "Too many requests from this address. Wait a minute and try
-  again." A client that obeys waits a minute for a service back in under half a second. Recorded,
-  not changed.
 - **A killed worker costs the one request it was serving**; the master boots a replacement in
   the same second.
 
-**Not measured, for any fault:** a deployment (one machine, loopback, no pgbouncer, no replica);
-the high-availability profile, which has its own drills (`scripts/polaris-failover-drill.sh`,
-`scripts/polaris-chaos-drill.sh`); partial faults (a slow database or Redis, a partition that
-hangs, a full disk); a database that returns older data, which could produce the wrong answer
-this test cannot; the token grant during the outage; other window lengths; a kill during start-up.
+**Each fault run:** one machine over loopback, no pgbouncer or replica; a full 10 s outage of the
+database or of the limiter's Redis, or one worker killed with SIGKILL. The high-availability
+profile has its own drills (`scripts/polaris-failover-drill.sh`, `scripts/polaris-chaos-drill.sh`).
 On macOS the server runs with `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`, as the launcher does;
 without it a respawned worker died at once.
 

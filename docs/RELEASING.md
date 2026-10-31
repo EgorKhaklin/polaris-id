@@ -208,15 +208,16 @@ What must hold for any publish:
 
 ## One-time setup, per registry
 
-Done for all four, and written down so that a fifth artifact gets the same shape. No
+Done for all five, and written down so that the next artifact gets the same shape. No
 long-lived token exists for any of them, and the workflow contains no `secrets.` reference.
 
 ### PyPI (Trusted Publishing)
 
-Each of the three projects has a trusted publisher: owner `EgorKhaklin`, repository
+Each of the four projects has a trusted publisher: owner `EgorKhaklin`, repository
 `polaris-id`, workflow `publish.yml`, environment `pypi`. The `pypi` environment exists in
-this repository's settings. Whether it requires a reviewer is a setting too, and on 2026-09-30
-it did not: typing `PUBLISH` into `confirm` was the deliberate step.
+this repository's settings and requires a reviewer, the maintainer: every PyPI publish since
+`polaris-oid4vp` 1.0.0rc11 (2026-09-30) was approved at that gate, after `PUBLISH` was typed
+into `confirm`.
 
 For a new project name, add a *pending* publisher at
 <https://pypi.org/manage/account/publishing/> before the first publish, with exactly those
