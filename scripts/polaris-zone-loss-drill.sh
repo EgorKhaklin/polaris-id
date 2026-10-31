@@ -60,6 +60,22 @@ fail() { echo "::error::$*" >&2; diagnose; exit 1; }
 ok() { echo "  ok: $*"; }
 now() { date +%s; }
 LAST_INSERT_ERR=""
+# containerd on a node that started again once logged "failed to create inotify fd: too many open files" (run
+# 41158258406): from the node's uid running out of inotify instances, or from a process at its open-file limit. One
+# line of what decides between them: the instances each node's processes hold by uid, the limit, and the open-file
+# limit of containerd and of one shim there.
+inotify_report() {
+    local nodes n held="" host limit files
+    nodes=$(kind get nodes --name "${CLUSTER}" 2> /dev/null || true)
+    for n in ${nodes}; do
+        held+=" ${n#"${CLUSTER}"-}[$(docker exec "$n" sh -c "find /proc/[0-9]*/fd -lname 'anon_inode:inotify' -printf '%U\n' 2> /dev/null | sort | uniq -c | tr -s ' \n' ' '" 2> /dev/null || true)]"
+    done
+    # Every node's processes, and the host's own, where the host lets this read them (CI's runner does).
+    host=$(sudo -n find /proc/[0-9]*/fd -lname 'anon_inode:inotify' -printf '%U\n' 2> /dev/null | sort | uniq -c | tr -s ' \n' ' ' || true)
+    limit=$(docker exec "${CLUSTER}-control-plane" cat /proc/sys/fs/inotify/max_user_instances /proc/sys/fs/inotify/max_user_watches 2> /dev/null | tr '\n' ' ' || true)
+    files=$(docker exec "${RESTARTED:-${CLUSTER}-control-plane}" sh -c 'for p in $(pidof containerd) $(pidof containerd-shim-runc-v2 | cut -d" " -f1); do grep "Max open files" /proc/$p/limits | tr -s " " | cut -d" " -f4,5; done | tr "\n" " "' 2> /dev/null || true)
+    echo "inotify instances held (count uid) per node:${held:- unread}; on the host: ${host:-unread}; max_user_instances and max_user_watches: ${limit:-unread}; open files (soft hard) of containerd and a shim on ${RESTARTED:-${CLUSTER}-control-plane}: ${files:-unread}"
+}
 diagnose() {
     echo "--- diagnostics ---" >&2
     kubectl -n "${NS}" get pods -o wide >&2 2> /dev/null || true
@@ -74,9 +90,15 @@ diagnose() {
     # CNI reaches the API through the service address, which works only once kube-proxy's rules are back.
     if [[ -n "${RESTARTED:-}" ]]; then
         echo "[${RESTARTED}] address $(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${RESTARTED}" 2> /dev/null);" \
-             "the API through 10.96.0.1 answers $(docker exec "${RESTARTED}" curl -sk --max-time 3 -o /dev/null -w '%{http_code}' https://10.96.0.1:443/version 2> /dev/null || echo none);" \
+             "the API through 10.96.0.1 answers $(docker exec "${RESTARTED}" curl -sk --max-time 3 -o /dev/null -w '%{http_code}' https://10.96.0.1:443/version 2> /dev/null || true);" \
              "kube-proxy rules for it: $(docker exec "${RESTARTED}" iptables-save -t nat 2> /dev/null | grep -c '10.96.0.1/32' || true)" >&2
         kubectl get pods -A -o wide --field-selector "spec.nodeName=${RESTARTED}" >&2 2> /dev/null || true
+        kp=$(kubectl -n kube-system get pods -l k8s-app=kube-proxy --field-selector "spec.nodeName=${RESTARTED}" -o name 2> /dev/null || true)
+        if [[ -n "${kp}" ]]; then
+            echo "[${RESTARTED}] ${kp}, the last lines of its previous run:" >&2
+            kubectl -n kube-system logs "${kp}" --previous --tail=6 2>&1 | sed 's/^/    /' >&2 || true
+        fi
+        echo "[${RESTARTED}] $(inotify_report)" >&2
         echo "[${RESTARTED}] kubelet and containerd errors since it started (last 40):" >&2
         docker exec "${RESTARTED}" journalctl -u kubelet -u containerd --no-pager -o short-iso --since "@${RESTART_AT:-0}" 2> /dev/null \
             | { grep -E ' E[0-9]{4} |level=error|\[ERROR\]|\[WARNING\]|timeout|[Ff]ailed' || true; } | tail -40 | cut -c1-400 | sed 's/^/    /' >&2 || true
@@ -132,6 +154,7 @@ helm install "${REL}" "${ROOT}/deploy/helm/polaris" -n "${NS}" --set domain=loca
     --set secrets.existingSecret=polaris-secrets --set images.pullPolicy=Never --wait --timeout 15m > /dev/null \
     || fail "helm install did not reach ready"
 ok "three workers in three zones; the chart installed with its defaults"
+echo "  $(inotify_report)"
 
 zone_of() { kubectl get node "$1" -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}'; }
 nodes_of() {  # nodes_of <component>: the nodes its running pods are on, one per line
@@ -296,7 +319,11 @@ until evicted; do
     sleep 3
 done
 evict_s=$(( $(now) - t0 ))
-ok "Kubernetes moved the ${N_MOVABLE} pod(s) with a ${EVICT}s toleration off ${L0NODE} by ${evict_s}s (spread.evictAfterSeconds)"
+if (( N_MOVABLE > 0 )); then
+    ok "Kubernetes moved the ${N_MOVABLE} pod(s) with a ${EVICT}s toleration off ${L0NODE} by ${evict_s}s (spread.evictAfterSeconds)"
+else
+    ok "no pod with a ${EVICT}s toleration was on ${L0NODE}; it stayed down past that window, ${evict_s}s"
+fi
 
 echo "== 5. ${L0NODE} starts again =="
 RESTART_AT=$(now); docker start "${L0NODE}" > /dev/null; STOPPED=""; RESTARTED="${L0NODE}"
@@ -307,6 +334,7 @@ while :; do
     sleep 3
 done
 ok "${L0} rejoined as a replica after ${rejoin_s}s"
+echo "  ${L0NODE}: kube-proxy restarts $(kubectl -n kube-system get pods -l k8s-app=kube-proxy --field-selector "spec.nodeName=${L0NODE}" -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}' 2> /dev/null || echo unread); $(inotify_report)"
 
 echo "== 6. the node holding Redis is killed =="
 REDISNODE=$(nodes_of redis | sed -n 1p)
@@ -341,11 +369,11 @@ ok "Redis ran again on ${moved} and the edge answered 200 with Redis healthy ${r
 docker start "${REDISNODE}" > /dev/null; STOPPED=""
 
 if [[ -n "${OUT}" ]]; then
-    python3 - "${OUT}" "${L0NODE}" "${lead_s}" "${write_s}" "${health_s}" "${evict_s}" "${rejoin_s}" "${REDISNODE}" "${redis_s}" "${held_leader}" <<'EOF'
+    python3 - "${OUT}" "${L0NODE}" "${lead_s}" "${write_s}" "${health_s}" "${evict_s}" "${N_MOVABLE}" "${rejoin_s}" "${REDISNODE}" "${redis_s}" "${held_leader}" <<'EOF'
 import json, sys
-o, node, lead, write, health, moved, rejoin, rnode, redis, held = sys.argv[1:]
+o, node, lead, write, health, moved, nmoved, rejoin, rnode, redis, held = sys.argv[1:]
 json.dump({"stopped_node": node, "new_leader_s": int(lead), "inserts_resumed_s": int(write),
-           "edge_healthy_s": int(health), "pods_moved_s": int(moved), "old_leader_rejoined_s": int(rejoin),
+           "edge_healthy_s": int(health), "pods_moved_s": int(moved), "pods_moved": int(nmoved), "old_leader_rejoined_s": int(rejoin),
            "redis_node": rnode,
            "redis_node_held_leader": held == "true", "redis_moved_and_edge_healthy_s": int(redis)},
           open(o, "w"), indent=2)
