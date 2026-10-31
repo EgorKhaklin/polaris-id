@@ -59,6 +59,20 @@ jobs:
       - name: Build the prod images
         run: bash scripts/polaris-image-build.sh --stack prod
 
+      # The four kind nodes share the runner's inotify limits; kind's known issue "Pod errors due to too many
+      # open files" suggests 512 instances and 524288 watches. Print the runner's limits and its open-file
+      # limit; raise a limit only if it is below the value kind suggests, never lower one.
+      - name: The runner's inotify and open-file limits
+        run: |
+          set -euo pipefail
+          for kv in fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288; do
+            k=${kv%=*}; want=${kv#*=}; v=$(sysctl -n "$k")
+            [[ "$v" =~ ^[0-9]+$ ]] || { echo "::error::$k read as '$v'"; exit 1; }
+            echo "$k=$v (kind suggests $want)"
+            if (( v < want )); then sudo sysctl -w "$k=$want"; fi
+          done
+          echo "open files (soft hard): $(ulimit -Sn) $(ulimit -Hn)"
+
       - name: Kill the leader's node (scripts/polaris-zone-loss-drill.sh)
         env:
           POLARIS_ZONE_OUT: /tmp/zone-loss.json

@@ -22,6 +22,8 @@
 #        Redis included (if Redis was on the
 #        stopped node, it was moved, which the rate limiter needs: it refuses without Redis);
 #        the marker is intact.
+#      The node stays down until Kubernetes has moved the pods it may move off it (spread.evictAfterSeconds
+#      after it marked the node unreachable), as in any outage longer than about a minute.
 #   5. The node starts again, and the old leader rejoins as a replica.
 #   6. The node holding Redis is killed: Redis must run again on another node and the edge answer 200 with
 #      Redis healthy (the rate limiter refuses without it). The roll-up answers 503 while the database is
@@ -31,7 +33,7 @@
 # It proves the placement and the failover, not a real zone's network or power.
 #
 # Env: KEEP_CLUSTER=1 keeps the cluster; KIND_CLUSTER (default polaris-zones); POLARIS_ZONE_OUT (JSON);
-#      the ceilings POLARIS_ZONE_CEIL_LEAD (90), _WRITE (180), _HEALTH (240), _REJOIN (360), seconds.
+#      the ceilings POLARIS_ZONE_CEIL_LEAD (90), _WRITE (180), _HEALTH (240), _EVICT (240), _REJOIN (360), seconds.
 # Exit: 0 every step held; 1 otherwise.
 # ============================================================================
 set -euo pipefail
@@ -44,6 +46,7 @@ OUT="${POLARIS_ZONE_OUT:-}"
 CEIL_LEAD="${POLARIS_ZONE_CEIL_LEAD:-90}"
 CEIL_WRITE="${POLARIS_ZONE_CEIL_WRITE:-180}"
 CEIL_HEALTH="${POLARIS_ZONE_CEIL_HEALTH:-240}"
+CEIL_EVICT="${POLARIS_ZONE_CEIL_EVICT:-240}"
 CEIL_REJOIN="${POLARIS_ZONE_CEIL_REJOIN:-360}"
 # The CNI pin the Helm drill reads (one place to bump it).
 CALICO_VERSION=$(sed -n 's/^CALICO_VERSION=//p' "${ROOT}/scripts/polaris-helm-drill.sh")
@@ -52,10 +55,27 @@ CALICO_MANIFEST="https://raw.githubusercontent.com/projectcalico/calico/${CALICO
 WORK="$(mktemp -d)"
 PF_PID=""
 STOPPED=""
+RESTARTED=""; RESTART_AT=""
 fail() { echo "::error::$*" >&2; diagnose; exit 1; }
 ok() { echo "  ok: $*"; }
 now() { date +%s; }
 LAST_INSERT_ERR=""
+# containerd on a node that started again once logged "failed to create inotify fd: too many open files" (run
+# 41158258406): from the node's uid running out of inotify instances, or from a process at its open-file limit. One
+# line of what decides between them: the instances each node's processes hold by uid, the limit, and the open-file
+# limit of containerd and of one shim there.
+inotify_report() {
+    local nodes n held="" host limit files
+    nodes=$(kind get nodes --name "${CLUSTER}" 2> /dev/null || true)
+    for n in ${nodes}; do
+        held+=" ${n#"${CLUSTER}"-}[$(docker exec "$n" sh -c "find /proc/[0-9]*/fd -lname 'anon_inode:inotify' -printf '%U\n' 2> /dev/null | sort | uniq -c | tr -s ' \n' ' '" 2> /dev/null || true)]"
+    done
+    # Every node's processes, and the host's own, where the host lets this read them (CI's runner does).
+    host=$(sudo -n find /proc/[0-9]*/fd -lname 'anon_inode:inotify' -printf '%U\n' 2> /dev/null | sort | uniq -c | tr -s ' \n' ' ' || true)
+    limit=$(docker exec "${CLUSTER}-control-plane" cat /proc/sys/fs/inotify/max_user_instances /proc/sys/fs/inotify/max_user_watches 2> /dev/null | tr '\n' ' ' || true)
+    files=$(docker exec "${RESTARTED:-${CLUSTER}-control-plane}" sh -c 'for p in $(pidof containerd) $(pidof containerd-shim-runc-v2 | cut -d" " -f1); do grep "Max open files" /proc/$p/limits | tr -s " " | cut -d" " -f4,5; done | tr "\n" " "' 2> /dev/null || true)
+    echo "inotify descriptors held (count uid) per node:${held:- unread}; on the host: ${host:-unread}; max_user_instances and max_user_watches: ${limit:-unread}; open files (soft hard) of containerd and a shim on ${RESTARTED:-${CLUSTER}-control-plane}: ${files:-unread}"
+}
 diagnose() {
     echo "--- diagnostics ---" >&2
     kubectl -n "${NS}" get pods -o wide >&2 2> /dev/null || true
@@ -66,6 +86,23 @@ diagnose() {
         echo "[$c] last 8 log lines:" >&2
         kubectl -n "${NS}" logs -l "app.kubernetes.io/component=$c" --tail=8 --prefix 2>&1 | sed 's/^/    /' >&2 || true
     done
+    # A node that started again: what its kubelet and runtime met. Its pods' sandboxes need the CNI, and Calico's
+    # CNI reaches the API through the service address, which works only once kube-proxy's rules are back.
+    if [[ -n "${RESTARTED:-}" ]]; then
+        echo "[${RESTARTED}] address $(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${RESTARTED}" 2> /dev/null);" \
+             "the API through 10.96.0.1 answers $(docker exec "${RESTARTED}" curl -sk --max-time 3 -o /dev/null -w '%{http_code}' https://10.96.0.1:443/version 2> /dev/null || true);" \
+             "kube-proxy rules for it: $(docker exec "${RESTARTED}" iptables-save -t nat 2> /dev/null | grep -c '10.96.0.1/32' || true)" >&2
+        kubectl get pods -A -o wide --field-selector "spec.nodeName=${RESTARTED}" >&2 2> /dev/null || true
+        kp=$(kubectl -n kube-system get pods -l k8s-app=kube-proxy --field-selector "spec.nodeName=${RESTARTED}" -o name 2> /dev/null || true)
+        if [[ -n "${kp}" ]]; then
+            echo "[${RESTARTED}] ${kp}, the last lines of its previous run:" >&2
+            kubectl -n kube-system logs "${kp}" --previous --tail=6 2>&1 | sed 's/^/    /' >&2 || true
+        fi
+        echo "[${RESTARTED}] $(inotify_report)" >&2
+        echo "[${RESTARTED}] kubelet and containerd errors since it started (last 40):" >&2
+        docker exec "${RESTARTED}" journalctl -u kubelet -u containerd --no-pager -o short-iso --since "@${RESTART_AT:-0}" 2> /dev/null \
+            | { grep -E ' E[0-9]{4} |level=error|\[ERROR\]|\[WARNING\]|timeout|[Ff]ailed' || true; } | tail -40 | cut -c1-400 | sed 's/^/    /' >&2 || true
+    fi
 }
 cleanup() {
     [[ -n "${PF_PID}" ]] && kill "${PF_PID}" 2> /dev/null || true
@@ -117,6 +154,7 @@ helm install "${REL}" "${ROOT}/deploy/helm/polaris" -n "${NS}" --set domain=loca
     --set secrets.existingSecret=polaris-secrets --set images.pullPolicy=Never --wait --timeout 15m > /dev/null \
     || fail "helm install did not reach ready"
 ok "three workers in three zones; the chart installed with its defaults"
+echo "  $(inotify_report)"
 
 zone_of() { kubectl get node "$1" -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}'; }
 nodes_of() {  # nodes_of <component>: the nodes its running pods are on, one per line
@@ -220,6 +258,40 @@ health() {  # prints "<edge http code> <roll-up http code> <redis status>"
 for _ in $(seq 1 30); do [[ "$(health)" == "200 200 healthy" ]] && break; sleep 2; done
 [[ "$(health)" == "200 200 healthy" ]] || fail "the edge pod ${EDGEPOD} or the app pod ${HEALTHPOD} is not healthy before the stop ($(health))"
 ok "writes through ${APPPOD} and health through ${EDGEPOD}, both off ${L0NODE}"
+# When Kubernetes moves pods off a node that stopped answering, and which of the node's pods it moves then:
+# the running ones whose unreachable toleration is that long (the database member keeps the default 300 s).
+EVICT=$(helm get values "${REL}" -n "${NS}" --all -o json \
+            | python3 -c 'import json, sys; print(int(json.load(sys.stdin)["spread"]["evictAfterSeconds"]))') \
+    || fail "reading spread.evictAfterSeconds from the release"
+[[ "${EVICT}" =~ ^[0-9]+$ ]] || fail "spread.evictAfterSeconds is not a number of seconds: '${EVICT}'"
+kubectl -n "${NS}" get pods --field-selector "spec.nodeName=${L0NODE},status.phase=Running" -o json > "${WORK}/onnode.json" \
+    || fail "listing the pods on ${L0NODE}"
+MOVABLE=$(python3 - "${WORK}/onnode.json" "${EVICT}" <<'EOF'
+import json, sys
+for p in json.load(open(sys.argv[1]))["items"]:
+    if any(t.get("key") == "node.kubernetes.io/unreachable" and t.get("effect") == "NoExecute"
+           and t.get("tolerationSeconds") == int(sys.argv[2]) for t in p["spec"].get("tolerations", [])):
+        print(p["metadata"]["name"])
+EOF
+) || fail "reading the tolerations of the pods on ${L0NODE}"
+N_MOVABLE=$(grep -c . <<< "${MOVABLE}" || true)
+evicted() {  # 0 once the node has carried the unreachable NoExecute taint for EVICT seconds and no movable pod is left
+    kubectl get node "${L0NODE}" -o json > "${WORK}/node.json" 2> /dev/null || return 1
+    kubectl -n "${NS}" get pods -o json > "${WORK}/pods.json" 2> /dev/null || return 1
+    # shellcheck disable=SC2086  # one argument per pod name
+    python3 - "${WORK}/node.json" "${WORK}/pods.json" "${EVICT}" ${MOVABLE} <<'EOF'
+import datetime, json, sys
+node, pods = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
+evict, names = int(sys.argv[3]), set(sys.argv[4:])
+added = [t["timeAdded"] for t in node["spec"].get("taints", [])
+         if t["key"] == "node.kubernetes.io/unreachable" and t["effect"] == "NoExecute" and t.get("timeAdded")]
+if not added:
+    sys.exit(1)
+age = datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(added[0].replace("Z", "+00:00"))
+live = {p["metadata"]["name"] for p in pods["items"] if not p["metadata"].get("deletionTimestamp")}
+sys.exit(0 if age.total_seconds() >= evict and not names & live else 1)
+EOF
+}
 
 echo "== 3. ${L0NODE}, the leader's node, is killed =="
 t0=$(now)
@@ -242,9 +314,19 @@ done
 [[ "$(pg "${R0}" "SELECT count(*) FROM drill.zone_marker WHERE note = 'before the node stops'")" == 1 ]] \
     || fail "the marker written before the stop is missing on the new leader"
 ok "${R0} led after ${lead_s}s; inserts resumed after ${write_s}s; the edge serving and /api/health 200, Redis healthy, after ${health_s}s; the marker intact"
+until evicted; do
+    (( $(now) - t0 > CEIL_EVICT )) && fail "Kubernetes did not move the pods off ${L0NODE} within ${CEIL_EVICT}s of the stop (spread.evictAfterSeconds ${EVICT})"
+    sleep 3
+done
+evict_s=$(( $(now) - t0 ))
+if (( N_MOVABLE > 0 )); then
+    ok "Kubernetes moved the ${N_MOVABLE} pod(s) with a ${EVICT}s toleration off ${L0NODE} by ${evict_s}s (spread.evictAfterSeconds)"
+else
+    ok "no pod with a ${EVICT}s toleration was on ${L0NODE}; it stayed down past that window, ${evict_s}s"
+fi
 
 echo "== 5. ${L0NODE} starts again =="
-docker start "${L0NODE}" > /dev/null; STOPPED=""
+RESTART_AT=$(now); docker start "${L0NODE}" > /dev/null; STOPPED=""; RESTARTED="${L0NODE}"
 t1=$(now); rejoin_s=""
 while :; do
     if [[ "$(pg "${L0}" 'SELECT pg_is_in_recovery()')" == t ]]; then rejoin_s=$(( $(now) - t1 )); break; fi
@@ -252,6 +334,7 @@ while :; do
     sleep 3
 done
 ok "${L0} rejoined as a replica after ${rejoin_s}s"
+echo "  ${L0NODE}: kube-proxy restarts $(kubectl -n kube-system get pods -l k8s-app=kube-proxy --field-selector "spec.nodeName=${L0NODE}" -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}' 2> /dev/null || echo unread); $(inotify_report)"
 
 echo "== 6. the node holding Redis is killed =="
 REDISNODE=$(nodes_of redis | sed -n 1p)
@@ -286,11 +369,12 @@ ok "Redis ran again on ${moved} and the edge answered 200 with Redis healthy ${r
 docker start "${REDISNODE}" > /dev/null; STOPPED=""
 
 if [[ -n "${OUT}" ]]; then
-    python3 - "${OUT}" "${L0NODE}" "${lead_s}" "${write_s}" "${health_s}" "${rejoin_s}" "${REDISNODE}" "${redis_s}" "${held_leader}" <<'EOF'
+    python3 - "${OUT}" "${L0NODE}" "${lead_s}" "${write_s}" "${health_s}" "${evict_s}" "${N_MOVABLE}" "${rejoin_s}" "${REDISNODE}" "${redis_s}" "${held_leader}" <<'EOF'
 import json, sys
-o, node, lead, write, health, rejoin, rnode, redis, held = sys.argv[1:]
+o, node, lead, write, health, moved, nmoved, rejoin, rnode, redis, held = sys.argv[1:]
 json.dump({"stopped_node": node, "new_leader_s": int(lead), "inserts_resumed_s": int(write),
-           "edge_healthy_s": int(health), "old_leader_rejoined_s": int(rejoin), "redis_node": rnode,
+           "edge_healthy_s": int(health), "pods_moved_s": int(moved), "pods_moved": int(nmoved), "old_leader_rejoined_s": int(rejoin),
+           "redis_node": rnode,
            "redis_node_held_leader": held == "true", "redis_moved_and_edge_healthy_s": int(redis)},
           open(o, "w"), indent=2)
 EOF

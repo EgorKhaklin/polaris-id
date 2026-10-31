@@ -984,6 +984,12 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
         return subprocess.run(["bash", "-euo", "pipefail", "-c", script], capture_output=True, text=True,
                               env={"PATH": self.path}, timeout=30)
 
+    def function(self, rel, name):
+        lines = (ROOT / rel).read_text().splitlines()
+        start = next(i for i, line in enumerate(lines) if line.startswith(name + "() {"))
+        end = next(i for i in range(start, len(lines)) if lines[i] == "}")
+        return "\n".join(lines[start:end + 1])
+
     def diagnose(self, rel):
         lines = (ROOT / rel).read_text().splitlines()
         start = next(i for i, line in enumerate(lines) if line.startswith("diagnose() {"))
@@ -998,6 +1004,36 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
             with self.subTest(rel):
                 r = self.run_block(self.diagnose(rel))
                 self.assertIn("REACHED THE FAIL", r.stdout, f"{rel}: diagnose ended the drill:\n{r.stdout}{r.stderr}")
+
+    def test_the_zone_loss_restarted_node_block_reaches_the_fail(self):
+        # The node that started again is read through docker; a docker that fails each call must not end the drill.
+        bin_dir = pathlib.Path(self.tmp.name)
+        (bin_dir / "docker").write_text('#!/bin/bash\necho "Error response from daemon: No such container" >&2\nexit 1\n')
+        (bin_dir / "docker").chmod(0o755)
+        r = self.run_block("CLUSTER=polaris-zones; RESTARTED=polaris-zones-worker2; RESTART_AT=0\n"
+                           + self.function("scripts/polaris-zone-loss-drill.sh", "inotify_report") + "\n"
+                           + self.diagnose("scripts/polaris-zone-loss-drill.sh"))
+        self.assertIn("[polaris-zones-worker2] kubelet and containerd errors since it started", r.stderr,
+                      "the block for the node that started again must run")
+        self.assertIn("the last lines of its previous run", r.stderr, "kube-proxy's previous run must be asked for")
+        self.assertIn("[polaris-zones-worker2] inotify descriptors held (count uid) per node: unread", r.stderr,
+                      "the inotify report must run and say what it could not read")
+        self.assertIn("REACHED THE FAIL", r.stdout, r.stdout + r.stderr)
+
+    def test_the_zone_loss_kube_proxy_lookup_may_fail(self):
+        # A kubectl that cannot list the node's kube-proxy must not end the drill, and no log is asked for.
+        bin_dir = pathlib.Path(self.tmp.name)
+        (bin_dir / "docker").write_text("#!/bin/bash\nexit 1\n")
+        (bin_dir / "docker").chmod(0o755)
+        kubectl = bin_dir / "kubectl"
+        kubectl.write_text(kubectl.read_text().replace(
+            'case "$*" in\n', 'case "$*" in\n  *k8s-app=kube-proxy*) echo "Unable to connect to the server" >&2; exit 1 ;;\n', 1))
+        r = self.run_block("CLUSTER=polaris-zones; RESTARTED=polaris-zones-worker2; RESTART_AT=0\n"
+                           + self.function("scripts/polaris-zone-loss-drill.sh", "inotify_report") + "\n"
+                           + self.diagnose("scripts/polaris-zone-loss-drill.sh"))
+        self.assertNotIn("the last lines of its previous run", r.stderr, r.stderr)
+        self.assertIn("[polaris-zones-worker2] inotify descriptors held", r.stderr, "the block must go on past the lookup")
+        self.assertIn("REACHED THE FAIL", r.stdout, r.stdout + r.stderr)
 
     def test_the_install_diagnostics_reach_the_pending_member(self):
         text = (ROOT / "scripts/polaris-helm-drill.sh").read_text()
