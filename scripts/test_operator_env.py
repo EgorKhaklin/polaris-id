@@ -999,6 +999,17 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
                 r = self.run_block(self.diagnose(rel))
                 self.assertIn("REACHED THE FAIL", r.stdout, f"{rel}: diagnose ended the drill:\n{r.stdout}{r.stderr}")
 
+    def test_the_zone_loss_restarted_node_block_reaches_the_fail(self):
+        # The node that started again is read through docker; a docker that fails each call must not end the drill.
+        bin_dir = pathlib.Path(self.tmp.name)
+        (bin_dir / "docker").write_text('#!/bin/bash\necho "Error response from daemon: No such container" >&2\nexit 1\n')
+        (bin_dir / "docker").chmod(0o755)
+        r = self.run_block("RESTARTED=polaris-zones-worker2; RESTART_AT=0\n"
+                           + self.diagnose("scripts/polaris-zone-loss-drill.sh"))
+        self.assertIn("[polaris-zones-worker2] kubelet and containerd errors since it started", r.stderr,
+                      "the block for the node that started again must run")
+        self.assertIn("REACHED THE FAIL", r.stdout, r.stdout + r.stderr)
+
     def test_the_install_diagnostics_reach_the_pending_member(self):
         text = (ROOT / "scripts/polaris-helm-drill.sh").read_text()
         block = text.split("--wait --timeout 12m >/dev/null || {\n", 1)[1].split("\n    }\n", 1)[0]
