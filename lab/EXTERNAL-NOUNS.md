@@ -179,7 +179,7 @@ become installable only when a maintainer approves them with a second factor.
 
 Every run is recorded in [docs/RELEASING.md](../docs/RELEASING.md). The Current column was
 measured on 2026-10-15 by installing each package into a fresh container, and each 2026-10-28
-and 2026-10-30 entry again when it was published; without `--pre`, pip installs 0.1.0 of `polaris-verify` and
+and 2026-10-30 entry again, into a fresh environment, when it was published; without `--pre`, pip installs 0.1.0 of `polaris-verify` and
 `polaris-sdk-python`. Being installable is not external use: a download count is not a person.
 
 Listed by outside parties: eudi-dev's maintainer merged `polaris-oid4vp` into its README's
