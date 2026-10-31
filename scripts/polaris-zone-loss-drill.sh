@@ -74,7 +74,7 @@ inotify_report() {
     host=$(sudo -n find /proc/[0-9]*/fd -lname 'anon_inode:inotify' -printf '%U\n' 2> /dev/null | sort | uniq -c | tr -s ' \n' ' ' || true)
     limit=$(docker exec "${CLUSTER}-control-plane" cat /proc/sys/fs/inotify/max_user_instances /proc/sys/fs/inotify/max_user_watches 2> /dev/null | tr '\n' ' ' || true)
     files=$(docker exec "${RESTARTED:-${CLUSTER}-control-plane}" sh -c 'for p in $(pidof containerd) $(pidof containerd-shim-runc-v2 | cut -d" " -f1); do grep "Max open files" /proc/$p/limits | tr -s " " | cut -d" " -f4,5; done | tr "\n" " "' 2> /dev/null || true)
-    echo "inotify instances held (count uid) per node:${held:- unread}; on the host: ${host:-unread}; max_user_instances and max_user_watches: ${limit:-unread}; open files (soft hard) of containerd and a shim on ${RESTARTED:-${CLUSTER}-control-plane}: ${files:-unread}"
+    echo "inotify descriptors held (count uid) per node:${held:- unread}; on the host: ${host:-unread}; max_user_instances and max_user_watches: ${limit:-unread}; open files (soft hard) of containerd and a shim on ${RESTARTED:-${CLUSTER}-control-plane}: ${files:-unread}"
 }
 diagnose() {
     echo "--- diagnostics ---" >&2

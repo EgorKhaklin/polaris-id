@@ -1016,7 +1016,7 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
         self.assertIn("[polaris-zones-worker2] kubelet and containerd errors since it started", r.stderr,
                       "the block for the node that started again must run")
         self.assertIn("the last lines of its previous run", r.stderr, "kube-proxy's previous run must be asked for")
-        self.assertIn("[polaris-zones-worker2] inotify instances held (count uid) per node: unread", r.stderr,
+        self.assertIn("[polaris-zones-worker2] inotify descriptors held (count uid) per node: unread", r.stderr,
                       "the inotify report must run and say what it could not read")
         self.assertIn("REACHED THE FAIL", r.stdout, r.stdout + r.stderr)
 
@@ -1032,7 +1032,7 @@ class DrillDiagnosticsReachTheirFail(unittest.TestCase):
                            + self.function("scripts/polaris-zone-loss-drill.sh", "inotify_report") + "\n"
                            + self.diagnose("scripts/polaris-zone-loss-drill.sh"))
         self.assertNotIn("the last lines of its previous run", r.stderr, r.stderr)
-        self.assertIn("[polaris-zones-worker2] inotify instances held", r.stderr, "the block must go on past the lookup")
+        self.assertIn("[polaris-zones-worker2] inotify descriptors held", r.stderr, "the block must go on past the lookup")
         self.assertIn("REACHED THE FAIL", r.stdout, r.stdout + r.stderr)
 
     def test_the_install_diagnostics_reach_the_pending_member(self):
