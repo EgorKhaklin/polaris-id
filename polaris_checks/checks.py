@@ -24975,6 +24975,16 @@ def _claim_text(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
+def _meta_contents(text: str, key: str) -> list[str]:
+    """The content of each <meta> tag outside HTML comments whose name or property is `key` (_claim_text decodes it)."""
+    found = []
+    for tag in re.findall(r"<meta\b[^>]*>", re.sub(r"<!--.*?-->", " ", text, flags=re.S), flags=re.I):
+        attrs = {k.lower(): a or b for k, a, b in re.findall(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""", tag)}
+        if key in (attrs.get("name"), attrs.get("property")):
+            found.append(attrs.get("content", ""))
+    return found
+
+
 def _claim_phrase_in(phrase: str, text: str, joined: str = r"\w") -> bool:
     """Is `phrase` in `text` as a whole phrase (case-insensitive), not as the start or end of a longer word?"""
     return re.search(r"(?<!%s)%s(?!%s)" % (joined, re.escape(phrase), joined), text, re.I) is not None
@@ -25092,7 +25102,10 @@ def check_claims_manifest(root: pathlib.Path) -> list[Finding]:
     And the counts: an entry listing implementations states their number and names each one, and an entry counting
     other entries' lists states their total. Names are distinct as whole phrases, and each scoreboard term finds the
     dated rows of lab/EXTERNAL-NOUNS.md's Wallets table whose wallet it names, no row claimed by two. The entry holding
-    the outward count of outside implementations must exist."""
+    the outward count of outside implementations must exist. A statement's surface may be one meta tag of a page,
+    PATH#meta:NAME (by name or property): the page holds exactly one tag of that name and its content opens with the
+    claim, since a search result or a card shows only a description's opening. A sentence a page states in two tags is
+    then held in each, which reading the whole page would not do."""
     name = "claims_manifest"
     try:
         entries = json.loads(_read(root, "docs/reference/claims.json"))["claims"]
@@ -25120,7 +25133,16 @@ def check_claims_manifest(root: pathlib.Path) -> list[Finding]:
             return _fail(name, f"README.md shows the badge {alt!r} and docs/reference/claims.json has no entry for it")
     for e in entries:
         for surface in e["surfaces"]:
-            text = _read(root, surface)
+            path, _, meta = str(surface).partition("#meta:")
+            text = _read(root, path)
+            if meta:
+                tags = _meta_contents(text, meta)
+                if e["kind"] == "badge" or len(tags) != 1:
+                    return _fail(name, f"{e['id']}: {surface} must be a statement's surface on a page with exactly one "
+                                       f"meta tag named {meta!r}; {path} has {len(tags)}")
+                if not _claim_text(tags[0]).startswith(_claim_text(e["claim"])):
+                    return _fail(name, f"{e['id']}: {surface} no longer opens with {e['claim'][:60]!r}")
+                continue
             if e["kind"] == "badge":
                 shown = _readme_badges(text)
                 if e["claim"] not in shown:

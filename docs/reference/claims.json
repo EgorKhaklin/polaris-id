@@ -1,5 +1,5 @@
 {
-  "about": "The outward claims this file covers: every image above the first heading of README.md (its badges), and the sentences listed below from README.md, site/index.html, site/llms.txt, lab/EXTERNAL-NOUNS.md and docs/reference/SPEC-COMPLIANCE.md. A sentence not listed here is not covered. For each: where it is published, the evidence behind it and how a stranger reproduces it. Evidence tokens: check:NAME (a check in polaris_checks/checks.py), test:PATH::NAME, drill:PATH, file:PATH, url:https://... (outside evidence, not fetched by the check). A badge's claim is its alt text and its label what the badge image renders. An entry with implementations states their number and names each one, each found by its scoreboard term in the Wallets table of lab/EXTERNAL-NOUNS.md; an entry with count_of states the total of those entries' lists. reproduce is null, with a why, where the claim is a live value an outside service renders or only a link. check_claims_manifest holds this file to the README, the surfaces it names, the evidence it cites and the scoreboard.",
+  "about": "The outward claims this file covers: every image above the first heading of README.md (its badges), and the sentences listed below from the files each names (README.md, the site, site/llms.txt, the scoreboard and the documents stating the OpenID certification). A surface PATH#meta:NAME is the one meta tag of that page named NAME, read alone. A sentence not listed here is not covered. For each: where it is published, the evidence behind it and how a stranger reproduces it. Evidence tokens: check:NAME (a check in polaris_checks/checks.py), test:PATH::NAME, drill:PATH, file:PATH, url:https://... (outside evidence, not fetched by the check). A badge's claim is its alt text and its label what the badge image renders. An entry with implementations states their number and names each one, each found by its scoreboard term in the Wallets table of lab/EXTERNAL-NOUNS.md; an entry with count_of states the total of those entries' lists. reproduce is null, with a why, where the claim is a live value an outside service renders or only a link. check_claims_manifest holds this file to the README, the surfaces it names, the evidence it cites and the scoreboard.",
   "claims": [
     {
       "id": "hero",
@@ -540,6 +540,98 @@
         "url:https://openid.net/certification/certified-oid4vp-haip-final/"
       ],
       "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt."
+    },
+    {
+      "id": "openid-certified-meta",
+      "kind": "statement",
+      "claim": "OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile at polaris-oid4vp 1.0.0rc7, a self-certification",
+      "surfaces": [
+        "site/index.html#meta:description",
+        "site/index.html#meta:og:description"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt."
+    },
+    {
+      "id": "openid-certified-3e",
+      "kind": "statement",
+      "claim": "a self-certification, not an endorsement or an independent verification.",
+      "surfaces": [
+        "README.md",
+        "site/index.html",
+        "site/llms.txt",
+        "polaris_web/templates/landing.html",
+        "TRADEMARKS.md",
+        "LICENSES/LicenseRef-OpenID-Certified-Mark.txt",
+        "ROADMAP.md",
+        "docs/INTEGRATION.md",
+        "docs/PRODUCTION-READINESS.md"
+      ],
+      "evidence": [
+        "file:LICENSES/LicenseRef-OpenID-Certified-Mark.txt",
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt: the certifier it names is the project's author, so the listing records a self-certification; lab/EXTERNAL-NOUNS.md cites Certification Terms 3(e)."
+    },
+    {
+      "id": "openid-certified-3e-spec",
+      "kind": "statement",
+      "claim": "a self-certification for that package version in that role, not an endorsement or an independent verification.",
+      "surfaces": [
+        "docs/reference/SPEC-COMPLIANCE.md"
+      ],
+      "evidence": [
+        "file:LICENSES/LicenseRef-OpenID-Certified-Mark.txt",
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt: the certifier it names is the project's author, so the listing records a self-certification; lab/EXTERNAL-NOUNS.md cites Certification Terms 3(e)."
+    },
+    {
+      "id": "openid-certified-3e-package",
+      "kind": "statement",
+      "claim": "a self-certification for that version in that role, not an endorsement or an independent verification.",
+      "surfaces": [
+        "packages/polaris-oid4vp/README.md"
+      ],
+      "evidence": [
+        "file:LICENSES/LicenseRef-OpenID-Certified-Mark.txt",
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt: the certifier it names is the project's author, so the listing records a self-certification; lab/EXTERNAL-NOUNS.md cites Certification Terms 3(e)."
+    },
+    {
+      "id": "openid-certified-3e-scoreboard",
+      "kind": "statement",
+      "claim": "a self-certification the OpenID Foundation approved and lists, not an endorsement and not an independent verification (Certification Terms 3(e)).",
+      "surfaces": [
+        "lab/EXTERNAL-NOUNS.md"
+      ],
+      "evidence": [
+        "file:LICENSES/LicenseRef-OpenID-Certified-Mark.txt",
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt: the certifier it names is the project's author, so the listing records a self-certification; lab/EXTERNAL-NOUNS.md cites Certification Terms 3(e)."
+    },
+    {
+      "id": "openid-certified-3e-interop",
+      "kind": "statement",
+      "claim": "a self-certification the OpenID Foundation approved and lists, for that version in that role, not an endorsement and not an independent verification.",
+      "surfaces": [
+        "lab/interop/README.md"
+      ],
+      "evidence": [
+        "file:LICENSES/LicenseRef-OpenID-Certified-Mark.txt",
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt: the certifier it names is the project's author, so the listing records a self-certification; lab/EXTERNAL-NOUNS.md cites Certification Terms 3(e)."
     }
   ]
 }
