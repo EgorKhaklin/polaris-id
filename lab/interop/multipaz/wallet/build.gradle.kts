@@ -10,7 +10,7 @@ plugins {
 repositories { mavenCentral() }
 
 dependencies {
-    implementation("org.multipaz:multipaz:0.101.0")
+    implementation("org.multipaz:multipaz:0.102.0")
     // Multipaz's own HTTP engine on the JVM (a runtime dependency of it); the wallet names it to
     // hand it to uriSchemePresentment().
     implementation("io.ktor:ktor-client-java:3.6.0")
