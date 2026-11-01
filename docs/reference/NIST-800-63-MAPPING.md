@@ -121,8 +121,8 @@ format.
 Every "MET" is a statement about this tree, checked in CI. A deployment gets a property by
 deploying and operating its mechanism (it does not inherit them), and the controls that depend
 on an authority's process (proofing sessions, referee flows, key ceremonies) are the
-authority's. The GAP and EXTERNAL rows are counted by the drill and printed, so their number
-cannot drift without the count changing.
+authority's. **Six** rows above are GAP or EXTERNAL; the drill counts them and prints the
+number, so it cannot drift without the count changing.
 
 ## Proven by
 
