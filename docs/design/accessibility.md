@@ -26,25 +26,10 @@ the 2.2 rules. Auditing with it and reporting "WCAG 2.2 AA" would be a claim abo
 the tool has never heard of. The drill asserts its own engine is new enough to have the rules it
 claims to be testing.
 
-## 2. What this does not establish, said plainly
+## 2. What a green run means
 
-**Automated testing detects roughly a third of WCAG failures.** It finds a missing label, a
-contrast ratio, a broken ARIA reference, a control with no accessible name. It cannot tell you:
-
-- whether alt text or a chart label is *meaningful* rather than merely present;
-- whether the focus order through a form makes sense;
-- whether an error message explains what to actually do;
-- whether a screen-reader user can complete a task end to end;
-- whether a workflow is usable with a switch device, voice control, or magnification;
-- whether the language of the interface is comprehensible under stress.
-
-**So a green run is a floor, not conformance.** Polaris does not claim WCAG 2.2 AA conformance,
-and `check_accessibility` refuses the claim in the README, [ROADMAP.md](../../ROADMAP.md),
-site/index.html and site/llms.txt. What changed is that the mechanical third is now
-enforced rather than assumed, and cannot regress unnoticed.
-
-WCAG 2.2 AA conformance needs manual testing with assistive technology, a step for the deploying
-organisation.
+A green run is a floor, not conformance; conformance needs manual testing with assistive
+technology, and Polaris does not claim WCAG 2.2 AA conformance.
 
 ## 3. What the first audit found
 

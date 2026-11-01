@@ -51,9 +51,8 @@ needs a key.
   issuer-centric on purpose -- the holder holds a credential, not a key pair, which is why
   document signing is notarial (P8.5) and login is by possession (P8.4). A holder-key binding
   is a future credential extension, not a wallet feature; the bridge waits on it.
-- **Native clients and card middleware.** Product engineering, not a research problem, and
-  not what a pre-pilot system on notional data should carry. The protocol above is
-  what they would implement.
+- **Native clients and card middleware.** Product engineering, not a research problem. The
+  protocol above is what they would implement.
 
 ## What runs
 

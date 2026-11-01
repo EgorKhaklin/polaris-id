@@ -23,10 +23,10 @@ absent otherwise. VC 2.0 permits a subject with no `id`, and that is more honest
 stable identifier, which would hand back exactly the correlation handle the presentation layer
 bounds.
 
-## A general verifier can parse it and cannot verify it
+## The cryptosuite: polaris-mldsa-jcs-2026; the proof verifies with the Polaris verifier
 
-It can read the type, the validity window, the subject, and find the proof. It cannot verify
-the proof, for two reasons.
+A general VC verifier reads the type, the validity window, the subject and the proof. Two
+choices set the suite.
 
 **The algorithm.** Every registered Data Integrity cryptosuite is classical. Signing with one
 to make a general verifier accept the proof would trade the post-quantum property for the

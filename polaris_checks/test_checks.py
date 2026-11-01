@@ -4183,8 +4183,8 @@ def test_evaluate_wired_check_discriminates(tmp_path):
     broken(ev, "def guarded(", "def unguarded(", "must FAIL when a probe that cannot run is not a failure")
     broken(ev, '"cosigner_agency_id": str(args.witness_agency)', '"cosigner_agency_id": ""',
            "must FAIL when the notional revocation is not co-signed")
-    broken("docs/operator/EVALUATE.md", "## What a run does not establish", "## Limits",
-           "must FAIL when the guide stops saying what a run does not establish")
+    broken("docs/operator/EVALUATE.md", "a review of a deployment is the operator's to commission",
+           "the report is the review", "must FAIL when the guide stops saying the review is the operator's")
     broken(ci, "GRANT INSERT ON DuressEvent TO polaris_app", "SELECT 1",
            "must FAIL when CI breaks no rule under the evaluation")
     broken(ci, 'grep -q "failing: .*A.doctor.edge"', 'true', "must FAIL when CI does not require the edge failure named")
@@ -17070,8 +17070,8 @@ def test_formal_specs_check_discriminates(tmp_path):
              "every MODELS binding resolves against the tree\n"
              "every counterpart configuration DOES violate its invariant\n")
     RUNNER = 'TLA_VERSION="${POLARIS_TLA_VERSION:-v1.7.4}"\n'
-    README = ("These are model-checked in CI on every push. What a model check does not tell\n"
-              "you: that the model matches the system. Both are bounded explorations.\n")
+    README = ("These are model-checked in CI on every push. TLC checks the\n"
+              "model; the MODELS bindings tie it to the named objects. Both are bounded explorations.\n")
     SQL_IDX = "CREATE UNIQUE INDEX uq_thing ON t (c);\n"
     SQL_PROC = ("CREATE PROCEDURE some_proc() AS $$ BEGIN\n"
                 "    SET LOCAL polaris.purge_in_progress = 'TRUE';\n"
@@ -17159,7 +17159,7 @@ def test_formal_specs_check_discriminates(tmp_path):
     write({'meta/tla/README.md': "This is not maintained verification infrastructure.\n"})
     assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
         "the README must not still say the specs are unchecked"
-    for phrase in ("model-checked in CI on every push", "does not tell\nyou", "bounded"):
+    for phrase in ("model-checked in CI on every push", "TLC checks the\nmodel", "bounded"):
         write({'meta/tla/README.md': README.replace(phrase, "")})
         assert checks.check_formal_specs(tmp_path)[0].level == "FAIL", \
             f"the README must state: {phrase}"
@@ -17180,10 +17180,9 @@ def test_accessibility_check_discriminates(tmp_path):
              '_row("the engine is new enough to HAVE the WCAG 2.2 rules", True, True)\n')
     RUNNER = ('AXE_VERSION="${POLARIS_AXE_VERSION:-4.13.0}"\n'
               'npm install --no-save --silent "axe-core@${AXE_VERSION}"\n')
-    DOC = ("A green run is a floor, not conformance. Automated testing detects roughly a\n"
-           "third of WCAG failures. Polaris does not claim WCAG 2.2 AA conformance. WCAG 2.2 AA\n"
-           "conformance needs manual testing with assistive technology, a step for the\n"
-           "deploying organisation.\n")
+    DOC = ("A green run is a floor, not conformance.\n"
+           "Polaris does not claim WCAG 2.2 AA conformance.\n"
+           "WCAG 2.2 AA conformance needs manual testing with assistive technology.\n")
     ROADMAP = "Have: an accessibility drill over every operator surface.\n"
     good = {
         'scripts/polaris-accessibility-drill.py': DRILL,
@@ -17246,7 +17245,6 @@ def test_accessibility_check_discriminates(tmp_path):
 
     # THE DOCUMENT that lets a green run be quoted as conformance.
     for phrase in ("A green run is a floor, not conformance.",
-                   "third of WCAG failures",
                    "Polaris does not claim WCAG 2.2 AA conformance.",
                    "needs manual testing with assistive technology"):
         write({'docs/design/accessibility.md': DOC.replace(phrase, "")})
@@ -18918,10 +18916,10 @@ def test_trust_ladder_check_discriminates(tmp_path):
         "| 6 | Today's model of computation | Nothing. This rung is open | See below |\n\n"
         "the honest other half, because a ledger that lists only the wins is an advertisement\n"
         "its practical form has a name: harvest now, decrypt later\n\n"
-        "## What Polaris does not claim\n\n"
-        "- Polaris implements **no** temporal cryptography and nothing physics-based.\n"
+        "## The cryptography, named\n\n"
         "- The cryptography here is standard: FIPS 204 ML-DSA-65 and standard TLS 1.3.\n"
-        "- Rung 6 is a question this document declines to answer, not a feature.\n")
+        "- Polaris implements **no** temporal cryptography and nothing physics-based.\n"
+        "- Rung 6 is a question this document declines to answer.\n")
     rel = "meta/trust-ladder.md"
     def write(body):
         f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text(body)
@@ -18941,14 +18939,14 @@ def test_trust_ladder_check_discriminates(tmp_path):
     # a rung names a path that is not there
     write(LADDER.replace("`polaris_checks/checks.py` |\n| 4", "`scripts/polaris-nonexistent.py` |\n| 4"))
     assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when a rung names a path that does not exist"
-    # the boundary section is gone, so the ladder reads as a claim
-    write(LADDER.replace("## What Polaris does not claim", "## Notes"))
-    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the boundary section is removed"
+    # the section naming the cryptography is gone, so the ladder reads as a claim
+    write(LADDER.replace("## The cryptography, named", "## Notes"))
+    assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the section naming the cryptography is removed"
     # the disclaimer of temporal cryptography is gone
     write(LADDER.replace("**no** temporal cryptography", "several kinds of temporal cryptography"))
     assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the temporal-cryptography disclaimer is removed"
     # the open rung stops being labelled a question
-    write(LADDER.replace("Rung 6 is a question this document declines to answer, not a feature.",
+    write(LADDER.replace("Rung 6 is a question this document declines to answer.",
                          "Rung 6 is solved by Polaris."))
     assert checks.check_trust_ladder_is_bound_to_the_code(tmp_path)[0].level == "FAIL", "must FAIL when the open rung is presented as a feature"
     # what Polaris actually does implement stops being named

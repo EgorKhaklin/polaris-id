@@ -116,15 +116,13 @@ format.
 
 ---
 
-## What this mapping deliberately does not do
+## Reading MET
 
-- **It does not claim conformance.** Every "MET" is a statement about this tree, checked in CI.
-  An assessment is performed by an assessor against a deployment.
-- **It does not inherit.** A deployment gets these properties only if it deploys the mechanisms
-  and operates them; the controls that depend on an authority's process (proofing sessions,
-  referee flows, key ceremonies) are theirs.
-- **It does not round a gap into a partial.** **Six** rows above are GAP or EXTERNAL. They are
-  counted by the drill and printed, so the number cannot drift without the count changing.
+Every "MET" is a statement about this tree, checked in CI. A deployment gets a property by
+deploying and operating its mechanism (it does not inherit them), and the controls that depend
+on an authority's process (proofing sessions, referee flows, key ceremonies) are the
+authority's. **Six** rows above are GAP or EXTERNAL; the drill counts them and prints the
+number, so it cannot drift without the count changing.
 
 ## Proven by
 

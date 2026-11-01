@@ -118,10 +118,9 @@ honour the bound (most have ≤ 7 sections). ✓ Not larping.
 
 ---
 
-## What this layer does NOT do
+## How it relates to the existing analysis
 
-It does NOT replace existing analysis with overlay framing. The
-threat model is still STRIDE; the tests are still pytest, SQL
+The threat model is still STRIDE; the tests are still pytest, SQL
 self-tests, and the `polaris_checks` invariant layer. The
 constraint-lattice framing is an OVERLAY that adds:
 

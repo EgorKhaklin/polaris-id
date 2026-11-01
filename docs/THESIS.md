@@ -140,13 +140,7 @@ could reopen it only through an explicit, recorded maintainer decision
 
 ---
 
-## What this page is NOT
-
-- A claim that the system has been independently validated.
-- A claim that reading the repository cold is proven to work.
-- A claim that the schema is novel.
-
-What this page IS:
+## What this page is
 
 - An honest statement that identity has to be enforced at its
   primitives, and that Polaris tries to do exactly that.

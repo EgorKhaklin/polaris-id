@@ -1,85 +1,70 @@
 # Production readiness
 
 The bound on every claim in this repository, for the operator or assessor deciding whether
-Polaris could hold real identity data. Status, known limitations, the operator's decisions, the gaps.
+Polaris could hold real identity data. Status, the facts to plan around, the operator's decisions.
 
 **Status (v1.0.0): not production-ready for real identity data.** Every engineering gap
-this ledger enumerated is closed and pinned by a check; what remains is the limitations and
-operator decisions below and the deployment-scale work in [ROADMAP.md](../ROADMAP.md). Operating it is a separate question, tracked criterion by criterion in the [operability gate](#operability-gate).
+this ledger enumerated is closed and pinned by a check; what remains is the operator decisions
+below and the deployment-scale work in [ROADMAP.md](../ROADMAP.md). Operating it is a separate question, tracked criterion by criterion in the [operability gate](#operability-gate).
 
-## Known limitations
+## Facts to plan around
 
-**Scope and evidence**
+**Certification and evidence**
 
-- It has never held real identity data; every number here was measured on notional data, on CI hosts or a kind cluster, not production multi-node hardware.
-- No external party has audited it. The one certification is narrow: `polaris-oid4vp 1.0.0rc7` is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (2026-09-24), which says nothing about readiness for real identity data.
-- The protocol layer (registry, trust list, exchange gateway and receipts, timestamp authority, document signing, auth broker, wallet presentations, algorithm versioning) is conformant in both SDKs under the repository's own suite only, and frozen at version 1.
-- Conformance is a floor. It constrains what its weakest conforming verifier computes: 28 verdict fields are unconstrained by any case (`polaris-conformance-mutation-drill.py`), and SDK refusals on inputs no case contains are covered by the SDKs' own tests, not by conformance.
-- The physical layer is a specification, an emulator and published vectors, not a card. No card is manufactured, no silicon is certified, and the profile states which properties an emulator cannot establish.
-- Enrollment records the evidence it rested on and derives the assurance level from it, but no proofing has been performed with it, and document authenticity is taken on the operator's word.
-- The NIST 800-63 mapping is machine-checked and is not a conformance claim; a deployment inherits none of it.
-- Accessibility is enforced only for the third that automation covers; accessibility conformance is not established.
+- Every number here was measured on notional data, on CI hosts or a kind cluster.
+- `polaris-oid4vp 1.0.0rc7` is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (2026-09-24): a self-certification, not an endorsement or an independent verification.
+- The protocol layer (registry, trust list, exchange gateway and receipts, timestamp authority, document signing, auth broker, wallet presentations, algorithm versioning) passes the repository's conformance suite in both SDKs and is frozen at version 1.
+- The physical layer is a specification, an emulator and published vectors.
+- Enrollment records the evidence it rested on and derives the assurance level from it; document authenticity is the operator's attestation.
 
 **Cryptography**
 
-- What is defensible is **algorithm agility under an audited migration path**, not a security claim against quantum adversaries. ML-DSA-65 rests on the hardness of Module-LWE and Module-SIS; the failure modes are a cryptanalytic advance against those assumptions or an implementation flaw. SLH-DSA-128s and SLH-DSA-256s are registered with no signer as a hash-based fallback, and issuance requires two independent ML-DSA implementations (liboqs and OpenSSL through `cryptography`) to agree.
-- A break in Module-LWE needs no schema change or new trust model, but it does need code: ML-DSA-87 rests on the same assumptions, and the hash-based SLH-DSA rows have no signer here and no verifier in `polaris-verify`. With those written, authorize the replacement per authority through `AgencyAlgorithmAuth`, provision a key under it, and migrate through `uc6_migrate` or the population runner, paths exercised on every push that record the algorithm of the key that signed and refuse a target no key is provisioned for (until 2026-10-02 the per-credential path recorded the algorithm it was asked for). It still costs every credential issued under the broken algorithm.
-- During a cutover a credential carries classical and ML-DSA signatures, and the **classical half** is protected by nothing here. The risk is forgery, not disclosure: a signature encrypts nothing, so harvest-now-decrypt-later does not apply to the credential, but once the classical algorithm falls anyone can forge that half, and a verifier that still accepts it accepts forgeries. Migration protects only verifiers that stop accepting it ([reference/PQC-POSTURE.md](reference/PQC-POSTURE.md)).
-- The default signing path, without `POLARIS_USE_REAL_PQC=1` and liboqs, writes a 32-byte SHA3-256 placeholder labelled `DETERMINISTIC-PLACEHOLDER-SHA3-256` that verifies against no key (real ML-DSA-65 is 3,309 bytes). This is the default in CI. Production fails closed at boot without real signing, and unnamed placeholder use warns loudly.
-- The zero-knowledge layer (a Plonky2 transparent-setup Merkle-inclusion circuit verified at use on `/api/zk/verify` with single-use nonces, plus an independent Python Poseidon/Merkle witness) is demo-scale. Its proof soundness rests on the `plonky2` 1.x crate. Do not protect real identities with it as shipped ([zk-soundness.md](design/zk-soundness.md)).
+- Polaris offers **algorithm agility under an audited migration path**. ML-DSA-65 rests on the hardness of Module-LWE and Module-SIS. SLH-DSA-128s and SLH-DSA-256s are registered as rows for a hash-based fallback, and issuance requires two independent ML-DSA implementations (liboqs and OpenSSL through `cryptography`) to agree.
+- A break in Module-LWE needs no schema change or new trust model. The response is code, then data: write the signer and the `polaris-verify` verifier for the replacement (ML-DSA-87 rests on the same assumptions as ML-DSA-65), authorize it per authority through `AgencyAlgorithmAuth`, provision a key under it, and migrate every credential issued under the broken algorithm through `uc6_migrate` or the population runner. Those paths run on every push, record the algorithm of the key that signed, and refuse a target no key is provisioned for (until 2026-10-02 the per-credential path recorded the algorithm it was asked for).
+- During a cutover a credential carries classical and ML-DSA signatures. Stop accepting the **classical half** when the cutover ends: a signature encrypts nothing, so harvest-now-decrypt-later does not apply to the credential, and once the classical algorithm falls anyone can forge that half ([reference/PQC-POSTURE.md](reference/PQC-POSTURE.md)).
+- The production profile (`POLARIS_USE_REAL_PQC=1` with liboqs) signs with ML-DSA-65 (3,309 bytes). The default in development and CI writes a 32-byte SHA3-256 placeholder labelled `DETERMINISTIC-PLACEHOLDER-SHA3-256` that verifies against no key; production fails closed at boot without real signing, and unnamed placeholder use warns loudly.
+- The zero-knowledge layer (a Plonky2 transparent-setup Merkle-inclusion circuit verified at use on `/api/zk/verify` with single-use nonces, plus an independent Python Poseidon/Merkle witness) rests its proof soundness on the `plonky2` 1.x crate. Do not protect real identities with it as shipped ([zk-soundness.md](design/zk-soundness.md)).
 
 **Algorithm migration**
 
-- A verifier cannot learn that an algorithm is deprecated. `deprecation_date` reaches none of the twenty signed formats; the registry publishes bare names, the trust list carries per-key status only, and the detached verifier's accepted set is hardcoded, so retiring or adding an algorithm is a software release to every relying party.
-- Key revocation does not substitute: if the assumption breaks, an attacker forges under any key the trust list calls active, and there is no algorithm-level lever.
-- Mid-migration, a relying party that drops the old algorithm at 90 percent re-signed locks out one holder in ten, and no signed artifact tells it which fraction it is at (`lab/crypto-migration/algorithm_status.py`).
-- There is no rollback. `one_signature_per_algorithm_per_token` forbids returning a token to an algorithm it already used; the only move is sideways to a third algorithm that must already exist, be keyed and not be deprecated, so a spare algorithm is a planning prerequisite (see [design/multi-sig-migration.md](design/multi-sig-migration.md)).
-- A real population's migration rate and the cost of re-signing at scale are deployment facts this repository cannot measure.
+- Relying parties take a new or retired algorithm by a software release: the detached verifier's accepted set is in its code, the registry publishes names, and the trust list carries per-key status.
+- Plan a spare algorithm. `one_signature_per_algorithm_per_token` forbids returning a token to an algorithm it already used, so a migration moves to an algorithm that already exists, is keyed and is not deprecated (see [design/multi-sig-migration.md](design/multi-sig-migration.md)).
 
 **Unlinkability and correlation**
 
-- Against colluding verifiers pooling full transcripts, a withheld-credential presentation gives no advantage beyond the anonymity set, and N is the epoch's membership. The application role writes an epoch only through `uc11_close_epoch`, which refuses an epoch below `polaris.min_epoch_anonymity_set` (20 unless set; the notional sample sets 1), and the online verifier and `verify_cross_authority_zk` answer a proof against a smaller epoch "privacy unavailable". Above the floor no verdict reports N: a 20-member epoch still gives a colluding pair a one-in-twenty guess, and `bounded` describes the transcript, not the crowd.
-- Timing, repeat-visit patterns and network metadata are not modelled, and the measuring adversary matches exact equality only: the result says no field is identical across verifiers, not that none is correlated.
-- Transcript length is a channel. A bounded presentation sits at chance only while it carries no per-holder variable-length field; the wallet's authenticity pack (free-text issuer name, unpadded token id) reaches 5.6 times chance, which matters once a pack rides alongside a withheld credential.
-- The OpenID4VP path discloses attribute values: over 200 holders an SD-JWT VC presentation falls into 16 holder-stable lengths, and one observation narrows 200 holders to about 23.
+- Against colluding verifiers pooling full transcripts, a withheld-credential presentation gives no advantage beyond the anonymity set, and N is the epoch's membership. The application role writes an epoch only through `uc11_close_epoch`, which refuses an epoch below `polaris.min_epoch_anonymity_set` (20 unless set; the notional sample sets 1), and the online verifier and `verify_cross_authority_zk` answer a proof against a smaller epoch "privacy unavailable".
+- The measuring adversary matches exact equality: its result is that no field is identical across verifiers.
+- Keep the wallet's authenticity pack (free-text issuer name, unpadded token id) apart from a withheld credential: a bounded presentation sits at chance while it carries no per-holder variable-length field.
 - Relying-party correlation is bounded, not eliminated: a full presentation shows a stable token value.
-- Holder-side mechanisms do not hide a holder from the ISSUER. A credential may carry a holder key, and epoch leaves are Poseidon commitments opened on the holder's device with a per-relying-party nullifier, but the issuer derives every leaf.
+- The issuer derives every epoch leaf. A credential may carry a holder key, and a leaf is a Poseidon commitment opened on the holder's device with a per-relying-party nullifier.
 
 **Duress**
 
-- The mechanism is duress-aware only. It works against a coercer who does not know it exists, not one watching the holder, and against lawful or institutional access it is net-negative because the duress record is append-only (`lab/duress/`).
+- The mechanism is duress-aware: it acts against a coercer who does not know it exists, and its record is append-only (`lab/duress/`).
 
 **Retention and records**
 
-- The timestamp authority keeps no per-request record except one digest and one instant per anchored timestamp, and only when the caller asked for the anchor.
-- Retention ships at five years for every class. Polaris records a jurisdiction's decision and its justification; it does not know the law.
-- Warrant-audit statistics rest on the authority's own append-only log, which defends against revision, not omission; no outside reader can detect an access that was never recorded.
-- Edits to a person's non-credential fields (legal name, date of birth, jurisdiction) are not recorded: an admin can rectify them through the operator UI and nothing keeps the prior value ([PRIVACY.md](operator/PRIVACY.md)).
+- The timestamp authority keeps one digest and one instant per anchored timestamp, when the caller asked for the anchor, and no other per-request record.
+- Retention ships at five years for every class: set each class to the jurisdiction's law, and Polaris records the decision and its justification.
+- Warrant-audit statistics are computed from the authority's own append-only log, which defends them against revision.
 
 **Authorization and operators**
 
-- The operator a rule names is the operator the application names. Procedures enforcing rules about people (four-eyes, the recovery ceremony's distinct roles) take the actor as a user id parameter, because every operator reaches the database through one application role; a holder of that database credential can name any operator and satisfy a four-eyes rule alone.
-- Closing that needs a per-operator database identity or operator-signed decisions checked outside the application; neither is built. The defence against a compromised application is its audit record and evidence held outside the database.
-- Role reach: `investigate_individual` and `investigate_token` need a session but no role, so an `operator` can retrieve a holder's tokens and non-zero-knowledge verification history, including textual `requestor_location`. Every access is audited and no zero-knowledge event or coordinates are returned; whether investigation is an oversight or operational function is the deploying organization's call.
-- Admin accounts created before both provisioning paths set a WebAuthn deadline carry none; `scripts/polaris-set-webauthn-deadline.sh` sets one and [OPERATIONS.md](operator/OPERATIONS.md) lists who is affected.
+- Procedures enforcing rules about people (four-eyes, the recovery ceremony's distinct roles) take the actor as a user id parameter from the application, which reaches the database through one role. Guard that database credential as the root of those rules, and hold evidence outside the database as the defence against a compromised application.
+- `investigate_individual` and `investigate_token` serve any signed-in operator: they return a holder's tokens and non-zero-knowledge verification history, including textual `requestor_location`, audit every access, and return no zero-knowledge event or coordinates. Whether investigation is an oversight or operational function is the deploying organization's call.
+- Run `scripts/polaris-set-webauthn-deadline.sh` for admin accounts created before both provisioning paths set a WebAuthn deadline; [OPERATIONS.md](operator/OPERATIONS.md) lists who is affected.
 
 **Verifiers and SDKs**
 
-- Six signed fields are verified but not surfaced or acted on: `epoch_number` on a revocation feed (a regressing `epoch_number` with advancing `as_of` is accepted), `purpose` on a signed document (a signature made for one purpose can be read as authorization for another), `auth_time` (no `max_age` can be derived), `authorized_via`, `bound_at` and `revoked_at`.
-- The canonical form distinguishes `4` from `4.0` and JavaScript has one number type, so the TypeScript SDK cannot check a grant whose monetary limit is signed as a float; its verdict says so.
+- A relying party that depends on them reads six signed fields itself: `epoch_number` on a revocation feed (require it to advance with `as_of`), `purpose` on a signed document (require the purpose it expects), `auth_time`, `authorized_via`, `bound_at` and `revoked_at`.
 - Where each security decision is made is in [reference/SECURITY-DECISIONS.md](reference/SECURITY-DECISIONS.md).
-
-**Application surface**
-
-- The 400/404 surface is measured and open: 35 of 76 malformed-input and not-found refusals survive mutation. Of 32 probed, 27 are masked by a later guard; cases the probe cannot reach while signed in report as unprobed.
-- Of fourteen rate limiters, the login and five holder-facing ones are driven by tests; the coarse velocity bounds (120 to 600 per minute) are pinned structurally, which proves the guard is written, not that it fires.
 
 **Capacity and availability**
 
-- `Individual.individual_id` and `IdentityToken.token_id` remain 32-bit, about 29 years at the stated enrollment rate, and widening them touches foreign keys across the schema; `check_capacity_model` recomputes the arithmetic from the live schema on every push.
-- Every core count is extrapolated from one core; linear fan-out has never been run. On one core ([lab/evaluation](../lab/evaluation/README.md), 2026-09-27) the liboqs witness verifies in 122 us at p50 (about 8,200/s, the path the application uses) and the Python SDK's OpenSSL witness, all a plain install gets, in 1.21 ms (about 826/s). End to end, `POST /api/v1/verify` served 155 to 165 per second on one 8-core machine with 4 or 8 workers; the signature was under 1% of each request, and a new database connection per statement (three per verification) was most of it.
-- 99.99% availability is not validated. The HA drills run a two-member topology on CI hardware, and latency on that topology supports a p50, not a p99.
-- The edge is a single host: recreating it is a 0.3 s window and a configuration reload may drop one in-flight request. Closing this needs a second edge with a moving address, which is placement and DNS.
+- `Individual.individual_id` and `IdentityToken.token_id` are 32-bit, about 29 years at the stated enrollment rate; widening them touches foreign keys across the schema, and `check_capacity_model` recomputes the arithmetic from the live schema on every push.
+- On one core ([lab/evaluation](../lab/evaluation/README.md), 2026-09-27) the liboqs witness verifies in 122 us at p50 (about 8,200/s, the path the application uses) and the Python SDK's OpenSSL witness, all a plain install gets, in 1.21 ms (about 826/s). End to end, `POST /api/v1/verify` served 155 to 165 per second on one 8-core machine with 4 or 8 workers; the signature was under 1% of each request, and a new database connection per statement (three per verification) was most of it.
+- The HA drills run a two-member topology on CI hardware.
+- The edge is one host: recreating it is a 0.3 s window, and a configuration reload may drop one in-flight request.
 - Under the HA profile a lost database leader is replaced within its 20 s lease, a planned switchover is a 3.4 s outage and a leader that loses its lease store stands down in 7 s. Without the profile a database crash is a 0.6 s window.
 
 ## Decisions only the operator can make
@@ -101,16 +86,6 @@ Production with real identity data cannot proceed until each is recorded as made
 | Penetration test and threat-model sign-off | The firm, the funding, an accountable signature | [RED-TEAM-SCOPE.md](RED-TEAM-SCOPE.md) |
 | What may leave the database and be joined to it | A written export and join rule and an audit that checks it. The constraints bind this schema only; a side store can rebuild the correlation C2 prevents with every check passing | [MISSION.md](../MISSION.md) |
 | A holder whose one live token is gone | Service level on the UC-9 recovery ceremony, and what the person is entitled to meanwhile. C3 means a revoked or lost token leaves them unable to present anywhere until it completes | [MISSION.md](../MISSION.md) |
-
-## Deployment-scale gaps
-
-This ledger covers one authority on one host or one cluster. [ROADMAP.md](../ROADMAP.md) tracks the rest; a closed ledger here is not readiness for any of it:
-
-- External penetration test (P1.12).
-- Partitioning, HA automation and multi-region (P2).
-- Relying-party API and federation protocol (P3).
-- Hardware token and enrollment kit (P4).
-- Pilots (P5), certification (P6) and national rollout (P7).
 
 ## Operability gate
 

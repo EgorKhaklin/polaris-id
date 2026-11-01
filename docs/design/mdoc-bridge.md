@@ -30,7 +30,7 @@ So the structure bridges and the cryptography does not. A verifier reports the t
 because a caller who reported the first as the second would be claiming a verification that did
 not happen.
 
-## Why it does not claim the mDL docType
+## The docType: id.polaris.credential.1
 
 The `docType` is `id.polaris.credential.1` and the namespace is `id.polaris.1`. Never
 `org.iso.18013.5.1.mDL`.

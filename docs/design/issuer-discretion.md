@@ -6,7 +6,8 @@ An identity system's worst failure is not a forged token. It is the authority
 that issued a population's tokens revoking them at scale, which is
 denaturalisation carried out with a database. This is the schema-level bound on
 that: a ceiling on how fast one agency's tokens can be revoked, above which a
-co-signer from a different agency is required.
+second agency's recorded approval (a co-signer from a different agency) is
+required.
 
 It is one of three answers to issuer trust concentration. The other two are
 cryptographic diversity, covered in
@@ -126,20 +127,6 @@ application code that skipped the procedure is refused with
   the recorded co-signer identity are there to make expensive and visible.
 - **What it costs.** The bound can refuse a legitimate bulk revocation, which
   the per-agency override and the co-signature exist to absorb.
-
-## What it does not protect against
-
-- **Slow abuse under the ceiling.** An agency revoking just under the bound
-  every month for a year still reaches most of its population. The counter is
-  audit reporting and public scrutiny of revocation rates, not the schema.
-- **Every agency captured at once.** The leverage of a co-signature ends when
-  there is nobody uncompromised to sign.
-- **`LOST` and `EXPIRED` events**, which are individual-scale transitions
-  rather than bulk operations. If either were used as laundered revocation,
-  extending the bound to cover them would be the answer.
-- **Forgery of the co-signer's identity.** The co-signature is recorded
-  procedurally, not cryptographically. Hardware-attested co-signing would be
-  the next layer, and it is not built.
 
 ## Related
 

@@ -1,7 +1,9 @@
 # meta/redaction-proof.md: verification-graph redaction (M2-12 / R11-7)
 
 **Status:** Active. Companion to property tests in
-`polaris_web/test_redaction_property.py`.
+`polaris_web/test_redaction_property.py`. **Scope:** the schema's
+redaction posture against a read-access adversary; the ZK proof's own
+properties live in the cryptography (M2-1 / R10-1).
 
 C2: the schema-level invariant that `VerificationEvent.token_id IS NULL`
 when `disclosure_level = 'ZERO_KNOWLEDGE'`: is a *syntactic* claim. A
@@ -182,21 +184,7 @@ on the population, given the row's observable non-holder columns.
 | `test_spatial_uniqueness_breaks_redaction` | CE-2 succeeds (documented limitation) | §5 |
 | `test_isolated_zk_event_has_no_holder_reference` | C2 + the absence of `individual_id` columns | §2 |
 
-## 8. What this document is not
-
-Not a cryptographic proof of zero-knowledge. The substrate-level work
-(M2-1 / R10-1) replaces `proof_commitment` with a real ZK-SNARK; that
-proof's properties live in the cryptography, not the schema. This
-document covers ONLY the schema's redaction posture against a
-read-access adversary. The two layers compose: a real ZK-SNARK
-prevents the holder from being inferred from the commitment itself;
-the schema-level redaction proven here prevents the holder from being
-inferred from the row's non-cryptographic columns. Together they
-realize the architectural claim that a ZERO_KNOWLEDGE verification
-"records that a valid token was presented without recording which
-token" (PDF §1, paragraph 9).
-
-## 9. Re-evaluation triggers
+## 8. Re-evaluation triggers
 
 This proof should be revisited when:
 

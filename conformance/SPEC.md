@@ -381,22 +381,19 @@ Status-assertion cases (`artifact: status-assertion`, verdict `{authentic, fresh
 | status-assertion-expired | authentic true, fresh false | genuine, but `now` is past `expires_at` |
 | status-assertion-tampered | authentic false | one signature byte flipped; MUST fail |
 
-## What this contract does NOT constrain
+## Outside the contract
 
-A conformance suite is read as a boundary, so it has to say where its boundary is. Measured
-rather than recalled, by `scripts/polaris-contract-reach-drill.py`, which runs every case and
-records which of the reference SDK's public functions actually execute: **the 307 cases enter
-21 of the SDK's 24 public functions.** Three are never entered by any case, which means an
-implementation can get them wrong, or omit them, and still pass every case here.
+Measured by `scripts/polaris-contract-reach-drill.py`, which runs every case and records which
+of the reference SDK's public functions execute: **the 307 cases enter 21 of the SDK's 24
+public functions.** Outside the contract: these three functions; an implementation provides
+them as it chooses.
 
-| never entered | why the contract does not ask |
+| function | why the contract does not ask |
 |---|---|
 | `nullifiers_link`, `handles_link` | linkability is a question about TWO presentations, and every case carries one artifact. There is no case shaped like "here are two, are they the same holder" |
 | `grant_within_limits` | whether a use stays inside a grant's limits depends on the service's own count of uses, which no case carries. Scope, revocation and the agent's proof are asked (`agent-grant-use`, since 1.0.0-rc.63) |
 
-Those three are covered by the SDK's own tests. That is a different guarantee: it binds this
-implementation, not the contract, and a third party certifying against these cases inherits
-none of it.
+Those three are covered by the SDK's own tests.
 
 The drill refuses to report at all if its measurement collected nothing, because a failed
 measurement and a contract that constrains nothing print the same list. `--prove-control`

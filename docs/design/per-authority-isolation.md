@@ -41,19 +41,12 @@ correct for a single-authority instance. Every policy is permissive when the ses
 empty, so unauthenticated API paths, the relying-party surface and the test suites are
 unaffected by this change.
 
-## The part that cannot be fixed by adding policies
+## Holder isolation: one instance per authority
 
-**An individual is not owned by an authority.** A person is a person; two authorities may
-both have issued to them over time, and C3's one-active-credential rule constrains credentials,
-not people. There is no honest per-authority policy for `Individual`, and inventing one would
-assert an ownership the model does not have.
-
-So in a shared instance these policies **bound** what an operator sees. They do not achieve
-isolation, because holder identity remains visible across authorities.
-
-That is the review's substantive finding, and it changes the status of the topology decision:
-**one authority per instance is load-bearing, not stylistic.** An operator considering two
-authorities in one database should read that sentence as the answer, not as a preference.
+Policies scope credentials and events by authority. **An individual is not owned by an
+authority:** two authorities may both have issued to the same person over time, and C3's
+one-active-credential rule constrains credentials, not people. A deployment that needs holder
+isolation runs one instance per authority.
 
 ## One trap, recorded
 

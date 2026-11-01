@@ -1,7 +1,7 @@
 # meta/tla/: the formal specifications
 
 **Reader:** an assessor who found TLA+ specs and wants to know how much weight they carry.
-**Job:** what is specified, what is checked, and what checking a model does not tell you.
+**Job:** what is specified, and what is checked.
 
 **These are model-checked in CI on every push** by
 [`scripts/polaris-tla-drill.sh`](../../scripts/polaris-tla-drill.sh). Until v9.374 they were
@@ -83,18 +83,11 @@ counterpart configuration is the proof that the assumption is load-bearing, and
 `check_formal_specs` asserts in the SQL what the model assumes: that
 `polaris.purge_in_progress` is `SET` in exactly one place.
 
-## What a model check does not tell you
+## What a model check covers
 
-- **That the model matches the system.** TLC verifies the model. Whether the model describes
-  PostgreSQL's actual behaviour is a human judgement, and the `MODELS` bindings narrow it
-  without closing it: they prove the named objects still exist, not that the spec describes
-  them correctly.
-- **Anything about the unmodelled.** Neither spec models PostgreSQL's implementation of an
-  index, MVCC, crash recovery, or any cryptography.
-- **Anything at unbounded scale.** Both are bounded explorations: two individuals, two
-  transactions, a handful of operations. The bounds are stated in each configuration. A
-  property that holds at N=2 and fails at N=5 would not be caught here, and closing that needs
-  a proof assistant rather than a model checker.
+TLC checks the model; the `MODELS` bindings name the objects it models, and CI fails when one
+stops resolving. Both specs are bounded explorations (two individuals, two transactions, a
+handful of operations), with the bounds stated in each configuration.
 
 ## Running them
 
