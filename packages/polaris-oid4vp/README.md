@@ -13,10 +13,11 @@ holder key binding, delivered over `direct_post.jwt`.
 
 <a href="https://openid.net/certification/certified-oid4vp-haip-final/"><img src="https://raw.githubusercontent.com/EgorKhaklin/polaris-id/main/docs/assets/openid-certified-mark-on-white.png" alt="OpenID Certified" width="160"></a>
 
-**OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile** at
-version 1.0.0rc7, which passed all eleven modules of the Foundation's hosted HAIP verifier test plan
+**`polaris-oid4vp` 1.0.0rc7 is OpenID® Certified™ by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0
+Verifier profile**: it passed all eleven modules of the Foundation's hosted HAIP verifier test plan
 (`sd_jwt_vc`, `direct_post.jwt`; [listing](https://openid.net/certification/certified-oid4vp-haip-final/),
-2026-09-24). The certification covers that version in that role. OpenID® and OpenID® Certified™
+2026-09-24). It is a self-certification for that version in that role, not an endorsement or an
+independent verification. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
 **Status:** This release, 1.1.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
@@ -298,8 +299,7 @@ one credential query, as `serve` asks, both expect every entry.
 [lab/interop/transaction-data](https://github.com/EgorKhaklin/polaris-id/blob/main/lab/interop/transaction-data/README.md)
 holds this to SIROS's published vectors and to a two-credential vector.
 
-Not covered: the DC API, mdoc, schemas for TS12's other three types, TS12 rules its schema does not
-encode, and JSON Schema `format` (an annotation). A `Verifier` remembers a `jti` for one day.
+A `Verifier` remembers a `jti` for one day.
 
 ## verifier_info under ETSI TS 119 472-2
 

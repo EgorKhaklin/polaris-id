@@ -14,9 +14,8 @@ every control, with no change on its side.
 
 Two halves of an access gate are in the tree and do not meet.
 
-- The OpenID4VP verifier (`packages/polaris-oid4vp`, 1.0.0rc7 OpenID Certified to the OID4VP 1.0 + HAIP
-  1.0 Verifier profile) decides a wallet's presentation. It answers only the lab harness and the test
-  suites.
+- The OpenID4VP verifier (`packages/polaris-oid4vp`) decides a wallet's presentation. It answers only the lab
+  harness and the test suites.
 - The auth broker (P8.4, `polaris_web/rp_auth.py`) gives a relying party a `polaris-id-token/1`. Its
   subject is a credential hash under that relying party's scope, and nothing records who logged in
   where. But the token is ML-DSA-signed in a Polaris format, and no access proxy reads it.

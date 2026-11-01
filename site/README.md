@@ -31,7 +31,7 @@ broken under it fails the build.
 | `404.html`, `404.css` | The not-found page and its styles: the coin at rest, with its shadow | The host, for any unknown path (`not_found_handling` in `wrangler.jsonc`) |
 | `_headers` | The security headers the host sends with every file | Cloudflare |
 | `robots.txt` | Crawl policy: one page, nothing private | Crawlers |
-| `llms.txt` | The project for a reading agent: what it is and is not, the one-minute offline check with its exit codes, and where the specifications and evidence live, as absolute links | Agents and tools that read `/llms.txt` |
+| `llms.txt` | The project for a reading agent: what it is, the one-minute offline check with its exit codes, and where the specifications and evidence live, as absolute links | Agents and tools that read `/llms.txt` |
 | `og.png` | The 1200 x 630 social card: the coin as the page shows it at rest, with the shadow it casts, at the still centre of the night's star trails (computed from the Yale Bright Star Catalogue, so the card holds only the project's own work), the page's eyebrow and headline, and the maker's mark | `index.html` (`og:image`) |
 | `khaklin.svg` | The KHAKLIN TECHNOLOGIES lockup in the site's gold, from the traced lettering and owl (never redrawn) | `og.png` (the maker's mark) |
 | `fonts/<face>.<hash>.woff2` | Inter, Cinzel and JetBrains Mono: the console's own files from `polaris_web/static/vendor/fonts/`, cut to the Latin characters a page can need and the ones this site uses, with every glyph outline, OpenType feature, variation axis and name record kept, each beside its SIL OFL licence (none reserves a font name) | `index.css`, `404.css` |

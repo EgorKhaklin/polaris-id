@@ -127,8 +127,7 @@ The fee was waived on 2026-09-23 under the Foundation's open-source policy.
 
 It is a self-certification the OpenID Foundation approved and lists, not an endorsement and not an
 independent verification (Certification Terms 3(e)). It covers that version in the verifier role
-on that profile. It does not cover the rest of Polaris, other versions, the wallet role, other formats, or
-anything the suite does not test.
+on that profile.
 Measured after it, on 2026-09-30: 1.0.0rc7 refuses an issuer certificate whose extended key
 usage is ISO 18013-5's document signer, as EUDI issuers' are (eudi-dev's PID Provider: its chain
 check answers no), and its `serve` takes issuer keys only as a JWKS (`--issuer-jwks`), so an `x5c`

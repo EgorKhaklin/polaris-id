@@ -88,6 +88,3 @@ front is a deployment decision an operator makes with their own provider.
 2. **An alert on that pattern**, so the bound has a detection half.
 3. **An alert on authentication-failure spikes per address**, using the
    counter that already exists.
-
-Everything else in this document is either built and named above, or
-deliberately out of scope.
