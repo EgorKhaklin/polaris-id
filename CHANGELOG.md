@@ -95,6 +95,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `POLARIS_PQC_TRUST_ANCHORS_FILE` is removed. No route of the running application read it: a rotation goes through the key register, and the relying-party door and the operator's verify route check each stored signature under the public key stored with it (KEY-CEREMONY.md). `pqc_signing.verify_token_signature` now checks under the configured key only. A deployment that still sets the variable starts as before.
 - WIRE-SPEC 3.5 states what a status assertion does not bind: no relying party and no challenge, so until `expires_at` a copy passes its checks at any verifier that trusts the issuer, and its `max_window_seconds` is unsigned; a verifier that needs the presenter to hold the bound holder key requires a holder proof (3.15).
 - docs/design/anchoring.md states what a batch proof binds: the verify route recomputes the leaf from the anchor's row, so a proof it accepts is bound to that row; outside verification goes through the transparency log, which binds each batch root.
+- `check_claims_manifest` holds the OpenID certification wording on every page that states it: the certification sentence in each of the site's `description` and `og:description` tags, each tag read alone (a surface written `PATH#meta:NAME`), and the Certification Terms 3(e) sentence on each of those pages.
 
 ### Fixed
 

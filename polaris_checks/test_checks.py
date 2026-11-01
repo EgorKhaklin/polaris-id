@@ -2858,8 +2858,119 @@ def test_claims_manifest_check_discriminates(tmp_path):
         "must FAIL on a null reproduce with no reason"
     assert run(edit(lambda by: by["site"].update(id="ci"))) == "FAIL", "must FAIL on two entries with one id"
     assert run(edit(lambda by: by["outside-ci"].update(kind="claim"))) == "FAIL", "must FAIL on an unknown kind"
+
+    # A meta surface, PATH#meta:NAME: one tag of a page, read alone, so a sentence stated in two tags is held in each.
+    tagline = "Certified by Alpha to profile one at alpha 1.0, a self-certification"
+
+    def page(desc=tagline + ". The system.", og=tagline + ". Check it.", extra=""):
+        tags = ['<meta name="description" content="%s">' % desc] if desc is not None else []
+        tags += ['<meta property="og:title" content="X">', '<meta property="og:description" content="%s">' % og, extra]
+        return "<head>\n" + "\n".join(tags) + "\n</head>\n<body>The page.</body>\n"
+
+    meta = copy.deepcopy(good)
+    meta["claims"].append({"id": "tagline", "kind": "statement", "claim": tagline,
+                           "surfaces": ["site/index.html#meta:description", "site/index.html#meta:og:description"],
+                           "evidence": ["file:LICENSE"], "reproduce": "Read the listing."})
+    (tmp_path / "site" / "index.html").write_text(page())
+    assert run(meta) == "OK", "must PASS when each named tag states the sentence"
+    for bad, why in ((page(desc="Certified by Alpha to profile one at alpha 1.0. The system."),
+                      "the description drops 'a self-certification' while og:description keeps it"),
+                     (page(og="Certified to profile one at alpha 1.0, a self-certification. Check it."),
+                      "og:description drops 'by Alpha' while the description keeps it"),
+                     (page(desc=None), "the page has no description tag"),
+                     (page(extra='<meta name="description" content="Another.">'), "the page has two description tags"),
+                     (page(extra="<meta NAME='description' content='Another.'>"),
+                      "the page has two description tags, one in capitals and single quotes"),
+                     (page().replace('<meta name="description"', '<!-- <meta name="description"')
+                      .replace('<meta property="og:title"', '--> <meta property="og:title"'),
+                      "the only description tag is inside an HTML comment"),
+                     (page(desc="The system. " + tagline + "."), "a tagline moves before the claim in the description")):
+        (tmp_path / "site" / "index.html").write_text(bad)
+        assert run(meta) == "FAIL", "must FAIL when " + why
+    # The reason for the form: the whole page still holds the sentence in its other tag.
+    (tmp_path / "site" / "index.html").write_text(page(desc="Certified by Alpha to profile one at alpha 1.0. The system."))
+    whole = copy.deepcopy(meta)
+    whole["claims"][-1]["surfaces"] = ["site/index.html"]
+    assert run(whole) == "OK", "a whole-page surface passes the description-only drop, which is why a tag is a surface"
+    (tmp_path / "site" / "index.html").write_text(page(og=tagline.upper() + ".  More."))
+    assert run(meta) == "OK", "the claim opens the tag however it is cased or spaced"
+    (tmp_path / "site" / "index.html").write_text(page())
+    badge_on_meta = edit(lambda by: by["status"].update(surfaces=["site/index.html#meta:description"]))
+    run(badge_on_meta)
+    assert "must be a statement's surface" in checks.check_claims_manifest(tmp_path)[0].message, \
+        "must FAIL, by that rule, when a badge names a meta surface"
     manifest.unlink()
     assert checks.check_claims_manifest(tmp_path)[0].level == "FAIL", "must FAIL when the manifest is missing"
+
+
+def test_claims_manifest_holds_the_certification_sentences_on_the_tree(monkeypatch):
+    # Each sentence the OpenID certification needs, dropped from one surface of this tree: the check turns red.
+    # Before the meta surfaces and the 3(e) entries, every one of these left every public check green.
+    import re
+
+    real = checks._read
+    assert checks.check_claims_manifest(REPO)[0].level == "OK"
+
+    def finding(path, change):
+        text = real(REPO, path)
+        changed = change(text)
+        assert changed != text, path
+        monkeypatch.setattr(checks, "_read", lambda root, rel: changed if rel == path else real(root, rel))
+        try:
+            return checks.check_claims_manifest(REPO)[0]
+        finally:
+            monkeypatch.setattr(checks, "_read", real)
+
+    def red(path, pattern, new, count=1):
+        return finding(path, lambda t: re.sub(pattern, new, t, count=count)).level == "FAIL"
+
+    page = "site/index.html"
+    D, O = '<meta name="description" content="', '<meta property="og:description" content="'
+    claim = ("OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile at polaris-oid4vp "
+             "1.0.0rc7, a self-certification. ")
+
+    def tag(text, start):
+        i = text.index(start)
+        return text[i:text.index(">", i) + 1]
+
+    def told(start, new):
+        return lambda t: t.replace(start + claim, start + new, 1)
+
+    for why, start, change in (
+            ("og:description loses the sentence", O, told(O, "")),
+            ("the description loses the sentence", D, told(D, "")),
+            ("the sentence moves from the description into the body", D,
+             lambda t: told(D, "")(t).replace("</body>", "<p>%s</p>\n</body>" % claim.strip(), 1)),
+            ("the description tag is deleted (its other sentence kept, in the body)", D,
+             lambda t: t.replace(tag(t, D), "", 1).replace("</body>", "<p>%s</p>\n</body>" % tag(t, D)[len(D + claim):-2], 1)),
+            ("a second description tag", D, lambda t: t.replace(tag(t, D), tag(t, D) + '\n<meta name="description" '
+                                                                 'content="Another.">', 1)),
+            ("the version changes", D, told(D, claim.replace("1.0.0rc7", "1.0.0rc8"))),
+            ("the package name is dropped", D, told(D, claim.replace("at polaris-oid4vp ", "at "))),
+            ("the profile is cut", O, told(O, claim.replace(" Verifier profile", " profile"))),
+            ("'a self-certification' is cut", D, told(D, claim.replace(", a self-certification", ""))),
+            ("'by Egor Khaklin' is cut from og:description", O, told(O, claim.replace(" by Egor Khaklin", ""))),
+            ("a tagline moves before the claim", D, told(D, "Polaris ID. " + claim))):
+        f = finding(page, change)
+        surface = page + "#meta:" + ("description" if start == D else "og:description")
+        assert f.level == "FAIL" and surface + " " in f.message, (why, f.message[:200])
+    first = lambda t: t.replace(tag(t, D), '<meta content="%s" name="description">' % tag(t, D)[len(D):-2], 1)  # noqa: E731
+    assert finding(page, first).level == "OK", "a tag with its content first is read"
+    assert finding(page, lambda t: first(t).replace(", a self-certification", "", 1)).level == "FAIL", \
+        "a tag with its content first is read, not skipped"
+    # The page-wide reader takes double-quoted content only, so a single-quoted description fails closed, never unread.
+    assert finding(page, lambda t: t.replace(tag(t, D), tag(t, D).replace('"', "'"), 1)).level == "FAIL"
+    assert red("site/index.html", r'content="OpenID Certified by Egor Khaklin to', 'content="OpenID Certified to', 0), \
+        "both tags without 'by Egor Khaklin'"
+    assert red("lab/EXTERNAL-NOUNS.md", r" \(Certification Terms 3\(e\)\)", ""), "the scoreboard without the terms' clause"
+    tail = r"not\s+an\s+endorsement\s+(?:or\s+an|and\s+not\s+an)\s+independent\s+verification"
+    for path in ("README.md", "site/index.html", "site/llms.txt", "polaris_web/templates/landing.html", "TRADEMARKS.md",
+                 "LICENSES/LicenseRef-OpenID-Certified-Mark.txt", "ROADMAP.md", "docs/INTEGRATION.md",
+                 "docs/PRODUCTION-READINESS.md", "docs/reference/SPEC-COMPLIANCE.md", "packages/polaris-oid4vp/README.md",
+                 "lab/EXTERNAL-NOUNS.md", "lab/interop/README.md"):
+        assert red(path, tail, "an independent verification"), path + " without the 3(e) sentence"
+        assert red(path, r"a\s+self-certification(?=[^.]{0,90}not\s+an\s+endorsement)", "a certification"), \
+            path + " without 'a self-certification' in that sentence"
 
 
 def test_ci_atlas_e2e_check_discriminates(tmp_path):
