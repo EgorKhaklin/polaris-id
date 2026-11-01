@@ -5,7 +5,7 @@ go 1.27
 toolchain go1.27.1
 
 require (
-	github.com/lestrrat-go/jwx/v4 v4.5.0
+	github.com/lestrrat-go/jwx/v4 v4.6.0
 	github.com/ncruces/go-sqlite3/gormlite v0.34.0
 	github.com/privacybydesign/irmago v1.4.3
 	github.com/sirupsen/logrus v1.10.2
@@ -32,7 +32,6 @@ require (
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/privacybydesign/gabi v0.0.0-20221212095008-68a086907750 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
-	github.com/valyala/fastjson v1.6.10 // indirect
 	github.com/veraison/go-cose v1.3.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
