@@ -41,7 +41,7 @@ Two things differ from the other JVM walks, both measured on 2026-10-04:
 
 | | |
 |---|---|
-| Wallet library | `org.multipaz:multipaz` 0.101.0 (2026-09-10) from Maven Central, its JVM jar `multipaz-jvm-0.101.0.jar` (`sha256:ae868d3d9d3ad91f0735bdec8c0dda57d69855624724a8982f580019dc72bb11`), Apache-2.0, [source](https://github.com/openwallet-foundation/multipaz) |
+| Wallet library | `org.multipaz:multipaz` 0.102.0 (2026-10-22) from Maven Central, its JVM jar `multipaz-jvm-0.102.0.jar` (`sha256:13e127ce0579d2aa609165d761102fa10fa27a48e4d6c4cdb9bf6e73a7623437`), Apache-2.0, [source](https://github.com/openwallet-foundation/multipaz) |
 | Wallet build | Kotlin 2.4.21 and Ktor 3.6.0 (the Java engine, Multipaz's own on the JVM), in `gradle:8.14.3-jdk21` pinned by digest (Temurin 21.0.9) |
 | Verifier | `polaris-oid4vp` 1.0.0rc15 from PyPI, with `cryptography` 50.0.2, in a fresh venv |
 | Runtime | Python 3.12.13, Docker 29.8.1, macOS 26.3 (Darwin 25.3.0) |
