@@ -337,10 +337,10 @@ where it belongs; it is a local unpublished run against the OpenID Foundation's 
 The certification run (2026-09-24) used the hosted instance, one plan (`7hXWngaA7f0QO`), and the
 `1.0.0rc7` artifact on PyPI: all eleven modules finished without failure. The request (OCS-3049) was
 approved, with the fee waived under the Foundation's open-source policy. `polaris-oid4vp 1.0.0rc7`
-is listed as OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile at
+is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, listed at
 <https://openid.net/certification/certified-oid4vp-haip-final/>. That is a self-certification the
 OpenID Foundation approved and lists, for that version in that role, not an endorsement and not an
-audit. [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md) records exactly what it covers.
+independent verification. [`lab/EXTERNAL-NOUNS.md`](../EXTERNAL-NOUNS.md) records exactly what it covers.
 
 ---
 

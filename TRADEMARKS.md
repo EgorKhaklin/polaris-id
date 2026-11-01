@@ -33,8 +33,9 @@ project or its maintainer endorses it.
 
 The OpenID Certified mark (`openid-certified-mark-on-white.png`, in `docs/assets/` and `site/`)
 belongs to the OpenID Foundation and is used under its certification terms, beside the scoped
-statement of what is certified: polaris-oid4vp 1.0.0rc7 is OpenID Certified to the
-OpenID4VP 1.0 + HAIP 1.0 Verifier profile. Neither the project's license nor this page grants any
+statement of what is certified: polaris-oid4vp 1.0.0rc7 is OpenID Certified by Egor Khaklin to
+the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, a self-certification, not an endorsement or an
+independent verification. Neither the project's license nor this page grants any
 right to the mark, and a fork or a later release is not certified.
 
 Questions: open an issue.

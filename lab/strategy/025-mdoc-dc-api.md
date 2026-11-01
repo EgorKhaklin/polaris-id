@@ -433,7 +433,7 @@ a separate DeviceResponse"). Off by default behind `--experimental` (M7). Not: D
 device-signed elements, mdoc revocation. When M2 merges, four sentences change, because "supports neither" would be
 false while `--help` shows `--format mso_mdoc`: README's "When to use something else" becomes "mdoc (ISO/IEC 18013-5):
 experimental in `polaris-oid4vp`, off by default, not exercised by any outside wallet or suite; the browser's Digital
-Credentials API: not supported. For either in production, Multipaz", and the package README's "Not covered" line and
+Credentials API: not supported. For either in production, Multipaz", and the package README and
 SPEC-COMPLIANCE's current-version row and OpenID4VP section say the same. When M3 merges, the DC API joins the
 experimental half.
 

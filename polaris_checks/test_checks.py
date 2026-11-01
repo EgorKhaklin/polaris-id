@@ -17071,7 +17071,7 @@ def test_formal_specs_check_discriminates(tmp_path):
              "every counterpart configuration DOES violate its invariant\n")
     RUNNER = 'TLA_VERSION="${POLARIS_TLA_VERSION:-v1.7.4}"\n'
     README = ("These are model-checked in CI on every push. TLC checks the\n"
-              "model; the MODELS bindings tie it to the named objects. Both are bounded explorations.\n")
+              "model; the MODELS bindings name the objects it models. Both are bounded explorations.\n")
     SQL_IDX = "CREATE UNIQUE INDEX uq_thing ON t (c);\n"
     SQL_PROC = ("CREATE PROCEDURE some_proc() AS $$ BEGIN\n"
                 "    SET LOCAL polaris.purge_in_progress = 'TRUE';\n"

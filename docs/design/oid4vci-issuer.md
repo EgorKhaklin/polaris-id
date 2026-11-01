@@ -78,7 +78,7 @@ is its own credential issuer, so a wallet copy names the agency that issued the 
 
 The paths sit under `/api/`, so every error is the JSON body the API reference promises.
 
-**Out of scope, and the reasons:**
+**Decided separately:**
 - **HAIP is not in this record.** It needs the authorization code grant, PAR, DPoP and
   attestation-based client authentication. Those make a FAPI 2.0 authorization server, and
   that is decided separately ([WALL.md](../../lab/strategy/005/WALL.md)).

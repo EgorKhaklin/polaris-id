@@ -30,7 +30,8 @@ is checkable offline against published keys with no Polaris code.
 ## 2. A wallet presents to, or is issued by, Polaris
 
 - **Present a credential (OpenID4VP, HAIP).** `polaris-oid4vp` 1.0.0rc7 is OpenID Certified
-  by Egor Khaklin to the OID4VP 1.0 + HAIP 1.0 Verifier profile. A wallet fetches the signed request
+  by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile, a self-certification, not an
+  endorsement or an independent verification. A wallet fetches the signed request
   object and posts an encrypted response.
 - **Reach a local instance in one command (dev/eval).**
   [`scripts/polaris-dev-tunnel.sh`](../scripts/polaris-dev-tunnel.sh) stands up a verifier and a

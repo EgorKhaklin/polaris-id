@@ -28,8 +28,8 @@ release named, on the row's date. Self means the author ran it; what outside par
 **Verifier** profile (`sd_jwt_vc`, `direct_post.jwt`), approved and listed by the OpenID
 Foundation on 24 September 2026
 ([listing](https://openid.net/certification/certified-oid4vp-haip-final/)). It is a
-self-certification for that package version in that role: not an endorsement, not an audit, and not
-a certification of the rest of Polaris. Certifications do not expire, and the listing names
+self-certification for that package version in that role, not an endorsement or an independent
+verification. Certifications do not expire, and the listing names
 1.0.0rc7. The newest release on PyPI runs against the OpenID Foundation's conformance suite (the
 HAIP verifier plan's sd_jwt_vc modules) every week in CI. OpenID® and OpenID® Certified™ are
 trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).

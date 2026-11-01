@@ -21,9 +21,9 @@ the public standards. Nothing proprietary, no internal design, no vendor source.
 birth.
 
 **EXTERNAL SYSTEM:** Privado ID, public documentation (`docs.privado.id`), ZK Query Language
-and circuits pages, read 2026-09-14. **Not run.** Standing up its issuer, wallet and
-on-chain state was out of scope for this pass, so every external row that would need a
-running system is UNKNOWN below rather than estimated.
+and circuits pages, read 2026-09-14. **Not run.** This pass read its public
+documentation, so every external row that would need a running system is UNKNOWN below
+rather than estimated.
 
 **POLARIS ARTIFACT:** `packages/polaris-oid4vp` 0.1.0 at commit `251d886`, driven by
 [`scenario-1-age.py`](scenario-1-age.py).

@@ -24681,8 +24681,8 @@ def check_formal_specs(root: pathlib.Path) -> list[Finding]:
     for phrase, why in (("model-checked in ci on every push",
                          "the README must say what is now true"),
                         ("tlc checks the model",
-                         "the README must say that what TLC checks is the model, which the "
-                         "MODELS bindings tie to the named objects, not the running system"),
+                         "the README must say that what TLC checks is the model, whose MODELS "
+                         "bindings name the objects it models, and CI fails when one stops resolving"),
                         ("bounded", "the bounds must be stated; a property that holds at N=2 "
                                     "and fails at N=5 is not caught by a bounded check")):
         if phrase not in low:
@@ -24694,7 +24694,7 @@ def check_formal_specs(root: pathlib.Path) -> list[Finding]:
                "FAIL under, because a spec whose invariant holds no matter what proves nothing; "
                "the single-setter assumption the purge-coverage result rests on is enforced in "
                "the SQL where it can actually be broken; and the README states that TLC checks "
-               "the model, bound to the named objects, in bounded explorations")
+               "the model, whose MODELS bindings name the objects it models, in bounded explorations")
 
 
 def check_accessibility(root: pathlib.Path) -> list[Finding]:

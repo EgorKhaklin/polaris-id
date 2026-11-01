@@ -336,8 +336,8 @@ $P reinit postgres2                                      # force a fresh clone o
   enabling the profile.
 - [`OPERATIONS.md`](OPERATIONS.md#the-ha-profile-living-with-patroni):
   day-2 with `patronictl`.
-- [`DR.md`](DR.md): backup and restore, the SEV ladder, the case the HA
-  profile does not cover.
+- [`DR.md`](DR.md): backup and restore, the SEV ladder, and a region-wide
+  outage ([section 4.8](DR.md#48-region-wide-outage)).
 - [`SECRETS.md`](SECRETS.md): `polaris_replicator_password` and the
   file-mounted secret convention Patroni's rendering reads.
 - [`RUNBOOKS.md`](RUNBOOKS.md): the per-alert responses.
