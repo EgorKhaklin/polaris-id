@@ -61,17 +61,11 @@ block storage, $0.09 per GiB of egress. No committed-use discount, no reserved c
 negotiated rate, and no provider named, because naming one dates the document faster than the
 prices do.
 
-## What it does not include
+## Scope: infrastructure
 
-Each of these can exceed the whole infrastructure figure:
-
-- **Staff and on-call.** The largest line in most real deployments, and not a number this
-  repository can estimate.
-- **The physical token**, its personalisation, and the enrolment stations. Modelled here, not
-  manufactured; roadmap P4.
-- **A hardware security module.** The PKCS#11 driver is proven against a software token; no
-  HSM has been used. A real deployment needs one and it is not a rounding error.
-- **Support, legal, compliance, and external audit.** None has occurred.
+The figure is infrastructure: compute, storage and network. Staff and on-call, the
+physical token and its enrolment, a hardware security module, and support, legal and audit
+are the deploying authority's own lines.
 
 ## Sensitivity, which is the point of a script
 

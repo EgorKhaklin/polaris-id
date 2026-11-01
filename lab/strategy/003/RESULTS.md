@@ -98,7 +98,7 @@ not a format allow-list. The id token, the exchange receipt and the holder-signe
 be fully recomputed, so even that design leaves forged logins and forged evidence of an exchange
 available to a compromised public process.
 
-## Step 4 (the lab signer): not built
+## Step 4: stopped by kill criterion 1
 
 The task made this step conditional on criterion 1 not firing, and it fired. An attempt to write
 the signer was also stopped before any file was written, so no signer exists and nothing about it

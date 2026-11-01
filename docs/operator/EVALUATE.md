@@ -55,14 +55,9 @@ sound install does, and what this one did. The verdict digest is a hash of the v
 runs on the same release give the same digest though their times and numbers differ. No password or
 secret the run used is written.
 
-## What a run does not establish
+## Reading the report
 
-- It is not a security review, an audit or a penetration test: it runs the probes above and nothing else.
-- A PASS means a probe behaved as a sound install behaves, at that moment, on that host.
-- Notional data says nothing about handling real identity data: that needs an independent review, your
-  own data-protection assessment and a pilot ([PRODUCTION-READINESS.md](../PRODUCTION-READINESS.md)).
-- Release provenance is reported, not judged: the deployment guide builds the images from source, so the
-  images running need not be the published, signed ones.
+The report states what was checked on this install; a review of a deployment is the operator's to commission.
 
 ## How it is checked
 

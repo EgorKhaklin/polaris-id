@@ -28,7 +28,7 @@ because the constraint is enforced before any application code runs.
 
 ---
 
-## §II. What Polaris is NOT
+## §II. What Polaris refuses
 
 Equally important. Polaris does not:
 
@@ -39,8 +39,6 @@ Equally important. Polaris does not:
   regression guard. Object Cards are single-entity-focused.
 - **Provide notebook authoring or predictive scoring.** These patterns
   are refused.
-- **Run with multi-region failover.** Single-region only; the roadmap's
-  P2 phase owns scale beyond one node.
 - **Carry a state-level surveillance API.** The verification graph is
   structurally inaccessible at the ZERO_KNOWLEDGE disclosure level
   (the C2 CHECK constraint enforces `token_id IS NULL`).

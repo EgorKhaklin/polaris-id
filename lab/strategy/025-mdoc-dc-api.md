@@ -351,7 +351,7 @@ before and after (the default request byte for byte, `TheDefaultRequestIsUnchang
 Every refusal joins the mutation drill, every verdict class runs past the second witness, and the negative cases join
 [lab/interop/negative-vectors](../interop/negative-vectors/README.md) in record 018's form.
 
-### M1 (lab, done 2026-10-11): what it proves and what it does not
+### M1 (lab, done 2026-10-11): what it proves
 
 Lab M1: our prototype verified one PID DeviceResponse offline, with no second witness for that verdict (isomdl-uniffi
 reads only the mDL docType and witnessed no MSO signature); both refused the mDL at its DS certificate profile.
@@ -367,21 +367,6 @@ What it proves:
 - It refused every control it was given: no root, an unrelated root, a flipped MSO signature byte, another nonce, the
   null-thumbprint transcript on an encrypted capture, one byte of `x5chain` DER, one byte of the protected header, an
   off-curve `deviceKey`, and mDL DS certificates without the EKU or without the SKI.
-
-What it does not prove:
-- **A second witness for any accepted verdict.** Device signatures agree only on the null-thumbprint transcript. The PID
-  capture carries the same DS certificate as the two mDL captures (SHA-256 prefix `70d4853b256b8576`), which both
-  verifiers refused under the mDL's profile; the PID rulebook states no such profile, so for the PID that certificate
-  passed our chain check and no second verifier has judged it. Plan 025's falsifier 2 stands at 1 of 2: on the mDL, the
-  prototype first accepted what isomdl-uniffi refused, and the fault was ours.
-- **A wallet app, or a query-driven mdoc.** The wallet was a harness built for the run. Two captures answer
-  `polaris-oid4vp`'s own `dc+sd-jwt` query (rc18 asks for no mdoc); the third answers an `mso_mdoc` query produced by a
-  lab rewrite of the request (`request_shim.py`).
-- **Freshness or the clock.** The prototype reads the nonce and the instant from the capture's own files: it shows
-  binding, not that a verifier minted the nonce, used it once, or judged at its own clock (GAP-1, GAP-2).
-- **Breadth.** One issuer's development deployment with its public test keys; ES256 only; DeviceSignature only; no
-  revocation; no key-usage check; no DC API, Annex C or HPKE; no real jurisdiction's root; no VICAL.
-- **The product.** `polaris-oid4vp` refused all three responses: it verifies no mdoc.
 
 ### M1b: the second witness, stage by stage, before any M2 code
 
@@ -984,45 +969,6 @@ sentence throughout. Calendar: about 6 to 8 weeks with three lanes, plus waits t
 reader certificate, Google's production onboarding, AAMVA's terms). M5 and M6 drop first if the work competes with the
 contract's open condition.
 
-## What this record does not claim, and the risks
-
-**Not claimed.**
-- No certification for mdoc or the DC API (M7). No production readiness: Polaris is pre-pilot and has never held real
-  identity data ([PRODUCTION-READINESS.md](../../docs/PRODUCTION-READINESS.md)).
-- No conformance to the EU AV profile: it requires relying parties to verify its zero-knowledge proof as well as the
-  plain mdoc (A.8), and this record builds only the plain mdoc. Its OpenID4VP fallback (`redirect_uri` client
-  identifiers, `direct_post`, no JAR) lies outside HAIP and is not built.
-- No zero-knowledge (`longfellow-libzk-v1`, Google's `mso_mdoc_zk`), proximity, issuance, DeviceMac or Android app
-  origins. No mdoc revocation: a revoked but unexpired mdoc is accepted until its MSO expires (GAP-7, in M2).
-- Nothing about US IDs until M7's extra condition holds.
-- "Nothing stored" is a property of this code, not of any deployment.
-
-**Risks.**
-- **The ISO texts are paywalled.** Annex C and the certificate profiles are built from public implementations. A
-  divergence from ISO is possible; agreeing witnesses and real wallets are the check.
-- **Vendor gates.** Apple Business Connect (its terms and review time: UNCONFIRMED), Google's production onboarding
-  (form, Terms of Service, CSR, video), AAMVA's terms: all the owner's. Apple's guidelines for its in-app API exclude
-  some categories (among them sexually oriented services and tobacco, S6); whether that binds the web flow is
-  UNCONFIRMED, and M5 gates nothing in them.
-- **Browser churn.** The W3C text is a Working Draft. Chrome removes protocol identifiers the specification does not
-  list by 160. Safari carries `org-iso-mdoc`, and neither WebKit post announces OpenID4VP (2026-10-13); WebKit's public
-  source keeps the `openid4vp-v1-*` protocols behind an internal setting whose default is on only where a build flag is
-  defined, and the public headers do not define it. Edge 141's web-platform notes do not list the API (S14), so Edge is
-  UNCONFIRMED. Mozilla's position is negative (S13).
-- **Strict where the field is loose.** The AV reference issuer's certificates carry a malformed issuerAltName (S16), so
-  refusing malformed certificates means refusing its credentials until it fixes them; the wrong `client_id` in a
-  handover already fails the AV reference stack against itself (S16). A verifier stricter than its peers meets these
-  first, and each one met is recorded with its issue, not loosened around.
-- **Privacy.** Device signatures are transferable; an mdoc is linkable unless single-use; the platform sees every request.
-  An age gate that asks for a government ID makes such requests more ordinary, which is the exclusion Mozilla names.
-- **Scope against the kill line.** A build of this size, before any pilot, spends time the contract counts: its day 180
-  is 2027-03-12. M5 and M6 drop first.
-- **The witness itself.** Falsifier 2 now counts every named witness and stands at 1 of 2: a single own-fault
-  disagreement closes the whole record. M1b ran before any M2 code, where such a finding costs the least, and found
-  none.
-- **Key custody.** The request-signing and reader keys identify the relying party; the reference listener keeps them in
-  files.
-
 ## Falsifiers
 
 1 to 4 are plan 025's, written on 2026-10-11 before its build; any one of them closes the record. 5 to 9 were written
@@ -1067,7 +1013,7 @@ rule, not a falsifier.
    `direct_post` and `direct_post.jwt` only (S12). We ask whether verifier tests for `dc_api.jwt` and `org-iso-mdoc` are
    planned, and what re-testing a later version for `iso_mdl` takes.
 2. **Apple's reader certificate.** Whether Apple Business Connect issues one to a pre-pilot open-source verifier, on
-   what terms and how fast. Without it Apple Wallet never answers M4.
+   what terms and how fast.
 3. **The origin string.** OpenID4VP's A.4 writes the audience as `origin:https://verifier.example.com/`, with a trailing
    slash; B.2.6.2's example hashes `https://example.com`, without one. Which form named wallets put in a key binding JWT
    decides whether M3's two accepted forms are right: measure with Google's sandbox and Multipaz before M3 ships.

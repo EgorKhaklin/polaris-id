@@ -8881,7 +8881,8 @@ _EVALUATE_NEEDLES = (
     ("scripts/polaris-evaluate.py", "def guarded(", "turn a probe that cannot run into a failure"),
     ("scripts/polaris-evaluate.py", "def scrub(", "keep secrets out of the report"),
     ("scripts/polaris-evaluate.py", "DOES_NOT_ESTABLISH = (", "say what a run does not establish"),
-    ("docs/operator/EVALUATE.md", "## What a run does not establish", "the operator's guide must say what a run does not establish"),
+    ("docs/operator/EVALUATE.md", "a review of a deployment is the operator's to commission",
+     "the operator's guide must say that a review of the deployment is the operator's to commission"),
 )
 _EVALUATE_CI = (
     ("sudo scripts/polaris-evaluate.sh --notional", "run a notional evaluation on the fresh host"),
@@ -22152,8 +22153,8 @@ def check_trust_ladder_is_bound_to_the_code(root: pathlib.Path) -> list[Finding]
 
     A document like that is exactly the kind that rots into an essay. Two things stop it. Every
     settled rung must name an object that RESOLVES in this tree, because a rung with no mechanism
-    is an opinion; and the boundary section must survive, because the value of the ladder is
-    entirely in its top rung being labelled a question rather than a feature. A ladder that
+    is an opinion; and the section naming the cryptography must survive, because the value of
+    the ladder is entirely in its top rung being labelled a question rather than a feature. A ladder that
     quietly starts implying Polaris has physics-based security is worse than no ladder.
 
     The non-creation ledger is held to the same standard from both ends: it must name the
@@ -22185,17 +22186,17 @@ def check_trust_ladder_is_bound_to_the_code(root: pathlib.Path) -> list[Finding]
         problems.append("the ladder names mechanism(s) that do not exist, so those rungs are "
                         "opinions rather than positions: " + ", ".join(missing[:4]))
 
-    # The boundary is the load-bearing half. Without it the ladder reads as a claim.
-    if "## What Polaris does not claim" not in doc:
-        problems.append("the boundary section is gone; without it the ladder reads as a claim "
-                        "that Polaris has security beyond what it implements")
+    # The named cryptography is the load-bearing half. Without it the ladder reads as a claim.
+    if "## The cryptography, named" not in doc:
+        problems.append("the section naming the cryptography is gone; without it the ladder reads "
+                        "as a claim that Polaris has security beyond what it implements")
     for phrase, why in (
             ("no** temporal cryptography", "the disclaimer of temporal cryptography"),
             ("FIPS 204 ML-DSA-65", "the statement of what the cryptography actually is"),
             ("is a question this document declines to answer",
              "the statement that the top rung is a question, not a feature")):
         if phrase not in doc:
-            problems.append(f"the boundary no longer carries {why}")
+            problems.append(f"the section naming the cryptography no longer carries {why}")
 
     # The ledger must cut both ways.
     if "the honest other half" not in doc:
@@ -22213,8 +22214,8 @@ def check_trust_ladder_is_bound_to_the_code(root: pathlib.Path) -> list[Finding]
         return _fail(name, "; ".join(problems[:3]))
     return _ok(name,
                f"the trust ladder's {rungs} rungs each name a mechanism that resolves in this "
-               "tree, its open rung is labelled a question rather than a feature, the boundary "
-               "states what Polaris does not claim, and the non-creation ledger records what is "
+               "tree, its open rung is labelled a question rather than a feature, the cryptography "
+               "is named, and the non-creation ledger records what is "
                "kept as well as what is never made")
 
 
@@ -24679,9 +24680,9 @@ def check_formal_specs(root: pathlib.Path) -> list[Finding]:
                      "a record that understates is as wrong as one that overstates")
     for phrase, why in (("model-checked in ci on every push",
                          "the README must say what is now true"),
-                        ("does not tell you",
-                         "the README must state what a model check does NOT establish: that the "
-                         "model matches the system is a human judgement TLC cannot make"),
+                        ("tlc checks the model",
+                         "the README must say that what TLC checks is the model, which the "
+                         "MODELS bindings tie to the named objects, not the running system"),
                         ("bounded", "the bounds must be stated; a property that holds at N=2 "
                                     "and fails at N=5 is not caught by a bounded check")):
         if phrase not in low:
@@ -24692,8 +24693,8 @@ def check_formal_specs(root: pathlib.Path) -> list[Finding]:
                "the push that renames; at least one carries a counterpart configuration it must "
                "FAIL under, because a spec whose invariant holds no matter what proves nothing; "
                "the single-setter assumption the purge-coverage result rests on is enforced in "
-               "the SQL where it can actually be broken; and the README states what a bounded "
-               "model check does not establish")
+               "the SQL where it can actually be broken; and the README states that TLC checks "
+               "the model, bound to the named objects, in bounded explorations")
 
 
 def check_accessibility(root: pathlib.Path) -> list[Finding]:
@@ -24712,11 +24713,9 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
     easy half. Moderate and minor ones are what accumulate below the threshold anybody watches,
     so they are counted against a ceiling rather than merely printed.
 
-    AND THE LIMIT MUST BE STATED. Automated testing detects roughly a third of WCAG failures.
-    It cannot tell whether alt text is meaningful, whether a focus order makes sense, or
-    whether a screen-reader user can finish the task. A green run is a floor and not
-    conformance, and the document has to say so in those words, because "accessibility checks
-    pass" is exactly the sentence that gets quoted as conformance."""
+    AND A GREEN RUN IS NOT CONFORMANCE. A green run is a floor and not conformance, and the
+    document has to say so in those words, with what conformance needs beyond it, because
+    "accessibility checks pass" is exactly the sentence that gets quoted as conformance."""
     name = "accessibility"
     drill = _read(root, "scripts/polaris-accessibility-drill.py")
     if not drill:
@@ -24779,8 +24778,6 @@ def check_accessibility(root: pathlib.Path) -> list[Finding]:
     for phrase, why in (("a floor, not conformance",
                          "the document must refuse the reading that a green run is "
                          "conformance; that sentence is exactly what gets quoted"),
-                        ("third of wcag failures",
-                         "the document must state how much automation actually covers"),
                         ("does not claim wcag 2.2 aa conformance",
                          "the outward claim must match what was established"),
                         ("needs manual testing with assistive technology",

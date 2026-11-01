@@ -164,7 +164,7 @@ surface, and the realistic exposure is bounded but real.
   the 128-bit-entropy mnemonic. It is listed here only for transparency about the
   algorithm family; it is acceptable as-is.
 
-## Gap table
+## Primitive table
 
 Status maps to the NIST IR 8547 timeline (deprecate classical public-key after
 2030, disallow after 2035).

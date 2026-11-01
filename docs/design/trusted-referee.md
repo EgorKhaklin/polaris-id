@@ -107,18 +107,3 @@ else's.** Those are separable, and separating them is the whole design.
 | `check_trusted_referee` | Every floor is in the schema; the surrogate id is 64-bit; `IdentityToken` mentions neither vouching nor referee; and the rules are EXERCISED -- the ceiling, self-vouching, the IAL3 cap, and the bound asking for a co-signer rather than refusing |
 | `scripts/polaris-referee-drill.py` | Fourteen cases against a real PostgreSQL. Every refusal attempted as a DIRECT INSERT, append-only proven by trying to UPDATE and DELETE a recorded vouching, the bound checked in both directions, the compromise query answered, and the credential's own catalog asked for any trace of a vouching |
 | `polaris_web/test_referee.py` | 23 measured tests, including that a referee may vouch BELOW their own level (an authority may hold itself to less than it could assert) and that the bound's refusal says in its own text that it is not a refusal |
-
----
-
-## 6. What this does not do
-
-- **It does not check that the referee is who they say they are at vouching time.** It records
-  their proofed level, copied rather than joined, so a later downgrade does not silently rewrite
-  what the vouching was worth. Whether the person in the room is the referee is the session's
-  problem, and IAL2 is what that session was worth.
-- **It does not detect collusion rings.** A refuses for B, B refuses for C, C for A: each is a
-  valid vouching by a proofed referee. The bound and the enumerable record make a ring
-  expensive and visible after the fact; nothing here prevents one.
-- **It does not cover the enrollment code.** `ENROLLMENT_CODE` exists as a verification method
-  and the process around it -- issuing a code to an address, a supervised redemption -- is still
-  open under P4.4, alongside the kiosk build.

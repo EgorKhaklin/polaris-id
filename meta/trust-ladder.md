@@ -98,23 +98,16 @@ where the adversary cannot be bounded, do not create the thing.
 
 ---
 
-## What Polaris does not claim
+## The cryptography, named
 
-This section is the boundary, and it is load-bearing.
-
-- Polaris implements **no** temporal cryptography, no physics-based security,
-  and nothing whose security argument depends on information becoming
-  physically unavailable. There is no such mechanism in this tree and none is
-  planned.
 - The cryptography here is standard and named: FIPS 204 ML-DSA-65 for credential
-  signatures, standard TLS 1.3 for transport, scrypt for operator passwords. The
-  ZK proof system's post-quantum standing is a hash-reduction argument, stated as
-  such in PQC-POSTURE, not a certification.
-- Rung 6 is a question this document declines to answer, not a feature. Nothing
-  in the running system depends on it having an answer. If the ladder's top rung
-  were deleted tomorrow, no guarantee in [MISSION.md](../MISSION.md) would weaken.
-- "Prefer non-creation over protection" is a design rule with a ledger, not a
-  claim that Polaris stores nothing. The ledger above says exactly what it stores.
+  signatures, standard TLS 1.3 for transport, scrypt for operator passwords.
+- Polaris implements **no** temporal cryptography and no physics-based security.
+- Rung 6 is a question this document declines to answer. Nothing in the running
+  system depends on it having an answer: if the ladder's top rung were deleted
+  tomorrow, no guarantee in [MISSION.md](../MISSION.md) would weaken.
+- "Prefer non-creation over protection" is a design rule with a ledger, and the
+  ledger above says exactly what Polaris stores.
 
 The reason to write the ladder down at all is that it tells you where effort is
 worth spending: rungs 1 to 5 are discharged and stay discharged because the

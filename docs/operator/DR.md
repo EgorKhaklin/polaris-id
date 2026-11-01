@@ -920,8 +920,7 @@ The section 8.4 template is the structure. Reviewers check:
   volume encryption.
 - [`KUBERNETES.md`](KUBERNETES.md): the same pgBackRest credential fragment
   delivered as a Secret.
-- [`PRODUCTION-READINESS.md`](../PRODUCTION-READINESS.md): the
-  deployment-scale gaps, multi-region among them.
+- [`ROADMAP.md`](../../ROADMAP.md): the deployment-scale work.
 - [`docs/design/threat-model.md`](../design/threat-model.md): the STRIDE
   threat model these procedures answer.
 - Scripts: [`polaris-dr-drill.sh`](../../scripts/polaris-dr-drill.sh),
