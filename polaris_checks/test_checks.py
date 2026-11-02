@@ -20646,6 +20646,29 @@ def test_conformance_spec_count_check_discriminates(tmp_path):
     assert out[0].level == "FAIL" and "1151" in out[0].message, \
         "must FAIL on a stale count written with a thousands separator"
 
+    # The front pages are held too (2026-11-02: ROADMAP.md's "151-case" beside 307 cases).
+    write("the suite certifies 12 artifact types.\n", 12)
+    (tmp_path / "ROADMAP.md").write_text("- Verifiers: two SDKs and a 24-case conformance suite.\n")
+    (tmp_path / "README.md").write_text("A 24-case suite, and no other count.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "OK" and "2 N-case count(s)" in out[0].message, \
+        "must PASS, and say it compared both, when every front-page count is the real one"
+    (tmp_path / "ROADMAP.md").write_text("- Verifiers: two SDKs and a 151-case conformance suite.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "ROADMAP.md says 151-case" in out[0].message \
+        and "24" in out[0].message, "must FAIL when ROADMAP.md names a stale case count"
+    (tmp_path / "ROADMAP.md").write_text("- Verifiers: two SDKs and a 12-case conformance suite.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "ROADMAP.md says 12-case" in out[0].message, \
+        "must FAIL when a front page understates the suite, too"
+    (tmp_path / "ROADMAP.md").write_text("- Verifiers: two SDKs and a 24-case conformance suite.\n")
+    (tmp_path / "README.md").write_text("A 1,151-case suite.\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "README.md says 1151-case" in out[0].message, \
+        "must FAIL on a stale README.md count written with a thousands separator"
+    (tmp_path / "ROADMAP.md").unlink()
+    (tmp_path / "README.md").unlink()
+
     # Anti-vacuity: a manifest too small to be the real one is a broken parse.
     write("the suite certifies 3 artifact types, listed in `cases.json`\n", 3)
     out = fn(tmp_path)
