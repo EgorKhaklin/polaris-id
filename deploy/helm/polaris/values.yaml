@@ -9,7 +9,7 @@ images:
   postgres: polaris-postgres:prod
   redis: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
   # The database router (v9.244): the same HAProxy as the compose HA profile.
-  haproxy: haproxy:3.4-alpine@sha256:7af8255207ee9964ccb4eec8ce4b7a40b777769665e3ae83897fb01b24d8a43a
+  haproxy: haproxy:3.4-alpine@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa
   # For the four self-built images. The drill sets Never (nothing pulled).
   pullPolicy: IfNotPresent
   # Redis is a digest-pinned upstream image the nodes pull themselves: `kind

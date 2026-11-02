@@ -1714,7 +1714,7 @@ you bring the stack up some other way, do it by hand first:
 ```bash
 for v in polaris_web_caddy_data polaris_web_caddy_config; do
     docker run --rm -v "$v:/v" \
-      alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
+      alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
       chown -R 1000:1000 /v
 done
 ```
@@ -1780,7 +1780,7 @@ elif docker volume inspect "${V}_old" >/dev/null 2>&1; then
 else
   docker volume create "${V}_old" &&
   docker run --rm -v "$V:/from:ro" -v "${V}_old:/to" \
-    alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
+    alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
     cp -a /from/. /to/ &&
   docker volume rm "$V"
 fi
@@ -1825,7 +1825,7 @@ else
     docker volume create --label com.docker.compose.project="$P" \
       --label com.docker.compose.volume=pg_data "$V"
   docker run --rm -v "${V}_old:/from:ro" -v "$V:/to" \
-    alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 \
+    alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
     sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/' &&
   ./scripts/polaris-deploy.sh prod --no-pull &&
   ARCHIVING=$(docker compose -f polaris_web/docker-compose.prod.yml exec -T postgres printenv POLARIS_PGBACKREST_ENABLED) &&
