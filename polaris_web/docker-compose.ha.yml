@@ -246,7 +246,7 @@ services:
       - polaris-dcs
 
   pg-router:
-    image: haproxy:3.4-alpine@sha256:7af8255207ee9964ccb4eec8ce4b7a40b777769665e3ae83897fb01b24d8a43a
+    image: haproxy:3.4-alpine@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa
     container_name: polaris-pg-router
     restart: unless-stopped
     volumes:

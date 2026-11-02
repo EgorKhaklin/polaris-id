@@ -3520,12 +3520,12 @@ def test_supply_chain_pins_holds_every_script_pin_to_the_dependabot_pin(tmp_path
     assert base.level == "OK", f"must PASS on the real tree's copy: {base.message}"
     deploy = tmp_path / "scripts/polaris-deploy.sh"
     good = deploy.read_text()
-    pin = "alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+    pin = "alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a"
     assert good.count(pin) == 2, "the fixture drifted: polaris-deploy.sh no longer pins alpine:3.24 twice"
     deploy.write_text(good.replace(pin, f"alpine:3.24@sha256:{'d' * 64}", 1))
     found = checks.check_supply_chain_pins(tmp_path)[0]
     assert found.level == "FAIL" and ("scripts/polaris-deploy.sh:289 pins alpine:3.24 at dddddddddddd, but "
-                                      "polaris_web/Dockerfile.etcd pins it at 294b683cb724") in found.message, \
+                                      "polaris_web/Dockerfile.etcd pins it at be2656061b53") in found.message, \
         f"must FAIL, naming both files, on a script no workflow calls: {found.message}"
     deploy.write_text(good)
     # As a ${VAR:-...} default the same; a comment is not a pin, and a tag no manifest Dependabot
