@@ -12493,6 +12493,10 @@ def test_wallet_presentation_check_discriminates(tmp_path):
     assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if native clients are not named"
     write({'docs/design/wallet-protocol.md': "# wallet\n\n## Clients of the protocol\n\n- A browser bridge.\n\n## What runs\n\nA native client.\n"})
     assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if a client is named outside the section"
+    write({'docs/design/wallet-protocol.md': "# wallet\n\n## Clients of the protocol\n\n- A browser bridge.\n- Native apps.\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if native apps stand in for a native client"
+    write({'docs/design/wallet-protocol.md': "# wallet\n\n## Clients of the protocol\n\n- A WebAuthn bridge.\n- Native clients.\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if a WebAuthn bridge stands in for the browser bridge"
 
 
 def test_auth_broker_check_discriminates(tmp_path):
