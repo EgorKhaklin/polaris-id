@@ -41,6 +41,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 - The readiness ledger and the paper (v3, English and Russian) said nothing floors an epoch's anonymity set above one. Since 1.0.0-rc.46 an epoch below `polaris.min_epoch_anonymity_set` (20 unless set) is not closed, and a proof against a smaller one answers "privacy unavailable"; above the floor no verdict reports the set's size. Both corrections tables record it. The rebuilt PDFs, the mathematical edition included, also carry the 2026-10-21 correction of which pages return no location for a zero-knowledge event.
 
+- ROADMAP.md named a 151-case conformance suite while `conformance/cases.json` holds 307 cases, and docs/design/wallet-protocol.md called a holder key a future credential extension after the holder key register (P9.1) had shipped. Both now say what the tree holds, and `conformance_spec_counts` holds every "N-case" count in ROADMAP.md and README.md to `conformance/cases.json`, with a detection test.
+
 - The transparency monitor and witness take `--log timestamps` and follow the timestamp log (`polaris-timestamp-log`), as docs/design/timestamp-transparency.md and docs/reference/API.md say they do; before, each stopped at its options with exit 2 (scripts/polaris-transparency-monitor.py, scripts/polaris-transparency-witness.py).
 
 - The weekly chaos drill keeps the shipped `prometheus.yml` discovery block and checks that the block and the drill's Alertmanager target are there (scripts/polaris-chaos-drill.sh); a dispatch on a branch runs that branch's drill and records no ledger row (.github/workflows/chaos.yml).

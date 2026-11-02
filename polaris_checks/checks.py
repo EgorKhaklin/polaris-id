@@ -14179,6 +14179,10 @@ def check_sdk_fresh_reads_only_signed_fields(root: pathlib.Path) -> list[Finding
                   sum(1 for r in py_reads.values() if not r)))
 
 
+#: The front pages whose "N-case" counts describe the conformance suite.
+_CASE_COUNT_PAGES = ("ROADMAP.md", "README.md")
+
+
 def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Finding]:
     """The published contract's own count of what it certifies, held to the manifest.
 
@@ -14202,6 +14206,10 @@ def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Find
     and the hostile-input drill's measurement named 281. So every "the N cases" or "all N
     cases" in SPEC.md is held to the manifest too; a dated measurement restates its number
     when it is re-measured.
+
+    The front pages drifted next (2026-11-02): ROADMAP.md offered "a 151-case conformance
+    suite" while cases.json held 307, because only SPEC.md's sentences were held. Every
+    "N-case" count in ROADMAP.md and README.md is held to the manifest as well.
     """
     name = "conformance_spec_counts"
     spec = _read_raw(root, "conformance/SPEC.md")
@@ -14234,10 +14242,18 @@ def check_conformance_spec_counts_its_artifacts(root: pathlib.Path) -> list[Find
         return _fail(name, "conformance/SPEC.md speaks of %s cases and cases.json holds %d; "
                            "a sentence about the whole suite is describing a suite that no "
                            "longer exists" % (", ".join(str(n) for n in wrong), len(cases)))
+    front = [(rel, int(c.group(1).replace(",", ""))) for rel in _CASE_COUNT_PAGES
+             for c in re.finditer(r"\b(\d[\d,]*)-case\b", _read_raw(root, rel))]
+    stale = sorted({"%s says %d-case" % (rel, n) for rel, n in front if n != len(cases)})
+    if stale:
+        return _fail(name, "%s, and cases.json holds %d cases; a front page is describing a "
+                           "suite that no longer exists" % ("; ".join(stale), len(cases)))
     return _ok(name, "conformance/SPEC.md states %d artifact types and cases.json holds "
                      "exactly that many across %d published cases, and its %d whole-suite "
-                     "case count(s) agree, so the contract's description of its scope is the "
-                     "scope" % (stated, len(cases), len(case_counts)))
+                     "case count(s) and the %d N-case count(s) in %s agree, so the contract's "
+                     "description of its scope is the scope" % (
+                         stated, len(cases), len(case_counts), len(front),
+                         " and ".join(_CASE_COUNT_PAGES)))
 
 
 def check_conformance_contract_distinguishes(root: pathlib.Path) -> list[Finding]:

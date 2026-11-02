@@ -46,11 +46,10 @@ needs a key.
 
 ## What is out of scope, and why
 
-- **A WebAuthn browser bridge.** Binding a presentation to a platform authenticator needs a
-  holder key registered against the credential at enrollment. Polaris's model is
-  issuer-centric on purpose -- the holder holds a credential, not a key pair, which is why
-  document signing is notarial (P8.5) and login is by possession (P8.4). A holder-key binding
-  is a future credential extension, not a wallet feature; the bridge waits on it.
+- **A WebAuthn browser bridge.** Binding a presentation to a holder's own key is the holder
+  key register of P9.1: a credential may carry a holder public key in an append-only register,
+  and a presentation may carry a holder signature ([holder-side-keys.md](holder-side-keys.md)).
+  A browser bridge is not a wallet-protocol feature.
 - **Native clients and card middleware.** Product engineering, not a research problem. The
   protocol above is what they would implement.
 
