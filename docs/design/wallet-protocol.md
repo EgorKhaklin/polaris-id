@@ -1,7 +1,7 @@
 # The wallet protocol surface (P8.6)
 
 **Reader:** an engineer building a holder client, or an assessor asking what a Polaris wallet
-must be able to say to a verifier and what Polaris deliberately does not build.
+must be able to say to a verifier.
 
 **Status:** shipped v9.327. `polaris-presentation/1` with stapled status, `polaris-qr/1`
 framing, the wallet's `present --qr`, and the detached verifier's `--presentation` /
@@ -12,10 +12,9 @@ framing, the wallet's `present --qr`, and the detached verifier's `--presentatio
 The wallet is a PROTOCOL, not a product. `scripts/polaris-wallet.py` is the reference holder
 agent -- it holds a credential, presents it, proves membership in zero knowledge, signs a
 document on the holder's behalf (P8.5) and logs in to a relying party (P8.4) -- and every
-message it emits is specified so that any client can emit the same. Native mobile and
-desktop clients, card and NFC middleware, and a WebAuthn browser bridge are product
-engineering this pre-pilot system does not attempt; they follow this protocol when
-someone builds them, and never lead it.
+message it emits is specified so that any client can emit the same. In this pre-pilot
+system, a native mobile or desktop client, card or NFC middleware, or a WebAuthn browser
+bridge implements this protocol and never leads it.
 
 ## The presentation
 
@@ -44,14 +43,14 @@ duplicate, or a reassembled payload whose digest does not match. The framing is 
 integrity only; it adds no authenticity, which is the point: nothing in the transfer layer
 needs a key.
 
-## What is out of scope, and why
+## Clients of the protocol
 
 - **A WebAuthn browser bridge.** Binding a presentation to a holder's own key is the holder
   key register of P9.1: a credential may carry a holder public key in an append-only register,
   and a presentation may carry a holder signature ([holder-side-keys.md](holder-side-keys.md)).
   A browser bridge is not a wallet-protocol feature.
-- **Native clients and card middleware.** Product engineering, not a research problem. The
-  protocol above is what they would implement.
+- **Native clients and card middleware.** A native client or card middleware implements the
+  protocol above.
 
 ## What runs
 
@@ -63,8 +62,8 @@ no assertion not decidable; a wrong context refused; a presentation code present
 interpreted; the wallet round trip (`enroll`, `present --qr --status-assertion`, decide with
 `--qr-frames --issuer-anchor`); hostile input. The fuzzer holds `verify_presentation` and the
 frame decoder total. `check_wallet_presentation` pins the surface, the duress opacity, the
-wallet and CLI flags, the spec (section 3.14), the drill, and that this document records the
-boundaries above -- with a detection test.
+wallet and CLI flags, the spec (section 3.14), the drill, and that this document names the
+clients of the protocol -- with a detection test.
 
 ## Resource bounds (v9.335)
 
