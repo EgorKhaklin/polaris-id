@@ -12460,7 +12460,7 @@ def test_wallet_presentation_check_discriminates(tmp_path):
         'scripts/polaris-verifier-fuzz.py': "V.verify_presentation(o)\n",
         'scripts/polaris-presentation-drill.py': "V.decode_presentation_frames(f); 'polaris-wallet.py'\n",
         '.github/workflows/ci.yml': '      - run: python scripts/polaris-presentation-drill.py\n',
-        'docs/design/wallet-protocol.md': "wallet\nThe browser bridge and native clients are out of scope for a pre-pilot system.\n",
+        'docs/design/wallet-protocol.md': "# wallet\n\n## Clients of the protocol\n\n- A browser bridge.\n- A native client.\n\n## What runs\n",
     }
 
     def write(overrides=None):
@@ -12482,7 +12482,17 @@ def test_wallet_presentation_check_discriminates(tmp_path):
     write({'scripts/polaris-presentation-drill.py': "V.decode_presentation_frames(f)\n"})
     assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the drill does not round-trip through the wallet"
     write({'docs/design/wallet-protocol.md': "# wallet\nEverything is built.\n"})
-    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the boundaries are not recorded honestly"
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the doc names no clients of the protocol"
+    write({'docs/design/wallet-protocol.md': ""})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL on an empty doc"
+    write({'docs/design/wallet-protocol.md': "# wallet\n\n## Out of scope\n\n- A browser bridge.\n- A native client.\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL without the heading"
+    write({'docs/design/wallet-protocol.md': "# wallet\n\n## Clients of the protocol\n\n- A native client.\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if the browser bridge is not named"
+    write({'docs/design/wallet-protocol.md': "# wallet\n\n## Clients of the protocol\n\n- A browser bridge.\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if native clients are not named"
+    write({'docs/design/wallet-protocol.md': "# wallet\n\n## Clients of the protocol\n\n- A browser bridge.\n\n## What runs\n\nA native client.\n"})
+    assert checks.check_wallet_presentation(tmp_path)[0].level == "FAIL", "must FAIL if a client is named outside the section"
 
 
 def test_auth_broker_check_discriminates(tmp_path):

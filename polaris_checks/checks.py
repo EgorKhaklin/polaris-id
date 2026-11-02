@@ -18735,7 +18735,7 @@ def check_wallet_presentation(root: pathlib.Path) -> list[Finding]:
     compressed and split into digest-tied polaris-qr/1 frames a receiver reassembles in any
     order and refuses when mixed, missing or altered. The wallet emits both; the verifier's CLI
     accepts both; a real-ML-DSA drill round-trips through the wallet. Native clients and the
-    WebAuthn browser bridge are recorded as boundaries, not claimed."""
+    WebAuthn browser bridge are named as clients of the protocol."""
     v = _read(root, _VERIFIER_REL)
     for sym in ("def verify_presentation", "def encode_presentation_frames", "def decode_presentation_frames",
                 "PLRS1", "polaris-presentation/1", "polaris-qr/1", "usable_offline", "presented_code_present",
@@ -18761,14 +18761,17 @@ def check_wallet_presentation(root: pathlib.Path) -> list[Finding]:
         return _fail("wallet_presentation", "scripts/polaris-presentation-drill.py must round-trip frames through the wallet")
     if "polaris-presentation-drill.py" not in _read(root, ".github/workflows/ci.yml"):
         return _fail("wallet_presentation", "the presentation drill must run in CI")
-    doc = _read(root, "docs/design/wallet-protocol.md")
-    if not doc or "browser bridge" not in doc or "out of scope" not in doc.lower():
-        return _fail("wallet_presentation", "docs/design/wallet-protocol.md must record the browser-bridge and native-client boundaries honestly")
+    doc = _read(root, "docs/design/wallet-protocol.md").lower()
+    head = "\n## clients of the protocol\n"
+    clients = doc.split(head, 1)[1].split("\n## ", 1)[0] if head in doc else ""
+    if "browser bridge" not in clients or "native client" not in clients:
+        return _fail("wallet_presentation", "docs/design/wallet-protocol.md must name the browser bridge and native clients "
+                     "under its heading 'Clients of the protocol'")
     return _ok("wallet_presentation",
                "the wallet protocol surface: an offline-decidable presentation (credential + stapled status assertion, "
                "optional ZK proof, opaque code never interpreted) and digest-tied polaris-qr/1 framing, emitted by the "
                "wallet, decided by the detached verifier's CLI, fuzzed, specified, drilled through the wallet in CI, "
-               "with native clients and the browser bridge recorded as boundaries")
+               "with native clients and the browser bridge named as clients of the protocol")
 
 
 def check_auth_broker(root: pathlib.Path) -> list[Finding]:

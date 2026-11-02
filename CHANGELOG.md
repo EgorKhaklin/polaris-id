@@ -99,6 +99,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - WIRE-SPEC 3.5 states what a status assertion does not bind: no relying party and no challenge, so until `expires_at` a copy passes its checks at any verifier that trusts the issuer, and its `max_window_seconds` is unsigned; a verifier that needs the presenter to hold the bound holder key requires a holder proof (3.15).
 - docs/design/anchoring.md states what a batch proof binds: the verify route recomputes the leaf from the anchor's row, so a proof it accepts is bound to that row; outside verification goes through the transparency log, which binds each batch root.
 - `check_claims_manifest` holds the OpenID certification wording on every page that states it: the certification sentence in each of the site's `description` and `og:description` tags, each tag read alone (a surface written `PATH#meta:NAME`), and the Certification Terms 3(e) sentence on each of those pages.
+- docs/design/wallet-protocol.md names the clients of the protocol under its own heading, and `check_wallet_presentation` holds that section: it fails unless the section names both the browser bridge and native clients.
 
 ### Fixed
 
