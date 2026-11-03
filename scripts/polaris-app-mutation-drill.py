@@ -80,6 +80,15 @@ many refusals it did not examine so the open surface cannot go quiet.
   python3 scripts/polaris-app-mutation-drill.py --limit 12      # a sample, for a quick look
   python3 scripts/polaris-app-mutation-drill.py --status 401 403 # only these answers
   python3 scripts/polaris-app-mutation-drill.py --exhaustive    # whole suite per mutation
+  python3 scripts/polaris-app-mutation-drill.py --all --shard 2/6  # one sixth of every refusal
+
+SHARDS. `--shard I/N` mutates one share of the examined refusals, so N runs together mutate each
+exactly once (scripts/test_app_drill.py proves the partition); the procedure drill's pattern.
+Refusals one DECLARED entry matches are dealt as one unit, so the shard that holds an entry's
+refusals can tell a live declaration from a stale one; an entry that matches no refusal at all
+belongs to no shard, and every shard reports it. The guards, the positive control and the
+negative control run in every shard. The weekly sweep runs six: unsharded, a run of 145
+refusals at about 83 s each passed the job's two hours (2026-10-29: 83 of 145).
 """
 from __future__ import annotations
 
@@ -140,6 +149,9 @@ DEFAULT_STATUSES = (401, 403, 409, 413, 429)
 #: `login_required` that cannot fire in a test, so the negative control correctly reported
 #: the harness as broken when the harness was fine and the control was badly chosen.
 CONTROL = ("/api/v1/auth/authorize", "not ok")
+
+#: Fewer refusals than this across polaris_web means the parser and the application have drifted.
+MIN_REFUSALS = 20
 
 #: Refusals nothing notices, each with the reason it is acceptable. A survivor with no entry
 #: here is the finding; an entry whose refusal is now covered is reported as stale, because a
@@ -471,6 +483,63 @@ def run_tests(targets: list[str], env: dict) -> tuple[bool, str]:
     return r.returncode == 0, text.strip().splitlines()[-1] if text.strip() else ""
 
 
+def parse_shard(text: str) -> tuple:
+    """`I/N` as (I, N), 1-based. Anything else is a usage error, never a silent full run."""
+    m = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", text or "")
+    if not m:
+        raise argparse.ArgumentTypeError("--shard takes I/N, as in 2/6, not %r" % text)
+    i, n = int(m.group(1)), int(m.group(2))
+    if n < 1 or not 1 <= i <= n:
+        raise argparse.ArgumentTypeError("--shard %s: need 1 <= I <= N" % text)
+    return i, n
+
+
+def matches(key: tuple, case: dict) -> bool:
+    """Whether a DECLARED (view, condition) entry names this refusal."""
+    view, cond = key
+    return view == case["view"] and cond in case["source"]
+
+
+def shard_units(cases: list, declared=None) -> list:
+    """The cases as units to deal: each refusal alone, except that every refusal one declared
+    entry matches is in the same unit (an entry may match several). Sorted by (module, line), so
+    N runs on N machines agree on who measures what."""
+    declared = DECLARED if declared is None else declared
+    ordered = sorted(cases, key=lambda c: (c["file"].name, c["line"]))
+    unit_of = list(range(len(ordered)))
+
+    def root(k):
+        while unit_of[k] != k:
+            unit_of[k] = unit_of[unit_of[k]]
+            k = unit_of[k]
+        return k
+    for key in declared:
+        hit = [k for k, c in enumerate(ordered) if matches(key, c)]
+        for k in hit[1:]:
+            unit_of[root(k)] = root(hit[0])
+    units: dict = {}
+    for k, c in enumerate(ordered):
+        units.setdefault(root(k), []).append(c)
+    return [units[r] for r in sorted(units)]
+
+
+def shard_cases(cases: list, shard: tuple, declared=None) -> list:
+    """The cases shard (I, N) mutates: units I-1, I-1+N, I-1+2N, ... of `shard_units`. Round
+    robin, because a refusal's cost is the cost of its route's test classes, and those differ by
+    two orders of magnitude (2026-10-29: 4 s for /api/heartbeat, 383 s for one on /tokens)."""
+    i, n = shard
+    return [c for k, unit in enumerate(shard_units(cases, declared)) if k % n == i - 1 for c in unit]
+
+
+def declarations_answered(full: list, mine: list, declared=None) -> set:
+    """The DECLARED entries this run can judge: those matching a refusal it mutated (a unit holds
+    all of an entry's refusals, so it holds them all), and those matching no examined refusal at
+    all, which belong to no shard and so to every shard. Unsharded, every entry."""
+    declared = DECLARED if declared is None else declared
+    return {k for k in declared
+            if any(matches(k, c) for c in mine) or not any(matches(k, c) for c in full)}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0] or None)
     ap.add_argument("--limit", type=int, help="mutate only the first N refusals")
@@ -486,6 +555,8 @@ def main() -> int:
     ap.add_argument("--probe-route", help=argparse.SUPPRESS)
     ap.add_argument("--exhaustive", action="store_true",
                     help="run the whole application suite per mutation, not the named classes")
+    ap.add_argument("--shard", type=parse_shard, default=(1, 1), metavar="I/N",
+                    help="mutate only shard I of N (1-based) of the refusals; N runs cover all")
     args = ap.parse_args()
     if args.probe_route:                      # the subprocess half of --probe
         return _probe_child(args.probe_route)
@@ -507,7 +578,7 @@ def main() -> int:
         for r in refusals(originals[m]):
             r["file"] = m
             found.append(r)
-    if len(found) < 20:
+    if len(found) < MIN_REFUSALS:
         print("== VOID: %d refusals found across %d module(s) of polaris_web. The parser and "
               "the application have drifted, so this drill is measuring nothing =="
               % (len(found), len(mods)), file=sys.stderr)
@@ -561,6 +632,21 @@ def main() -> int:
     scope = set(args.status or ([] if args.all else DEFAULT_STATUSES))
     cases = [r for r in found if not scope or r["status"] in scope]
     outside = [r for r in found if scope and r["status"] not in scope]
+    full_cases = cases
+    shard_i, shard_n = args.shard
+    if shard_n > 1:
+        units = shard_units(full_cases)
+        cases = shard_cases(full_cases, args.shard)
+        print("shard %d/%d: %d of these %d refusal(s), in %d of %d unit(s)\n"
+              % (shard_i, shard_n, len(cases), len(full_cases),
+                 len(units[shard_i - 1::shard_n]), len(units)), flush=True)
+        # An empty share is legitimate only when there are fewer units than this shard's
+        # number; any other empty shard is the partition losing work that no shard mutates.
+        if not cases and len(units) >= shard_i:
+            print("== FAIL: shard %d/%d received no refusal although the examined set has %d "
+                  "unit(s): the partition has dropped work no shard will mutate =="
+                  % (shard_i, shard_n, len(units)), file=sys.stderr)
+            return 1
     if args.limit:
         cases = cases[:args.limit]
 
@@ -631,8 +717,7 @@ def main() -> int:
     print("elapsed                        %d s" % (time.time() - started))
 
     def _declared(case):
-        return any(view == case["view"] and cond in case["source"]
-                   for (view, cond) in DECLARED)
+        return any(matches(key, case) for key in DECLARED)
 
     undeclared = [c for c in survivors + blind if not _declared(c)]
     if undeclared:
@@ -650,9 +735,13 @@ def main() -> int:
     # declaration as obsolete and exited 1 on a finding it had no evidence for: `--limit 4`
     # called 17 of them stale on 2026-09-18. Say so instead.
     partial = bool(args.limit) or bool(outside)
-    matched = sorted(k for k in DECLARED
-                     if any(k[0] == c["view"] and k[1] in c["source"] for c in survivors + blind))
-    unmatched = sorted(set(DECLARED) - set(matched))
+    # A shard judges the entries whose refusals it holds, all of them, and the entries that
+    # match no refusal at all; another shard's entries are that shard's to judge.
+    answered = declarations_answered(full_cases, cases)
+    if shard_n > 1:
+        print("\ndeclarations this shard answers for: %d of %d" % (len(answered), len(DECLARED)))
+    matched = sorted(k for k in answered if any(matches(k, c) for c in survivors + blind))
+    unmatched = sorted(answered - set(matched))
     # A partial run cannot prove a declaration OBSOLETE, because it did not examine most of
     # them. It can prove one LIVE, because a declaration matched by a survivor here is matched
     # whatever the rest of the run would have found. So report the half that is sound. When
@@ -666,12 +755,12 @@ def main() -> int:
                   "A partial run cannot prove a declaration stale, but a declaration matched "
                   "here is matched whatever the unexamined %d refusals would have shown, so "
                   "this audit is complete even though the run is not."
-                  % (len(DECLARED), len(found) - len(cases)))
+                  % (len(answered), len(found) - len(cases)))
         else:
             print("\ndeclarations: %d of %d matched a survivor in this run. The other %d were "
                   "not examined (%s), and a partial run cannot tell an obsolete declaration "
                   "from an unexamined one. Re-run with --all and no --limit: %s"
-                  % (len(matched), len(DECLARED), len(unmatched),
+                  % (len(matched), len(answered), len(unmatched),
                      "--limit" if args.limit else "status scope",
                      ", ".join("%s(%s)" % k for k in unmatched[:6])))
     if stale:

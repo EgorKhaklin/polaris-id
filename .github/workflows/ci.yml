@@ -1683,6 +1683,7 @@ jobs:
       - managed-postgres
       - test-oid4vp-drill
       - test-sdk-drill
+      - test-mdoc-drill
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1696,7 +1697,7 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: >-
           python3 scripts/polaris-ci-gate.py --changes changes
-          --always test-core,test-coverage,test-procedures
+          --always test-core,test-coverage,test-procedures,test-mdoc-drill
           --when full=test-app-role,test-zk,test-trigger-drill,test-trigger-refusals,ui-drill,docker-image,caddy-edge,page-drill,trace-drill,dr-drill,linux-install,custody-pkcs11,rolling-deploy,region-evacuation,ha-failover,helm-kind,pqc-real,pqc-real-web,federation-two-instances,image-cve-scan,prod-stack-boot,managed-postgres
           --when oid4vp=test-oid4vp-drill
           --when sdk=test-sdk-drill
@@ -3957,6 +3958,11 @@ jobs:
       # come from polaris_web/requirements.txt, installed above.
       - name: The mdoc captures against their two witnesses (lab/interop/mdoc/witness-eudi), every stage classified
         run: python -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py
+      # lab/interop/mdoc/verify_mdoc.py refuses each malformed input at the check that names it, with
+      # that check's reason: the CBOR reader, the COSE_Sign1 shape, the verifier's own OpenID4VP
+      # inputs, and the fields read before a signature decides. The vectors reach the rest.
+      - name: The mdoc verifier, each malformed input refused at its own check (lab/interop/mdoc/test_verify_mdoc.py)
+        run: python -m unittest lab/interop/mdoc/test_verify_mdoc.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.
@@ -4012,6 +4018,37 @@ jobs:
         env:
           POLARIS_DRILL_SHARD: "${{ matrix.shard }}/3"
         run: python scripts/polaris-oid4vp-mutation-drill.py --shard "$POLARIS_DRILL_SHARD"
+
+  # 2026-11-03: the mdoc verifier drill. lab/interop/mdoc/verify_mdoc.py judges the mdoc negative
+  # vectors other verifiers run; each refusal of its CBOR, COSE_Sign1, MSO, device-authentication
+  # and request checks is switched off one at a time, and the suites that read it (the vectors,
+  # test_verify_mdoc, the witness replay) must notice. Two shards (--shard, proved a partition by
+  # scripts/test_mdoc_drill.py) of about four minutes each. On every change: lab/interop/ is on
+  # the changes allowlist, so a change to the verifier alone would skip a job gated on the full
+  # suite.
+  test-mdoc-drill:
+    name: "mdoc verifier mutation drill, shard ${{ matrix.shard }} of 2"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+      - name: Install cbor2 and cryptography (verify_mdoc.py reads CBOR and checks ES256/ES384)
+        run: python -m pip install --quiet --require-hashes -r polaris_web/requirements.txt
+      - name: mdoc verifier mutation, one shard (each refusal of the CBOR, COSE_Sign1, MSO, device-authentication and request checks is noticed)
+        env:
+          POLARIS_DRILL_SHARD: "${{ matrix.shard }}/2"
+        run: python scripts/polaris-mdoc-mutation-drill.py --shard "$POLARIS_DRILL_SHARD"
 
   # 2026-10-15: the SDK mutation drill, out of Real PQC, where it had no time bound and took 65
   # minutes on a change to the detached verifier (run 38667231409). Every refusal in both reference

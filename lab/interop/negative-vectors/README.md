@@ -77,7 +77,8 @@ For it the refusal code counts too: each negative must be refused with the code 
 status list from the vector, in memory: no vector opens a socket.
 The run fails when a control is refused or a negative accepted, and also when the file holds no vectors, no
 control, or no negative the adapter judged, or when it judges a negative in a layer whose own control
-(`accept-status-list` for `status-list`) it left to its caller; a run that passes ends `done`.
+(`accept-status-list` for `status-list`) it left to its caller, or under a trust mode whose own control
+(`accept-x5c`, `accept-jwks`) it did not judge; a run that passes ends `done`.
 
 An adapter is one function, `(vector, settings) -> ("accept" | "reject", reason)`. `settings` holds the
 instant, nonce, audience, credential type, trust anchors (PEM) and issuer JWKs every vector assumes.
