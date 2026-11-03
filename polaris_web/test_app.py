@@ -4021,7 +4021,7 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                      cooldown_expires_at)
                 VALUES (
                     %s,
-                    CURRENT_TIMESTAMP - INTERVAL '50 hours',
+                    CURRENT_TIMESTAMP - INTERVAL '51 hours',
                     1,
                     %s,
                     %s,
@@ -4048,6 +4048,59 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
             rid = cur.fetchone()['recovery_id']
             conn.commit()
         return rid
+
+    def test_the_seed_request_loads_in_every_session_time_zone(self):
+        # 2026-11-03: the seed's request was 50h old with its cool-down 2h past, exactly the 48h
+        # of cooldown_window_minimum between two timestamp without time zone columns, in the
+        # session's wall time, so for two days after an autumn clock change the sample data did
+        # not load. Both are UTC wall time now. At an instant 11 hours after Antarctica/Troll set
+        # its clock back two hours, the seed's own span is 48 hours in every zone, its INSERT
+        # loads in a Troll session, and the same text in the session's wall time is refused,
+        # which shows the CHECK is what this measures.
+        with open(os.path.join(SQL_DIR, '10_auth.sql')) as fh:
+            seed = re.search(r"INSERT INTO RecoveryRequest\b.*?\);", fh.read(), re.S).group(0)
+        utc = "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'"
+        at = "TIMESTAMPTZ '2026-10-25 12:00:00+00'"
+        self.assertEqual(seed.count(utc), 2, seed)
+        self.assertEqual(seed.count("CURRENT_TIMESTAMP"), 2, seed)
+        self.assertEqual(len(re.findall(r"VALUES\s*\(5,", seed)), 1, seed)
+        requested, cooldown = re.findall(re.escape(utc) + r" - INTERVAL '\d+ hours'", seed)
+        # Two people, so only the CHECK can refuse the wall-time request (one PENDING request each).
+        iid, other = self._make_individual('Seed Clock UTC'), self._make_individual('Seed Clock Wall')
+        in_utc = re.sub(r"VALUES\s*\(5,", "VALUES (%d," % iid, seed).replace("CURRENT_TIMESTAMP", at)
+        in_wall = re.sub(r"VALUES\s*\(5,", "VALUES (%d," % other, seed).replace(utc, at)
+        self.assertNotIn("AT TIME ZONE", in_wall)
+        span = "SELECT (%s) - (%s) AS span" % (cooldown.replace("CURRENT_TIMESTAMP", at),
+                                              requested.replace("CURRENT_TIMESTAMP", at))
+        wall = "SELECT (%s)::timestamp - (%s)::timestamp AS span" % (cooldown.replace(utc, at),
+                                                                    requested.replace(utc, at))
+        with closing(self._new_conn()) as conn, conn.cursor() as cur:
+            cur.execute("SELECT name FROM pg_timezone_names ORDER BY name")
+            zones = [r['name'] for r in cur.fetchall()]
+            self.assertIn('Antarctica/Troll', zones)
+            self.assertGreater(len(zones), 300)
+            short = []
+            for zone in zones:
+                cur.execute("SELECT set_config('TimeZone', %s, true)", (zone,))
+                cur.execute(span)
+                self.assertEqual(cur.fetchone()['span'], timedelta(hours=48), zone)
+                cur.execute(wall)
+                if cur.fetchone()['span'] < timedelta(hours=48):
+                    short.append(zone)
+            # The control: in the session's wall time this database's zone data has Troll short.
+            self.assertIn('Antarctica/Troll', short)
+            cur.execute("SET LOCAL TIME ZONE 'Antarctica/Troll'")
+            cur.execute(wall)
+            self.assertEqual(cur.fetchone()['span'], timedelta(hours=46))
+            cur.execute(in_utc)
+            cur.execute("SELECT cooldown_expires_at - requested_at AS span FROM RecoveryRequest "
+                        "WHERE claimed_individual_id = %s", (iid,))
+            self.assertEqual(cur.fetchone()['span'], timedelta(hours=48))
+            cur.execute("SAVEPOINT wall")
+            with self.assertRaises(psycopg2.errors.CheckViolation) as ctx:
+                cur.execute(in_wall)
+            self.assertIn('cooldown_window_minimum', str(ctx.exception))
+            conn.rollback()
 
     def test_a_channel_is_recorded_through_the_console(self):
         """1.0.0-rc.60: the queue records a channel through /uc9/record-channel, attributed to
@@ -4295,7 +4348,7 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                     (claimed_individual_id, requested_at, requesting_agency_id,
                      requesting_user_id, biometric_verified, sworn_statement_hash,
                      witness_agency_id, witness_co_sign_user_id, cooldown_expires_at)
-                VALUES (%s, CURRENT_TIMESTAMP - INTERVAL '50 hours', 1, %s, TRUE, %s, 3, %s,
+                VALUES (%s, CURRENT_TIMESTAMP - INTERVAL '51 hours', 1, %s, TRUE, %s, 3, %s,
                         CURRENT_TIMESTAMP - INTERVAL '2 hours')
                 RETURNING recovery_id
             """, (iid, self._user_id('operator'), 'a' * 64, self._user_id('auditor')))
@@ -4422,7 +4475,7 @@ class CatastrophicLossRecoveryTests(PolarisTestCase):
                      cooldown_expires_at)
                 VALUES (
                     %s,
-                    CURRENT_TIMESTAMP - INTERVAL '50 hours',
+                    CURRENT_TIMESTAMP - INTERVAL '51 hours',
                     1, %s, TRUE, %s, 3, %s,
                     CURRENT_TIMESTAMP - INTERVAL '2 hours'
                 )
@@ -11338,7 +11391,7 @@ class ConcurrencyTests(PolarisTestCase):
                      cooldown_expires_at)
                 VALUES (
                     %s,
-                    CURRENT_TIMESTAMP - INTERVAL '50 hours',
+                    CURRENT_TIMESTAMP - INTERVAL '51 hours',
                     1, %s, TRUE, %s, 3, %s,
                     CURRENT_TIMESTAMP - INTERVAL '2 hours'
                 )
@@ -11412,7 +11465,7 @@ class ConcurrencyTests(PolarisTestCase):
                          cooldown_expires_at)
                     VALUES (
                         %s,
-                        CURRENT_TIMESTAMP - INTERVAL '50 hours',
+                        CURRENT_TIMESTAMP - INTERVAL '51 hours',
                         1, %s, TRUE, %s, 3, %s,
                         CURRENT_TIMESTAMP - INTERVAL '2 hours'
                     )
