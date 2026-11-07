@@ -192,9 +192,9 @@ click==8.5.0 \
     # via
     #   -r requirements-patroni.in
     #   patroni
-dnspython==2.9.0 \
-    --hash=sha256:9a4aedb833c3c1b49214d04d44d3032ab7a9135f7c1d29a549b4ff78fd82fda9 \
-    --hash=sha256:b44dc6b18f07a8b1c56676a19fbfdb5209415b046a9cece286baafa87ff3f7f1
+dnspython==2.9.1 \
+    --hash=sha256:7c81caf8de1ed57b8cfc7e0ad4f528a0b8ceace473c7eb946df195dc9def751f \
+    --hash=sha256:9a6d30e55f8dc63e6052597666112bff0586b95a2474a9deda03afbbf820d37a
     # via
     #   -r requirements-patroni.in
     #   python-etcd
@@ -313,9 +313,9 @@ psycopg-binary==3.3.6 \
     # via
     #   -r requirements-patroni.in
     #   psycopg
-py-consul==1.7.1 \
-    --hash=sha256:016fe49c65c68426e1c0353de2243865fd58e3c7a940413b6202c2becf3cfb04 \
-    --hash=sha256:a0b3912a0af449e1cd09c4aa710e53d1149c5edb3512a1becbe6475ed395761a
+py-consul==1.8.0 \
+    --hash=sha256:242f45d66c97224ecd04ba1dd4eb71053ed5a38dc7bb9b9387d2a882f7352d59 \
+    --hash=sha256:ed9ab0adb335d33ea84f7622f372411f8e288bb09aee5e7632264d28d285a52c
     # via
     #   -r requirements-patroni.in
     #   patroni
