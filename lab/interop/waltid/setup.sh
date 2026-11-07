@@ -88,6 +88,18 @@ open("wallet-service.conf", "w").write(
     "publicBaseUrl = \"http://localhost:7006\"\n\nclientIdTrust {\n  x509TrustAnchors = [\"" + pem + "\"]\n}\n")
 '
 docker cp wallet-service.conf "$CONTAINER:/waltid-wallet-api2/config/wallet-service.conf" >/dev/null
+
+# 5. wallet-api2 1.2.1 refuses outbound fetches to private networks unless the service opts in
+#    (config/network-fetch-guard.conf, loaded at startup since walt.id commit 1b59a0b9,
+#    2026-10-30). The verifier here is host.docker.internal, a private host-gateway address, so
+#    the walk opts in, as walt.id's own docker-compose does (69af9f08). Loopback, link-local and
+#    cloud-metadata addresses stay refused. Earlier images ignore the file.
+cat > network-fetch-guard.conf <<'CONF'
+allowLoopback = false
+allowPrivateNetworks = true
+trustedHostSuffixes = []
+CONF
+docker cp network-fetch-guard.conf "$CONTAINER:/waltid-wallet-api2/config/network-fetch-guard.conf" >/dev/null
 docker restart "$CONTAINER" >/dev/null
 for _ in $(seq 30); do curl -sf -m 2 "$WALTID/livez" >/dev/null 2>&1 && break; sleep 1; done
 
