@@ -1265,6 +1265,18 @@ class RefusalsCoverageFoundTests(unittest.TestCase):
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "disclosure")
 
+    def test_a_disclosure_that_is_not_utf8_is_refused(self):
+        """RFC 9901 section 7.1 step 3: a disclosure that is not base64url-encoded JSON is
+        rejected. Valid base64url over bytes that are not UTF-8 is refused where it is decoded,
+        never read with a replacement character into a disclosure that then hashes elsewhere."""
+        w = Wallet()
+        raw = json.dumps(["salt", "family_name", "Smith"], separators=(",", ":")).encode()
+        v = w.verify(w.present(extra_disclosure=b64u_encode(raw.replace(b"salt", b"sa\xf2lt"))))
+        self.assertFalse(v.authentic)
+        self.assertEqual(v.code, "disclosure")
+        self.assertIn("does not decode", v.reason)
+        self.assertIn("utf-8", v.reason)
+
     def test_a_key_binding_jwt_with_a_non_numeric_iat_is_refused(self):
         w = Wallet()
         v = w.verify(w.present(iat="yesterday"))
