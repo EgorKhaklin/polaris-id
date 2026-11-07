@@ -11,6 +11,11 @@ first run, is not an error. And every run's wallet used stores of one fixed name
 wallet held the first run's credential too and presented it, which the verifier refused under
 the new issuer key. Step 1 now names the stores for the run.
 
+wallet-api2 1.2.1 refuses outbound fetches to private networks unless the service opts in through
+config/network-fetch-guard.conf, read at startup, and the verifier the walk reaches is
+host.docker.internal, a private address. Step 5 copies in the opt-in walt.id's own docker-compose
+uses for that address, before the restart that loads it, and loopback stays refused.
+
 The tests run setup.sh's own lines under /bin/bash (3.2.57 on macOS, 5.2 on the Linux CI
 runners): step 4 against a `docker` whose keytool answers as keytool does (an alias that exists
 is refused on import, an absent one on delete), step 1 against a `curl` that records what it is
@@ -25,6 +30,7 @@ import unittest
 SETUP = pathlib.Path(__file__).resolve().parent / "setup.sh"
 STEP1 = ("\nSTORE=$(", "\n\n# 2.")
 STEP4 = ('docker cp "$PKI/tls.pem"', '\n"$PY" -c \'')
+RESTART = ('docker cp wallet-service.conf', '\nfor _ in $(seq 30)')
 
 FAKE_DOCKER = r'''#!/bin/bash
 # The container's keystore is a directory, one file per alias.
@@ -180,6 +186,45 @@ class StoresPerRun(unittest.TestCase):
                 self.assertIn("did not create the %s store" % kind, r.stderr)
                 self.assertFalse([c for c in calls if c.startswith("http://waltid.test/wallet ")],
                                  "no wallet is made without its stores")
+
+
+# Records each copy's destination (and the copied file under its own name) and each restart, in order.
+RECORDING_DOCKER = r'''#!/bin/bash
+case "$1" in
+  cp) echo "cp $3" >> "$FAKE_ROOT/calls.log"; cp "$2" "$FAKE_ROOT/copied-$(basename "$3")" ;;
+  restart) echo "restart $2" >> "$FAKE_ROOT/calls.log" ;;
+  *) echo "unexpected docker $*" >&2; exit 1 ;;
+esac
+'''
+
+
+class FetchGuard(unittest.TestCase):
+    """Step 5: the opt-in reaches the service's config directory before the restart that loads it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        (self.root / "bin").mkdir()
+        docker = self.root / "bin" / "docker"
+        docker.write_text(RECORDING_DOCKER)
+        docker.chmod(0o755)
+        (self.root / "wallet-service.conf").write_text("publicBaseUrl = \"http://localhost:7006\"\n")
+        (self.root / "restart.sh").write_text('set -euo pipefail\nCONTAINER=polaris-waltid\n' + lines(RESTART))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_the_opt_in_is_copied_before_the_restart_that_loads_it(self):
+        r = subprocess.run(["/bin/bash", str(self.root / "restart.sh")], cwd=self.root, capture_output=True,
+                           text=True, timeout=30,
+                           env={"PATH": "%s:/usr/bin:/bin" % (self.root / "bin"), "FAKE_ROOT": str(self.root)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.root / "calls.log").read_text().splitlines(), [
+            "cp polaris-waltid:/waltid-wallet-api2/config/wallet-service.conf",
+            "cp polaris-waltid:/waltid-wallet-api2/config/network-fetch-guard.conf",
+            "restart polaris-waltid"])
+        self.assertEqual((self.root / "copied-network-fetch-guard.conf").read_text().splitlines(),
+                         ["allowLoopback = false", "allowPrivateNetworks = true", "trustedHostSuffixes = []"])
 
 
 if __name__ == "__main__":

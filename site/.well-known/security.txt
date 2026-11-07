@@ -1,6 +1,17 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
 Contact: mailto:security@polaris-id.org
 Contact: https://github.com/EgorKhaklin/polaris-id/security/advisories/new
 Expires: 2027-10-01T00:00:00Z
 Preferred-Languages: en, ru
 Canonical: https://polaris-id.org/.well-known/security.txt
 Policy: https://github.com/EgorKhaklin/polaris-id/blob/main/SECURITY.md
+-----BEGIN PGP SIGNATURE-----
+
+iJEEARYKADkWIQTdYns4vMI2ovRht3i7pC3Ieij48AUCau5irRsUgAAAAAAEAA5t
+YW51MiwyLjUrMS4xMiwwLDMACgkQu6QtyHoo+PA34QEA0otKauzHVXGPhMqKi4Gx
+jCXjrwwUftTSIB7DV3CmzWcBAM7UbJMcca1j7o6nkZIkQXhrhIvcBJXiAtWu0jY3
+sG8E
+=3kl9
+-----END PGP SIGNATURE-----

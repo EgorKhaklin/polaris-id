@@ -73,6 +73,21 @@ RUN for m in server etcdctl etcdutl; do \
         left=$(grep -c '=> \.\./' "$m/go.mod"); \
         [ "$left" = 0 ] || { echo "$m: $left replace directive(s) to a sibling directory left" >&2; exit 1; }; \
     done
+# GO-2026-6865 (klauspost/compress, a panic on two-block frames) is fixed in compress v1.20.2;
+# etcd v3.6.16 requires v1.18.7 (indirect) in its server and etcdutl modules and in its root
+# module, which scripts/build.sh reads first and which reaches server through a replace to its
+# directory, and no etcd release requires a fixed one yet. Each of the three is raised to v1.20.2
+# with go get: a requirement, not a replace, so the check below that refuses "=>" still holds.
+# Drop this step at the first etcd 3.6 release that requires compress v1.20.2 or later; the build
+# fails if ETCD_VERSION moves to such a release while this step remains.
+RUN for m in . server etcdutl; do \
+        v=$(cd "$m" && go list -m -f '{{.Version}}' github.com/klauspost/compress) && [ -n "$v" ] || exit 1; \
+        case "$v" in \
+            v1.1[0-9].*|v1.20.[01]) ;; \
+            *) echo "$m requires klauspost/compress $v: drop this step" >&2; exit 1 ;; \
+        esac; \
+        (cd "$m" && go get github.com/klauspost/compress@v1.20.2) || exit 1; \
+    done
 RUN CGO_ENABLED=0 ./scripts/build.sh
 # etcd v3.6.16's go.mod requires only go 1.26.0, so an older Go here would compile it without
 # complaint: fail the build unless both binaries report go1.27.3 or a later release (Go 1.27.0
@@ -83,6 +98,14 @@ RUN for b in bin/etcd bin/etcdctl; do \
             1.27.[3-9]|1.27.[1-9][0-9]|1.2[89].[0-9]*|1.[3-9][0-9].[0-9]*) echo "$b: go$v" ;; \
             *) echo "$b reports go$v, older than go1.27.3" >&2; exit 1 ;; \
         esac; \
+    done
+# etcd links compress v1.20.2 and no other version; etcdctl links none or the same.
+RUN go version -m bin/etcd | awk '$1 == "dep" && $2 == "github.com/klauspost/compress" && $3 == "v1.20.2" {n++} \
+        END {exit n == 1 ? 0 : 1}' \
+        || { echo "bin/etcd does not link klauspost/compress v1.20.2" >&2; exit 1; }; \
+    for b in bin/etcd bin/etcdctl; do \
+        bad=$(go version -m "$b" | awk '$1 == "dep" && $2 == "github.com/klauspost/compress" && $3 != "v1.20.2"'); \
+        [ -z "$bad" ] || { printf '%s\n' "$bad" >&2; echo "$b links another klauspost/compress" >&2; exit 1; }; \
     done
 # Every module in both binaries carries a version, and none is replaced.
 RUN for b in bin/etcd bin/etcdctl; do \

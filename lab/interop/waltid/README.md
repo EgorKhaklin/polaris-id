@@ -57,7 +57,7 @@ walt.id parses `typ: dc+sd-jwt` (the OpenID4VP 1.0 final identifier, not the old
     polaris-oid4vp serve  --pki ./pki --host host.docker.internal --bind 0.0.0.0 \
                           --port 9443 --issuer-jwks issuer-jwks.json --once
 
-Two configuration steps on the walt.id side, both legitimate registration rather than
+Three configuration steps on the walt.id side, all legitimate registration rather than
 workarounds:
 
   * **TLS.** The listener's certificate is self-signed, and walt.id is right to refuse it.
@@ -71,6 +71,11 @@ workarounds:
     PEM, as one quoted string with escaped newlines. The type's own comment says "DERs in
     base64 format"; base64 DER crashes the service with `Invalid PEM` at startup, which is
     also the quickest way to prove the key is being read at all.
+  * **The outbound-fetch guard.** wallet-api2 1.2.1 refuses requests to private networks
+    unless the service opts in, and the verifier on the Docker host is one. In
+    `/waltid-wallet-api2/config/network-fetch-guard.conf`, `allowPrivateNetworks = true`,
+    the setting walt.id's own docker-compose uses for the same address; loopback stays
+    refused.
 
 ## 4. The exchange
 
