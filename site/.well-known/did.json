@@ -1,0 +1,21 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/multikey/v1"
+  ],
+  "id": "did:web:polaris-id.org",
+  "verificationMethod": [
+    {
+      "id": "did:web:polaris-id.org#openpgp-dd627b38bcc236a2f461b778bba42dc87a28f8f0",
+      "type": "Multikey",
+      "controller": "did:web:polaris-id.org",
+      "publicKeyMultibase": "z6MkutmwCPiAerju78TRFzeS8BB1f4HNdmGDjYYkUzJ1duw1"
+    }
+  ],
+  "authentication": [
+    "did:web:polaris-id.org#openpgp-dd627b38bcc236a2f461b778bba42dc87a28f8f0"
+  ],
+  "assertionMethod": [
+    "did:web:polaris-id.org#openpgp-dd627b38bcc236a2f461b778bba42dc87a28f8f0"
+  ]
+}
