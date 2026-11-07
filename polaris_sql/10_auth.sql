@@ -80,6 +80,11 @@ INSERT INTO AppUser (username, password_hash, role) VALUES
 -- the APPROVED path end-to-end. In production these are set by the
 -- out-of-band verification processes that happen between phase 1 and
 -- phase 2.
+--
+-- Both timestamps are UTC wall time, as requested_at's own default writes it:
+-- cooldown_window_minimum needs 48h between requested_at and
+-- cooldown_expires_at, both timestamp without time zone, so a session's own
+-- clock change must not enter that span.
 -- ----------------------------------------------------------------------------
 INSERT INTO RecoveryRequest
     (claimed_individual_id, requested_at, requesting_agency_id,
@@ -87,7 +92,7 @@ INSERT INTO RecoveryRequest
      witness_agency_id, witness_co_sign_user_id, cooldown_expires_at)
 VALUES
     (5,                                                  -- David Okafor
-     CURRENT_TIMESTAMP - INTERVAL '50 hours',            -- requested 50h ago
+     CURRENT_TIMESTAMP AT TIME ZONE 'UTC' - INTERVAL '50 hours',  -- requested 50h ago
      1,                                                  -- federal issuer
      (SELECT user_id FROM AppUser WHERE username='operator'),
      TRUE,
@@ -97,7 +102,7 @@ VALUES
      -- who requested nor the admin who will approve — the three channels must
      -- be three different actors (witness_differs_from_parties).
      (SELECT user_id FROM AppUser WHERE username='auditor'),
-     CURRENT_TIMESTAMP - INTERVAL '2 hours');            -- cool-down past
+     CURRENT_TIMESTAMP AT TIME ZONE 'UTC' - INTERVAL '2 hours');  -- cool-down past
 
 -- ----------------------------------------------------------------------------
 -- v8.22 / R11-3 / M2-8 — Federation trust graph seed (8 attestations).

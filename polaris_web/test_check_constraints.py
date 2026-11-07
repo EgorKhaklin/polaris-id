@@ -1923,7 +1923,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 ind = cur.fetchone()["individual_id"]
                 cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
                             "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
-                            "(%s, now() - interval '50 hours', 1, %s, now() - interval '2 hours') "
+                            "(%s, now() - interval '51 hours', 1, %s, now() - interval '2 hours') "
                             "RETURNING recovery_id", (ind, operator))
                 rid = cur.fetchone()["recovery_id"]
         finally:
@@ -2017,7 +2017,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                 def request(individual, agency):
                     cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
                                 "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
-                                "(%s, now() - interval '50 hours', %s, %s, now() - interval '2 hours') "
+                                "(%s, now() - interval '51 hours', %s, %s, now() - interval '2 hours') "
                                 "RETURNING recovery_id", (individual, agency, operator))
                     return cur.fetchone()["recovery_id"]
                 by_bank = request(person["individual_id"], 5)
@@ -2055,7 +2055,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                             "decision_reason = 'fixture' WHERE recovery_id = %s", (by_california,))
                 cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
                             "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
-                            "(%s, now() - interval '50 hours', 2, %s, now() - interval '2 hours') "
+                            "(%s, now() - interval '51 hours', 2, %s, now() - interval '2 hours') "
                             "RETURNING recovery_id", (tokenless, operator))
                 by_pennsylvania = cur.fetchone()["recovery_id"]
         finally:
@@ -2097,7 +2097,7 @@ class TestC1PrivilegeBoundary(unittest.TestCase):
                     ind = cur.fetchone()["individual_id"]
                     cur.execute("INSERT INTO RecoveryRequest (claimed_individual_id, requested_at, "
                                 "requesting_agency_id, requesting_user_id, cooldown_expires_at) VALUES "
-                                "(%s, now() - interval '50 hours', 1, %s, now() - interval '2 hours') "
+                                "(%s, now() - interval '51 hours', 1, %s, now() - interval '2 hours') "
                                 "RETURNING recovery_id", (ind, operator))
                     rids.append(cur.fetchone()["recovery_id"])
                 open_rid, decided_rid = rids
