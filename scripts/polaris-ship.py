@@ -158,7 +158,8 @@ VERIFICATION = [
      "and each of the walk's verdicts passes and fails where it should"),
     (r"^lab/interop/negative-vectors/",
      ["python3 -m unittest lab/interop/negative-vectors/test_vectors.py",
-      "python3 -m unittest lab/interop/status-list/revoked/test_fixture.py"],
+      "python3 -m unittest lab/interop/status-list/revoked/test_fixture.py",
+      "python3 scripts/polaris-mdoc-mutation-drill.py"],
      "the negative vectors moved (lab, record 018): regenerated, and every verdict reached"),
     (r"^lab/interop/status-list/revoked/",
      ["python3 -m unittest lab/interop/status-list/revoked/test_fixture.py"],
@@ -174,6 +175,8 @@ VERIFICATION = [
      "the stranger's step 4 moved: run again, the wallet must trust the new certificate and hold only the new credential"),
     (r"^lab/interop/mdoc/",
      ["python3 -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py",
+      "python3 -m unittest lab/interop/mdoc/test_verify_mdoc.py",
+      "python3 scripts/polaris-mdoc-mutation-drill.py",
       "lab/interop/mdoc/witness-eudi/run.sh if a witness, a case or verify_mdoc.py changed"],
      "the mdoc lab moved (record 025, M1b): M1's captures against the two witnesses' recorded verdicts"),
     (r"^lab/interop/oid4vcgo/",
@@ -377,7 +380,8 @@ UNSHARDED_SUITES = {
                 "test_sbom_enrich", "test_issuance_scope", "test_pin_chart_images", "test_release_tag_guard",
                 "test_chain_anchor_tool",
                 "test_migrate_runner", "test_coverage_script",
-                "test_trigger_drill", "test_procedure_drill", "test_oid4vp_drill", "test_sdk_drill",
+                "test_trigger_drill", "test_procedure_drill", "test_oid4vp_drill", "test_sdk_drill", "test_app_drill",
+                "test_mdoc_drill",
                 "test_ci_changes", "test_ci_gate", "test_compose_parse", "test_operator_env", "test_key_event",
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
                 "test_event_partition_migration", "test_database_settings", "test_db_state", "test_db_reference",
@@ -406,6 +410,7 @@ UNSHARDED_SUITES = {
     # Needs requirements.txt there; without it the suite skips here and CI, which installs it, runs it.
     "packages/polaris-oid4vp/examples/yivi-checkin": ["test_checkin"],
     "lab/interop/mdoc/witness-eudi": ["test_witness_eudi"],
+    "lab/interop/mdoc": ["test_verify_mdoc"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
@@ -445,6 +450,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/waltid":       ("unittest", None),
     "packages/polaris-oid4vp/examples/yivi-checkin": ("unittest", None),
     "lab/interop/mdoc/witness-eudi": ("unittest", None),
+    "lab/interop/mdoc":         ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
 }
@@ -1666,7 +1672,8 @@ def _with_this_interpreter(cmd):
 #: full suites: on the merge export of a change to the detached verifier it took 106 minutes in
 #: one process (259 refusals), the slowest step before that change's push. Each shard copies the
 #: tree into a temporary directory of its own and none touches a database, so they share nothing.
-SHARDED_DRILLS = {"python3 scripts/polaris-sdk-mutation-drill.py": 3}
+SHARDED_DRILLS = {"python3 scripts/polaris-sdk-mutation-drill.py": 3,
+                  "python3 scripts/polaris-mdoc-mutation-drill.py": 2}
 
 
 def _run_drill(cmd):

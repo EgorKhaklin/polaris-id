@@ -6,7 +6,9 @@
 # it, and a full local run that day found 25 refusals nothing noticed (malformed
 # input, missing rows, a proof index past the end), which is exactly how a guarantee
 # nobody runs stops being one. They are covered now; this sweep keeps them covered.
-# A full run is about forty minutes, which is why it is weekly rather than per push.
+# Six shards (`--shard I/6`, proved a partition by scripts/test_app_drill.py): in one
+# job the 145 refusals, about 83 s each, never finished inside two hours (2026-10-01
+# to 10-29; on 10-29 it reached 83). Weekly rather than per push, for the same cost.
 # ============================================================================
 name: Application sweep (every refusal)
 
@@ -25,9 +27,14 @@ env:
 
 jobs:
   sweep:
-    name: Every application refusal, against the suites
+    name: "Every application refusal, against the suites, shard ${{ matrix.shard }} of 6"
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      # Every shard reports, so one red shard does not hide what the others measured.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     services:
       postgres:
         image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
@@ -97,5 +104,7 @@ jobs:
             psql -h localhost -U postgres -d polaris_test -v ON_ERROR_STOP=1 -f "$f"
           done
 
-      - name: Every application refusal, against the suites
-        run: python scripts/polaris-app-mutation-drill.py --all
+      - name: Every application refusal, against the suites, one shard
+        env:
+          POLARIS_APP_SWEEP_SHARD: "${{ matrix.shard }}/6"
+        run: python scripts/polaris-app-mutation-drill.py --all --shard "$POLARIS_APP_SWEEP_SHARD"

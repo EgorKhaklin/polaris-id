@@ -1,0 +1,45 @@
+# ============================================================================
+# vector-quotes.yml - every quoted clause in the negative vectors, in the section it cites.
+#
+# lab/interop/negative-vectors/quotes.py fetches each document the vectors cite from an
+# immutable source (the RFC Editor's text, the IETF archive's text of the cited draft revision,
+# the OpenID Foundation's final page) and refuses one whose SHA-256 is not the pinned one: the
+# fetch step goes red naming the URL, and a person re-pins after reading the change. Then each
+# quote must be found, word for word, in the section its clause cites: the check step goes red
+# naming the vector and the clause. It runs even when a fetch failed, and a document that is not
+# there is red too.
+#
+# Weekly, never on a pull request, and no network in the pull-request suite: its side is offline
+# (test_vectors.py, class Quotes: the manifest places every cited reference), so a new clause
+# without a manifest row is red there.
+# ============================================================================
+name: Vector quotes (every clause in the section it cites)
+
+on:
+  schedule:
+    - cron: "37 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quotes:
+    name: Every quoted clause, in the section of the pinned document it cites
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Fetch each cited document, against its pinned SHA-256
+        run: python lab/interop/negative-vectors/quotes.py --fetch "$RUNNER_TEMP/cited"
+
+      - name: Each quote in the section it cites
+        if: ${{ !cancelled() }}
+        run: python lab/interop/negative-vectors/quotes.py --check "$RUNNER_TEMP/cited"

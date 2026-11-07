@@ -11,7 +11,8 @@ An adapter is one function: (vector, settings) -> ("accept" | "reject", a short 
 (exit 1) when a control is refused, because then every refusal it reports measured nothing, when a
 negative vector is accepted, when polaris-oid4vp refuses one with another code than POLARIS_OID4VP_CODES
 names, and when the file holds no vectors, no control, or no negative the adapter judged, or judges a negative
-in a layer whose own control (an accept-* vector of that layer) it left to its caller. Exit 2: the adapter could not run. A run that passes ends "done".
+in a layer whose own control (an accept-* vector of that layer) it left to its caller, or under a trust mode whose
+own control (accept-x5c, accept-jwks) it did not judge. Exit 2: the adapter could not run. A run that passes ends "done".
 
 A control is a vector of class `control`. A vector with a `repaired` twin (mdoc-vectors.json) is run twice: the vector
 as it stands, and its twin, the same vector with its one defect put back, which must be accepted (a refused twin means
@@ -254,7 +255,7 @@ def main(argv=None):
     _JS_FILE.append(os.path.abspath(args.vectors))
     run = ADAPTERS[args.adapter]
     results, wrong = [], []
-    kind, layer = {}, {}  # per row id: its class and its layer
+    kind, layer, trust = {}, {}, {}  # per row id: its class, its layer and its trust mode (none for mdoc)
     rows = []
     for vector in doc["vectors"]:
         rows.append(vector)
@@ -263,7 +264,7 @@ def main(argv=None):
             rows.append(dict({k: v for k, v in vector.items() if k != "repaired"}, **vector["repaired"],
                              id=vector["id"] + "+repaired", expected="accept", **{"class": "repaired"}))
     for vector in rows:
-        kind[vector["id"]], layer[vector["id"]] = vector["class"], vector["layer"]
+        kind[vector["id"]], layer[vector["id"]], trust[vector["id"]] = vector["class"], vector["layer"], vector.get("trust")
         try:
             got, why = run(vector, doc["settings"])
         except Exception as e:  # noqa: BLE001: an adapter that cannot judge a vector stops the run
@@ -296,6 +297,15 @@ def main(argv=None):
         if judged_here and not any(r["ok"] is not None for r in layer_controls):
             print("the %s layer: %d negatives judged and its control %s not: they measured nothing"
                   % (name, len(judged_here), ", ".join(r["id"] for r in layer_controls)), file=sys.stderr)
+            return 1
+    # A trust mode (x5c, jwks) is measured only with its own control, the plain accept-* vector of that mode: a
+    # negative judged under jwks while accept-jwks is missing or left to the caller measured nothing, since a
+    # verifier that refuses every credential of that mode also makes it.
+    for mode in sorted({trust[r["id"]] for r in negatives if trust[r["id"]]}):
+        if not any(trust[r["id"]] == mode and layer[r["id"]] == "control" for r in controls):
+            judged_here = [r for r in negatives if trust[r["id"]] == mode]
+            print("the %s trust mode: %d negatives judged and no control of that mode: they measured nothing"
+                  % (mode, len(judged_here)), file=sys.stderr)
             return 1
     if args.json:
         with open(args.json, "w") as fh:
