@@ -5,6 +5,7 @@ type: software
 authors:
   - family-names: Khaklin
     given-names: Egor
+    orcid: "https://orcid.org/0009-0007-0625-6655"
 version: "1.0.0"
 date-released: "2026-10-11"
 repository-code: "https://github.com/EgorKhaklin/polaris-id"
