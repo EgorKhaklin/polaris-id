@@ -1,0 +1,27 @@
+{
+  "@context": "https://w3id.org/codemeta/3.0",
+  "@type": "SoftwareSourceCode",
+  "name": "Polaris ID",
+  "description": "Polaris ID: a pre-pilot, issuer-unlinkable, duress-aware identity-token system signed with ML-DSA-65 under an audited algorithm-migration path",
+  "version": "1.0.0",
+  "datePublished": "2026-10-11",
+  "license": "https://spdx.org/licenses/Apache-2.0",
+  "codeRepository": "https://github.com/EgorKhaklin/polaris-id",
+  "url": "https://polaris-id.org/",
+  "author": [
+    {
+      "@type": "Person",
+      "@id": "https://orcid.org/0009-0007-0625-6655",
+      "givenName": "Egor",
+      "familyName": "Khaklin"
+    }
+  ],
+  "keywords": [
+    "digital identity",
+    "post-quantum cryptography",
+    "zero-knowledge proofs",
+    "ML-DSA",
+    "anti-coercion"
+  ],
+  "programmingLanguage": ["Python", "Shell", "PLpgSQL", "TypeScript"]
+}
