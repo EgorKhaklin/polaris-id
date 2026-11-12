@@ -2304,6 +2304,29 @@ class ListsAndRecordsAtScaleTests(PolarisTestCase):
         self.assertEqual(log.count('pill-FULL') + log.count('pill-SELECTIVE'), total,
                          'the log filtered by the credential shows every verification of it')
 
+    def test_the_log_refuses_a_credential_filter_that_is_no_number(self):
+        # 2 ** 63 is one past the largest key; '%23' is a '#' with no number after it.
+        for raw in ('abc', '12x', '0', '-3', '1.5', '%23', str(2 ** 63)):
+            with self.subTest(token_id=raw):
+                r = self.client.get('/verifications?token_id=' + raw)
+                self.assertEqual(r.status_code, 400)
+                self.assertIn('token_id must be a credential number', r.get_data(as_text=True))
+        # A number, with or without its '#', filters: the page shows that credential's verifications
+        # and no zero-knowledge row, which names no credential. An empty value is no filter.
+        tok = _sql("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1",
+                   fetch='one')['token_id']
+        self._verifications(2, token_id=tok)
+        self._verifications(2)
+        of_tok = _sql("SELECT count(*) AS n FROM VerificationEvent WHERE token_id = %s", (tok,), fetch='one')['n']
+        for raw, filtered in ((str(tok), True), ('%%23%d' % tok, True), ('', False)):
+            with self.subTest(a_number_or_no_filter=raw):
+                r = self.client.get('/verifications?page_size=500&token_id=' + raw)
+                self.assertEqual(r.status_code, 200)
+                log = r.get_data(as_text=True)
+                self.assertEqual('pill-ZERO_KNOWLEDGE' in log, not filtered)
+                if filtered:
+                    self.assertEqual(log.count('pill-FULL') + log.count('pill-SELECTIVE'), of_tok)
+
     def test_an_investigation_counts_up_to_its_cap(self):
         tok = _sql("SELECT token_id FROM IdentityToken WHERE status = 'ACTIVE' ORDER BY token_id LIMIT 1",
                    fetch='one')['token_id']
@@ -23863,6 +23886,17 @@ class WalletCopyIssuanceTests(PolarisTestCase):
     def _unbind(self):
         with self.client.session_transaction() as sess:
             _bind_account(sess, None)
+
+    def test_no_offer_for_a_number_no_credential_holds(self):
+        # Asked by an account bound to no authority, so the answer is the plain one.
+        missing = flask_app.query("SELECT COALESCE(MAX(token_id), 0) + 1000 AS n FROM IdentityToken",
+                                  fetch='one')['n']
+        offered = "SELECT count(*) AS n FROM AuthAuditLog WHERE event_type = 'WALLET_COPY_OFFERED'"
+        before = flask_app.query(offered, fetch='one')['n']
+        r = self._offer(missing)
+        self.assertEqual(r.status_code, 404, r.get_data(as_text=True)[:300])
+        self.assertEqual(r.get_json(), {'error': 'not_found'})
+        self.assertEqual(flask_app.query(offered, fetch='one')['n'], before, 'no offer is recorded')
 
     def test_the_offer_uri_carries_the_offer(self):
         import json as _json

@@ -191,12 +191,6 @@ DECLARED: dict[tuple[str, str], str] = {
     # federation-instances drill (measured: it goes red), which unit tests cannot drive.
     ("api_v1_exchange", "_canonical_body_hash"): "body not bound to the signed envelope: federation-instances "
                                "drill, 'the receipt ... binds BOTH bodies' (measured 2026-09-24)",
-    # Masked by the register itself: HolderKeyEvent's CHECKs (chk_holder_key_event, _hex,
-    # _algorithm) refuse each value, and the route answers that refusal 400 through
-    # db_error_to_message. The route check gives the better message; the table is the boundary.
-    # With both removed, HolderKeyBindingTests.test_only_an_accepted_parameter_set_is_registered
-    # fails (measured 2026-09-24: an Ed25519 binding was issuer-signed).
-    ("api_v1_holder_key_bind", "event not in"): "masked by chk_holder_key_event, answered 400",
     # 1.0.0-rc.43: a bound operator's hidden credential is refused before the write. On these two
     # the write itself runs as the application role, so the token policy already scopes the
     # UPDATE and the DELETE to nothing; measured one route at a time on rc.42, neither changed
@@ -206,13 +200,15 @@ DECLARED: dict[tuple[str, str], str] = {
         "masked by the token policy on the write (measured rc.42); defence in depth",
     ("tokens_delete", "session.get('operator_agency_id') is not None"):
         "masked by the token policy on the write (measured rc.42); defence in depth",
+    # Masked by the register itself: HolderKeyEvent's CHECKs (chk_holder_key_hex, _algorithm)
+    # refuse each value, and the route answers that refusal 400 through db_error_to_message. The
+    # route check gives the better message; the table is the boundary. With both removed,
+    # HolderKeyBindingTests.test_only_an_accepted_parameter_set_is_registered fails (measured
+    # 2026-09-24: an Ed25519 binding was issuer-signed).
     ("api_v1_holder_key_bind", "re.fullmatch"): "masked by chk_holder_key_hex, answered 400",
     ("api_v1_holder_key_bind", "holder_alg not in"): "masked by chk_holder_key_algorithm (2026-09-24), answered 400",
     ("api_v1_exchange_receipt_signed", "_EXCHANGE_MINT_WINDOW"): "stale mint time: federation-instances drill, "
                                               "'a STALE signed time (30 min) rejects (401)'",
-    ("api_v1_exchange_receipt_signed", "not ok"): "bad mint signature: federation-instances drill, "
-                                              "'an UNATTESTED requester is not authorized: 403 "
-                                              "even under a valid responder signature'",
 
     # The coarse velocity bounds: 120 to 600 requests per minute, per authority or per
     # requester key. Driving one in a unit test means issuing hundreds of real timestamps or
