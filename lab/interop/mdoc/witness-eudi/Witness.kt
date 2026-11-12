@@ -6,15 +6,16 @@
 //
 //   java -cp /workspace/BOOT-INF/classes:/workspace/BOOT-INF/lib/*:/driver WitnessKt /in/jobs.json
 //
-// Its mdoc decoding, MSO signature, value digests and device signature are walt.id's
-// (waltid-mdoc-credentials 0.11.0, the library that built the captures), so they are reported
-// but never counted. What is counted, each from the verifier's own code:
+// Its mdoc decoding, MSO signature, value digests, docType match and device signature rest on walt.id's
+// (waltid-mdoc-credentials 0.11.0). The mdoc lane (../, whose captures that library built)
+// reports them and never counts them; ../../altid counts them, since walt.id built none of its
+// vectors. What both lanes count, each from the verifier's own code:
 //   transcript  the SessionTranscript bytes its private toHandover() and SessionTranscript build
 //               from (client_id, nonce, encryption JWK or null, response_uri), dumped, not inferred
 //               from a signature check (DocumentValidator.kt toHandover, SessionTranscript);
 //   trust       its IsChainTrustedForAttestation.msoMdocIssuance(chain, docType) over the
 //               usingTrustAnchors(roots) PKIX check (revocation off), with the develop profile's
-//               attestation classifications; with no roots, its shipped fallback
+//               attestation classifications and our "av" entry (below); with no roots, its shipped fallback
 //               IsChainTrustedForContextF.Ignored, which trusts any chain: "trust not witnessed";
 //   validity    its DocumentValidator's ExpiredValidityInfo verdict at the capture's instant.
 // The x5chain is read with com.upokecenter.cbor (not walt.id). One JSON line per case, prefixed
@@ -84,10 +85,15 @@ import eu.europa.ec.eudi.etsi1196x2.consultation.AttestationClassifications as C
 private const val MSO = "eu.europa.ec.eudi.verifier.endpoint.adapter.out.mso"
 
 // The develop profile's verifier.attestation-classifications: the PID docType as pid, the mDL as eaa "mDL".
+// The eaa "av" entry is not the verifier's: it is our classification input, so that its own trust and validity
+// code runs on eu.europa.ec.av.1, the docType of ../../altid. Without it the verifier answers NoClassification.
 private val classifications =
     ConsultationAttestationClassifications(
         pids = AttestationIdentifierPredicate.any(setOf(AttestationIdentifier.MDoc("eu.europa.ec.eudi.pid.1"))),
-        eaAs = mapOf("mDL" to AttestationIdentifierPredicate.any(setOf(AttestationIdentifier.MDoc("org.iso.18013.5.1.mDL")))),
+        eaAs = mapOf(
+            "mDL" to AttestationIdentifierPredicate.any(setOf(AttestationIdentifier.MDoc("org.iso.18013.5.1.mDL"))),
+            "av" to AttestationIdentifierPredicate.any(setOf(AttestationIdentifier.MDoc("eu.europa.ec.av.1"))),
+        ),
     )
 
 private fun pem(path: String): List<X509Certificate> =

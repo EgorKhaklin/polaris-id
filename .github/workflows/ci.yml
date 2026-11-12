@@ -3963,6 +3963,12 @@ jobs:
       # inputs, and the fields read before a signature decides. The vectors reach the rest.
       - name: The mdoc verifier, each malformed input refused at its own check (lab/interop/mdoc/test_verify_mdoc.py)
         run: python -m unittest lab/interop/mdoc/test_verify_mdoc.py
+      # lab/interop/altid: an age-verification response checked against the AltID integration
+      # guide's Appendix D, over its 23 vectors; the tunnel runner's cleanup; and the
+      # witness table rebuilt from the recorded outputs, with its control. cbor2 and cryptography
+      # as above; no network, no Docker.
+      - name: The AltID age-verification lab, each response refused at its own step (lab/interop/altid/test_avp.py)
+        run: python -m unittest lab/interop/altid/test_avp.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.

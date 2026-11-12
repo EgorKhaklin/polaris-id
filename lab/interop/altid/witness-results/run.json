@@ -1,0 +1,16 @@
+{
+ "ran_at": "2026-11-13T01:00:52Z",
+ "eu_image": "ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint@sha256:b56390f2078f9ce705f2b20db86fdd52297c0a587dd4110c82f173c223a3a07f",
+ "jdk_image": "gradle:8.14.3-jdk21@sha256:21bd311ed01360c189b8870c6b6e988199ff10f72d445d02fb39d3cff9da91d7",
+ "node_image": "node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+ "python_image": "python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70",
+ "kotlinc_sha256": "ba1b9e6eb6ddc3275079224f2e9ea4a2b02eef7d59ce2d38404f04b22613c20a",
+ "isomdl_wheel_sha256": "7bc9a48af109f5c0a5754c2ef89ee351421dd1010ae8ea217214335af036729c",
+ "isomdl_uniffi": "0.2.0",
+ "owf_mdoc": "0.9.0",
+ "network": "none",
+ "docker": "29.9.2",
+ "phase1_hosts": [
+  "registry.npmjs.org"
+ ]
+}
