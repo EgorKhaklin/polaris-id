@@ -5,8 +5,9 @@
 #
 # The README's sequence as one command. Everything runs from a scratch directory: a fresh venv with
 # polaris-oid4vp from PyPI, the verifier's test PKI, and the wallet from its image, unmodified (only
-# its configuration is touched, by setup.sh: the listener's certificate in its trust store and the
-# request-object anchor in its client-id trust). walt.id generates the holder key itself; the
+# its configuration is touched, by setup.sh: the listener's certificate in its trust store, the
+# request-object anchor in its client-id trust, and the outbound-fetch guard's opt-in for the
+# verifier's private address). walt.id generates the holder key itself; the
 # credential is bound to the public half it reports.
 #
 #   lab/interop/waltid/run.sh                                          # wallet-api2 1.1.1, by digest

@@ -20,47 +20,25 @@
 # until it is taken on purpose; Go's checksum database verifies the module.
 #
 # Both stages are digest-pinned (v9.114 discipline); Dependabot's docker
-# ecosystem tracks the FROM digests. The runtime stage is the SAME image the
-# compose pinned before (caddy:2.11.4-alpine = caddy:2-alpine @ 77c07d5e); we
-# only swap the binary for one that includes the plugin.
+# ecosystem tracks the FROM digests. The runtime stage is the stock Caddy image
+# of the builder's release; we only swap the binary for one that includes the
+# plugin.
 #
 # Build context is polaris_web/ (see docker-compose.prod.yml: context: .).
 # ============================================================================
-FROM caddy:2.11.4-builder-alpine@sha256:0aa610043dab5da82ad0a0268e46bb852785e6f5160f12f1c6fe3f42903d7e1b AS builder
+FROM caddy:2.11.9-builder-alpine@sha256:d26fbc8a56ed8c3c1534f5573162d148ad3ed41732665da8526eb181fac0b728 AS builder
 
-# The Go toolchain has a FLOOR, as the modules below do. This builder digest ships
-# Go 1.26.8, and the Go standard library is compiled into the binary: CVE-2026-56857
-# (CRITICAL, os.Root's Mkdir and MkdirAll can follow junctions out of the root) is
-# fixed in Go 1.26.9, and Trivy gates on fixable CRITICAL. GOTOOLCHAIN makes the go
-# command fetch go1.26.10, which also carries crypto/x509 security fixes, from the
-# module proxy, verified against the checksum database like the modules below.
-# Remove it once Dependabot's builder digest carries Go >= 1.26.10 on its own.
-ENV GOTOOLCHAIN=go1.26.10
-# Fail the build once that is true: the line above forces go1.26.10, so a builder
-# that ships a newer Go (or names none) would otherwise compile with the older one.
-RUN case "$GOLANG_VERSION" in 1.26.[0-9]) ;; *) echo "builder ships Go $GOLANG_VERSION: remove GOTOOLCHAIN=go1.26.10" >&2; exit 1;; esac
 
 # Compile the edge rate-limiter into the binary. Add future --with plugins here.
 #
-# The --replace lines are dependency FLOORS, not plugins. Caddy 2.11.4's module
-# graph resolves each of these modules below the release that fixes an advisory
-# against it, in Go's vulnerability database or in Trivy's report for the image.
-# Each floor is that release, or the release another floor's module graph requires
-# (x/net v0.62.0 requires x/crypto v0.58.0, otel/sdk v1.45.0 requires otel v1.45.0, and
-# autoexport v0.70.0 brings compress v1.19.1), so no floor undercuts another:
-#   golang.org/x/crypto            v0.58.0  GO-2026-6354, 6355 (ssh)
-#   golang.org/x/net               v0.62.0  GO-2026-6603, 6610, 6611, 6612, 6617 (http2), 6860, 6866 (html)
-#   google.golang.org/grpc         v1.83.2  GO-2026-6061, 6348, 6441, 6443; CVE-2026-84445
-#   github.com/go-chi/chi/v5       v5.3.0   GO-2026-5774, 5775, 5777
-#   github.com/klauspost/compress  v1.19.1  GO-2026-5841 (fixed in v1.18.7)
-#   github.com/go-jose/go-jose/v4  v4.1.6   CVE-2026-116587
-#   go.opentelemetry.io/otel       v1.45.0  GO-2026-5158
-#   go.opentelemetry.io/otel/sdk   v1.45.0  GO-2026-6505
-#   go.opentelemetry.io/otel/sdk/log                             v0.21.0  GO-2026-6615
-#   go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc  v0.21.0  GO-2026-6508
-#   go.opentelemetry.io/contrib/exporters/autoexport             v0.70.0  (the release built
-#     for otel v1.45.0 and otel/log v0.21.0: 2.11.4's v0.68.0 keeps its stdout log exporter at
-#     v0.19.0, which does not compile against otel/log v0.21.0)
+# The --replace lines are dependency FLOORS, not plugins. Caddy 2.11.9's go.mod
+# requires each of these modules below the release that fixes an advisory against
+# it, in Go's vulnerability database or in Trivy's report for the image. Each floor
+# is that release, or the release another floor's module graph requires (x/net
+# v0.62.0 requires x/crypto v0.58.0), so no floor undercuts another:
+#   golang.org/x/crypto            v0.58.0  GO-2026-6354, 6355 (ssh); 2.11.9 requires v0.57.0
+#   golang.org/x/net               v0.62.0  GO-2026-6603, 6610, 6611, 6612, 6617 (http2), 6860, 6866 (html); v0.60.0
+#   github.com/klauspost/compress  v1.20.2  GO-2026-6865 (a panic on two-block frames); v1.20.1
 # Each floor only raises its module: go version -m prints "dep <module> <resolved>"
 # then "=> <module> <floor>", with the floor at or above the resolved version.
 # x/crypto's floor first answered CVE-2026-56854 (CRITICAL, x/crypto/ssh), which
@@ -69,11 +47,10 @@ RUN case "$GOLANG_VERSION" in 1.26.[0-9]) ;; *) echo "builder ships Go $GOLANG_V
 # answer. --with cannot express a floor for a module with no importable root package
 # (x/crypto, x/net fail with "cannot find module providing package"); --replace
 # writes a plain replace directive to go.mod, which is what xcaddy documents for
-# this case. Remove the floors at the first Caddy release that carries
-# caddyserver/caddy#8178 (c31d9a71) and passes scripts/polaris-edge-limits-drill.sh;
-# the caddy entry in .github/dependabot.yml's ignore list says why the edge stays on
-# 2.11.4 until then. A floor moves by hand to each module release that fixes an advisory
-# against it; the weekly image scan fails on a fixable critical CVE in the binary.
+# this case. Drop a floor at the first Caddy release whose go.mod requires its module
+# at the floor or above, as 2.11.9 does for the eight others 2.11.4 needed. A floor
+# moves by hand to each module release that fixes an advisory against it; the weekly
+# image scan fails on a fixable critical CVE in the binary.
 # The binary keeps its symbol table, so govulncheck reads it at symbol level: xcaddy's
 # default go build flags strip it (-ldflags "-w -s"), and XCADDY_GO_BUILD_FLAGS replaces
 # all of them, so it restates the rest of xcaddy v0.4.5's defaults (-trimpath and its
@@ -90,22 +67,14 @@ RUN for attempt in 1 2 3 4; do \
             --with github.com/mholt/caddy-ratelimit@v0.1.0 \
             --replace golang.org/x/crypto=golang.org/x/crypto@v0.58.0 \
             --replace golang.org/x/net=golang.org/x/net@v0.62.0 \
-            --replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2 \
-            --replace github.com/go-chi/chi/v5=github.com/go-chi/chi/v5@v5.3.0 \
-            --replace github.com/klauspost/compress=github.com/klauspost/compress@v1.19.1 \
-            --replace github.com/go-jose/go-jose/v4=github.com/go-jose/go-jose/v4@v4.1.6 \
-            --replace go.opentelemetry.io/otel=go.opentelemetry.io/otel@v1.45.0 \
-            --replace go.opentelemetry.io/otel/sdk=go.opentelemetry.io/otel/sdk@v1.45.0 \
-            --replace go.opentelemetry.io/otel/sdk/log=go.opentelemetry.io/otel/sdk/log@v0.21.0 \
-            --replace go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc=go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.21.0 \
-            --replace go.opentelemetry.io/contrib/exporters/autoexport=go.opentelemetry.io/contrib/exporters/autoexport@v0.70.0 \
+            --replace github.com/klauspost/compress=github.com/klauspost/compress@v1.20.2 \
         && break; \
         if [ "$attempt" = 4 ]; then echo "xcaddy build failed 4 times; giving up" >&2; exit 1; fi; \
         echo "xcaddy build attempt $attempt failed (a module fetch or a checksum-database stream error); retrying in $((attempt * 20))s" >&2; \
         sleep $((attempt * 20)); \
     done
 
-FROM caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+FROM caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
 
 # Every Polaris image carries the same provenance labels; the version is
 # passed in by scripts/polaris-image-build.sh from polaris_web/__version__.py.
