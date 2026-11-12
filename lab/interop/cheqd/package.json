@@ -9,10 +9,10 @@
     "typecheck": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --allowImportingTsExtensions --strict --skipLibCheck --types node walk.ts MemoryStorageService.ts"
   },
   "dependencies": {
-    "@credo-ts/cheqd": "0.7.3",
-    "@credo-ts/core": "0.7.3",
-    "@credo-ts/node": "0.7.3",
-    "@credo-ts/openid4vc": "0.7.3"
+    "@credo-ts/cheqd": "0.7.4",
+    "@credo-ts/core": "0.7.4",
+    "@credo-ts/node": "0.7.4",
+    "@credo-ts/openid4vc": "0.7.4"
   },
   "devDependencies": {
     "typescript": "7.0.2"

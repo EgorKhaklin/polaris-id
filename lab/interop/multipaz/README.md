@@ -42,7 +42,7 @@ Two things differ from the other JVM walks, both measured on 2026-10-04:
 | | |
 |---|---|
 | Wallet library | `org.multipaz:multipaz` 0.102.0 (2026-10-22) from Maven Central, its JVM jar `multipaz-jvm-0.102.0.jar` (`sha256:13e127ce0579d2aa609165d761102fa10fa27a48e4d6c4cdb9bf6e73a7623437`), Apache-2.0, [source](https://github.com/openwallet-foundation/multipaz) |
-| Wallet build | Kotlin 2.4.21 and Ktor 3.6.0 (the Java engine, Multipaz's own on the JVM), in `gradle:8.14.3-jdk21` pinned by digest (Temurin 21.0.9) |
+| Wallet build | Kotlin 2.4.21 and Ktor 3.6.1 (the Java engine, Multipaz's own on the JVM), in `gradle:8.14.3-jdk21` pinned by digest (Temurin 21.0.9) |
 | Verifier | `polaris-oid4vp` 1.0.0rc15 from PyPI, with `cryptography` 50.0.2, in a fresh venv |
 | Runtime | Python 3.12.13, Docker 29.8.1, macOS 26.3 (Darwin 25.3.0) |
 
@@ -86,8 +86,8 @@ verifier answered the wallet `200` with its `redirect_uri`. All three controls w
 same against the tree's `packages/polaris-oid4vp`.
 
 The wallet builds from an empty Gradle cache in 46 s, and a run takes about 30 s once the cache is
-warm. The verification metadata lists 107 components; OSV-Scanner 2.6.0 finds no advisory against
-any of them (2026-10-24), and the SHA-256 the metadata pins for the Multipaz jar is the one Maven Central
+warm. The verification metadata lists 133 components; OSV-Scanner 2.6.0 finds no advisory against
+any of them (2026-11-12), and the SHA-256 the metadata pins for the Multipaz jar is the one Maven Central
 publishes. Changing one digit of it fails the build.
 
 ## What was run
