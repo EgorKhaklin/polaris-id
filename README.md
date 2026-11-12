@@ -14,6 +14,7 @@
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
+[![Archived by Software Heritage](https://archive.softwareheritage.org/badge/origin/https://github.com/EgorKhaklin/polaris-id/)](https://archive.softwareheritage.org/browse/origin/?origin_url=https://github.com/EgorKhaklin/polaris-id)
 
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
 [![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)

@@ -35,7 +35,7 @@ psycopg2-binary==2.9.13
 # InvalidAuthenticationResponse instead of raw parser errors, rejects
 # duplicate CBOR keys, and refreshes the Android/TPM attestation roots) ----
 webauthn==3.0.1
-cbor2==6.1.5
+cbor2==6.2.0.post1
 cryptography==50.0.2
 pyOpenSSL==26.4.0
 pyasn1==0.6.5

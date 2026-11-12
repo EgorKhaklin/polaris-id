@@ -8,13 +8,13 @@ asn1crypto==1.5.1 \
     --hash=sha256:13ae38502be632115abf8a24cbe5f4da52e3b5231990aff31123c805306ccb9c \
     --hash=sha256:db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67
     # via python-pkcs11
-boto3==1.43.118 \
-    --hash=sha256:ab8f3d2c622ef039338b4f228d97ea55f1abd573d84bb9b9a5ee8cb6780c0ccd \
-    --hash=sha256:c0620f799e0f0c222ba42c337b65cdbcd3da38a3121187f634d8926cbbb28a9c
+boto3==1.43.123 \
+    --hash=sha256:055fabb990c5d2f31fce4ca569255bd640cdd11a3ca68c9ecad35f4f8a5b83b5 \
+    --hash=sha256:d18d66e1e13faa0c25d0b1b8c5ce946e29fb5fc0b6456b655a93a678ff4cc313
     # via -r requirements-custody.in
-botocore==1.43.121 \
-    --hash=sha256:39bfd17e69f3370350e6aac2072df64045d002f9878e09115e85b87c772bd473 \
-    --hash=sha256:69eb571c74ff140cc3a716aed3bc25d09eb7b12de4ea2f990c03785a634f9dcf
+botocore==1.43.126 \
+    --hash=sha256:2f2239a47025a2fa173cd145ab8803ac02b76114864bf5b66475ff1cb88e6b0a \
+    --hash=sha256:96996af07d8b703c3cdf44863f69c0b4b8b2d1cb6976c641986ced3e38c072f3
     # via
     #   boto3
     #   s3transfer

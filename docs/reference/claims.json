@@ -160,6 +160,19 @@
       "why": "A score the OpenSSF Scorecard service computes from the public repository and renders live."
     },
     {
+      "id": "software-heritage",
+      "kind": "badge",
+      "claim": "Archived by Software Heritage",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "url:https://archive.softwareheritage.org/browse/origin/?origin_url=https://github.com/EgorKhaklin/polaris-id"
+      ],
+      "reproduce": null,
+      "why": "An archive state the Software Heritage service renders live from its own visits to the repository."
+    },
+    {
       "id": "openid4vp",
       "kind": "badge",
       "claim": "OpenID4VP 1.0",

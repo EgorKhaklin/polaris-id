@@ -25,6 +25,7 @@ polaris/
 ├── CODE_OF_CONDUCT.md            ← the community standard, Contributor Covenant 3.0
 ├── GOVERNANCE.md                 ← how decisions are made, the roles, and continuity
 ├── CITATION.cff                  ← how to cite this work, and the shipped version
+├── codemeta.json                 ← the citation metadata in CodeMeta 3.0, for archives and software indexes
 ├── LICENSE / NOTICE              ← Apache 2.0; provenance and third-party notices
 ├── TRADEMARKS.md                 ← the names and marks the license does not cover
 │
@@ -80,7 +81,8 @@ polaris/
 │   ├── reference/      ← this directory
 │   ├── design/         ← why it is built this way: the threat model, the mechanisms, the substrate
 │   ├── history/        ← the changelog archive: entries older than the root CHANGELOG keeps, by major
-│   └── paper/          ← the report, its evidence record and the mathematical edition (PDF)
+│   ├── paper/          ← the report, its evidence record and the mathematical edition (PDF)
+│   └── timestamps/     ← two RFC 3161 timestamps over the paper PDFs' and the v1.0.0 assets' hashes
 ├── DEVNOTES/           ← the contributor's working notes: gotchas, house style, the project record
 ├── meta/               ← structural records (redaction proof, structural architecture, the TLA+ model)
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
