@@ -40,7 +40,7 @@ ROOT="$(cd -- "${SCRIPT_DIR}/.." &> /dev/null && pwd)"
 OBS="$ROOT/deploy/observability"
 
 # Digest-pinned (the repo's standard): a mutated tag cannot change the drill.
-PROM_IMAGE="prom/prometheus@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2"
+PROM_IMAGE="prom/prometheus@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06"
 AM_IMAGE="prom/alertmanager@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b"
 PY_IMAGE="python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
 
