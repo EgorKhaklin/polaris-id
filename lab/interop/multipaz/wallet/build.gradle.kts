@@ -20,7 +20,7 @@ dependencies {
     // The key attestation verifier Multipaz 0.102.0 adds pulls these in; they resolve at the releases
     // scripts/polaris-osv-gradle.sh accepts.
     constraints {
-        implementation("com.google.guava:guava:33.7.2-jre")
+        implementation("com.google.guava:guava:33.8.0-jre")
         implementation("org.bouncycastle:bcprov-jdk18on:1.86")
         implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
         implementation("org.bouncycastle:bcutil-jdk18on:1.86")
