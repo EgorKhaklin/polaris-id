@@ -11,7 +11,7 @@ Witnesses, each counted only for the stages its own code decides:
        SessionTranscript bytes its toHandover() builds, its PKIX trust (msoMdocIssuance), and its
        validity verdict. Its decoding, MSO signature, digests and device signature are walt.id's,
        the library that built the captures: reported, never counted.
-  owf  @owf/mdoc 0.9.2, witness_owf.mjs: its own SessionTranscript.forOid4Vp bytes, and every check
+  owf  @owf/mdoc 0.9.3, witness_owf.mjs: its own SessionTranscript.forOid4Vp bytes, and every check
        of Verifier.verifyDeviceResponse against that transcript (MSO signature, digests, validity,
        docType, device signature, the chain to the given roots, the DS certificate's countryName).
 
