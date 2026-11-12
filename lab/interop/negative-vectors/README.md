@@ -1,8 +1,8 @@
 # Negative test vectors for SD-JWT VC presentations
 
 **Reader:** anyone building or testing a verifier of SD-JWT VC presentations under OpenID4VP 1.0 and
-HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 36 presentations a
-verifier must judge, each with the verdict a correct verifier reaches. Each of the 33 refusals carries the
+HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 37 presentations a
+verifier must judge, each with the verdict a correct verifier reaches. Each of the 34 refusals carries the
 clauses it rests on and a `class` saying how directly they require the refusal.
 [Lab record 018](../../strategy/018-negative-vectors.md) explains why it exists and what would end it.
 
@@ -14,14 +14,14 @@ against the verification function sees the verdict directly.
 
 Two **controls** come first: valid presentations, one with the issuer key in an `x5c` chain, one given as
 a JWK. A verifier that refuses them refuses everything, and its refusals below mean nothing. A third,
-`accept-status-list`, opens the status-list family. Each of the other 33 is a control with exactly one thing
+`accept-status-list`, opens the status-list family. Each of the other 34 is a control with exactly one thing
 changed, re-signed wherever the change needs it, so the only reason to refuse it is the clause it cites:
 
 | Group | Vectors |
 |---|---|
 | JOSE | `crit` in the issuer JWT and in the key binding JWT; an ES256 signature DER-encoded |
 | Key binding JWT | `aud` or `nonce` missing, `aud` as an array, `aud` without the Client Identifier prefix, `typ` JWT, `alg` none, HS256 keyed with the holder's public JWK, `iat` NaN, `exp` a string |
-| Disclosures | a digest committed twice, a claim already in the clear, `exp` or `iss` disclosed, four elements, a claim named `_sd` |
+| Disclosures | a digest committed twice, a claim already in the clear, `exp` or `iss` disclosed, four elements, a claim named `_sd`, a Disclosure no digest commits to |
 | `x5c` chain | a self-signed leaf, the anchor sent in the chain, an unknown root, an expired leaf, an intermediate that is not a CA |
 | The signer is not the named issuer | another issuer's valid leaf under the trusted root signs a credential whose `iss` is the trusted issuer: the leaf names that issuer's URL; names only a DNS host that is not `iss`'s; names that URL and also a host both share. Refused by a verifier that requires the leaf to name `iss` |
 | Status goes dark | the Token Status List the credential names gives no answer; answers with an HTML page; has a `lst` whose ZLIB stream never ends; is signed by another issuer's key under the same root; sits at a uri no key is stated for; has expired; does not reach the credential's index |
@@ -95,7 +95,7 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 **The keys and certificates are test material: never trust them.**
 [`test_vectors.py`](test_vectors.py), run in CI:
 - the file has not drifted from its generator;
-- `polaris-oid4vp` reaches all 36 verdicts with the expected refusal codes, under the default binding, under
+- `polaris-oid4vp` reaches all 37 verdicts with the expected refusal codes, under the default binding, under
   another verifier's, and under the EU test harness's;
 - each leaf in the signer family signs an authentic credential when `iss` is the name it gives, so the name is
   the only defect; and a leaf that names nobody is accepted with `iss` unbound (see Limits);
@@ -116,7 +116,8 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 ## Bind them to your verifier
 
 Every Key Binding JWT names one verifier (`aud`, `nonce`) and one instant, so the published file is refused by any
-verifier but the one in its `settings`, controls included. Regenerate it for yours:
+verifier but the one in its `settings`, controls included. Regenerate it for yours; the generator needs the
+`cryptography` package (`pip install cryptography`):
 
 ```bash
 python3 make_vectors.py --audience 'x509_san_dns:verifier.test' --nonce 'your-test-nonce' --now 1830297600 --out DIR
@@ -252,6 +253,8 @@ suite's expected-failures files (MIT). Nothing of theirs is copied into this dir
   view carries neither, so a run of that view judges the credential alone.
 - A verdict is pass or refuse. Why a verifier refused is compared for polaris-oid4vp only; for any other
   adapter, a refusal for the wrong reason counts as a pass.
+- Version 0.4.0 added `disclosure-unreferenced`: a Disclosure presented that no digest in the issuer's payload
+  commits to (RFC 9901 s7.1 step 5); the 36 earlier vectors are byte for byte those of 0.3.1.
 - Version 0.3.1 (0.3.0 with the signer family's three vectors graded `policy`, not `spec-implied`, since
   oauth-wg/oauth-sd-jwt-vc PR #436; their ids, verdicts and presentations are unchanged, and the `policy` class
   now also covers a check the text leaves to the verifier). 0.3.0 added the signer and status-list families

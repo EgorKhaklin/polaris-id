@@ -39,6 +39,7 @@ POLARIS_OID4VP_CODES = {
     "kb-nonce-missing": "nonce",
     "digest-twice": "disclosure", "claim-overwrite": "disclosure", "disclosed-exp": "disclosure",
     "disclosed-iss": "disclosure", "disclosure-four-elements": "disclosure", "disclosure-named-sd": "disclosure",
+    "disclosure-unreferenced": "disclosure",
     "kb-typ-jwt": "kb_typ", "kb-alg-none": "kb_alg", "kb-alg-hs256": "kb_alg",
     "kb-iat-nan": "malformed", "kb-exp-string": "kb_freshness",
     "issuer-sig-der": "issuer_signature",
