@@ -65,8 +65,20 @@ fi
 
 CF_LOG="$(mktemp -t polaris-cf.XXXXXX)"
 CF_PID=""
-cleanup() { [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null || true; rm -f "$CF_LOG"; }
-trap cleanup EXIT INT TERM
+SV_PID=""
+# When the verifier returns, on Ctrl-C and on a TERM, the tunnel and then the verifier are
+# stopped by their recorded PIDs and the tunnel's log is deleted. The verifier runs under `wait`,
+# not exec, so this trap stays the shell's. Ctrl-C reaches the shell, whose background children
+# ignore it; the trap stops them.
+cleanup() {
+    trap - EXIT INT TERM
+    if [ -n "$CF_PID" ]; then kill "$CF_PID" 2>/dev/null || true; wait "$CF_PID" 2>/dev/null || true; fi
+    if [ -n "$SV_PID" ]; then kill "$SV_PID" 2>/dev/null || true; wait "$SV_PID" 2>/dev/null || true; fi
+    rm -f "$CF_LOG"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo ">> starting a cloudflared quick tunnel to https://localhost:$PORT ..."
 # The verifier serves plain HTTP on the loopback (--no-local-tls); cloudflare terminates the
@@ -108,5 +120,7 @@ echo "   request object:     GET  $URL/request.jwt"
 echo "   response endpoint:  POST $URL/response"
 echo "   register this anchor with the wallet under test: $PKI/anchor.pem"
 echo "   (Ctrl-C stops the verifier and the tunnel.)"
-exec polaris-oid4vp serve --pki "$PKI" --bind 127.0.0.1 --port "$PORT" \
-    --public-base-url "$URL" --no-local-tls ${EXTRA[@]+"${EXTRA[@]}"}
+polaris-oid4vp serve --pki "$PKI" --bind 127.0.0.1 --port "$PORT" \
+    --public-base-url "$URL" --no-local-tls ${EXTRA[@]+"${EXTRA[@]}"} &
+SV_PID=$!
+wait "$SV_PID"
