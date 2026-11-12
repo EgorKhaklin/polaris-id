@@ -152,8 +152,8 @@ class Vectors(unittest.TestCase):
         self.assertEqual(by_id["accept-status-list"]["layer"], "status-list")
         # Every negative is judged under a trust mode that has its control.
         self.assertEqual({v["trust"] for v in self.doc["vectors"]}, {"x5c", "jwks"})
-        self.assertEqual(len(ids), 36)
-        self.assertEqual(len(set(ids)), 36)
+        self.assertEqual(len(ids), 37)
+        self.assertEqual(len(set(ids)), 37)
 
     def test_a_trust_mode_judged_without_its_own_control_fails(self):
         # disclosed-iss is the one jwks negative: without accept-jwks it would be judged with no jwks control.
@@ -1156,6 +1156,10 @@ REFUSAL_REASONS = {
         "disclosure: a disclosure is named '_sd', which SD-JWT reserves for its own structure (RFC 9901, "
         "sections 4.1.1 and 7.1)"
     ),
+    "disclosure-unreferenced": (
+        "disclosure: a disclosure was presented that the issuer never committed to: its digest appears nowhere in "
+        "the signed payload"
+    ),
     "kb-typ-jwt": "kb_typ: the key binding JWT declares typ='JWT' rather than 'kb+jwt'",
     "kb-alg-none": "kb_alg: the key binding JWT declares alg='none', which is not in the accepted set ('ES256',)",
     "kb-alg-hs256": "kb_alg: the key binding JWT declares alg='HS256', which is not in the accepted set ('ES256',)",
@@ -1310,7 +1314,7 @@ class RefusalReasons(unittest.TestCase):
                     cls.seen[vector["id"]] = adapter(vector, doc["settings"])
 
     def test_each_negative_is_refused_with_its_pinned_reason(self):
-        self.assertEqual(len(self.seen), 65)
+        self.assertEqual(len(self.seen), 66)
         self.assertEqual(reason_problems(self.seen, REFUSAL_REASONS), [])
 
     def test_each_pin_carries_the_code_the_runner_compares(self):
@@ -1372,6 +1376,10 @@ ONE_CHANGE = {
     "disclosure-named-sd": ("accept-x5c",
         ["/disclosures[+1 -0]"],
         ["/issuer/payload/_sd[+1 -0]", "/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    # the issuer's JWT is the control's, byte for byte: nothing it signed commits to the added Disclosure
+    "disclosure-unreferenced": ("accept-x5c",
+        ["/disclosures[+1 -0]"],
+        ["/kb/payload/sd_hash", "/kb/sig"]),
     "kb-typ-jwt": ("accept-x5c", ["/kb/header/typ"], ["/kb/sig"]),
     "kb-alg-none": ("accept-x5c", ["/kb/header/alg"], ["/kb/sig"]),
     "kb-alg-hs256": ("accept-x5c", ["/kb/header/alg"], ["/kb/sig"]),
@@ -1578,7 +1586,7 @@ class OneChange(unittest.TestCase):
                 cls.docs[filename] = json.load(fh)
 
     def test_each_negative_differs_from_its_reference_by_its_pinned_paths_only(self):
-        self.assertEqual(len(ONE_CHANGE), 65)
+        self.assertEqual(len(ONE_CHANGE), 66)
         self.assertEqual(one_change_problems(self.oc, self.docs.values(), ONE_CHANGE), [])
 
     def test_the_pinned_reference_is_the_nearest_control_of_the_trust_mode_or_the_twin(self):
@@ -1770,6 +1778,7 @@ SDJWT_KNOCKOUTS = {
         "disclosed-iss": "accept",
         "disclosure-four-elements": "accept",
         "disclosure-named-sd": "accept",
+        "disclosure-unreferenced": "accept",
     }),
     "issuer_key": (2, {
         "x5c-self-signed": "reject:issuer_signature",
@@ -2016,6 +2025,7 @@ CLAUSE_BINDS = [
     ("RFC 9901 s7.1 step 3.c.ii.2", "If the claim name is _sd or", "verifier"),
     ("RFC 9901 s7.1 step 3.c.ii.3", "If the claim name already exists at the level of the _sd key", "verifier"),
     ("RFC 9901 s7.1 step 4", "If any digest value is encountered more than once", "verifier"),
+    ("RFC 9901 s7.1 step 5", "If any Disclosure was not referenced by digest value", "verifier"),
     ("RFC 9901 s7.3 step 5.b", "The \"none\" algorithm MUST NOT be accepted", "verifier"),
     ("RFC 9901 s7.3 step 5.d", "Check that the typ of the Key Binding JWT is kb+jwt", "verifier"),
     ("RFC 9901 s7.3 step 5.f", "Determine that the Key Binding JWT is bound to the current transaction", "verifier"),

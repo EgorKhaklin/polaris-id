@@ -15,7 +15,7 @@ The layout is the one in `src/test/resources/` of eu-digital-identity-wallet/eud
 - `INDEX.json`: per vector, `expected` (`accept` or `reject`), `clauses` (the spec text), `trust` and `files` (its pair).
 - A `status-list` vector also needs `status_list.response` served at `status_list.uri` (null: no answer) and the verifier held to the `policy` its entry names; without both, run the others.
 
-36 vectors, numbered 50 to 85 in `vectors.json`'s order. The 3 `accept-*` vectors are the controls: a refusal counts only where the controls are accepted.
+37 vectors, numbered 50 to 86 in `vectors.json`'s order. The 3 `accept-*` vectors are the controls: a refusal counts only where the controls are accepted.
 
 ## The binding
 

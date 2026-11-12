@@ -196,11 +196,13 @@ def _digest(disclosure):
     return b64u(hashlib.sha256(disclosure.encode("ascii")).digest())
 
 
-def present(*, mode="x5c", x5c=None, issuer_header=None, payload=None, extra=(), drop_claims=(),
+def present(*, mode="x5c", x5c=None, issuer_header=None, payload=None, extra=(), unreferenced=(), drop_claims=(),
             issuer_der=False, kb_header=None, kb_payload=None, kb_text=None, signer=None):
-    """`extra` adds Disclosures the issuer commits to; `payload` edits the issuer's claims after the
-    digests are in; the `kb_*` knobs edit the Key Binding JWT, re-signed by the holder. `signer` signs
-    the issuer JWT instead of the issuer's key (the key of the x5c leaf it is given with)."""
+    """`extra` adds Disclosures the issuer commits to; `unreferenced` adds Disclosures that travel with the
+    presentation and that no digest in the issuer's payload commits to (the holder signs over them);
+    `payload` edits the issuer's claims after the digests are in; the `kb_*` knobs edit the Key Binding
+    JWT, re-signed by the holder. `signer` signs the issuer JWT instead of the issuer's key (the key of
+    the x5c leaf it is given with)."""
     disclosures = [_disclosure(_salt(n), n, v) for n, v in CLAIMS if n not in drop_claims]
     disclosures += [_disclosure(*e) for e in extra]
     body = {"iss": ISSUER, "vct": VCT, "iat": NOW - 86400, "exp": NOW + 365 * 86400,
@@ -214,6 +216,7 @@ def present(*, mode="x5c", x5c=None, issuer_header=None, payload=None, extra=(),
         header["x5c"] = [_der64(c) for c in (x5c or (LEAF, INTERMEDIATE))]
     header.update(issuer_header or {})
     issuer_jwt = _jws(header, _json(body), key=signer or ISS_K, der=issuer_der)
+    disclosures += [_disclosure(*e) for e in unreferenced]  # after the digests are in and the issuer has signed
     presented = issuer_jwt + "~" + "".join(d + "~" for d in disclosures)
     kb_head = {"alg": "ES256", "typ": "kb+jwt"}
     kb_head.update(kb_header or {})
@@ -311,6 +314,9 @@ RFC9901_EXISTS = ("RFC 9901 s7.1 step 3.c.ii.3", "If the claim name already exis
 RFC9901_THREE = ("RFC 9901 s7.1 step 3.c.ii.1", "If the contents of the respective Disclosure is not a JSON array "
                  "of three elements (salt, claim name, claim value), the SD-JWT MUST be rejected.")
 RFC9901_SD_NAME = ("RFC 9901 s7.1 step 3.c.ii.2", "If the claim name is _sd or ..., the SD-JWT MUST be rejected.")
+RFC9901_UNREFERENCED = ("RFC 9901 s7.1 step 5", "If any Disclosure was not referenced by digest value in the "
+                        "Issuer-signed JWT (directly or recursively via other Disclosures), the SD-JWT MUST be "
+                        "rejected.")
 RFC9901_KB_TYP = ("RFC 9901 s7.3 step 5.d", "Check that the typ of the Key Binding JWT is kb+jwt (see Section 4.3).")
 RFC9901_NONE = ("RFC 9901 s7.3 step 5.b", "The \"none\" algorithm MUST NOT be accepted.")
 RFC9901_AUD = ("RFC 9901 s4.3", "aud: REQUIRED. The value MUST be a single string that identifies the intended "
@@ -493,6 +499,10 @@ def _make_vectors():
          {"payload": _status(idx=INDEX_PAST_END), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token()},
           "notes": _status_note("list_refused (code index)")}, "reject"),
+        # 0.4.0, last in the file so that no vector is renumbered: a Disclosure nobody committed to.
+        ("disclosure-unreferenced", "a Disclosure travels with the presentation that no digest in the issuer's "
+         "payload commits to; the holder's Key Binding JWT signs over it", "spec", "sd-jwt", (RFC9901_UNREFERENCED,),
+         {"unreferenced": ((_salt("nationality"), "nationality", "DE"),)}, "reject"),
     )
 
 
@@ -514,7 +524,7 @@ def build():
                             **extra))
     return {
         "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
-        "version": "0.3.1",
+        "version": "0.4.0",
         "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them."
                    + "".join(" The %s key came from %s." % kv for kv in _SUPPLIED),
         "settings": {"now": NOW, "nonce": NONCE, "audience": AUDIENCE, "vct": VCT, "max_skew_seconds": 300,
