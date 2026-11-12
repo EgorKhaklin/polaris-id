@@ -159,6 +159,15 @@ for liboqs-python 0.16.0.1 and earlier, crediting Egor Khaklin as reporter. 0.16
 polaris-verify's `oqs` extra requires it or later, and the server's lock
 (`polaris_web/requirements-pqc.txt`) pins it.
 
+**`@sd-jwt/core` and `@sd-jwt/sd-jwt-vc` changed after a report from here, 2026-10-30.** On
+2026-11-03 the OpenWallet Foundation Labs project identity-common-ts published
+[GHSA-7xf4-9r27-vcr5](https://github.com/openwallet-foundation-labs/identity-common-ts/security/advisories/GHSA-7xf4-9r27-vcr5)
+("SD-JWT VC verification accepts selectively disclosed protected claims and unknown `crit`
+headers", severity low) for both npm packages at 0.24.0 and earlier, crediting EgorKhaklin as
+reporter. 0.24.1, on npm since 2026-10-30, is patched, and the fix is upstream commit
+[260114a5](https://github.com/openwallet-foundation-labs/identity-common-ts/commit/260114a597a9d585f42fc6609c8fbe4b0253dbbd),
+whose author line reads Egor Khaklin.
+
 draft-ietf-oauth-status-list-21: the byte arrays of Section 4.2, the four Appendix C test vectors (1, 2, 4 and 8 bits, 2^20 entries) and the signed example of Section 8.2 under the example key the draft's authors publish, decided by `polaris_oid4vp.status.decide`, with tokens signed by the OpenWallet Foundation's `@sd-jwt/jwt-status-list` 0.19.0 beside them (2026-10-04, [lab/interop/status-list](interop/status-list/README.md); run by the author, not every push). Every status matched. The library's 2^20-entry list at 10% revoked was refused by 1.0.0rc15 (payload over 64 KiB); the bound is fixed in the tree.
 
 ### Public distribution
