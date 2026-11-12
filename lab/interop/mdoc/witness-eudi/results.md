@@ -46,9 +46,9 @@ decides.
     `validateDetachedCoseSign1`), and it builds for macOS and iOS only (`Package.swift`), not in a
     container.
   - eudi-lib-android-verifier-core (`eeb9cef3`) is Android-only, on Multipaz 0.93.0.
-- **For the MSO signature, digests, docType and device signature, the witness is @owf/mdoc 0.9.2**
-  (openwallet-foundation-labs/identity-common-ts, tag `mdoc-v0.9.2`, commit
-  `4037a934635cc6ae8b01c06ce11a56fbf6dd6463`, Apache-2.0). It shares no code with walt.id or with
+- **For the MSO signature, digests, docType and device signature, the witness is @owf/mdoc 0.9.3**
+  (openwallet-foundation-labs/identity-common-ts, tag `mdoc-v0.9.3`, commit
+  `6b867afeb19660b9fbc36ba2b5c1fb60b12618fe`, Apache-2.0). It shares no code with walt.id or with
   `verify_mdoc.py`:
   - CBOR is cbor-x;
   - ECDSA is @noble/curves (pure JavaScript);
@@ -59,7 +59,7 @@ decides.
     (`packages/mdoc/src/verifier.ts:18`). The transcript passed is its own, built by
     `SessionTranscript.forOid4Vp` (`src/mdoc/models/session-transcript.ts:229`).
   - It reports every check through `onCheck`:
-    - `device-auth.ts:127`;
+    - `device-auth.ts:126`;
     - `issuer-auth.ts:207` and :250;
     - `issuer-signed.ts:143`.
   - Its pluggable crypto (the MdocContext) is the upstream test context,
@@ -184,11 +184,11 @@ The `verify_mdoc.py` and record mutations ran on an export, which was discarded 
 |---|---|
 | EU verifier image | `ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint@sha256:b56390f2078f9ce705f2b20db86fdd52297c0a587dd4110c82f173c223a3a07f`, tag v0.12.0. The digest was read anonymously from ghcr.io; the image's `org.opencontainers.image.revision` is `19537e72a633b25c94b7450bf582760f52ab2cc9`. The image is linux/amd64. |
 | Kotlin compiler | kotlin-compiler-2.4.0.zip, SHA-256 `ba1b9e6eb6ddc3275079224f2e9ea4a2b02eef7d59ce2d38404f04b22613c20a` (as the release publishes it), run in `gradle:8.14.3-jdk21@sha256:21bd311e...` with no network |
-| @owf/mdoc | 0.9.2 and its dependencies, `npm ci` from `package-lock.json` (npm integrity per package), run in `node:22-alpine@sha256:0a7108bf...` |
-| Network | Every witness container runs with `--network none`, a read-only root and read-only mounts of the captures. Only the dependency phase had a network: `npm ci` from the lockfile, a fresh named volume, nothing else mounted, and the volume deleted after. Its fetch log is `results/phase1-fetches.txt`: 36 fetches, all from registry.npmjs.org. |
+| @owf/mdoc | 0.9.3 and its dependencies, `npm ci` from `package-lock.json` (npm integrity per package), run in `node:22-alpine@sha256:0a7108bf...` |
+| Network | Every witness container runs with `--network none`, a read-only root and read-only mounts of the captures. Only the dependency phase had a network: `npm ci` from the lockfile, a fresh named volume, nothing else mounted, and the volume deleted after. Its fetch log is `results/phase1-fetches.txt`: 69 fetch lines, for 43 distinct URLs, all from registry.npmjs.org. |
 | Credentials | `DOCKER_CONFIG` is a fresh directory whose `config.json` is `{"auths":{"polaris.invalid":{}}}`, written before any docker command; images are pulled anonymously |
 | Instant | each capture's `captured-at.txt`, except the validity controls, which set it; it drives the validity clocks and the PKIX date |
-| Run | Docker 29.8.1, macOS arm64; `results/run.json` |
+| Run | Docker 29.9.2, macOS arm64; `results/run.json` |
 
 Commands:
 
