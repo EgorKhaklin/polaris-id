@@ -20,7 +20,7 @@
 # The pin moves by hand to each v3.6 patch release etcd publishes; the weekly
 # image scan fails on a fixable critical CVE in the pinned release.
 # ============================================================================
-FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS compile
+FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS compile
 ARG ETCD_VERSION=v3.6.16
 ARG ETCD_COMMIT=0b065e61c679ea81f6862bb24c9815f7fc673966
 RUN apk add --no-cache bash git jq
@@ -90,13 +90,14 @@ RUN for m in . server etcdutl; do \
     done
 RUN CGO_ENABLED=0 ./scripts/build.sh
 # etcd v3.6.16's go.mod requires only go 1.26.0, so an older Go here would compile it without
-# complaint: fail the build unless both binaries report go1.27.3 or a later release (Go 1.27.0
-# to 1.27.2 lack the crypto/x509 fix for CVE-2026-111943 that 1.27.3 carries).
+# complaint: fail the build unless both binaries report go1.27.4 or a later release (Go 1.27.0
+# to 1.27.2 lack the crypto/x509 fix for CVE-2026-111943 that 1.27.3 carries, and Go 1.27.0 to
+# 1.27.3 lack the net/http fix for CVE-2026-97054 (GO-2026-6859) that 1.27.4 carries).
 RUN for b in bin/etcd bin/etcdctl; do \
         v=$(go version "$b" | sed 's/^.*: go//'); \
         case "$v" in \
-            1.27.[3-9]|1.27.[1-9][0-9]|1.2[89].[0-9]*|1.[3-9][0-9].[0-9]*) echo "$b: go$v" ;; \
-            *) echo "$b reports go$v, older than go1.27.3" >&2; exit 1 ;; \
+            1.27.[4-9]|1.27.[1-9][0-9]|1.2[89].[0-9]*|1.[3-9][0-9].[0-9]*) echo "$b: go$v" ;; \
+            *) echo "$b reports go$v, older than go1.27.4" >&2; exit 1 ;; \
         esac; \
     done
 # etcd links compress v1.20.2 and no other version; etcdctl links none or the same.
