@@ -56,6 +56,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- `scripts/polaris-dev-tunnel.sh` stops its cloudflared tunnel and the verifier and deletes the tunnel's log on every exit: when the verifier returns (`--once` returns after one presentation), on Ctrl-C and on a TERM, as its help says; it exits with the verifier's status. Before, the verifier ran under `exec`, the cleanup never ran and the tunnel kept running: stop any `cloudflared tunnel --url http://localhost:<port>` that an earlier run left.
 - The Python SDK refuses a trust list, registry or federation manifest whose signed key collection is not a list, and `verify_cross_authority` reads a manifest whose `attestations` is not a list as naming no edge, as the TypeScript SDK does.
 - Both reference SDKs answer `fresh` false, with a note, for an artifact, status assertion or ID token whose signed `issued_at` or `expires_at` (the ID token's `iat` or `exp`) is not an instant (WIRE-SPEC 2.2). `fresh` stays null for a format that signs no window and for a caller's clock that does not parse.
 - `agent_proof_proves` (Python) and `agentProofProves` (TypeScript) take `now` and prove an agent only by a proof whose `issued_at` falls inside the grant's `[issued_at, expires_at)` and at most 60 seconds ahead of that clock (WIRE-SPEC 3.17). The conformance contract asks it of a grant in use (5 cases, since 1.1.0).
