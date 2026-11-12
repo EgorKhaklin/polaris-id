@@ -255,10 +255,12 @@ OID4VP_INPUTS = (
 #: detection tests, the sign-off and the two dependency scans are required checks; the
 #: TypeScript SDK is required; the product boundary is required; and the product suite's core
 #: part and its coverage shards run polaris_checks over the whole tree (measured: the checks
-#: and their detection tests open every tracked file), so no path is unread by them.
+#: and their detection tests open every tracked file), so no path is unread by them. The mdoc
+#: drill reads lab/interop/, which is on the allowlist, so it runs on every change too.
 ALWAYS_RUN_JOBS = (
     "changes", "test-core", "test-coverage-shard", "test-coverage", "test-procedures", "test",
     "product-boundary", "sdk-typescript", "invariants", "dco", "osv-scan", "cve-scan",
+    "test-mdoc-drill",
 )
 
 #: Code outside polaris_checks/ that only always-run jobs execute, so what it reads does not
@@ -284,6 +286,8 @@ ALWAYS_RUN_ONLY = {
     "scripts/test_doctor.py": "the coverage shards",
     "scripts/test_ci_changes.py": "the coverage shards",
     "scripts/polaris-product-boundary-drill.py": "the product boundary job (always run)",
+    "scripts/polaris-mdoc-mutation-drill.py": "the mdoc drill job (always run)",
+    "scripts/test_mdoc_drill.py": "the coverage shards",
     "packages/polaris-oid4vp/examples/yivi-checkin/app.py": "the product boundary job",
     "packages/polaris-oid4vp/examples/yivi-checkin/test_checkin.py": "the product boundary job",
     "scripts/polaris-ci-changes.py": "the changes job and the invariant checks",

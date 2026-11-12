@@ -88,7 +88,7 @@ polaris/
 ├── scripts/            ← every shell tool (polaris-*): deploys, drills, gates, checks; the detached verifier polaris-verify.py, its vector generator, and the holder wallet polaris-wallet.py live here too
 ├── site/               ← the published project page (Cloudflare, wrangler.jsonc) and its logo
 │
-├── .github/workflows/  ← ci.yml (37 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
+├── .github/workflows/  ← ci.yml (38 jobs), dr-drill.yml (monthly), chaos.yml (weekly), procedure-sweep.yml and trigger-sweep.yml (the exhaustive mutation sweeps, on their own schedules), sbom.yml (per release), publish.yml (manual dispatch: the four packages to PyPI and npm), pages.yml (the old GitHub Pages address, now a redirect to the site)
 ├── .github/dependabot.yml, .pre-commit-config.yaml, .gitignore, .coveragerc, .trivyignore, ruff.toml
 ├── osv-scanner.toml   ← declared exceptions for the malicious-package and vulnerability scan (none today)
 ├── vex.openvex.json   ← scanner findings that do not affect Polaris, and why (OpenVEX)
@@ -131,6 +131,7 @@ polaris/
   material from a directory that is not the repository, with none of Polaris importable.
   Carries a negative control: a verifier that drags `psycopg2` in with it must be caught.
 - `test-oid4vp-drill`: the OpenID4VP mutation drill (every refusal in `packages/polaris-oid4vp`, inverted) as three shards, when a change touches the package, the drill, its requirements or the workflow, and on every push to `main`.
+- `test-mdoc-drill`: the mdoc verifier mutation drill (each refusal of `lab/interop/mdoc/verify_mdoc.py`'s CBOR, COSE_Sign1, MSO, device-authentication and request checks, switched off) as two shards, on every change.
 - `sdk-typescript`: the TypeScript verify SDK (`sdk/typescript/`) type-checked, unit-tested, and driven through the language-agnostic conformance runner (`@noble/post-quantum` ML-DSA-65 agreeing with liboqs and OpenSSL).
 - `invariants`: the invariant layer and every check's detection test, with no database, in minutes; the required check that keeps a failing invariant from merging.
 - `dco`: on a pull request, every commit a person made carries a Developer Certificate of Origin sign-off.
