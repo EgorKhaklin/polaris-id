@@ -4,9 +4,9 @@
 reuses a PKI directory that already holds one rather than minting new keys over it, unless its
 leaf has expired (keygen makes it valid for 90 days), which it refuses with how to remint.
 
-On every exit (the verifier returning, as `--once` does after one presentation; Ctrl-C; a TERM)
-it stops the tunnel and the verifier and deletes the tunnel's log, and it exits with the
-verifier's status.
+When the verifier returns (as `--once` does after one presentation), on Ctrl-C and on a TERM, it
+stops the tunnel and the verifier and deletes the tunnel's log, and it exits with the verifier's
+status.
 
 Run against stand-ins on PATH: a cloudflared that prints a quick-tunnel origin and a
 polaris-oid4vp that records each command line (keygen also writes the five files). With

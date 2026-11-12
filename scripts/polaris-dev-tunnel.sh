@@ -66,9 +66,10 @@ fi
 CF_LOG="$(mktemp -t polaris-cf.XXXXXX)"
 CF_PID=""
 SV_PID=""
-# On any exit, the tunnel and then the verifier are stopped by their recorded PIDs and the
-# tunnel's log is deleted. The verifier runs under `wait`, not exec, so this trap stays the
-# shell's. Ctrl-C reaches the shell, whose background children ignore it; the trap stops them.
+# When the verifier returns, on Ctrl-C and on a TERM, the tunnel and then the verifier are
+# stopped by their recorded PIDs and the tunnel's log is deleted. The verifier runs under `wait`,
+# not exec, so this trap stays the shell's. Ctrl-C reaches the shell, whose background children
+# ignore it; the trap stops them.
 cleanup() {
     trap - EXIT INT TERM
     if [ -n "$CF_PID" ]; then kill "$CF_PID" 2>/dev/null || true; wait "$CF_PID" 2>/dev/null || true; fi
