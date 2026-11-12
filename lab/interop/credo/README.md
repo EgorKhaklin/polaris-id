@@ -77,12 +77,12 @@ for the run, and a leaf for the issuer key that names the `iss` URL). Credo trus
 
 Versions: `@credo-ts/core`, `@credo-ts/openid4vc` and `@credo-ts/node` 0.7.2, `@openid4vc/openid4vp`
 and `@openid4vc/oauth2` 0.6.0, `@sd-jwt/core` 0.21.1, Node v24.11.1. The runs are recorded in
-[`evidence/credo-0.7.2/`](evidence/credo-0.7.2/). The pins stay at 0.6.3: the OpenID4VCI receive
-scripts were recorded on it and were not re-run on 0.7.2 (they typecheck under both). To repeat:
+[`evidence/credo-0.7.2/`](evidence/credo-0.7.2/). The OpenID4VCI receive scripts were recorded on
+0.6.3. To repeat:
 
     npm ci && npm install --no-save @credo-ts/core@0.7.2 @credo-ts/node@0.7.2 @credo-ts/openid4vc@0.7.2
     EVIDENCE_DIR=evidence/credo-0.7.2 PATH=/tmp/p/bin:$PATH PYTHON=/tmp/p/bin/python npm run present
-    npm ci                                     # back to the pinned 0.6.3
+    npm ci                                     # back to the pinned release
 
 ## What `present.ts` does
 

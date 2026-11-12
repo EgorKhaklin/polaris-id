@@ -46,9 +46,9 @@ decides.
     `validateDetachedCoseSign1`), and it builds for macOS and iOS only (`Package.swift`), not in a
     container.
   - eudi-lib-android-verifier-core (`eeb9cef3`) is Android-only, on Multipaz 0.93.0.
-- **For the MSO signature, digests, docType and device signature, the witness is @owf/mdoc 0.9.0**
-  (openwallet-foundation-labs/identity-common-ts, tag `mdoc-v0.9.0`, commit
-  `399d7dd9a8e5470c9c0925a32a03ede6e52edfa9`, Apache-2.0). It shares no code with walt.id or with
+- **For the MSO signature, digests, docType and device signature, the witness is @owf/mdoc 0.9.2**
+  (openwallet-foundation-labs/identity-common-ts, tag `mdoc-v0.9.2`, commit
+  `4037a934635cc6ae8b01c06ce11a56fbf6dd6463`, Apache-2.0). It shares no code with walt.id or with
   `verify_mdoc.py`:
   - CBOR is cbor-x;
   - ECDSA is @noble/curves (pure JavaScript);
@@ -60,14 +60,14 @@ decides.
     `SessionTranscript.forOid4Vp` (`src/mdoc/models/session-transcript.ts:229`).
   - It reports every check through `onCheck`:
     - `device-auth.ts:127`;
-    - `issuer-auth.ts:203` and :246;
+    - `issuer-auth.ts:207` and :250;
     - `issuer-signed.ts:143`.
   - Its pluggable crypto (the MdocContext) is the upstream test context,
     `packages/mdoc/src/__tests__/context.ts` at commit `0666f743e7fccab8ac97ce92191055e12d745ebb`,
     ported to JavaScript in `witness_owf.mjs`; DeviceMac is left out.
 
 **What @owf/mdoc's chain check covers.** The upstream context's `verifyCertificateChain` builds the path
-with @peculiar/x509 2.2.0's `X509ChainBuilder`. Its `findIssuer` links each certificate only to an issuer
+with @peculiar/x509 3.1.0's `X509ChainBuilder`. Its `findIssuer` links each certificate only to an issuer
 whose key verifies its signature (`signatureOnly: true`). The context then requires a given root in the
 path.
 - That is all it establishes: signatures up to a trusted root.
@@ -93,7 +93,7 @@ stage. "Refused" means refused at that stage.
 | docType, document vs MSO | `verify_document()` | walt.id, not counted | `DeviceResponse.verify` | the document relabeled PID <-> mDL, MSO kept: refused / - / refused | **two** |
 | Device signature, under the transcript | `verify_document()` | walt.id, not counted | `DeviceAuth.verify` | another nonce, null thumbprint: refused / - / refused | **two** |
 | mDL DS profile (SKI, id-mdl-ds EKU) | `ds_profile()` | no check | no check | (M1's units) | **one** (ours) |
-| DS countryName | no check | no check | `issuer-auth.ts:203` | none needed: it fails on every capture | **one** (owf) |
+| DS countryName | no check | no check | `issuer-auth.ts:207` | none needed: it fails on every capture | **one** (owf) |
 
 **SessionTranscript bytes.** 70 of 70 comparisons are byte-identical: 35 cases, each against the EU bytes
 and the @owf bytes. On the genuine PID capture the bytes are also identical to the wallet's own
@@ -184,7 +184,7 @@ The `verify_mdoc.py` and record mutations ran on an export, which was discarded 
 |---|---|
 | EU verifier image | `ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint@sha256:b56390f2078f9ce705f2b20db86fdd52297c0a587dd4110c82f173c223a3a07f`, tag v0.12.0. The digest was read anonymously from ghcr.io; the image's `org.opencontainers.image.revision` is `19537e72a633b25c94b7450bf582760f52ab2cc9`. The image is linux/amd64. |
 | Kotlin compiler | kotlin-compiler-2.4.0.zip, SHA-256 `ba1b9e6eb6ddc3275079224f2e9ea4a2b02eef7d59ce2d38404f04b22613c20a` (as the release publishes it), run in `gradle:8.14.3-jdk21@sha256:21bd311e...` with no network |
-| @owf/mdoc | 0.9.0 and its dependencies, `npm ci` from `package-lock.json` (npm integrity per package), run in `node:22-alpine@sha256:0a7108bf...` |
+| @owf/mdoc | 0.9.2 and its dependencies, `npm ci` from `package-lock.json` (npm integrity per package), run in `node:22-alpine@sha256:0a7108bf...` |
 | Network | Every witness container runs with `--network none`, a read-only root and read-only mounts of the captures. Only the dependency phase had a network: `npm ci` from the lockfile, a fresh named volume, nothing else mounted, and the volume deleted after. Its fetch log is `results/phase1-fetches.txt`: 36 fetches, all from registry.npmjs.org. |
 | Credentials | `DOCKER_CONFIG` is a fresh directory whose `config.json` is `{"auths":{"polaris.invalid":{}}}`, written before any docker command; images are pulled anonymously |
 | Instant | each capture's `captured-at.txt`, except the validity controls, which set it; it drives the validity clocks and the PKIX date |
