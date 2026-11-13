@@ -110,18 +110,23 @@ def _name(cn):
     return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 
 
+_CA_KEY_USAGE = x509.KeyUsage(False, False, False, False, False, True, True, False, False)  # keyCertSign, cRLSign
+_LEAF_KEY_USAGE = x509.KeyUsage(True, False, False, False, False, False, False, False, False)  # digitalSignature
+
+
 def _cert(cn, key, issuer_cn, issuer_key, serial, *, ca, pathlen=None, leaf_san=False, san=None, not_before=None,
-          not_after=None, extensions=()):
+          not_after=None, extensions=(), key_usage=None):
     not_before = T0 if not_before is None else not_before
     not_after = T1 if not_after is None else not_after
     b = (x509.CertificateBuilder().subject_name(_name(cn)).issuer_name(_name(issuer_cn))
          .public_key(key.public_key()).serial_number(serial).not_valid_before(not_before).not_valid_after(not_after))
     if ca:
         b = b.add_extension(x509.BasicConstraints(ca=True, path_length=pathlen), critical=True)
-        b = b.add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), critical=True)
     else:
         b = b.add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-        b = b.add_extension(x509.KeyUsage(True, False, False, False, False, False, False, False, False), critical=True)
+    if key_usage is None:
+        key_usage = _CA_KEY_USAGE if ca else _LEAF_KEY_USAGE
+    b = b.add_extension(key_usage, critical=True)
     if leaf_san:
         b = b.add_extension(x509.SubjectAlternativeName([x509.UniformResourceIdentifier(ISSUER),
                                                          x509.DNSName("issuer.example")]), critical=False)
@@ -155,7 +160,10 @@ def _make_pki():
                        leaf_san=True)
     EXPIRED_LEAF = _cert("Negative Vectors Test Issuer", ISS_K, "Negative Vectors Test Intermediate", INT_K, 7, ca=False,
                          leaf_san=True, not_after=now - datetime.timedelta(days=_EXPIRED_DAYS))
-    NOT_A_CA = _cert("Negative Vectors Test Intermediate", BADINT_K, "Negative Vectors Test Root", ROOT_K, 8, ca=False)
+    # 0.4.1: cA FALSE is its one defect; its key usage is its siblings' (keyCertSign, cRLSign), so a verifier that
+    # checks key usage first still reaches basicConstraints.
+    NOT_A_CA = _cert("Negative Vectors Test Intermediate", BADINT_K, "Negative Vectors Test Root", ROOT_K, 8, ca=False,
+                     key_usage=_CA_KEY_USAGE)
     LEAF_UNDER_NOT_A_CA = _cert("Negative Vectors Test Issuer", ISS_K, "Negative Vectors Test Intermediate", BADINT_K, 9,
                                 ca=False, leaf_san=True)
     # 0.3.0: another issuer's leaves, under the same intermediate and root as the control's. Each is a valid
@@ -524,7 +532,7 @@ def build():
                             **extra))
     return {
         "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
-        "version": "0.4.0",
+        "version": "0.4.1",
         "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them."
                    + "".join(" The %s key came from %s." % kv for kv in _SUPPLIED),
         "settings": {"now": NOW, "nonce": NONCE, "audience": AUDIENCE, "vct": VCT, "max_skew_seconds": 300,
