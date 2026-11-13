@@ -3969,6 +3969,10 @@ jobs:
       # as above; no network, no Docker.
       - name: The AltID age-verification lab, each response refused at its own step (lab/interop/altid/test_avp.py)
         run: python -m unittest lab/interop/altid/test_avp.py
+      # lab/interop/swiyu: a lab verifier for the swiyu wallet, a subclass of this package's verifier whose
+      # own checks can only refuse; it stays true as the verifier moves under it. No wallet here.
+      - name: The swiyu lab verifier, each lab check a refusal over the package's verdict (lab/interop/swiyu/test_swiyu.py)
+        run: python -m unittest lab/interop/swiyu/test_swiyu.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.
