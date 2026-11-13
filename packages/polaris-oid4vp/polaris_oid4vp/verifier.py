@@ -1267,6 +1267,16 @@ class Verifier:
     DCQL_QUERY_ID = "pid"
 
     def _single_presentation(self, vp_token):
+        # OpenID4VP 1.0 section 8.1 calls vp_token a JSON-encoded object. A wallet may put it in
+        # the direct_post.jwt payload as a JSON string holding that object (the swiyu Sandbox
+        # Wallet 1.19.0 does, lab run 2026-11-13). The string is read once, as that object, and
+        # held to every rule below; a string that is not JSON, or JSON that is not an object
+        # (a string inside a string included), is refused as before.
+        if isinstance(vp_token, str):
+            try:
+                vp_token = json.loads(vp_token)
+            except ValueError:
+                return None
         if not isinstance(vp_token, dict) or list(vp_token) != [self.query_id]:
             return None
         value = vp_token[self.query_id]

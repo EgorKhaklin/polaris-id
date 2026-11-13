@@ -1695,6 +1695,33 @@ class HeldOutTransportTests(VerifierTestCase):
         form = self.wallet.respond(jar, vp_token={"pid": [genuine]})
         self.assertEqual(self.verifier.handle_direct_post(form)[0], 200)
 
+    def test_one_genuine_presentation_in_a_vp_token_sent_as_a_json_string_is_accepted(self):
+        """The swiyu Sandbox Wallet 1.19.0 puts vp_token in the direct_post.jwt payload as a JSON
+        string holding the object (lab run 2026-11-13, variant C). OpenID4VP 1.0 section 8.1 calls
+        vp_token a JSON-encoded object; the string is read as that object and held to every rule
+        the object form is."""
+        jar, genuine = self._genuine()
+        form = self.wallet.respond(jar, vp_token=json.dumps({"pid": [genuine]}))
+        status, _, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertTrue(verdict.authentic)
+
+    def test_a_vp_token_sent_as_a_json_string_is_held_to_the_object_rules(self):
+        """The string form gets no rule the object form does not: two credentials, two
+        presentations, another query id, a list, a string that is not JSON, and a string inside a
+        string are each refused as not one presentation."""
+        jar, genuine = self._genuine()
+        for vp_token in (json.dumps({"pid": [genuine], "other": [genuine]}),
+                         json.dumps({"pid": [genuine, genuine]}),
+                         json.dumps({"not-pid": [genuine]}),
+                         json.dumps([genuine]),
+                         genuine,
+                         json.dumps(json.dumps({"pid": [genuine]}))):
+            form = self.wallet.respond(jar, vp_token=vp_token)
+            status, body, verdict = self.verifier.handle_direct_post(form)
+            self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY), vp_token[:60])
+            self.assertIn("not one presentation", verdict.reason)
+
     def test_an_answered_request_is_forgotten_not_merely_flagged(self):
         session, jar = self.verifier.new_request()
         form = self.wallet.respond(jar)
