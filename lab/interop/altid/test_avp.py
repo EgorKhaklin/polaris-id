@@ -17,6 +17,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -748,6 +749,17 @@ class WitnessResults(unittest.TestCase):
         with open(os.path.join(self.RESULTS, "table.txt")) as f:
             self.assertEqual(text, f.read())
         self.assertIn("\nRESULT: 0 disagreement(s) unclassified, over 46 cases\n", text)
+
+    def test_the_recorded_o_version_is_the_pinned_one(self):
+        # O is installed from ../mdoc/witness-eudi/package.json; the record and the README name what that pin ran.
+        with open(os.path.join(HERE, "..", "mdoc", "witness-eudi", "package.json")) as f:
+            pin = json.load(f)["dependencies"]["@owf/mdoc"]
+        self.assertRegex(pin, r"^\d+\.\d+\.\d+$")
+        with open(os.path.join(self.RESULTS, "run.json")) as f:
+            self.assertEqual(json.load(f)["owf_mdoc"], pin, "witness-results/run.json ran another @owf/mdoc")
+        with open(os.path.join(HERE, "README.md")) as f:
+            named = re.findall(r"with @owf/mdoc (\S+) \(O\)", f.read())
+        self.assertEqual(named, [pin], "README.md names another @owf/mdoc for O")
 
     def test_the_control_shows_disagreements(self):
         with tempfile.TemporaryDirectory() as t:

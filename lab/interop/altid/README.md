@@ -57,7 +57,7 @@ must carry a stated reason in its `CLASSIFIED`, or the run fails. A control, @ow
 true, must produce differences without one. `test_avp.py` rebuilds the table from the raw outputs in
 `witness-results/` and runs that control again.
 
-The run of 2026-11-13, with @owf/mdoc 0.9.0 (O), the EU reference verifier eudi-srv-verifier-endpoint v0.12.0 (E) and
+The run of 2026-11-13, with @owf/mdoc 0.9.3 (O), the EU reference verifier eudi-srv-verifier-endpoint v0.12.0 (E) and
 isomdl-uniffi 0.2.0 (I), each pinned by digest (`witness-results/run.json`):
 
 | Step | Cases ours judged | O agrees | E agrees | Differences, each with its reason |
