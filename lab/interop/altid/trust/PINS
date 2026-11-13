@@ -1,0 +1,7 @@
+# The SHA-256 of each certificate the lab trusts, over its DER. avp.anchors_from refuses any certificate in a trust
+# PEM whose hash is not listed here.
+#
+# dktb-test.pem: the integration guide's Table 13 test certificate, as its text prints it (self-signed, CA:FALSE,
+# valid 2026-06-08 to 2029-06-08). Taken from a copy of the guide whose file SHA-256 is
+# b522d95130dd069dec15e726fed44f387b8d1af6fbfa2d6b585760d32fa93a5c.
+4c3081a4c612e09906316347a7fd531097f4bcb1f920a18d9ebed6efd84ebf7a  dktb-test.pem

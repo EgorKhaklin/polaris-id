@@ -8,7 +8,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 
 | Noun | State |
 |---|---|
-| Wallets | 7 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 8 more implementations (six libraries or services under a wallet or harness built here; an adapter and a testing tool whose test issuer was replaced); 2 received wallet copies from the product |
+| Wallets | 7 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 8 more implementations (six libraries or services under a wallet or harness built here; an adapter and a testing tool whose test issuer was replaced); 2 received wallet copies from the product; the AltID test app (iOS) presented an mdoc proof of age to the lab mdoc verifier, 2026-11-13 |
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
@@ -63,6 +63,7 @@ accepts everything prints the same success line.
 | 2026-10-04 | Credo 0.7.2 with `@credo-ts/cheqd` on a local cheqd ledger (`cheqd-node` 4.2.1, by digest, cheqd's own localnet recipe): Credo registered a P-256 `did:cheqd` on the ledger, issued a `urn:eudi:pid:1` SD-JWT VC under it, published its Token Status List on the ledger as a DID-Linked Resource, and a Credo holder presented it | PyPI 1.0.0rc15, with the key the walk resolved from the ledger (Polaris resolves no DIDs) | accepted: `200 authentic`; the status list read from the ledger decided VALID by `polaris_oid4vp.status` | a key the DID does not resolve to; the answered request again; Credo trusting an unrelated CA for the verifier (Credo refused); the credential revoked on the ledger (INVALID) | [lab/interop/cheqd](interop/cheqd/README.md) |
 | 2026-10-10 | Axle's Kotlin OpenID4VP client, driven by a harness written here: Axle (OpenWallet Foundation Labs, Kotlin) at f7b8054171bb, which has no releases, its `openid4vp`, `trust` and `testkit` modules unchanged, built and run in `gradle:9.3.1-jdk17` by digest; the holder key made in its `SoftwareSecureArea` | PyPI 1.0.0rc16 | accepted: `200 authentic` | an issuer CA of the same name with another key; the answered request again; a mismatched `client_id` (Axle refused); an unrelated CA for the verifier (Axle reported it untrusted and the harness declined); the issuer-signed payload altered; a credential bound to a key the wallet does not hold | [lab/interop/axle](interop/axle/README.md) |
 | 2026-10-14 | Yivi app 8.3.1 (iOS, App Store build; developer mode, our verifier root added) | this repository at 8e6f4834 | accepted: `200 authentic`; one claim (domain) disclosed | a replayed response; neither Yivi anchor trusted | [lab/interop/yivi](interop/yivi/README.md) |
+| 2026-11-13 | the AltID test app (Denmark's Agency for Digital Government, iOS, its test environment), presenting a Proof of Age (`eu.europa.ec.av.1`) its test issuer signed, operated by the author | this repository, lab/interop/altid | accepted: `VERIFIED` | the same response posted again to its restored record (offline, at step 13: the record is one-use); a changed nonce (offline, at the device signature) | [lab/interop/altid](interop/altid/README.md); two outside mdoc verifiers agree offline: @owf/mdoc 0.9.3 and eudi-srv-verifier-endpoint v0.12.0 (with our classification input) |
 
 eudi-dev v2.3.7, OID4VCgo 0.12.0 and ProtocolSoup are listed by the OpenID Foundation as certified
 OID4VP 1.0 + HAIP 1.0 wallets.
@@ -109,11 +110,11 @@ findings were walt.id's own, recorded and not absorbed: its `present/resolve-req
 ignores configured trust anchors, and `x509TrustAnchors` wants PEM although its comment says
 base64 DER.
 
-**What the wallet rows are.** Each was driven by the author, on one machine, against this
-repository's issuer script or a test CA and a scratch database (the 2026-09-30 eudi-dev row
-against the wallet's own issuer): interoperability. One credential format (SD-JWT VC), one
-presentation path (OpenID4VP `direct_post.jwt`), ES256 throughout; the issuing side uses a
-pre-authorized code, and a wallet copy is an ES256 credential.
+**What the wallet rows are.** Each was driven by the author: interoperability. Every wallet
+presented an SD-JWT VC over OpenID4VP `direct_post.jwt`, ES256 throughout, but on 2026-11-13, when
+the AltID test app presented an mdoc over OpenID4VP `direct_post` to the lab mdoc verifier. The
+issuing side of 2026-09-28 (above) uses a pre-authorized code, and a wallet copy is an ES256
+credential.
 
 ### Conformance profile
 
