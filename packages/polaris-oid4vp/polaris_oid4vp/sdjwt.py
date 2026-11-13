@@ -230,7 +230,7 @@ class Verdict:
 
     __slots__ = ("authentic", "code", "reason", "claims", "revocation", "disclosed",
                  "issuer_subject", "issuer_anchor", "iss_bound", "unbound_iss", "transaction_data",
-                 "wallet_error", "response_code")
+                 "wallet_error", "response_code", "vp_token_from_string")
 
     def __init__(self, authentic, code="", reason="", claims=None, revocation=None,
                  disclosed=None, issuer_subject=None, issuer_anchor=None, iss_bound=None,
@@ -248,6 +248,9 @@ class Verdict:
         self.issuer_anchor = issuer_anchor
         self.iss_bound = iss_bound
         self.unbound_iss = unbound_iss
+        # True only when a Verifier built with accept_vp_token_as_json_string=True read this
+        # presentation out of a vp_token sent as a JSON string; never set by verify_presentation.
+        self.vp_token_from_string = False
         # What the key binding JWT was held to for the request's transaction_data, when the
         # request carried any: which entries it had to bind and under which reading, the hash
         # algorithm it used and its `jti`. None when the request carried none.
@@ -276,6 +279,8 @@ class Verdict:
             out["transaction_data"] = self.transaction_data
         if self.wallet_error is not None:
             out["wallet_error"] = self.wallet_error
+        if self.vp_token_from_string:
+            out["vp_token_from_string"] = True
         return out
 
 

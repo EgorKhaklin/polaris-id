@@ -1695,28 +1695,60 @@ class HeldOutTransportTests(VerifierTestCase):
         form = self.wallet.respond(jar, vp_token={"pid": [genuine]})
         self.assertEqual(self.verifier.handle_direct_post(form)[0], 200)
 
-    def test_one_genuine_presentation_in_a_vp_token_sent_as_a_json_string_is_accepted(self):
+    def test_a_vp_token_sent_as_a_json_string_is_refused_by_default(self):
         """The swiyu Sandbox Wallet 1.19.0 puts vp_token in the direct_post.jwt payload as a JSON
-        string holding the object (lab run 2026-11-13, variant C). OpenID4VP 1.0 section 8.1 calls
-        vp_token a JSON-encoded object; the string is read as that object and held to every rule
-        the object form is."""
+        string holding the object (lab run 2026-11-13). OpenID4VP 1.0 section 8.3's examples show
+        the object and 8.6 asks for a refusal; that stays the default."""
+        jar, genuine = self._genuine()
+        form = self.wallet.respond(jar, vp_token=json.dumps({"pid": [genuine]}))
+        status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertIn("not one presentation", verdict.reason)
+
+    def test_only_true_turns_the_json_string_vp_token_on(self):
+        cert_pem, key_pem = _client_chain()
+        for value, on in ((True, True), (False, False), ("yes", False), (1, False), (None, False)):
+            verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                                request_uri="https://verifier.test/request.jwt",
+                                response_uri="https://verifier.test/response",
+                                issuer_jwks=[self.wallet.issuer_jwk],
+                                accept_vp_token_as_json_string=value)
+            self.assertIs(verifier.accept_vp_token_as_json_string, on, repr(value))
+
+    def test_a_json_string_vp_token_is_accepted_when_turned_on_and_the_verdict_says_so(self):
+        self.verifier.accept_vp_token_as_json_string = True
         jar, genuine = self._genuine()
         form = self.wallet.respond(jar, vp_token=json.dumps({"pid": [genuine]}))
         status, _, verdict = self.verifier.handle_direct_post(form)
         self.assertEqual(status, 200, verdict.reason)
         self.assertTrue(verdict.authentic)
+        self.assertIs(verdict.vp_token_from_string, True)
+        self.assertIs(verdict.as_dict()["vp_token_from_string"], True)
 
-    def test_a_vp_token_sent_as_a_json_string_is_held_to_the_object_rules(self):
-        """The string form gets no rule the object form does not: two credentials, two
-        presentations, another query id, a list, a string that is not JSON, and a string inside a
-        string are each refused as not one presentation."""
+    def test_the_object_form_is_not_marked_as_a_string_when_turned_on(self):
+        self.verifier.accept_vp_token_as_json_string = True
         jar, genuine = self._genuine()
+        form = self.wallet.respond(jar, vp_token={"pid": [genuine]})
+        status, _, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertIs(verdict.vp_token_from_string, False)
+        self.assertNotIn("vp_token_from_string", verdict.as_dict())
+
+    def test_a_json_string_vp_token_turned_on_is_held_to_the_object_rules(self):
+        """The string form gets no rule the object form does not: two credentials, two
+        presentations, another query id, a list, a string that is not JSON, a string inside a
+        string, and a string nested past the depth bound (20,000 levels; json.loads overflowed
+        at 10,000 when measured on Python 3.12.13) are each refused as not one presentation."""
+        self.verifier.accept_vp_token_as_json_string = True
+        jar, genuine = self._genuine()
+        deep = '{"pid": ' + "[" * 20000 + "]" * 20000 + "}"
         for vp_token in (json.dumps({"pid": [genuine], "other": [genuine]}),
                          json.dumps({"pid": [genuine, genuine]}),
                          json.dumps({"not-pid": [genuine]}),
                          json.dumps([genuine]),
                          genuine,
-                         json.dumps(json.dumps({"pid": [genuine]}))):
+                         json.dumps(json.dumps({"pid": [genuine]})),
+                         deep):
             form = self.wallet.respond(jar, vp_token=vp_token)
             status, body, verdict = self.verifier.handle_direct_post(form)
             self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY), vp_token[:60])

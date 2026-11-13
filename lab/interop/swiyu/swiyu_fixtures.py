@@ -150,7 +150,8 @@ class Wallet:
                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())})
         return presented + kb
 
-    def respond(self, jar, *, enc="A256GCM", audience=None, nonce=None, vp_token=None, **credential):
+    def respond(self, jar, *, enc="A256GCM", audience=None, nonce=None, vp_token=None, vp_token_as_string=False,
+                **credential):
         """The posted form for the request object `jar`, read as a wallet reads it."""
         _, claims = parts(jar)
         jwk = claims["client_metadata"]["jwks"]["keys"][0]
@@ -158,6 +159,8 @@ class Wallet:
                                          claims["client_id"] if audience is None else audience, **credential)
         query_id = sv.QUERY_ID
         body = {"state": claims["state"], "vp_token": {query_id: [presentation]} if vp_token is None else vp_token}
+        if vp_token_as_string:  # what the swiyu Sandbox Wallet 1.19.0 sends (its source; lab run 2026-11-13)
+            body["vp_token"] = json.dumps(body["vp_token"])
         return {"response": [encrypt_compact(json.dumps(body).encode(), _public_key_from_jwk(jwk), enc)]}
 
     def over_http(self, link_url, did_log_text, *, post=True):

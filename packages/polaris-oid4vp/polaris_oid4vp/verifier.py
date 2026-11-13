@@ -47,7 +47,7 @@ try:
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
-from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, JweError, _loads_depth_bounded,
+from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, MAX_RESPONSE_BYTES, JweError, _loads_depth_bounded,
                   _public_key_from_jwk, b64u_decode, b64u_encode, check_compact_length,
                   decrypt_response, encrypt_compact)
 from .sdjwt import (ALL_ENTRIES, PER_CREDENTIAL, TRANSACTION_DATA_HASH_ALGS,
@@ -851,7 +851,7 @@ class Verifier:
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
                  vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
                  status_resolver=None, verifier_info=None, credential_query_id=None,
-                 verifier_info_profile=None, redirect=True):
+                 verifier_info_profile=None, redirect=True, accept_vp_token_as_json_string=False):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         # The id of the request's one DCQL credential query, "pid" unless named. A
@@ -876,6 +876,12 @@ class Verifier:
         # polling has nobody to send there, so `redirect=False` answers `{}` and issues no
         # response_code that nobody would redeem.
         self.redirect = bool(redirect)
+        # OpenID4VP 1.0 section 8.3 puts vp_token in a direct_post.jwt payload as a top-level JSON
+        # member, both of its example payloads show the object, and 8.6 asks a verifier to reject
+        # a vp_token whose format is not 8.1's. The swiyu Sandbox Wallet 1.19.0 sends the
+        # object's JSON as a string instead. Off by default, and only True turns it on, so a
+        # truthy or misspelt value reads nothing new.
+        self.accept_vp_token_as_json_string = accept_vp_token_as_json_string is True
         self.issuer_jwks = list(issuer_jwks or [])
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
         self.request_ttl_seconds = request_ttl_seconds
@@ -1120,7 +1126,20 @@ class Verifier:
         # presentation, arriving second, was refused as a replay. It closes below, once
         # verify_presentation has found the presentation authentic: only the holder of the
         # credential and its key can get that far, so only the holder can close it.
-        presentation = self._single_presentation(body.get("vp_token"))
+        # A vp_token sent as a JSON string, read only when the verifier was built to read it: once,
+        # under the depth bound and the size limit the payload around it was read under. What it
+        # holds is then held to every rule the object form is, so a string inside a string, a
+        # list or a number is refused below like any other. An accepted verdict says it came this
+        # way (`vp_token_from_string`).
+        vp_token, from_string = body.get("vp_token"), False
+        if isinstance(vp_token, str) and self.accept_vp_token_as_json_string:
+            try:
+                vp_token = _loads_depth_bounded(vp_token, "vp_token", limit=MAX_RESPONSE_BYTES,
+                                                finite=True)
+            except ValueError:
+                vp_token = None
+            from_string = True
+        presentation = self._single_presentation(vp_token)
         if presentation is None:
             return self._error("invalid_request",
                                "the vp_token is not one presentation for the one credential "
@@ -1147,6 +1166,7 @@ class Verifier:
                                       expected_vct=self.vct_values,
                                       status_resolver=self.status_resolver,
                                       transaction_data=binding)
+        verdict.vp_token_from_string = from_string
         if not verdict.authentic:
             # The reason goes to the operator through the returned verdict, and the wallet
             # gets the same constant refusal every other cause gets. The request stays open.
@@ -1267,16 +1287,6 @@ class Verifier:
     DCQL_QUERY_ID = "pid"
 
     def _single_presentation(self, vp_token):
-        # OpenID4VP 1.0 section 8.1 calls vp_token a JSON-encoded object. A wallet may put it in
-        # the direct_post.jwt payload as a JSON string holding that object (the swiyu Sandbox
-        # Wallet 1.19.0 does, lab run 2026-11-13). The string is read once, as that object, and
-        # held to every rule below; a string that is not JSON, or JSON that is not an object
-        # (a string inside a string included), is refused as before.
-        if isinstance(vp_token, str):
-            try:
-                vp_token = json.loads(vp_token)
-            except ValueError:
-                return None
         if not isinstance(vp_token, dict) or list(vp_token) != [self.query_id]:
             return None
         value = vp_token[self.query_id]

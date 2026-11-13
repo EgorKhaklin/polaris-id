@@ -365,7 +365,7 @@ class SwiyuVerifier(Verifier):
                          request_uri=public_url.rstrip("/") + "/request.jwt", response_uri=public_url.rstrip("/") + "/response",
                          redirect=False, issuer_jwks=self.pin.jwks(), vct_values=list(VCT_VALUES), claims=[CLAIM],
                          credential_query_id=QUERY_ID, request_ttl_seconds=request_ttl_seconds, verifier_info=info,
-                         status_resolver=self._status_resolver)
+                         status_resolver=self._status_resolver, accept_vp_token_as_json_string=True)
         self.did, self.kid, self.scope = did, kid, scope
         self.client_id = CLIENT_ID_PREFIX + did
         self.x5c = None
@@ -614,7 +614,8 @@ class Front:
             result = v.handle_direct_post(form)
         verdict = result[2]
         answer = {"status": result[0], "authentic": bool(getattr(verdict, "authentic", False)),
-                  "code": getattr(verdict, "code", ""), "reason": getattr(verdict, "reason", "")}
+                  "code": getattr(verdict, "code", ""), "reason": getattr(verdict, "reason", ""),
+                  "vp_token_from_string": getattr(verdict, "vp_token_from_string", False) is True}
         local = v._local
         # beside each check, the package's own answer at the place that check sits
         l7["parent"] = NOT_JUDGED if stopped_by_l7 else {"status": answer["status"], "code": answer["code"]}

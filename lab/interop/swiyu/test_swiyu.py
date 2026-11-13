@@ -713,7 +713,13 @@ class RecordTests(Base):
         # accepted
         self.w.exchange()
         record = self.w.last()
-        self.assertEqual(record["verdict"], {"status": 200, "authentic": True, "code": "", "reason": ""})
+        self.assertEqual(record["verdict"], {"status": 200, "authentic": True, "code": "", "reason": "",
+                                             "vp_token_from_string": False})
+        # accepted, from the vp_token the swiyu wallet sends as a JSON string, and the record says so
+        self.w.exchange(vp_token_as_string=True)
+        record = self.w.last()
+        self.assertEqual(record["verdict"], {"status": 200, "authentic": True, "code": "", "reason": "",
+                                             "vp_token_from_string": True})
         self.assertEqual(record["checks"]["L7"]["parent"], {"status": 200, "code": ""})
         self.assertEqual(record["checks"]["L10"]["parent"], "passed")
         answer = record["checks"]["L13"]["parent"]
@@ -1228,7 +1234,8 @@ class PinTests(unittest.TestCase):
         self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)', inspect.getsource(sdjwt._revocation_state))
         # the response path the lab sits in front of: it decrypts, then asks _single_presentation
         source = inspect.getsource(Verifier.handle_direct_post)
-        for fragment in ("decrypt_response(token, candidate.enc_key)", "self._single_presentation(body.get(\"vp_token\"))",
+        for fragment in ("decrypt_response(token, candidate.enc_key)", "self._single_presentation(vp_token)",
+                         "vp_token, from_string = body.get(\"vp_token\"), False",
                          "status_resolver=self.status_resolver", "expected_audience=self.client_id"):
             self.assertIn(fragment, source)
 

@@ -56,7 +56,6 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
-- polaris-oid4vp reads a `vp_token` that a wallet sends in the `direct_post.jwt` payload as a JSON string holding the object (the swiyu Sandbox Wallet 1.19.0 does) as that object, held to every rule the object form is; before, it refused it as not one presentation.
 - Negative vectors 0.4.1 (lab/interop/negative-vectors): the intermediate of `x5c-intermediate-not-ca` carries its siblings' key usage (keyCertSign, cRLSign), so cA FALSE is its one defect; in 0.4.0 it also had no keyCertSign, and a verifier that checks key usage first refused it for that. Reported by an outside verifier's run of the set. Its id and verdict are unchanged, and the other 36 vectors are byte for byte those of 0.4.0. A test now holds each `x5c` vector's chain to the property it names, against its control's, certificate by certificate. Lab only; no product change.
 - `scripts/polaris-dev-tunnel.sh` stops its cloudflared tunnel and the verifier and deletes the tunnel's log when the verifier returns (`--once` returns after one presentation), on Ctrl-C and on a TERM, as its help says; it exits with the verifier's status. Before, the verifier ran under `exec`, the cleanup never ran and the tunnel kept running: stop any `cloudflared tunnel --url http://localhost:<port>` that an earlier run left.
 - The Python SDK refuses a trust list, registry or federation manifest whose signed key collection is not a list, and `verify_cross_authority` reads a manifest whose `attestations` is not a list as naming no edge, as the TypeScript SDK does.
@@ -98,6 +97,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- polaris-oid4vp `Verifier(accept_vp_token_as_json_string=True)` reads a `vp_token` that a wallet sends in the `direct_post.jwt` payload as a JSON string holding the object (the swiyu Sandbox Wallet 1.19.0 does) as that object, once and under the payload's depth and size bounds, held to every rule the object form is; an accepted verdict carries `vp_token_from_string`. Off by default.
 - Negative vectors 0.5.0: 33 of the 34 SD-JWT VC negatives carry a repaired twin, the same presentation with its one defect put back, which a correct verifier accepts; suggested by Neil Berkman (Attesto).
 - The scoreboard (lab/EXTERNAL-NOUNS.md) records GHSA-7xf4-9r27-vcr5, published 2026-11-03 with EgorKhaklin credited as reporter: `@sd-jwt/core` and `@sd-jwt/sd-jwt-vc` 0.24.0 and earlier, patched in 0.24.1 (2026-10-30), and the upstream commit that carries the fix.
 - polaris-oid4vp `serve --once --result FILE` keeps FILE a JSON object, apart from the log on stdout, saying what became of the request: `nothing_received` until a response arrives, then `accepted` with the claim names, `refused` with the check and reason its `<-` line prints, or `wallet_error`; the HTTP status the wallet was answered; and the request object fetches served and refused. It is rewritten whole before each answer goes out. Once the request closes, on its acceptance or at the end of its lifetime, the outcome stays.
