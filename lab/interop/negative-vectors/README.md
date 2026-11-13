@@ -26,6 +26,14 @@ changed, re-signed wherever the change needs it, so the only reason to refuse it
 | The signer is not the named issuer | another issuer's valid leaf under the trusted root signs a credential whose `iss` is the trusted issuer: the leaf names that issuer's URL; names only a DNS host that is not `iss`'s; names that URL and also a host both share. Refused by a verifier that requires the leaf to name `iss` |
 | Status goes dark | the Token Status List the credential names gives no answer; answers with an HTML page; has a `lst` whose ZLIB stream never ends; is signed by another issuer's key under the same root; sits at a uri no key is stated for; has expired; does not reach the credential's index |
 
+**33 of the 34 negatives carry their repaired twin** (`repaired`): the same vector with that one defect put back,
+which a correct verifier accepts. A twin that is refused means the vector's refusal measured nothing. A twin keeps every
+other knob of its vector (trust mode, extra Disclosures, signer, status claim), so it can equal a control byte for
+byte; where the defect is in what the status list's uri answers, the twin also carries the `status_list` it answers
+with instead. One vector, `status-list-no-authority`, carries `no_twin` and its reason in place of a twin: an
+accepted twin must change both the uri its credential names, to the one the settings state a key for, and the key
+that signs the list there, so it would be `accept-status-list` itself.
+
 **The signer is not the named issuer** is the class of swiyu change dossier CD-008 (2026-07-31), in which a
 verifier accepted a credential signed by an attacker's key while its `iss` named a trusted issuer. Its shape
 differs: there the key was a DID named by `kid` and checked against `iss`; here it is an `x5c` leaf. SD-JWT VC
@@ -75,6 +83,10 @@ installed from PyPI into an empty venv, reached all 36 verdicts of vectors.json 
 For it the refusal code counts too: each negative must be refused with the code `POLARIS_OID4VP_CODES` names
 (for a status-list vector, the revocation state, with `list_refused`'s code after a slash). It serves each
 status list from the vector, in memory: no vector opens a socket.
+It runs every twin as a row `<id>+repaired`, expected accept, and the run fails when one is refused; a consumer's own
+harness does the same: it judges `repaired.presentation` under the vector's trust mode and `policy`, serving
+`repaired.status_list` at its `uri` where the twin has one and the vector's own list where it has not, and expects
+accept.
 The run fails when a control is refused or a negative accepted, and also when the file holds no vectors, no
 control, or no negative the adapter judged, or when it judges a negative in a layer whose own control
 (`accept-status-list` for `status-list`) it left to its caller, or under a trust mode whose own control
@@ -98,13 +110,19 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 - `polaris-oid4vp` reaches all 37 verdicts with the expected refusal codes, under the default binding, under
   another verifier's, and under the EU test harness's;
 - each leaf in the signer family signs an authentic credential when `iss` is the name it gives, so the name is
-  the only defect; and a leaf that names nobody is accepted with `iss` unbound (see Limits);
+  the only defect; and a leaf that names nobody is accepted with `iss` unbound;
 - each status vector leaves the credential authentic with the state its `notes` names, carries the control's
   credential byte for byte where it names the control's index and uri, and is accepted by a verifier that
   checks no status;
 - a run with no vectors, no control or no judged negative fails;
 - the views equal the generator's output, and a view with no vectors or a missing pair file fails;
 - each certificate defect is the only one, because the same chain repaired is accepted.
+- every negative carries `repaired` or `no_twin`, never both, a control neither, and the vectors with `no_twin` are
+  the pinned one; `polaris-oid4vp` accepts every twin, under the default binding, another verifier's, a Digital
+  Credentials API origin and the EU test harness's, and still refuses every negative with its pinned code; no twin
+  equals its negative; a file bound with `--audience`, `--nonce` and `--now` has twins accepted under its own settings;
+  each negative differs from its twin, or the one without a twin from its nearest control, by its pinned paths only;
+  `run_vectors.py` fails when a twin is refused; and `vectors.json` equals its generator's output, run to run.
 - `mdoc-vectors.json` equals its generator's output, run to run; `verify_mdoc.py` reaches every verdict with the
   refusal check each vector names; every repaired twin is accepted; the generator reproduces the OpenID4VP 1.0 B.2.6.1
   and B.2.6.2 examples; every issuer-signed item's random is 32 bytes; a digestID the MSO lacks is refused as having
@@ -227,32 +245,22 @@ python3 run_vectors.py mdoc-vectors.json --adapter verify-mdoc
 `class` `control`, runs every twin as a row `<id>+repaired`, and fails the run when a twin is refused. The keys and
 certificates are test material from public seeds, as above.
 
-## Credits
+## Using the set
 
-The signer family takes its class from swiyu change dossier CD-008, "VC Authorization Bypass" (published
-2026-07-31; swiyu-admin-ch/swiyu-admin-ch.github.io, `_change-dossiers/CD-008-Critical-Vulnerability-Generic-Verifier.md`).
-
-The views take their shapes from others' work: the mint-time reference verdict and the hardening flag from
-goodmeta/ap2-conformance (Apache-2.0); the index fields `spec_section`, `target`, `input` and `expected` from
-reallyme/openid4vp's test vectors; the pair layout from the EU reference verifier's test resources
-(eudi-srv-verifier-endpoint, Apache-2.0); and the exceptions file from the OpenID Foundation conformance
-suite's expected-failures files (MIT). Nothing of theirs is copied into this directory.
-
-## Limits
-
-- One credential type and one issuer profile; the response layer (`direct_post.jwt` encryption) has no vectors yet.
-- A leaf that names no issuer at all (no subjectAltName) is not a vector: draft-19 makes `iss` optional with
-  `x5c` and the issuer the leaf's subject, so no verdict follows. polaris-oid4vp accepts such a credential and
-  reports its `iss` apart as unbound.
-- The signer family is for `x5c`. A verifier configured with several issuers' JWKs can bind `iss` to a key only
-  by a mapping the vectors do not carry. Its verdicts are those of a verifier that requires the leaf to name `iss`;
-  the text does not require that, so a verifier that accepts the three is not wrong by the text.
-- The `sd-jwt-python` and `sd-jwt-js` adapters have not been run against 0.3.0, so nothing here says how they judge
-  the two new families.
-- A status-list vector needs its `response` served at its `uri` and the verifier held to its `policy`; the EU
+- Serve each status-list vector's `response` at its `uri`, and hold the verifier to the vector's `policy`. The EU
   view carries neither, so a run of that view judges the credential alone.
-- A verdict is pass or refuse. Why a verifier refused is compared for polaris-oid4vp only; for any other
-  adapter, a refusal for the wrong reason counts as a pass.
+- The signer family is for `x5c`. Its verdicts are those of a verifier that requires the leaf to name `iss` (its
+  class, `policy`); the text does not require that, so a verifier that accepts the three is not wrong by the text.
+  A verifier configured with several issuers' JWKs can bind `iss` to a key only by a mapping of its own.
+- A run records pass or refuse. `run_vectors.py` also compares the refusal code for polaris-oid4vp and the refusal
+  check for verify-mdoc; for an adapter whose refusal it does not compare, a negative's repaired twin is the check
+  on the reason: a twin it refuses means its refusal of that negative measured nothing.
+
+## Versions
+
+- Version 0.5.0: each negative carries `repaired`, its twin, except `status-list-no-authority`, which carries
+  `no_twin` and its reason (a new field moves the minor version). Every vector's id, class, verdict and presentation
+  are byte for byte those of 0.4.1, and the views differ from 0.4.1's by their version stamp alone.
 - Version 0.4.1: the intermediate of `x5c-intermediate-not-ca` carries its siblings' key usage (keyCertSign,
   cRLSign), so cA FALSE is its one defect; in 0.4.0 it also had no keyCertSign. Its id and verdict are unchanged,
   and the other 36 vectors are byte for byte those of 0.4.0.
@@ -264,3 +272,14 @@ suite's expected-failures files (MIT). Nothing of theirs is copied into this dir
   (`settings.status_list_keys`, `policies`, the `policy` class and the vector fields `policy`, `status_list` and
   `notes`). 0.2.0 added `kb-aud-missing` and `kb-nonce-missing`. Vectors may be added, and none will change
   meaning under the same id.
+
+## Credits
+
+The signer family takes its class from swiyu change dossier CD-008, "VC Authorization Bypass" (published
+2026-07-31; swiyu-admin-ch/swiyu-admin-ch.github.io, `_change-dossiers/CD-008-Critical-Vulnerability-Generic-Verifier.md`).
+
+The views take their shapes from others' work: the mint-time reference verdict and the hardening flag from
+goodmeta/ap2-conformance (Apache-2.0); the index fields `spec_section`, `target`, `input` and `expected` from
+reallyme/openid4vp's test vectors; the pair layout from the EU reference verifier's test resources
+(eudi-srv-verifier-endpoint, Apache-2.0); and the exceptions file from the OpenID Foundation conformance
+suite's expected-failures files (MIT). Nothing of theirs is copied into this directory.

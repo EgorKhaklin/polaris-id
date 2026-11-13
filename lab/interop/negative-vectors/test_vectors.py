@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PACKAGE = os.path.join(HERE, "..", "..", "..", "packages", "polaris-oid4vp")
@@ -208,12 +209,9 @@ class Vectors(unittest.TestCase):
             return verify_presentation(mv.present(x5c=chain), expected_nonce=mv.NONCE, expected_audience=mv.AUDIENCE,
                                        now=mv.NOW, expected_vct=mv.VCT, trust_anchors=[mv.ROOT]).authentic
 
-        repaired_ca = mv._cert("Negative Vectors Test Intermediate", mv.BADINT_K, "Negative Vectors Test Root",
-                               mv.ROOT_K, 8, ca=True, pathlen=0)
-        in_date = mv._cert("Negative Vectors Test Issuer", mv.ISS_K, "Negative Vectors Test Intermediate", mv.INT_K, 7,
-                           ca=False, leaf_san=True)
-        self.assertTrue(authentic((mv.LEAF_UNDER_NOT_A_CA, repaired_ca)), "the not-a-CA vector has a second defect")
-        self.assertTrue(authentic((in_date, mv.INTERMEDIATE)), "the expired-leaf vector has a second defect")
+        # The repairs are the generator's own: they are the twins' chains (0.5.0).
+        self.assertTrue(authentic((mv.LEAF_UNDER_NOT_A_CA, mv.REPAIRED_CA)), "the not-a-CA vector has a second defect")
+        self.assertTrue(authentic((mv.REPAIRED_LEAF, mv.INTERMEDIATE)), "the expired-leaf vector has a second defect")
         self.assertFalse(authentic((mv.LEAF_UNDER_NOT_A_CA, mv.NOT_A_CA)))
         self.assertFalse(authentic((mv.EXPIRED_LEAF, mv.INTERMEDIATE)))
 
@@ -263,8 +261,7 @@ class SignerIsNotTheIssuer(unittest.TestCase):
         # iss is the name the leaf gives.
         mv = self.mv
         for leaf in (mv.OTHER_LEAF_URI, mv.OTHER_LEAF_DNS, mv.OTHER_LEAF_URI_AND_HOST):
-            verdict = self._verify(mv.present(x5c=(leaf, mv.INTERMEDIATE), signer=mv.OTHER_K,
-                                              payload=mv._set(iss=mv.OTHER_ISSUER)))
+            verdict = self._verify(mv.under_its_own_name(leaf))
             self.assertTrue(verdict.authentic, verdict.reason)
             self.assertIs(verdict.iss_bound, True)
             self.assertEqual(verdict.claims.get("iss"), mv.OTHER_ISSUER)
@@ -647,6 +644,306 @@ class Rebinding(unittest.TestCase):
         for audience in ("https://verifier.test", "verifier", "x509_hash:", "origin:"):
             with self.assertRaises(ValueError, msg=audience):
                 mv.bind(audience=audience)
+
+
+# 0.5.0: each SD-JWT VC negative carries its repaired twin (`repaired`), the same vector with its one defect put back,
+# which a correct verifier accepts: a twin that is refused means the vector's refusal measured nothing. The one
+# negative that no single change puts back (an accepted twin must change the uri its credential names and the key
+# that signs the list there, and would be accept-status-list itself) carries a `no_twin` reason instead.
+NO_TWIN = {"status-list-no-authority"}
+# The bindings the negative tests use: the file's own, another verifier's, the Digital Credentials API's origin
+# and the EU test harness's.
+BINDINGS = ({}, OTHER, {"audience": "origin:https://verifier.test", "nonce": OTHER["nonce"]},
+            {"audience": "x509_hash:i7jZiSqa4GXNh1LzBwD2lVtKIcIhpinRQRo8BHSVMx0",
+             "nonce": "706f6c4d-c92d-4472-9dbf-d814c94f90c2", "now": 1800000000})
+
+
+def twin_row(vector):
+    """The row the runner judges for a vector's twin: the vector with its `repaired` fields laid over it (the
+    way run_vectors.main builds it), expected accept."""
+    return dict({k: v for k, v in vector.items() if k not in ("repaired", "no_twin")}, **vector["repaired"],
+                id=vector["id"] + "+repaired", expected="accept")
+
+
+def served(vector):
+    """What a vector is judged on: its presentation and the list its uri answers with (None: no status claim)."""
+    return vector["presentation"], vector.get("status_list")
+
+
+def twin_problems(doc, no_twin):
+    """What is wrong with the twins of doc: a negative with neither a twin nor a reason, with both, a control
+    with either, a reason that is empty or that no_twin does not name, a name in no_twin with a twin, and a
+    document in which no twin was measured."""
+    problems, twinned, reasoned = [], 0, set()
+    for vector in doc["vectors"]:
+        vid, twin, reason = vector["id"], "repaired" in vector, "no_twin" in vector
+        if vector["expected"] != "reject":
+            if twin or reason:
+                problems.append("%s: a control carries a twin or a reason" % vid)
+        elif twin and reason:
+            problems.append("%s: carries both a twin and a no_twin reason" % vid)
+        elif twin:
+            twinned += 1
+            if not vector["repaired"].get("presentation"):
+                problems.append("%s: its twin has no presentation" % vid)
+        elif reason:
+            reasoned.add(vid)
+            if not isinstance(vector["no_twin"], str) or not vector["no_twin"].strip():
+                problems.append("%s: its no_twin reason is empty" % vid)
+        else:
+            problems.append("%s: neither a twin nor a no_twin reason" % vid)
+    if reasoned != set(no_twin):
+        problems.append("the vectors with no_twin are %s, pinned %s" % (sorted(reasoned), sorted(no_twin)))
+    if not twinned:
+        problems.append("no twin was measured")
+    return problems
+
+
+def verdict_problems(rv, doc):
+    """polaris-oid4vp over every vector of doc as it stands (its verdict, and for a refusal its pinned code) and
+    over every twin (accepted). Nothing judged is a problem too."""
+    problems, twins = [], 0
+    for vector in doc["vectors"]:
+        got, why = rv.polaris_oid4vp(vector, doc["settings"])
+        if got != vector["expected"] or not rv.judge("polaris-oid4vp", vector, got, why):
+            problems.append("%s: %s: %s" % (vector["id"], got, why))
+        if "repaired" in vector:
+            twins += 1
+            got, why = rv.polaris_oid4vp(twin_row(vector), doc["settings"])
+            if got != "accept":
+                problems.append("%s+repaired was refused: %s" % (vector["id"], why))
+    return problems + ([] if twins else ["no twin was judged"])
+
+
+def _jwt_payload(token):
+    part = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+
+
+class RepairedTwins(unittest.TestCase):
+    """Every negative has its repaired twin, polaris-oid4vp accepts each under every binding, and a broken twin
+    fails the run."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mv = _load("make_vectors_twins", "make_vectors.py")
+        cls.rv = _load("run_vectors_twins", "run_vectors.py")
+        with open(os.path.join(HERE, "vectors.json")) as fh:
+            cls.doc = json.load(fh)
+        cls.by_id = {v["id"]: v for v in cls.doc["vectors"]}
+
+    def _run(self, doc):
+        rv = _load("run_vectors_twins_main", "run_vectors.py")
+        with tempfile.TemporaryDirectory(prefix="twins-") as tmp:
+            path = os.path.join(tmp, "vectors.json")
+            with open(path, "w") as fh:
+                json.dump(doc, fh)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = rv.main([path, "--adapter", "polaris-oid4vp"])
+        return code, out.getvalue(), err.getvalue()
+
+    # 1. every negative carries a twin or a reason, never both; the controls neither
+    def test_every_negative_carries_a_twin_or_a_reason_never_both(self):
+        self.assertEqual(twin_problems(self.doc, NO_TWIN), [])
+        self.assertEqual(sum("repaired" in v for v in self.doc["vectors"]), 33)
+        for vid in SDJWT_CONTROLS + ["accept-status-list"]:
+            self.assertFalse({"repaired", "no_twin"} & set(self.by_id[vid]), vid)
+        self.assertEqual([v["id"] for v in self.doc["vectors"] if "no_twin" in v], sorted(NO_TWIN))
+
+    def test_a_missing_twin_both_fields_a_control_twin_an_empty_reason_and_a_moved_pin_are_problems(self):
+        def edited(vid, **change):
+            return dict(self.doc, vectors=[dict(v, **change) if v["id"] == vid else v for v in self.doc["vectors"]])
+        without = dict(self.doc, vectors=[{k: x for k, x in v.items() if k != "repaired"} if v["id"] == "kb-crit" else v
+                                          for v in self.doc["vectors"]])
+        self.assertEqual(twin_problems(without, NO_TWIN), ["kb-crit: neither a twin nor a no_twin reason"])
+        self.assertEqual(twin_problems(edited("kb-crit", no_twin="a reason"), NO_TWIN),
+                         ["kb-crit: carries both a twin and a no_twin reason"])
+        self.assertEqual(twin_problems(edited("accept-x5c", repaired={"presentation": "x"}), NO_TWIN),
+                         ["accept-x5c: a control carries a twin or a reason"])
+        self.assertEqual(twin_problems(edited("status-list-no-authority", no_twin=" "), NO_TWIN),
+                         ["status-list-no-authority: its no_twin reason is empty"])
+        self.assertEqual(len(twin_problems(self.doc, NO_TWIN | {"kb-crit"})), 1)
+        self.assertEqual(len(twin_problems(self.doc, set())), 1)
+        self.assertEqual(len(twin_problems(edited("kb-crit", repaired={"presentation": ""}), NO_TWIN)), 1)
+        # No twin anywhere: the parsed set of twins is empty.
+        bare = dict(self.doc, vectors=[{k: v for k, v in x.items() if k != "repaired"} for x in self.doc["vectors"]])
+        self.assertIn("no twin was measured", twin_problems(bare, NO_TWIN))
+        self.assertIn("no twin was measured", twin_problems(dict(self.doc, vectors=[]), set()))
+
+    # 2. polaris-oid4vp accepts every twin and still refuses every negative, under each binding
+    def test_polaris_oid4vp_accepts_every_twin_and_refuses_every_negative_under_each_binding(self):
+        self.assertEqual(verdict_problems(self.rv, self.doc), [])
+        for binding in BINDINGS[1:]:
+            mv = _load("make_vectors_twin_binding", "make_vectors.py")
+            mv.bind(**binding)
+            doc = mv.build()
+            self.assertEqual(twin_problems(doc, NO_TWIN), [], binding)
+            self.assertEqual(verdict_problems(self.rv, doc), [], binding)
+
+    def test_a_refused_twin_is_a_problem(self):
+        broken = copy.deepcopy(self.doc)
+        negative = next(v for v in broken["vectors"] if v["id"] == "kb-nonce-missing")
+        negative["repaired"] = {"presentation": negative["presentation"]}
+        self.assertEqual(len(verdict_problems(self.rv, broken)), 1)
+        self.assertEqual(verdict_problems(self.rv, dict(broken, vectors=[])), ["no twin was judged"])
+
+    # 3. no twin is its negative
+    def test_no_twin_equals_its_negative(self):
+        twins = 0
+        for vector in self.doc["vectors"]:
+            if "repaired" in vector:
+                twins += 1
+                self.assertNotEqual(served(twin_row(vector)), served(vector), vector["id"])
+        self.assertEqual(twins, 33)
+
+    def test_a_twin_keeps_its_vectors_knobs(self):
+        by_id, control = self.by_id, self.by_id["accept-x5c"]
+        # a jwks vector's twin is the jwks control; a twin of a defect that is the vector's only knob is a control's
+        self.assertEqual(by_id["disclosed-iss"]["repaired"]["presentation"], by_id["accept-jwks"]["presentation"])
+        self.assertEqual(by_id["disclosed-exp"]["repaired"]["presentation"], control["presentation"])
+        self.assertEqual(by_id["kb-aud-missing"]["repaired"]["presentation"], control["presentation"])
+        # the unreferenced Disclosure is committed in its twin, and travels the same: the issuer's JWT differs
+        twin = by_id["disclosure-unreferenced"]["repaired"]["presentation"].split("~")
+        negative = by_id["disclosure-unreferenced"]["presentation"].split("~")
+        self.assertEqual(sorted(twin[1:-1]), sorted(negative[1:-1]))
+        self.assertNotEqual(twin[0], negative[0])
+        self.assertNotEqual(twin[0], control["presentation"].split("~")[0])
+        # a signer vector's twin keeps its leaf and signer and names the leaf's own issuer
+        for vid in SIGNER_FAMILY:
+            twin = by_id[vid]["repaired"]["presentation"]
+            self.assertEqual(twin.split(".")[0], by_id[vid]["presentation"].split(".")[0], vid)
+            self.assertEqual(_jwt_payload(twin)["iss"], self.mv.OTHER_ISSUER, vid)
+            self.assertEqual(_jwt_payload(by_id[vid]["presentation"])["iss"], self.mv.ISSUER, vid)
+        # the twins of the three certificate repairs are the generator's shared constructions
+        mv = self.mv
+        for vid, leaf in zip(SIGNER_FAMILY, (mv.OTHER_LEAF_URI, mv.OTHER_LEAF_DNS, mv.OTHER_LEAF_URI_AND_HOST)):
+            self.assertEqual(by_id[vid]["repaired"]["presentation"], mv.under_its_own_name(leaf), vid)
+        self.assertEqual(by_id["x5c-intermediate-not-ca"]["repaired"]["presentation"],
+                         mv.present(x5c=(mv.LEAF_UNDER_NOT_A_CA, mv.REPAIRED_CA)))
+        self.assertEqual(by_id["x5c-leaf-expired"]["repaired"]["presentation"],
+                         mv.present(x5c=(mv.REPAIRED_LEAF, mv.INTERMEDIATE)))
+        # a status vector's twin keeps its credential and policy; the list it serves is the control's, except the
+        # index vector, whose defect is in the credential and whose list stays
+        control_list = by_id["accept-status-list"]["status_list"]
+        for vid in STATUS_FAMILY:
+            if vid == "status-list-no-authority":
+                continue
+            twin = by_id[vid]["repaired"]
+            self.assertEqual(twin.get("status_list", by_id[vid]["status_list"]), control_list, vid)
+            self.assertEqual(twin["presentation"], by_id["accept-status-list"]["presentation"], vid)
+        self.assertNotIn("status_list", by_id["status-list-index-past-end"]["repaired"])
+
+    # 4. rebinding: a file bound with the flags has twins accepted under its own settings
+    def test_a_bound_file_has_twins_polaris_oid4vp_accepts_under_the_bound_settings(self):
+        tmp = tempfile.mkdtemp(prefix="twins-bound-")
+        self.addCleanup(shutil.rmtree, tmp)
+        _run_generator("--audience", OTHER["audience"], "--nonce", OTHER["nonce"], "--now", str(OTHER["now"]),
+                       "--out", tmp)
+        with open(os.path.join(tmp, "vectors.json")) as fh:
+            doc = json.load(fh)
+        self.assertEqual((doc["settings"]["audience"], doc["settings"]["nonce"], doc["settings"]["now"]),
+                         (OTHER["audience"], OTHER["nonce"], OTHER["now"]))
+        self.assertEqual(twin_problems(doc, NO_TWIN), [])
+        self.assertEqual(verdict_problems(self.rv, doc), [])
+        # bound to another verifier, the twin is another verifier's: the default settings refuse it
+        twin = twin_row(next(v for v in doc["vectors"] if v["id"] == "kb-crit"))
+        self.assertEqual(self.rv.polaris_oid4vp(twin, self.doc["settings"])[0], "reject")
+        run = _run_runner(os.path.join(tmp, "vectors.json"))
+        self.assertTrue(run.stdout.endswith(b"done\n"), run.stdout[-200:])
+        self.assertIn(b"kb-crit+repaired", run.stdout)
+
+    # 5. a broken twin is caught by the runner
+    def test_the_run_judges_every_twin_and_says_done(self):
+        code, out, err = self._run(self.doc)
+        self.assertEqual(code, 0, out + err)
+        self.assertTrue(out.endswith("done\n"))
+        self.assertEqual(out.count("+repaired"), 33)
+
+    def test_the_run_fails_when_a_repaired_twin_is_refused(self):
+        for vid in ("kb-nonce-missing", "status-list-expired", "x5c-leaf-names-other-host"):
+            doc = copy.deepcopy(self.doc)
+            vector = next(v for v in doc["vectors"] if v["id"] == vid)
+            # the twin replaced by its own negative: the same presentation, the same served list
+            vector["repaired"] = {k: vector[k] for k in ("presentation", "status_list") if k in vector}
+            code, out, err = self._run(doc)
+            self.assertEqual(code, 1, vid + out)
+            self.assertIn("a repaired twin was refused", err, vid)
+            self.assertNotIn("done", out, vid)
+
+    def test_an_adapter_that_judges_a_file_is_handed_every_row_the_run_judges(self):
+        # sd-jwt-js judges one file in one Node run: it must judge the twins too, not only the file's vectors.
+        rv = _load("run_vectors_js_batch", "run_vectors.py")
+        handed, refuse = [], set()
+
+        def node(argv, **kwargs):
+            with open(argv[2]) as fh:
+                batch = json.load(fh)
+            handed.append(batch)
+            verdicts = {v["id"]: ["reject" if v["id"] in refuse else v["expected"], ""] for v in batch["vectors"]}
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(verdicts), stderr="")
+
+        def run():
+            with tempfile.TemporaryDirectory(prefix="js-batch-") as tmp:
+                path = os.path.join(tmp, "vectors.json")
+                with open(path, "w") as fh:
+                    json.dump(self.doc, fh)
+                out, err = io.StringIO(), io.StringIO()
+                with mock.patch("subprocess.run", node), contextlib.redirect_stdout(out), \
+                        contextlib.redirect_stderr(err):
+                    return rv.main([path, "--adapter", "sd-jwt-js"]), out
+
+        code, out = run()
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertEqual(len(handed), 1)
+        rows = []
+        for vector in self.doc["vectors"]:
+            rows.append(vector["id"])
+            if "repaired" in vector:
+                rows.append(vector["id"] + "+repaired")
+        self.assertEqual([v["id"] for v in handed[0]["vectors"]], rows)
+        self.assertEqual(sum(r.endswith("+repaired") for r in rows), 33)
+        self.assertEqual(handed[0]["settings"], self.doc["settings"])
+        twin = next(v for v in handed[0]["vectors"] if v["id"] == "kb-crit+repaired")
+        self.assertEqual(twin["presentation"], self.by_id["kb-crit"]["repaired"]["presentation"])
+        self.assertEqual(out.getvalue().count("+repaired"), 33)
+        # a second run in the same process judges afresh: the first run's verdicts are not reused
+        refuse.add("accept-x5c")
+        code, out = run()
+        self.assertEqual((code, len(handed)), (1, 2), out.getvalue())
+
+    def test_no_single_change_puts_status_list_no_authoritys_defect_back(self):
+        # Its no_twin reason: the uri the credential names and the key that signs the list there must both change,
+        # either alone is still refused, and both together make accept-status-list itself.
+        mv, negative, control = self.mv, self.by_id["status-list-no-authority"], self.by_id["accept-status-list"]
+        other = {"key": mv.OTHER_K, "x5c": (mv.OTHER_LEAF_URI, mv.INTERMEDIATE)}
+
+        def judged(uri, token):
+            row = dict(negative, presentation=mv.present(payload=mv._status(uri=uri)),
+                       status_list={"uri": uri, "response": token})
+            got, why = self.rv.polaris_oid4vp(row, self.doc["settings"])
+            return got, why.split(":", 1)[0]
+
+        unvetted = mv.UNVETTED_STATUS_URI
+        self.assertEqual(mv.present(payload=mv._status(uri=unvetted)), negative["presentation"])
+        self.assertEqual(mv._status_list_token(uri=unvetted, **other), negative["status_list"]["response"])
+        self.assertEqual(judged(unvetted, mv._status_list_token(uri=unvetted, **other)), ("reject", "no_authority"))
+        # the list re-signed by the issuer, the uri kept
+        self.assertEqual(judged(unvetted, mv._status_list_token(uri=unvetted)), ("reject", "no_authority"))
+        # the uri moved to the one the settings state a key for, the other issuer's list kept
+        self.assertEqual(judged(mv.STATUS_URI, mv._status_list_token(**other)), ("reject", "list_refused/signature"))
+        # both: the control, presentation and list byte for byte
+        self.assertEqual(mv.present(payload=mv._status()), control["presentation"])
+        self.assertEqual({"uri": mv.STATUS_URI, "response": mv._status_list_token()}, control["status_list"])
+        self.assertEqual(judged(mv.STATUS_URI, mv._status_list_token())[0], "accept")
+
+    # 6. the file is what the generator makes, run to run
+    def test_two_runs_make_identical_files(self):
+        runs = [_run_generator().stdout for _ in range(2)]
+        self.assertEqual(runs[0], runs[1])
+        with open(os.path.join(HERE, "vectors.json"), "rb") as fh:
+            self.assertEqual(runs[0], fh.read())
+        self.assertEqual(self.mv.build(), self.mv.build())
 
 
 MDOC = os.path.join(HERE, "..", "mdoc")
@@ -1343,137 +1640,91 @@ class RefusalReasons(unittest.TestCase):
         self.assertEqual(reason_problems({}, REFUSAL_REASONS), ["no refusal was measured"])
 
 
-# The decoded one-change diff of each negative (one_change.py): what it is measured against (its nearest control
-# of the same trust mode; for mdoc its repaired twin), the paths that are its change, and the paths that follow
-# from that change (signatures over it, a certificate re-issued with a new serial, the bytes of a decoded value,
-# sd_hash, an _sd digest). A second change, planted or not, adds a path and fails the pin. A corpus change that
-# moves a vector edits its pin in the same commit.
+# The decoded one-change diff of each negative (one_change.py): what it is measured against (its repaired twin;
+# a negative with no twin, its nearest control of the same trust mode), the paths that are its change, and the
+# paths that follow from that change (signatures over it, a certificate re-issued with a new serial, the bytes of
+# a decoded value, sd_hash, an _sd digest). A second change, planted or not, adds a path and fails the pin. A
+# corpus change that moves a vector edits its pin in the same commit. Since 0.5.0 an SD-JWT VC negative is held
+# against its own twin, which keeps its construction, so the pin is the defect alone.
 _D0 = "/response/'documents'[0]"
 _NS = _D0 + "/'issuerSigned'/'nameSpaces'/'org.iso.18013.5.1'"
 _DS = _D0 + "/'deviceSigned'/'deviceAuth'/'deviceSignature'"
 _IA = _D0 + "/'issuerSigned'/'issuerAuth'"
 _MSO = _IA + "/#cose.payload/#tag24"
 ONE_CHANGE = {
-    "issuer-crit": ("accept-x5c",
+    "issuer-crit": ("+repaired",
         ["/issuer/header/crit(+)", "/issuer/header/urn:example:never-understood(+)"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "kb-crit": ("accept-x5c", ["/kb/header/crit(+)", "/kb/header/urn:example:never-understood(+)"], ["/kb/sig"]),
-    "kb-aud-array": ("accept-x5c", ["/kb/payload/aud"], ["/kb/sig"]),
-    "kb-aud-no-prefix": ("accept-x5c", ["/kb/payload/aud"], ["/kb/sig"]),
-    "digest-twice": ("accept-x5c", ["/issuer/payload/_sd[+1 -0]"], ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "claim-overwrite": ("accept-x5c",
+    "kb-crit": ("+repaired", ["/kb/header/crit(+)", "/kb/header/urn:example:never-understood(+)"], ["/kb/sig"]),
+    "kb-aud-array": ("+repaired", ["/kb/payload/aud"], ["/kb/sig"]),
+    "kb-aud-no-prefix": ("+repaired", ["/kb/payload/aud"], ["/kb/sig"]),
+    "digest-twice": ("+repaired", ["/issuer/payload/_sd[+1 -0]"], ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    "claim-overwrite": ("+repaired",
         ["/issuer/payload/given_name(+)"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "disclosed-exp": ("accept-x5c",
+    "disclosed-exp": ("+repaired",
         ["/disclosures[+1 -0]", "/issuer/payload/exp(-)"],
         ["/issuer/payload/_sd[+1 -0]", "/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "disclosed-iss": ("accept-jwks",
+    "disclosed-iss": ("+repaired",
         ["/disclosures[+1 -0]", "/issuer/payload/iss(-)"],
         ["/issuer/payload/_sd[+1 -0]", "/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "disclosure-four-elements": ("accept-x5c",
-        ["/disclosures[+1 -0]"],
-        ["/issuer/payload/_sd[+1 -0]", "/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "disclosure-named-sd": ("accept-x5c",
-        ["/disclosures[+1 -0]"],
-        ["/issuer/payload/_sd[+1 -0]", "/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    # the issuer's JWT is the control's, byte for byte: nothing it signed commits to the added Disclosure
-    "disclosure-unreferenced": ("accept-x5c",
-        ["/disclosures[+1 -0]"],
-        ["/kb/payload/sd_hash", "/kb/sig"]),
-    "kb-typ-jwt": ("accept-x5c", ["/kb/header/typ"], ["/kb/sig"]),
-    "kb-alg-none": ("accept-x5c", ["/kb/header/alg"], ["/kb/sig"]),
-    "kb-alg-hs256": ("accept-x5c", ["/kb/header/alg"], ["/kb/sig"]),
-    "kb-iat-nan": ("accept-x5c", ["/kb/payload/iat"], ["/kb/sig"]),
-    "kb-exp-string": ("accept-x5c", ["/kb/payload/exp(+)"], ["/kb/sig"]),
-    "issuer-sig-der": ("accept-x5c", ["/issuer/sig"], ["/kb/payload/sd_hash", "/kb/sig"]),
-    "x5c-self-signed": ("accept-x5c",
+    # the fourth element of the fourth Disclosure; the issuer committed to its digest (the sorted digests move)
+    "disclosure-four-elements": ("+repaired",
+        ["/disclosures[3][+1 -0]"],
+        ["/issuer/payload/_sd[0]", "/issuer/payload/_sd[1]", "/issuer/payload/_sd[2]", "/issuer/payload/_sd[3]",
+         "/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    # the claim name of the fourth Disclosure (its element 1)
+    "disclosure-named-sd": ("+repaired",
+        ["/disclosures[3][1]"],
+        ["/issuer/payload/_sd[0]", "/issuer/payload/_sd[1]", "/issuer/payload/_sd[2]", "/issuer/sig",
+         "/kb/payload/sd_hash", "/kb/sig"]),
+    # the Disclosures are the twin's, byte for byte: what differs is that nothing the issuer signed commits to one
+    "disclosure-unreferenced": ("+repaired",
+        ["/issuer/payload/_sd[+0 -1]"],
+        ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    "kb-typ-jwt": ("+repaired", ["/kb/header/typ"], ["/kb/sig"]),
+    "kb-alg-none": ("+repaired", ["/kb/header/alg"], ["/kb/sig"]),
+    "kb-alg-hs256": ("+repaired", ["/kb/header/alg"], ["/kb/sig"]),
+    "kb-iat-nan": ("+repaired", ["/kb/payload/iat"], ["/kb/sig"]),
+    "kb-exp-string": ("+repaired", ["/kb/payload/exp"], ["/kb/sig"]),
+    "issuer-sig-der": ("+repaired", ["/issuer/sig"], ["/kb/payload/sd_hash", "/kb/sig"]),
+    "x5c-self-signed": ("+repaired",
         ["/issuer/header/x5c[+1 -2]"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "x5c-includes-anchor": ("accept-x5c",
+    "x5c-includes-anchor": ("+repaired",
         ["/issuer/header/x5c[+1 -0]"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "x5c-unknown-root": ("accept-x5c",
+    "x5c-unknown-root": ("+repaired",
         ["/issuer/header/x5c[+1 -2]"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "x5c-leaf-expired": ("accept-x5c",
+    # the twin is the same leaf with a validity that covers the instant: its key, subject and serial are the vector's
+    "x5c-leaf-expired": ("+repaired",
         ["/issuer/header/x5c[0]/#cert.notAfter"],
-        [
-            "/issuer/header/x5c[0]/#SIG",
-            "/issuer/header/x5c[0]/#cert.serial",
-            "/issuer/sig",
-            "/kb/payload/sd_hash",
-            "/kb/sig",
-        ]),
-    "x5c-intermediate-not-ca": ("accept-x5c",
-        [
-            "/issuer/header/x5c[1]/#cert.extensions/2.5.29.19/value",
-            "/issuer/header/x5c[1]/#cert.spki",
-        ],
-        [
-            "/issuer/header/x5c[0]/#SIG",
-            "/issuer/header/x5c[0]/#cert.serial",
-            "/issuer/header/x5c[1]/#SIG",
-            "/issuer/header/x5c[1]/#cert.serial",
-            "/issuer/sig",
-            "/kb/payload/sd_hash",
-            "/kb/sig",
-        ]),
-    "kb-aud-missing": ("accept-x5c", ["/kb/payload/aud(-)"], ["/kb/sig"]),
-    "kb-nonce-missing": ("accept-x5c", ["/kb/payload/nonce(-)"], ["/kb/sig"]),
-    "x5c-leaf-names-other-issuer": ("accept-x5c",
-        [
-            "/issuer/header/x5c[0]/#cert.extensions/2.5.29.17/value",
-            "/issuer/header/x5c[0]/#cert.spki",
-            "/issuer/header/x5c[0]/#cert.subject",
-        ],
-        [
-            "/issuer/header/x5c[0]/#SIG",
-            "/issuer/header/x5c[0]/#cert.serial",
-            "/issuer/sig",
-            "/kb/payload/sd_hash",
-            "/kb/sig",
-        ]),
-    "x5c-leaf-names-other-host": ("accept-x5c",
-        [
-            "/issuer/header/x5c[0]/#cert.extensions/2.5.29.17/value",
-            "/issuer/header/x5c[0]/#cert.spki",
-            "/issuer/header/x5c[0]/#cert.subject",
-        ],
-        [
-            "/issuer/header/x5c[0]/#SIG",
-            "/issuer/header/x5c[0]/#cert.serial",
-            "/issuer/sig",
-            "/kb/payload/sd_hash",
-            "/kb/sig",
-        ]),
-    "x5c-leaf-uri-beats-host": ("accept-x5c",
-        [
-            "/issuer/header/x5c[0]/#cert.extensions/2.5.29.17/value",
-            "/issuer/header/x5c[0]/#cert.spki",
-            "/issuer/header/x5c[0]/#cert.subject",
-        ],
-        [
-            "/issuer/header/x5c[0]/#SIG",
-            "/issuer/header/x5c[0]/#cert.serial",
-            "/issuer/sig",
-            "/kb/payload/sd_hash",
-            "/kb/sig",
-        ]),
-    "status-list-unreachable": ("accept-status-list", ["/status_list/response"], []),
-    "status-list-not-a-token": ("accept-status-list", ["/status_list/response"], []),
-    "status-list-lst-truncated": ("accept-status-list",
+        ["/issuer/header/x5c[0]/#SIG", "/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    # the twin is the same intermediate with cA TRUE: its key, subject, serial and key usage are the vector's
+    "x5c-intermediate-not-ca": ("+repaired",
+        ["/issuer/header/x5c[1]/#cert.extensions/2.5.29.19/value"],
+        ["/issuer/header/x5c[1]/#SIG", "/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    "kb-aud-missing": ("+repaired", ["/kb/payload/aud(-)"], ["/kb/sig"]),
+    "kb-nonce-missing": ("+repaired", ["/kb/payload/nonce(-)"], ["/kb/sig"]),
+    "x5c-leaf-names-other-issuer": ("+repaired", ["/issuer/payload/iss"], ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    "x5c-leaf-names-other-host": ("+repaired", ["/issuer/payload/iss"], ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    "x5c-leaf-uri-beats-host": ("+repaired", ["/issuer/payload/iss"], ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    "status-list-unreachable": ("+repaired", ["/status_list/response"], []),
+    "status-list-not-a-token": ("+repaired", ["/status_list/response"], []),
+    "status-list-lst-truncated": ("+repaired",
         ["/status_list/response/payload/status_list/lst"],
         ["/status_list/response/sig"]),
-    "status-list-wrong-key": ("accept-status-list",
+    "status-list-wrong-key": ("+repaired",
         ["/status_list/response/header/x5c[0]"],
         ["/status_list/response/sig"]),
     "status-list-no-authority": ("accept-x5c",
         ["/issuer/payload/status(+)", "/status_list(+)"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
-    "status-list-expired": ("accept-status-list",
+    "status-list-expired": ("+repaired",
         ["/status_list/response/payload/exp"],
         ["/status_list/response/sig"]),
-    "status-list-index-past-end": ("accept-status-list",
+    "status-list-index-past-end": ("+repaired",
         ["/issuer/payload/status/status_list/idx"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
     "md-st-nonce": ("+repaired", [_DS + "/#SIG"], []),
@@ -1620,7 +1871,7 @@ class OneChange(unittest.TestCase):
         docs = self._with("vectors.json", "kb-nonce-missing", drop_aud)
         problems = one_change_problems(self.oc, docs, ONE_CHANGE)
         self.assertEqual(len(problems), 1, problems)
-        self.assertIn("kb-nonce-missing: against accept-x5c changed ['/kb/payload/aud(-)', '/kb/payload/nonce(-)']",
+        self.assertIn("kb-nonce-missing: against +repaired changed ['/kb/payload/aud(-)', '/kb/payload/nonce(-)']",
                       problems[0])
 
         # md-digest-value-modified whose device signature is md-st-nonce's (made over another nonce): the digest
@@ -1736,7 +1987,9 @@ def x5c_property_problems(oc, doc, pins, properties):
     for vector in doc["vectors"]:
         if vector["expected"] != "reject" or "presentation" not in vector or vector["id"] not in pins:
             continue
-        control = controls.get(pins[vector["id"]][0])
+        # The chain is held against the plain control of the vector's trust mode, whatever the one-change pin is
+        # measured against (since 0.5.0, its twin, which may carry a chain of its own).
+        control = controls.get(pins[vector["id"]][0]) or controls.get("accept-" + vector["trust"])
         if control is None:
             continue
         changed, _ = chain_paths(oc, control, vector)

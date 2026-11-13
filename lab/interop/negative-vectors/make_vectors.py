@@ -9,6 +9,9 @@ needs it, so the only reason to refuse it is the clause it cites. Two accept con
 verifier that refuses everything fails them, and a negative vector means nothing without them. The
 status-list family (0.3.0) carries its own control, and each of its vectors names the Token Status
 List the credential points at, as the bytes its uri answers with, and the policy its verdict holds under.
+Since 0.5.0 each negative but status-list-no-authority also carries `repaired`, its twin: the same vector
+with exactly its one defect put back, which a correct verifier accepts (a twin that is refused means the
+vector's refusal measured nothing).
 
 The keys and certificates are TEST material derived from public seeds, signed with deterministic
 ECDSA (RFC 6979): anyone can regenerate every byte, and nobody may trust them.
@@ -144,7 +147,7 @@ OTHER_K = _key("other-issuer")  # another issuer's own key, certified under the 
 
 def _make_pki():
     global T0, T1, ROOT, INTERMEDIATE, LEAF, SELF_SIGNED_LEAF, ROGUE_ROOT, ROGUE_LEAF, EXPIRED_LEAF, NOT_A_CA
-    global LEAF_UNDER_NOT_A_CA, OTHER_LEAF_URI, OTHER_LEAF_DNS, OTHER_LEAF_URI_AND_HOST
+    global LEAF_UNDER_NOT_A_CA, OTHER_LEAF_URI, OTHER_LEAF_DNS, OTHER_LEAF_URI_AND_HOST, REPAIRED_CA, REPAIRED_LEAF
     now = datetime.datetime.fromtimestamp(NOW, UTC)
     T0, T1 = now - datetime.timedelta(days=_NOT_BEFORE_DAYS), now + datetime.timedelta(days=_NOT_AFTER_DAYS)
     ROOT = _cert("Negative Vectors Test Root", ROOT_K, "Negative Vectors Test Root", ROOT_K, 1, ca=True, pathlen=1)
@@ -166,6 +169,13 @@ def _make_pki():
                      key_usage=_CA_KEY_USAGE)
     LEAF_UNDER_NOT_A_CA = _cert("Negative Vectors Test Issuer", ISS_K, "Negative Vectors Test Intermediate", BADINT_K, 9,
                                 ca=False, leaf_san=True)
+    # 0.5.0, the repairs of two certificates, which the twins and test_vectors.py's one-defect test share: the
+    # not-a-CA intermediate with cA TRUE (its key, subject, serial and key usage as they are), and the expired
+    # leaf with a validity that covers the instant (its key, subject and serial as they are).
+    REPAIRED_CA = _cert("Negative Vectors Test Intermediate", BADINT_K, "Negative Vectors Test Root", ROOT_K, 8, ca=True,
+                        pathlen=0)
+    REPAIRED_LEAF = _cert("Negative Vectors Test Issuer", ISS_K, "Negative Vectors Test Intermediate", INT_K, 7,
+                          ca=False, leaf_san=True)
     # 0.3.0: another issuer's leaves, under the same intermediate and root as the control's. Each is a valid
     # certificate for that issuer; the vectors use one to sign a credential whose iss names ISSUER.
     OTHER_LEAF_URI = _cert("Negative Vectors Other Issuer", OTHER_K, "Negative Vectors Test Intermediate", INT_K, 10,
@@ -237,6 +247,25 @@ def present(*, mode="x5c", x5c=None, issuer_header=None, payload=None, extra=(),
 
 def _set(**kv):
     return lambda body: body.update(kv)
+
+
+# 0.5.0, the signer family's repair: the credential names the issuer the leaf gives (every leaf of the family
+# names OTHER_ISSUER or its host), so the same leaf and signer sign an authentic credential. The twins and
+# test_vectors.py's own-name test build it from this.
+OWN_NAME = {"payload": _set(iss=OTHER_ISSUER)}
+
+
+def under_its_own_name(leaf):
+    """The signer family's twin for `leaf`: its chain, its signer, and the iss it gives."""
+    return present(x5c=(leaf, INTERMEDIATE), signer=OTHER_K, **OWN_NAME)
+
+
+_GONE = object()
+
+
+def _undo(*knobs):
+    """A repair that takes the defect's knobs away: the twin is built as the vector is, without them."""
+    return dict.fromkeys(knobs, _GONE)
 
 
 def _drop(*names):
@@ -384,63 +413,97 @@ SL_EXP_RELY = (_SL + "s13.7", "the exp claim specifies an absolute timestamp, ma
 SL_INDEX = (_SL + "s8.3 step 6", "If the provided index is out of bounds of the Status List, no statement about the "
             "status of the Referenced Token can be made and the Referenced Token MUST be rejected.")
 
+# Why the one vector without a twin has none (0.5.0).
+NO_AUTHORITY_REASON = ("An accepted twin must change two things: the uri the credential names, to the one the settings "
+                       "state a key for, and the key that signs the list there. Changing either alone is still "
+                       "refused, and changing both gives accept-status-list itself.")
+
+
 def _make_vectors():
     # id, what is changed, class, layer, citations, how the presentation is built, the verdict a correct verifier
-    # reaches. Built at call time, so bind() re-derives the instant, the audience and the certificates in them.
+    # reaches, and (0.5.0) its twin: the changes to the construction that put its one defect back (a knob removed
+    # with _undo, or set to its repaired value; every other knob of the vector is kept), or, for a negative whose
+    # defect no single change can put back, the reason it has no twin. A control has none.
+    # Built at call time, so bind() re-derives the instant, the audience and the certificates in them.
+    # What the status-list vectors' uris answer with when the list is as it should be: the control's.
+    served = {"status_list": {"uri": STATUS_URI, "response": _status_list_token()}}
     return (
-        ("accept-x5c", "nothing: the control, issuer key from x5c chaining to the anchor", "control", "control", (), {}, "accept"),
-        ("accept-jwks", "nothing: the control, issuer key given as a JWK", "control", "control", (), {"mode": "jwks"}, "accept"),
+        ("accept-x5c", "nothing: the control, issuer key from x5c chaining to the anchor", "control", "control", (), {}, "accept", None),
+        ("accept-jwks", "nothing: the control, issuer key given as a JWK", "control", "control", (), {"mode": "jwks"}, "accept", None),
         ("issuer-crit", "the issuer JWT's header marks an extension critical", "spec", "jose", (RFC7515_CRIT,),
-         {"issuer_header": CRIT}, "reject"),
+         {"issuer_header": CRIT}, "reject",
+         _undo("issuer_header")),
         ("kb-crit", "the Key Binding JWT's header marks an extension critical", "spec", "jose", (RFC7515_CRIT,),
-         {"kb_header": CRIT}, "reject"),
+         {"kb_header": CRIT}, "reject",
+         _undo("kb_header")),
         ("kb-aud-array", "the Key Binding JWT's aud is an array holding the right identifier", "spec", "sd-jwt", (RFC9901_AUD,),
-         {"kb_payload": lambda b: b.update(aud=[AUDIENCE])}, "reject"),
+         {"kb_payload": lambda b: b.update(aud=[AUDIENCE])}, "reject",
+         _undo("kb_payload")),
         ("kb-aud-no-prefix", "the Key Binding JWT's aud is the Client Identifier without its %s: prefix"
          % AUDIENCE.split(":", 1)[0], "spec",
-         "openid4vp", (OID4VP_AUD,), {"kb_payload": lambda b: b.update(aud=AUDIENCE.split(":", 1)[1])}, "reject"),
+         "openid4vp", (OID4VP_AUD,), {"kb_payload": lambda b: b.update(aud=AUDIENCE.split(":", 1)[1])}, "reject",
+         _undo("kb_payload")),
         ("digest-twice", "the issuer committed to one digest twice", "spec", "sd-jwt", (RFC9901_DIGEST_TWICE,),
-         {"payload": _dup_first_digest}, "reject"),
+         {"payload": _dup_first_digest}, "reject",
+         _undo("payload")),
         ("claim-overwrite", "a Disclosure names a claim the payload already holds in the clear", "spec", "sd-jwt", (RFC9901_EXISTS,),
-         {"payload": _set(given_name="Max")}, "reject"),
+         {"payload": _set(given_name="Max")}, "reject",
+         _undo("payload")),
         # spec-implied: SD-JWT VC draft-19 s2.2.2.3 constrains the issuer's format, and its verification
         # section adds no verifier refusal for a disclosed exp.
         ("disclosed-exp", "exp travels in a Disclosure instead of the payload", "spec-implied", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
-         {"payload": _drop("exp"), "extra": ((_salt("exp"), "exp", NOW + 365 * 86400),)}, "reject"),
+         {"payload": _drop("exp"), "extra": ((_salt("exp"), "exp", NOW + 365 * 86400),)}, "reject",
+         _undo("payload", "extra")),
         # spec-implied: SD-JWT VC draft-19 s2.2.2.3 constrains the issuer's format, and its verification
         # section adds no verifier refusal for a disclosed iss.
         ("disclosed-iss", "iss travels in a Disclosure instead of the payload", "spec-implied", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
-         {"payload": _drop("iss"), "extra": ((_salt("iss"), "iss", ISSUER),), "mode": "jwks"}, "reject"),
+         {"payload": _drop("iss"), "extra": ((_salt("iss"), "iss", ISSUER),), "mode": "jwks"}, "reject",
+         _undo("payload", "extra")),
         ("disclosure-four-elements", "an object-property Disclosure with four elements", "spec", "sd-jwt", (RFC9901_THREE,),
-         {"extra": ((_salt("nationality"), "nationality", "DE", "extra"),)}, "reject"),
+         {"extra": ((_salt("nationality"), "nationality", "DE", "extra"),)}, "reject",
+         {"extra": ((_salt("nationality"), "nationality", "DE"),)}),
         ("disclosure-named-sd", "a Disclosure whose claim name is _sd", "spec", "sd-jwt", (RFC9901_SD_NAME,),
-         {"extra": ((_salt("_sd"), "_sd", ["x"]),)}, "reject"),
-        ("kb-typ-jwt", "the Key Binding JWT's typ is JWT", "spec", "sd-jwt", (RFC9901_KB_TYP,), {"kb_header": {"typ": "JWT"}}, "reject"),
+         {"extra": ((_salt("_sd"), "_sd", ["x"]),)}, "reject",
+         {"extra": ((_salt("_sd"), "nicknames", ["x"]),)}),
+        ("kb-typ-jwt", "the Key Binding JWT's typ is JWT", "spec", "sd-jwt", (RFC9901_KB_TYP,), {"kb_header": {"typ": "JWT"}}, "reject",
+         _undo("kb_header")),
         ("kb-alg-none", "the Key Binding JWT is unsigned (alg none)", "spec", "sd-jwt", (RFC9901_NONE,),
-         {"kb_header": {"alg": "none"}}, "reject"),
+         {"kb_header": {"alg": "none"}}, "reject",
+         _undo("kb_header")),
         ("kb-alg-hs256", "the Key Binding JWT is an HMAC keyed with the holder's public JWK (algorithm confusion)", "spec",
-         "jose", (RFC8725_ONE_ALG,), {"kb_header": {"alg": "HS256"}}, "reject"),
+         "jose", (RFC8725_ONE_ALG,), {"kb_header": {"alg": "HS256"}}, "reject",
+         _undo("kb_header")),
         ("kb-iat-nan", "the Key Binding JWT's iat is NaN, which is not JSON", "spec", "sd-jwt", (RFC8259_NAN,),
-         {"kb_text": lambda b: _json(dict(b, iat="__NAN__")).replace('"__NAN__"', "NaN")}, "reject"),
+         {"kb_text": lambda b: _json(dict(b, iat="__NAN__")).replace('"__NAN__"', "NaN")}, "reject",
+         _undo("kb_text")),
         ("kb-exp-string", "the Key Binding JWT's exp is a string", "spec-implied", "sd-jwt", (RFC7519_NUMERICDATE,),
-         {"kb_payload": lambda b: b.update(exp="never")}, "reject"),
+         {"kb_payload": lambda b: b.update(exp="never")}, "reject",
+         {"kb_payload": lambda b: b.update(exp=NOW + 3600)}),
         ("issuer-sig-der", "the issuer JWT's ES256 signature is DER-encoded instead of R||S", "spec", "jose", (RFC7518_ES256,),
-         {"issuer_der": True}, "reject"),
+         {"issuer_der": True}, "reject",
+         _undo("issuer_der")),
         ("x5c-self-signed", "x5c holds only a self-signed leaf", "spec-implied", "haip-x509", (HAIP_SELF_SIGNED,),
-         {"x5c": (SELF_SIGNED_LEAF,)}, "reject"),
+         {"x5c": (SELF_SIGNED_LEAF,)}, "reject",
+         _undo("x5c")),
         ("x5c-includes-anchor", "x5c carries the trust anchor's own certificate", "spec-implied", "haip-x509", (HAIP_NO_ANCHOR,),
-         {"x5c": (LEAF, INTERMEDIATE, ROOT)}, "reject"),
+         {"x5c": (LEAF, INTERMEDIATE, ROOT)}, "reject",
+         _undo("x5c")),
         ("x5c-unknown-root", "the leaf chains to a root the verifier was not given", "spec", "haip-x509", (RFC7515_X5C,),
-         {"x5c": (ROGUE_LEAF,)}, "reject"),
+         {"x5c": (ROGUE_LEAF,)}, "reject",
+         _undo("x5c")),
         ("x5c-leaf-expired", "the leaf expired before the verification instant", "spec", "haip-x509", (RFC7515_X5C, RFC5280_VALIDITY),
-         {"x5c": (EXPIRED_LEAF, INTERMEDIATE)}, "reject"),
+         {"x5c": (EXPIRED_LEAF, INTERMEDIATE)}, "reject",
+         {"x5c": (REPAIRED_LEAF, INTERMEDIATE)}),
         ("x5c-intermediate-not-ca", "the intermediate in x5c is not a CA", "spec", "haip-x509", (RFC7515_X5C, RFC5280_CA),
-         {"x5c": (LEAF_UNDER_NOT_A_CA, NOT_A_CA)}, "reject"),
+         {"x5c": (LEAF_UNDER_NOT_A_CA, NOT_A_CA)}, "reject",
+         {"x5c": (LEAF_UNDER_NOT_A_CA, REPAIRED_CA)}),
         # 0.2.0: absent, not wrong. A verifier that checks aud and nonce only when present accepts these.
         ("kb-aud-missing", "the Key Binding JWT has no aud", "spec", "sd-jwt",
-         (RFC9901_KB_AUD_REQUIRED, RFC9901_KB_BOUND, OID4VP_AUD), {"kb_payload": lambda b: b.pop("aud")}, "reject"),
+         (RFC9901_KB_AUD_REQUIRED, RFC9901_KB_BOUND, OID4VP_AUD), {"kb_payload": lambda b: b.pop("aud")}, "reject",
+         _undo("kb_payload")),
         ("kb-nonce-missing", "the Key Binding JWT has no nonce", "spec", "sd-jwt",
-         (RFC9901_KB_NONCE_REQUIRED, RFC9901_KB_BOUND, OID4VP_NONCE), {"kb_payload": lambda b: b.pop("nonce")}, "reject"),
+         (RFC9901_KB_NONCE_REQUIRED, RFC9901_KB_BOUND, OID4VP_NONCE), {"kb_payload": lambda b: b.pop("nonce")}, "reject",
+         _undo("kb_payload")),
         # 0.3.0: the signer is not the named issuer. Another issuer's valid leaf, under the trusted root, signs
         # with that issuer's own key a credential whose iss is ISSUER. policy (0.3.1; spec-implied in 0.3.0): no
         # sentence requires comparing iss with the leaf's names, and oauth-wg/oauth-sd-jwt-vc PR #436 (merged
@@ -452,15 +515,18 @@ def _make_vectors():
         ("x5c-leaf-names-other-issuer", "another issuer's leaf, under the trusted root and naming %s as its URI, "
          "signs a credential whose iss is %s" % (OTHER_ISSUER, ISSUER), "policy", "x5c-issuer",
          (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
-         {"x5c": (OTHER_LEAF_URI, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
+         {"x5c": (OTHER_LEAF_URI, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject",
+         OWN_NAME),
         ("x5c-leaf-names-other-host", "another issuer's leaf, under the trusted root and naming only the DNS host %s, "
          "signs a credential whose iss is %s: it names neither that URL nor its host" % (OTHER_HOST, ISSUER),
          "policy", "x5c-issuer", (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
-         {"x5c": (OTHER_LEAF_DNS, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
+         {"x5c": (OTHER_LEAF_DNS, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject",
+         OWN_NAME),
         ("x5c-leaf-uri-beats-host", "another issuer's leaf, under the trusted root, names %s as its URI and also the "
          "host issuer.example, which both share; it signs a credential whose iss is %s" % (OTHER_ISSUER, ISSUER),
          "policy", "x5c-issuer", (SDJWTVC_X5C_ISSUER, SDJWTVC_KEY_ISSUER, SDJWTVC_ISS_KEYS),
-         {"x5c": (OTHER_LEAF_URI_AND_HOST, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject"),
+         {"x5c": (OTHER_LEAF_URI_AND_HOST, INTERMEDIATE), "signer": OTHER_K, "notes": SIGNER_NOTE}, "reject",
+         OWN_NAME),
         # 0.3.0: status goes dark. The control's credential with a status claim; `status_list` is what its uri
         # answers with (null: no answer). The verdict is the status-required policy's: the draft says SHOULD
         # for each failed check except an index past the list's end (MUST, s8.3 step 6).
@@ -468,27 +534,31 @@ def _make_vectors():
          "VALID at the index", "control", "status-list", (),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token()},
-          "notes": "polaris-oid4vp returns authentic with revocation state checked, status 0 (VALID)."}, "accept"),
+          "notes": "polaris-oid4vp returns authentic with revocation state checked, status 0 (VALID)."}, "accept", None),
         ("status-list-unreachable", "the status list's uri gives no answer", "policy", "status-list",
          (SL_RESOLVE, SL_SHOULD),
          {"payload": _status(), "policy": "status-required", "status_list": {"uri": STATUS_URI, "response": None},
-          "notes": _status_note("unreachable")}, "reject"),
+          "notes": _status_note("unreachable")}, "reject",
+         served),
         ("status-list-not-a-token", "the status list's uri answers with an HTML error page, not a Status List Token",
          "policy", "status-list", (SL_RESPONSE, SL_SHOULD),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": "<!doctype html><title>503 Service Unavailable</title>"},
-          "notes": _status_note("unreachable (no list was obtained)")}, "reject"),
+          "notes": _status_note("unreachable (no list was obtained)")}, "reject",
+         served),
         ("status-list-lst-truncated", "the status list's compressed lst is cut short: the ZLIB stream never ends",
          "policy", "status-list", (SL_DECOMPRESS, SL_SHOULD),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token(truncated=True)},
-          "notes": _status_note("list_refused (code lst)")}, "reject"),
+          "notes": _status_note("list_refused (code lst)")}, "reject",
+         served),
         ("status-list-wrong-key", "the status list at the stated uri is signed by another issuer's key, whose leaf "
          "chains to the same trusted root", "policy", "status-list", (SL_SIGNATURE, SL_SHOULD),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token(key=OTHER_K,
                                                                             x5c=(OTHER_LEAF_URI, INTERMEDIATE))},
-          "notes": _status_note("list_refused (code signature)")}, "reject"),
+          "notes": _status_note("list_refused (code signature)")}, "reject",
+         served),
         ("status-list-no-authority", "the credential names a status list at %s, where no key is stated as entitled "
          "to publish its issuer's status; the list there is signed by another issuer's key" % UNVETTED_STATUS_URI,
          "policy", "status-list", (SL_KEY, SL_NO_MANDATE, SL_SHOULD),
@@ -496,21 +566,25 @@ def _make_vectors():
           "status_list": {"uri": UNVETTED_STATUS_URI,
                           "response": _status_list_token(uri=UNVETTED_STATUS_URI, key=OTHER_K,
                                                          x5c=(OTHER_LEAF_URI, INTERMEDIATE))},
-          "notes": _status_note("no_authority, and nothing was fetched")}, "reject"),
+          "notes": _status_note("no_authority, and nothing was fetched")}, "reject",
+         NO_AUTHORITY_REASON),
         ("status-list-expired", "the status list expired a day before the verification instant", "policy",
          "status-list", (SL_EXP, SL_EXP_RELY, SL_SHOULD),
          {"payload": _status(), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token(exp_days=-1)},
-          "notes": _status_note("list_refused (code expired)")}, "reject"),
+          "notes": _status_note("list_refused (code expired)")}, "reject",
+         served),
         ("status-list-index-past-end", "the credential names index %d of a %d-entry status list"
          % (INDEX_PAST_END, len(STATUSES)), "spec", "status-list", (SL_INDEX,),
          {"payload": _status(idx=INDEX_PAST_END), "policy": "status-required",
           "status_list": {"uri": STATUS_URI, "response": _status_list_token()},
-          "notes": _status_note("list_refused (code index)")}, "reject"),
+          "notes": _status_note("list_refused (code index)")}, "reject",
+         {"payload": _status()}),
         # 0.4.0, last in the file so that no vector is renumbered: a Disclosure nobody committed to.
         ("disclosure-unreferenced", "a Disclosure travels with the presentation that no digest in the issuer's "
          "payload commits to; the holder's Key Binding JWT signs over it", "spec", "sd-jwt", (RFC9901_UNREFERENCED,),
-         {"unreferenced": ((_salt("nationality"), "nationality", "DE"),)}, "reject"),
+         {"unreferenced": ((_salt("nationality"), "nationality", "DE"),)}, "reject",
+         dict(_undo("unreferenced"), extra=((_salt("nationality"), "nationality", "DE"),))),
     )
 
 
@@ -523,16 +597,25 @@ EXTRA_FIELDS = ("policy", "status_list", "notes")
 
 def build():
     vectors = []
-    for vid, what, cls, layer, cites, kw, expected in VECTORS:
+    for vid, what, cls, layer, cites, kw, expected, repair in VECTORS:
         kw = dict(kw)
         extra = {k: kw.pop(k) for k in EXTRA_FIELDS if k in kw}
-        vectors.append(dict({"id": vid, "changed": what, "class": cls, "layer": layer,
-                             "clauses": [{"ref": r, "text": t} for r, t in cites],
-                             "trust": kw.get("mode", "x5c"), "presentation": present(**kw), "expected": expected},
-                            **extra))
+        vector = dict({"id": vid, "changed": what, "class": cls, "layer": layer,
+                       "clauses": [{"ref": r, "text": t} for r, t in cites],
+                       "trust": kw.get("mode", "x5c"), "presentation": present(**kw), "expected": expected},
+                      **extra)
+        if isinstance(repair, str):
+            vector["no_twin"] = repair
+        elif repair is not None:
+            # The twin: the vector's own construction, every knob kept, with the repair laid over it. A twin
+            # carries the list its uri answers with only where the repair changes it.
+            fixed = {k: v for k, v in dict(kw, **repair).items() if v is not _GONE and k not in EXTRA_FIELDS}
+            vector["repaired"] = dict({"presentation": present(**fixed)},
+                                      **{k: repair[k] for k in ("status_list",) if k in repair})
+        vectors.append(vector)
     return {
         "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
-        "version": "0.4.1",
+        "version": "0.5.0",
         "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them."
                    + "".join(" The %s key came from %s." % kv for kv in _SUPPLIED),
         "settings": {"now": NOW, "nonce": NONCE, "audience": AUDIENCE, "vct": VCT, "max_skew_seconds": 300,
