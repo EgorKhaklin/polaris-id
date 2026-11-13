@@ -3925,7 +3925,7 @@ jobs:
         run: python -m unittest lab/interop/fixtures/ed25519-holder/test_fixture.py
       # lab/interop/*/run.sh: a harness that stops early must not exit 0. macOS bash 3.2 exits with
       # the EXIT trap's status after a set -u failure, so each harness's trap fails a run that did
-      # not reach its last line; this holds all sixteen to it and runs the shape under /bin/bash.
+      # not reach its last line; this holds all seventeen to it and runs the shape under /bin/bash.
       - name: The lab harnesses' EXIT traps (lab/interop/test_exit_trap.py), an early stop fails
         run: python -m unittest lab/interop/test_exit_trap.py
       # lab/interop/waltid/setup.sh is the stranger's step 4. Run again on the same walt.id after
@@ -3969,6 +3969,10 @@ jobs:
       # as above; no network, no Docker.
       - name: The AltID age-verification lab, each response refused at its own step (lab/interop/altid/test_avp.py)
         run: python -m unittest lab/interop/altid/test_avp.py
+      # lab/interop/swiyu: a lab verifier for the swiyu wallet, a subclass of this package's verifier whose
+      # own checks can only refuse; it stays true as the verifier moves under it. No wallet here.
+      - name: The swiyu lab verifier, each lab check a refusal over the package's verdict (lab/interop/swiyu/test_swiyu.py)
+        run: python -m unittest lab/interop/swiyu/test_swiyu.py
       # The refusals as HTTP status codes, which is the form the conformance plan scores.
       # Noticing a forged presentation and answering 200 anyway fails seven modules at once
       # while every unit test stays green.

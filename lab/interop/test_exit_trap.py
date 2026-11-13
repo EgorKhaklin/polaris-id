@@ -77,8 +77,8 @@ class SkeletonExits(unittest.TestCase):
 
 
 class EveryHarnessCarriesIt(unittest.TestCase):
-    def test_the_sixteen_are_found(self):
-        self.assertEqual(len(harnesses()), 16, [p.parent.name for p in harnesses()])
+    def test_the_seventeen_are_found(self):
+        self.assertEqual(len(harnesses()), 17, [p.parent.name for p in harnesses()])
 
     def test_each_harness(self):
         for p in harnesses():
