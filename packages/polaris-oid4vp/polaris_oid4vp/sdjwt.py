@@ -248,7 +248,7 @@ class Verdict:
         self.issuer_anchor = issuer_anchor
         self.iss_bound = iss_bound
         self.unbound_iss = unbound_iss
-        # True only when a Verifier built with accept_vp_token_as_json_string=True read the
+        # True only when a Verifier whose accept_vp_token_as_json_string is True read the
         # response's vp_token out of a JSON string, refused or accepted; never set by
         # verify_presentation.
         self.vp_token_from_string = False

@@ -645,7 +645,7 @@ class Front:
             and answer["authentic"]
             and state != NOT_JUDGED
             and state["state"] == sdjwt.CHECKED
-            and state["status"] == 0
+            and type(state["status"]) is int and state["status"] == 0
             and type(state.get("age_seconds")) is int
             and 0 <= state["age_seconds"] <= COUNTED_MAX_LIST_AGE_SECONDS
         )

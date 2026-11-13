@@ -1063,8 +1063,8 @@ class Verifier:
     def _read_vp_token(self, member):
         """The payload's vp_token member, as the object the rules below judge.
 
-        A member sent as a JSON string is read only when the verifier was built with
-        accept_vp_token_as_json_string=True (the attribute is True, not merely truthy): once,
+        A member sent as a JSON string is read only while the verifier's
+        accept_vp_token_as_json_string is True (built so, or set so; not merely truthy): once,
         under the depth bound, size limit and finite rule the payload around it was read under.
         What it holds is then held to every rule the object form is, so a string inside a
         string, a list or a number is refused like any other; a string that is not JSON gives

@@ -823,6 +823,11 @@ class RecordTests(Base):
         bound = sv.COUNTED_MAX_LIST_AGE_SECONDS
         for revocation, counted in (({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": 0}, True),
                                     ({"state": "checked", "status": 1, "code": None, "stale": False, "age_seconds": 0}, False),
+                                    # VALID is the integer 0: False and 0.0 compare equal to it and are not it
+                                    ({"state": "checked", "status": False, "code": None, "stale": False, "age_seconds": 0},
+                                     False),
+                                    ({"state": "checked", "status": 0.0, "code": None, "stale": False, "age_seconds": 0},
+                                     False),
                                     ({"state": "unreachable", "status": 0, "code": None, "stale": False, "age_seconds": 0},
                                      False),
                                     # past its ttl counted from iat (records 7-8: 2177 s, ttl 900), inside the lab's bound
