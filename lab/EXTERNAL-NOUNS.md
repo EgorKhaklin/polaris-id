@@ -8,13 +8,13 @@ Anything the author ran against the author's own code belongs in the last sectio
 
 | Noun | State |
 |---|---|
-| Wallets | 7 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 8 more implementations (six libraries or services under a wallet or harness built here; an adapter and a testing tool whose test issuer was replaced); 2 received wallet copies from the product |
+| Wallets | 7 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 8 more implementations (six libraries or services under a wallet or harness built here; an adapter and a testing tool whose test issuer was replaced); 2 received wallet copies from the product; the AltID test app (iOS) presented an mdoc proof of age to the lab mdoc verifier, 2026-11-13 |
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. |
-| Use | 2 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier |
-| Findings from outside | 2, both fixed |
+| Use | 2 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
+| Findings from outside | 3, all fixed |
 
 ## External nouns
 
@@ -63,6 +63,7 @@ accepts everything prints the same success line.
 | 2026-10-04 | Credo 0.7.2 with `@credo-ts/cheqd` on a local cheqd ledger (`cheqd-node` 4.2.1, by digest, cheqd's own localnet recipe): Credo registered a P-256 `did:cheqd` on the ledger, issued a `urn:eudi:pid:1` SD-JWT VC under it, published its Token Status List on the ledger as a DID-Linked Resource, and a Credo holder presented it | PyPI 1.0.0rc15, with the key the walk resolved from the ledger (Polaris resolves no DIDs) | accepted: `200 authentic`; the status list read from the ledger decided VALID by `polaris_oid4vp.status` | a key the DID does not resolve to; the answered request again; Credo trusting an unrelated CA for the verifier (Credo refused); the credential revoked on the ledger (INVALID) | [lab/interop/cheqd](interop/cheqd/README.md) |
 | 2026-10-10 | Axle's Kotlin OpenID4VP client, driven by a harness written here: Axle (OpenWallet Foundation Labs, Kotlin) at f7b8054171bb, which has no releases, its `openid4vp`, `trust` and `testkit` modules unchanged, built and run in `gradle:9.3.1-jdk17` by digest; the holder key made in its `SoftwareSecureArea` | PyPI 1.0.0rc16 | accepted: `200 authentic` | an issuer CA of the same name with another key; the answered request again; a mismatched `client_id` (Axle refused); an unrelated CA for the verifier (Axle reported it untrusted and the harness declined); the issuer-signed payload altered; a credential bound to a key the wallet does not hold | [lab/interop/axle](interop/axle/README.md) |
 | 2026-10-14 | Yivi app 8.3.1 (iOS, App Store build; developer mode, our verifier root added) | this repository at 8e6f4834 | accepted: `200 authentic`; one claim (domain) disclosed | a replayed response; neither Yivi anchor trusted | [lab/interop/yivi](interop/yivi/README.md) |
+| 2026-11-13 | the AltID test app (Denmark's Agency for Digital Government, iOS, its test environment), presenting a Proof of Age (`eu.europa.ec.av.1`) its test issuer signed, operated by the author | this repository, lab/interop/altid | accepted: `VERIFIED` | the same response posted again to its restored record (offline, at step 13: the record is one-use); a changed nonce (offline, at the device signature) | [lab/interop/altid](interop/altid/README.md); two outside mdoc verifiers agree offline: @owf/mdoc 0.9.3 and eudi-srv-verifier-endpoint v0.12.0 (with our classification input) |
 
 eudi-dev v2.3.7, OID4VCgo 0.12.0 and ProtocolSoup are listed by the OpenID Foundation as certified
 OID4VP 1.0 + HAIP 1.0 wallets.
@@ -109,11 +110,11 @@ findings were walt.id's own, recorded and not absorbed: its `present/resolve-req
 ignores configured trust anchors, and `x509TrustAnchors` wants PEM although its comment says
 base64 DER.
 
-**What the wallet rows are.** Each was driven by the author, on one machine, against this
-repository's issuer script or a test CA and a scratch database (the 2026-09-30 eudi-dev row
-against the wallet's own issuer): interoperability. One credential format (SD-JWT VC), one
-presentation path (OpenID4VP `direct_post.jwt`), ES256 throughout; the issuing side uses a
-pre-authorized code, and a wallet copy is an ES256 credential.
+**What the wallet rows are.** Each was driven by the author: interoperability. Every wallet
+presented an SD-JWT VC over OpenID4VP `direct_post.jwt`, ES256 throughout, but on 2026-11-13, when
+the AltID test app presented an mdoc over OpenID4VP `direct_post` to the lab mdoc verifier. The
+issuing side of 2026-09-28 (above) uses a pre-authorized code, and a wallet copy is an ES256
+credential.
 
 ### Conformance profile
 
@@ -235,11 +236,18 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    opened from here and merged by the maintainer on 2026-10-28 (b587ce4a). Its CI's test count went
    from 123 to 144; the first run on main with them ([40770905494](https://github.com/vouchkit/vouchkit/actions/runs/40770905494))
    passed on Python 3.11, 3.12 and 3.13.
+4. 2026-11-13: Neil Berkman (Xuku LLC) reported by email a run of this repository's negative
+   vectors against the verifier of [Attesto](https://github.com/XukuLLC/attesto), not a CI job.
+   In his words, at vectors 0.4.0 (commit `2a5acc4`),
+   [Attesto 2.17.0](https://github.com/XukuLLC/attesto/releases/tag/v2.17.0) "refuses all 66
+   negatives, including disclosure-unreferenced, and accepts every control and repaired twin. The
+   seven status-list cases are refused by Attesto's status-list check, which a verifier calls
+   alongside presentation verification."
 
 ### Findings from outside
 
-    Bugs/ambiguities filed by non-authors:   1
-    Fixed because of external findings:      2
+    Bugs/ambiguities filed by non-authors:   2
+    Fixed because of external findings:      3
 
 1. walt.id declined the request-signing certificate (above): nobody filed it, but the cause was
    outside this repository. Fixed in v9.465.
@@ -248,6 +256,11 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    filed ambiguity: the README stamped the tree's version while its status line named the
    published one. Fixed the same day. The reviewer is not named, so this is not validated
    external evidence; three observations were answered "intentional" with measurements.
+3. 2026-11-13: Neil Berkman (Attesto) reported that the `x5c-intermediate-not-ca` vector carried a
+   second defect. In his words: "Its intermediate has cA = FALSE but also lacks keyCertSign, so a
+   verifier that checks key usage first refuses it for that reason, and the BasicConstraints check
+   is never isolated." Fixed in negative vectors 0.4.1
+   ([PR 541](https://github.com/EgorKhaklin/polaris-id/pull/541)).
 
 ---
 

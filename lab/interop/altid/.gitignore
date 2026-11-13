@@ -1,0 +1,2 @@
+# A flow's capture is kept on the machine that ran it; none is committed by default.
+runs/

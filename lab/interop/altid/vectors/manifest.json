@@ -1,0 +1,274 @@
+{
+ "cases": [
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "satisfied",
+   "name": "table13-bstr",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "satisfied",
+   "name": "table13-array",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "satisfied",
+   "name": "leaf-root",
+   "pins": [
+    "root"
+   ],
+   "pins_sha256": [
+    "b0efdbfe1c38db5f855c33b437e5ee17058b3887b49d83abec4ec6085ecbfb45"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "not satisfied",
+   "name": "age-false",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "not satisfied",
+   "name": "age-missing",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "device response",
+   "name": "two-documents",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "device response",
+   "name": "no-documents",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "device response",
+   "name": "status-10",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "trust list",
+   "name": "end-at-intermediate",
+   "pins": [
+    "intermediate"
+   ],
+   "pins_sha256": [
+    "ee660237108c155497b060619394ec054e43dc561ec8cbb145ad80b952024017"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "trust list",
+   "name": "pinned-leaf-alone",
+   "pins": [
+    "leaf-under-root"
+   ],
+   "pins_sha256": [
+    "4da27abc1ca178c590f48527b4c1175b22dd40658530c621b9aa43c81180ab6a"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "trust list",
+   "name": "unordered",
+   "pins": [
+    "root"
+   ],
+   "pins_sha256": [
+    "b0efdbfe1c38db5f855c33b437e5ee17058b3887b49d83abec4ec6085ecbfb45"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "trust list",
+   "name": "self-signature-broken",
+   "pins": [
+    "table13-shape-signature-broken"
+   ],
+   "pins_sha256": [
+    "d6daf4261ea4cc22da54ce4e4412898596730b644c1bb9b5e7eb3e0f8e55bfab"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "issuer chain",
+   "name": "empty-x5chain",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "issuer signature",
+   "name": "first-did-not-sign",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "trust list",
+   "name": "same-subject-other-key",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2027-02-01T12:00:00Z",
+   "expected": "issuer chain",
+   "name": "certificate-expired",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-12-02T12:00:00Z",
+   "expected": "validity",
+   "name": "mso-expired",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "docType",
+   "name": "mso-doctype-other",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "requested docType",
+   "name": "document-doctype-other",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "status",
+   "name": "status-element",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "device signature",
+   "name": "device-other-key",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "device signature",
+   "name": "signed-bare-client-id",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  },
+  {
+   "at": "2026-11-12T12:00:00Z",
+   "expected": "device signature",
+   "name": "signed-with-thumbprint",
+   "pins": [
+    "table13-shape"
+   ],
+   "pins_sha256": [
+    "36ad5028eb782587315bfb9ecd38a156ef4a50da7221cd519892341d2a6c8e90"
+   ]
+  }
+ ],
+ "inputs": {
+  "claims": [
+   {
+    "path": [
+     "eu.europa.ec.av.1",
+     "age_over_18"
+    ]
+   }
+  ],
+  "client_id": "redirect_uri:https://avp-lab.example/response/zS6S_YaTSgfgCVg8wd_6nTO46qiQM-IwXg89HVRSyP8",
+  "doctype_value": "eu.europa.ec.av.1",
+  "encryption_jwk": null,
+  "nonce": "v5Iflq2dE3rwnDU0YH0oTA",
+  "response_mode": "direct_post",
+  "response_uri": "https://avp-lab.example/response/zS6S_YaTSgfgCVg8wd_6nTO46qiQM-IwXg89HVRSyP8"
+ },
+ "note": "TEST material from the public seed 'polaris-altid-avp-lab/'; nothing here is real issuer material"
+}

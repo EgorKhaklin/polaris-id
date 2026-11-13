@@ -257,8 +257,14 @@ def eu(rec):
     if rec["outcome"] == "accepted" or (rec["outcome"] == "refused" and rec.get("error") == "InvalidDocuments" and trusted):
         stages["validity"] = "FAIL" if any(e.startswith(("ExpiredValidityInfo", "MissingValidityInfo")) for e in errors) else "ok"
         for name, err in (("mso_signature", "InvalidIssuerSignature"), ("digests", "InvalidIssuerSignedItems"),
-                          ("device_signature", "InvalidDeviceSignature"), ("doctype", "DocumentTypeNotMatching")):
+                          ("doctype", "DocumentTypeNotMatching")):
             waltid[name] = "FAIL" if err in errors else "ok"
+        # The device signature is judged only where E's output shows it: its own error, or an acceptance. Any other
+        # refusal leaves it not judged, since E's output does not show that it reached the device signature.
+        if "InvalidDeviceSignature" in errors:
+            waltid["device_signature"] = "FAIL"
+        elif rec["outcome"] == "accepted":
+            waltid["device_signature"] = "ok"
     return {"transcript_hex": rec.get("transcript_hex"), "stages": stages, "waltid": waltid, "outcome": rec["outcome"]}
 
 
