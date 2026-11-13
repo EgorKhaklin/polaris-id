@@ -268,7 +268,8 @@ and `as_dict()` leaves it out.
   payload as a JSON object, and the verifier reads it so by default. Build it with
   `accept_vp_token_as_json_string=True` to also read a string holding that object (the swiyu
   Sandbox Wallet 1.19.0 sends one): once, under the payload's depth and size bounds, held to every
-  rule the object is. Every verdict on such a response carries `vp_token_from_string`.
+  rule the object is. A verdict reached after that read, accepted or refused, carries
+  `vp_token_from_string`.
 
 ## Transaction data
 

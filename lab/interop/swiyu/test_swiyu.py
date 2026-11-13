@@ -804,6 +804,11 @@ class RecordTests(Base):
             self.assertEqual(w.last()["checks"][name]["outcome"], sv.NOT_JUDGED, name)
             self.assertFalse(w.last()["counted"], name)
 
+    def test_the_readme_states_the_age_bound_the_gate_counts_by(self):
+        readme = " ".join((HERE / "README.md").read_text().split())
+        self.assertEqual(sv.COUNTED_MAX_LIST_AGE_SECONDS, 24 * 3600)
+        self.assertIn("issued at most 24 hours before it was read", readme)
+
     def test_the_gate_does_not_lean_on_the_package_alone(self):
         """`counted` asks the list's answer itself: VALID, of a checked list, and fresh. The package refuses a revoked
         credential, so the other answers are put in its place by a stand-in for the package's verdict."""

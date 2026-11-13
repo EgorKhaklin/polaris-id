@@ -359,9 +359,10 @@ class Session:
 
 def _says_how_the_vp_token_came(handler):
     """Every verdict handle_direct_post returns carries `vp_token_from_string`: True when that
-    call read the vp_token out of a JSON string (`_read_vp_token`), refused or accepted, so a
-    record never shows a string-form response as an object-form one. Set at the one exit, so a
-    refusal added later carries it too."""
+    call read the vp_token out of a JSON string (`_read_vp_token`), whether the response was then
+    refused or accepted. A response refused before its vp_token is read (beside an `error`, or
+    under a state no request holds) carries False: the read never ran. Set at the one exit, so a
+    refusal added after the read carries it too."""
     @functools.wraps(handler)
     def handle(self, form):
         read = self._vp_token_read

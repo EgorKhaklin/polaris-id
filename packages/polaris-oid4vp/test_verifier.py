@@ -1741,6 +1741,7 @@ class HeldOutTransportTests(VerifierTestCase):
         jar_one, genuine_one = self._genuine()
         jar_two, _ = self._genuine()
         for jar, vp_token, flag in ((jar_one, json.dumps({"pid": [genuine_one, genuine_one]}), True),
+                                    (jar_one, "not JSON", True),
                                     (jar_two, json.dumps({"pid": [genuine_one]}), True),
                                     (jar_two, {"pid": [genuine_one]}, False)):
             status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar, vp_token=vp_token))
