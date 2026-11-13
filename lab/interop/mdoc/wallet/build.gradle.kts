@@ -17,13 +17,13 @@ repositories {
 }
 
 dependencies {
-    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:0.15.0")
-    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vp-kt:0.16.2")
+    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:0.16.0")
+    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vp-kt:0.17.0")
     implementation("id.walt.mdoc-credentials:waltid-mdoc-credentials-jvm:0.11.0")
     implementation("com.augustcellars.cose:cose-java:1.1.0") // walt.id's COSE, at its version; the wallet names its AlgorithmID
-    implementation("io.ktor:ktor-client-okhttp:3.6.0")
-    implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
+    implementation("io.ktor:ktor-client-okhttp:3.6.1")
+    implementation("io.ktor:ktor-client-content-negotiation:3.6.1")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.1")
     constraints {
         listOf("bcprov", "bcpkix", "bcutil").forEach {
             implementation("org.bouncycastle:$it-jdk18on:1.86") { because("advisories fixed in 1.85") }

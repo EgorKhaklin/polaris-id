@@ -10,11 +10,11 @@ plugins {
 repositories { mavenCentral() }
 
 dependencies {
-    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:0.15.0")
-    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vp-kt:0.16.2")
-    implementation("io.ktor:ktor-client-okhttp:3.6.0")
-    implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
+    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:0.16.0")
+    implementation("eu.europa.ec.eudi:eudi-lib-jvm-openid4vp-kt:0.17.0")
+    implementation("io.ktor:ktor-client-okhttp:3.6.1")
+    implementation("io.ktor:ktor-client-content-negotiation:3.6.1")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.1")
     // Both EU libraries bring Bouncy Castle 1.83 transitively, which OSV lists advisories against
     // (fixed in 1.85); this lifts it, as an operator would, rather than ignore the advisories.
     constraints {

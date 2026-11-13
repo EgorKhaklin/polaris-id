@@ -31,7 +31,7 @@ names it, as the stated authority.
 | | |
 |---|---|
 | Ledger | cheqd-node 4.2.1, `ghcr.io/cheqd/cheqd-node:4.2.1@sha256:57cd432725f53ad832124dac57c5754d458de5359d78540cc83f879116127d5c` (linux/amd64 and linux/arm64), one validator, chain id `cheqd`, DID namespace `testnet` |
-| Issuer and holder | `@credo-ts/core`, `@credo-ts/cheqd`, `@credo-ts/openid4vc` and `@credo-ts/node` 0.7.2, with `@cheqd/sdk-esm` 5.5.1, `@openid4vc/openid4vp` 0.6.0 and `@sd-jwt/core` 0.21.1 underneath, pinned by [`package-lock.json`](package-lock.json) |
+| Issuer and holder | `@credo-ts/core`, `@credo-ts/cheqd`, `@credo-ts/openid4vc` and `@credo-ts/node` 0.7.2, with `@cheqd/sdk-esm` 5.5.1, `@openid4vc/openid4vp` 0.6.0 and `@sd-jwt/core` 0.21.1 underneath, as recorded; `run.sh` installs what [`package-lock.json`](package-lock.json) pins |
 | Verifier | `polaris-oid4vp` 1.0.0rc15 from PyPI (`pip install --pre polaris-oid4vp`) |
 | Runtime | Node v24.11.1, Python 3.12.13, Docker 29.8.1, macOS (Darwin 25.3.0, arm64) |
 

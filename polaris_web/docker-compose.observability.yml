@@ -34,7 +34,7 @@
 
 services:
   prometheus:
-    image: prom/prometheus@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    image: prom/prometheus@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     container_name: polaris-prometheus
     restart: unless-stopped
     command:
@@ -83,7 +83,7 @@ services:
       options: { max-size: 10m, max-file: '3' }
 
   alertmanager:
-    image: prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    image: prom/alertmanager@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
     container_name: polaris-alertmanager
     restart: unless-stopped
     volumes:
@@ -116,7 +116,7 @@ services:
       options: { max-size: 10m, max-file: '3' }
 
   grafana:
-    image: grafana/grafana@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f  # 13.2.4
+    image: grafana/grafana@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205  # 13.3.0
     container_name: polaris-grafana
     restart: unless-stopped
     environment:
