@@ -20,7 +20,7 @@ It reuses the prototype mdoc verifier and its witnesses in place:
 | [`run_tunnel.sh`](run_tunnel.sh) | `serve.py` behind the integrator's own cloudflared quick tunnel, modelled on [`scripts/polaris-dev-tunnel.sh`](../../../scripts/polaris-dev-tunnel.sh). On Ctrl-C and on a TERM it stops both processes by their recorded PIDs and deletes the tunnel's log. |
 | [`trust/`](trust/) | The guide's Table 13 test certificate, and `PINS`, its SHA-256. A trust PEM whose hash is not pinned is refused when it loads. |
 | [`make_vectors.py`](make_vectors.py), [`vectors/`](vectors/) | 23 synthetic responses, made with the lab's own test keys from a public seed. Each case sits in `manifest.json` with its pinned anchors, its instant and the verdict it must get. |
-| [`test_avp.py`](test_avp.py) | 78 tests, with no database and no outside network (the server tests bind loopback ports of their own). |
+| [`test_avp.py`](test_avp.py) | 79 tests, with no database and no outside network (the server tests bind loopback ports of their own). |
 | [`dryrun_appendix_f.py`](dryrun_appendix_f.py) | The guide's own Appendix F response through `avp.py` and `verify_mdoc.py`, read from the guide's text at a path you give. The guide's bytes are not in the tree. |
 | [`witness.sh`](witness.sh), [`witness_jobs.py`](witness_jobs.py), [`witness-results/`](witness-results/) | Three outside mdoc verifiers over every vector, offline, the step table, and the record of the last run. |
 
@@ -79,11 +79,18 @@ which trusts any chain; the driver marks it not witnessed, and it is not counted
 only where its output shows it, by its own error or an acceptance. `witness-results/table.txt` gives
 each reason in the witness's own words.
 
+## The app's presentation, 2026-11-13
+
+On 2026-11-13 the AltID test app (iOS, the agency's test environment), operated by the author, presented a Proof of
+Age to this verifier, and `avp.py` answered `VERIFIED`. Over the same response, offline, @owf/mdoc 0.9.3 and
+eudi-srv-verifier-endpoint v0.12.0 (with our classification input) agree, and the lab verifier refuses it posted a
+second time to its restored record (step 13) and under a changed nonce (step 12, the device signature).
+
 ## Run it
 
     python3 -m venv /tmp/v && /tmp/v/bin/pip install --require-hashes -r lab/interop/mdoc/requirements.txt
     cd lab/interop/altid
-    /tmp/v/bin/python -m unittest test_avp                          # 78 tests
+    /tmp/v/bin/python -m unittest test_avp                          # 79 tests
     /tmp/v/bin/python -I make_vectors.py vectors                    # regenerates vectors/ byte for byte
     /tmp/v/bin/python -I dryrun_appendix_f.py GUIDE.txt             # pdftotext -layout of the guide
     PYTHON=/tmp/v/bin/python ./witness.sh                           # writes witness-results/
