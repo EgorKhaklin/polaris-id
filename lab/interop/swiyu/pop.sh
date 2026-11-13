@@ -37,4 +37,5 @@ open(sys.argv[2], "w").write(json.dumps({"proofOfPossessions": [pop]}))' "$KEYDI
 # 5.3 submit it
 send POST "$TRUST_API/trust-onboarding-submission/proof-of-possessions" SWIYU_TRUST_REGISTRY_ACCESS_TOKEN \
   "application/json" '{"proofOfPossessions": ["<redacted>"]}' "$KEYDIR/.body.json"
+finished=1
 echo done

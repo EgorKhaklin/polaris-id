@@ -11,6 +11,15 @@
 # credential's status list). Ctrl-C or TERM stops the tunnel and the verifier by their recorded PIDs and deletes the
 # tunnel's log. The tunnel is yours (cloudflared, no account); no Polaris service is involved.
 set -euo pipefail
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. Every trap below hands its status to exit_trap.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PY="${PYTHON:-python3}"
 PORT="${PORT:-9444}"
@@ -35,15 +44,13 @@ DID="$(tr -d '\n' <"$KEYDIR/did")"
 CF_LOG="$(mktemp "${TMPDIR:-/tmp}/swiyu-cf.XXXXXX")"
 CF_PID=""
 SV_PID=""
-cleanup() {  # $1: the status of the run, handed on
-  local rc="$1"
-  trap - EXIT INT TERM
+cleanup() {  # stops the tunnel and the verifier by their recorded PIDs and deletes the tunnel's log
+  trap - INT TERM
   if [ -n "$CF_PID" ]; then kill "$CF_PID" 2>/dev/null || true; wait "$CF_PID" 2>/dev/null || true; fi
   if [ -n "$SV_PID" ]; then kill "$SV_PID" 2>/dev/null || true; wait "$SV_PID" 2>/dev/null || true; fi
   rm -f "$CF_LOG"
-  exit "$rc"
 }
-trap 'cleanup $?' EXIT
+trap 'exit_rc=$?; cleanup; exit_trap "$exit_rc"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -64,5 +71,8 @@ echo "tunnel: $URL -> http://127.0.0.1:$PORT"
   ${STATEMENTS[@]+"${STATEMENTS[@]}"} &
 SV_PID=$!
 echo "pids: tunnel=$CF_PID verifier=$SV_PID"
-wait "$SV_PID"
-echo done
+fail=0
+wait "$SV_PID" || fail=$?
+[ "$fail" != 0 ] || echo done
+finished=1
+exit "$fail"

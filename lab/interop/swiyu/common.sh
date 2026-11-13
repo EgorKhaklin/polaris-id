@@ -24,11 +24,20 @@ check_jar() {
   [ "$got" = "$DIDTOOL_SHA256" ] || die "jar sha256 is $got, expected $DIDTOOL_SHA256: not running it"
 }
 
-cleanup() {  # $1: the status of the run, handed on
-  trap - EXIT
+# A run that stops before its last line fails, whatever its EXIT trap's last command returns:
+# after a set -u failure, bash 3.2 (macOS /bin/bash) exits with the trap's own status, and $? in
+# the trap is already 0. The trap keydir sets hands its status to exit_trap; each script sets
+# finished=1 before its last line.
+finished=0
+exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early with 0
+  local rc="$1"
+  if [ "$finished" != 1 ] && [ "$rc" = 0 ]; then rc=1; fi
+  exit "$rc"
+}
+
+cleanup() {  # what a run leaves in the key folder: no answer, request body or proof, and no empty DID log
   rm -f "$KEYDIR/.response" "$KEYDIR/.body.json" "$KEYDIR/.pop.jwt"
   [ -s "$KEYDIR/did.jsonl" ] || rm -f "$KEYDIR/did.jsonl"
-  exit "$1"
 }
 
 # keydir PATH [make]: the one folder anything is written to; mode 700, files mode 600
@@ -39,7 +48,7 @@ keydir() {
   chmod 700 "$1"
   KEYDIR="$(cd "$1" && pwd)"
   RESP="$KEYDIR/.response"
-  trap 'cleanup $?' EXIT
+  trap 'exit_rc=$?; cleanup; exit_trap "$exit_rc"' EXIT
 }
 
 sha256_file() { "$PY" -I -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"; }

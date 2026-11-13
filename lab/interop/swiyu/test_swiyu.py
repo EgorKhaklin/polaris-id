@@ -1660,6 +1660,22 @@ class StatementScriptTests(ScriptBase):
             self.assertNotEqual(rc, 0, repr(jwt))
             self.assertFalse((self.key / "statements" / "vqps.jwt").exists(), repr(jwt))
 
+    def test_a_script_stopped_by_an_unset_variable_exits_non_zero(self):
+        """After a set -u failure, bash 3.2 (macOS /bin/bash) exits with the EXIT trap's own status, and $? in the trap
+        is already 0; common.sh's trap hands the status to exit_trap, so a script that stops early fails. Here
+        statement.sh stops inside its request, in a curl that BASH_ENV defines to write the answer file and then read
+        a variable no one set."""
+        self.prepare()
+        bash_env = pathlib.Path(self.root.name) / "bash-env"
+        bash_env.write_text('curl() { : >"$RESP"; : "$SWIYU_TEST_UNSET_VARIABLE"; }\n')
+        rc, text = self.run_script("statement.sh", str(self.key), "identity", extra={"BASH_ENV": str(bash_env)})
+        self.assertIn("SWIYU_TEST_UNSET_VARIABLE", text)  # it stopped where the test made it stop
+        self.assertNotEqual(rc, 0, text)
+        self.assertNotIn("done", text.splitlines())
+        self.assertFalse((self.key / ".response").exists(), "the cleanup did not run")
+        self.assertFalse((self.key / "statements" / "identity.jwt").exists())
+        self.assertEqual(self.calls("curl"), [])  # the stub on PATH was never reached
+
     def test_statement_sh_needs_the_encoded_did_before_it_builds_the_url(self):
         self.prepare()
         bad = pathlib.Path(self.root.name) / "bad-python"
@@ -1889,6 +1905,46 @@ class RunScriptTests(ScriptBase):
         self.assertEqual(os.listdir(self.tmp), [])
         self.assertNotEqual(text.splitlines()[-1], "done")
 
+    def test_run_sh_stopped_by_an_unset_variable_exits_1_and_stops_both(self):
+        """run.sh's EXIT trap hands its status to exit_trap: stopped by a set -u failure (here just after it printed the
+        pids, in an echo that BASH_ENV defines to read a variable no one set), it exits 1 under bash 3.2 as under 5.2,
+        and still stops the tunnel and the verifier and deletes the tunnel's log."""
+        self.prepare()
+        bash_env = pathlib.Path(self.root.name) / "bash-env"
+        bash_env.write_text('echo() { builtin echo "$@"; case "${1:-}" in pids:*) : "$SWIYU_TEST_UNSET_VARIABLE" ;; esac; }\n')
+        self.env["BASH_ENV"] = str(bash_env)
+        proc = self.start(str(self.key), "A", "1.19.0-test")
+        try:
+            status_ = proc.wait(timeout=60)
+            text = self.out.read_text()
+            tunnel = int(text.split("tunnel=")[1].split()[0])
+            verifier = int(text.split("verifier=")[1].split()[0])
+            left = [name for name, pid in (("tunnel", tunnel), ("verifier", verifier)) if self.alive(pid)]
+        finally:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            proc.wait()
+            self.log.close()
+        self.assertIn("SWIYU_TEST_UNSET_VARIABLE", text)  # it stopped where the test made it stop
+        self.assertEqual(status_, 1, text)
+        self.assertEqual(left, [], "left running after the script stopped")
+        self.assertEqual(os.listdir(self.tmp), [], "the tunnel log was not deleted")
+        self.assertNotIn("done", text.splitlines())
+
+    def test_run_sh_prints_done_and_exits_0_when_the_verifier_exits_0(self):
+        """A verifier that exits 0 (a counted presentation) makes done run.sh's last line and 0 its exit status."""
+        self.prepare()
+        ok = pathlib.Path(self.root.name) / "verifier-exits-0"
+        ok.write_text('#!/bin/bash\necho "verifier ran: $1 $2"\nexit 0\n')
+        os.chmod(ok, 0o755)
+        rc, text = self.run_script("run.sh", str(self.key), "A", "v", extra={"PYTHON": str(ok)}, timeout=60)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("verifier ran: -I -B", text)
+        self.assertEqual(text.splitlines()[-1], "done")
+        self.assertEqual(os.listdir(self.tmp), [], "the tunnel log was not deleted")
+
 
 class ScriptDisciplineTests(unittest.TestCase):
     SCRIPTS = ("did.sh", "pop.sh", "statement.sh", "run.sh", "common.sh")
@@ -1900,9 +1956,14 @@ class ScriptDisciplineTests(unittest.TestCase):
             self.assertLessEqual(len(lines), 120, name)
             self.assertEqual(subprocess.run(["bash", "-n", str(HERE / name)]).returncode, 0, name)
             self.assertNotIn("rm -rf", text, name)
-            if name != "common.sh":
+            tail = [line.strip() for line in lines if line.strip()]
+            if name == "run.sh":  # the harness shape lab/interop/test_exit_trap.py holds; done on a counted presentation
                 self.assertIn("set -euo pipefail", text, name)
-                self.assertEqual([line for line in lines if line.strip()][-1].strip(), "echo done", name)
+                self.assertEqual(tail[-3:], ['[ "$fail" != 0 ] || echo done', "finished=1", 'exit "$fail"'], name)
+            elif name != "common.sh":  # common.sh's exit_trap fails a run that stops before finished=1
+                self.assertIn("set -euo pipefail", text, name)
+                self.assertEqual(tail[-2:], ["finished=1", "echo done"], name)
+                self.assertEqual(text.count("finished=1"), 1, name)  # an earlier one would pass an early stop again
 
     def test_the_readme_and_common_sh_say_what_the_scripts_send_and_print(self):
         readme = " ".join((HERE / "README.md").read_text().split())

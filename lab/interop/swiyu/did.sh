@@ -49,4 +49,5 @@ send PUT "$IDENT_API/business-entities/$SWIYU_PARTNER_ID/identifier-entries/$ENT
   "the file did.jsonl ($(wc -c <"$KEYDIR/did.jsonl" | tr -d ' ') bytes, sha256 $(sha256_file "$KEYDIR/did.jsonl"))" "$KEYDIR/did.jsonl"
 echo "DID: $DID"
 echo "keys: $KEYDIR/.didtoolbox"
+finished=1
 echo done

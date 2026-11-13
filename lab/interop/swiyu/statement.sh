@@ -51,4 +51,5 @@ case "$JWT" in *$'\n'*) die "the answer holds more than one line; nothing saved"
 printf '%s\n' "$JWT" >"$KEYDIR/statements/$FILE"
 [ "$2" != vqps ] || printf '%s\n' "$3" >"$KEYDIR/statements/scope"
 echo "saved: $KEYDIR/statements/$FILE"
+finished=1
 echo done
