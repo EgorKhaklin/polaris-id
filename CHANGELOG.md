@@ -97,6 +97,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- Negative vectors 0.5.0: 33 of the 34 SD-JWT VC negatives carry a repaired twin, the same presentation with its one defect put back, which a correct verifier accepts; suggested by Neil Berkman (Attesto).
 - The scoreboard (lab/EXTERNAL-NOUNS.md) records GHSA-7xf4-9r27-vcr5, published 2026-11-03 with EgorKhaklin credited as reporter: `@sd-jwt/core` and `@sd-jwt/sd-jwt-vc` 0.24.0 and earlier, patched in 0.24.1 (2026-10-30), and the upstream commit that carries the fix.
 - polaris-oid4vp `serve --once --result FILE` keeps FILE a JSON object, apart from the log on stdout, saying what became of the request: `nothing_received` until a response arrives, then `accepted` with the claim names, `refused` with the check and reason its `<-` line prints, or `wallet_error`; the HTTP status the wallet was answered; and the request object fetches served and refused. It is rewritten whole before each answer goes out. Once the request closes, on its acceptance or at the end of its lifetime, the outcome stays.
 - The Yivi app 8.3.1 (developer mode, our verifier root added) presents a Yivi-issued SD-JWT VC to polaris-oid4vp, at 8e6f4834; it counts as an unmodified wallet in place of the irmago library row, so the count stays 15 (lab/interop/yivi). Not in the weekly canary.

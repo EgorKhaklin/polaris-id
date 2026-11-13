@@ -14,7 +14,7 @@ names, and when the file holds no vectors, no control, or no negative the adapte
 in a layer whose own control (an accept-* vector of that layer) it left to its caller, or under a trust mode whose
 own control (accept-x5c, accept-jwks) it did not judge. Exit 2: the adapter could not run. A run that passes ends "done".
 
-A control is a vector of class `control`. A vector with a `repaired` twin (mdoc-vectors.json) is run twice: the vector
+A control is a vector of class `control`. A vector with a `repaired` twin is run twice: the vector
 as it stands, and its twin, the same vector with its one defect put back, which must be accepted (a refused twin means
 the vector's refusal measured nothing). The `verify-mdoc` adapter is lab/interop/mdoc/verify_mdoc.py, whose refusal
 check (its Refused.check) is compared for each negative.
@@ -215,16 +215,22 @@ _JS = {}
 
 def sd_jwt_js(vector, settings):
     """The OpenWallet Foundation's SD-JWT VC library for JavaScript, through adapters/sd_jwt_js.cjs (one
-    Node run for the whole file). SD_JWT_JS_MODULES names the folder whose node_modules holds it."""
+    Node run over a file of every row the run judges, twins included). SD_JWT_JS_MODULES names the folder
+    whose node_modules holds it."""
     if not _JS:
         import subprocess
-        out = subprocess.run(["node", os.path.join(HERE, "adapters", "sd_jwt_js.cjs"), _JS_FILE[0]],
-                             capture_output=True, text=True, check=True)
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="sd-jwt-js-") as tmp:
+            rows = os.path.join(tmp, "rows.json")
+            with open(rows, "w") as fh:
+                json.dump({"settings": settings, "vectors": _JS_ROWS}, fh)
+            out = subprocess.run(["node", os.path.join(HERE, "adapters", "sd_jwt_js.cjs"), rows],
+                                 capture_output=True, text=True, check=True)
         _JS.update(json.loads(out.stdout))
     return tuple(_JS[vector["id"]])
 
 
-_JS_FILE = []
+_JS_ROWS = []  # the rows main() judges, for an adapter that judges them in one run
 ADAPTERS = {"polaris-oid4vp": polaris_oid4vp, "sd-jwt-python": sd_jwt_python, "sd-jwt-js": sd_jwt_js,
             "verify-mdoc": verify_mdoc}
 CODED = {"polaris-oid4vp": POLARIS_OID4VP_CODES,  # adapters whose refusal code is compared too
@@ -253,7 +259,6 @@ def main(argv=None):
     if not doc.get("vectors"):
         print("%s holds no vectors: a run over none measures nothing" % args.vectors, file=sys.stderr)
         return 1
-    _JS_FILE.append(os.path.abspath(args.vectors))
     run = ADAPTERS[args.adapter]
     results, wrong = [], []
     kind, layer, trust = {}, {}, {}  # per row id: its class, its layer and its trust mode (none for mdoc)
@@ -264,6 +269,8 @@ def main(argv=None):
             # The twin: the vector with its one defect put back, accepted (it carries its own response and inputs).
             rows.append(dict({k: v for k, v in vector.items() if k != "repaired"}, **vector["repaired"],
                              id=vector["id"] + "+repaired", expected="accept", **{"class": "repaired"}))
+    _JS.clear()
+    _JS_ROWS[:] = rows
     for vector in rows:
         kind[vector["id"]], layer[vector["id"]], trust[vector["id"]] = vector["class"], vector["layer"], vector.get("trust")
         try:
