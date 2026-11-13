@@ -815,12 +815,21 @@ class RecordTests(Base):
                 return 200, {}, sdjwt.Verdict(True, revocation=revocation)
             return answer
 
-        for revocation, counted in (({"state": "checked", "status": 0, "code": None, "stale": False}, True),
-                                    ({"state": "checked", "status": 1, "code": None, "stale": False}, False),
-                                    ({"state": "unreachable", "status": 0, "code": None, "stale": False}, False),
-                                    ({"state": "checked", "status": 0, "code": None, "stale": True}, False),
-                                    ({"state": "checked", "status": 0, "code": None, "stale": None}, False),
-                                    ({"state": "checked", "status": 0, "code": None}, False)):
+        bound = sv.COUNTED_MAX_LIST_AGE_SECONDS
+        for revocation, counted in (({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": 0}, True),
+                                    ({"state": "checked", "status": 1, "code": None, "stale": False, "age_seconds": 0}, False),
+                                    ({"state": "unreachable", "status": 0, "code": None, "stale": False, "age_seconds": 0},
+                                     False),
+                                    # past its ttl counted from iat (records 7-8: 2177 s, ttl 900), inside the lab's bound
+                                    ({"state": "checked", "status": 0, "code": None, "stale": True, "age_seconds": 2177}, True),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": None, "age_seconds": bound}, True),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": bound + 1},
+                                     False),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": -1}, False),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": None}, False),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": True},
+                                     False),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False}, False)):
             w = F.World()
             _, jar = w.verifier.new_request()
             form = w.wallet.respond(jar)
@@ -842,7 +851,7 @@ class RecordTests(Base):
             self.assertEqual((status_, verdict.authentic), (400, False), name)  # the package could not open it
             self.assertFalse(record["counted"], name)
 
-    def test_a_stale_status_list_is_not_counted(self):
+    def test_a_list_past_its_ttl_from_iat_counts_inside_the_labs_age_bound(self):
         self.w.tokens[F.STATUS_URI] = F.status_token(self.w.issuer_key, self.w.wallet.kid, F.STATUS_URI, [0] * 16,
                                                      iat=int(time.time()) - 7200)  # ttl 3600
         status_, _, verdict = self.w.exchange()
@@ -850,6 +859,17 @@ class RecordTests(Base):
         self.assertEqual((status_, verdict.authentic), (200, True))  # the package accepts it
         self.assertEqual((record["status"]["state"], record["status"]["status"], record["status"]["stale"]),
                          ("checked", 0, True))
+        self.assertGreaterEqual(record["status"]["age_seconds"], 7200)
+        self.assertTrue(record["counted"])
+
+    def test_a_list_older_than_the_labs_age_bound_is_not_counted(self):
+        self.w.tokens[F.STATUS_URI] = F.status_token(self.w.issuer_key, self.w.wallet.kid, F.STATUS_URI, [0] * 16,
+                                                     iat=int(time.time()) - sv.COUNTED_MAX_LIST_AGE_SECONDS - 60)
+        status_, _, verdict = self.w.exchange()
+        record = self.w.last()
+        self.assertEqual((status_, verdict.authentic), (200, True))  # the package accepts it
+        self.assertEqual((record["status"]["state"], record["status"]["status"]), ("checked", 0))
+        self.assertGreater(record["status"]["age_seconds"], sv.COUNTED_MAX_LIST_AGE_SECONDS)
         self.assertFalse(record["counted"])
 
     def test_the_status_of_a_record_comes_from_l13_when_the_verdict_has_none(self):
@@ -861,7 +881,9 @@ class RecordTests(Base):
         self.assertEqual((status_, verdict.authentic, verdict.code), (400, False, "claims"))
         self.assertIsNone(getattr(verdict, "revocation", None))
         self.assertEqual(record["checks"]["L13"]["outcome"], "ok")
-        self.assertEqual(record["status"], {"state": "checked", "status": 0, "code": None, "stale": False})
+        status_record = dict(record["status"])
+        self.assertIs(type(status_record.pop("age_seconds")), int)
+        self.assertEqual(status_record, {"state": "checked", "status": 0, "code": None, "stale": False})
         self.assertFalse(record["counted"])
 
     def test_the_record_names_the_package_that_judged(self):

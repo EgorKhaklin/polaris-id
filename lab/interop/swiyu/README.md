@@ -32,9 +32,11 @@ lab checks inside it, or, when L7 refused before the package ran, the lab's own 
 (L7: its status and code, or `not judged` when L7 stopped the response; L10: `passed` when the package's `_single_presentation`
 returned the presentation, its refusal when it did not, or `not judged` when L7 stopped the response or the package never reached
 `_single_presentation`; L13: the answer of `status.decide_by_fetching`, or `not judged` when the lab did not reach it). A check
-that did not run is `not judged`. `status` is the issuer's list as the verdict carries it, or as L13 read it, with `stale`, or
+that did not run is `not judged`. `status` is the issuer's list as the verdict carries it, or as L13 read it, with `stale` (the package's reading of the token's ttl from its iat, kept, not counted on) and
+`age_seconds`, or
 `not judged` when neither the verdict nor L13 has an answer. `counted` is true only when the package accepted the presentation, L7, L10 and L13 each said `ok`, and the list says
-VALID and is not stale. `package` names what judged: version, file (relative to the repository root), the commit of its folder and
+VALID and was issued at most 24 hours before it was read (`COUNTED_MAX_LIST_AGE_SECONDS`, the lab's own policy,
+declared 2026-11-13). `package` names what judged: version, file (relative to the repository root), the commit of its folder and
 whether its folder held uncommitted changes (`dirty`; `unknown` when git does not answer). The tree's `packages/polaris-oid4vp` is
 put first on `sys.path` before the package is imported. The files `record-N.json` and `capture-N.json` carry the
 same N as `record["n"]`; a run on a folder that already holds records numbers past the largest one in it.
