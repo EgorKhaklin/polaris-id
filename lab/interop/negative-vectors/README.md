@@ -110,7 +110,7 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 - `polaris-oid4vp` reaches all 37 verdicts with the expected refusal codes, under the default binding, under
   another verifier's, and under the EU test harness's;
 - each leaf in the signer family signs an authentic credential when `iss` is the name it gives, so the name is
-  the only defect; and a leaf that names nobody is accepted with `iss` unbound (see Limits);
+  the only defect; and a leaf that names nobody is accepted with `iss` unbound;
 - each status vector leaves the credential authentic with the state its `notes` names, carries the control's
   credential byte for byte where it names the control's index and uri, and is accepted by a verifier that
   checks no status;
@@ -121,8 +121,8 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
   the pinned one; `polaris-oid4vp` accepts every twin, under the default binding, another verifier's, a Digital
   Credentials API origin and the EU test harness's, and still refuses every negative with its pinned code; no twin
   equals its negative; a file bound with `--audience`, `--nonce` and `--now` has twins accepted under its own settings;
-  each negative differs from its twin by its pinned paths only; `run_vectors.py` fails when a twin is refused; and
-  `vectors.json` equals its generator's output, run to run.
+  each negative differs from its twin, or the one without a twin from its nearest control, by its pinned paths only;
+  `run_vectors.py` fails when a twin is refused; and `vectors.json` equals its generator's output, run to run.
 - `mdoc-vectors.json` equals its generator's output, run to run; `verify_mdoc.py` reaches every verdict with the
   refusal check each vector names; every repaired twin is accepted; the generator reproduces the OpenID4VP 1.0 B.2.6.1
   and B.2.6.2 examples; every issuer-signed item's random is 32 bytes; a digestID the MSO lacks is refused as having
@@ -245,32 +245,19 @@ python3 run_vectors.py mdoc-vectors.json --adapter verify-mdoc
 `class` `control`, runs every twin as a row `<id>+repaired`, and fails the run when a twin is refused. The keys and
 certificates are test material from public seeds, as above.
 
-## Credits
+## Using the set
 
-The signer family takes its class from swiyu change dossier CD-008, "VC Authorization Bypass" (published
-2026-07-31; swiyu-admin-ch/swiyu-admin-ch.github.io, `_change-dossiers/CD-008-Critical-Vulnerability-Generic-Verifier.md`).
-
-The views take their shapes from others' work: the mint-time reference verdict and the hardening flag from
-goodmeta/ap2-conformance (Apache-2.0); the index fields `spec_section`, `target`, `input` and `expected` from
-reallyme/openid4vp's test vectors; the pair layout from the EU reference verifier's test resources
-(eudi-srv-verifier-endpoint, Apache-2.0); and the exceptions file from the OpenID Foundation conformance
-suite's expected-failures files (MIT). Nothing of theirs is copied into this directory.
-
-## Limits
-
-- One credential type and one issuer profile; the response layer (`direct_post.jwt` encryption) has no vectors yet.
-- A leaf that names no issuer at all (no subjectAltName) is not a vector: draft-19 makes `iss` optional with
-  `x5c` and the issuer the leaf's subject, so no verdict follows. polaris-oid4vp accepts such a credential and
-  reports its `iss` apart as unbound.
-- The signer family is for `x5c`. A verifier configured with several issuers' JWKs can bind `iss` to a key only
-  by a mapping the vectors do not carry. Its verdicts are those of a verifier that requires the leaf to name `iss`;
-  the text does not require that, so a verifier that accepts the three is not wrong by the text.
-- The `sd-jwt-python` and `sd-jwt-js` adapters have not been run against 0.3.0, so nothing here says how they judge
-  the two new families.
-- A status-list vector needs its `response` served at its `uri` and the verifier held to its `policy`; the EU
+- Serve each status-list vector's `response` at its `uri`, and hold the verifier to the vector's `policy`. The EU
   view carries neither, so a run of that view judges the credential alone.
-- A verdict is pass or refuse. Why a verifier refused is compared for polaris-oid4vp only; for any other
-  adapter, a refusal for the wrong reason counts as a pass.
+- The signer family is for `x5c`. Its verdicts are those of a verifier that requires the leaf to name `iss` (its
+  class, `policy`); the text does not require that, so a verifier that accepts the three is not wrong by the text.
+  A verifier configured with several issuers' JWKs can bind `iss` to a key only by a mapping of its own.
+- A run records pass or refuse. `run_vectors.py` also compares the refusal code for polaris-oid4vp and the refusal
+  check for verify-mdoc; for an adapter whose refusal it does not compare, a negative's repaired twin is the check
+  on the reason: a twin it refuses means its refusal of that negative measured nothing.
+
+## Versions
+
 - Version 0.5.0: each negative carries `repaired`, its twin, except `status-list-no-authority`, which carries
   `no_twin` and its reason (a new field moves the minor version). Every vector's id, class, verdict and presentation
   are byte for byte those of 0.4.1, and the views differ from 0.4.1's by their version stamp alone.
@@ -285,3 +272,14 @@ suite's expected-failures files (MIT). Nothing of theirs is copied into this dir
   (`settings.status_list_keys`, `policies`, the `policy` class and the vector fields `policy`, `status_list` and
   `notes`). 0.2.0 added `kb-aud-missing` and `kb-nonce-missing`. Vectors may be added, and none will change
   meaning under the same id.
+
+## Credits
+
+The signer family takes its class from swiyu change dossier CD-008, "VC Authorization Bypass" (published
+2026-07-31; swiyu-admin-ch/swiyu-admin-ch.github.io, `_change-dossiers/CD-008-Critical-Vulnerability-Generic-Verifier.md`).
+
+The views take their shapes from others' work: the mint-time reference verdict and the hardening flag from
+goodmeta/ap2-conformance (Apache-2.0); the index fields `spec_section`, `target`, `input` and `expected` from
+reallyme/openid4vp's test vectors; the pair layout from the EU reference verifier's test resources
+(eudi-srv-verifier-endpoint, Apache-2.0); and the exceptions file from the OpenID Foundation conformance
+suite's expected-failures files (MIT). Nothing of theirs is copied into this directory.
