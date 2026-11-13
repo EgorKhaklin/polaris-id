@@ -861,6 +861,74 @@ class VerificationSelectionTests(unittest.TestCase):
             self.assertIn("polaris-oid4vp-mutation-drill.py", runs(path), path)
 
 
+class PlanReadsEveryChangedPath(unittest.TestCase):
+    """2026-11-13: `plan` matched VERIFICATION against the product paths only, so a lab path's rows
+    were dropped before they were read. #547 changed lab/interop/swiyu/run.sh, whose row names
+    lab/interop/test_exit_trap.py; the plan printed only its product paths' rows, and CI ran
+    test_exit_trap.py and went red. These run `plan` itself, in a scratch repository, on one change."""
+
+    def setUp(self):
+        self._git_env = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")}
+
+    def tearDown(self):
+        os.environ.update(self._git_env)
+
+    def _plan(self, changes):
+        import subprocess
+        import tempfile
+        work = tempfile.mkdtemp(prefix="polaris-ship-plan-")
+        self.addCleanup(__import__("shutil").rmtree, work, True)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        git = lambda *a: subprocess.run(["git", *a], cwd=work, check=True, env=env,  # noqa: E731
+                                        capture_output=True, text=True)
+        git("init", "-q")
+        _write(os.path.join(work, "a.txt"), "1")
+        git("add", "a.txt"); git("commit", "-q", "-m", "base"); git("tag", "v1.0.0")
+        for path in changes:
+            os.makedirs(os.path.dirname(os.path.join(work, path)), exist_ok=True)
+            _write(os.path.join(work, path), "changed")
+        git("add", "-A"); git("commit", "-q", "-m", "the change")
+        saved, out = ship.ROOT, io.StringIO()
+        ship.ROOT = work
+        try:
+            rc = ship.plan(out=out)
+        finally:
+            ship.ROOT = saved
+        text = out.getvalue()
+        self.assertIn("plan for the %d path(s) changed since v1.0.0" % len(changes), text,
+                      "the plan must have read this change, or nothing below is measured")
+        return rc, text
+
+    def test_a_lab_only_change_prints_its_rows(self):
+        rc, text = self._plan(["lab/interop/swiyu/run.sh"])
+        self.assertEqual(rc, 0)
+        self.assertIn("run: python3 -m unittest lab/interop/test_exit_trap.py", text)
+        self.assertIn("run: python3 -m unittest lab/interop/swiyu/test_swiyu.py", text)
+        self.assertNotIn("no product path moved", text, "a lab row was selected: the gate is not the whole verification")
+
+    def test_a_lab_and_a_product_path_print_the_rows_of_both(self):
+        rc, text = self._plan(["lab/interop/test_exit_trap.py", ".github/workflows/ci.yml"])
+        self.assertEqual(rc, 0)
+        self.assertIn("run: python3 -m unittest lab/interop/test_exit_trap.py", text)
+        self.assertIn("run: the deploy jobs in CI", text)
+
+    def test_a_change_no_row_names_says_no_product_path_moved(self):
+        self.assertEqual(ship.verification_for(["NOTES.txt"]), [], "the premise: no row names NOTES.txt")
+        rc, text = self._plan(["NOTES.txt"])
+        self.assertEqual(rc, 0)
+        self.assertIn("✓ no product path moved", text)
+        self.assertNotIn("run:", text)
+
+    def test_a_product_path_no_row_names_is_still_said(self):
+        self.assertEqual(ship.verification_for(["scripts/zz_unlisted.txt"]), [],
+                         "the premise: no row names scripts/zz_unlisted.txt")
+        rc, text = self._plan(["scripts/zz_unlisted.txt"])
+        self.assertEqual(rc, 0)
+        self.assertIn("no listed verification for scripts/zz_unlisted.txt", text)
+        self.assertNotIn("no product path moved", text)
+
+
 class RouteChangeDetectionTests(unittest.TestCase):
     """`changed_routes` is how a ship learns which drills exercise what it touched."""
 

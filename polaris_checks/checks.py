@@ -13421,7 +13421,7 @@ def check_no_upsert_without_an_arbiter(root: pathlib.Path) -> list[Finding]:
 # ----------------------------------------------------------------------------
 
 def check_drill_plan_is_binding(root: pathlib.Path) -> list[Finding]:
-    """A drill the plan names for this ship must have run, or READY is withheld (v9.428).
+    """A drill a product path's row names for this ship must have run, or READY is withheld (v9.428).
 
     Four properties, each of which the mechanism is useless without:
 
@@ -13494,7 +13494,7 @@ def check_drill_plan_is_binding(root: pathlib.Path) -> list[Finding]:
                                         "product job's first step"))
 
     if "drills --check" not in pre:
-        findings.extend(_fail(name, "preflight never asks whether the drills this change needs "
+        findings.extend(_fail(name, "preflight never asks whether the drills a product path names "
                                     "have run"))
     else:
         block = pre[pre.find("drills --check"):]

@@ -339,10 +339,14 @@ def plan(out=None):
                 "`drills` scopes to this ship" % behind)
     print("plan for the %d path(s) changed since %s%s (working tree, uncommitted and untracked included):"
           % (len(changed), last, span), file=out)
-    if not product:
+    # The rows are matched against EVERY changed path, lab included (2026-11-13). Matching only
+    # the product paths dropped the lab rows of VERIFICATION before they were read: #547 changed
+    # lab/interop/swiyu/run.sh, whose row names lab/interop/test_exit_trap.py, the plan printed
+    # only its product paths' rows, and CI ran test_exit_trap.py and went red.
+    selected = verification_for(changed)
+    if not product and not selected:
         print("  ✓ no product path moved: the gate, the detection suite and the link check are the verification", file=out)
         return 0
-    selected = verification_for(product)
     covered = {path for v in selected for path in v["paths"]}
     for v in selected:
         print("  %s (%s):" % (v["why"], ", ".join(v["paths"][:4]) + (" ..." if len(v["paths"]) > 4 else "")), file=out)
@@ -1458,7 +1462,10 @@ _DRILL_RE = re.compile(r"^(?:python3|bash)\s+(scripts/polaris-[a-z0-9-]+drill\.(
 
 
 def _drill_jobs(since=None):
-    """[(command, [paths that named it])] for every drill the plan names.
+    """[(command, [paths that named it])] for every drill a product path's row names.
+
+    A changed route in polaris_web/app.py names the drills that mention it, too. plan also
+    prints the rows of lab paths (2026-11-13); this binds none of them.
 
     'every drill CI runs' is prose, not a command, so it expands here to the drills CI
     actually invokes. That phrase is what the schema rule emits, and it is the rule that
@@ -1703,7 +1710,7 @@ def _run_drill(cmd):
 
 
 def drills(argv):
-    """List, run, or verify the drills this change needs."""
+    """List, run, or verify the drills a product path names."""
     check = "--check" in argv
     do_run = "--run" in argv
     since = None
@@ -1712,7 +1719,7 @@ def drills(argv):
     jobs = _drill_jobs(since)
     if not jobs:
         if not check:
-            print("drills: this change names no drill "
+            print("drills: no product path names a drill "
                   "(no product path moved, or none of the rules that name one matched)")
         return 0
 
@@ -1750,7 +1757,7 @@ def drills(argv):
         for cmd, why in stale:
             print("  ✗ %s: %s" % (cmd, why))
         return 1 if stale else 0
-    print("drills this change needs (%d):" % len(jobs))
+    print("drills a product path names (%d):" % len(jobs))
     for cmd, paths in jobs:
         mark = "✗" if any(cmd == c for c, _ in stale) else "✓"
         print("  %s %s" % (mark, cmd))
