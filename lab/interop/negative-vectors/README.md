@@ -253,6 +253,9 @@ suite's expected-failures files (MIT). Nothing of theirs is copied into this dir
   view carries neither, so a run of that view judges the credential alone.
 - A verdict is pass or refuse. Why a verifier refused is compared for polaris-oid4vp only; for any other
   adapter, a refusal for the wrong reason counts as a pass.
+- Version 0.4.1: the intermediate of `x5c-intermediate-not-ca` carries its siblings' key usage (keyCertSign,
+  cRLSign), so cA FALSE is its one defect; in 0.4.0 it also had no keyCertSign. Its id and verdict are unchanged,
+  and the other 36 vectors are byte for byte those of 0.4.0.
 - Version 0.4.0 added `disclosure-unreferenced`: a Disclosure presented that no digest in the issuer's payload
   commits to (RFC 9901 s7.1 step 5); the 36 earlier vectors are byte for byte those of 0.3.1.
 - Version 0.3.1 (0.3.0 with the signer family's three vectors graded `policy`, not `spec-implied`, since
