@@ -13,8 +13,8 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. |
-| Use | 2 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier |
-| Findings from outside | 2, both fixed |
+| Use | 2 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
+| Findings from outside | 3, all fixed |
 
 ## External nouns
 
@@ -235,11 +235,18 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    opened from here and merged by the maintainer on 2026-10-28 (b587ce4a). Its CI's test count went
    from 123 to 144; the first run on main with them ([40770905494](https://github.com/vouchkit/vouchkit/actions/runs/40770905494))
    passed on Python 3.11, 3.12 and 3.13.
+4. 2026-11-13: Neil Berkman (Xuku LLC) reported by email a run of this repository's negative
+   vectors against the verifier of [Attesto](https://github.com/XukuLLC/attesto), not a CI job.
+   In his words, at vectors 0.4.0 (commit `2a5acc4`),
+   [Attesto 2.17.0](https://github.com/XukuLLC/attesto/releases/tag/v2.17.0) "refuses all 66
+   negatives, including disclosure-unreferenced, and accepts every control and repaired twin. The
+   seven status-list cases are refused by Attesto's status-list check, which a verifier calls
+   alongside presentation verification."
 
 ### Findings from outside
 
-    Bugs/ambiguities filed by non-authors:   1
-    Fixed because of external findings:      2
+    Bugs/ambiguities filed by non-authors:   2
+    Fixed because of external findings:      3
 
 1. walt.id declined the request-signing certificate (above): nobody filed it, but the cause was
    outside this repository. Fixed in v9.465.
@@ -248,6 +255,11 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    filed ambiguity: the README stamped the tree's version while its status line named the
    published one. Fixed the same day. The reviewer is not named, so this is not validated
    external evidence; three observations were answered "intentional" with measurements.
+3. 2026-11-13: Neil Berkman (Attesto) reported that the `x5c-intermediate-not-ca` vector carried a
+   second defect. In his words: "Its intermediate has cA = FALSE but also lacks keyCertSign, so a
+   verifier that checks key usage first refuses it for that reason, and the BasicConstraints check
+   is never isolated." Fixed in negative vectors 0.4.1
+   ([PR 541](https://github.com/EgorKhaklin/polaris-id/pull/541)).
 
 ---
 
