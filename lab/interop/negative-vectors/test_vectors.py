@@ -1406,7 +1406,6 @@ ONE_CHANGE = {
         ]),
     "x5c-intermediate-not-ca": ("accept-x5c",
         [
-            "/issuer/header/x5c[1]/#cert.extensions/2.5.29.15/value",
             "/issuer/header/x5c[1]/#cert.extensions/2.5.29.19/value",
             "/issuer/header/x5c[1]/#cert.spki",
         ],
@@ -1688,6 +1687,117 @@ class OneChange(unittest.TestCase):
                 json.dump(dict(doc, vectors=vectors), fh)
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(self.oc.main([path]), 1, name)
+
+
+# What each negative's x5c chain may differ in from its control's, certificate by certificate: the property the
+# vector names, and for a certificate on a key of its own, that key and the subject it is issued to. Anything else
+# is a second defect: a verifier that checks it first refuses for it, and the named property is never isolated
+# (0.4.1, reported by an outside verifier's run of the set: the not-a-CA intermediate also had no keyCertSign).
+# Written from each vector's description, not from a measurement, so a regenerated pin cannot carry a second
+# defect in with it.
+_CHAIN = "/issuer/header/x5c"
+_BC, _SAN = "/#cert.extensions/2.5.29.19/value", "/#cert.extensions/2.5.29.17/value"
+_OWN_LEAF = [_CHAIN + "[0]" + p for p in (_SAN, "/#cert.spki", "/#cert.subject")]
+X5C_PROPERTY = {
+    "x5c-self-signed": [_CHAIN + "[0]/#cert.issuer", _CHAIN + "[1](-)"],
+    "x5c-includes-anchor": [_CHAIN + "[2](+)"],
+    "x5c-unknown-root": [_CHAIN + "[0]/#cert.issuer", _CHAIN + "[1](-)"],
+    "x5c-leaf-expired": [_CHAIN + "[0]/#cert.notAfter"],
+    "x5c-intermediate-not-ca": [_CHAIN + "[1]" + _BC, _CHAIN + "[1]/#cert.spki"],
+    "x5c-leaf-names-other-issuer": _OWN_LEAF,
+    "x5c-leaf-names-other-host": _OWN_LEAF,
+    "x5c-leaf-uri-beats-host": _OWN_LEAF,
+}
+
+
+def chain_paths(oc, control, vector):
+    """Every path at which the vector's issuer x5c differs from the control's, certificate by certificate (a
+    certificate only one side holds is `[i](+)` or `[i](-)`), split into (changed, forced) as one_change does."""
+    a = oc.sdjwt_view(control)["issuer"]["header"].get("x5c") or []
+    b = oc.sdjwt_view(vector)["issuer"]["header"].get("x5c") or []
+    out = []
+    for i in range(max(len(a), len(b))):
+        at = "%s[%d]" % (_CHAIN, i)
+        if i >= len(a):
+            out.append(at + "(+)")
+        elif i >= len(b):
+            out.append(at + "(-)")
+        else:
+            out += oc.paths(a[i], b[i], at)
+    return oc.split(out)
+
+
+def x5c_property_problems(oc, doc, pins, properties):
+    """Each negative whose issuer x5c differs from its control's (the control ONE_CHANGE pins): a change outside
+    the property it names, no property written for it, a property written for no such negative. Nothing measured
+    is a problem too."""
+    problems, measured = [], set()
+    controls = {v["id"]: v for v in doc["vectors"] if v["class"] == "control"}
+    for vector in doc["vectors"]:
+        if vector["expected"] != "reject" or "presentation" not in vector or vector["id"] not in pins:
+            continue
+        control = controls.get(pins[vector["id"]][0])
+        if control is None:
+            continue
+        changed, _ = chain_paths(oc, control, vector)
+        if not changed:
+            continue
+        vid = vector["id"]
+        measured.add(vid)
+        if vid not in properties:
+            problems.append("%s: its x5c differs from %s's (%s), and no property is written for it"
+                            % (vid, control["id"], ", ".join(changed)))
+            continue
+        outside = [p for p in changed if p not in properties[vid]]
+        if outside:
+            problems.append("%s: its x5c differs from %s's outside the property it names: %s"
+                            % (vid, control["id"], ", ".join(outside)))
+    if not measured:
+        return ["no x5c negative was measured"]
+    problems += ["%s: a property is written, but its x5c is its control's or there is no such negative" % vid
+                 for vid in sorted(set(properties) - measured)]
+    return problems
+
+
+class X5CChainDiffersOnlyInItsProperty(unittest.TestCase):
+    """Each x5c negative's chain differs from its control's only in the property it names."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.oc = _load("one_change_x5c", "one_change.py")
+        cls.mv = _load("make_vectors_x5c", "make_vectors.py")
+        with open(os.path.join(HERE, "vectors.json")) as fh:
+            cls.doc = json.load(fh)
+
+    def test_each_x5c_negative_differs_only_in_the_property_it_names(self):
+        self.assertEqual(x5c_property_problems(self.oc, self.doc, ONE_CHANGE, X5C_PROPERTY), [])
+
+    def test_the_not_a_ca_intermediate_without_keycertsign_is_a_second_defect(self):
+        # 0.4.0's intermediate: cA FALSE, and its key usage a leaf's (digitalSignature, no keyCertSign).
+        mv = self.mv
+        old = mv._cert("Negative Vectors Test Intermediate", mv.BADINT_K, "Negative Vectors Test Root", mv.ROOT_K, 8,
+                       ca=False)
+        doc = dict(self.doc, vectors=[dict(v, presentation=mv.present(x5c=(mv.LEAF_UNDER_NOT_A_CA, old)))
+                                      if v["id"] == "x5c-intermediate-not-ca" else v for v in self.doc["vectors"]])
+        self.assertEqual(x5c_property_problems(self.oc, doc, ONE_CHANGE, X5C_PROPERTY),
+                         ["x5c-intermediate-not-ca: its x5c differs from accept-x5c's outside the property it names: "
+                          + _CHAIN + "[1]/#cert.extensions/2.5.29.15/value"])
+
+    def test_an_unwritten_property_a_stale_one_and_an_empty_run_are_problems(self):
+        properties = dict(X5C_PROPERTY)
+        del properties["x5c-leaf-expired"]
+        problems = x5c_property_problems(self.oc, self.doc, ONE_CHANGE, properties)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("x5c-leaf-expired: its x5c differs from accept-x5c's (%s[0]/#cert.notAfter)" % _CHAIN,
+                      problems[0])
+        properties = dict(X5C_PROPERTY, **{"kb-crit": [_CHAIN + "[0]/#cert.notAfter"]})
+        self.assertEqual(x5c_property_problems(self.oc, self.doc, ONE_CHANGE, properties),
+                         ["kb-crit: a property is written, but its x5c is its control's or there is no such negative"])
+        self.assertEqual(x5c_property_problems(self.oc, dict(self.doc, vectors=[]), ONE_CHANGE, X5C_PROPERTY),
+                         ["no x5c negative was measured"])
+        no_chain = [v for v in self.doc["vectors"] if not v["id"].startswith("x5c-")]
+        self.assertEqual(x5c_property_problems(self.oc, dict(self.doc, vectors=no_chain), ONE_CHANGE, X5C_PROPERTY),
+                         ["no x5c negative was measured"])
 
 
 def _without(path, module_name, name, code, package=None):
