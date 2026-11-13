@@ -1246,6 +1246,28 @@ FLAKE_SIGNATURES = [
      "then rerun the failed jobs. If it keeps recurring, raise the limit rather than "
      "rerunning: an 'unauthenticated' limit needs a docker login on the image-building jobs; "
      "an account's own limit ('as <user>') needs fewer pulls or a higher tier"),
+    # 2026-11-13, run 43398751023: a procedure drill shard died before its first step. Its
+    # postgres service container was never created: each of the runner's three pulls failed
+    # fetching a layer from Docker Hub's blob CDN, `read: connection reset by peer`, and the
+    # rerun passed unchanged. Triage said "investigate".
+    #
+    # Anchored on the fetch, never on the wrapper. `Docker pull failed with exit code 1` is what
+    # GitHub prints for EVERY failed service pull, `pull access denied` and `repository does not
+    # exist` included, and those are definite: a rule on the wrapper would tell a removed image
+    # to rerun. The pattern needs the Get of a registry-v2 blob from production.cloudfront.
+    # docker.com and a transport ending on the same line: a reset, an i/o timeout, a TLS
+    # handshake timeout. An HTTP status is not one of them.
+    #
+    # On a log carrying both this and a removed image, registry-removal wins:
+    # classify_failure_log tests UPSTREAM_SIGNATURES before FLAKE_SIGNATURES.
+    ("dockerhub-blob-fetch",
+     r'Get "https://production\.cloudfront\.docker\.com/registry-v2/[^"\n]*": [^\n]*'
+     r"(?:connection reset by peer|i/o timeout|TLS handshake timeout)",
+     "Docker Hub's blob CDN dropped a layer fetch while a service container's image was pulled "
+     "(a connection reset or a timeout, not an HTTP status), so the service never started and "
+     "the job's later errors are 'connection refused'. Nothing in the tree is implicated; rerun "
+     "the failed jobs once. If the same pull fails on the rerun, do not rerun again: read the "
+     "log for a registry answer such as 'pull access denied' and investigate"),
     # 2026-09-16: the rolling drill's preflight asks `docker compose config --services` for
     # `app-green` and refuses when it is absent. On run 35110741726 it was absent seconds
     # after the boot step of the same job had started both colours and printed them healthy,
