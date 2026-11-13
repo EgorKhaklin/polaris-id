@@ -33,6 +33,7 @@ is not reused between tests, and it is right to: one long-lived response-encrypt
 every presentation ever sent to this verifier readable by anybody who later obtains it.
 """
 import base64
+import functools
 import json
 import re
 import secrets
@@ -354,6 +355,22 @@ class Session:
         # This request's transaction_data entries (TransactionDataEntry), empty for none.
         self.transaction_data = tuple(transaction_data)
 
+
+
+def _says_how_the_vp_token_came(handler):
+    """Every verdict handle_direct_post returns carries `vp_token_from_string`: True when that
+    call read the vp_token out of a JSON string (`_read_vp_token`), refused or accepted, so a
+    record never shows a string-form response as an object-form one. Set at the one exit, so a
+    refusal added later carries it too."""
+    @functools.wraps(handler)
+    def handle(self, form):
+        read = self._vp_token_read
+        read.from_string = False
+        result = handler(self, form)
+        if isinstance(result[2], Verdict):
+            result[2].vp_token_from_string = read.from_string
+        return result
+    return handle
 
 
 def verifier_info_entries(entries, credential_ids=()):
@@ -880,7 +897,7 @@ class Verifier:
         # member, both of its example payloads show the object, and 8.6 asks a verifier to reject
         # a vp_token whose format is not 8.1's. The swiyu Sandbox Wallet 1.19.0 sends the
         # object's JSON as a string instead. Off by default, and only True turns it on, so a
-        # truthy or misspelt value reads nothing new.
+        # truthy or misspelt value reads nothing new, here or set later (`_read_vp_token`).
         self.accept_vp_token_as_json_string = accept_vp_token_as_json_string is True
         self.issuer_jwks = list(issuer_jwks or [])
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
@@ -912,6 +929,8 @@ class Verifier:
         # the code's SHA-256 so the lookup compares no secret: digest -> (when, state, verdict).
         self._results = {}
         self._lock = threading.Lock()
+        # Per call of handle_direct_post: whether it read the vp_token out of a JSON string.
+        self._vp_token_read = threading.local()
         self._jti_memory = JtiMemory(retention_seconds=JTI_RETENTION_SECONDS)
 
     # ------------------------------------------------------------------ the request
@@ -1040,6 +1059,26 @@ class Verifier:
 
     # ----------------------------------------------------------------- the response
 
+    def _read_vp_token(self, member):
+        """The payload's vp_token member, as the object the rules below judge.
+
+        A member sent as a JSON string is read only when the verifier was built with
+        accept_vp_token_as_json_string=True (the attribute is True, not merely truthy): once,
+        under the depth bound, size limit and finite rule the payload around it was read under.
+        What it holds is then held to every rule the object form is, so a string inside a
+        string, a list or a number is refused like any other; a string that is not JSON gives
+        None, which is refused too. Any other member is returned as it came.
+        """
+        if isinstance(member, str) and self.accept_vp_token_as_json_string is True:
+            self._vp_token_read.from_string = True
+            try:
+                return _loads_depth_bounded(member, "vp_token", limit=MAX_RESPONSE_BYTES,
+                                            finite=True)
+            except ValueError:
+                return None
+        return member
+
+    @_says_how_the_vp_token_came
     def handle_direct_post(self, form):
         """Judge one `direct_post.jwt` response. Returns (http_status, body_dict, verdict).
 
@@ -1126,20 +1165,7 @@ class Verifier:
         # presentation, arriving second, was refused as a replay. It closes below, once
         # verify_presentation has found the presentation authentic: only the holder of the
         # credential and its key can get that far, so only the holder can close it.
-        # A vp_token sent as a JSON string, read only when the verifier was built to read it: once,
-        # under the depth bound and the size limit the payload around it was read under. What it
-        # holds is then held to every rule the object form is, so a string inside a string, a
-        # list or a number is refused below like any other. An accepted verdict says it came this
-        # way (`vp_token_from_string`).
-        vp_token, from_string = body.get("vp_token"), False
-        if isinstance(vp_token, str) and self.accept_vp_token_as_json_string:
-            try:
-                vp_token = _loads_depth_bounded(vp_token, "vp_token", limit=MAX_RESPONSE_BYTES,
-                                                finite=True)
-            except ValueError:
-                vp_token = None
-            from_string = True
-        presentation = self._single_presentation(vp_token)
+        presentation = self._single_presentation(self._read_vp_token(body.get("vp_token")))
         if presentation is None:
             return self._error("invalid_request",
                                "the vp_token is not one presentation for the one credential "
@@ -1166,7 +1192,6 @@ class Verifier:
                                       expected_vct=self.vct_values,
                                       status_resolver=self.status_resolver,
                                       transaction_data=binding)
-        verdict.vp_token_from_string = from_string
         if not verdict.authentic:
             # The reason goes to the operator through the returned verdict, and the wallet
             # gets the same constant refusal every other cause gets. The request stays open.

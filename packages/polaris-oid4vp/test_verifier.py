@@ -1734,6 +1734,37 @@ class HeldOutTransportTests(VerifierTestCase):
         self.assertIs(verdict.vp_token_from_string, False)
         self.assertNotIn("vp_token_from_string", verdict.as_dict())
 
+    def test_a_refused_json_string_vp_token_still_says_it_came_as_a_string(self):
+        """A refusal at the shape and one past verify_presentation (another request's nonce) each
+        carry the flag; an object-form refusal does not."""
+        self.verifier.accept_vp_token_as_json_string = True
+        jar_one, genuine_one = self._genuine()
+        jar_two, _ = self._genuine()
+        for jar, vp_token, flag in ((jar_one, json.dumps({"pid": [genuine_one, genuine_one]}), True),
+                                    (jar_two, json.dumps({"pid": [genuine_one]}), True),
+                                    (jar_two, {"pid": [genuine_one]}, False)):
+            status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar, vp_token=vp_token))
+            self.assertEqual(status, 400, verdict.reason)
+            self.assertIs(verdict.vp_token_from_string, flag, verdict.reason)
+
+    def test_a_truthy_attribute_set_after_construction_reads_nothing_new(self):
+        jar, genuine = self._genuine()
+        for value in ("no", 1, ["x"]):
+            self.verifier.accept_vp_token_as_json_string = value
+            form = self.wallet.respond(jar, vp_token=json.dumps({"pid": [genuine]}))
+            status, body, verdict = self.verifier.handle_direct_post(form)
+            self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY), repr(value))
+            self.assertIn("not one presentation", verdict.reason)
+            self.assertIs(verdict.vp_token_from_string, False)
+
+    def test_a_replayed_json_string_vp_token_is_refused(self):
+        self.verifier.accept_vp_token_as_json_string = True
+        jar, genuine = self._genuine()
+        form = self.wallet.respond(jar, vp_token=json.dumps({"pid": [genuine]}))
+        self.assertEqual(self.verifier.handle_direct_post(form)[0], 200)
+        status, body, _ = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+
     def test_a_json_string_vp_token_turned_on_is_held_to_the_object_rules(self):
         """The string form gets no rule the object form does not: two credentials, two
         presentations, another query id, a list, a string that is not JSON, a string inside a

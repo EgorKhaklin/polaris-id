@@ -429,8 +429,11 @@ class SwiyuVerifier(Verifier):
         self._local.l13_parent = None
         self._local.l13_answer = None
 
+    def _read_vp_token(self, member):
+        self._local.vp_token = member  # the capture keeps the member as the payload carried it, string or object
+        return super()._read_vp_token(member)
+
     def _single_presentation(self, vp_token):
-        self._local.vp_token = vp_token
         presentation = super()._single_presentation(vp_token)
         if presentation is None:
             self._local.l10_parent = "refused"

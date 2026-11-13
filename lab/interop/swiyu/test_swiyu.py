@@ -720,11 +720,18 @@ class RecordTests(Base):
         record = self.w.last()
         self.assertEqual(record["verdict"], {"status": 200, "authentic": True, "code": "", "reason": "",
                                              "vp_token_from_string": True})
+        self.assertIsInstance(self.w.verifier._local.vp_token, str)  # the capture holds what the wallet sent
         self.assertEqual(record["checks"]["L7"]["parent"], {"status": 200, "code": ""})
         self.assertEqual(record["checks"]["L10"]["parent"], "passed")
         answer = record["checks"]["L13"]["parent"]
         self.assertEqual((answer["checked"], answer["status"], answer["code"]), (True, 0, None))
         json.dumps(record)  # every parent answer is plain data
+        # refused past the envelope (another audience): the record and the capture still say it came as a string
+        self.w.exchange(vp_token_as_string=True, audience="https://another.verifier.example")
+        record = self.w.last()
+        self.assertEqual((record["verdict"]["status"], record["verdict"]["authentic"]), (400, False))
+        self.assertIs(record["verdict"]["vp_token_from_string"], True)
+        self.assertIsInstance(self.w.verifier._local.vp_token, str)
         # L13's lab precondition failed (a host that is not the registry's): decide_by_fetching did not run
         self.w.exchange(status_uri="https://evil.example/api/v1/statuslist/1.jwt")
         record = self.w.last()
@@ -1214,6 +1221,7 @@ class PinTests(unittest.TestCase):
         self.assertEqual(names(Verifier._request_object), ["self", "session", "wallet_nonce"])
         self.assertEqual(names(Verifier._dcql_query), ["self"])
         self.assertEqual(names(Verifier._single_presentation), ["self", "vp_token"])
+        self.assertEqual(names(Verifier._read_vp_token), ["self", "member"])
         self.assertEqual(names(Verifier.handle_direct_post), ["self", "form"])
         self.assertEqual(names(Verifier.request_object), ["self", "state", "wallet_nonce", "wallet_metadata"])
         self.assertEqual(names(Verifier.new_request), ["self", "transaction_data"])
@@ -1234,8 +1242,7 @@ class PinTests(unittest.TestCase):
         self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)', inspect.getsource(sdjwt._revocation_state))
         # the response path the lab sits in front of: it decrypts, then asks _single_presentation
         source = inspect.getsource(Verifier.handle_direct_post)
-        for fragment in ("decrypt_response(token, candidate.enc_key)", "self._single_presentation(vp_token)",
-                         "vp_token, from_string = body.get(\"vp_token\"), False",
+        for fragment in ("decrypt_response(token, candidate.enc_key)", "self._single_presentation(self._read_vp_token(body.get(\"vp_token\")))",
                          "status_resolver=self.status_resolver", "expected_audience=self.client_id"):
             self.assertIn(fragment, source)
 
