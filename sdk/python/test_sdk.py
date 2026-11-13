@@ -106,6 +106,11 @@ def _conformance_vector(name):
         return json.load(f)
 
 
+def _json_file(path):
+    with open(path) as f:
+        return json.load(f)
+
+
 class _OqsKey:
     """A fresh ML-DSA-65 key, made and used through liboqs. The SDK checks a signature with each
     witness it has, so what is signed here is also checked by cryptography's implementation."""
@@ -972,7 +977,7 @@ class HolderChainHeldOutTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.early = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "holder-chain-early-binding.json")))
+        cls.early = _json_file(os.path.join(_ROOT, "sdk", "testdata", "holder-chain-early-binding.json"))
         cls.conf = {n: _conformance_vector("holder-%s.json" % n)
                     for n in ("credential", "binding-valid", "proof-valid")}
 
@@ -1034,7 +1039,7 @@ class CrossAuthorityHeldOutTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+        cls.f = _json_file(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json"))
 
     def decide(self, manifest="base", feed="clean", anchors=None, require_signed=False):
         f = self.f
@@ -1069,7 +1074,7 @@ class CrossAuthorityEdgeWindowTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-edge-window.json")))
+        cls.f = _json_file(os.path.join(_ROOT, "sdk", "testdata", "federation-edge-window.json"))
 
     def decide(self, window, require_signed=False):
         f = self.f
@@ -1113,7 +1118,7 @@ class ExchangeEdgeSignatureTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "exchange-edge-signature.json")))
+        cls.f = _json_file(os.path.join(_ROOT, "sdk", "testdata", "exchange-edge-signature.json"))
 
     def verdicts(self, name):
         f, now = self.f, self.f["_fixture"]["now"]
@@ -1270,7 +1275,7 @@ class HostileFieldsAreAVerdictTests(unittest.TestCase):
                 self.assertFalse(pv.verify_timestamp_anchor(ts, log_key=key).anchored)
 
     def test_a_revocation_feed_that_is_not_an_object_rejects(self):
-        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+        f = _json_file(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json"))
 
         def decide(feed):
             return pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], [f["manifests"]["base"]],
@@ -1283,7 +1288,7 @@ class HostileFieldsAreAVerdictTests(unittest.TestCase):
     def test_manifests_that_are_not_a_list_are_no_manifests(self):
         """2026-09-30: `manifests or []` let `true` and `5` reach the loop, which raised
         TypeError; the detached verifier reads a manifest set that is not a list as none."""
-        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+        f = _json_file(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json"))
 
         def decide(manifests):
             return pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], manifests,
@@ -2126,7 +2131,7 @@ class CrossAuthorityViaTests(unittest.TestCase):
     def test_via_names_the_authority_the_edge_was_found_under(self):
         """2026-09-30: `via` kept only a string, and every manifest's authority is an object, so
         it was always None; the TypeScript SDK reports the object."""
-        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+        f = _json_file(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json"))
         v = pv.verify_cross_authority(f["pack"], f["_fixture"]["context_id"], [f["manifests"]["base"]],
                                       [f["trusted_anchor"]], None, now=f["_fixture"]["now"])
         self.assertEqual(v.decision, "accept")
@@ -2139,7 +2144,7 @@ class TrustComesFromTheRelyingPartyTests(unittest.TestCase):
     equivalents take their trust by name (`trusted_manifests`) or report it separately."""
 
     def test_a_cross_authority_decision_with_no_anchors_trusts_nothing(self):
-        f = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json")))
+        f = _json_file(os.path.join(_ROOT, "sdk", "testdata", "federation-variants.json"))
         args = (f["pack"], f["_fixture"]["context_id"], [f["manifests"]["base"]])
         ok = pv.verify_cross_authority(*args, [f["trusted_anchor"]], None, now=f["_fixture"]["now"])
         self.assertEqual((ok.decision, ok.issuer_trusted), ("accept", True), "control: the relying party's anchor")
@@ -2256,7 +2261,7 @@ class ParityWithTheTypeScriptSdkTests(unittest.TestCase):
         self.assertNotEqual(pv.pairwise_handle(key, "\x1cscope"), pv.pairwise_handle(key, "scope"))
 
     def test_a_holder_proof_that_cannot_be_checked_reports_no_nonce(self):
-        e = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "holder-chain-early-binding.json")))
+        e = _json_file(os.path.join(_ROOT, "sdk", "testdata", "holder-chain-early-binding.json"))
         v = pv.verify_holder(e["credential"], e["binding"], dict(e["proof"], algorithm="ML-DSA-44"),
                              expected_nonce="held-out-nonce", expected_context=1, now="2026-05-01T00:00:10Z")
         self.assertIs(v.proof_authentic, None)
@@ -2522,7 +2527,7 @@ class IsoInstantGrammarTests(unittest.TestCase):
     def test_the_shared_vectors(self):
         import json
         import os
-        cases = json.load(open(os.path.join(_ROOT, "sdk", "testdata", "iso-instants.json")))["cases"]
+        cases = _json_file(os.path.join(_ROOT, "sdk", "testdata", "iso-instants.json"))["cases"]
         for c in cases:
             with self.subTest(c["input"]):
                 got = pv._iso_to_epoch(c["input"])
@@ -2721,7 +2726,9 @@ class AnotherProjectsOqsModule(unittest.TestCase):
         "except ImportError:\n"
         "    out['import'] = 'ImportError'\n"
         "for path in sys.argv[1:]:\n"
-        "    v = pv.verify_authenticity(json.load(open(path)))\n"
+        "    with open(path) as f:\n"
+        "        doc = json.load(f)\n"
+        "    v = pv.verify_authenticity(doc)\n"
         "    out[path] = [v.authentic, v.witnesses]\n"
         "print(json.dumps(out))\n")
 
