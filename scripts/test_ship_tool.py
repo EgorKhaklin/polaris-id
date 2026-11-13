@@ -120,6 +120,70 @@ ALPINE_APK_NO_PIP = (
 #: so the apk signature must require a real failure marker and this must NOT classify.
 ALPINE_APK_ECHO_ONLY = '#8 [stage-1 3/7] RUN /bin/sh -c apk add --no-cache pgbouncer'
 
+#: Run 43398751023, job 131796156715, lines 52-77 of its log, verbatim: the postgres service
+#: container's three pulls, each failing at a layer fetch from Docker Hub's blob CDN with
+#: `connection reset by peer`. The rerun passed unchanged. `--log-failed` puts the job and
+#: step names in front of each line; the pattern reads neither.
+DOCKERHUB_BLOB_FETCH = (
+    '2026-11-13T09:08:56.9972890Z ##[command]/usr/bin/docker pull postgres:16-alpine@sha256:72187'
+    '3c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea\n'
+    '2026-11-13T09:08:57.5120203Z docker.io/library/postgres@sha256:721873c34ceb9f8d8fc265984940d'
+    'c982404c105f19ad51be9fdc5970a6080ea: Pulling from library/postgres\n'
+    '2026-11-13T09:08:57.6967387Z failed to copy: httpReadSeeker: failed open: failed to do reque'
+    'st: Get "https://production.cloudfront.docker.com/registry-v2/docker/registry/v2/blobs/sha25'
+    '6/81/81bd698b4594e751a3269e4dcd3e03a4a0ec0daf7b72e7aa1abd43cce9887542/data?Expires=179456393'
+    '7&Signature=QG18MYVVpjvBF-wvAvwQn7vXRBVESAJJfhB0r~SOhReiKoDhBvPcUbBT4~sG7VhkspO8ObnXsR-~WsW7'
+    'sFoJhENpwlZUP9QPr4uZI02lYc8D9QpEjUhnxkTqNNVCb4hgsnvG8ULT2rdFeFeNmUHECHHzxWs6IIH9qVnAFGkNLnXE'
+    'Qg4pxp1WEr2Iyt6PDOSWRRJA8Xyj-L8NA5sNqSs3XhqBBj0AnP6V2MUT1tM1jcAY2twd~U7sGEDg5nQcgUOHUHKWmtPz'
+    'r-Wqc90jIwe42RrbmDOMq3Akj2Ro9jnANIWkZY3L6oI6gXflf7TtvDWtSZH6pTR8UHESL1P3K-56tQ__&Key-Pair-Id'
+    '=K31B9XRZB58O8Z": read tcp 10.1.0.125:45982->3.167.183.100:443: read: connection reset by pe'
+    'er\n'
+    '2026-11-13T09:08:57.7001225Z ##[warning]Docker pull failed with exit code 1, back off 9.743 '
+    'seconds before retry.\n'
+    '2026-11-13T09:09:07.4440224Z ##[command]/usr/bin/docker pull postgres:16-alpine@sha256:72187'
+    '3c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea\n'
+    '2026-11-13T09:09:07.9405637Z docker.io/library/postgres@sha256:721873c34ceb9f8d8fc265984940d'
+    'c982404c105f19ad51be9fdc5970a6080ea: Pulling from library/postgres\n'
+    '2026-11-13T09:09:08.1641011Z 509688edf37b: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1641637Z 6c25da34e03f: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1642014Z 81717818649a: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1642315Z 3ae6141cfd99: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1642584Z 210b280f9556: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1642886Z 1b7f9cd581ee: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1643197Z 25b77f59fd95: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1643522Z d8d21be4bf02: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1644552Z a88782f92806: Pulling fs layer\n'
+    '2026-11-13T09:09:08.1644959Z 6117bd39f23f: Pulling fs layer\n'
+    '2026-11-13T09:09:08.2603017Z 509688edf37b: Download complete\n'
+    '2026-11-13T09:09:08.2606217Z 6c25da34e03f: Download complete\n'
+    '2026-11-13T09:09:08.4021792Z e6b147246a89: Download complete\n'
+    '2026-11-13T09:09:08.4023474Z 021b01ea4cc2: Download complete\n'
+    '2026-11-13T09:09:08.4052937Z failed to copy: httpReadSeeker: failed open: failed to do reque'
+    'st: Get "https://production.cloudfront.docker.com/registry-v2/docker/registry/v2/blobs/sha25'
+    '6/3a/3ae6141cfd99b452b6681c53b7ad98794795232fd103f21aff66d2551310b767/data?Expires=179456394'
+    '8&Signature=XVb9nlt7bOqRkprM0QmRn6SyieaJjbH2CfG8h~gUyk4sA4kQy8ddTVN5AJKpf6KUEzSaJ8HkJai2N-TU'
+    'i7SDkE4EYzukFIC-9DCq6bfcP1eoI3xAvJSOL4SZcCCEs-fggCPoDFhfvZEuFnjtH7sjbD4CFVGh3eZYUDxwl4QMXD9m'
+    'h5fDOpd0pog-tlimcZ3lZsmx1eDJHJU1W-chf2iabemXqLCYwYZ59HNhQ40t8G8HLfFGiHr8wx~DMwsCSPDdol-E3I~t'
+    'sKy6AmraWPN4fu0mpL4bfkbUfwxZtN6mmwZdoNfOg~1mcP8sFRUWwNdwi-GiynCv1oI9zEEPSdYcJg__&Key-Pair-Id'
+    '=K31B9XRZB58O8Z": read tcp 10.1.0.125:33338->3.167.183.62:443: read: connection reset by pee'
+    'r\n'
+    '2026-11-13T09:09:08.4064496Z ##[warning]Docker pull failed with exit code 1, back off 1.387 '
+    'seconds before retry.\n'
+    '2026-11-13T09:09:09.7940022Z ##[command]/usr/bin/docker pull postgres:16-alpine@sha256:72187'
+    '3c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea\n'
+    '2026-11-13T09:09:10.2114860Z docker.io/library/postgres@sha256:721873c34ceb9f8d8fc265984940d'
+    'c982404c105f19ad51be9fdc5970a6080ea: Pulling from library/postgres\n'
+    '2026-11-13T09:09:10.3857845Z failed to copy: httpReadSeeker: failed open: failed to do reque'
+    'st: Get "https://production.cloudfront.docker.com/registry-v2/docker/registry/v2/blobs/sha25'
+    '6/81/81bd698b4594e751a3269e4dcd3e03a4a0ec0daf7b72e7aa1abd43cce9887542/data?Expires=179456395'
+    '0&Signature=PylET2tRh2TOON64W5d68rbMQMHsN4LzjKfEjqfs2zsl8DXUXMI1CWvhcO7ik8JE0b6VvWLBi6dpShvB'
+    'UznMm0qqe5aP0QqZiEhjhhjbxgUhITSbTKKoMcExq4bTnfteizGe3-eDJMvdhHHSBzdA2GVbtQ0wPDJ1cXFwOPFpWYjk'
+    'JZy7s-bXcvyZpyQjFpyfYYnoWIhJsI94XORRMJUHH70nuuCN8~1ktxdL-dgy~Jp0rypz~KB-u3seAk5UfmQdH2Ma9b9X'
+    '07Igzr7GbhyQ8A5UXcWmjnlGhCPENNfxa9IQFwF6B8tplXSoPvxndpdV7hCsD3coxbnlMAJBV9Pk0A__&Key-Pair-Id'
+    '=K31B9XRZB58O8Z": read tcp 10.1.0.125:33574->3.167.183.100:443: read: connection reset by pe'
+    'er\n'
+    '2026-11-13T09:09:10.3943135Z ##[error]Docker pull failed with exit code 1')
+
 
 class FlakeClassifierTests(unittest.TestCase):
     def test_the_alpine_apk_layer_is_a_known_flake(self):
@@ -252,6 +316,60 @@ class FlakeClassifierTests(unittest.TestCase):
             "pull access denied for minio/minio, repository does not exist or may require "
             "'docker login'")
         self.assertEqual((verdict, name), ("upstream", "registry-removal"))
+
+    def test_a_reset_fetching_a_docker_hub_blob_is_a_known_flake(self):
+        """Run 43398751023: three pulls of the postgres service image, each reset at a layer
+        fetch from the blob CDN. Before the signature it said 'investigate'."""
+        verdict, name, advice = ship.classify_failure_log(DOCKERHUB_BLOB_FETCH)
+        self.assertEqual((verdict, name), ("flake", "dockerhub-blob-fetch"))
+        self.assertIn("rerun the failed jobs once", advice)
+        self.assertIn("do not rerun again", advice)
+
+    def test_a_blob_fetch_timeout_is_the_same_flake(self):
+        """The two other transport endings, on the run's own Get line: a dial that timed out,
+        and a TLS handshake that did not finish."""
+        line = [entry for entry in DOCKERHUB_BLOB_FETCH.split("\n") if "production.cloudfront" in entry][0]
+        get = line[:line.index('": read tcp')]
+        for ending in ('": dial tcp 3.167.183.100:443: i/o timeout',
+                       '": net/http: TLS handshake timeout'):
+            with self.subTest(ending=ending[-21:]):
+                self.assertEqual(ship.classify_failure_log(get + ending)[:2], ("flake", "dockerhub-blob-fetch"))
+
+    def test_the_wrapper_line_alone_is_not_this_flake(self):
+        """GitHub prints `Docker pull failed with exit code 1` for every failed service pull, a
+        removed image's included. The wrapper says nothing about why."""
+        wrappers = "\n".join(entry for entry in DOCKERHUB_BLOB_FETCH.split("\n") if "Docker pull failed" in entry)
+        self.assertEqual(wrappers.count("Docker pull failed"), 3, "the premise: the run's three wrapper lines")
+        self.assertEqual(ship.classify_failure_log(wrappers), ("investigate", None, None))
+
+    def test_a_blob_fetch_that_got_an_http_status_is_not_this_flake(self):
+        """An answer from the CDN is not a dropped connection, and the same Get to another host
+        is not Docker Hub's blob store."""
+        line = [entry for entry in DOCKERHUB_BLOB_FETCH.split("\n") if "production.cloudfront" in entry][0]
+        get = line[:line.index('": read tcp')]
+        for log in (get + '": 403 Forbidden',
+                    get.replace("production.cloudfront.docker.com", "objects.githubusercontent.com")
+                    + '": read tcp 10.1.0.125:45982->3.167.183.100:443: read: connection reset by peer'):
+            with self.subTest(log=log[-30:]):
+                self.assertNotEqual(ship.classify_failure_log(log)[1], "dockerhub-blob-fetch")
+
+    def test_the_wrapper_with_a_removed_image_is_registry_removal(self):
+        verdict, name, _advice = ship.classify_failure_log(
+            "2026-11-13T09:08:57.6967387Z Error response from daemon: pull access denied for "
+            "polaris/nope, repository does not exist or may require 'docker login': denied: "
+            "requested access to the resource is denied\n"
+            "2026-11-13T09:09:10.3943135Z ##[error]Docker pull failed with exit code 1")
+        self.assertEqual((verdict, name), ("upstream", "registry-removal"))
+
+    def test_a_removed_image_beats_a_blob_fetch_reset_in_the_same_log(self):
+        """One job's reset must not turn another job's removed image into 'rerun', whichever
+        comes first in the log."""
+        removed = ("pull access denied for minio/minio, repository does not exist or may require "
+                   "'docker login'")
+        for label, log in (("reset first", DOCKERHUB_BLOB_FETCH + "\n" + removed),
+                           ("reset last", removed + "\n" + DOCKERHUB_BLOB_FETCH)):
+            with self.subTest(label):
+                self.assertEqual(ship.classify_failure_log(log)[:2], ("upstream", "registry-removal"))
 
     def test_the_apt_index_flake_still_classifies(self):
         for line in ("E: Failed to fetch http://azure.archive.ubuntu.com",
