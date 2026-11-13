@@ -177,7 +177,8 @@ fi
 #    Informational; it skips itself where no tag is reachable (shallow clones).
 ( cd "${ROOT}" && python3 scripts/polaris-ship.py plan ) 2>&1 | sed 's/^/  /'
 
-# 4b. The drills the plan names, made binding (v9.428).
+# 4b. The drills a product path's row names, made binding (v9.428). The plan also
+#     prints the rows of lab paths (2026-11-13); none of those is bound here.
 #
 #     Step 4 above has printed a verification plan since v9.345 under the word
 #     "Informational", and step 2b already says what that costs: "a preflight that
@@ -193,9 +194,9 @@ fi
 #     because some drills need Docker, an HSM or a cluster; a waiver that is visible
 #     is a decision, a waiver that is silent is this bug again.
 echo
-echo "── drills this change needs ──"
+echo "── drills a product path names ──"
 if drill_out="$( cd "${ROOT}" && python3 scripts/polaris-ship.py drills --check 2>&1 )"; then
-  echo "  ✓ every drill this change needs has run against this tree"
+  echo "  ✓ every drill a product path names has run against this tree"
 else
   echo "$drill_out" | sed 's/^/  /'
   if [ "${POLARIS_DRILLS_WAIVED:-0}" = "1" ]; then
