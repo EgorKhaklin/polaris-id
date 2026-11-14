@@ -25871,10 +25871,12 @@ def test_edge_tls_state_shared_check_discriminates(tmp_path):
 
 
 def test_interop_page_count_check_discriminates(tmp_path):
-    """The interop page's rows, its sentence, the scoreboard's summary, the README badge and the claims manifest
-    must count and name the same implementations: each one changed, or the page emptied, must FAIL."""
+    """The interop page's rows, its sentence, the scoreboard's summary, the README badge, the claims manifest and the
+    site's count, tally and Evidence list must count and name the same implementations: each one changed, or the page
+    emptied, must FAIL."""
     files = {rel: (REPO / rel).read_text(encoding="utf-8") for rel in (
-        "README.md", "lab/EXTERNAL-NOUNS.md", "docs/reference/claims.json", "docs/reference/INTEROP.md")}
+        "README.md", "lab/EXTERNAL-NOUNS.md", "docs/reference/claims.json", "docs/reference/INTEROP.md",
+        "site/index.html")}
 
     def write(**changes):
         for rel, text in files.items():
@@ -25887,13 +25889,15 @@ def test_interop_page_count_check_discriminates(tmp_path):
 
     write()
     assert level() == "OK"
-    page, board, readme, manifest = (files[r] for r in (
-        "docs/reference/INTEROP.md", "lab/EXTERNAL-NOUNS.md", "README.md", "docs/reference/claims.json"))
+    page, board, readme, manifest, site = (files[r] for r in (
+        "docs/reference/INTEROP.md", "lab/EXTERNAL-NOUNS.md", "README.md", "docs/reference/claims.json",
+        "site/index.html"))
+    swiyu_item = next(ln for ln in site.splitlines() if "swiyu Sandbox Wallet</a>" in ln)
     axle_row = next(ln for ln in page.splitlines() if ln.startswith("| Axle "))
     broken = [
-        {"docs/reference/INTEROP.md": page.replace("Seven wallets and eight more", "Eight wallets and eight more")},
-        {"docs/reference/INTEROP.md": page.replace("Seven wallets and eight more", "Seven wallets and seven more")},
-        {"docs/reference/INTEROP.md": page.replace("Seven wallets and eight more outside", "Several outside")},
+        {"docs/reference/INTEROP.md": page.replace("Eight wallets and eight more", "Nine wallets and eight more")},
+        {"docs/reference/INTEROP.md": page.replace("Eight wallets and eight more", "Eight wallets and seven more")},
+        {"docs/reference/INTEROP.md": page.replace("Eight wallets and eight more outside", "Several outside")},
         {"docs/reference/INTEROP.md": page.replace(axle_row + "\n", "")},
         {"docs/reference/INTEROP.md": page.replace(axle_row, axle_row + "\n" + axle_row)},
         {"docs/reference/INTEROP.md": page.replace("| walt.id Wallet API v2 | wallet |", "| walt.id Wallet API v2 | library |")},
@@ -25903,11 +25907,11 @@ def test_interop_page_count_check_discriminates(tmp_path):
         {"docs/reference/INTEROP.md": page.replace("| Implementation | Kind |", "| Name | Kind |")},
         {"docs/reference/INTEROP.md": page.replace("\n## Measured\n", "\n## Runs\n")},
         {"docs/reference/INTEROP.md": ""},
-        {"lab/EXTERNAL-NOUNS.md": board.replace("| 7 unmodified wallets", "| 8 unmodified wallets", 1)},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("| 8 unmodified wallets", "| 9 unmodified wallets", 1)},
         {"lab/EXTERNAL-NOUNS.md": board.replace("and 8 more implementations", "and 9 more implementations", 1)},
-        {"lab/EXTERNAL-NOUNS.md": board.replace("| Wallets | 7 unmodified", "| Wallets | seven unmodified", 1)},
-        {"README.md": readme.replace("tested_against-15_outside_implementations", "tested_against-16_outside_implementations")},
-        {"README.md": readme.replace("tested_against-15_outside_implementations", "tested_against-15_outside_wallets")},
+        {"lab/EXTERNAL-NOUNS.md": board.replace("| Wallets | 8 unmodified", "| Wallets | eight unmodified", 1)},
+        {"README.md": readme.replace("tested_against-16_outside_implementations", "tested_against-17_outside_implementations")},
+        {"README.md": readme.replace("tested_against-16_outside_implementations", "tested_against-16_outside_wallets")},
         {"docs/reference/claims.json": manifest.replace('"scoreboard": "Axle"', '"scoreboard": "Axel"')},
         {"docs/reference/claims.json": manifest.replace('"scoreboard": "Multipaz"', '"scoreboard": "OpenWallet Foundation"')},
         {"docs/reference/claims.json": manifest.replace('        "readme-six-wallets",\n        "readme-nine-more"\n',
@@ -25916,6 +25920,13 @@ def test_interop_page_count_check_discriminates(tmp_path):
                                                          '        "readme-six-wallets",\n        "readme-six-wallets",\n'
                                                          '        "readme-nine-more"\n', 1)},
         {"docs/reference/claims.json": ""},
+        {"site/index.html": site.replace("tested against 16 outside projects", "tested against 15 outside projects", 1)},
+        {"site/index.html": site.replace("tested against 16 outside projects", "tested against many outside projects")},
+        {"site/index.html": site.replace("<b>16</b><span>outside projects", "<b>15</b><span>outside projects")},
+        {"site/index.html": site.replace('<p class="tally" aria-hidden', '<p class="count" aria-hidden')},
+        {"site/index.html": site.replace(swiyu_item + "\n", "")},
+        {"site/index.html": site.replace(swiyu_item, swiyu_item + "\n" + swiyu_item)},
+        {"site/index.html": ""},
     ]
     for case in broken:
         (rel, text), = case.items()

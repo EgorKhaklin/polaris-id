@@ -75,8 +75,8 @@
     {
       "id": "outside-implementations",
       "kind": "badge",
-      "claim": "Tested against 15 outside implementations",
-      "label": "tested against: 15 outside implementations",
+      "claim": "Tested against 16 outside implementations",
+      "label": "tested against: 16 outside implementations",
       "surfaces": [
         "README.md"
       ],
@@ -338,7 +338,7 @@
     {
       "id": "readme-six-wallets",
       "kind": "statement",
-      "claim": "Seven wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup, Procivis One Core and the Yivi app (developer mode; built on irmago).",
+      "claim": "Eight wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup, Procivis One Core, the Yivi app (developer mode; built on irmago) and the swiyu Sandbox Wallet.",
       "surfaces": [
         "README.md"
       ],
@@ -375,6 +375,10 @@
         {
           "name": "the Yivi app (developer mode; built on irmago)",
           "scoreboard": "Yivi app"
+        },
+        {
+          "name": "the swiyu Sandbox Wallet",
+          "scoreboard": "swiyu Sandbox Wallet"
         }
       ]
     },
@@ -426,9 +430,9 @@
       ]
     },
     {
-     "id": "site-fifteen-projects",
+     "id": "site-outside-projects",
      "kind": "statement",
-     "claim": "15 outside projects",
+     "claim": "16 outside projects",
      "surfaces": [
       "site/index.html"
      ],
@@ -436,12 +440,12 @@
       "file:docs/reference/INTEROP.md",
       "file:lab/EXTERNAL-NOUNS.md"
      ],
-     "reproduce": "Count the fifteen projects in the Evidence list (act II) of site/index.html; each has a dated row in docs/reference/INTEROP.md."
+     "reproduce": "Count the sixteen projects in the Evidence list (act II) of site/index.html; each has a dated row in docs/reference/INTEROP.md."
     },
     {
       "id": "site-six-wallets-description",
       "kind": "statement",
-      "claim": "seven wallets nobody here wrote have presented to it",
+      "claim": "eight wallets nobody here wrote have presented to it",
       "surfaces": [
         "site/index.html"
       ],
@@ -449,7 +453,7 @@
         "file:lab/EXTERNAL-NOUNS.md",
         "file:lab/interop"
       ],
-      "reproduce": "Find each of the seven wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
+      "reproduce": "Find each of the eight wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
       "count_of": [
         "readme-six-wallets"
       ]
@@ -457,7 +461,7 @@
     {
       "id": "site-six-wallets-card",
       "kind": "statement",
-      "claim": "seven independent wallets have presented to",
+      "claim": "eight independent wallets have presented to",
       "surfaces": [
         "site/index.html"
       ],
@@ -465,7 +469,7 @@
         "file:lab/EXTERNAL-NOUNS.md",
         "file:lab/interop"
       ],
-      "reproduce": "Find each of the seven wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
+      "reproduce": "Find each of the eight wallets the README names in the dated rows of the Wallets table of lab/EXTERNAL-NOUNS.md.",
       "count_of": [
         "readme-six-wallets"
       ]
