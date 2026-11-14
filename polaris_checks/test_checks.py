@@ -8612,8 +8612,31 @@ def test_zero_downtime_deploy_check_discriminates(tmp_path):
               "compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --address unix//config/admin.sock\n"
               "polaris-migrate.sh --up --target=docker-stack\nwait_healthy() { :; }\n"
               "mapfile -t APP_SERVICES < <(compose config --services | grep -E '^app(-green)?$' | sort -r)\n")
-    WINDOW = ("caddy reload\n[[ \"$r_drops\" -le \"$_rmax\" ]]\ncompose up -d --no-deps --force-recreate caddy\n"
-              "EDGE_CEILING=30\ncompose restart -t 10 postgres\nDB_CEILING=60\n")
+    WINDOW_PINS = ('traffic_start "$WORK/reload.json" --retry', "reloads=$((reloads + 1))",
+                   '--judge-reload "$WORK/reload.json" "$reloads")', '|| fail "configuration reload under traffic')
+    WINDOW = ("traffic_start \"$WORK/reload.json\" --retry\ncaddy reload\nreloads=$((reloads + 1))\n"
+              "verdict=$(python3 \"$TRAFFIC\" --judge-reload \"$WORK/reload.json\" \"$reloads\") \\\n"
+              "    || fail \"configuration reload under traffic: ${verdict}\"\n"
+              "compose up -d --no-deps --force-recreate caddy\nEDGE_CEILING=30\ncompose restart -t 10 postgres\nDB_CEILING=60\n")
+    TRAFFIC_PINS = ('RETRIED = ("closed_no_response", "closed_before_request")', "SERVED_FLOOR = 40",
+                    '        phase = "body"\n', 'if stats["retry"] is not True:',
+                    'if not (isinstance(stats["served"], int) and stats["served"] >= SERVED_FLOOR):',
+                    '    bound = stats["workers"] * reloads\n', 'if stats["other"] != 0:', 'if stats["drops"] != 0:',
+                    'if stats["raw_retried"] > bound:', "problems = judge_reload(stats, int(argv[2]))",
+                    '        if problems:\n            print("; ".join(problems))\n            return 1\n')
+    TRAFFIC = ('RETRIED = ("closed_no_response", "closed_before_request")\nSERVED_FLOOR = 40\n'
+               "def attempt():\n        r = conn.getresponse()\n        phase = \"body\"\n        r.read()\n"
+               "def judge_reload(stats, reloads):\n"
+               '    if stats["retry"] is not True:\n        return ["no retry"]\n'
+               '    bound = stats["workers"] * reloads\n    problems = []\n'
+               '    if not (isinstance(stats["served"], int) and stats["served"] >= SERVED_FLOOR):\n'
+               '        problems.append("floor")\n'
+               '    if stats["other"] != 0:\n        problems.append("other")\n'
+               '    if stats["drops"] != 0:\n        problems.append("drops")\n'
+               '    if stats["raw_retried"] > bound:\n        problems.append("bound")\n    return problems\n'
+               "def main(argv):\n    if argv[:1] == ['--judge-reload']:\n"
+               "        problems = judge_reload(stats, int(argv[2]))\n"
+               '        if problems:\n            print("; ".join(problems))\n            return 1\n        return 0\n')
     good = {
         "polaris_web/Caddyfile": CADDY, "polaris_web/Caddyfile.citest": CADDY,
         "polaris_web/docker-compose.prod.yml": COMPOSE,
@@ -8623,6 +8646,7 @@ def test_zero_downtime_deploy_check_discriminates(tmp_path):
         "scripts/polaris-rolling-drill.sh": ("bash scripts/polaris-deploy.sh prod --no-pull\nassert s[\"drops\"] == 0\n"
                                              "compose stop -t 1 app app-green\nassert s[\"drops\"] > 0\n"),
         "scripts/polaris-window-drill.sh": WINDOW,
+        "scripts/polaris-window-traffic.py": TRAFFIC,
         ".github/workflows/ci.yml": ("run: docker compose -f docker-compose.bluegreen.yml up -d; bash scripts/polaris-rolling-drill.sh\n"
                                      "run: bash scripts/polaris-window-drill.sh\n"),
     }
@@ -8667,6 +8691,30 @@ def test_zero_downtime_deploy_check_discriminates(tmp_path):
     # A window drill that measures nothing.
     write({"scripts/polaris-window-drill.sh": "echo windows are fine\n"})
     assert checks.check_zero_downtime_deploy(tmp_path)[0].level == "FAIL", "must FAIL when the windows are not measured"
+    # 2026-11-14: the reload is judged under retrying traffic. Each pinned line, removed, is a FAIL:
+    # the retry, the reload count, the judge's call and the fail it triggers, and in the generator
+    # the retried classes, the body phase, the served floor, the retry flag, the bound and each of
+    # the refusals it applies.
+    for pin in WINDOW_PINS:
+        assert pin in WINDOW
+        write({"scripts/polaris-window-drill.sh": WINDOW.replace(pin, "")})
+        out = checks.check_zero_downtime_deploy(tmp_path)[0]
+        assert out.level == "FAIL" and repr(pin) in out.message, "must FAIL when the drill drops %r" % pin
+    for pin in TRAFFIC_PINS:
+        assert pin in TRAFFIC
+        write({"scripts/polaris-window-traffic.py": TRAFFIC.replace(pin, "")})
+        out = checks.check_zero_downtime_deploy(tmp_path)[0]
+        assert out.level == "FAIL" and repr(pin) in out.message, "must FAIL when the judge drops %r" % pin
+    # A doubled bound is not the bound: its needle ends at the line end (2026-11-14).
+    bound = '    bound = stats["workers"] * reloads\n'
+    assert TRAFFIC.count(bound) == 1
+    write({"scripts/polaris-window-traffic.py": TRAFFIC.replace(bound, '    bound = stats["workers"] * reloads * 2\n')})
+    out = checks.check_zero_downtime_deploy(tmp_path)[0]
+    assert out.level == "FAIL" and repr(bound) in out.message, "must FAIL when the bound is doubled"
+    (tmp_path / "scripts/polaris-window-traffic.py").unlink()
+    assert "has no judge" in checks.check_zero_downtime_deploy(tmp_path)[0].message, "must FAIL when the judge is gone"
+    write()
+    assert checks.check_zero_downtime_deploy(tmp_path)[0].level == "OK", "the good fixture again"
     # The drill exists but CI never runs it.
     write({".github/workflows/ci.yml": "run: docker compose -f docker-compose.bluegreen.yml up -d; bash scripts/polaris-rolling-drill.sh\n"})
     assert checks.check_zero_downtime_deploy(tmp_path)[0].level == "FAIL", "must FAIL when CI does not run the window drill"

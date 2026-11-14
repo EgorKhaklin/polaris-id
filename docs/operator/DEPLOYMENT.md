@@ -128,15 +128,15 @@ any request. `polaris-deploy.sh` and `polaris-rotate-secret.sh` both roll the
 colours one at a time.
 
 **Edge and database operations (v9.240).** An edge configuration change is
-not a window: `polaris-deploy.sh` applies an edited Caddyfile with
-`caddy reload` through the edge's admin unix socket, and the listeners never
-close. What remains are the two recreations, measured under traffic by
-[`scripts/polaris-window-drill.sh`](../../scripts/polaris-window-drill.sh) on
-every CI push against hard ceilings:
+applied live: `polaris-deploy.sh` applies an edited Caddyfile with
+`caddy reload` through the edge's admin unix socket, with no container
+restart. [`scripts/polaris-window-drill.sh`](../../scripts/polaris-window-drill.sh)
+judges that reload under traffic that retries once, and measures the two
+recreations against hard ceilings, on every CI push:
 
 | Operation | What clients see | Measured (v9.240, local reference run) | Ceiling |
 |---|---|---|---|
-| Caddyfile change, `caddy reload` | nothing; a header added to the existing site, applied live, verified, reverted (a handler swap, not a listener change, which is Caddy's zero-drop path) | 0 dropped of 110, slowest request 0.06 s | 0 drops |
+| Caddyfile change, `caddy reload` | a header added to the existing site, applied live with no container restart, verified, reverted; judged under traffic that retries once | 3 runs of 2 reloads each (2026-11-14, Caddy 2.11.9): 160, 163 and 183 requests served, 1 close retried (bound 8), 0 failures | no request failed after one retry, no failure of another class, no more retried closes than workers times reloads (4 x 2 = 8 in the drill) |
 | Edge recreation (`--force-recreate caddy`, an image update) | a sub-second gap | 0.3 s window, 6 dropped of 95 | 30 s |
 | Database restart (`restart postgres`) | latency, not errors: pgbouncer queues a query until its server connection is back | 0 dropped of 116, slowest request 0.94 s | 60 s |
 

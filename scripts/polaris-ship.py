@@ -206,6 +206,10 @@ VERIFICATION = [
     (r"^scripts/(polaris-transparency-(monitor|witness)\.py|test_transparency_tools\.py)$",
      ["python3 -m unittest scripts/test_transparency_tools.py"],
      "the transparency monitor or witness moved: each must follow the log --log names"),
+    (r"^scripts/(polaris-window-(traffic\.py|drill\.sh)|test_window_traffic\.py)$",
+     ["python3 -m unittest scripts/test_window_traffic.py",
+      "scripts/polaris-window-drill.sh on a throwaway blue-green stack (CI's rolling job runs it)"],
+     "the window drill or its traffic moved: each failure keeps its class, and only a close before an answer is retried"),
     (r"^packages/polaris-verify/",
      ["python3 scripts/polaris-compat-suite.py",
       "python3 conformance/run_conformance.py --self",
@@ -402,7 +406,7 @@ UNSHARDED_SUITES = {
                 "test_doctor", "test_evaluate", "test_restore_schema_check", "test_sync_objects_parity",
                 "test_event_partition_migration", "test_database_settings", "test_db_state", "test_db_reference",
                 "test_pgbackrest_conf", "test_db_init", "test_dev_tunnel", "test_tree_gate",
-                "test_transparency_tools", "test_govulncheck_gate"],
+                "test_transparency_tools", "test_govulncheck_gate", "test_window_traffic"],
     # The standalone packages. 2026-09-17: none of these was named here, and
     # `check_local_gate_covers_ci` did not notice because it compared this list against
     # `polaris-coverage.sh` instead of against the workflow that gates the push. Nine

@@ -10349,7 +10349,7 @@ def check_zero_downtime_deploy(root: pathlib.Path) -> list[Finding]:
     for name, cf in (("Caddyfile", caddy), ("Caddyfile.citest", citest)):
         if "admin unix//config/admin.sock" not in cf:
             return _fail("zero_downtime", f"{name} must expose Caddy's admin API on the unix socket "
-                         "/config/admin.sock: it is the reload path that makes a configuration change windowless")
+                         "/config/admin.sock: it is the reload path that applies a configuration change live")
     if "caddy reload" not in dep or "unix//config/admin.sock" not in dep:
         return _fail("zero_downtime", "polaris-deploy.sh must apply a Caddyfile change with `caddy reload` through "
                      "the admin unix socket; compose does not recreate a container for a bind-mounted file change")
@@ -10358,17 +10358,38 @@ def check_zero_downtime_deploy(root: pathlib.Path) -> list[Finding]:
         return _fail("zero_downtime", "scripts/polaris-window-drill.sh is missing: the edge and database recreation "
                      "windows must be measured, not asserted")
     for needle in ("caddy reload", "--force-recreate caddy", "restart -t 10 postgres", "EDGE_CEILING", "DB_CEILING",
-                   'r_drops" -le "$_rmax"'):
+                   'traffic_start "$WORK/reload.json" --retry', "reloads=$((reloads + 1))",
+                   '--judge-reload "$WORK/reload.json" "$reloads")', '|| fail "configuration reload under traffic'):
         if needle not in wdrill:
-            return _fail("zero_downtime", f"polaris-window-drill.sh must contain {needle!r}: a config reload within a "
-                         "small transient budget (a graceful reload may drop one in-flight request at a listener swap, "
-                         "not zero), an edge recreation and a database restart measured against ceilings")
+            return _fail("zero_downtime", f"polaris-window-drill.sh must contain {needle!r}: a configuration reload "
+                         "under retrying traffic, judged by the traffic generator, and an edge recreation and a "
+                         "database restart measured against ceilings")
+    # 2026-11-14: the reload is judged, not budgeted. A close before an answer is what a reload does
+    # to a connection the old server accepted and had not answered, at most once per connection; the
+    # generator retries it once, and the judge refuses any other class, any request still failed
+    # after its retry, more retried closes than workers times reloads, and traffic that served under
+    # the floor. A close after the status line is its own class (the body phase), never retried.
+    # The bound's needle ends at the line end, so a doubled bound (`* reloads * 2`) is not it.
+    traffic = _read(root, "scripts/polaris-window-traffic.py")
+    if not traffic:
+        return _fail("zero_downtime", "scripts/polaris-window-traffic.py is missing: the reload has no judge")
+    for needle in ('RETRIED = ("closed_no_response", "closed_before_request")', "SERVED_FLOOR = 40",
+                   '        phase = "body"\n', 'if stats["retry"] is not True:',
+                   'if not (isinstance(stats["served"], int) and stats["served"] >= SERVED_FLOOR):',
+                   '    bound = stats["workers"] * reloads\n', 'if stats["other"] != 0:', 'if stats["drops"] != 0:',
+                   'if stats["raw_retried"] > bound:', "problems = judge_reload(stats, int(argv[2]))",
+                   "        if problems:\n            print(\"; \".join(problems))\n            return 1\n"):
+        if needle not in traffic:
+            return _fail("zero_downtime", f"polaris-window-traffic.py must contain {needle!r}: the reload judge "
+                         "refuses traffic without its retry, traffic that served under its floor, any failure but "
+                         "a close before an answer (a close after the status line included), a request still "
+                         "failed after one retry, and more retried closes than workers times reloads")
     if "polaris-window-drill.sh" not in ci:
         return _fail("zero_downtime", "ci.yml must run scripts/polaris-window-drill.sh after the rolling drill")
     return _ok("zero_downtime", "blue-green profile behind a retrying edge with fast liveness, deploy migrates then rolls "
                "green/blue with health waits (rollback both), rotation rolls too, CI drills zero drops under "
-               "traffic with a negative control, edge configuration changes are live reloads, and the edge and "
-               "database recreation windows are measured against ceilings")
+               "traffic with a negative control, edge configuration changes are live reloads judged under "
+               "retrying traffic, and the edge and database recreation windows are measured against ceilings")
 
 
 def check_verification_load_certified(root: pathlib.Path) -> list[Finding]:
