@@ -21,7 +21,10 @@ An authority publishes one signed object, `polaris-federation-manifest/1`:
   "authority": { "agency_id": 1, "name": "..." },
   "anchors":   [ { "public_key_hex": "...", "algorithm": "ML-DSA-65", "status": "active" } ],
   "attestations": [
-    { "attested_agency_id": 2, "attested_public_key_hex": "...", "context_id": 3, "valid_until": "..." }
+    { "attesting_agency_id": 1, "attested_agency_id": 2, "attested_public_key_hex": "...",
+      "context_id": 3, "attested_date": "...", "valid_until": "...",
+      "format": "polaris-trust-attestation/1", "algorithm": "ML-DSA-65",
+      "signature_hex": "...", "public_key_hex": "..." }   // signed by the attesting agency (WIRE-SPEC 3.14)
   ],
   "epoch":      { "number": 12, "root_hex": "..." },
   "revocation": { "as_of": "..." },
