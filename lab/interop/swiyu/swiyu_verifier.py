@@ -27,7 +27,8 @@ refuses some POSTs before they reach it, and a record that cannot be written rai
 refusal; each check's outcome carries `parent`, the package's own answer at the place that check sits,
 "not judged" where the package did not run; a check that did not run is "not judged"; and the record
 says whether the presentation COUNTS (the package accepted it, all three checks ran and said ok, and the
-issuer's status list says VALID and is not stale). It names the package that judged: version, file (relative to
+issuer's status list says VALID and was issued at most COUNTED_MAX_LIST_AGE_SECONDS before it was read). It names
+the package that judged: version, file (relative to
 the repository root), commit, and whether its folder held uncommitted changes.
 
 The issuer's key is a pin, not a resolution: a file written by the pin step from a DID log checked offline.
@@ -72,6 +73,11 @@ from polaris_oid4vp.verifier import RESPONSE_MODE, WALLET_AUDIENCE, Verifier, _s
 QUERY_ID = "betaid"
 VCT_VALUES = ("betaid-sdjwt", "urn:vct:ch.admin.bcs.betaid")
 CLAIM = "age_over_18"
+# The oldest status list the lab COUNTS, by its iat: the lab's own relying-party policy (Token Status List draft-20
+# 8.3 step 4b: a relying party with a local freshness policy SHOULD check iat), declared 2026-11-13 (h-131) before
+# the next round read a list. The package's `stale` reads the token's ttl from iat; draft-20 13.7 counts ttl from
+# the fetch, and the lab fetches every round. The record keeps `stale` beside `age_seconds`; counting reads the age.
+COUNTED_MAX_LIST_AGE_SECONDS = 24 * 3600
 TYP_IDENTITY = "swiyu-identity-trust-statement+jwt"
 TYP_QUERY = "swiyu-verification-query-public-statement+jwt"
 TYP_PROTECTED = "swiyu-protected-verification-authorization-trust-statement+jwt"
@@ -365,7 +371,7 @@ class SwiyuVerifier(Verifier):
                          request_uri=public_url.rstrip("/") + "/request.jwt", response_uri=public_url.rstrip("/") + "/response",
                          redirect=False, issuer_jwks=self.pin.jwks(), vct_values=list(VCT_VALUES), claims=[CLAIM],
                          credential_query_id=QUERY_ID, request_ttl_seconds=request_ttl_seconds, verifier_info=info,
-                         status_resolver=self._status_resolver)
+                         status_resolver=self._status_resolver, accept_vp_token_as_json_string=True)
         self.did, self.kid, self.scope = did, kid, scope
         self.client_id = CLIENT_ID_PREFIX + did
         self.x5c = None
@@ -429,8 +435,11 @@ class SwiyuVerifier(Verifier):
         self._local.l13_parent = None
         self._local.l13_answer = None
 
+    def _read_vp_token(self, member):
+        self._local.vp_token = member  # the capture keeps the member as the payload carried it, string or object
+        return super()._read_vp_token(member)
+
     def _single_presentation(self, vp_token):
-        self._local.vp_token = vp_token
         presentation = super()._single_presentation(vp_token)
         if presentation is None:
             self._local.l10_parent = "refused"
@@ -585,7 +594,8 @@ def _revocation_of(answer):
         code = answer.get("code")
         state = (sdjwt.CHECKED if answer.get("checked") else sdjwt.NO_AUTHORITY if code == sdjwt.NO_AUTHORITY
                  else sdjwt.UNREACHABLE if code in (None, sdjwt.UNREACHABLE) else sdjwt.LIST_REFUSED)
-    return {"state": state, "status": answer.get("status"), "code": answer.get("code"), "stale": answer.get("stale")}
+    return {"state": state, "status": answer.get("status"), "code": answer.get("code"), "stale": answer.get("stale"),
+            "age_seconds": answer.get("age_seconds")}
 
 
 class Front:
@@ -614,7 +624,8 @@ class Front:
             result = v.handle_direct_post(form)
         verdict = result[2]
         answer = {"status": result[0], "authentic": bool(getattr(verdict, "authentic", False)),
-                  "code": getattr(verdict, "code", ""), "reason": getattr(verdict, "reason", "")}
+                  "code": getattr(verdict, "code", ""), "reason": getattr(verdict, "reason", ""),
+                  "vp_token_from_string": getattr(verdict, "vp_token_from_string", False) is True}
         local = v._local
         # beside each check, the package's own answer at the place that check sits
         l7["parent"] = NOT_JUDGED if stopped_by_l7 else {"status": answer["status"], "code": answer["code"]}
@@ -627,14 +638,16 @@ class Front:
         revocation = getattr(verdict, "revocation", None)
         state = _revocation_of(revocation if isinstance(revocation, dict) else local.l13_answer)
         # counted: the package accepted it, L7, L10 and L13 each ran and said ok, and the issuer's list says VALID (0)
-        # and is not stale. A check that did not run never counts, and neither does an answer that does not say fresh.
+        # and was issued at most COUNTED_MAX_LIST_AGE_SECONDS before it was read. A check that did not run never counts,
+        # and neither does an answer that gives no age.
         counted = bool(
             all(c["outcome"] == "ok" for c in checks.values())
             and answer["authentic"]
             and state != NOT_JUDGED
             and state["state"] == sdjwt.CHECKED
-            and state["status"] == 0
-            and state["stale"] is False
+            and type(state["status"]) is int and state["status"] == 0
+            and type(state.get("age_seconds")) is int
+            and 0 <= state["age_seconds"] <= COUNTED_MAX_LIST_AGE_SECONDS
         )
         record = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "wallet_version": v.wallet_version,
                   "variant": v.variant, "package": v.package, "checks": checks, "verdict": answer,

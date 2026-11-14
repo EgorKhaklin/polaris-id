@@ -98,6 +98,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- polaris-oid4vp `Verifier(accept_vp_token_as_json_string=True)` reads a `vp_token` that a wallet sends in the `direct_post.jwt` payload as a JSON string holding the object (the swiyu Sandbox Wallet 1.19.0 for iOS does) as that object, once and under the payload's depth and size bounds, held to every rule the object form is; a verdict reached after that read, accepted or refused, carries `vp_token_from_string`. Off by default.
 - Negative vectors 0.5.0: 33 of the 34 SD-JWT VC negatives carry a repaired twin, the same presentation with its one defect put back, which a correct verifier accepts; suggested by Neil Berkman (Attesto).
 - The scoreboard (lab/EXTERNAL-NOUNS.md) records GHSA-7xf4-9r27-vcr5, published 2026-11-03 with EgorKhaklin credited as reporter: `@sd-jwt/core` and `@sd-jwt/sd-jwt-vc` 0.24.0 and earlier, patched in 0.24.1 (2026-10-30), and the upstream commit that carries the fix.
 - polaris-oid4vp `serve --once --result FILE` keeps FILE a JSON object, apart from the log on stdout, saying what became of the request: `nothing_received` until a response arrives, then `accepted` with the claim names, `refused` with the check and reason its `<-` line prints, or `wallet_error`; the HTTP status the wallet was answered; and the request object fetches served and refused. It is rewritten whole before each answer goes out. Once the request closes, on its acceptance or at the end of its lifetime, the outcome stays.

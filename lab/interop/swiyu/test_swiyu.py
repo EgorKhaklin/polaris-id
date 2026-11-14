@@ -713,12 +713,25 @@ class RecordTests(Base):
         # accepted
         self.w.exchange()
         record = self.w.last()
-        self.assertEqual(record["verdict"], {"status": 200, "authentic": True, "code": "", "reason": ""})
+        self.assertEqual(record["verdict"], {"status": 200, "authentic": True, "code": "", "reason": "",
+                                             "vp_token_from_string": False})
+        # accepted, from the vp_token the swiyu wallet sends as a JSON string, and the record says so
+        self.w.exchange(vp_token_as_string=True)
+        record = self.w.last()
+        self.assertEqual(record["verdict"], {"status": 200, "authentic": True, "code": "", "reason": "",
+                                             "vp_token_from_string": True})
+        self.assertIsInstance(self.w.verifier._local.vp_token, str)  # the capture holds what the wallet sent
         self.assertEqual(record["checks"]["L7"]["parent"], {"status": 200, "code": ""})
         self.assertEqual(record["checks"]["L10"]["parent"], "passed")
         answer = record["checks"]["L13"]["parent"]
         self.assertEqual((answer["checked"], answer["status"], answer["code"]), (True, 0, None))
         json.dumps(record)  # every parent answer is plain data
+        # refused past the envelope (another audience): the record and the capture still say it came as a string
+        self.w.exchange(vp_token_as_string=True, audience="https://another.verifier.example")
+        record = self.w.last()
+        self.assertEqual((record["verdict"]["status"], record["verdict"]["authentic"]), (400, False))
+        self.assertIs(record["verdict"]["vp_token_from_string"], True)
+        self.assertIsInstance(self.w.verifier._local.vp_token, str)
         # L13's lab precondition failed (a host that is not the registry's): decide_by_fetching did not run
         self.w.exchange(status_uri="https://evil.example/api/v1/statuslist/1.jwt")
         record = self.w.last()
@@ -791,6 +804,11 @@ class RecordTests(Base):
             self.assertEqual(w.last()["checks"][name]["outcome"], sv.NOT_JUDGED, name)
             self.assertFalse(w.last()["counted"], name)
 
+    def test_the_readme_states_the_age_bound_the_gate_counts_by(self):
+        readme = " ".join((HERE / "README.md").read_text().split())
+        self.assertEqual(sv.COUNTED_MAX_LIST_AGE_SECONDS, 24 * 3600)
+        self.assertIn("issued at most 24 hours before it was read", readme)
+
     def test_the_gate_does_not_lean_on_the_package_alone(self):
         """`counted` asks the list's answer itself: VALID, of a checked list, and fresh. The package refuses a revoked
         credential, so the other answers are put in its place by a stand-in for the package's verdict."""
@@ -802,12 +820,26 @@ class RecordTests(Base):
                 return 200, {}, sdjwt.Verdict(True, revocation=revocation)
             return answer
 
-        for revocation, counted in (({"state": "checked", "status": 0, "code": None, "stale": False}, True),
-                                    ({"state": "checked", "status": 1, "code": None, "stale": False}, False),
-                                    ({"state": "unreachable", "status": 0, "code": None, "stale": False}, False),
-                                    ({"state": "checked", "status": 0, "code": None, "stale": True}, False),
-                                    ({"state": "checked", "status": 0, "code": None, "stale": None}, False),
-                                    ({"state": "checked", "status": 0, "code": None}, False)):
+        bound = sv.COUNTED_MAX_LIST_AGE_SECONDS
+        for revocation, counted in (({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": 0}, True),
+                                    ({"state": "checked", "status": 1, "code": None, "stale": False, "age_seconds": 0}, False),
+                                    # VALID is the integer 0: False and 0.0 compare equal to it and are not it
+                                    ({"state": "checked", "status": False, "code": None, "stale": False, "age_seconds": 0},
+                                     False),
+                                    ({"state": "checked", "status": 0.0, "code": None, "stale": False, "age_seconds": 0},
+                                     False),
+                                    ({"state": "unreachable", "status": 0, "code": None, "stale": False, "age_seconds": 0},
+                                     False),
+                                    # past its ttl counted from iat (records 7-8: 2177 s, ttl 900), inside the lab's bound
+                                    ({"state": "checked", "status": 0, "code": None, "stale": True, "age_seconds": 2177}, True),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": None, "age_seconds": bound}, True),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": bound + 1},
+                                     False),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": -1}, False),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": None}, False),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False, "age_seconds": True},
+                                     False),
+                                    ({"state": "checked", "status": 0, "code": None, "stale": False}, False)):
             w = F.World()
             _, jar = w.verifier.new_request()
             form = w.wallet.respond(jar)
@@ -829,7 +861,7 @@ class RecordTests(Base):
             self.assertEqual((status_, verdict.authentic), (400, False), name)  # the package could not open it
             self.assertFalse(record["counted"], name)
 
-    def test_a_stale_status_list_is_not_counted(self):
+    def test_a_list_past_its_ttl_from_iat_counts_inside_the_labs_age_bound(self):
         self.w.tokens[F.STATUS_URI] = F.status_token(self.w.issuer_key, self.w.wallet.kid, F.STATUS_URI, [0] * 16,
                                                      iat=int(time.time()) - 7200)  # ttl 3600
         status_, _, verdict = self.w.exchange()
@@ -837,6 +869,17 @@ class RecordTests(Base):
         self.assertEqual((status_, verdict.authentic), (200, True))  # the package accepts it
         self.assertEqual((record["status"]["state"], record["status"]["status"], record["status"]["stale"]),
                          ("checked", 0, True))
+        self.assertGreaterEqual(record["status"]["age_seconds"], 7200)
+        self.assertTrue(record["counted"])
+
+    def test_a_list_older_than_the_labs_age_bound_is_not_counted(self):
+        self.w.tokens[F.STATUS_URI] = F.status_token(self.w.issuer_key, self.w.wallet.kid, F.STATUS_URI, [0] * 16,
+                                                     iat=int(time.time()) - sv.COUNTED_MAX_LIST_AGE_SECONDS - 60)
+        status_, _, verdict = self.w.exchange()
+        record = self.w.last()
+        self.assertEqual((status_, verdict.authentic), (200, True))  # the package accepts it
+        self.assertEqual((record["status"]["state"], record["status"]["status"]), ("checked", 0))
+        self.assertGreater(record["status"]["age_seconds"], sv.COUNTED_MAX_LIST_AGE_SECONDS)
         self.assertFalse(record["counted"])
 
     def test_the_status_of_a_record_comes_from_l13_when_the_verdict_has_none(self):
@@ -848,7 +891,9 @@ class RecordTests(Base):
         self.assertEqual((status_, verdict.authentic, verdict.code), (400, False, "claims"))
         self.assertIsNone(getattr(verdict, "revocation", None))
         self.assertEqual(record["checks"]["L13"]["outcome"], "ok")
-        self.assertEqual(record["status"], {"state": "checked", "status": 0, "code": None, "stale": False})
+        status_record = dict(record["status"])
+        self.assertIs(type(status_record.pop("age_seconds")), int)
+        self.assertEqual(status_record, {"state": "checked", "status": 0, "code": None, "stale": False})
         self.assertFalse(record["counted"])
 
     def test_the_record_names_the_package_that_judged(self):
@@ -1208,6 +1253,7 @@ class PinTests(unittest.TestCase):
         self.assertEqual(names(Verifier._request_object), ["self", "session", "wallet_nonce"])
         self.assertEqual(names(Verifier._dcql_query), ["self"])
         self.assertEqual(names(Verifier._single_presentation), ["self", "vp_token"])
+        self.assertEqual(names(Verifier._read_vp_token), ["self", "member"])
         self.assertEqual(names(Verifier.handle_direct_post), ["self", "form"])
         self.assertEqual(names(Verifier.request_object), ["self", "state", "wallet_nonce", "wallet_metadata"])
         self.assertEqual(names(Verifier.new_request), ["self", "transaction_data"])
@@ -1228,7 +1274,7 @@ class PinTests(unittest.TestCase):
         self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)', inspect.getsource(sdjwt._revocation_state))
         # the response path the lab sits in front of: it decrypts, then asks _single_presentation
         source = inspect.getsource(Verifier.handle_direct_post)
-        for fragment in ("decrypt_response(token, candidate.enc_key)", "self._single_presentation(body.get(\"vp_token\"))",
+        for fragment in ("decrypt_response(token, candidate.enc_key)", "self._single_presentation(self._read_vp_token(body.get(\"vp_token\")))",
                          "status_resolver=self.status_resolver", "expected_audience=self.client_id"):
             self.assertIn(fragment, source)
 

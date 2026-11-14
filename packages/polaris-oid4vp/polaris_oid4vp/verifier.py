@@ -33,6 +33,7 @@ is not reused between tests, and it is right to: one long-lived response-encrypt
 every presentation ever sent to this verifier readable by anybody who later obtains it.
 """
 import base64
+import functools
 import json
 import re
 import secrets
@@ -47,7 +48,7 @@ try:
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
-from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, JweError, _loads_depth_bounded,
+from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, MAX_RESPONSE_BYTES, JweError, _loads_depth_bounded,
                   _public_key_from_jwk, b64u_decode, b64u_encode, check_compact_length,
                   decrypt_response, encrypt_compact)
 from .sdjwt import (ALL_ENTRIES, PER_CREDENTIAL, TRANSACTION_DATA_HASH_ALGS,
@@ -354,6 +355,23 @@ class Session:
         # This request's transaction_data entries (TransactionDataEntry), empty for none.
         self.transaction_data = tuple(transaction_data)
 
+
+
+def _says_how_the_vp_token_came(handler):
+    """Every verdict handle_direct_post returns carries `vp_token_from_string`: True when that
+    call read the vp_token out of a JSON string (`_read_vp_token`), whether the response was then
+    refused or accepted. A response refused before its vp_token is read (one that decrypts under
+    no open request's key, carries another request's state, or an `error`) carries False: the
+    read never ran. Set at the one exit, so a refusal added after the read carries it too."""
+    @functools.wraps(handler)
+    def handle(self, form):
+        read = self._vp_token_read
+        read.from_string = False
+        result = handler(self, form)
+        if isinstance(result[2], Verdict):
+            result[2].vp_token_from_string = read.from_string
+        return result
+    return handle
 
 
 def verifier_info_entries(entries, credential_ids=()):
@@ -851,7 +869,7 @@ class Verifier:
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
                  vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
                  status_resolver=None, verifier_info=None, credential_query_id=None,
-                 verifier_info_profile=None, redirect=True):
+                 verifier_info_profile=None, redirect=True, accept_vp_token_as_json_string=False):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         # The id of the request's one DCQL credential query, "pid" unless named. A
@@ -876,6 +894,12 @@ class Verifier:
         # polling has nobody to send there, so `redirect=False` answers `{}` and issues no
         # response_code that nobody would redeem.
         self.redirect = bool(redirect)
+        # OpenID4VP 1.0 section 8.3 puts vp_token in a direct_post.jwt payload as a top-level JSON
+        # member, both of its example payloads show the object, and 8.6 asks a verifier to reject
+        # a vp_token whose format is not 8.1's. The swiyu Sandbox Wallet 1.19.0 sends the
+        # object's JSON as a string instead. Off by default, and only True turns it on, so a
+        # truthy or misspelt value reads nothing new, here or set later (`_read_vp_token`).
+        self.accept_vp_token_as_json_string = accept_vp_token_as_json_string is True
         self.issuer_jwks = list(issuer_jwks or [])
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
         self.request_ttl_seconds = request_ttl_seconds
@@ -906,6 +930,8 @@ class Verifier:
         # the code's SHA-256 so the lookup compares no secret: digest -> (when, state, verdict).
         self._results = {}
         self._lock = threading.Lock()
+        # Per call of handle_direct_post: whether it read the vp_token out of a JSON string.
+        self._vp_token_read = threading.local()
         self._jti_memory = JtiMemory(retention_seconds=JTI_RETENTION_SECONDS)
 
     # ------------------------------------------------------------------ the request
@@ -1034,6 +1060,26 @@ class Verifier:
 
     # ----------------------------------------------------------------- the response
 
+    def _read_vp_token(self, member):
+        """The payload's vp_token member, as the object the rules below judge.
+
+        A member sent as a JSON string is read only while the verifier's
+        accept_vp_token_as_json_string is True (built so, or set so; not merely truthy): once,
+        under the depth bound, size limit and finite rule the payload around it was read under.
+        What it holds is then held to every rule the object form is, so a string inside a
+        string, a list or a number is refused like any other; a string that is not JSON gives
+        None, which is refused too. Any other member is returned as it came.
+        """
+        if isinstance(member, str) and self.accept_vp_token_as_json_string is True:
+            self._vp_token_read.from_string = True
+            try:
+                return _loads_depth_bounded(member, "vp_token", limit=MAX_RESPONSE_BYTES,
+                                            finite=True)
+            except ValueError:
+                return None
+        return member
+
+    @_says_how_the_vp_token_came
     def handle_direct_post(self, form):
         """Judge one `direct_post.jwt` response. Returns (http_status, body_dict, verdict).
 
@@ -1120,7 +1166,7 @@ class Verifier:
         # presentation, arriving second, was refused as a replay. It closes below, once
         # verify_presentation has found the presentation authentic: only the holder of the
         # credential and its key can get that far, so only the holder can close it.
-        presentation = self._single_presentation(body.get("vp_token"))
+        presentation = self._single_presentation(self._read_vp_token(body.get("vp_token")))
         if presentation is None:
             return self._error("invalid_request",
                                "the vp_token is not one presentation for the one credential "

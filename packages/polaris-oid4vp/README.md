@@ -264,6 +264,12 @@ and `as_dict()` leaves it out.
   accepted response is then answered `{}`, as section 8.2 allows, and the screen learns the result
   from the returned verdict. Section 14.2 calls this flow susceptible to a relayed request, and
   nothing on the verifier's side can tell.
+- **A vp_token sent as a JSON string:** section 8.3's examples carry `vp_token` in a
+  `direct_post.jwt` payload as a JSON object, and the verifier reads it so by default. Build it
+  with `accept_vp_token_as_json_string=True` to also read a string holding that object (the
+  swiyu Sandbox Wallet 1.19.0 for iOS sends one): once, under the payload's depth and size
+  bounds, held to every rule the object is. A verdict reached after that read, accepted or refused, carries
+  `vp_token_from_string`.
 
 ## Transaction data
 
@@ -401,7 +407,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 679 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 687 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 179 refusals accept and requires a
