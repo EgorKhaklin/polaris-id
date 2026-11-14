@@ -4,6 +4,17 @@
 swiyu wallet reads a request. The request side is this folder's. The response side is the package's, unmodified:
 `handle_direct_post` is not overridden (a test holds that), and three lab checks sit beside it that can only refuse.
 
+## Result, 2026-11-13
+
+On 2026-11-13 the swiyu Sandbox Wallet 1.19.0 (iOS), operated by the author and holding a Beta-ID from the Beta
+Credential Service, answered a request from this verifier at `c5b0ba5f`. The package's `handle_direct_post`, with
+`accept_vp_token_as_json_string=True`, answered `200 authentic`. L7, L10 and L13 each said `ok`, and the issuer's
+status list, read from the registry and held to the issuer's pinned key, said VALID.
+
+Offline, a second implementation, `@sd-jwt/sd-jwt-vc` 0.24.3 (OpenWallet Foundation Labs), accepts the same
+presentation under the pinned issuer key with the request's nonce and audience. It refuses it under another nonce,
+with no key, and under each of the 17 other pinned keys.
+
 ## What the request carries
 
 | | |

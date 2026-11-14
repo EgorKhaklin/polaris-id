@@ -31456,7 +31456,9 @@ def check_ci_changes_allowlist_measured(root: pathlib.Path) -> list[Finding]:
 # 2026-10-11: docs/reference/INTEROP.md gives each outside implementation's latest run, one row each, so its rows are
 # the outward count a second time. The page's own sentence, its rows, the scoreboard's Wallets summary, the README's
 # badge and the claims manifest's lists must name the same implementations, split the same way: the wallets that ran
-# unmodified, and the rest.
+# unmodified, and the rest. 2026-11-14: the site too. Its "tested against N outside projects" sentences, its tally and
+# the items of its Evidence list must each equal the page's rows (a commit raised the count everywhere else and left
+# the site at the old one, and nothing here read it).
 _INTEROP_PAGE = "docs/reference/INTEROP.md"
 
 
@@ -31523,8 +31525,23 @@ def check_interop_page_matches_the_count(root: pathlib.Path) -> list[Finding]:
         if hits[0] in matched:
             return _fail(name, f"{term!r} and {matched[hits[0]]!r} both name the row {rows[hits[0]][0]!r}")
         matched[hits[0]] = term
+    site = _read(root, "site/index.html")
+    if not site:
+        return _fail(name, "site/index.html is missing")
+    told = [int(n) for n in re.findall(r"tested against (\d+) outside projects", site)]
+    if not told or any(n != len(rows) for n in told):
+        return _fail(name, f"the site says it was tested against {told or 'no number of'} outside projects; "
+                           f"{_INTEROP_PAGE} has {len(rows)} rows")
+    tally = [int(n) for n in re.findall(r'<p class="tally"[^>]*><b>(\d+)</b><span>outside projects</span>', site)]
+    if tally != [len(rows)]:
+        return _fail(name, f"the site's outside-projects tally reads {tally}; {_INTEROP_PAGE} has {len(rows)} rows")
+    ledgers = re.findall(r'<ol class="ledger">(.*?)</ol>', site, re.S)
+    listed = [len(re.findall(r"<li\b", body)) for body in ledgers]
+    if listed != [len(rows)]:
+        return _fail(name, f"the site's Evidence list has {listed} items; {_INTEROP_PAGE} has {len(rows)} rows")
     return _ok(name, f"{_INTEROP_PAGE} has one row for each of the {len(rows)} counted implementations, "
-                     f"{split[0]} wallets and {split[1]} more, as its sentence, the scoreboard, the badge and the manifest say")
+                     f"{split[0]} wallets and {split[1]} more, as its sentence, the scoreboard, the badge, the manifest "
+                     "and the site's count, tally and Evidence list say")
 
 
 CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
