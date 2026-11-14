@@ -1126,7 +1126,8 @@ def _federation_manifest_body(ag, now):
     to a signed document (the signer's anchors at the instant of signing)."""
     agency_id = ag['agency_id']
     atts = query("""
-        SELECT att.attested_agency_id, att.context_id, att.attested_date, att.valid_until,
+        SELECT att.attesting_agency_id, att.attested_agency_id, att.context_id,
+               att.attested_date, att.valid_until,
                att.attestation_format, att.attestation_signature_hex,
                att.attestation_public_key_hex,
                ag2.signing_public_key_hex AS attested_public_key_hex
@@ -1155,15 +1156,21 @@ def _federation_manifest_body(ag, now):
         # canonical polaris-trust-attestation/1 statement, so a consumer can check the
         # trust edge itself rather than trusting that the manifest's publisher recorded it
         # faithfully. A row made before v9.348 rides unsigned and is reported as legacy.
+        # attesting_agency_id and algorithm are signed fields (WIRE-SPEC 3.14), so an edge
+        # published without them verified nowhere. The algorithm is the set the row's STORED
+        # signer key names: the signer refused any key not of its label's exact size, and the
+        # accepted sets' key sizes differ. Never the agency's current set, which a re-key moves.
         'attestations': [
-            {'attested_agency_id': a['attested_agency_id'],
+            {'attesting_agency_id': a['attesting_agency_id'],
+             'attested_agency_id': a['attested_agency_id'],
              'attested_public_key_hex': a['attested_public_key_hex'],
              'context_id': a['context_id'],
              'attested_date': (a['attested_date'].isoformat() if a.get('attested_date') else None),
              'valid_until': a['valid_until'].isoformat() if a['valid_until'] else None,
              'format': a.get('attestation_format'),
              'signature_hex': a.get('attestation_signature_hex'),
-             'public_key_hex': a.get('attestation_public_key_hex')}
+             'public_key_hex': a.get('attestation_public_key_hex'),
+             'algorithm': pqc_signing.algorithm_for_public_key_hex(a.get('attestation_public_key_hex'))}
             for a in atts if a['attested_public_key_hex']
         ],
         'epoch': ({'number': epoch['epoch_id'], 'root_hex': epoch['merkle_root']} if epoch else None),
