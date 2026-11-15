@@ -3722,6 +3722,15 @@ jobs:
           # driver against its wire-faithful stand-in, rotation end to end.
           pip install --require-hashes -r polaris_web/requirements-custody.txt
 
+      # The signed trust edge the federation-manifest route publishes is verified here by all
+      # three verifiers, the TypeScript SDK among them; without the SDK installed that leg skips.
+      - name: Set up Node (the web suite runs the TypeScript SDK)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install the TypeScript SDK's pinned dependencies
+        run: cd sdk/typescript && npm ci
+
       # 2026-09-25: the web suite had only ever run with the placeholder signer; the first run
       # under real ML-DSA-65 found five tests asserting the placeholder's bytes. This job has
       # liboqs and a Postgres server, so it loads a test database and runs test_app whole.

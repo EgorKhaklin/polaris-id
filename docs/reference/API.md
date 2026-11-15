@@ -747,14 +747,18 @@ if the agency does not exist or is not federated (no registered signing key).
 { "format": "polaris-federation-manifest/1",
   "authority": { "agency_id": 1, "name": "..." },
   "anchors": [ { "public_key_hex": "...", "algorithm": "ML-DSA-65", "status": "active" } ],
-  "attestations": [ { "attested_agency_id": 2, "attested_public_key_hex": "...", "context_id": 3, "valid_until": "..." } ],
+  "attestations": [ { "attesting_agency_id": 1, "attested_agency_id": 2, "attested_public_key_hex": "...",
+                      "context_id": 3, "attested_date": "...", "valid_until": "...",
+                      "format": "polaris-trust-attestation/1", "algorithm": "ML-DSA-65",
+                      "signature_hex": "...", "public_key_hex": "..." } ],
   "epoch": { "number": 12, "root_hex": "..." }, "revocation": { "as_of": "..." },
   "issued_at": "...", "expires_at": "...", "algorithm": "ML-DSA-65", "signature_hex": "...", "public_key_hex": "..." }
 ```
 
 A relying party verifies it offline with `scripts/polaris-verify.py`
 (`verify_manifest`, `verify_cross_authority`) and accepts a foreign credential iff a
-trusted authority attests to its key in the presented context. The protocol is
+trusted authority attests to its key in the presented context. Each attestation is signed
+by the agency that made it (`polaris-trust-attestation/1`, WIRE-SPEC 3.14). The protocol is
 specified in [inter-authority-protocol.md](../design/inter-authority-protocol.md).
 
 ### `GET /api/v1/epoch-checkpoint/<agency_id>`
