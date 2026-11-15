@@ -345,15 +345,14 @@ done
 echo "  [5/7] Bringing infrastructure up (postgres, pgbouncer, redis, caddy)…"
 compose up -d --remove-orphans --no-deps postgres pgbouncer redis caddy
 
-# v9.240 — a Caddyfile change is applied by a live reload through the edge's
-# admin unix socket, not by recreating the container: the listeners stay up
-# and no request is dropped (scripts/polaris-window-drill.sh proves it under
-# traffic). Compose does not recreate a container for a change inside a
+# v9.240: a Caddyfile change is applied by a live reload through the edge's
+# admin unix socket, not by recreating the container (scripts/polaris-window-drill.sh
+# judges it under traffic). Compose does not recreate a container for a change inside a
 # bind-mounted file, so without this step an edited Caddyfile was silently
 # not applied until the next recreation. A reload of an unchanged Caddyfile
 # is a no-op; a Caddyfile that fails to adapt leaves the running config in
 # place and fails this step loudly.
-echo "  [5a]  Reloading the edge configuration (live, no listener restart)…"
+echo "  [5a]  Reloading the edge configuration (live, no container restart)…"
 if compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
         --address unix//config/admin.sock >/dev/null 2>&1; then
     echo "  ✓ edge configuration reloaded"

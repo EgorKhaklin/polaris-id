@@ -64,7 +64,7 @@ below and the deployment-scale work in [ROADMAP.md](../ROADMAP.md). Operating it
 - `Individual.individual_id` and `IdentityToken.token_id` are 32-bit, about 29 years at the stated enrollment rate; widening them touches foreign keys across the schema, and `check_capacity_model` recomputes the arithmetic from the live schema on every push.
 - On one core ([lab/evaluation](../lab/evaluation/README.md), 2026-09-27) the liboqs witness verifies in 122 us at p50 (about 8,200/s, the path the application uses) and the Python SDK's OpenSSL witness, all a plain install gets, in 1.21 ms (about 826/s). End to end, `POST /api/v1/verify` served 155 to 165 per second on one 8-core machine with 4 or 8 workers; the signature was under 1% of each request, and a new database connection per statement (three per verification) was most of it.
 - The HA drills run a two-member topology on CI hardware.
-- The edge is one host: recreating it is a 0.3 s window, and a configuration reload may drop one in-flight request.
+- The edge is one host: recreating it is a 0.3 s window, and a configuration reload may close a connection it has not answered, at most once per connection; one retry serves that request.
 - Under the HA profile a lost database leader is replaced within its 20 s lease, a planned switchover is a 3.4 s outage and a leader that loses its lease store stands down in 7 s. Without the profile a database crash is a 0.6 s window.
 
 ## Decisions only the operator can make

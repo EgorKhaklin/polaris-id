@@ -62,7 +62,8 @@ block after the shebang is its documentation, and `--help` prints it.
 | `polaris-dr-drill.sh` | Kills a primary, restores from the WAL archive, measures RPO and RTO | `ci.yml`, `dr-drill.yml`, the monthly timer |
 | `polaris-offsite-drill.sh` | The S3 backup and restore path, end to end | `ci.yml` |
 | `polaris-rolling-drill.sh` | A rolling deploy drops zero requests | `ci.yml` |
-| `polaris-window-drill.sh` | An edge configuration reload drops nothing; edge and database recreation windows measured against ceilings | `ci.yml` |
+| `polaris-window-drill.sh` | An edge configuration reload is applied live, with no failure for a client that retries once; edge and database recreation windows measured against ceilings | `ci.yml` |
+| `polaris-window-traffic.py` | The window drill's traffic: each failure recorded with its class, phase, reason chain and duration; a connection closed before an answer retried once around a reload; and the reload judge | `polaris-window-drill.sh` |
 | `polaris-failover-drill.sh` | The HA profile under induced failures: the leader crashed, cut off from the lease store, switched over, an etcd member crashed, each measured under a live write stream against a ceiling | `ci.yml` |
 | `polaris-partition-drill.sh` | The event tables' partitioning: a future row lands in a monthly partition, append-only holds across a partition/attach/detach, a populated table converts in place, retention routes across partitions | `ci.yml`, on every push |
 | `polaris-partition-maintenance.sh` | Premake the event tables' monthly partitions ahead of time on the running stack | `polaris-partition-maintenance.timer`, monthly |

@@ -13,9 +13,9 @@
     email admin@{$POLARIS_DOMAIN}
     # The admin API on a unix socket in /config (owned by the edge's own
     # user, never on the network): `caddy reload` through it applies a
-    # Caddyfile change with no listener restart, so an edge configuration
-    # change is no longer a window (v9.240). The Caddyfile is mounted
-    # read-only, so nothing reached through the socket can persist.
+    # Caddyfile change live, with no container restart (v9.240). The
+    # Caddyfile is mounted read-only, so nothing reached through the socket
+    # can persist.
     admin unix//config/admin.sock
     # v9.239 — the edge runs as uid 1000 with no capabilities, so it listens on
     # unprivileged ports; the host publishes 80/443 onto 8080/8443 (compose)

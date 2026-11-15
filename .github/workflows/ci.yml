@@ -2952,11 +2952,12 @@ jobs:
       - name: Rolling deploy under traffic, then the negative control
         run: bash scripts/polaris-rolling-drill.sh
 
-      # v9.240 — the two windows the blue-green deploy still has, measured
-      # under the same traffic, and the proof that an edge configuration
-      # change is a live reload with no window at all. The ceilings are hard
-      # assertions; the numbers are the ones DEPLOYMENT.md states.
-      - name: Window drill (edge reload drops nothing; edge and database recreation measured)
+      # v9.240: the two windows the blue-green deploy still has, measured
+      # under the same traffic, and an edge configuration change applied as a
+      # live reload, judged under traffic that retries a connection closed
+      # before an answer once. The ceilings and the judge are hard assertions;
+      # the numbers are the ones DEPLOYMENT.md states.
+      - name: Window drill (edge reload applied live and judged; edge and database recreation measured)
         env:
           POLARIS_WINDOW_OUT: /tmp/windows.json
         run: bash scripts/polaris-window-drill.sh

@@ -2,16 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 # ============================================================================
-# polaris-window-drill.sh — measure the service windows the blue-green deploy
-# still has, and prove the edge configuration path has none.
+# polaris-window-drill.sh: measure the service windows the blue-green deploy
+# still has, and judge the edge configuration path under traffic.
 #
 # The rolling drill proves an app deploy drops zero requests. Two operations
 # were left as "plan a window": recreating the edge and recreating the
-# database. This drill puts numbers on them, under the same traffic generator,
-# and proves that the most frequent edge operation, a configuration change, is
-# a live reload with a near-zero window: Caddy occasionally restarts a listener
-# on reload and drops a single in-flight request, so the drill asserts a small
-# transient budget rather than an absolute zero (v9.273).
+# database. This drill puts numbers on them, under one traffic generator
+# (scripts/polaris-window-traffic.py), and judges the most frequent edge
+# operation, a configuration change, applied as a live reload: under traffic
+# that retries a connection closed before an answer once, no request fails,
+# no failure of another class occurs, and no more such closes than workers
+# times reloads.
 #
 # Run against a production stack already up with the blue-green overlay (and,
 # in CI or locally without a public domain, the internal-CA edge):
@@ -22,13 +23,11 @@
 #
 # Scenarios, each under continuous traffic against the edge:
 #   1. Edge configuration reload: a response header is added inside the
-#      existing site and reloaded through the admin socket, then reverted. A
-#      handler swap leaves the listeners untouched, which is Caddy's zero-drop
-#      path; adding a new listen address is not (v9.244)
-#      Caddyfile (a new listener inside the container), applied with
-#      `caddy reload` through the admin unix socket, verified live, then
-#      reverted the same way. Assertion: at most a small transient budget
-#      (a graceful reload may drop one in-flight request at a listener swap).
+#      existing site, applied with `caddy reload` through the admin unix
+#      socket, verified live, then reverted the same way. Judged by the
+#      generator (--judge-reload): at least 40 requests served, no failure
+#      after one retry, no failure of any class but a close before an answer,
+#      and no more such closes than workers times reloads.
 #   2. Edge recreation: `compose up --force-recreate caddy`. Measured: the
 #      window from the first dropped request to the last. Ceiling: 30 s.
 #   3. Database restart: `compose restart postgres`. Measured the same way
@@ -52,46 +51,13 @@ WORK="$(mktemp -d)"
 [[ -n "$OUT" ]] || OUT="$WORK/windows.json"
 fail() { echo "::error::$*" >&2; exit 1; }
 
-# The traffic generator: the rolling drill's, plus the time of the first and
-# last dropped request so a window has a length. 429 is the edge's own rate
-# limiter enforcing policy and is neither served nor dropped.
-cat > "$WORK/traffic.py" <<'PYEOF'
-import json, signal, ssl, sys, threading, time, urllib.request
-base = sys.argv[1]; out = sys.argv[2]
-ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
-stats = {"requests": 0, "served": 0, "drops": 0, "by": {}, "first_drop": None, "last_drop": None, "max_latency_s": 0.0}
-lock = threading.Lock(); stop = threading.Event()
-signal.signal(signal.SIGTERM, lambda *a: stop.set())
-def worker(path):
-    while not stop.is_set():
-        key = "ok"; t0 = time.time()
-        try:
-            with urllib.request.urlopen(base + path, timeout=5, context=ctx) as r:
-                if r.status != 200: key = f"http_{r.status}"
-        except urllib.error.HTTPError as e: key = f"http_{e.code}"
-        except Exception as e: key = "transport:" + type(e).__name__
-        now = time.time()
-        with lock:
-            stats["requests"] += 1
-            stats["max_latency_s"] = max(stats["max_latency_s"], round(now - t0, 2))
-            if key == "ok": stats["served"] += 1
-            elif key != "http_429":
-                stats["drops"] += 1
-                stats["first_drop"] = stats["first_drop"] or now
-                stats["last_drop"] = now
-            stats["by"][key] = stats["by"].get(key, 0) + 1
-        time.sleep(0.25)
-# Public routes, since the edge refuses the health answers to a client outside POLARIS_METRICS_ALLOW:
-# one the app answers alone, and one that reads the database (as /api/health did).
-threads = [threading.Thread(target=worker, args=(p,), daemon=True)
-           for p in ["/.well-known/security.txt"] * 2 + ["/api/v1/transparency/anchors?end=0"] * 2]
-[t.start() for t in threads]
-while not stop.is_set(): time.sleep(0.2)
-time.sleep(0.5)
-stats["window_s"] = round(stats["last_drop"] - stats["first_drop"], 1) if stats["drops"] else 0.0
-with open(out, "w") as fh: json.dump(stats, fh)
-PYEOF
-traffic_start() { : > "$1"; python3 "$WORK/traffic.py" "$URL" "$1" & TRAFFIC_PID=$!; sleep 3; }
+# The traffic generator (scripts/polaris-window-traffic.py): four workers on two public routes,
+# a new connection per request, every failure recorded with its class, phase, reason chain and
+# duration, and the time of the first and last drop so a window has a length. 429 is the edge's
+# own rate limiter enforcing policy and is neither served nor dropped.
+TRAFFIC="$SCRIPT_DIR/polaris-window-traffic.py"
+[[ -f "$TRAFFIC" ]] || fail "the traffic generator $TRAFFIC is missing"
+traffic_start() { : > "$1"; python3 "$TRAFFIC" "$URL" "$@" & TRAFFIC_PID=$!; sleep 3; }
 traffic_stop()  { kill -TERM "$TRAFFIC_PID" 2>/dev/null || true; wait "$TRAFFIC_PID" 2>/dev/null || true; }
 stat() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
 # The edge serves a public route; the roll-up is read at the app's own address, since the edge
@@ -143,14 +109,15 @@ polaris_host_lock "the window drill"
 RELOAD=(compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --address unix//config/admin.sock)
 
 echo "== 1. edge configuration reload under traffic =="
-traffic_start "$WORK/reload.json"
-# A response header added INSIDE the existing site block: a pure config reload
-# that swaps the HTTP handler with the :8443 and :8080 listeners untouched,
-# which is Caddy's near-zero-drop path (a listener is occasionally restarted, dropping a
-#      single in-flight request). Adding a new listen address (a second site
-# on another port) is not: opening and closing a listener can reset a
-# connection being accepted on the main one, which the drill measured as 1
-# drop in ~115 on a Linux runner (v9.244).
+# The one scenario whose traffic retries: a request whose connection closed before an answer is
+# sent once more at once, on a new connection, as a client of an idempotent GET may. A reload
+# binds a new listener and shuts the old server down, which closes a connection it had accepted
+# and not answered, at most once per connection; the judge holds the count of such closes to
+# workers times reloads.
+traffic_start "$WORK/reload.json" --retry
+reloads=0
+# A response header added INSIDE the existing site block: a pure configuration reload that swaps
+# the HTTP handler and keeps the :8443 and :8080 addresses.
 python3 - "$WORK/Caddyfile.orig" "$WORK/Caddyfile.drill" <<'PYIN'
 import re, sys
 src = open(sys.argv[1]).read().splitlines(keepends=True)
@@ -165,21 +132,26 @@ PYIN
 grep -q "X-Window-Drill" "$WORK/Caddyfile.drill" || fail "could not insert the drill header into the Caddyfile"
 cat "$WORK/Caddyfile.drill" > "$CADDYFILE"
 "${RELOAD[@]}" >/dev/null 2>&1 || fail "caddy reload through the admin socket failed"
+reloads=$((reloads + 1))
 sleep 1
 hdr=$(curl -skI "$URL/.well-known/security.txt" 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="x-window-drill"{print $2}')
 [[ "$hdr" == "live" ]] || fail "the reloaded configuration is not live at the edge (X-Window-Drill: '${hdr}')"
 restore_caddyfile
 "${RELOAD[@]}" >/dev/null 2>&1 || fail "caddy reload of the original Caddyfile failed"
+reloads=$((reloads + 1))
 sleep 1
 hdr=$(curl -skI "$URL/.well-known/security.txt" 2>/dev/null | tr -d '\r' | awk -F': ' 'tolower($1)=="x-window-drill"{print $2}')
 [[ -z "$hdr" ]] || fail "the drill header survived the reload of the original Caddyfile (X-Window-Drill: '${hdr}')"
 sleep 2
 traffic_stop
 r_req=$(stat "$WORK/reload.json" requests); r_drops=$(stat "$WORK/reload.json" drops); r_lat=$(stat "$WORK/reload.json" max_latency_s)
-echo "  reload: ${r_req} requests, ${r_drops} drops, slowest request ${r_lat} s (a header added to the site, applied live, verified, reverted); breakdown $(stat "$WORK/reload.json" by)"
-[[ "$r_req" -ge 40 ]] || fail "too few requests during the reload scenario (${r_req})"
-_rmax=$(python3 -c "import sys,math; n=int(sys.argv[1]); print(max(2, math.ceil(n*0.02)))" "$r_req")
-[[ "$r_drops" -le "$_rmax" ]] || fail "${r_drops} requests dropped during a configuration reload (budget ${_rmax}); a graceful reload may drop a single in-flight request when Caddy restarts a listener, but more than that is a regression"
+r_raw=$(stat "$WORK/reload.json" raw_retried); r_other=$(stat "$WORK/reload.json" other)
+echo "  reload: ${r_req} requests over ${reloads} reloads, ${r_drops} failed after one retry, ${r_raw} closed before an answer and retried, ${r_other} other failures, slowest request ${r_lat} s (a header added to the site, applied live, verified, reverted); breakdown $(stat "$WORK/reload.json" by)"
+echo "  reload failures (class, phase, reason chain, seconds): $(stat "$WORK/reload.json" failures)"
+[[ "$reloads" -eq 2 ]] || fail "the reload scenario counted ${reloads} reloads, not 2"
+verdict=$(python3 "$TRAFFIC" --judge-reload "$WORK/reload.json" "$reloads") \
+    || fail "configuration reload under traffic: ${verdict}"
+echo "  reload judged: ${verdict}"
 
 echo "== 2. edge recreation under traffic =="
 traffic_start "$WORK/edge.json"
@@ -214,15 +186,16 @@ app_ids_after=$(compose ps -q app app-green 2>/dev/null | sort | tr '\n' ' ')
 [[ "$app_ids_before" == "$app_ids_after" ]] || fail "the app containers were replaced during the database restart; recovery must not need an app restart"
 wait_edge 30 || fail "stack not healthy after the database restart"
 
-python3 - "$OUT" "$r_req" "$r_drops" "$r_lat" "$e_win" "$e_drops" "$e_req" "$e_lat" "$d_win" "$d_drops" "$d_req" "$d_lat" <<'PYEOF'
+python3 - "$OUT" "$r_req" "$r_drops" "$r_lat" "$r_raw" "$r_other" "$e_win" "$e_drops" "$e_req" "$e_lat" "$d_win" "$d_drops" "$d_req" "$d_lat" <<'PYEOF'
 import json, sys
-out, r_req, r_drops, r_lat, e_win, e_drops, e_req, e_lat, d_win, d_drops, d_req, d_lat = sys.argv[1:]
+out, r_req, r_drops, r_lat, r_raw, r_other, e_win, e_drops, e_req, e_lat, d_win, d_drops, d_req, d_lat = sys.argv[1:]
 summary = {
-    "edge_reload":   {"requests": int(r_req), "drops": int(r_drops), "window_s": 0.0, "max_latency_s": float(r_lat)},
+    "edge_reload":   {"requests": int(r_req), "drops": int(r_drops), "window_s": 0.0, "max_latency_s": float(r_lat),
+                      "closed_before_an_answer_retried": int(r_raw), "other_failures": int(r_other)},
     "edge_recreate": {"requests": int(e_req), "drops": int(e_drops), "window_s": float(e_win), "max_latency_s": float(e_lat)},
     "db_restart":    {"requests": int(d_req), "drops": int(d_drops), "window_s": float(d_win), "max_latency_s": float(d_lat)},
 }
 json.dump(summary, open(out, "w"), indent=2)
 print(json.dumps(summary))
 PYEOF
-echo "== WINDOW DRILL PASSED: configuration reload drops nothing; recreation windows measured and within ceilings =="
+echo "== WINDOW DRILL PASSED: configuration reload applied live with no failure after one retry; recreation windows measured and within ceilings =="
