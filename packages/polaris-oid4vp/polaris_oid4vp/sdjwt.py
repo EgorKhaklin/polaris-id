@@ -587,12 +587,18 @@ def _issuer_public_keys(header, issuer_jwks, trust_anchors, now=None):
             leaf = load_der_x509_certificate(base64.b64decode(chain[0]))
         except Exception as exc:  # noqa: BLE001  any parse failure is the same refusal
             return [], "the x5c leaf certificate does not parse: %s" % exc, None
+        why = _unparsed_name(leaf)
+        if why:
+            return [], "the x5c leaf certificate carries %s" % why, None
         intermediates = []
         for position, item in enumerate(chain[1:], start=1):
             try:
                 intermediates.append(load_der_x509_certificate(base64.b64decode(item)))
             except Exception as exc:  # noqa: BLE001  any parse failure is the same refusal
                 return [], "x5c certificate %d does not parse: %s" % (position, exc), None
+            why = _unparsed_name(intermediates[-1])
+            if why:
+                return [], "x5c certificate %d carries %s" % (position, why), None
         if not trust_anchors:
             return [], ("the credential presents an x5c chain and no trust anchor is "
                         "configured, so nothing can be said about who signed it"), None
@@ -707,15 +713,28 @@ def _self_signed(cert):
     return True
 
 
+def _unparsed_name(cert):
+    """"" when `cert`'s subject and issuer parse, else which does not and what the parser said.
+    `cryptography` parses a name when it is first read, so each certificate a presentation sends
+    is asked here, once, when it is loaded."""
+    for what, part in (("a subject", "subject"), ("an issuer", "issuer")):
+        try:
+            getattr(cert, part)
+        except Exception as exc:  # noqa: BLE001  any parse failure is the same refusal
+            return "%s that does not parse: %s" % (what, str(exc) or type(exc).__name__)
+    return ""
+
+
 def _signed_by(child, parent):
     """True when `parent`'s key verifies `child`'s signature and `child` names `parent` as its
-    issuer."""
+    issuer. A name that does not parse matches nothing: a configured anchor is the operator's
+    input, and one with such a name certifies nothing."""
     try:
         parent.public_key().verify(child.signature, child.tbs_certificate_bytes,
                                    ec.ECDSA(child.signature_hash_algorithm))
+        return child.issuer == parent.subject
     except Exception:  # noqa: BLE001  wrong key, wrong algorithm, malformed: all one answer
         return False
-    return child.issuer == parent.subject
 
 
 def _outside_validity(cert, now, what):

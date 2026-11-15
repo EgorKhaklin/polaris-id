@@ -2934,6 +2934,43 @@ class IntermediateChainTests(unittest.TestCase):
         junk = base64.b64encode(b"not a certificate").decode()
         self._refused(self._verify(root, [chain[0], junk], key), "x5c certificate 1 does not parse")
 
+    @staticmethod
+    def _with_a_name_that_does_not_parse(cert, cn, times):
+        """`cert` again, its common name `cn` under a tag that names no string type (0x0d where
+        UTF8String is 0x0c). It loads, and raises when the name is first read: ValueError under
+        cryptography 50, KeyError under 46."""
+        raw = cert.public_bytes(serialization.Encoding.DER)
+        name = b"\x0c" + bytes([len(cn)]) + cn.encode()
+        assert raw.count(name) == times, "%s occurs %d times" % (cn, raw.count(name))
+        return x509.load_der_x509_certificate(raw.replace(name, b"\x0d" + name[1:]))
+
+    def test_a_sent_certificate_whose_name_does_not_parse_is_refused(self):
+        """A certificate sent in `x5c` is nobody's until its own issuer is found, so the names of
+        each are read when it is loaded: the CA certificate's, and the leaf's."""
+        root, chain, key = self._make(depth=1)
+        ca = self._with_a_name_that_does_not_parse(chain[1], "test CA 1", times=1)
+        with self.assertRaises((ValueError, KeyError)):
+            ca.subject
+        self._refused(self._verify(root, [chain[0], ca], key),
+                      "x5c certificate 1 carries a subject that does not parse")
+        leaf = self._with_a_name_that_does_not_parse(chain[0], "test CA 1", times=1)
+        with self.assertRaises((ValueError, KeyError)):
+            leaf.issuer
+        self._refused(self._verify(root, [leaf, chain[1]], key),
+                      "the x5c leaf certificate carries an issuer that does not parse")
+
+    def test_a_trust_anchor_whose_name_does_not_parse_certifies_nothing(self):
+        """A configured anchor is the operator's input. Its key still verifies the certificate
+        beneath it, and its name matches nobody's issuer."""
+        root, chain, key = self._make(depth=1, root_path_length=1)
+        anchor = self._with_a_name_that_does_not_parse(root, "test root", times=2)
+        with self.assertRaises((ValueError, KeyError)):
+            anchor.subject
+        self._refused(self._verify(anchor, chain, key), "does not chain to any configured trust anchor")
+        # The control: the same chain under the anchor as it was made.
+        v = self._verify(root, chain, key)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
 
 class NameConstraintTests(unittest.TestCase):
     """RFC 5280 4.2.1.10: a CA's name constraints bind the certificates beneath it, and the trust
