@@ -5970,6 +5970,132 @@ class IssuerFederationTests(PolarisTestCase):
                      "WHERE attestation_id = %s", (aid,), fetch='one')['s']
         self.assertEqual(after, before, 'a second signing replaced the recorded signature')
 
+    @staticmethod
+    def _ml_dsa_signer(algorithm):
+        """(signer, public key hex): a stand-in for pqc_signing.signature_over_message that signs
+        SHA3-256(message) under one fresh `algorithm` key, as a custodied key does."""
+        import oqs
+        with oqs.Signature(algorithm) as s:
+            pk = s.generate_keypair()
+            sk = s.export_secret_key()
+
+        def signer(message, agency_id=None, **kw):
+            with oqs.Signature(algorithm, sk) as s:
+                return s.sign(hashlib.sha3_256(message).digest()), algorithm, pk.hex()
+        return signer, pk.hex()
+
+    def _sign_edge_6_to_1(self, signer, key_hex, attested_key):
+        """Agency 6, registered under `key_hex`, attests agency 1 (registered under `attested_key`)
+        in HEALTHCARE through the route, signed by `signer`. Returns the context id."""
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 6", (key_hex,))
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", (attested_key,))
+        ctx = self._context_id('HEALTHCARE')
+        csrf = self._csrf_token_from('/verifications/new')
+        with patch.object(pqc_signing, 'signature_over_message', signer):
+            r = self.client.post('/api/federation/attest', json={
+                'attesting_agency_id': 6, 'attested_agency_id': 1, 'context_id': ctx,
+                'valid_until': str(datetime.now(timezone.utc).date() + timedelta(days=90))},
+                headers={'X-CSRFToken': csrf})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertTrue(r.get_json()['attestation_signed'])
+        return ctx
+
+    def _published_edge(self, m, ctx, key_hex):
+        """The one edge 6 to 1 in `ctx` signed under `key_hex`, as the manifest `m` publishes it."""
+        edges = [a for a in m['attestations'] if a.get('attested_agency_id') == 1
+                 and a.get('context_id') == ctx and a.get('public_key_hex') == key_hex]
+        self.assertEqual(len(edges), 1, m['attestations'])
+        return edges[0]
+
+    @unittest.skipUnless(pqc_signing.is_available() and pqc_signing.second_witness_available(),
+                         "a real ML-DSA edge needs liboqs and the second witness")
+    def test_a_signed_edge_the_manifest_route_publishes_verifies_in_every_verifier(self):
+        """WIRE-SPEC 3.14: an attestation published inside a federation manifest is the attesting
+        agency's signature over format, attesting_agency_id, attested_agency_id,
+        attested_public_key_hex, context_id, attested_date, valid_until and algorithm, and a
+        verifier MUST check that signature and MUST require attesting_agency_id to equal the
+        manifest's authority. API.md: a relying party verifies the manifest offline. The route
+        signs one edge under a real ML-DSA-65 key, GET /api/v1/federation-manifest/6 publishes it,
+        and each verifier is handed the edge exactly as published."""
+        signer, key = self._ml_dsa_signer('ML-DSA-65')
+        attested_key = 'ab' * 16
+        ctx = self._sign_edge_6_to_1(signer, key, attested_key)
+        with patch.object(pqc_signing, 'signature_over_message', signer):
+            m = self.client.get('/api/v1/federation-manifest/6').get_json()
+        edge = self._published_edge(m, ctx, key)
+        anchors = [a['public_key_hex'] for a in m['anchors'] if a.get('status') == 'active']
+        self.assertIn(key, anchors, 'the edge is signed by one of the manifest\'s active anchors')
+        self._edge_verifies_everywhere(edge, m['authority']['agency_id'], attested_key)
+
+    @unittest.skipUnless(pqc_signing.is_available() and pqc_signing.second_witness_available(),
+                         "a real ML-DSA edge needs liboqs and the second witness")
+    def test_a_signed_edge_keeps_the_set_it_was_signed_under_after_its_agency_re_keys(self):
+        """The published algorithm is the set the row's stored signer key names, not the set the
+        attesting agency signs under now. Agency 6 signs the edge under ML-DSA-65 and then moves
+        to ML-DSA-87: the manifest it signs after the move names ML-DSA-87 for itself and still
+        ML-DSA-65 for the edge, and the edge verifies."""
+        old, old_key = self._ml_dsa_signer('ML-DSA-65')
+        new, new_key = self._ml_dsa_signer('ML-DSA-87')
+        attested_key = 'ab' * 16
+        ctx = self._sign_edge_6_to_1(old, old_key, attested_key)
+        _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 6", (new_key,))
+        moved = lambda agency_id=None: 'ML-DSA-87' if agency_id == 6 else 'ML-DSA-65'
+        with patch.object(pqc_signing, 'signature_over_message', new), \
+                patch.object(pqc_signing, 'algorithm_name', moved):
+            self.assertEqual(flask_app._signing_algorithm(6), 'ML-DSA-87')
+            m = self.client.get('/api/v1/federation-manifest/6').get_json()
+        self.assertEqual(m['algorithm'], 'ML-DSA-87', 'the manifest is signed under the new set')
+        edge = self._published_edge(m, ctx, old_key)
+        self.assertEqual(edge['algorithm'], 'ML-DSA-65')
+        self._edge_verifies_everywhere(edge, 6, attested_key)
+
+    def _edge_verifies_everywhere(self, edge, agency_id, attested_key):
+        """The edge, as published, verified by polaris-sdk-python, polaris-verify and
+        polaris-sdk-ts against the publishing agency and the attested key."""
+        import importlib.util
+        import pathlib
+        import shutil
+        import subprocess
+        root = pathlib.Path(__file__).resolve().parent.parent
+
+        with self.subTest('sdk/python verify_attestation'):
+            spec = importlib.util.spec_from_file_location(
+                'polaris_verify_sdk_edge', root / 'sdk' / 'python' / 'polaris_verify' / '__init__.py')
+            sdk = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sdk)
+            v = sdk.verify_attestation(edge, attesting_agency_id=agency_id, expected_key=attested_key)
+            self.assertTrue(v.authentic, v.note)
+
+        with self.subTest('polaris-verify verify_attestation'):
+            spec = importlib.util.spec_from_file_location(
+                'polaris_verify_cli_edge', root / 'scripts' / 'polaris-verify.py')
+            cli = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(cli)
+            v = cli.verify_attestation(edge, attesting_agency_id=agency_id, expected_key=attested_key)
+            self.assertTrue(v['attestation_authentic'], v)
+            self.assertIs(v['attester_matches'], True, v)
+            self.assertIs(v['key_matches'], True, v)
+
+        with self.subTest('sdk/typescript verifyAttestation'):
+            ts = root / 'sdk' / 'typescript'
+            entry = ts / 'dist' / 'index.js'
+            if not entry.is_file() and (ts / 'node_modules' / '@noble' / 'post-quantum').is_dir():
+                entry = ts / 'src' / 'index.ts'
+            node = shutil.which('node')
+            if not node or not entry.is_file() or not (ts / 'node_modules').is_dir():
+                self.skipTest('the TypeScript SDK is not installed here (npm ci in sdk/typescript)')
+            script = ("import { verifyAttestation } from %s;\n"
+                      "let s = ''; for await (const c of process.stdin) s += c;\n"
+                      "const q = JSON.parse(s);\n"
+                      "process.stdout.write(JSON.stringify(verifyAttestation(q.edge, q.agency, q.key)));\n"
+                      % json.dumps(entry.as_uri()))
+            p = subprocess.run([node, '--input-type=module', '-e', script], capture_output=True, text=True,
+                               timeout=120, input=json.dumps({'edge': edge, 'agency': agency_id,
+                                                              'key': attested_key}))
+            self.assertEqual(p.returncode, 0, p.stderr)
+            v = json.loads(p.stdout)
+            self.assertIs(v['authentic'], True, v)
+
     def _attest_6_to_1(self, signer):
         import pqc_signing
         _owner_write("UPDATE Agency SET signing_public_key_hex = %s WHERE agency_id = 1", ('ab' * 16,))

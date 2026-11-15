@@ -64,7 +64,7 @@ STATEMENTS = [
         FROM AuthorityKeyCurrent WHERE agency_id = %s ORDER BY registered_at NULLS LAST, public_key_hex""", (1,)),
     ('_key_status', "SELECT status FROM AuthorityKeyCurrent WHERE agency_id = %s AND public_key_hex = %s", (1, H)),
     ('_federation_manifest_body', """
-        SELECT att.attested_agency_id, att.context_id, att.attested_date, att.valid_until, att.attestation_format,
+        SELECT att.attesting_agency_id, att.attested_agency_id, att.context_id, att.attested_date, att.valid_until, att.attestation_format,
                att.attestation_signature_hex, att.attestation_public_key_hex, ag2.signing_public_key_hex AS attested_public_key_hex
         FROM AgencyTrustAttestation att JOIN Agency ag2 ON ag2.agency_id = att.attested_agency_id
         WHERE att.attesting_agency_id = %s AND att.revocation_date IS NULL AND att.valid_until >= polaris_utc_date()
