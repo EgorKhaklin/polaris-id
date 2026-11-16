@@ -233,6 +233,85 @@ def _loop_bound_paths(fn):
     return out
 
 
+#: Cores that two or more checks share: each caller names the inputs, the core reads them and
+#: searches them. 2026-11-15: check_release_images_signed's body became `_signed_image_release`,
+#: shared with the polaris-oid4vp image's release check, and this harness, which reads a check's
+#: own function, named no file for it and nothing to search for: it deleted none of its inputs
+#: and no sentence of its runbook. A check that calls a core listed here is credited with what
+#: the core reads, each path parameter bound to what the call passes, and with the strings and
+#: patterns the core writes out. The two helpers it parses a workflow's jobs with are listed for
+#: the same reason: a job list that parses empty fails the check, so their patterns are ones the
+#: check tests. A pattern the core builds from a parameter is not taken (the ref test each caller
+#: passes, the runbook's identity and signer-workflow lines, built from the workflow's name and
+#: ref): each has a broken fixture in the checks' detection tests. Named, like the package
+#: doors: following every helper would credit a check with strings it never tests.
+SHARED_CORES = ("_signed_image_release", "_workflow_jobs", "_needs_of")
+
+_CORE_DEFS = None
+
+
+def _shared_core_defs():
+    """The definitions of SHARED_CORES in checks.py, by name."""
+    try:
+        tree = ast.parse((ROOT / "polaris_checks" / "checks.py").read_text(errors="replace"))
+    except Exception:
+        return {}
+    return {n.name: n for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name in SHARED_CORES}
+
+
+def _core_calls(fn):
+    """Each call `fn` makes to a shared core, as (the core's definition, parameter -> the node
+    the call passes for it)."""
+    global _CORE_DEFS
+    if _CORE_DEFS is None:
+        _CORE_DEFS = _shared_core_defs()
+    out = []
+    for node in ast.walk(fn):
+        core = _CORE_DEFS.get(getattr(node.func, "id", "")) if isinstance(node, ast.Call) else None
+        if core is None:
+            continue
+        bound = dict(zip([a.arg for a in core.args.posonlyargs + core.args.args], node.args))
+        bound.update({kw.arg: kw.value for kw in node.keywords if kw.arg})
+        out.append((core, bound))
+    return out
+
+
+def _path_passed(node, fn):
+    """The path an argument names: a literal, a module path constant, or a name `fn` binds
+    exactly once, to one of those. Anything else is None: left unnamed, never guessed."""
+    def stated(n):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            return n.value
+        if isinstance(n, ast.Name):
+            return _PATH_CONSTANTS.get(n.id)
+        return None
+
+    path = stated(node)
+    if path is None and isinstance(node, ast.Name):
+        stores = [n for n in ast.walk(fn) if isinstance(n, ast.Name)
+                  and isinstance(n.ctx, ast.Store) and n.id == node.id]
+        if len(stores) == 1:
+            path = next((stated(n.value) for n in ast.walk(fn)
+                         if isinstance(n, ast.Assign) and stores[0] in n.targets), None)
+    return path
+
+
+def _core_reads(fn):
+    """What `fn` reads through the shared cores it calls: the files a core names itself, and the
+    ones it reads through a parameter, bound to the path the call passes."""
+    out = []
+    for core, bound in _core_calls(fn):
+        out.extend(reads_of(core))
+        for node in ast.walk(core):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") in ("_read", "_read_raw") \
+                    and len(node.args) >= 2 and isinstance(node.args[1], ast.Name):
+                path = _path_passed(bound.get(node.args[1].id), fn)
+                if path:
+                    out.append(path)
+    return out
+
+
 def reads_of(fn):
     """Files the check names, through a path or through a PACKAGE door.
 
@@ -273,6 +352,7 @@ def reads_of(fn):
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 out.extend(_package_modules(arg.value))
     out.extend(_read_path_targets(fn))
+    out.extend(_core_reads(fn))
     return out
 
 
@@ -308,6 +388,8 @@ def needles_of(fn):
                 for el in ast.walk(node.iter):
                     if isinstance(el, ast.Constant):
                         take(el.value, 120)
+    for core, _bound in _core_calls(fn):
+        out |= needles_of(core)
     return out
 
 
@@ -490,6 +572,8 @@ def regexes_of(fn):
             # prove nothing about this check.
             if 3 <= len(pat) <= 400 and pat not in (".*", ".+", r"\s*"):
                 out.add(pat)
+    for core, _bound in _core_calls(fn):
+        out |= regexes_of(core)
     return out
 
 
@@ -525,6 +609,8 @@ def globs_of(fn):
             base = _dir_of(node.func.value)
             if base is not None:
                 out.append((base, node.args[0].value))
+    for core, _bound in _core_calls(fn):
+        out.extend(globs_of(core))
     return out
 
 
@@ -549,7 +635,7 @@ def opaque_inputs(fn):
                            if isinstance(c, ast.Call) and c.func is node), None)
             if parent is None or id(parent) not in resolvable:
                 return True
-    return False
+    return any(opaque_inputs(core) for core, _bound in _core_calls(fn))
 
 
 def main():

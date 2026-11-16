@@ -2370,24 +2370,24 @@ jobs:
           # package per branch, so once either is replaced, apk refuses the next command and the step
           # fails there with apk's error; the versions are then moved by hand, there and in the three
           # client lines below.
-          docker run --rm alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
+          docker run --rm alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
             apk add --no-cache curl=8.23.0-r0 openssl=3.5.9-r0 >/dev/null \
             || { echo "::error::apk could not install curl=8.23.0-r0 and openssl=3.5.9-r0 on alpine:3.24 (its error is above): move a version Alpine no longer serves by hand; a mirror error is a flake"; exit 1; }
           # Wait for the edge to serve TLS.
           for i in $(seq 1 30); do
-            docker run --rm --network pqnet alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a sh -c \
+            docker run --rm --network pqnet alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c \
               'apk add --no-cache curl=8.23.0-r0 >/dev/null 2>&1; curl -sk https://edge:8443/ -o /dev/null -w "%{http_code}"' 2>/dev/null \
               | grep -q 200 && { echo "edge serving after ${i}"; break; }
             sleep 1
           done
           probe() { # $1 = -groups args; echoes the negotiated TLS1.3 group
-            docker run --rm --network pqnet alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a sh -c \
+            docker run --rm --network pqnet alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c \
               "apk add --no-cache openssl=3.5.9-r0 >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge $1 -tls1_3 2>/dev/null | grep -i 'Negotiated TLS1.3 group'"
           }
           forced=$(probe "-groups X25519MLKEM768"); echo "forced ML-KEM:  $forced"
           deflt=$(probe "");                        echo "default groups: $deflt"
           # Classical client must still complete the handshake (fallback).
-          classical=$(docker run --rm --network pqnet alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a sh -c \
+          classical=$(docker run --rm --network pqnet alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c \
             'apk add --no-cache openssl=3.5.9-r0 >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge -groups X25519 -tls1_3 2>&1 | grep -c "New, TLSv1.3, Cipher is"')
           docker rm -f pqedge >/dev/null 2>&1 || true
           docker network rm pqnet >/dev/null 2>&1 || true
@@ -4001,6 +4001,11 @@ jobs:
       # failed run each to discover. The tests assert the SHAPE, not that files appeared.
       - name: The verifier's entry point, and the certificates it must produce
         run: cd packages/polaris-oid4vp && python -m unittest test_cli
+      # The image a stranger pulls holds the released wheel, by hash, and nothing of this tree
+      # (packages/polaris-oid4vp/image). Built here, then presented to by the suite's wallet over
+      # TLS: a valid presentation accepted, the wrong nonce refused, as a user that is not root.
+      - name: The polaris-oid4vp image builds and judges a presentation
+        run: python scripts/polaris-oid4vp-image-drill.py
 
   # 2026-10-15: the OID4VP mutation drill, out of the product boundary job. Every refusal in
   # packages/polaris-oid4vp is made to accept and the package's suites must notice; the drill

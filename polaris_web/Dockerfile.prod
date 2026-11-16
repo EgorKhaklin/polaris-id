@@ -47,7 +47,7 @@ RUN if [ "${POLARIS_ZK_BUILD}" = "1" ]; then \
 # ---------------------------------------------------------------------------
 # Stage 2: Python builder (deps to a virtual env we can copy)
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70 AS py-builder
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS py-builder
 
 # Acquire::Retries survives a Debian mirror serving a partial file mid-sync,
 # which failed a release build once. See scripts/polaris-image-build.sh.
@@ -107,7 +107,7 @@ RUN if [ "$POLARIS_CUSTODY_EXTRAS" = "1" ]; then pip install --no-cache-dir --re
 # ---------------------------------------------------------------------------
 # Stage 3: Runtime (minimal Debian-slim, non-root)
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70 AS runtime
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS runtime
 
 LABEL org.opencontainers.image.title="Polaris (production)"
 LABEL org.opencontainers.image.description="Polaris identity-token system (pre-pilot, notional data)"
