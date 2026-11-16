@@ -19,7 +19,8 @@ omit =
     # is not product code, and recording it leaves a dangling source reference
     # once the temp dir is cleaned (a "No source for code" report error).
     */sitecustomize.py
-    # Scripts a test writes into a temp dir and runs: the conformance runner's fake verifier,
+    # Scripts a test writes into a temp dir and runs: the conformance runner's fake verifier and
+    # the drill tests' scratch suites and copies of a drill (one name, polaris-runner-test-),
     # the tree gate's stub stages (its scratch repositories and the gate's own exports of them),
     # the duress test's worker, and the stand-in `oqs` module the verifier and SDK tests put
     # first on PYTHONPATH. CI combines the coverage shards on another runner, where those temp
