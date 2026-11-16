@@ -4,11 +4,10 @@
 record. It moves plan 025 (verify ISO/IEC 18013-5 mdoc presentations over OpenID4VP redirects, accepted 2026-10-11) into
 `lab/strategy/` and extends it to the browser's Digital Credentials API (the DC API), which plan 025 left to a record of
 its own. State: OPEN. Lab M1 ran on 2026-10-11 and M1b on 2026-10-14 ([lab/interop/mdoc](../interop/mdoc/README.md));
-nothing in the product has changed. The next step is M2, paused from 2026-10-14 while the effort goes to a pilot and a
-design partner. Falsifiers 1 to 4 are plan 025's, written before its build and kept
-with their numbers; 5 to 9 were written before any DC API code. Outside sources (S1 to S16) were read on 2026-10-13 and
-are listed at the end. None of the tests named in this record exists yet: each is named in its unittest form,
-`Class.test_name`, so that its name is stable and says where it will live.
+M2 is in `polaris-oid4vp`, experimental and off by default (built 2026-11-16). Falsifiers 1 to 4 are plan 025's,
+written before its build and kept with their numbers; 5 to 9 were written before any DC API code. Outside sources (S1
+to S16) were read on 2026-10-13 and are listed at the end. Each test this record names is in its unittest form,
+`Class.test_name`, so that its name is stable; the tests named for M3 to M6 do not exist yet.
 
 **Qualifying reason: STRATEGIC-BUILD, not yet EXT-INTEROP.** The bet rests on three named ecosystems that chose mdoc and
 the DC API: Google Wallet (`openid4vp-v1-signed` over the DC API, which Chrome ships from 141), Apple Wallet
@@ -931,7 +930,7 @@ Apple Wallet, Google Wallet or age-verification attestations, until for that pat
    under that state's IACA root, presented by a named person, on a date.
 
 Until both hold, the path ships off by default behind `--experimental`; its documentation and the public surfaces carry
-the smallest true sentence, "experimental, off by default, not exercised by any outside wallet or suite" (M2 names the
+the smallest true sentence, "experimental and off by default" (M2 names the
 first such edit); the CHANGELOG records each such path as experimental. No certification is claimed for mdoc or the DC
 API: rc7's covers `sd_jwt_vc` over `direct_post.jwt`, and an `iso_mdl` certification would need a version re-tested in
 the OpenID Foundation's suite and submitted. No verifier profile for the DC API appears on the Foundation's listing, and
