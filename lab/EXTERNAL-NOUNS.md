@@ -13,7 +13,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. |
-| Use | 2 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
+| Use | 3 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier; on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
 | Findings from outside | 3, all fixed |
 
 ## External nouns
@@ -209,7 +209,7 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
 
 ### Use
 
-    Outside projects running it:   2 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28)
+    Outside projects running it:   3 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28; openeudi/openid4vp's CI, since 2026-11-15)
 
 1. 2026-10-11: IDFoundry/OID4VCgo (maintainer osanderson) added
    [polaris-interop.yml](https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml):
@@ -244,6 +244,16 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    negatives, including disclosure-unreferenced, and accepts every control and repaired twin. The
    seven status-list cases are refused by Attesto's status-list check, which a verifier calls
    alongside presentation verification."
+5. 2026-11-15: 54 of this repository's negative vectors (24 SD-JWT VC, 30 mso_mdoc) are externally
+   exercised in openeudi/openid4vp's CI, against its `verifyPresentation`, on each push to main and
+   on pull requests: the `Test` job of its
+   [ci.yml](https://github.com/openeudi/openid4vp/blob/36d66bf57e921020030d2b893dbbbfa5cd5de08a/.github/workflows/ci.yml)
+   runs `npm test` on Node 22 and 24. The test reads its copies of `vectors.json` (0.5.0) and
+   `mdoc-vectors.json` (0.1.0), taken from this repository at `5d0c68f6`, checks each file's
+   SHA-256, accepts the four controls, and requires each of the 54 to be refused and its repaired
+   twin accepted, since [PR 82](https://github.com/openeudi/openid4vp/pull/82), opened from here
+   and merged by the maintainer on 2026-11-15 (36d66bf5). The first run on main with them
+   ([43737527166](https://github.com/openeudi/openid4vp/actions/runs/43737527166)) passed on both.
 
 ### Findings from outside
 
