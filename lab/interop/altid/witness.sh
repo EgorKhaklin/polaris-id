@@ -78,7 +78,7 @@ NODE_IMAGE="$(pin NODE_IMAGE)"
 KOTLINC_URL="$(pin KOTLINC_URL)"
 KOTLINC_SHA256="$(pin KOTLINC_SHA256)"
 JRE="$(pin JRE)"
-PY_IMAGE=python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
+PY_IMAGE=python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
 ISOMDL_URL=https://github.com/Indicio-tech/isomdl-uniffi/releases/download/v0.2.0-indicio.2/isomdl_uniffi-0.2.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ISOMDL_SHA256=7bc9a48af109f5c0a5754c2ef89ee351421dd1010ae8ea217214335af036729c  # the release's published digest
 
