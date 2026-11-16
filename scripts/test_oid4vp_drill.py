@@ -14,6 +14,7 @@ fails on every mutation except the declared survivors. No suite runs.
 import contextlib
 import importlib.util
 import io
+import os
 import pathlib
 import re
 import subprocess
@@ -164,7 +165,12 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
                 text = originals.get(source) or (drill.PKG / source).read_text(encoding="utf-8")
                 self.by_text[text.replace(old, new)] = label
 
-    def run_shard(self, shard, survive):
+    #: What the stand-in prints for a failing run, in the form unittest gives a failing test.
+    FAILED = "FAIL: test_stand_in (suite.T.test_stand_in)\nAssertionError\n\nFAILED (failures=1)\n"
+
+    def run_shard(self, shard, survive, fails_once=()):
+        """main() for one shard: (exit status, the labels run in order, everything printed). A
+        label in `fails_once` fails its first run and passes after it."""
         made = []
 
         def suite(work):
@@ -172,7 +178,8 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
                 label = self.by_text.get((work / source).read_text(encoding="utf-8"))
                 if label is not None:
                     made.append(label)
-                    return subprocess.CompletedProcess([], 0 if label in survive else 1, "", "")
+                    passes = label in survive and not (label in fails_once and made.count(label) == 1)
+                    return subprocess.CompletedProcess([], 0 if passes else 1, "", "" if passes else self.FAILED)
             if any("# MUTANT" in (work / s).read_text(encoding="utf-8") for s in drill.SOURCES):
                 return subprocess.CompletedProcess([], 1, "", "")     # the negative control
             return subprocess.CompletedProcess([], 0, "", "")         # unmutated
@@ -209,8 +216,27 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
                       if any(u[1] == declared for u in drill.shard_of(self.units, (i, 3))))
         survive = set(drill.DECLARED_SURVIVORS) - {declared}
         for i in (1, 2, 3):
-            code, _, text = self.run_shard((i, 3), survive)
+            code, made, text = self.run_shard((i, 3), survive)
             self.assertEqual(code, 1 if i == holder else 0, (i, text[-400:]))
+            if i == holder:
+                # It failed twice before the list was called stale, and the run's words are shown.
+                self.assertEqual(made.count(declared), 2)
+                self.assertIn("%s is declared a survivor and its suite run failed twice" % declared, text)
+                self.assertIn("FAIL: test_stand_in (suite.T.test_stand_in)", text)
+                self.assertIn("no longer survive", text)
+
+    def test_a_declared_survivor_that_fails_one_run_and_passes_the_next_still_survives(self):
+        declared = sorted(drill.DECLARED_SURVIVORS)[0]
+        holder = next(i for i in (1, 2, 3)
+                      if any(u[1] == declared for u in drill.shard_of(self.units, (i, 3))))
+        code, made, text = self.run_shard((holder, 3), set(drill.DECLARED_SURVIVORS), fails_once={declared})
+        self.assertEqual(code, 0, text[-600:])
+        self.assertEqual(made.count(declared), 2)
+        self.assertIn("%s is declared a survivor and its suite run failed, then passed on the re-run"
+                      % declared, text)
+        self.assertIn("FAIL: test_stand_in (suite.T.test_stand_in)", text)
+        self.assertIn("1 declared survivor(s) failed one run and passed the re-run", text)
+        self.assertNotIn("no longer survive", text)
 
     def test_a_declaration_naming_no_refusal_fails_every_shard(self):
         with mock.patch.dict(drill.DECLARED_SURVIVORS, {"sdjwt:nowhere:000000": "stale"}):
@@ -238,8 +264,8 @@ class TheSuiteRun(unittest.TestCase):
 
     def test_a_run_names_every_suite_once_and_the_slow_one_last(self):
         command = drill.unittest_command()
-        self.assertEqual(command[1:4], ["-m", "unittest", "--failfast"])
-        self.assertEqual(sorted(command[4:]), sorted(drill.SUITES))
+        self.assertEqual(command[1:5], ["-B", "-m", "unittest", "--failfast"])
+        self.assertEqual(sorted(command[5:]), sorted(drill.SUITES))
         self.assertTrue(drill.SLOW_SUITES)
         self.assertEqual(tuple(command[-len(drill.SLOW_SUITES):]), drill.SLOW_SUITES)
         self.assertLessEqual(set(drill.SLOW_SUITES), set(drill.SUITES))
@@ -270,6 +296,54 @@ class TheSuiteRun(unittest.TestCase):
         code, slow_ran = self.run_in(quick_passes=True)
         self.assertEqual(code, 0)
         self.assertTrue(slow_ran)
+
+
+class NoStaleBytecode(unittest.TestCase):
+    """A mutant is one file rewritten, often to the size of the mutant before it and within the same
+    second, which is all a bytecode file is keyed by. A suite run that leaves bytecode behind hands
+    the next mutant the previous one's code (2026-11-16: in CI a mutant in a branch nothing reaches
+    was reported caught). So a suite run leaves none, whichever interpreter imports the module."""
+
+    #: Two versions of one module, the same length. The suite fails on A and passes on B.
+    A = "def f():\n    return 1\n"
+    B = "def f():\n    return 2\n"
+    #: The module imported by the suite's own interpreter.
+    DIRECT = ("import unittest\n\nimport m\n\n\nclass T(unittest.TestCase):\n    def test_f(self):\n"
+              "        self.assertEqual(m.f(), 2)\n")
+    #: The module imported first by an interpreter the test starts, as test_cli and test_serve start
+    #: theirs, then by the suite's own.
+    THROUGH_A_CHILD = ("import subprocess\nimport sys\nimport unittest\n\n\nclass T(unittest.TestCase):\n"
+                       "    def test_f(self):\n"
+                       "        subprocess.run([sys.executable, '-c', 'import m'], check=True)\n"
+                       "        import m\n        self.assertEqual(m.f(), 2)\n")
+
+    def two_versions(self, suite):
+        """A, one suite run, then B written at A's size and mtime, and a second run: (the first exit
+        status, the second, the bytecode files left behind)."""
+        self.assertEqual(len(self.A), len(self.B))
+        with tempfile.TemporaryDirectory() as tmp:
+            work = pathlib.Path(tmp)
+            (work / "test_m.py").write_text(suite)
+            module = work / "m.py"
+            module.write_text(self.A)
+            stamp = module.stat()
+            with mock.patch.object(drill, "SUITES", ("test_m",)), mock.patch.object(drill, "SLOW_SUITES", ()), \
+                    mock.patch.dict(os.environ):
+                # Whatever the caller of these tests set, the drill's own setting is what is tested.
+                os.environ.pop("PYTHONDONTWRITEBYTECODE", None)
+                first = drill._run_suite(work).returncode
+                module.write_text(self.B)
+                os.utime(module, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+                second = drill._run_suite(work).returncode
+            return first, second, sorted(p.name for p in work.rglob("*.pyc"))
+
+    def test_a_rewrite_of_the_same_size_and_time_runs_its_own_code(self):
+        for name, suite in (("direct", self.DIRECT), ("through a child", self.THROUGH_A_CHILD)):
+            with self.subTest(imported=name):
+                first, second, left = self.two_versions(suite)
+                self.assertNotEqual(first, 0)
+                self.assertEqual(second, 0)
+                self.assertEqual(left, [])
 
 
 if __name__ == "__main__":

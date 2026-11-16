@@ -35,9 +35,16 @@ is not a mutation runs in every shard: the unmutated baseline, the negative cont
 check that every named mutation still matches its code. A declared survivor is answered for by
 the shard that mutates it, and one that names no refusal at all by every shard. Unsharded the
 drill was 34 of the product boundary job's 35 minutes; CI runs three shards in a job of its own.
+
+NO BYTECODE (2026-11-16). A mutant is one file rewritten, and two raise-mutants of a file have
+the same size. Python keys a bytecode file by the source's size and whole-second mtime, so a
+suite run that writes one hands the NEXT mutant, written in the same second, the previous
+mutant's code: a mutant nothing catches is then reported caught. No child of a suite run
+writes bytecode (`-B`, and PYTHONDONTWRITEBYTECODE for the interpreters the tests start).
 """
 import argparse
 import hashlib
+import os
 import pathlib
 import re
 import shutil
@@ -335,13 +342,24 @@ SLOW_SUITES = ("test_serve",)
 
 
 def unittest_command():
-    """The command one suite run is: every suite, the slow ones last, stopping at a failure."""
+    """The command one suite run is: every suite, the slow ones last, stopping at a failure,
+    writing no bytecode."""
     ordered = [s for s in SUITES if s not in SLOW_SUITES] + [s for s in SUITES if s in SLOW_SUITES]
-    return [sys.executable, "-m", "unittest", "--failfast", *ordered]
+    return [sys.executable, "-B", "-m", "unittest", "--failfast", *ordered]
 
 
 def _run_suite(work: pathlib.Path):
-    return subprocess.run(unittest_command(), cwd=str(work), capture_output=True, text=True, timeout=600)
+    # The variable is for the interpreters the tests themselves start: -B stops this one writing
+    # bytecode, not from reading what a child of its own wrote for the previous mutant.
+    return subprocess.run(unittest_command(), cwd=str(work), capture_output=True, text=True, timeout=600,
+                          env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+
+
+def _what_failed(proc) -> list:
+    """The lines of a failing suite run that name what failed, and its last line."""
+    lines = [line for line in (proc.stderr or proc.stdout or "").strip().splitlines() if line.strip()]
+    named = [line for line in lines if line.startswith(("FAIL: ", "ERROR: "))]
+    return (named + lines[-1:])[:4] or ["(the run printed nothing)"]
 
 
 def _suite_passes(work: pathlib.Path) -> bool:
@@ -433,13 +451,14 @@ def main(argv=None) -> int:
             return 1
         print("  negative control: a package with every refusal inverted is caught")
 
-        survivors, flaky = [], []
+        survivors, flaky, unsteady = [], [], []
         for source, i, mutated, label in my_sites:
             lines = originals[source].splitlines(keepends=True)
             lines[i] = mutated
             (pkg / source).write_text("".join(lines), encoding="utf-8")
             try:
-                if _suite_passes(pkg):
+                first = _run_suite(pkg)
+                if first.returncode == 0:
                     again, proc = _confirm_survivor(pkg)
                     if again:
                         survivors.append((label, lines[i].split("# MUTANT")[0].strip()))
@@ -450,6 +469,18 @@ def main(argv=None) -> int:
                                 print("      %s" % out_line[:100])
                     else:
                         flaky.append(label)
+                elif label in DECLARED_SURVIVORS:
+                    # The other direction gets the same second run. One failing run does not
+                    # close a declared gap, only two do, and what failed is printed either way:
+                    # "no longer survives" with no output cannot be acted on from a CI log.
+                    again, _ = _confirm_survivor(pkg)
+                    print("  ! %s is declared a survivor and its suite run failed%s. That run said:"
+                          % (label, ", then passed on the re-run" if again else " twice"))
+                    for out_line in _what_failed(first):
+                        print("      %s" % out_line[:160])
+                    if again:
+                        survivors.append((label, lines[i].split("# MUTANT")[0].strip()))
+                        unsteady.append(label)
             finally:
                 (pkg / source).write_text(originals[source], encoding="utf-8")
             if args.verbose:
@@ -500,6 +531,10 @@ def main(argv=None) -> int:
     if flaky:
         print("  %d mutation(s) passed once and failed on the re-run, so they are CAUGHT: %s"
               % (len(flaky), ", ".join(flaky)))
+    if unsteady:
+        print("  %d declared survivor(s) failed one run and passed the re-run, so they SURVIVE and "
+              "the suite failed once for a reason of its own, printed above: %s"
+              % (len(unsteady), ", ".join(unsteady)))
     print("  refusals inverted           %4d%s" % (len(my_sites), (" of %d (shard %d/%d)"
                                                               % (len(sites), shard_i, shard_n))
                                                              if shard_n > 1 else ""))
