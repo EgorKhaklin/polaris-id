@@ -168,9 +168,10 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
     #: What the stand-in prints for a failing run, in the form unittest gives a failing test.
     FAILED = "FAIL: test_stand_in (suite.T.test_stand_in)\nAssertionError\n\nFAILED (failures=1)\n"
 
-    def run_shard(self, shard, survive, fails_once=()):
+    def run_shard(self, shard, survive, fails_once=(), fails_rerun=()):
         """main() for one shard: (exit status, the labels run in order, everything printed). A
-        label in `fails_once` fails its first run and passes after it."""
+        label in `fails_once` fails its first run and passes after it; one in `fails_rerun`
+        passes its first run and fails its second."""
         made = []
 
         def suite(work):
@@ -178,7 +179,9 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
                 label = self.by_text.get((work / source).read_text(encoding="utf-8"))
                 if label is not None:
                     made.append(label)
-                    passes = label in survive and not (label in fails_once and made.count(label) == 1)
+                    run = made.count(label)
+                    passes = label in survive and not (label in fails_once and run == 1) \
+                        and not (label in fails_rerun and run == 2)
                     return subprocess.CompletedProcess([], 0 if passes else 1, "", "" if passes else self.FAILED)
             if any("# MUTANT" in (work / s).read_text(encoding="utf-8") for s in drill.SOURCES):
                 return subprocess.CompletedProcess([], 1, "", "")     # the negative control
@@ -235,8 +238,34 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
         self.assertIn("%s is declared a survivor and its suite run failed, then passed on the re-run"
                       % declared, text)
         self.assertIn("FAIL: test_stand_in (suite.T.test_stand_in)", text)
-        self.assertIn("1 declared survivor(s) failed one run and passed the re-run", text)
+        self.assertIn("1 declared survivor(s) failed one of their two runs", text)
         self.assertNotIn("no longer survive", text)
+
+    def test_a_declared_survivor_that_passes_one_run_and_fails_the_next_still_survives(self):
+        """The same rule in the other order: the failing run is the second."""
+        declared = sorted(drill.DECLARED_SURVIVORS)[0]
+        holder = next(i for i in (1, 2, 3)
+                      if any(u[1] == declared for u in drill.shard_of(self.units, (i, 3))))
+        code, made, text = self.run_shard((holder, 3), set(drill.DECLARED_SURVIVORS), fails_rerun={declared})
+        self.assertEqual(code, 0, text[-600:])
+        self.assertEqual(made.count(declared), 2)
+        self.assertIn("%s is declared a survivor and its suite run passed, then failed on the re-run"
+                      % declared, text)
+        self.assertIn("FAIL: test_stand_in (suite.T.test_stand_in)", text)
+        self.assertIn("1 declared survivor(s) failed one of their two runs", text)
+        self.assertNotIn("no longer survive", text)
+        self.assertNotIn("so they are CAUGHT", text)
+
+    def test_an_undeclared_mutation_that_passes_one_run_and_fails_the_next_is_caught(self):
+        """The second run of a mutation nobody declared is still what it was: a confirmation."""
+        undeclared = next(u[1] for u in self.units if u[0] == "site" and u[1] not in drill.DECLARED_SURVIVORS)
+        holder = next(i for i in (1, 2, 3)
+                      if any(u[1] == undeclared for u in drill.shard_of(self.units, (i, 3))))
+        code, made, text = self.run_shard((holder, 3), set(drill.DECLARED_SURVIVORS) | {undeclared},
+                                          fails_rerun={undeclared})
+        self.assertEqual(code, 0, text[-600:])
+        self.assertEqual(made.count(undeclared), 2)
+        self.assertIn("1 mutation(s) passed once and failed on the re-run, so they are CAUGHT: %s" % undeclared, text)
 
     def test_a_declaration_naming_no_refusal_fails_every_shard(self):
         with mock.patch.dict(drill.DECLARED_SURVIVORS, {"sdjwt:nowhere:000000": "stale"}):
@@ -264,8 +293,8 @@ class TheSuiteRun(unittest.TestCase):
 
     def test_a_run_names_every_suite_once_and_the_slow_one_last(self):
         command = drill.unittest_command()
-        self.assertEqual(command[1:5], ["-B", "-m", "unittest", "--failfast"])
-        self.assertEqual(sorted(command[5:]), sorted(drill.SUITES))
+        self.assertEqual(command[1:4], ["-m", "unittest", "--failfast"])
+        self.assertEqual(sorted(command[4:]), sorted(drill.SUITES))
         self.assertTrue(drill.SLOW_SUITES)
         self.assertEqual(tuple(command[-len(drill.SLOW_SUITES):]), drill.SLOW_SUITES)
         self.assertLessEqual(set(drill.SLOW_SUITES), set(drill.SUITES))
@@ -317,11 +346,17 @@ class NoStaleBytecode(unittest.TestCase):
                        "        subprocess.run([sys.executable, '-c', 'import m'], check=True)\n"
                        "        import m\n        self.assertEqual(m.f(), 2)\n")
 
+    #: What the scratch package's directory name starts with. The coverage shards record the suite
+    #: runs' interpreters too, and their data is combined on another runner, where the scratch
+    #: module never existed: measured, it is a "No source for code" report error there.
+    #: .coveragerc omits this name.
+    SCRATCH = "polaris-runner-test-"
+
     def two_versions(self, suite):
         """A, one suite run, then B written at A's size and mtime, and a second run: (the first exit
-        status, the second, the bytecode files left behind)."""
+        status, the second, the bytecode files left behind, the scratch directory's name)."""
         self.assertEqual(len(self.A), len(self.B))
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(prefix=self.SCRATCH) as tmp:
             work = pathlib.Path(tmp)
             (work / "test_m.py").write_text(suite)
             module = work / "m.py"
@@ -335,15 +370,20 @@ class NoStaleBytecode(unittest.TestCase):
                 module.write_text(self.B)
                 os.utime(module, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
                 second = drill._run_suite(work).returncode
-            return first, second, sorted(p.name for p in work.rglob("*.pyc"))
+            return first, second, sorted(p.name for p in work.rglob("*.pyc")), work.name
 
     def test_a_rewrite_of_the_same_size_and_time_runs_its_own_code(self):
         for name, suite in (("direct", self.DIRECT), ("through a child", self.THROUGH_A_CHILD)):
             with self.subTest(imported=name):
-                first, second, left = self.two_versions(suite)
+                first, second, left, where = self.two_versions(suite)
                 self.assertNotEqual(first, 0)
                 self.assertEqual(second, 0)
                 self.assertEqual(left, [])
+                self.assertTrue(where.startswith(self.SCRATCH), where)
+
+    def test_the_scratch_name_is_one_the_coverage_measure_leaves_out(self):
+        omitted = [line.strip() for line in (HERE.parent / ".coveragerc").read_text().splitlines()]
+        self.assertIn("*/%s*/*" % self.SCRATCH, omitted)
 
 
 if __name__ == "__main__":

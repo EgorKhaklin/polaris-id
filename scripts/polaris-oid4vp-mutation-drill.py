@@ -39,8 +39,8 @@ drill was 34 of the product boundary job's 35 minutes; CI runs three shards in a
 NO BYTECODE (2026-11-16). A mutant is one file rewritten, and two raise-mutants of a file have
 the same size. Python keys a bytecode file by the source's size and whole-second mtime, so a
 suite run that writes one hands the NEXT mutant, written in the same second, the previous
-mutant's code: a mutant nothing catches is then reported caught. No child of a suite run
-writes bytecode (`-B`, and PYTHONDONTWRITEBYTECODE for the interpreters the tests start).
+mutant's code: a mutant nothing catches is then reported caught. So a suite run is started
+with PYTHONDONTWRITEBYTECODE=1, and neither its interpreter nor one a test starts writes any.
 """
 import argparse
 import hashlib
@@ -342,15 +342,14 @@ SLOW_SUITES = ("test_serve",)
 
 
 def unittest_command():
-    """The command one suite run is: every suite, the slow ones last, stopping at a failure,
-    writing no bytecode."""
+    """The command one suite run is: every suite, the slow ones last, stopping at a failure."""
     ordered = [s for s in SUITES if s not in SLOW_SUITES] + [s for s in SUITES if s in SLOW_SUITES]
-    return [sys.executable, "-B", "-m", "unittest", "--failfast", *ordered]
+    return [sys.executable, "-m", "unittest", "--failfast", *ordered]
 
 
 def _run_suite(work: pathlib.Path):
-    # The variable is for the interpreters the tests themselves start: -B stops this one writing
-    # bytecode, not from reading what a child of its own wrote for the previous mutant.
+    # The variable reaches the suite's own interpreter and every interpreter a test starts, so
+    # none of them writes bytecode and no mutant is answered for by the bytecode of another.
     return subprocess.run(unittest_command(), cwd=str(work), capture_output=True, text=True, timeout=600,
                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
 
@@ -458,29 +457,33 @@ def main(argv=None) -> int:
             (pkg / source).write_text("".join(lines), encoding="utf-8")
             try:
                 first = _run_suite(pkg)
-                if first.returncode == 0:
-                    again, proc = _confirm_survivor(pkg)
-                    if again:
+                declared = label in DECLARED_SURVIVORS
+                if first.returncode == 0 or declared:
+                    again, second = _confirm_survivor(pkg)
+                    passed = (first.returncode == 0) + again
+                    if passed == 2 or (declared and passed == 1):
                         survivors.append((label, lines[i].split("# MUTANT")[0].strip()))
-                        if label not in DECLARED_SURVIVORS:
-                            print("  ! %s survived twice. The suite's second run said:"
-                                  % label)
-                            for out_line in (proc.stdout or proc.stderr).strip().splitlines()[-4:]:
-                                print("      %s" % out_line[:100])
-                    else:
+                    if not declared and passed == 2:
+                        print("  ! %s survived twice. The suite's second run said:"
+                              % label)
+                        for out_line in (second.stdout or second.stderr).strip().splitlines()[-4:]:
+                            print("      %s" % out_line[:100])
+                    elif not declared:
                         flaky.append(label)
-                elif label in DECLARED_SURVIVORS:
-                    # The other direction gets the same second run. One failing run does not
-                    # close a declared gap, only two do, and what failed is printed either way:
-                    # "no longer survives" with no output cannot be acted on from a CI log.
-                    again, _ = _confirm_survivor(pkg)
-                    print("  ! %s is declared a survivor and its suite run failed%s. That run said:"
-                          % (label, ", then passed on the re-run" if again else " twice"))
-                    for out_line in _what_failed(first):
-                        print("      %s" % out_line[:160])
-                    if again:
-                        survivors.append((label, lines[i].split("# MUTANT")[0].strip()))
-                        unsteady.append(label)
+                    elif passed < 2:
+                        # A declared survivor is run twice whatever its first run said. One
+                        # failing run of the two, in either order, does not close a declared
+                        # gap; two do. What the failing run said is printed either way: "no
+                        # longer survives" with no output cannot be acted on from a CI log.
+                        failed = first if first.returncode != 0 else second
+                        print("  ! %s is declared a survivor and its suite run %s. That run said:"
+                              % (label, "failed twice" if passed == 0
+                                 else "failed, then passed on the re-run" if first.returncode != 0
+                                 else "passed, then failed on the re-run"))
+                        for out_line in _what_failed(failed):
+                            print("      %s" % out_line[:160])
+                        if passed == 1:
+                            unsteady.append(label)
             finally:
                 (pkg / source).write_text(originals[source], encoding="utf-8")
             if args.verbose:
@@ -532,7 +535,7 @@ def main(argv=None) -> int:
         print("  %d mutation(s) passed once and failed on the re-run, so they are CAUGHT: %s"
               % (len(flaky), ", ".join(flaky)))
     if unsteady:
-        print("  %d declared survivor(s) failed one run and passed the re-run, so they SURVIVE and "
+        print("  %d declared survivor(s) failed one of their two runs, so they SURVIVE and "
               "the suite failed once for a reason of its own, printed above: %s"
               % (len(unsteady), ", ".join(unsteady)))
     print("  refusals inverted           %4d%s" % (len(my_sites), (" of %d (shard %d/%d)"
