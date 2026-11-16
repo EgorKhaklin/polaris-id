@@ -26,7 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cryptography import x509  # noqa: E402
 
 from polaris_oid4vp.cli import FILES, keygen, main, parse_claim, verifier_from  # noqa: E402
-from test_verifier import TYP_AS_FORMAT, Wallet, verifier_info_vectors  # noqa: E402
+from test_verifier import MdocWallet, TYP_AS_FORMAT, Wallet, verifier_info_vectors  # noqa: E402
+import test_mdoc as md  # noqa: E402
 
 
 class KeygenTests(unittest.TestCase):
@@ -1019,6 +1020,336 @@ class VerifierInfoProfileServeTests(unittest.TestCase):
                 self.assertIsNone(seen["verifier"].verifier_info_profile)
                 self.assertIn(b'"verifier_info":' + json.dumps(info, separators=(",", ":")).encode(),
                               self._request_payload(seen["verifier"]))
+
+
+MDL_AGE = '["org.iso.18013.5.1","age_over_21"]=true'
+
+
+class _MdocServeCase(unittest.TestCase):
+    """`serve` run to its end with the listener replaced, as ServeCommandHeldOutTests runs it,
+    with a file holding the IACA root the mdoc tests mint under."""
+
+    _serve = ServeCommandHeldOutTests._serve
+    _jwks_file = ServeCommandHeldOutTests._jwks_file
+    _anchor_file = ServeCommandHeldOutTests._anchor_file
+
+    def setUp(self):
+        from cryptography.hazmat.primitives import serialization
+        ServeCommandHeldOutTests.setUp(self)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.root = self.tmp / "iaca.pem"
+        self.root.write_bytes(md.IACA.public_bytes(serialization.Encoding.PEM))
+
+    def mdoc(self, *extra, without=()):
+        args = ["--format", "mso_mdoc", "--experimental", "--doctype", md.MDL,
+                "--iaca-root", str(self.root), "--claim", MDL_AGE]
+        for flag in without:
+            at = args.index(flag)
+            del args[at:at + (1 if flag == "--experimental" else 2)]
+        return self._serve(*args, *extra)
+
+    def stopped(self, result, *says):
+        """The command refused before it built a verifier, and stderr says why."""
+        rc, seen, _, err = result
+        self.assertEqual(rc, 2, err)
+        self.assertNotIn("verifier", seen)
+        for words in says:
+            self.assertIn(words, err)
+
+
+class PublicationRuleTests(_MdocServeCase):
+    """What no outside wallet or suite has exercised is off until it is asked for by name."""
+
+    def test_the_unexercised_paths_are_off_by_default(self):
+        import json
+        rc, seen, out, _ = self._serve()
+        self.assertEqual(rc, 0)
+        verifier = seen["verifier"]
+        self.assertEqual((verifier.credential_format, verifier.doctype_value, verifier.iaca_roots),
+                         ("dc+sd-jwt", None, []))
+        payload = verifier.new_request()[1].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual([q["format"] for q in claims["dcql_query"]["credentials"]], ["dc+sd-jwt"])
+        self.assertEqual(list(claims["client_metadata"]["vp_formats_supported"]), ["dc+sd-jwt"])
+        self.assertNotIn("mso_mdoc", out)
+        # Asked for without the flag that turns it on, it does not start.
+        self.stopped(self.mdoc(without=("--experimental",)), "--format mso_mdoc", "--experimental")
+        # The flag alone asks for nothing new.
+        rc, seen, _, _ = self._serve("--experimental")
+        self.assertEqual((rc, seen["verifier"].credential_format), (0, "dc+sd-jwt"))
+
+
+class MdocServeCommandTests(_MdocServeCase):
+    """`serve --format mso_mdoc --doctype D --iaca-root PEM --claim '[NS,EL]' --experimental`:
+    what the flags hand the verifier, and what stops the command before it listens."""
+
+    def test_the_flags_reach_the_verifier_and_an_mdoc_is_accepted(self):
+        rc, seen, out, err = self.mdoc()
+        self.assertEqual(rc, 0, err)
+        verifier = seen["verifier"]
+        self.assertEqual((verifier.credential_format, verifier.doctype_value, verifier.query_id),
+                         ("mso_mdoc", md.MDL, "mdoc"))
+        self.assertEqual(verifier.claims, [((md.MDL_NS, "age_over_21"), (True,))])
+        self.assertEqual([(root.certificate, root.doctypes) for root in verifier.iaca_roots],
+                         [(md.IACA, frozenset([md.MDL]))])
+        self.assertEqual((verifier.issuer_jwks, verifier.issuer_trust_anchors), ([], []))
+        self.assertIn("mso_mdoc, docType %s (experimental)" % md.MDL, out)
+        self.assertNotIn("--iaca-root", err)
+        self.assertNotIn("--issuer-jwks", err)
+        _, jar = verifier.new_request()
+        status, _, verdict = verifier.handle_direct_post(MdocWallet().respond(jar))
+        self.assertEqual((status, verdict.authentic), (200, True), verdict.reason)
+
+    def test_the_line_and_the_result_file_name_the_elements_accepted(self):
+        """The `<-` line serve prints and the --result file, for an accepted mdoc: each element
+        under its namespace, as --claim names it."""
+        import contextlib
+        import io
+        import json
+        path = self.tmp / "result.json"
+        rc, seen, _, err = self.mdoc("--once", "--result", str(path))
+        self.assertEqual(rc, 0, err)
+        verifier = seen["verifier"]
+        (session,) = verifier._sessions.values()
+        status, body, verdict = verifier.handle_direct_post(
+            MdocWallet().respond(verifier.request_object(session.state)))
+        line = io.StringIO()
+        with contextlib.redirect_stdout(line):
+            seen["kwargs"]["on_verdict"](status, body, verdict)
+        self.assertEqual(line.getvalue(),
+                         "  <- 200 authentic, claims [['org.iso.18013.5.1', 'age_over_21']]\n")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual((doc["outcome"], doc["claims"]),
+                         ("accepted", [["org.iso.18013.5.1", "age_over_21"]]))
+
+    def test_a_value_the_request_does_not_accept_is_refused(self):
+        _, seen, _, _ = self.mdoc()
+        verifier = seen["verifier"]
+        _, jar = verifier.new_request()
+        status, _, verdict = verifier.handle_direct_post(
+            MdocWallet().respond(jar, items=(md.el("age_over_21", False),)))
+        self.assertEqual((status, verdict.code), (400, "claims"), verdict.reason)
+
+    def test_the_query_id_named_is_the_one_asked_under(self):
+        rc, seen, _, _ = self.mdoc("--credential-query-id", "licence")
+        self.assertEqual((rc, seen["verifier"].query_id), (0, "licence"))
+
+    def test_verifier_info_names_the_mdoc_query_by_its_id(self):
+        """An attestation's credential_ids name this request's query: `mdoc` unless one is named."""
+        import json
+        path = self.tmp / "verifier-info.json"
+        for query_id, flags in (("mdoc", ()), ("licence", ("--credential-query-id", "licence"))):
+            with self.subTest(query_id=query_id):
+                info = [{"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln",
+                         "credential_ids": [query_id]}]
+                path.write_text(json.dumps(info))
+                rc, seen, _, err = self.mdoc("--verifier-info", str(path), *flags)
+                self.assertEqual(rc, 0, err)
+                self.assertEqual(seen["verifier"].verifier_info, info)
+        path.write_text(json.dumps([{"format": "registration_cert", "data": "x", "credential_ids": ["pid"]}]))
+        self.stopped(self.mdoc("--verifier-info", str(path)), "--verifier-info", "credential queries (mdoc)")
+
+    def test_without_a_root_it_warns_and_refuses_every_document(self):
+        rc, seen, _, err = self.mdoc(without=("--iaca-root",))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("no --iaca-root", err)
+        self.assertIn("issuer_key", err)
+        self.assertNotIn("no --issuer-jwks", err)
+        verifier = seen["verifier"]
+        self.assertEqual(verifier.iaca_roots, [])
+        _, jar = verifier.new_request()
+        status, _, verdict = verifier.handle_direct_post(MdocWallet().respond(jar))
+        self.assertEqual((status, verdict.code), (400, "issuer_key"), verdict.reason)
+
+    def test_every_certificate_in_a_root_file_is_a_root_for_the_doctype(self):
+        from cryptography.hazmat.primitives import serialization
+        _, other = md.make_root("Another IACA")
+        self.root.write_bytes(b"".join(c.public_bytes(serialization.Encoding.PEM) for c in (md.IACA, other)))
+        second = self.tmp / "second.pem"
+        second.write_bytes(md.make_root("A third IACA")[1].public_bytes(serialization.Encoding.PEM))
+        rc, seen, _, err = self.mdoc("--iaca-root", str(second))
+        self.assertEqual(rc, 0, err)
+        roots = seen["verifier"].iaca_roots
+        self.assertEqual([r.certificate.subject.rfc4514_string() for r in roots],
+                         ["CN=Test IACA", "CN=Another IACA", "CN=A third IACA"])
+        self.assertEqual({r.doctypes for r in roots}, {frozenset([md.MDL])})
+
+    def test_a_root_file_it_cannot_use_stops_it_starting(self):
+        from cryptography.hazmat.primitives import serialization
+        absent = self.tmp / "absent.pem"
+        text = self.tmp / "text.pem"
+        text.write_text("hello")
+        leaf = self.tmp / "leaf.pem"
+        leaf.write_bytes(md.DS.public_bytes(serialization.Encoding.PEM))
+        for path, says in ((absent, "not a readable PEM"), (text, "not a readable PEM"), (leaf, "not a CA")):
+            with self.subTest(path=path.name):
+                self.stopped(self.mdoc("--iaca-root", str(path), without=("--iaca-root",)),
+                             "--iaca-root %s" % path, says)
+
+    def test_what_an_mdoc_query_needs_is_asked_for_by_flag(self):
+        self.stopped(self.mdoc(without=("--doctype",)), "--doctype")
+        self.stopped(self.mdoc(without=("--claim",)), "--claim", "namespace")
+        self.stopped(self.mdoc("--doctype", ""), "--doctype")
+
+    def test_a_claim_that_is_not_a_namespace_and_an_element_stops_it_starting(self):
+        for claim in ("age_over_21", "org.iso.18013.5.1.age_over_21", '["org.iso.18013.5.1"]',
+                      '["org.iso.18013.5.1","driving_privileges","codes"]'):
+            with self.subTest(claim=claim):
+                self.stopped(self.mdoc("--claim", claim, without=("--claim",)), claim, "namespace")
+
+    def test_an_sd_jwt_flag_with_an_mdoc_query_stops_it_starting(self):
+        import json
+        entries = self.tmp / "transaction-data.json"
+        entries.write_text(json.dumps([{"type": "x", "credential_ids": ["mdoc"]}]))
+        for flags in (("--issuer-jwks", self._jwks_file({"keys": [self.jwk]})),
+                      ("--issuer-trust-anchor", self._anchor_file()),
+                      ("--vct", "urn:eudi:pid:1"),
+                      ("--once", "--transaction-data", str(entries))):
+            with self.subTest(flag=flags[-2]):
+                self.stopped(self.mdoc(*flags), flags[-2], "dc+sd-jwt")
+
+    def test_an_mdoc_flag_without_the_format_stops_it_starting(self):
+        for flags in (("--doctype", md.MDL), ("--iaca-root", str(self.root))):
+            with self.subTest(flag=flags[0]):
+                for more in ((), ("--experimental",)):
+                    self.stopped(self._serve(*flags, *more), flags[0], "--format mso_mdoc")
+
+    def test_a_format_it_does_not_build_is_refused_by_the_parser(self):
+        import contextlib
+        import io
+        from unittest import mock
+        from polaris_oid4vp import cli
+        # The parser refuses it, so no server is ever built; one that is built ends the test at
+        # once, where the real one would serve until interrupted.
+        built = AssertionError("the parser admitted a format this command does not build")
+        err = io.StringIO()
+        with mock.patch.object(cli, "serve", side_effect=built), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), \
+                self.assertRaises(SystemExit) as caught:
+            main(["serve", "--pki", str(self.tmp), "--format", "jwt_vc_json", "--experimental"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("argument --format: invalid choice: 'jwt_vc_json'", err.getvalue())
+
+    def test_the_help_says_the_format_is_experimental(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            main(["serve", "--help"])
+        flat = " ".join(out.getvalue().split())
+        for phrase in ("--format {dc+sd-jwt,mso_mdoc}", "--doctype", "--iaca-root", "--experimental",
+                       "experimental"):
+            self.assertIn(phrase, flat)
+
+
+class MdocVerdictCommandTests(unittest.TestCase):
+    """`polaris-oid4vp verdict` over a captured mdoc response: the PID capture, its request, its
+    root and the instant it was captured at."""
+
+    def setUp(self):
+        import json
+        from cryptography.hazmat.primitives import serialization
+        from polaris_oid4vp.jwe import b64u_encode
+        response, inputs, self.at, root = md.capture_case("capture-pid")
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-mdoc-verdict-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.query = {"id": "pid", "format": "mso_mdoc", "meta": {"doctype_value": md.PID}}
+        self.claims = {
+            "client_id": inputs["client_id"], "nonce": inputs["nonce"], "response_uri": inputs["response_uri"],
+            "response_mode": "direct_post.jwt",
+            "client_metadata": {"jwks": {"keys": [inputs["encryption_jwk"]]}},
+            "dcql_query": {"credentials": [self.query]}}
+        self.request = self.write("request.json", json.dumps(self.claims))
+        self.token = self.write("vp_token.json", json.dumps({"pid": [b64u_encode(response)]}))
+        self.root = self.write("root.pem", root.public_bytes(serialization.Encoding.PEM).decode())
+
+    def write(self, name, text):
+        path = self.tmp / name
+        path.write_text(text)
+        return str(path)
+
+    def verdict(self, *extra, experimental=True, root=True, now=True, request=None):
+        import contextlib
+        import io
+        import json
+        args = ["verdict", "--request", request or self.request, "--vp-token", self.token]
+        args += ["--experimental"] if experimental else []
+        args += ["--iaca-root", self.root] if root else []
+        args += ["--now", str(self.at)] if now else []
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = main(args + list(extra))
+        return rc, (json.loads(out.getvalue()) if out.getvalue() else None), err.getvalue()
+
+    def test_the_pid_capture_verifies_at_its_instant(self):
+        rc, result, err = self.verdict()
+        self.assertEqual((rc, result["accepted"]), (0, True), err)
+        verdict = result["verdicts"]["pid"]
+        self.assertTrue(verdict["authentic"])
+        self.assertIn("judged at the supplied instant 2026-10-11T04:54:42Z", verdict["reason"])
+        self.assertEqual(verdict["claims"], [[md.PID, "family_name"], [md.PID, "given_name"]])
+
+    def test_the_roots_are_trusted_for_the_doctypes_the_request_names_and_no_other(self):
+        from unittest import mock
+        from polaris_oid4vp import cli
+        real, handed = cli.verify_response, {}
+
+        def judge(request, token, **kwargs):
+            handed.update(kwargs)
+            return real(request, token, **kwargs)
+
+        with mock.patch.object(cli, "verify_response", judge):
+            rc, result, err = self.verdict()
+        self.assertEqual((rc, result["accepted"]), (0, True), err)
+        self.assertEqual([root.doctypes for root in handed["iaca_roots"]], [frozenset([md.PID])])
+
+    def test_without_the_flag_a_captured_mdoc_is_not_judged(self):
+        rc, result, err = self.verdict(experimental=False)
+        self.assertEqual((rc, result), (2, None))
+        self.assertIn("--experimental", err)
+        self.assertIn("mso_mdoc", err)
+
+    def test_at_this_machine_s_clock_the_capture_has_run_out(self):
+        rc, result, _ = self.verdict(now=False)
+        self.assertEqual((rc, result["accepted"]), (1, False))
+        self.assertEqual(result["verdicts"]["pid"]["code"], "credential_validity")
+        self.assertNotIn("supplied instant", result["verdicts"]["pid"]["reason"])
+
+    def test_without_a_root_or_under_another_it_is_refused(self):
+        from cryptography.hazmat.primitives import serialization
+        rc, result, _ = self.verdict(root=False)
+        self.assertEqual((rc, result["verdicts"]["pid"]["code"]), (1, "issuer_key"))
+        other = self.write("other.pem", md.IACA.public_bytes(serialization.Encoding.PEM).decode())
+        rc, result, _ = self.verdict("--iaca-root", other, root=False)
+        self.assertEqual((rc, result["verdicts"]["pid"]["code"]), (1, "issuer_key"))
+
+    def test_a_root_is_trusted_for_the_doctype_the_request_names(self):
+        """The same root and response under a request asking for an mDL: the document is a PID."""
+        import json
+        mdl = dict(self.claims, dcql_query={"credentials": [dict(self.query, meta={"doctype_value": md.MDL})]})
+        rc, result, _ = self.verdict(request=self.write("mdl.json", json.dumps(mdl)))
+        self.assertEqual((rc, result["verdicts"]["pid"]["code"]), (1, "doctype"))
+
+    def test_a_root_file_it_cannot_use_is_refused(self):
+        rc, result, err = self.verdict("--iaca-root", self.write("text.pem", "hello"))
+        self.assertEqual((rc, result), (2, None))
+        self.assertIn("--iaca-root", err)
+
+    def test_a_flag_no_query_of_the_request_reads_is_refused(self):
+        import json
+        issuers = self.write("issuers.json", json.dumps({"keys": []}))
+        for flags, says in ((("--issuer-jwks", issuers), "dc+sd-jwt"),
+                            (("--issuer-trust-anchor", self.root), "dc+sd-jwt")):
+            with self.subTest(flag=flags[0]):
+                rc, result, err = self.verdict(*flags)
+                self.assertEqual((rc, result), (2, None))
+                self.assertIn(flags[0], err)
+                self.assertIn(says, err)
+        sd_jwt = dict(self.claims, dcql_query={"credentials": [{"id": "pid", "format": "dc+sd-jwt"}]})
+        rc, result, err = self.verdict(request=self.write("sd-jwt.json", json.dumps(sd_jwt)))
+        self.assertEqual((rc, result), (2, None))
+        self.assertIn("--iaca-root", err)
+        self.assertIn("mso_mdoc", err)
 
 
 class VerdictCommandTests(unittest.TestCase):

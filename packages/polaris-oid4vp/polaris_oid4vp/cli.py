@@ -49,10 +49,12 @@ except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
 from .jwe import _loads_depth_bounded
+from .mdoc import IacaRoot
 from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
                     b64u_decode)
 from .serve import REQUEST_PATH, RESPONSE_PATH, serve
-from .verifier import (VERIFIER_INFO_PROFILES, Verifier, claim_query, transaction_data_entries,
+from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_INFO_PROFILES,
+                       Verifier, claim_query, mdoc_claim_query, transaction_data_entries,
                        verifier_info_entries, verify_response)
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
@@ -161,10 +163,12 @@ def keygen(out: pathlib.Path, host: str) -> dict:
     return {"out": out, "host": host}
 
 
-def parse_claim(text):
+def parse_claim(text, credential_format=SD_JWT_FORMAT):
     """`--claim`: a name (`given_name`), a dotted path of object keys (`age_equal_or_over.18`)
     or a JSON array of keys (`["address","locality"]`), optionally `=VALUE` (JSON: `=true`,
-    `=18`, `="DE"`; anything else is taken as a string) for the value the request accepts."""
+    `=18`, `="DE"`; anything else is taken as a string) for the value the request accepts.
+    For an mso_mdoc query the path is a namespace and an element, which only the JSON array
+    can spell: a namespace has dots of its own."""
     if text.startswith("["):
         end = text.find("]")
         if end < 0:
@@ -188,7 +192,8 @@ def parse_claim(text):
             value = value_text
         claim["values"] = [value]
     try:
-        claim_query(claim)      # refuses here what the verifier would refuse at startup
+        # Refuses here what the verifier would refuse at startup.
+        (mdoc_claim_query if credential_format == MDOC_FORMAT else claim_query)(claim)
     except ValueError as exc:
         raise ValueError("--claim %s: %s" % (text, exc)) from None
     return claim
@@ -197,17 +202,31 @@ def parse_claim(text):
 def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
                   issuer_trust_anchors=None, public_base_url=None, claims=None,
                   vct_values=None, verifier_info=None, credential_query_id=None,
-                  verifier_info_profile=None) -> Verifier:
+                  verifier_info_profile=None, credential_format=None, doctype_value=None,
+                  iaca_roots=None) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
+    if credential_format == MDOC_FORMAT:
+        # An mdoc's issuer is held to the IACA roots. An SD-JWT VC's issuer keys and anchors are
+        # handed over only when given, and the verifier then refuses them.
+        trust = {"credential_format": MDOC_FORMAT, "doctype_value": doctype_value,
+                 "iaca_roots": list(iaca_roots or [])}
+        trust.update({name: given for name, given in (("issuer_jwks", issuer_jwks),
+                                                      ("issuer_trust_anchors", issuer_trust_anchors))
+                      if given})
+    else:
+        trust = {"issuer_jwks": issuer_jwks or [], "issuer_trust_anchors": issuer_trust_anchors or []}
+        trust.update({name: given for name, given in (("credential_format", credential_format),
+                                                      ("doctype_value", doctype_value),
+                                                      ("iaca_roots", iaca_roots))
+                      if given is not None})
     return Verifier(
         client_cert_pem=(pki / FILES["client_cert"]).read_bytes(),
         client_key_pem=(pki / FILES["client_key"]).read_bytes(),
         request_uri=base + REQUEST_PATH,
         response_uri=base + RESPONSE_PATH,
-        issuer_jwks=issuer_jwks or [],
-        issuer_trust_anchors=issuer_trust_anchors or [],
+        **trust,
         **({"claims": claims} if claims else {}),
         **({"vct_values": vct_values} if vct_values else {}),
         **({"verifier_info": verifier_info} if verifier_info is not None else {}),
@@ -232,6 +251,26 @@ def _load_trust_anchors(paths):
             raise SystemExit("polaris-oid4vp: --issuer-trust-anchor %s is not a readable PEM "
                              "certificate file: %s" % (path, exc))
     return anchors
+
+
+def _load_iaca_roots(paths, doctypes):
+    """Each file holds one or more PEM certificates, every one an IACA root trusted for
+    `doctypes`. A file that does not read, or a certificate `IacaRoot` refuses (one that is not
+    a CA, one carrying an extension that does not parse), stops the command."""
+    from cryptography.x509 import load_pem_x509_certificates
+    roots = []
+    for path in paths or []:
+        try:
+            certificates = load_pem_x509_certificates(pathlib.Path(path).read_bytes())
+        except (OSError, ValueError) as exc:
+            raise SystemExit("polaris-oid4vp: --iaca-root %s is not a readable PEM certificate "
+                             "file: %s" % (path, exc))
+        for certificate in certificates:
+            try:
+                roots.append(IacaRoot(certificate, doctypes))
+            except ValueError as exc:
+                raise SystemExit("polaris-oid4vp: --iaca-root %s: %s" % (path, exc))
+    return roots
 
 
 def _load_issuer_jwks(path):
@@ -275,20 +314,29 @@ def _cmd_keygen(args) -> int:
     return 0
 
 
-def _operator_line(verdict):
+def _claim_names(verdict, credential_format=SD_JWT_FORMAT):
+    """The names of the claims a presentation disclosed, sorted. An mdoc's are its elements, each
+    as its namespace and its name, the path `--claim` asks for one by."""
+    if credential_format == MDOC_FORMAT:
+        return sorted([namespace, element] for namespace, elements in verdict.claims.items()
+                      for element in elements)
+    return sorted(verdict.claims)
+
+
+def _operator_line(verdict, credential_format=SD_JWT_FORMAT):
     """What `serve` prints after `<- STATUS` for one answer at the response URI. Only an
     authentic presentation reads `authentic`: the lab walks grep `<- 200 authentic` for an
     acceptance, and a wallet's error response is answered 200 too (OpenID4VP 1.0 section 8.2)."""
     if verdict is None:
         return "refused"
     if verdict.authentic:
-        return "authentic, claims %s" % sorted(verdict.claims)
+        return "authentic, claims %s" % _claim_names(verdict, credential_format)
     if getattr(verdict, "wallet_error", None) is not None:
         return "wallet error: %s" % verdict.reason
     return "refused: %s: %s" % (verdict.code, verdict.reason)
 
 
-def _result_of(status, verdict):
+def _result_of(status, verdict, credential_format=SD_JWT_FORMAT):
     """The members `--result` writes for one answer at the response URI, decided as
     `_operator_line` decides: the HTTP status the wallet was answered, and for anything but an
     acceptance the check that refused (the verdict's code) and its reason. Claim names only, as
@@ -297,7 +345,7 @@ def _result_of(status, verdict):
     if verdict is None:
         out.update(outcome="refused", check=None, reason=None)
     elif verdict.authentic:
-        out.update(outcome="accepted", claims=sorted(verdict.claims))
+        out.update(outcome="accepted", claims=_claim_names(verdict, credential_format))
     elif getattr(verdict, "wallet_error", None) is not None:
         out.update(outcome="wallet_error", check=verdict.code, reason=verdict.reason)
     else:
@@ -324,8 +372,9 @@ class _ResultFile:
     answer.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, credential_format=SD_JWT_FORMAT):
         self.path = pathlib.Path(path)
+        self._format = credential_format
         self._lock = threading.Lock()
         self._state = None
         self._fetches = {"served": 0, "refused": 0}
@@ -352,7 +401,7 @@ class _ResultFile:
             # recorded even when the lifetime ends before this line runs.
             accepted = verdict is not None and verdict.authentic
             if self._latest["outcome"] != "accepted" and (accepted or self._open()):
-                self._latest = _result_of(status, verdict)
+                self._latest = _result_of(status, verdict, self._format)
             self._rewrite()
 
     def _rewrite(self):
@@ -393,19 +442,53 @@ def _cmd_serve(args) -> int:
         print("polaris-oid4vp: %s is missing %s. Run `polaris-oid4vp keygen --out %s` first."
               % (pki, ", ".join(missing), pki), file=sys.stderr)
         return 2
+    # What each format reads, held before anything is loaded: a flag the other format owns is
+    # refused rather than ignored, and mso_mdoc starts only when it is asked for twice.
+    as_mdoc = args.format == MDOC_FORMAT
+    if as_mdoc:
+        unread = [flag for flag, given in (("--issuer-jwks", args.issuer_jwks),
+                                           ("--issuer-trust-anchor", args.issuer_trust_anchor),
+                                           ("--vct", args.vct),
+                                           ("--transaction-data", args.transaction_data)) if given]
+        why = None
+        if not args.experimental:
+            why = ("--format %s is experimental and off by default; add --experimental to turn it "
+                   "on" % MDOC_FORMAT)
+        elif unread:
+            why = ("%s belong%s to --format %s and %s not read with --format %s, which takes "
+                   "--doctype and --iaca-root"
+                   % (" and ".join(unread), "s" if len(unread) == 1 else "", SD_JWT_FORMAT,
+                      "is" if len(unread) == 1 else "are", MDOC_FORMAT))
+        elif not args.doctype:
+            why = ("--format %s needs --doctype, the docType to ask for, such as "
+                   "org.iso.18013.5.1.mDL" % MDOC_FORMAT)
+        elif not args.claim:
+            why = ("--format %s needs at least one --claim, a JSON array of a namespace and an "
+                   "element, such as --claim '[\"org.iso.18013.5.1\",\"age_over_21\"]=true'"
+                   % MDOC_FORMAT)
+    else:
+        unread = [flag for flag, given in (("--doctype", args.doctype is not None),
+                                           ("--iaca-root", args.iaca_root)) if given]
+        why = ("%s belong%s to --format %s, which this command was not given"
+               % (" and ".join(unread), "s" if len(unread) == 1 else "", MDOC_FORMAT)
+               if unread else None)
+    if why:
+        print("polaris-oid4vp: %s" % why, file=sys.stderr)
+        return 2
     try:
         issuer_jwks = _load_issuer_jwks(args.issuer_jwks) if args.issuer_jwks else []
         anchors = _load_trust_anchors(args.issuer_trust_anchor)
+        iaca_roots = _load_iaca_roots(args.iaca_root, [args.doctype]) if as_mdoc else None
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 2
     try:
-        claims = [parse_claim(c) for c in args.claim]
+        claims = [parse_claim(c, args.format) for c in args.claim]
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
-    query_id = (Verifier.DCQL_QUERY_ID if args.credential_query_id is None
-                else args.credential_query_id)
+    query_id = ((Verifier.MDOC_QUERY_ID if as_mdoc else Verifier.DCQL_QUERY_ID)
+                if args.credential_query_id is None else args.credential_query_id)
     verifier_info = None
     if args.verifier_info:
         try:
@@ -456,11 +539,17 @@ def _cmd_serve(args) -> int:
                                  public_base_url=args.public_base_url, claims=claims,
                                  vct_values=args.vct, verifier_info=verifier_info,
                                  credential_query_id=args.credential_query_id,
-                                 verifier_info_profile=args.verifier_info_profile)
+                                 verifier_info_profile=args.verifier_info_profile,
+                                 **({"credential_format": MDOC_FORMAT, "doctype_value": args.doctype,
+                                     "iaca_roots": iaca_roots} if as_mdoc else {}))
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
-    if not issuer_jwks and not anchors:
+    if as_mdoc and not iaca_roots:
+        print("polaris-oid4vp: no --iaca-root given, so no document can be verified: every "
+              "presentation will be refused with `issuer_key`. That is the correct answer to an "
+              "unconfigured verifier, and it is probably not what you wanted.", file=sys.stderr)
+    if not as_mdoc and not issuer_jwks and not anchors:
         print("polaris-oid4vp: no --issuer-jwks or --issuer-trust-anchor given, so no "
               "credential can be verified: "
               "every presentation will be refused with `issuer_key`. That is the correct "
@@ -470,7 +559,7 @@ def _cmd_serve(args) -> int:
     result = None
     if args.result:
         try:
-            result = _ResultFile(args.result)
+            result = _ResultFile(args.result, verifier.credential_format)
         except OSError as exc:
             print("polaris-oid4vp: --result %s: %s" % (args.result, exc), file=sys.stderr)
             return 2
@@ -480,7 +569,8 @@ def _cmd_serve(args) -> int:
             result.verdict(status, verdict)
         # The operator sees the reason; the wallet never does. body carries the same constant
         # refusal whatever went wrong.
-        print("  <- %d %s" % (status, _operator_line(verdict)), flush=True)
+        print("  <- %d %s" % (status, _operator_line(verdict, verifier.credential_format)),
+              flush=True)
 
     httpd = serve(verifier, host=args.bind, port=args.port,
                   certfile=None if args.no_local_tls else str(pki / FILES["tls_cert"]),
@@ -495,6 +585,8 @@ def _cmd_serve(args) -> int:
     print("  request_uri   %s%s" % (verifier.request_uri, ""))
     print("  response_uri  %s" % verifier.response_uri)
     print("  anchor to register: %s" % (pki / FILES["anchor"]))
+    if as_mdoc:
+        print("  asks for      %s, docType %s (experimental)" % (MDOC_FORMAT, verifier.doctype_value))
     if verifier.verifier_info_profile:
         print("  verifier_info meets %s: ETSI TS 119 472-2 V1.2.1 RO-01 to RO-16, shape and labels "
               "only (the registration certificate's signature, chain and registry are not "
@@ -553,25 +645,65 @@ def _read_request(path):
     return _loads_depth_bounded(b64u_decode(parts[1]), "request object payload")
 
 
-def _verdict_json(verdict):
+def _verdict_json(verdict, credential_format=SD_JWT_FORMAT):
     out = {"authentic": verdict.authentic, "code": verdict.code, "reason": verdict.reason,
-           "claims": sorted(verdict.claims)}
+           "claims": _claim_names(verdict, credential_format)}
     if verdict.transaction_data is not None:
         out["transaction_data"] = verdict.transaction_data
     return out
 
 
+def _asked(request):
+    """The format each credential query of the request asks for, by query id, and the docTypes
+    its mso_mdoc queries name. Read leniently, to decide which flags the request reads: what is
+    malformed here is `verify_response`'s to refuse."""
+    dcql = request.get("dcql_query") if isinstance(request, dict) else None
+    queries = dcql.get("credentials") if isinstance(dcql, dict) else None
+    formats, doctypes = {}, []
+    for query in queries if isinstance(queries, list) else ():
+        if not isinstance(query, dict):
+            continue
+        qid, asked = query.get("id"), query.get("format")
+        if not (isinstance(qid, str) and isinstance(asked, str)):
+            continue
+        formats[qid] = asked
+        meta = query.get("meta")
+        doctype = meta.get("doctype_value") if isinstance(meta, dict) else None
+        if asked == MDOC_FORMAT and isinstance(doctype, str) and doctype and doctype not in doctypes:
+            doctypes.append(doctype)
+    return formats, doctypes
+
+
 def _cmd_verdict(args) -> int:
     try:
         request = _read_request(args.request)
+        formats, doctypes = _asked(request)
+        asked = set(formats.values())
+        if MDOC_FORMAT in asked and not args.experimental:
+            raise ValueError("the request asks for %s, which is experimental and off by default; "
+                             "add --experimental to judge it" % MDOC_FORMAT)
+        # A flag no query of the request reads is refused rather than ignored.
+        if args.iaca_root and asked and MDOC_FORMAT not in asked:
+            raise ValueError("--iaca-root belongs to an %s query, and the request has none"
+                             % MDOC_FORMAT)
+        unread = [flag for flag, given in (("--issuer-jwks", args.issuer_jwks),
+                                           ("--issuer-trust-anchor", args.issuer_trust_anchor))
+                  if given]
+        if unread and MDOC_FORMAT in asked and SD_JWT_FORMAT not in asked:
+            raise ValueError("%s belong%s to a %s query, and the request has none; an mdoc's "
+                             "issuer is held to --iaca-root"
+                             % (" and ".join(unread), "s" if len(unread) == 1 else "", SD_JWT_FORMAT))
         token = _loads_depth_bounded(pathlib.Path(args.vp_token).read_text(encoding="utf-8"),
                                      "vp_token")
         if isinstance(token, dict) and "vp_token" in token:   # a whole direct_post body
             token = token["vp_token"]
         issuer_jwks = _load_issuer_jwks(args.issuer_jwks) if args.issuer_jwks else []
         anchors = _load_trust_anchors(args.issuer_trust_anchor)
+        # Each root is trusted for the docTypes the request's mso_mdoc queries name.
+        iaca_roots = _load_iaca_roots(args.iaca_root, doctypes) if doctypes else None
         result = verify_response(request, token, transaction_data_scope=args.transaction_data_scope,
-                                 issuer_jwks=issuer_jwks, trust_anchors=anchors, now=args.now)
+                                 issuer_jwks=issuer_jwks, trust_anchors=anchors, now=args.now,
+                                 iaca_roots=iaca_roots)
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -581,8 +713,9 @@ def _cmd_verdict(args) -> int:
     print(json.dumps({
         "accepted": result["accepted"], "scope": result["scope"], "problem": result["problem"],
         "expected": result["expected"], "either": result["either"],
-        "verdicts": {qid: _verdict_json(v) for qid, v in result["verdicts"].items()},
-        "readings": {scope: {qid: _verdict_json(v) for qid, v in verdicts.items()}
+        "verdicts": {qid: _verdict_json(v, formats.get(qid))
+                     for qid, v in result["verdicts"].items()},
+        "readings": {scope: {qid: _verdict_json(v, formats.get(qid)) for qid, v in verdicts.items()}
                      for scope, verdicts in result["readings"].items()},
         "response_refusals": result["response_refusals"],
     }, indent=2))
@@ -655,9 +788,22 @@ and one that judges a response already captured:
     s.add_argument("--claim", action="append", default=[], metavar="PATH[=VALUE]",
                    help="a claim to ask for (repeatable; default given_name and family_name): a "
                         "name, a dotted path of object keys such as age_equal_or_over.18, or a "
-                        "JSON array of keys; =VALUE (e.g. =true) is the value it must have")
+                        "JSON array of keys; =VALUE (e.g. =true) is the value it must have. With "
+                        "--format mso_mdoc, a JSON array of a namespace and an element, such as "
+                        "'[\"org.iso.18013.5.1\",\"age_over_21\"]=true'")
     s.add_argument("--vct", action="append", default=[], metavar="TYPE",
                    help="a credential type to accept (repeatable; default urn:eudi:pid:1)")
+    s.add_argument("--format", default=SD_JWT_FORMAT, choices=CREDENTIAL_FORMATS,
+                   help="the credential format to ask for: dc+sd-jwt, the default, or mso_mdoc, "
+                        "an ISO/IEC 18013-5 mdoc, which is experimental and needs --experimental")
+    s.add_argument("--doctype", default=None, metavar="DOCTYPE",
+                   help="with --format mso_mdoc: the docType to ask for, such as "
+                        "org.iso.18013.5.1.mDL")
+    s.add_argument("--iaca-root", action="append", default=[], metavar="PEM",
+                   help="with --format mso_mdoc: a PEM file of IACA root certificates a "
+                        "document's signer must chain to, each trusted for --doctype (repeatable)")
+    s.add_argument("--experimental", action="store_true",
+                   help="turn on what is off by default: --format mso_mdoc")
     s.add_argument("--verifier-info", default=None, metavar="FILE",
                    help="verifier attestations to put in the request object: a JSON array "
                         "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
@@ -671,8 +817,8 @@ and one that judges a response already captured:
                         "chain and registry are not checked), and, when a registration "
                         "certificate is carried, a request asking for no more than it registers")
     s.add_argument("--credential-query-id", default=None, metavar="ID",
-                   help="the id of the request's DCQL credential query (default pid), which "
-                        "transaction_data entries name in credential_ids")
+                   help="the id of the request's DCQL credential query (default pid, or mdoc with "
+                        "--format mso_mdoc), which transaction_data entries name in credential_ids")
     s.add_argument("--transaction-data", default=None, metavar="FILE",
                    help="a JSON array of transaction_data entries (OpenID4VP 1.0 section 8.4) for "
                         "the request --once starts: each a base64url string, sent exactly as "
@@ -687,8 +833,9 @@ and one that judges a response already captured:
                         "outcome (nothing_received until a response arrives, then accepted, "
                         "refused or wallet_error), response.status_code (the HTTP status the "
                         "wallet was answered), check and reason (what refused it, as the <- "
-                        "line says), claims (the names accepted), state, request_object (the "
-                        "fetches served and refused) and responses (how many arrived)")
+                        "line says), claims (the names accepted; an mdoc's elements each as its "
+                        "namespace and its name), state, request_object (the fetches served and "
+                        "refused) and responses (how many arrived)")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
 
@@ -706,8 +853,16 @@ and one that judges a response already captured:
                    help="which entries each key binding JWT must bind: per_credential, those "
                         "naming its credential query; all_entries, every one. Needed when the "
                         "two differ")
+    d.add_argument("--iaca-root", action="append", default=[], metavar="PEM",
+                   help="for an mso_mdoc query: a PEM file of IACA root certificates a document's "
+                        "signer must chain to, each trusted for the docTypes the request's "
+                        "mso_mdoc queries name (repeatable)")
+    d.add_argument("--experimental", action="store_true",
+                   help="judge a request that asks for mso_mdoc, which is experimental and off "
+                        "by default")
     d.add_argument("--now", type=float, default=None, metavar="SECONDS",
-                   help="judge as of this POSIX time, such as when the response was captured")
+                   help="judge as of this POSIX time, such as when the response was captured; an "
+                        "mdoc's verdict then says it was judged at the supplied instant")
     d.set_defaults(func=_cmd_verdict)
 
     args = ap.parse_args(argv)

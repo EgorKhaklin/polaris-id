@@ -54,11 +54,14 @@ from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, MAX_RESPONSE_BYTES, JweError, _loa
 from .sdjwt import (ALL_ENTRIES, PER_CREDENTIAL, TRANSACTION_DATA_HASH_ALGS,
                     TRANSACTION_DATA_SCOPES, JtiMemory, TransactionDataBinding,
                     TransactionDataEntry, Verdict, verify_presentation)
+from . import cose, mdoc
 
 #: How long an outstanding request stays answerable. A nonce that is accepted forever is not
 #: a nonce; this is the other half of the key binding JWT's own freshness check, on our side,
 #: where we control it.
 DEFAULT_REQUEST_TTL_SECONDS = 300
+#: The credential type a dc+sd-jwt query asks for when the caller names none: the EU PID.
+DEFAULT_VCT_VALUES = ("urn:eudi:pid:1",)
 
 #: The audience of a request object, fixed by OpenID4VP 1.0 for a wallet that is not a
 #: specific named entity.
@@ -67,6 +70,12 @@ WALLET_AUDIENCE = "https://self-issued.me/v2"
 #: The response mode HAIP pins and every request here names. TS12 section 3.6 has the key
 #: binding JWT of an SCA presentation repeat it.
 RESPONSE_MODE = "direct_post.jwt"
+
+#: The credential formats a request can ask for, one per verifier: an SD-JWT VC unless named.
+#: `mso_mdoc` asks for an ISO/IEC 18013-5 mdoc, which `mdoc.py` judges.
+SD_JWT_FORMAT = "dc+sd-jwt"
+MDOC_FORMAT = "mso_mdoc"
+CREDENTIAL_FORMATS = (SD_JWT_FORMAT, MDOC_FORMAT)
 
 #: The fresh value an accepted response's `redirect_uri` carries, as its `response_code`. OpenID4VP
 #: 1.0 section 8.2: a Verifier that answers with a redirect URI "MUST include a fresh,
@@ -337,6 +346,43 @@ def _selected(path, requested):
     reached through) or inside one (a member of a requested object or array).
     """
     return any(path == r[:len(path)] or r == path[:len(r)] for r in requested)
+
+
+def mdoc_claim_query(claim):
+    """One element an `mso_mdoc` query asks for, as `(path, values)`: a claim as `claim_query`
+    reads it, whose path is the namespace and then the element (OpenID4VP 1.0 section 7.2)."""
+    path, values = claim_query(claim)
+    if len(path) != 2:
+        raise ValueError("an mso_mdoc claim's path is a namespace and an element, two strings "
+                         "(OpenID4VP 1.0 section 7.2): %r" % (claim,))
+    return path, values
+
+
+def mdoc_query_refusal(claims, elements):
+    """None when a verified mdoc's `elements` answer an `mso_mdoc` query's `claims`, else the
+    refusal as `(code, reason)`.
+
+    `claims` are `(path, values)` pairs as `mdoc_claim_query` gives them. `elements` is
+    `{(namespace, element): value}` in CBOR's types, as `mdoc.judge_device_response` returns
+    it. Every claim is required (the query names no `claim_sets`). A claim's `values` are held by
+    type and value, so the integer 1 is not `true` and a date is not its text. An element the
+    query did not ask for refuses the response (OpenID4VP 1.0 section 6.4), whatever it holds.
+    """
+    asked = {tuple(path): values for path, values in claims}
+    missing = [path for path in asked if path not in elements]
+    if missing:
+        return "claims", ("the presentation does not disclose %s, which the request asked for"
+                          % ", ".join(_shown(p) for p in missing))
+    unaccepted = [path for path, values in asked.items()
+                  if values is not None and not value_matches(elements[path], values)]
+    if unaccepted:
+        return "claims", ("the presentation discloses %s with a value the request does not accept"
+                          % ", ".join(_shown(p) for p in unaccepted))
+    extra = sorted((path for path in elements if path not in asked), key=repr)
+    if extra:
+        return "claims", ("the presentation discloses %s, which the request did not select"
+                          % ", ".join(_shown(p) for p in extra[:5]))
+    return None
 
 
 class Session:
@@ -867,15 +913,25 @@ class Verifier:
     def __init__(self, *, client_cert_pem, client_key_pem, request_uri, response_uri,
                  issuer_jwks=None, issuer_trust_anchors=None, redirect_uri=None,
                  request_ttl_seconds=DEFAULT_REQUEST_TTL_SECONDS,
-                 vct_values=("urn:eudi:pid:1",), claims=("given_name", "family_name"),
+                 vct_values=None, claims=("given_name", "family_name"),
                  status_resolver=None, verifier_info=None, credential_query_id=None,
-                 verifier_info_profile=None, redirect=True, accept_vp_token_as_json_string=False):
+                 verifier_info_profile=None, redirect=True, accept_vp_token_as_json_string=False,
+                 credential_format=SD_JWT_FORMAT, doctype_value=None, iaca_roots=None):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
-        # The id of the request's one DCQL credential query, "pid" unless named. A
+        # The format the one credential query asks for. A name this verifier does not build is
+        # refused: one misspelt would otherwise ask for the default and say nothing.
+        if not isinstance(credential_format, str) or credential_format not in CREDENTIAL_FORMATS:
+            raise ValueError("credential_format is one of %s, not %r"
+                             % (", ".join(CREDENTIAL_FORMATS), credential_format))
+        self.credential_format = credential_format
+        as_mdoc = credential_format == MDOC_FORMAT
+        # The id of the request's one DCQL credential query, "pid" unless named ("mdoc" for an
+        # mso_mdoc query: "pid" names the EU PID). A
         # transaction_data entry names it in credential_ids, and the published TS12 vectors
         # name "pay" inside the very string that is hashed, so it cannot be rewritten to fit.
-        self.query_id = self.DCQL_QUERY_ID if credential_query_id is None else credential_query_id
+        default_id = self.MDOC_QUERY_ID if as_mdoc else self.DCQL_QUERY_ID
+        self.query_id = default_id if credential_query_id is None else credential_query_id
         if not isinstance(self.query_id, str) or not _DCQL_ID.fullmatch(self.query_id):
             raise ValueError("a credential query id is a non-empty string of letters, digits, _ "
                              "and - (OpenID4VP 1.0 section 6.1), not %r" % (self.query_id,))
@@ -903,8 +959,47 @@ class Verifier:
         self.issuer_jwks = list(issuer_jwks or [])
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
         self.request_ttl_seconds = request_ttl_seconds
-        self.vct_values = list(vct_values)
-        self.claims = [claim_query(c) for c in claims]
+        # None asks for the default type. It is None rather than the type itself so that a value
+        # given with an mso_mdoc query, which names a docType and has no vct, is seen and refused.
+        self.vct_values = list(DEFAULT_VCT_VALUES if vct_values is None else vct_values)
+        # An mso_mdoc query names its docType (OpenID4VP 1.0 B.2.3) and asks for elements, each a
+        # namespace and an element. Its trust is IACA roots, each bound to the docTypes it may
+        # sign; with none, every mdoc is refused. Neither belongs to a dc+sd-jwt query, and given
+        # with one they are refused rather than ignored.
+        self.doctype_value, self.iaca_roots = None, []
+        if as_mdoc:
+            if not isinstance(doctype_value, str) or not doctype_value:
+                raise ValueError("an mso_mdoc query names the docType it asks for: doctype_value is "
+                                 "a non-empty string, not %r" % (doctype_value,))
+            if iaca_roots is not None and not (isinstance(iaca_roots, (list, tuple)) and all(
+                    isinstance(root, mdoc.IacaRoot) for root in iaca_roots)):
+                raise ValueError("iaca_roots is a list of IacaRoot, each a certificate bound to the "
+                                 "docTypes it may sign, not %s" % _given(iaca_roots))
+            # An SD-JWT VC's issuer keys, trust anchors, status resolver and credential types are
+            # not read for an mdoc, whose issuer is held to the IACA roots and whose type is its
+            # docType. Given with mso_mdoc they are refused rather than ignored: an operator who
+            # named one would take it for something this verifier holds a document to.
+            unread = [name for name, given in (("issuer_jwks", issuer_jwks),
+                                               ("issuer_trust_anchors", issuer_trust_anchors),
+                                               ("status_resolver", status_resolver),
+                                               ("vct_values", vct_values))
+                      if given is not None]
+            if unread:
+                raise ValueError("%s belong%s to credential_format %s; this verifier asks for %s "
+                                 "and holds a document's issuer to iaca_roots"
+                                 % (" and ".join(unread), "s" if len(unread) == 1 else "",
+                                    SD_JWT_FORMAT, MDOC_FORMAT))
+            self.doctype_value = doctype_value
+            self.iaca_roots = list(iaca_roots or ())
+            self.vct_values = []
+            self.claims = [mdoc_claim_query(c) for c in claims]
+            if not self.claims:
+                raise ValueError("an mso_mdoc query asks for at least one element")
+        else:
+            if doctype_value is not None or iaca_roots is not None:
+                raise ValueError("doctype_value and iaca_roots belong to credential_format %s; "
+                                 "this verifier asks for %s" % (MDOC_FORMAT, credential_format))
+            self.claims = [claim_query(c) for c in claims]
         # Revocation. None means the verdict reports `not_evaluated`, which is what this
         # verifier can honestly say about a status list nobody read. Threaded from here
         # rather than left on `verify_presentation` alone because THIS is the surface an
@@ -946,6 +1041,9 @@ class Verifier:
         credential query, every entry names it, so both readings of which entries a key binding
         JWT binds expect all of them. Without it the request is exactly what it always was.
         """
+        if transaction_data is not None and self.credential_format == MDOC_FORMAT:
+            raise ValueError("transaction_data is not read for an %s presentation: what binds it "
+                             "is an SD-JWT VC's key binding JWT" % MDOC_FORMAT)
         entries = (() if transaction_data is None
                    else transaction_data_entries(transaction_data, (self.query_id,)))
         enc_key = ec.generate_private_key(ec.SECP256R1())
@@ -997,12 +1095,27 @@ class Verifier:
             header["kid"] = kid
         return encrypt_compact(jar.encode("ascii"), public_key, enc, extra_header=header)
 
-    def _request_object(self, session, wallet_nonce=None):
+    @staticmethod
+    def _response_jwk(session):
+        """The key a request asks its response to be encrypted to, as its request object carries
+        it. An mdoc's SessionTranscript hashes this key's RFC 7638 thumbprint."""
         numbers = session.enc_key.public_key().public_numbers()
-        enc_jwk = {"kty": "EC", "crv": "P-256", "use": "enc", "alg": "ECDH-ES",
-                   "kid": "enc-" + session.state,
-                   "x": b64u_encode(numbers.x.to_bytes(32, "big")),
-                   "y": b64u_encode(numbers.y.to_bytes(32, "big"))}
+        return {"kty": "EC", "crv": "P-256", "use": "enc", "alg": "ECDH-ES",
+                "kid": "enc-" + session.state,
+                "x": b64u_encode(numbers.x.to_bytes(32, "big")),
+                "y": b64u_encode(numbers.y.to_bytes(32, "big"))}
+
+    def _vp_formats(self):
+        """`client_metadata.vp_formats_supported` for the one format this verifier asks for. For
+        an mdoc (OpenID4VP 1.0 B.2.2): the COSE algorithms `cose.py` reads, for the issuer's
+        signature and the device's; no MAC algorithm, since a device MAC is refused."""
+        if self.credential_format == MDOC_FORMAT:
+            return {MDOC_FORMAT: {"issuerauth_alg_values": list(cose.ALG_VALUES),
+                                  "deviceauth_alg_values": list(cose.ALG_VALUES)}}
+        return {"dc+sd-jwt": {"sd-jwt_alg_values": ["ES256"], "kb-jwt_alg_values": ["ES256"]}}
+
+    def _request_object(self, session, wallet_nonce=None):
+        enc_jwk = self._response_jwk(session)
         now = int(time.time())
         claims = {
             "iss": self.client_id,
@@ -1019,8 +1132,7 @@ class Verifier:
             # authorization_encrypted_response_alg/_enc names, which an earlier draft used.
             "client_metadata": {
                 "jwks": {"keys": [enc_jwk]},
-                "vp_formats_supported": {"dc+sd-jwt": {"sd-jwt_alg_values": ["ES256"],
-                                                       "kb-jwt_alg_values": ["ES256"]}},
+                "vp_formats_supported": self._vp_formats(),
                 "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
             },
             "dcql_query": self._dcql_query(),
@@ -1037,7 +1149,19 @@ class Verifier:
 
     def _dcql_query(self):
         """The DCQL query every request object carries, one credential query. Built in one place
-        so the over-asking check holds the registration certificate to the query that is sent."""
+        so the over-asking check holds the registration certificate to the query that is sent.
+
+        An mso_mdoc query (OpenID4VP 1.0 B.2.3, B.2.4) names its docType in `meta` and marks every
+        element `intent_to_retain` false."""
+        if self.credential_format == MDOC_FORMAT:
+            return {"credentials": [{
+                "id": self.query_id,
+                "format": MDOC_FORMAT,
+                "meta": {"doctype_value": self.doctype_value},
+                "claims": [dict({"path": list(path)}, **({"values": list(values)} if values else {}),
+                                intent_to_retain=False)
+                           for path, values in self.claims],
+            }]}
         return {"credentials": [{
             "id": self.query_id,
             "format": "dc+sd-jwt",
@@ -1167,6 +1291,11 @@ class Verifier:
         # verify_presentation has found the presentation authentic: only the holder of the
         # credential and its key can get that far, so only the holder can close it.
         presentation = self._single_presentation(self._read_vp_token(body.get("vp_token")))
+        if self.credential_format == MDOC_FORMAT:
+            verdict = self._judge_mdoc(session, presentation)
+            if not verdict.authentic:
+                return self._error(verdict.code, verdict.reason)
+            return self._close_and_answer(session, verdict)
         if presentation is None:
             return self._error("invalid_request",
                                "the vp_token is not one presentation for the one credential "
@@ -1242,7 +1371,43 @@ class Verifier:
             return 400, dict(self.REFUSAL_BODY), Verdict(
                 False, "revoked", "the issuer's status list gives this credential the value %r, "
                                   "not VALID (0)" % (rev.get("status"),), revocation=rev)
+        return self._close_and_answer(session, verdict)
 
+    def _judge_mdoc(self, session, presentation):
+        """The verdict on an answer to `session`'s `mso_mdoc` request. `presentation` is the one
+        `vp_token` value, a base64url DeviceResponse (OpenID4VP 1.0 B.2.5), or None when the
+        `vp_token` held no single one.
+
+        The SessionTranscript is this verifier's (B.2.6.1): the client_id the request carried,
+        prefix and all, the session's nonce, the thumbprint of the session's response key and
+        the response_uri. Nothing in it is read from the response, and the document is judged at
+        this verifier's clock. An authentic document is then held to the query
+        (`mdoc_query_refusal`); the docType the query named is `mdoc.py`'s to hold, and so is
+        the size limit: the response around the value is bounded before it is decrypted.
+        """
+        if presentation is None:
+            return Verdict(False, "malformed", "the vp_token is not one DeviceResponse for the one "
+                                               "credential the DCQL query asked for")
+        try:
+            device_response = b64u_decode(presentation)
+        except ValueError:
+            return Verdict(False, "malformed", "the vp_token value is not a base64url "
+                                               "DeviceResponse (OpenID4VP 1.0 B.2.5)")
+        transcript = mdoc.redirect_session_transcript(
+            client_id=self.client_id, nonce=session.nonce, response_uri=self.response_uri,
+            jwk_thumbprint=mdoc.jwk_thumbprint(self._response_jwk(session)))
+        verdict, elements = mdoc.judge_device_response(
+            device_response, session_transcript=transcript, iaca_roots=self.iaca_roots,
+            doctype=self.doctype_value)
+        if not verdict.authentic:
+            return verdict
+        refusal = mdoc_query_refusal(self.claims, elements)
+        if refusal is not None:
+            return Verdict(False, *refusal)
+        return verdict
+
+    def _close_and_answer(self, session, verdict):
+        """Close `session`'s request on the presentation it accepted, and answer the wallet."""
         # Accepted: the request closes here, after the last refusal, so a response refused for
         # its claims, its over-disclosure or its status leaves it open for the holder's own
         # (until 2026-10-30 it closed before those three, and another holder's authentic
@@ -1311,6 +1476,9 @@ class Verifier:
     #: Until 2026-09-27 the key was never compared: one presentation under any name was taken as
     #: the answer (found by mutating a genuine Credo response, lab/interop/credo/adversarial/).
     DCQL_QUERY_ID = "pid"
+
+    #: The same for an `mso_mdoc` query.
+    MDOC_QUERY_ID = "mdoc"
 
     def _single_presentation(self, vp_token):
         if not isinstance(vp_token, dict) or list(vp_token) != [self.query_id]:
@@ -1414,7 +1582,7 @@ class Verifier:
 
 
 def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jwks=None,
-                    trust_anchors=None, now=None):
+                    trust_anchors=None, now=None, iaca_roots=None):
     """A verdict over a captured response: every presentation in `vp_token`, each held to the
     request it answers, and the request's transaction_data under both readings of which entries
     a key binding JWT binds.
@@ -1425,6 +1593,13 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
     for) and `transaction_data`. `vp_token` maps each credential query id to its one
     presentation (OpenID4VP 1.0 section 8.1). `now` evaluates the key binding JWTs at the instant
     they were captured, which a replayed capture needs.
+
+    A credential query of format mso_mdoc is answered by one base64url DeviceResponse, judged by
+    `mdoc.verify_device_response` under `iaca_roots` (a list of `mdoc.IacaRoot`) for the docType
+    its `meta.doctype_value` names. Its SessionTranscript is built from the request as it was
+    sent: `client_id`, `nonce`, `response_uri` and the one key in `client_metadata.jwks`. With
+    `now`, the verdict's reason says it was judged at the supplied instant. Transaction data is
+    not read for an mdoc, so a request carrying both is refused.
 
     Each presentation is checked as `verify_presentation` checks it; the claims it discloses are
     returned, not judged against the query. With transaction_data every presentation is
@@ -1461,17 +1636,47 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
     queries = dcql.get("credentials") if isinstance(dcql, dict) else None
     if not isinstance(queries, list) or not queries:
         raise ValueError("the request's dcql_query has no credentials")
-    asked = {}
+    asked, mdocs = {}, {}
     for query in queries:
         qid = query.get("id") if isinstance(query, dict) else None
         if not isinstance(qid, str) or not _DCQL_ID.fullmatch(qid) or qid in asked:
             raise ValueError("a credential query's id is missing, malformed or repeated: %r" % (qid,))
-        if query.get("format") != "dc+sd-jwt":
-            raise ValueError("credential query %r asks for format %r; this verifier checks "
-                             "dc+sd-jwt only" % (qid, query.get("format")))
         meta = query.get("meta") if isinstance(query.get("meta"), dict) else {}
+        if query.get("format") == MDOC_FORMAT:
+            doctype = meta.get("doctype_value")
+            if not isinstance(doctype, str) or not doctype:
+                raise ValueError("credential query %r asks for an mso_mdoc and names no "
+                                 "doctype_value" % (qid,))
+            mdocs[qid] = doctype
+            asked[qid] = None
+            continue
+        if query.get("format") != SD_JWT_FORMAT:
+            raise ValueError("credential query %r asks for format %r; this verifier checks "
+                             "dc+sd-jwt and mso_mdoc" % (qid, query.get("format")))
         vct = meta.get("vct_values")
         asked[qid] = vct if isinstance(vct, list) else None
+    transcript = None
+    if mdocs:
+        if request.get("transaction_data") is not None:
+            raise ValueError("the request carries transaction_data and an mso_mdoc query (%s); "
+                             "transaction data is not read for an mdoc" % ", ".join(sorted(mdocs)))
+        response_uri = request.get("response_uri")
+        if not isinstance(response_uri, str) or not response_uri:
+            raise ValueError("the request asks for an mso_mdoc and names no response_uri, which "
+                             "its SessionTranscript hashes")
+        metadata = request.get("client_metadata")
+        jwks = metadata.get("jwks") if isinstance(metadata, dict) else None
+        keys = jwks.get("keys") if isinstance(jwks, dict) else None
+        try:
+            if not isinstance(keys, list) or len(keys) != 1:
+                raise ValueError("it holds %s" % ("%d keys" % len(keys) if isinstance(keys, list)
+                                                  else "no keys array"))
+            thumbprint = mdoc.jwk_thumbprint(keys[0])
+        except ValueError as exc:
+            raise ValueError("the request asks for an mso_mdoc, and client_metadata.jwks is not the "
+                             "one response key its SessionTranscript hashes: %s" % exc) from None
+        transcript = mdoc.redirect_session_transcript(
+            client_id=audience, nonce=nonce, response_uri=response_uri, jwk_thumbprint=thumbprint)
     entries = []
     if request.get("transaction_data") is not None:
         raw = request["transaction_data"]
@@ -1517,9 +1722,18 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
             return out
         presented[qid] = value
 
+    def judge_mdoc(qid):
+        try:
+            device_response = b64u_decode(presented[qid])
+        except ValueError:
+            return Verdict(False, "malformed", "the vp_token value is not a base64url "
+                                               "DeviceResponse (OpenID4VP 1.0 B.2.5)")
+        return mdoc.verify_device_response(device_response, session_transcript=transcript,
+                                           iaca_roots=iaca_roots, doctype=mdocs[qid], now=now)
+
     def evaluate(scope):
         memory = JtiMemory()
-        return {qid: verify_presentation(
+        return {qid: judge_mdoc(qid) if qid in mdocs else verify_presentation(
             presentation, expected_nonce=nonce, expected_audience=audience,
             issuer_jwks=issuer_jwks, trust_anchors=trust_anchors, now=now,
             expected_vct=asked[qid],

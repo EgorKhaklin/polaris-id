@@ -2740,8 +2740,9 @@ class VerifyResponseTests(unittest.TestCase):
                               "missing, malformed or repeated: 'pid'"),
             "an id DCQL does not allow": (dict(r, dcql_query={"credentials": [dict(q[0], id="p d")]}),
                                           "missing, malformed or repeated: 'p d'"),
-            "an mdoc query": (dict(r, dcql_query={"credentials": [dict(q[0], format="mso_mdoc"), q[1]]}),
-                              "this verifier checks dc+sd-jwt only"),
+            "a format this verifier does not check": (
+                dict(r, dcql_query={"credentials": [dict(q[0], format="jwt_vc_json"), q[1]]}),
+                "this verifier checks dc+sd-jwt and mso_mdoc"),
             "an entry naming no query": (dict(r, dcql_query={"credentials": [q[0]]}),
                                          "names pay, which the request's dcql_query does not ask for"),
             "an entry that is not one": (dict(r, transaction_data=["%%%"]), "transaction_data entry 0:"),
@@ -2885,3 +2886,705 @@ class AnEntryNamingTwoPresentedCredentialsTests(unittest.TestCase):
             with self.subTest(binds=binds):
                 result = _TwoCredentials(entries).judge(binds)
                 self.assertIs(result["accepted"], accepted, result["problem"])
+
+
+# --------------------------------------------------------------------------- mso_mdoc
+#
+# An ISO/IEC 18013-5 mdoc answering this verifier's own `mso_mdoc` query over direct_post.jwt.
+# The wallet and the issuer are `test_mdoc.py`'s, built on cbor2 and `cryptography`, never on
+# the code under test.
+
+import inspect  # noqa: E402
+import secrets  # noqa: E402
+from unittest import mock  # noqa: E402
+
+import cbor2  # noqa: E402  (the witness; a test dependency only)
+
+import test_mdoc as md  # noqa: E402
+from polaris_oid4vp import mdoc as mdoc_module  # noqa: E402
+from polaris_oid4vp import serve as serve_module  # noqa: E402
+from polaris_oid4vp import verifier as verifier_module  # noqa: E402
+from polaris_oid4vp.mdoc import IacaRoot  # noqa: E402
+from polaris_oid4vp.verifier import mdoc_query_refusal  # noqa: E402
+
+AGE_OVER_21 = [md.MDL_NS, "age_over_21"]
+FAMILY_NAME = [md.MDL_NS, "family_name"]
+MDOC_ALGS = [-7, -9, -35]
+
+
+def _enc_public(jar):
+    jwk = Wallet.read_request(jar)[1]["client_metadata"]["jwks"]["keys"][0]
+    return ec.EllipticCurvePublicNumbers(int.from_bytes(b64u_decode(jwk["x"]), "big"),
+                                         int.from_bytes(b64u_decode(jwk["y"]), "big"),
+                                         ec.SECP256R1()).public_key()
+
+
+class MdocWallet:
+    """A wallet holding the mDL `test_mdoc.py` mints, answering the request object it is given.
+    It hashes what the request carried (OpenID4VP 1.0 B.2.6.1): its client_id, nonce and
+    response_uri, and the RFC 7638 thumbprint of its response key. Each of those can be
+    replaced, which is how a response made for something else is built."""
+
+    ITEMS = (md.el("age_over_21", True),)
+
+    def device_response(self, jar, *, client_id=None, nonce=None, response_uri=None, thumbprint=None,
+                        **knobs):
+        _, claims = Wallet.read_request(jar)
+        jwk = claims["client_metadata"]["jwks"]["keys"][0]
+        transcript = md.witness_transcript(
+            claims["client_id"] if client_id is None else client_id,
+            claims["nonce"] if nonce is None else nonce,
+            md.witness_thumbprint(jwk) if thumbprint is None else thumbprint,
+            claims["response_uri"] if response_uri is None else response_uri)
+        knobs.setdefault("items", self.ITEMS)
+        return md.mint(wallet_transcript=transcript, **knobs)
+
+    def respond(self, jar, *, vp_token=None, state=None, extra=None, encrypt_to=None, **knobs):
+        """The response to `jar`, posted as direct_post.jwt. `vp_token(value)` replaces the
+        vp_token built around the base64url DeviceResponse; `encrypt_to` is another request
+        object, whose key and state the response is then sent under."""
+        _, claims = Wallet.read_request(jar)
+        value = b64u_encode(self.device_response(jar, **knobs))
+        target = claims if encrypt_to is None else Wallet.read_request(encrypt_to)[1]
+        query_id = claims["dcql_query"]["credentials"][0]["id"]
+        body = {"state": target["state"] if state is None else state,
+                "vp_token": {query_id: [value]} if vp_token is None else vp_token(value)}
+        body.update(extra or {})
+        token = encrypt_compact(json.dumps(body).encode(), _enc_public(jar if encrypt_to is None else encrypt_to))
+        return {"response": [token]}
+
+
+class MdocVerifierCase(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chain = _client_chain()
+
+    def make(self, **kw):
+        kw.setdefault("claims", [AGE_OVER_21])
+        kw.setdefault("iaca_roots", [IacaRoot(md.IACA, [md.MDL])])
+        kw.setdefault("doctype_value", md.MDL)
+        kw.setdefault("credential_format", "mso_mdoc")
+        return Verifier(client_cert_pem=self.chain[0], client_key_pem=self.chain[1],
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response", **kw)
+
+    def setUp(self):
+        self.verifier = self.make()
+        self.wallet = MdocWallet()
+
+    def exchange(self, verifier=None, **kw):
+        verifier = self.verifier if verifier is None else verifier
+        _, jar = verifier.new_request()
+        return verifier.handle_direct_post(self.wallet.respond(jar, **kw))
+
+    def accepted(self, result, base="https://verifier.test/done"):
+        status, body, verdict = result
+        self.assertEqual(status, 200, "%s: %s" % (verdict.code, verdict.reason))
+        assert_redirect_with_code(self, body, base)
+        self.assertTrue(verdict.authentic)
+        return verdict
+
+    def refused(self, code, result, words=None):
+        """A refusal: 400, the one constant body, the code and a fragment of the rule's own
+        reason for the operator, and nothing a caller could take for a result."""
+        status, body, verdict = result
+        self.assertEqual(status, 400, "accepted, where %s was expected" % code)
+        self.assertEqual(body, Verifier.REFUSAL_BODY)
+        self.assertFalse(verdict.authentic)
+        self.assertEqual(verdict.code, code, verdict.reason)
+        if words:
+            self.assertIn(words, verdict.reason)
+        self.assertEqual((verdict.claims, verdict.disclosed), ({}, frozenset()))
+        return verdict
+
+
+class MdocRequestTests(MdocVerifierCase):
+    """`Verifier(credential_format="mso_mdoc", doctype_value=..., iaca_roots=[...], claims=[[NS,
+    EL]])`: the request it signs. The default format's request is held, byte for byte, by
+    TheDefaultRequestIsUnchangedTests."""
+
+    def query(self, verifier):
+        _, claims = Wallet.read_request(verifier.new_request()[1])
+        return claims, claims["dcql_query"]["credentials"][0]
+
+    def test_the_request_carries_one_mso_mdoc_query(self):
+        claims, _ = self.query(self.verifier)
+        self.assertEqual(claims["dcql_query"], {"credentials": [{
+            "id": "mdoc", "format": "mso_mdoc", "meta": {"doctype_value": md.MDL},
+            "claims": [{"path": AGE_OVER_21, "intent_to_retain": False}]}]})
+        metadata = claims["client_metadata"]
+        self.assertEqual(metadata["vp_formats_supported"], {"mso_mdoc": {
+            "issuerauth_alg_values": MDOC_ALGS, "deviceauth_alg_values": MDOC_ALGS}})
+        self.assertEqual(set(metadata), {"jwks", "vp_formats_supported",
+                                         "encrypted_response_enc_values_supported"})
+        self.assertEqual(self.verifier.query_id, "mdoc")
+        # Everything else is what the default request carries.
+        self.assertEqual((claims["response_mode"], claims["response_type"], claims["client_id"]),
+                         ("direct_post.jwt", "vp_token", self.verifier.client_id))
+        self.assertTrue(claims["client_id"].startswith("x509_hash:"))
+
+    def test_values_ride_in_the_claim_and_the_query_id_can_be_named(self):
+        verifier = self.make(claims=[{"path": AGE_OVER_21, "values": [True]}, FAMILY_NAME],
+                             credential_query_id="mdl")
+        _, query = self.query(verifier)
+        self.assertEqual(query["id"], "mdl")
+        self.assertEqual(query["claims"], [{"path": AGE_OVER_21, "values": [True], "intent_to_retain": False},
+                                           {"path": FAMILY_NAME, "intent_to_retain": False}])
+        # No trusted_authorities and no claim_sets, as in the default request.
+        self.assertEqual(set(query), {"id", "format", "meta", "claims"})
+
+    def test_naming_the_default_format_changes_nothing(self):
+        verifier = self.make(credential_format="dc+sd-jwt", doctype_value=None, iaca_roots=None,
+                             claims=("given_name", "family_name"))
+        claims, query = self.query(verifier)
+        self.assertEqual((query["id"], query["format"], query["meta"]),
+                         ("pid", "dc+sd-jwt", {"vct_values": ["urn:eudi:pid:1"]}))
+        self.assertEqual(query["claims"], [{"path": ["given_name"]}, {"path": ["family_name"]}])
+        self.assertEqual(claims["client_metadata"]["vp_formats_supported"], {"dc+sd-jwt": {
+            "sd-jwt_alg_values": ["ES256"], "kb-jwt_alg_values": ["ES256"]}})
+        # No type named, or None, asks for the default type; a named type replaces it.
+        for given, asked in ((None, ["urn:eudi:pid:1"]), (["urn:test:1"], ["urn:test:1"])):
+            with self.subTest(vct_values=given):
+                named = self.make(credential_format="dc+sd-jwt", doctype_value=None, iaca_roots=None,
+                                  claims=("given_name", "family_name"), vct_values=given)
+                self.assertEqual(self.query(named)[1]["meta"], {"vct_values": asked})
+
+    def test_a_doctype_or_iaca_roots_with_the_default_format_is_refused(self):
+        """Given with a dc+sd-jwt query they would be ignored, and an operator who named them
+        would be running a verifier that asks for something else."""
+        for given in ({"doctype_value": md.MDL, "iaca_roots": None},
+                      {"doctype_value": None, "iaca_roots": [IacaRoot(md.IACA, [md.MDL])]},
+                      {"doctype_value": None, "iaca_roots": []}):
+            for named in ({"credential_format": "dc+sd-jwt"}, {}):
+                with self.subTest(given=sorted(k for k, v in given.items() if v is not None), named=named):
+                    with self.assertRaises(ValueError) as caught:
+                        Verifier(client_cert_pem=self.chain[0], client_key_pem=self.chain[1],
+                                 request_uri="https://verifier.test/request.jwt",
+                                 response_uri="https://verifier.test/response", **given, **named)
+                    self.assertIn("belong to credential_format mso_mdoc", str(caught.exception))
+
+    def test_an_sd_jwt_option_with_an_mdoc_query_is_refused(self):
+        """Issuer keys, trust anchors, a status resolver and credential types are read for an
+        SD-JWT VC alone. Given with an mso_mdoc query they would be ignored, and an operator who
+        named them would take them for something a document is held to."""
+        for name, value in (("issuer_jwks", [{"kty": "EC"}]), ("issuer_jwks", []),
+                            ("issuer_trust_anchors", [md.IACA]), ("issuer_trust_anchors", []),
+                            ("status_resolver", lambda uri: None),
+                            ("vct_values", ["urn:eudi:pid:1"]), ("vct_values", []),
+                            ("vct_values", ("urn:eudi:pid:1",))):
+            with self.subTest(option=name, empty=value == []):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(**{name: value})
+                self.assertIn(name + " belongs to credential_format dc+sd-jwt", str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            self.make(issuer_jwks=[], status_resolver=lambda uri: None)
+        self.assertIn("issuer_jwks and status_resolver belong to credential_format dc+sd-jwt",
+                      str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            self.make(status_resolver=lambda uri: None, vct_values=["urn:eudi:pid:1"])
+        self.assertIn("status_resolver and vct_values belong to credential_format dc+sd-jwt",
+                      str(caught.exception))
+        asked = self.make(issuer_jwks=None, issuer_trust_anchors=None, status_resolver=None,
+                          vct_values=None)
+        self.assertEqual(asked.vct_values, [])
+
+    def test_a_format_this_verifier_does_not_build_is_refused(self):
+        for bad in ("jwt_vc_json", "mso_mdoc ", "MSO_MDOC", "", None, 5, ["mso_mdoc"]):
+            with self.subTest(credential_format=bad):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(credential_format=bad)
+                self.assertIn("credential_format", str(caught.exception))
+
+    def test_an_mdoc_query_names_its_doctype(self):
+        for bad in (None, "", 5, [md.MDL], b"org.iso.18013.5.1.mDL"):
+            with self.subTest(doctype_value=bad):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(doctype_value=bad)
+                self.assertIn("doctype_value", str(caught.exception))
+
+    def test_an_mdoc_claim_is_a_namespace_and_an_element(self):
+        """OpenID4VP 1.0 section 7.2: for an mdoc the path is the namespace, then the element."""
+        for bad in (["age_over_21"], [[md.MDL_NS]], [[md.MDL_NS, "driving_privileges", "codes"]],
+                    [{"path": [md.MDL_NS]}], [AGE_OVER_21, "family_name"]):
+            with self.subTest(claims=bad):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(claims=bad)
+                self.assertIn("a namespace and an element", str(caught.exception))
+        # Each of the two is a non-empty string, as a claim's path is for any format.
+        for bad in ([[md.MDL_NS, ""]], [[md.MDL_NS, 5]], [["", "age_over_21"]], [[md.MDL_NS, None]]):
+            with self.subTest(claims=bad):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(claims=bad)
+                self.assertIn("non-empty strings", str(caught.exception))
+        # A query that asks for no element asks for nothing a wallet may send.
+        for none in ([], ()):
+            with self.assertRaises(ValueError) as caught:
+                self.make(claims=none)
+            self.assertIn("at least one element", str(caught.exception))
+
+    def test_roots_are_iaca_roots_or_refused_when_the_verifier_is_made(self):
+        for bad in ([md.IACA], [md.der(md.IACA)], IacaRoot(md.IACA, [md.MDL]), "iaca.pem", [None]):
+            with self.subTest(iaca_roots=type(bad).__name__):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(iaca_roots=bad)
+                self.assertIn("iaca_roots", str(caught.exception))
+
+    def test_transaction_data_is_not_read_for_an_mdoc(self):
+        with self.assertRaises(ValueError) as caught:
+            self.verifier.new_request(transaction_data=[RAW_PAYMENT])
+        self.assertIn("mso_mdoc", str(caught.exception))
+        # No request was made.
+        self.assertEqual(self.verifier._sessions, {})
+
+    def test_each_request_mints_its_own_nonce(self):
+        """GAP-1. The nonce is the verifier's: 256 bits from `secrets`, one per request, and no
+        argument of `new_request` carries one in."""
+        nonces = [self.verifier.new_request()[0].nonce for _ in range(8)]
+        self.assertEqual(len(set(nonces)), 8)
+        for nonce in nonces:
+            self.assertEqual(len(b64u_decode(nonce)), 32)
+        self.assertEqual(list(inspect.signature(Verifier.new_request).parameters), ["self", "transaction_data"])
+        drawn = []
+
+        def token(nbytes):
+            drawn.append(nbytes)
+            return "drawn-%d-%d" % (nbytes, len(drawn))
+
+        with mock.patch.object(verifier_module.secrets, "token_urlsafe", token):
+            session, jar = self.verifier.new_request()
+        self.assertEqual(drawn, [16, 32], "the state, then the nonce")
+        self.assertEqual(session.nonce, "drawn-32-2")
+        self.assertEqual(Wallet.read_request(jar)[1]["nonce"], "drawn-32-2")
+
+    def test_the_over_asking_check_holds_an_mdoc_query(self):
+        """ETSI TS 119 472-2's over-asking check reads the query this verifier sends, so an mdoc
+        query is held to the registration certificate as a dc+sd-jwt one is."""
+        mdl = {"format": "mso_mdoc", "meta": {"doctype_value": md.MDL}}
+
+        def info(credential):
+            return [_registrar(), _certificate(_registration_cert([credential]))]
+
+        verifier = self.make(verifier_info=info(dict(mdl, claim=[{"path": AGE_OVER_21}])),
+                             verifier_info_profile="etsi-119472-2")
+        self.assertTrue(verifier.over_asking_checked)
+        for certificate, says in (
+                (dict(mdl, claim=[{"path": FAMILY_NAME}]), "does not register"),
+                (dict(mdl, meta={"doctype_value": md.PID}, claim=[{"path": AGE_OVER_21}]),
+                 "none of the certificate's credentials registers that"),
+                (dict(_PID, claim=[{"path": AGE_OVER_21}]), "none of the certificate's credentials registers that")):
+            with self.subTest(certificate=certificate):
+                with self.assertRaises(VerifierInfoError) as caught:
+                    self.make(verifier_info=info(certificate), verifier_info_profile="etsi-119472-2")
+                self.assertIn(says, str(caught.exception))
+
+
+class MdocResponseTests(MdocVerifierCase):
+    """`handle_direct_post` for an `mso_mdoc` request: the transcript is built from the session's
+    own client_id, nonce, response key and response_uri, the document is judged at the verifier's
+    clock, and then held to the query: its docType, every requested element, `values` by CBOR
+    type and value, and no other element."""
+
+    def test_an_answering_mdoc_is_accepted(self):
+        session, jar = self.verifier.new_request()
+        result = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        verdict = self.accepted(result)
+        self.assertEqual(verdict.claims, {md.MDL_NS: {"age_over_21": True}})
+        self.assertEqual(verdict.disclosed, frozenset({(md.MDL_NS, "age_over_21")}))
+        self.assertEqual(verdict.revocation["state"], "no_status_claim")
+        self.assertEqual(verdict.issuer_anchor, "CN=Test IACA")
+        self.assertFalse(verdict.vp_token_from_string)
+        # The result is fetched with the redirect's code, once, as for an SD-JWT VC.
+        self.assertIs(self.verifier.redeem(verdict.response_code, session.state), verdict)
+        self.assertIsNone(self.verifier.redeem(verdict.response_code, session.state))
+
+    def test_without_roots_every_mdoc_is_refused(self):
+        for none in (None, [], ()):
+            with self.subTest(iaca_roots=none):
+                self.refused("issuer_key", self.exchange(self.make(iaca_roots=none)),
+                             "no IACA root is configured")
+
+    def test_the_handover_uses_the_requests_effective_client_id(self):
+        """OpenID4VP 1.0 section 14.8, "Always Use the Full Client Identifier": the handover
+        hashes the client_id the request carried, prefix and all. A refused response leaves the
+        request open, so the genuine one is accepted on the same request afterwards."""
+        _, jar = self.verifier.new_request()
+        own = Wallet.read_request(jar)[1]["client_id"]
+        self.assertEqual(own, self.verifier.client_id)
+        for other in (own[len("x509_hash:"):], "verifier.test", "x509_san_dns:verifier.test",
+                      "redirect_uri:https://verifier.test/response"):
+            with self.subTest(client_id=other):
+                self.refused("device_signature", self.verifier.handle_direct_post(
+                    self.wallet.respond(jar, client_id=other)), "the SessionTranscript this verifier built")
+        self.accepted(self.verifier.handle_direct_post(self.wallet.respond(jar, client_id=own)))
+
+    def test_another_response_uri_or_response_key_is_refused(self):
+        _, jar = self.verifier.new_request()
+        other_key = md.witness_thumbprint(md.public_jwk(ec.generate_private_key(ec.SECP256R1())))
+        for change in ({"response_uri": "https://verifier.test/response/"},
+                       {"response_uri": "https://other.test/response"},
+                       {"thumbprint": other_key}, {"thumbprint": bytes(32)}):
+            with self.subTest(change=sorted(change)):
+                self.refused("device_signature", self.verifier.handle_direct_post(
+                    self.wallet.respond(jar, **change)))
+        self.accepted(self.verifier.handle_direct_post(self.wallet.respond(jar)))
+
+    def test_an_mdoc_made_for_another_request_is_refused(self):
+        """Request A's transcript, sent under request B's key and state."""
+        _, jar_a = self.verifier.new_request()
+        _, jar_b = self.verifier.new_request()
+        self.refused("device_signature", self.verifier.handle_direct_post(
+            self.wallet.respond(jar_a, encrypt_to=jar_b)), "the SessionTranscript this verifier built")
+        # The controls: both requests are still open, and each takes its own answer.
+        self.accepted(self.verifier.handle_direct_post(self.wallet.respond(jar_a)))
+        self.accepted(self.verifier.handle_direct_post(self.wallet.respond(jar_b)))
+
+    def test_a_plaintext_response_is_refused(self):
+        _, jar = self.verifier.new_request()
+        _, claims = Wallet.read_request(jar)
+        value = b64u_encode(self.wallet.device_response(jar))
+        for form in ({"vp_token": [json.dumps({"mdoc": [value]})], "state": [claims["state"]]},
+                     {"vp_token": [value], "state": [claims["state"]]},
+                     {"response": [json.dumps({"state": claims["state"], "vp_token": {"mdoc": [value]}})]}):
+            with self.subTest(form=sorted(form)):
+                self.refused("invalid_request", self.verifier.handle_direct_post(form))
+        self.accepted(self.verifier.handle_direct_post(self.wallet.respond(jar)))
+
+    def test_a_format_answering_the_other_query_is_refused(self):
+        # An SD-JWT VC, bound to this request's nonce and client_id, answering the mdoc query.
+        sd_jwt_wallet = Wallet()
+        _, jar = self.verifier.new_request()
+        self.refused("malformed", self.verifier.handle_direct_post(sd_jwt_wallet.respond(jar)),
+                     "not a base64url DeviceResponse")
+        # An mdoc answering the default dc+sd-jwt query, under a verifier that trusts its root.
+        other = self.make(credential_format="dc+sd-jwt", doctype_value=None, iaca_roots=None,
+                          claims=("given_name",), issuer_trust_anchors=[md.IACA])
+        status, body, verdict = self.exchange(other)
+        self.assertEqual((status, body), (400, Verifier.REFUSAL_BODY))
+        self.assertFalse(verdict.authentic)
+        self.assertEqual(verdict.claims, {})
+
+    def test_a_value_of_another_type_or_value_is_refused(self):
+        """DCQL `values` are held by CBOR type and value: false is not true, and 1 is not true."""
+        verifier = self.make(claims=[{"path": AGE_OVER_21, "values": [True]}])
+        for value in (False, 1, "true", cbor2.CBORTag(1004, "2026-01-01")):
+            with self.subTest(value=value):
+                self.refused("claims", self.exchange(verifier, items=(md.el("age_over_21", value),)),
+                             "with a value the request does not accept")
+        self.accepted(self.exchange(verifier))
+        # The integer 1 is asked for, and true is sent.
+        counted = self.make(claims=[{"path": AGE_OVER_21, "values": [1]}])
+        self.refused("claims", self.exchange(counted), "with a value the request does not accept")
+        self.accepted(self.exchange(counted, items=(md.el("age_over_21", 1),)))
+
+    def test_every_refusal_has_the_constant_body(self):
+        """The codes and reasons are the operator's. Whatever was wrong, the wallet reads one body."""
+        valued = self.make(claims=[{"path": AGE_OVER_21, "values": [True]}])
+        two = self.make(claims=[AGE_OVER_21, FAMILY_NAME])
+        results = {
+            "device_signature": self.exchange(nonce="another"),
+            "doctype": self.exchange(doctype=md.PID),
+            "issuer_key": self.exchange(self.make(iaca_roots=None)),
+            "issuer_signature": self.exchange(issuer_hash=hashes.SHA384),
+            "credential_validity": self.exchange(signed=md.BOOT - md.days(40), valid_from=md.BOOT - md.days(40),
+                                                 valid_until=md.BOOT - md.days(10)),
+            "digest": self.exchange(digest_over="inner"),
+            "device_auth": self.exchange(device_auth="mac"),
+            "malformed": self.exchange(vp_token=lambda value: {"other": [value]}),
+            "claims": self.exchange(two),
+            "claims (a value)": self.exchange(valued, items=(md.el("age_over_21", False),)),
+            "claims (an extra element)": self.exchange(items=MdocWallet.ITEMS + (md.el("family_name", "x"),)),
+            "invalid_request": self.verifier.handle_direct_post({"response": ["not.a.jwe"]}),
+        }
+        for name, (status, body, verdict) in results.items():
+            with self.subTest(refusal=name):
+                self.assertEqual(verdict.code, name.split(" ")[0], verdict.reason)
+                self.assertEqual(status, 400)
+        bodies = {json.dumps(body, sort_keys=True) for _, body, _ in results.values()}
+        self.assertEqual(bodies, {json.dumps(Verifier.REFUSAL_BODY, sort_keys=True)})
+
+    # ---- GAP-1: the nonce is the verifier's, used once, and expires.
+
+    def test_a_nonce_this_verifier_did_not_issue_is_refused(self):
+        _, jar = self.verifier.new_request()
+        for nonce in (secrets.token_urlsafe(32), Wallet.read_request(jar)[1]["nonce"] + "INVALID", ""):
+            with self.subTest(nonce=nonce[-8:]):
+                self.refused("device_signature", self.verifier.handle_direct_post(
+                    self.wallet.respond(jar, nonce=nonce)), "the SessionTranscript this verifier built")
+        # A nonce another of this verifier's requests issued is not this request's either.
+        other_session, _ = self.verifier.new_request()
+        self.refused("device_signature", self.verifier.handle_direct_post(
+            self.wallet.respond(jar, nonce=other_session.nonce)))
+
+    def test_a_nonce_is_consumed_by_its_first_answer(self):
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        self.accepted(self.verifier.handle_direct_post(form))
+        # The same response again, and a second response to the same request.
+        for again in (form, self.wallet.respond(jar)):
+            self.refused("invalid_request", self.verifier.handle_direct_post(again),
+                         "did not decrypt under any outstanding request's key")
+        self.assertIsNone(self.verifier.request_object(session.state))
+
+    def test_a_response_after_the_request_expired_is_refused(self):
+        real = time.time
+
+        def later(by):
+            return mock.patch.object(verifier_module.time, "time", lambda: real() + by)
+
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        with later(DEFAULT_REQUEST_TTL_SECONDS + 1):
+            self.refused("invalid_request", self.verifier.handle_direct_post(form), "expired")
+        # The control: inside its lifetime the same kind of response is accepted.
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        with later(DEFAULT_REQUEST_TTL_SECONDS - 5):
+            self.accepted(self.verifier.handle_direct_post(form))
+
+    # ---- GAP-2: the live path reads the verifier's clock and nothing else.
+
+    def test_the_live_path_reads_only_the_verifiers_clock(self):
+        """The whole parameter sets, pinned: a time argument added or renamed changes one."""
+        pinned = {
+            Verifier: ["self", "client_cert_pem", "client_key_pem", "request_uri", "response_uri",
+                       "issuer_jwks", "issuer_trust_anchors", "redirect_uri", "request_ttl_seconds",
+                       "vct_values", "claims", "status_resolver", "verifier_info", "credential_query_id",
+                       "verifier_info_profile", "redirect", "accept_vp_token_as_json_string",
+                       "credential_format", "doctype_value", "iaca_roots"],
+            Verifier.handle_direct_post: ["self", "form"],
+            serve_module.serve: ["verifier", "host", "port", "certfile", "keyfile", "on_verdict",
+                                 "background", "verbose", "on_request_object"],
+        }
+        for what, names in pinned.items():
+            target = what.__init__ if what is Verifier else what
+            with self.subTest(what=getattr(what, "__qualname__", what)):
+                self.assertEqual(list(inspect.signature(target).parameters), names)
+
+    def test_the_served_path_judges_at_the_verifier_clock(self):
+        """An MSO whose window closed ten days ago, sent with instants inside the window in every
+        place a response could carry one."""
+        window = dict(signed=md.BOOT - md.days(40), valid_from=md.BOOT - md.days(40),
+                      valid_until=md.BOOT - md.days(10))
+        inside = (md.BOOT - md.days(20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stamp = int((md.BOOT - md.days(20)).timestamp())
+        _, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar, extra={"now": inside, "at": inside, "captured_at": inside,
+                                               "iat": stamp, "instant": stamp}, **window)
+        for name in ("now", "at", "captured_at", "instant"):
+            form[name] = [inside]
+        self.refused("credential_validity", self.verifier.handle_direct_post(form), "validUntil")
+        # The control: the same response with a window that is open now.
+        self.accepted(self.verifier.handle_direct_post(self.wallet.respond(jar, extra={"now": inside})))
+
+    # ---- GAP-3: the document is the one the query asked for.
+
+    def test_a_doctype_the_query_did_not_ask_for_is_refused(self):
+        """A PID answering an mDL query, under a root that may sign both."""
+        verifier = self.make(iaca_roots=[IacaRoot(md.IACA, [md.MDL, md.PID])])
+        verdict = self.refused("doctype", self.exchange(
+            verifier, doctype=md.PID, items=(md.el("age_over_21", True, md.PID),)), "the request asked for docType")
+        self.assertIn(md.PID, verdict.reason)
+        self.accepted(self.exchange(verifier))
+
+    def test_a_withheld_element_is_refused(self):
+        verifier = self.make(claims=[AGE_OVER_21, FAMILY_NAME])
+        verdict = self.refused("claims", self.exchange(verifier, items=(md.el("family_name", "Mustermann"),)),
+                               "does not disclose")
+        self.assertIn("age_over_21", verdict.reason)
+        self.assertNotIn("family_name", verdict.reason)
+        # The same element in another namespace does not answer the query.
+        both = (md.el("family_name", "Mustermann"), md.el("age_over_21", True, "org.iso.18013.5.1.aamva"))
+        self.refused("claims", self.exchange(verifier, items=both), "does not disclose")
+        self.accepted(self.exchange(verifier, items=(md.el("family_name", "Mustermann"), md.el("age_over_21", True))))
+
+    def test_an_answer_keyed_to_another_query_is_refused(self):
+        for name, vp_token in (
+                ("another query id", lambda value: {"other": [value]}),
+                ("the default query id", lambda value: {"pid": [value]}),
+                ("two DeviceResponses for one query", lambda value: {"mdoc": [value, value]}),
+                ("two queries", lambda value: {"mdoc": [value], "other": [value]}),
+                ("no presentation", lambda value: {"mdoc": []}),
+                ("not an object", lambda value: [value]),
+                ("not text", lambda value: {"mdoc": [5]})):
+            with self.subTest(vp_token=name):
+                self.refused("malformed", self.exchange(vp_token=vp_token),
+                             "not one DeviceResponse for the one credential the DCQL query asked for")
+        for name, vp_token in (
+                ("padded base64", lambda value: {"mdoc": [value + "="]}),
+                ("standard base64", lambda value: {"mdoc": [value.replace("_", "/").replace("-", "+") + "+"]}),
+                ("text", lambda value: {"mdoc": ["a DeviceResponse"]})):
+            with self.subTest(vp_token=name):
+                self.refused("malformed", self.exchange(vp_token=vp_token), "not a base64url DeviceResponse")
+        # One byte over the DeviceResponse limit, inside a response the JWE limits allow.
+        over = b64u_encode(bytes(mdoc_module.MAX_DEVICE_RESPONSE_BYTES + 1))
+        self.refused("malformed", self.exchange(vp_token=lambda value: {"mdoc": [over]}), "byte limit")
+        # The single value outside an array is read, as for an SD-JWT VC.
+        self.accepted(self.exchange(vp_token=lambda value: {"mdoc": value}))
+
+    # ---- GAP-4: nothing the query did not ask for.
+
+    def test_an_element_the_query_did_not_ask_for_is_refused(self):
+        privileges = [{"vehicle_category_code": "B", "issue_date": cbor2.CBORTag(1004, "2020-01-01")}]
+        for extra in (md.el("birth_date", cbor2.CBORTag(1004, "1964-08-12")),
+                      md.el("driving_privileges", privileges),
+                      md.el("age_over_21", True, "org.iso.18013.5.1.aamva")):
+            with self.subTest(element=extra["element"], ns=extra["ns"]):
+                verdict = self.refused("claims", self.exchange(items=MdocWallet.ITEMS + (extra,)),
+                                       "which the request did not select")
+                self.assertIn(extra["element"], verdict.reason)
+        self.accepted(self.exchange())
+
+
+class MdocQueryTests(unittest.TestCase):
+    """`mdoc_query_refusal`, the rule `handle_direct_post` holds a verified mdoc's elements to,
+    on its own: `claims` as `Verifier` reads them, `elements` as `judge_device_response` returns
+    them."""
+
+    CLAIMS = [(tuple(AGE_OVER_21), (True,)), (tuple(FAMILY_NAME), None)]
+    ELEMENTS = {(md.MDL_NS, "age_over_21"): True, (md.MDL_NS, "family_name"): "Mustermann"}
+
+    def test_the_elements_asked_for_and_no_other_answer_the_query(self):
+        self.assertIsNone(mdoc_query_refusal(self.CLAIMS, self.ELEMENTS))
+
+    def test_each_departure_is_a_claims_refusal_with_its_own_reason(self):
+        for change, says in (
+                ({(md.MDL_NS, "age_over_21"): None}, "does not disclose"),
+                ({(md.MDL_NS, "age_over_21"): 1}, "with a value the request does not accept"),
+                ({(md.MDL_NS, "age_over_21"): False}, "with a value the request does not accept"),
+                ({(md.MDL_NS, "birth_date"): "1964-08-12"}, "which the request did not select"),
+                ({("org.iso.18013.5.1.aamva", "family_name"): "x"}, "which the request did not select")):
+            with self.subTest(change=change):
+                elements = dict(self.ELEMENTS)
+                for key, value in change.items():
+                    if value is None:
+                        del elements[key]
+                    else:
+                        elements[key] = value
+                code, reason = mdoc_query_refusal(self.CLAIMS, elements)
+                self.assertEqual(code, "claims")
+                self.assertIn(says, reason)
+                self.assertIn(list(change)[0][1], reason)
+
+    def test_a_missing_element_is_named_before_a_wrong_value_or_an_extra_one(self):
+        elements = {(md.MDL_NS, "age_over_21"): False, (md.MDL_NS, "birth_date"): "x"}
+        self.assertIn("does not disclose", mdoc_query_refusal(self.CLAIMS, elements)[1])
+        elements[(md.MDL_NS, "family_name")] = "Mustermann"
+        self.assertIn("does not accept", mdoc_query_refusal(self.CLAIMS, elements)[1])
+
+
+class MdocVerifyResponseTests(unittest.TestCase):
+    """`verify_response` over a captured mdoc response: the transcript is built from the request
+    as it was sent (its client_id, nonce, response_uri and the key in client_metadata.jwks), and
+    the document is judged at the instant supplied, which the verdict then states."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.response, inputs, cls.at, root = md.capture_case("capture-pid")
+        cls.roots = [IacaRoot(root, [md.PID])]
+        cls.request = {
+            "client_id": inputs["client_id"], "nonce": inputs["nonce"], "response_uri": inputs["response_uri"],
+            "response_mode": "direct_post.jwt",
+            "client_metadata": {"jwks": {"keys": [inputs["encryption_jwk"]]}},
+            "dcql_query": {"credentials": [{"id": "pid", "format": "mso_mdoc",
+                                            "meta": {"doctype_value": md.PID}}]}}
+        cls.vp_token = {"pid": [b64u_encode(cls.response)]}
+
+    def judged(self, request=None, vp_token=None, **kw):
+        kw.setdefault("iaca_roots", self.roots)
+        kw.setdefault("now", self.at)
+        return verify_response(self.request if request is None else request,
+                               self.vp_token if vp_token is None else vp_token, **kw)
+
+    def test_a_captured_mdoc_verifies_at_its_instant(self):
+        out = self.judged()
+        self.assertIs(out["accepted"], True, out["problem"])
+        verdict = out["verdicts"]["pid"]
+        self.assertTrue(verdict.authentic)
+        self.assertIn("judged at the supplied instant", verdict.reason)
+        self.assertIn(md.PID, verdict.claims)
+        # At the verifier's own clock the capture's MSO or certificate has run out or the
+        # verdict is the same; either way nothing says "supplied".
+        live = self.judged(now=None)["verdicts"]["pid"]
+        self.assertNotIn("supplied instant", live.reason)
+
+    def test_what_the_request_carried_decides_the_transcript(self):
+        r = self.request
+        other_key = md.public_jwk(ec.generate_private_key(ec.SECP256R1()))
+        for name, request in (
+                ("another nonce", dict(r, nonce=r["nonce"] + "x")),
+                ("another client_id", dict(r, client_id=r["client_id"][len("x509_hash:"):])),
+                ("another response_uri", dict(r, response_uri=r["response_uri"] + "/")),
+                ("another response key", dict(r, client_metadata={"jwks": {"keys": [other_key]}}))):
+            with self.subTest(request=name):
+                out = self.judged(request)
+                self.assertIs(out["accepted"], False)
+                self.assertEqual(out["verdicts"]["pid"].code, "device_signature")
+                self.assertIn("pid: device_signature", out["problem"])
+
+    def test_the_query_s_doctype_and_the_roots_are_held(self):
+        r = self.request
+        mdl = dict(r, dcql_query={"credentials": [{"id": "pid", "format": "mso_mdoc",
+                                                   "meta": {"doctype_value": md.MDL}}]})
+        self.assertEqual(self.judged(mdl)["verdicts"]["pid"].code, "doctype")
+        self.assertEqual(self.judged(iaca_roots=None)["verdicts"]["pid"].code, "issuer_key")
+
+    def test_the_supplied_instant_judges_the_mso_window(self):
+        """An MSO whose window opens in ten days: refused at this verifier's clock, authentic at
+        an instant inside the window, and the verdict says which of the two judged it."""
+        request = dict(md.REQUEST, response_mode="direct_post.jwt",
+                       client_metadata={"jwks": {"keys": [md.ENC_JWK]}},
+                       dcql_query={"credentials": [{"id": "mdoc", "format": "mso_mdoc",
+                                                    "meta": {"doctype_value": md.MDL}}]})
+        response = md.mint(signed=md.BOOT + md.days(10), valid_from=md.BOOT + md.days(10),
+                           valid_until=md.BOOT + md.days(40))
+        vp_token = {"mdoc": [b64u_encode(response)]}
+        roots = [IacaRoot(md.IACA, [md.MDL])]
+        live = verify_response(request, vp_token, iaca_roots=roots)
+        self.assertIs(live["accepted"], False)
+        self.assertEqual(live["verdicts"]["mdoc"].code, "credential_validity")
+        self.assertNotIn("supplied instant", live["verdicts"]["mdoc"].reason)
+        inside = int((md.BOOT + md.days(20)).timestamp())
+        out = verify_response(request, vp_token, iaca_roots=roots, now=inside)
+        self.assertIs(out["accepted"], True, out["problem"])
+        self.assertIn("judged at the supplied instant", out["verdicts"]["mdoc"].reason)
+        # Past the window's end, at a supplied instant too.
+        after = verify_response(request, vp_token, iaca_roots=roots, now=inside + 30 * 86400)
+        self.assertEqual(after["verdicts"]["mdoc"].code, "credential_validity")
+        self.assertIn("judged at the supplied instant", after["verdicts"]["mdoc"].reason)
+
+    def test_an_mdoc_request_nothing_can_be_held_to_is_refused(self):
+        r = self.request
+        query = r["dcql_query"]["credentials"][0]
+        for name, request, says in (
+                ("no response_uri", {k: v for k, v in r.items() if k != "response_uri"}, "response_uri"),
+                ("no client_metadata", {k: v for k, v in r.items() if k != "client_metadata"}, "client_metadata.jwks"),
+                ("no key", dict(r, client_metadata={"jwks": {"keys": []}}), "client_metadata.jwks"),
+                ("two keys", dict(r, client_metadata={"jwks": {"keys": [r["client_metadata"]["jwks"]["keys"][0]] * 2}}),
+                 "client_metadata.jwks"),
+                ("a key that is no EC key", dict(r, client_metadata={"jwks": {"keys": [{"kty": "RSA"}]}}),
+                 "client_metadata.jwks"),
+                ("no doctype_value", dict(r, dcql_query={"credentials": [dict(query, meta={})]}), "doctype_value"),
+                ("another format", dict(r, dcql_query={"credentials": [dict(query, format="jwt_vc_json")]}),
+                 "dc+sd-jwt and mso_mdoc")):
+            with self.subTest(request=name):
+                with self.assertRaises(ValueError) as caught:
+                    self.judged(request)
+                self.assertIn(says, str(caught.exception))
+
+    def test_a_vp_token_that_is_not_one_device_response_is_refused(self):
+        value = self.vp_token["pid"][0]
+        for name, vp_token in (("two", {"pid": [value, value]}), ("another id", {"other": [value]}),
+                               ("not text", {"pid": [5]})):
+            with self.subTest(vp_token=name):
+                out = self.judged(vp_token=vp_token)
+                self.assertIs(out["accepted"], False)
+                self.assertEqual(out["verdicts"], {})
+        out = self.judged(vp_token={"pid": [value + "="]})
+        self.assertEqual(out["verdicts"]["pid"].code, "malformed")
+
+    def test_transaction_data_naming_an_mdoc_query_is_refused(self):
+        entry = _raw(dict(PAYMENT, credential_ids=["pid"]))
+        with self.assertRaises(ValueError) as caught:
+            self.judged(dict(self.request, transaction_data=[entry]))
+        self.assertIn("mso_mdoc", str(caught.exception))

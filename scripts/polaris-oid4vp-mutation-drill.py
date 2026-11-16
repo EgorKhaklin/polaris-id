@@ -48,21 +48,36 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PKG = ROOT / "packages" / "polaris-oid4vp"
 
-#: The three files that decide. `serve.py` is transport: it has no refusal of its own, it
+#: The files that decide. `serve.py` is transport: it has no refusal of its own, it
 #: relays the verdict, and inverting a status code there is tested by `test_serve.py`
 #: directly rather than through mutation.
 #: `status.py` joined on 2026-09-23. It decides whether a credential is revoked, it refuses
 #: through the same `_refuse`, and it was absent from this tuple and its suite from SUITES:
 #: measured that day, 6 of its 12 raise-refusals could be inverted with the package green.
+#: `cbor.py`, `cose.py` and `mdoc.py` joined on 2026-11-16 with the mso_mdoc format: the CBOR
+#: decoder, the COSE reader and the mdoc judge, which refuse by raising.
 SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py",
-           "polaris_oid4vp/status.py")
+           "polaris_oid4vp/status.py", "polaris_oid4vp/cbor.py", "polaris_oid4vp/cose.py",
+           "polaris_oid4vp/mdoc.py")
+
+#: The package's other modules, each with the reason it has no refusal for this drill to
+#: invert. A module that is in neither list fails the drill (`module_problems`): status.py sat
+#: outside it for want of a line here, and a new module's refusals would go uninverted the
+#: same way, with every shard green.
+NO_REFUSALS = {
+    "polaris_oid4vp/__init__.py": "names what the package exports",
+    "polaris_oid4vp/serve.py": "transport: it relays the verdict, and test_serve holds its "
+                               "status codes directly",
+    "polaris_oid4vp/cli.py": "the command line: it hands flags and files to the verifier, and "
+                             "test_cli holds its refusals of flags directly",
+}
 
 #: Every suite in the package. A new test file that is not listed here is invisible to this
 #: drill, which is a silent way to lose coverage of a refusal: the file exists, the refusal
 #: is tested, and the drill still calls it unprotected or, worse, calls it protected by
 #: something else.
 SUITES = ("test_sdjwt", "test_jwe", "test_verifier", "test_serve", "test_cli",
-          "test_conformance_capture", "test_status")
+          "test_conformance_capture", "test_status", "test_mdoc")
 
 #: Refusals a passing suite cannot reach, with the reason. Every one is the same shape: the
 #: guard fires only when `cryptography` is ABSENT, and a suite that runs has it installed,
@@ -132,6 +147,20 @@ _STATUS_PATTERNS = (
 )
 
 
+#: cbor.py, cose.py and mdoc.py, 2026-11-16. They refuse by raising: the decoder a CborError,
+#: the COSE reader a CoseError, the mdoc judge a `_Refused` (which `verify_device_response`
+#: turns into the refusing verdict), an `_Unread`, or a ValueError for a root or an argument it
+#: will not take. Accepting is the guard not firing, so the raise is put behind `if False:`.
+#: The statement stays whole however many lines it spans and whether or not it ends in
+#: `from None`, which a bare call would not survive: a mutant that does not compile fails every
+#: test and reads as caught.
+_RAISING = ("polaris_oid4vp/cbor.py", "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py")
+_RAISE_PATTERNS = (
+    (re.compile(r"^(\s*)raise (CborError|CoseError|_Refused|_Unread|ValueError)\b"),
+     r"\1pass  # MUTANT\n\1if False: raise \2"),
+)
+
+
 #: Changes that are not refusals and must still be caught, each as (label, file, the exact text,
 #: what replaces it). 2026-10-14, OpenID4VP 1.0 section 8.2: an accepted response's redirect_uri
 #: carries a fresh response_code, and `Verifier.redeem` hands that request's result over once for
@@ -192,8 +221,15 @@ NAMED_MUTANTS = (
     # A request closes only on an authentic presentation: anything else anyone who saw the
     # request can send.
     ("verifier:garbage-closes-the-request", "polaris_oid4vp/verifier.py",
-     "        if presentation is None:\n",
-     "        if presentation is None:\n            self._sessions.pop(session.state, None)\n"),
+     "        if presentation is None:\n            return self._error(\"invalid_request\",\n",
+     "        if presentation is None:\n            self._sessions.pop(session.state, None)\n"
+     "            return self._error(\"invalid_request\",\n"),
+    # 2026-11-16, the same property on the mso_mdoc path: a response `_judge_mdoc` refuses, garbage
+    # included, leaves the request open for the holder's own.
+    ("verifier:a-refused-mdoc-closes-the-request", "polaris_oid4vp/verifier.py",
+     "            if not verdict.authentic:\n                return self._error(verdict.code, verdict.reason)\n",
+     "            if not verdict.authentic:\n                self._sessions.pop(session.state, None)\n"
+     "                return self._error(verdict.code, verdict.reason)\n"),
     ("verifier:a-refused-presentation-closes-the-request", "polaris_oid4vp/verifier.py",
      "            # gets the same constant refusal every other cause gets. The request stays open.\n",
      "            self._sessions.pop(session.state, None)\n"),
@@ -244,10 +280,28 @@ def _invert(line: str, source: str = ""):
                 out = pattern.sub(replacement, line.rstrip("\n"), count=1)
                 return out + "\n"
         return None
-    for pattern, replacement in _PATTERNS:
+    for pattern, replacement in (_RAISE_PATTERNS if source in _RAISING else _PATTERNS):
         if pattern.match(line):
             return pattern.sub(replacement, line, count=1)
     return None
+
+
+def module_problems(modules: list, sited: set) -> list:
+    """What is wrong between the package's modules and the two lists, one line each. `modules`
+    is every module of the package, as SOURCES names them; `sited` the sources in which a
+    refusal matched."""
+    problems = []
+    for module in sorted(set(modules) | set(SOURCES) | set(NO_REFUSALS)):
+        if module not in modules:
+            problems.append("%s is listed and is not a module of the package" % module)
+        elif module in SOURCES and module in NO_REFUSALS:
+            problems.append("%s is in SOURCES and in NO_REFUSALS: it is one or the other" % module)
+        elif module in SOURCES and module not in sited:
+            problems.append("%s is in SOURCES and no refusal in it matched a pattern" % module)
+        elif module not in SOURCES and module not in NO_REFUSALS:
+            problems.append("%s is in neither SOURCES nor NO_REFUSALS: its refusals would go "
+                            "uninverted" % module)
+    return problems
 
 
 def _fingerprint(line: str) -> str:
@@ -273,9 +327,21 @@ def _label(lines, i, source):
                            "#%d" % (seen + 1) if seen else "")
 
 
+#: The suite that listens on real sockets: 11 of the 14 seconds a passing run takes (measured
+#: 2026-11-16, 859 tests). It runs last, and a run stops at its first failing test, so a
+#: mutation another suite catches costs a second or two instead of the whole run. The verdict
+#: is the one a full run gives: the exit status is non-zero exactly when some test fails.
+SLOW_SUITES = ("test_serve",)
+
+
+def unittest_command():
+    """The command one suite run is: every suite, the slow ones last, stopping at a failure."""
+    ordered = [s for s in SUITES if s not in SLOW_SUITES] + [s for s in SUITES if s in SLOW_SUITES]
+    return [sys.executable, "-m", "unittest", "--failfast", *ordered]
+
+
 def _run_suite(work: pathlib.Path):
-    return subprocess.run([sys.executable, "-m", "unittest", *SUITES],
-                          cwd=str(work), capture_output=True, text=True, timeout=600)
+    return subprocess.run(unittest_command(), cwd=str(work), capture_output=True, text=True, timeout=600)
 
 
 def _suite_passes(work: pathlib.Path) -> bool:
@@ -324,6 +390,15 @@ def main(argv=None) -> int:
         if not sites:
             print("oid4vp-mutation drill: no refusals matched; the patterns and the package "
                   "have drifted and a clean result would mean nothing", file=sys.stderr)
+            return 1
+        problems = module_problems(
+            sorted(str(f.relative_to(pkg)) for f in (pkg / "polaris_oid4vp").glob("*.py")),
+            {source for source, _i, _m, _l in sites})
+        if problems:
+            print("oid4vp-mutation drill: the package's modules and this drill's lists disagree, "
+                  "so a clean result would not cover the package:", file=sys.stderr)
+            for problem in problems:
+                print("  %s" % problem, file=sys.stderr)
             return 1
         print("== %d refusals across %s ==" % (len(sites), ", ".join(SOURCES)))
         mine = shard_of(units, args.shard)

@@ -4001,6 +4001,12 @@ jobs:
       # failed run each to discover. The tests assert the SHAPE, not that files appeared.
       - name: The verifier's entry point, and the certificates it must produce
         run: cd packages/polaris-oid4vp && python -m unittest test_cli
+      # Decision record 025, milestone 2: an ISO/IEC 18013-5 DeviceResponse. The package's CBOR
+      # decoder is held to cbor2 (in the hash-pinned set installed above, and never imported by
+      # the package), and each refusal is asserted with its code, on three responses a wallet
+      # library this project did not write built and on ones this file mints.
+      - name: An mdoc DeviceResponse, decoded and each defect refused by its own check
+        run: cd packages/polaris-oid4vp && python -m unittest test_mdoc
 
   # 2026-10-15: the OID4VP mutation drill, out of the product boundary job. Every refusal in
   # packages/polaris-oid4vp is made to accept and the package's suites must notice; the drill

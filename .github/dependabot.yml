@@ -49,8 +49,10 @@ updates:
       - dependency-name: "ydiff"
         versions: [">=1.5"]
 
-  # The fuzz job's hash-pinned set (atheris and polaris-oid4vp's one dependency),
-  # compiled by pip-compile from requirements.in; Dependabot recompiles the hashes.
+  # The fuzz job's hash-pinned set (atheris, polaris-oid4vp's one dependency, and cbor2, the
+  # mdoc target's oracle), compiled by pip-compile from requirements.in; Dependabot recompiles
+  # the hashes. A cbor2 release that reads differently fails the mdoc target's controls at
+  # its start, on the pull request that moves it.
   - package-ecosystem: pip
     directory: /packages/polaris-oid4vp/fuzz
     schedule:

@@ -15,8 +15,10 @@ import contextlib
 import importlib.util
 import io
 import pathlib
+import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -64,6 +66,83 @@ class ThePartition(unittest.TestCase):
         for bad in ("", "3", "0/3", "4/3", "1/0", "a/b"):
             with self.assertRaises(Exception):
                 drill.parse_shard(bad)
+
+
+def _modules():
+    return sorted("polaris_oid4vp/" + f.name for f in (drill.PKG / "polaris_oid4vp").glob("*.py"))
+
+
+def _sited():
+    return {u[2] for u in drill.mutation_units(_originals()) if u[0] == "site"}
+
+
+class TheModulesThatRaise(unittest.TestCase):
+    """cbor.py, cose.py and mdoc.py refuse by raising, and the mutant puts the raise behind
+    `if False:` (2026-11-16)."""
+
+    def test_every_raise_in_them_is_a_site_and_every_mutant_compiles(self):
+        originals = _originals()
+        for source in drill._RAISING:
+            lines = originals[source].splitlines(keepends=True)
+            sites = [i for i, line in enumerate(lines) if drill._invert(line, source) is not None]
+            raises = [i for i, line in enumerate(lines) if re.match(r"\s*raise\b", line)]
+            self.assertTrue(sites, source)
+            self.assertEqual(sites, raises, "%s raises something no pattern inverts" % source)
+            for i in sites:
+                mutated = lines[:]
+                mutated[i] = drill._invert(lines[i], source)
+                # A mutant that does not compile fails every test and reads as caught.
+                compile("".join(mutated), source, "exec")
+
+    def test_the_mutated_guard_does_not_fire(self):
+        for raised in ('raise _Refused("code", "why")\n', 'raise _Refused("code", "why") from None\n',
+                       'raise _Refused("code",\n                   "why") from None\n'):
+            first, _, rest = raised.partition("\n")
+            mutant = drill._invert("    " + first + "\n", "polaris_oid4vp/mdoc.py") + rest + ("\n" if rest else "")
+            scope = {}
+            exec("class _Refused(Exception):\n    pass\n\n\ndef judge():\n" + mutant + "    return 'accepted'\n", scope)
+            self.assertEqual(scope["judge"](), "accepted", raised)
+
+    def test_the_other_modules_keep_their_own_patterns(self):
+        line = '    raise ValueError("no")\n'
+        self.assertIsNone(drill._invert(line, "polaris_oid4vp/sdjwt.py"))
+        self.assertIsNotNone(drill._invert(line, "polaris_oid4vp/mdoc.py"))
+
+
+class TheLists(unittest.TestCase):
+    """Every module of the package is a source with a refusal or is declared to have none."""
+
+    def test_the_package_as_it_is_has_no_problem(self):
+        self.assertEqual(drill.module_problems(_modules(), _sited()), [])
+        self.assertEqual(set(_modules()), set(drill.SOURCES) | set(drill.NO_REFUSALS))
+
+    def test_a_module_in_neither_list_is_a_problem(self):
+        # mdoc.py as it stood before it joined SOURCES, and a module added tomorrow.
+        mdoc = "polaris_oid4vp/mdoc.py"
+        with mock.patch.object(drill, "SOURCES", tuple(s for s in drill.SOURCES if s != mdoc)):
+            problems = drill.module_problems(_modules(), _sited() - {mdoc})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn(mdoc + " is in neither SOURCES nor NO_REFUSALS", problems[0])
+        problems = drill.module_problems(_modules() + ["polaris_oid4vp/new.py"], _sited())
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("polaris_oid4vp/new.py is in neither", problems[0])
+
+    def test_a_source_in_which_no_refusal_matched_is_a_problem(self):
+        problems = drill.module_problems(_modules(), _sited() - {"polaris_oid4vp/cose.py"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("polaris_oid4vp/cose.py is in SOURCES and no refusal in it matched", problems[0])
+
+    def test_a_listed_module_that_is_gone_is_a_problem(self):
+        for gone in ("polaris_oid4vp/serve.py", "polaris_oid4vp/jwe.py"):
+            problems = drill.module_problems([m for m in _modules() if m != gone], _sited() - {gone})
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn(gone + " is listed and is not a module of the package", problems[0])
+
+    def test_a_module_in_both_lists_is_a_problem(self):
+        with mock.patch.dict(drill.NO_REFUSALS, {"polaris_oid4vp/jwe.py": "no"}):
+            problems = drill.module_problems(_modules(), _sited())
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("polaris_oid4vp/jwe.py is in SOURCES and in NO_REFUSALS", problems[0])
 
 
 class TheShardsAgreeWithOneRun(unittest.TestCase):
@@ -117,6 +196,13 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
         self.assertEqual(sorted(set(made)), sorted(set(one)))
         self.assertEqual(sorted(set(made)), sorted(u[1] for u in self.units))
 
+    def test_a_module_outside_both_lists_stops_the_drill_before_any_mutation(self):
+        kept = {k: v for k, v in drill.NO_REFUSALS.items() if k != "polaris_oid4vp/cli.py"}
+        with mock.patch.object(drill, "NO_REFUSALS", kept):
+            code, made, text = self.run_shard((1, 1), set(drill.DECLARED_SURVIVORS))
+        self.assertEqual((code, made), (1, []), text[-400:])
+        self.assertIn("polaris_oid4vp/cli.py is in neither SOURCES nor NO_REFUSALS", text)
+
     def test_a_closed_gap_fails_only_the_shard_that_holds_it(self):
         declared = sorted(drill.DECLARED_SURVIVORS)[0]
         holder = next(i for i in (1, 2, 3)
@@ -144,6 +230,46 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
         n = len(self.units) + 1
         code, made, text = self.run_shard((n, n), set(drill.DECLARED_SURVIVORS))
         self.assertEqual((code, made), (0, []), text[-400:])
+
+
+class TheSuiteRun(unittest.TestCase):
+    """One suite run: every suite, the slow one last, stopped by the first failing test, with the
+    exit status a full run gives."""
+
+    def test_a_run_names_every_suite_once_and_the_slow_one_last(self):
+        command = drill.unittest_command()
+        self.assertEqual(command[1:4], ["-m", "unittest", "--failfast"])
+        self.assertEqual(sorted(command[4:]), sorted(drill.SUITES))
+        self.assertTrue(drill.SLOW_SUITES)
+        self.assertEqual(tuple(command[-len(drill.SLOW_SUITES):]), drill.SLOW_SUITES)
+        self.assertLessEqual(set(drill.SLOW_SUITES), set(drill.SUITES))
+
+    def run_in(self, quick_passes):
+        """Two suites of one test each in a scratch package: the quick one passes or fails, the
+        slow one leaves a file when it runs. Returns (exit status, whether the slow one ran)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            work = pathlib.Path(tmp)
+            (work / "test_quick.py").write_text(
+                "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_it(self):\n"
+                "        self.assertTrue(%r)\n" % quick_passes)
+            (work / "test_slow.py").write_text(
+                "import pathlib\nimport unittest\n\n\nclass T(unittest.TestCase):\n    def test_it(self):\n"
+                "        pathlib.Path('ran').write_text('x')\n")
+            # Listed slow first, so that only the ordering puts it after the quick one.
+            with mock.patch.object(drill, "SUITES", ("test_slow", "test_quick")), \
+                    mock.patch.object(drill, "SLOW_SUITES", ("test_slow",)):
+                done = drill._run_suite(work)
+            return done.returncode, (work / "ran").exists()
+
+    def test_a_failing_test_ends_the_run_before_the_slow_suite_and_fails_it(self):
+        code, slow_ran = self.run_in(quick_passes=False)
+        self.assertNotEqual(code, 0)
+        self.assertFalse(slow_ran)
+
+    def test_a_passing_run_ran_every_suite(self):
+        code, slow_ran = self.run_in(quick_passes=True)
+        self.assertEqual(code, 0)
+        self.assertTrue(slow_ran)
 
 
 if __name__ == "__main__":

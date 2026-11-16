@@ -4,7 +4,9 @@
 # polaris-oid4vp is the package that reads what a wallet it has never met sends it,
 # and its functions promise totality in their own docstrings: verify_presentation
 # "never raises on bad input", decrypt_compact raises nothing but JweError,
-# handle_direct_post never answers 500, status.decide is "total on hostile input".
+# handle_direct_post never answers 500, status.decide is "total on hostile input",
+# cbor.decode raises nothing but CborError, verify_device_response "never raises
+# on bad input".
 # The targets in packages/polaris-oid4vp/fuzz hold each function to its promise.
 #
 # A pull request that touches the package runs every target for a minute; the
@@ -34,9 +36,9 @@ concurrency:
 
 jobs:
   fuzz:
-    name: Coverage-guided fuzzing, five targets
+    name: Coverage-guided fuzzing, six targets
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     env:
       SECONDS_EACH: ${{ github.event_name == 'pull_request' && '60' || '600' }}
     steps:
@@ -48,7 +50,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install atheris and the package's one dependency, hash-pinned
+      - name: Install atheris, the package's one dependency and cbor2 (the mdoc target's oracle), hash-pinned
         run: pip install --require-hashes -r packages/polaris-oid4vp/fuzz/requirements.txt
 
       - name: Restore the corpus the last run grew
@@ -63,7 +65,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/crashes"
           fail=0
-          for t in presentation signed jwe response status; do
+          for t in presentation signed jwe response status mdoc; do
             echo "::group::$t, ${SECONDS_EACH}s"
             python "fuzz_$t.py" "$RUNNER_TEMP/corpus/$t" -max_total_time="$SECONDS_EACH" \
               -max_len=16384 -timeout=30 -print_final_stats=1 \

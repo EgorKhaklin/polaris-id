@@ -3,3 +3,6 @@
 # and installed with pip install --require-hashes -r requirements.txt.
 atheris==3.1.0
 cryptography>=50.0.2
+# fuzz_mdoc.py's oracle, a CBOR decoder this project did not write. Pinned exactly: the target
+# sets its strict options by name, and its controls fail at start if a release reads them otherwise.
+cbor2==6.2.1
