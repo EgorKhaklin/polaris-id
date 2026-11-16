@@ -13,7 +13,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. |
-| Use | 3 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier; on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
+| Use | 4 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-13, 25 are in openwallet-foundation-labs/identity-common-ts's CI, against its `@sd-jwt/sd-jwt-vc` verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier; on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
 | Findings from outside | 3, all fixed |
 
 ## External nouns
@@ -209,7 +209,7 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
 
 ### Use
 
-    Outside projects running it:   3 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28; openeudi/openid4vp's CI, since 2026-11-15)
+    Outside projects running it:   4 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28; openwallet-foundation-labs/identity-common-ts's CI, since 2026-11-13; openeudi/openid4vp's CI, since 2026-11-15)
 
 1. 2026-10-11: IDFoundry/OID4VCgo (maintainer osanderson) added
    [polaris-interop.yml](https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml):
@@ -244,7 +244,18 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    negatives, including disclosure-unreferenced, and accepts every control and repaired twin. The
    seven status-list cases are refused by Attesto's status-list check, which a verifier calls
    alongside presentation verification."
-5. 2026-11-15: 54 of this repository's negative vectors (24 SD-JWT VC, 30 mso_mdoc) are externally
+5. 2026-11-13: 25 of this repository's SD-JWT VC negative vectors are externally exercised in
+   openwallet-foundation-labs/identity-common-ts's CI, against the `verify` of its
+   `@sd-jwt/sd-jwt-vc` package, on each push to main and on pull requests: the `Tests` job of its
+   [ci.yml](https://github.com/openwallet-foundation-labs/identity-common-ts/blob/975c3fb4e62191c61d3b2cb4f361aea1dad1d7cc/.github/workflows/ci.yml)
+   runs `pnpm test` on Node 22, 24 and 26. The test reads its copy of `vectors.json` (0.3.1), taken
+   from this repository at `37b013f4`, verifies the three controls and requires each of the 25 to
+   be refused with its reason, since
+   [PR 455](https://github.com/openwallet-foundation-labs/identity-common-ts/pull/455), opened from
+   here and merged by a maintainer on 2026-11-13 (975c3fb4). The first run on main with them
+   ([43338393333](https://github.com/openwallet-foundation-labs/identity-common-ts/actions/runs/43338393333))
+   passed on all three.
+6. 2026-11-15: 54 of this repository's negative vectors (24 SD-JWT VC, 30 mso_mdoc) are externally
    exercised in openeudi/openid4vp's CI, against its `verifyPresentation`, on each push to main and
    on pull requests: the `Test` job of its
    [ci.yml](https://github.com/openeudi/openid4vp/blob/36d66bf57e921020030d2b893dbbbfa5cd5de08a/.github/workflows/ci.yml)
