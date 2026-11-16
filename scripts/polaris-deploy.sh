@@ -286,7 +286,7 @@ pg_major_check() {
         || image=""
     pull=never
     if [[ -z "${image}" ]] || ! docker image inspect "${image}" > /dev/null 2>&1; then
-        image=alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+        image=alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
         pull=missing
     fi
     err=$(mktemp "${TMPDIR:-/tmp}/polaris-pg-major.XXXXXX")
@@ -337,7 +337,7 @@ for vol in caddy_data caddy_config; do
         | python3 -c "import json,sys; print(json.load(sys.stdin)['volumes']['${vol}'].get('name',''))" 2>/dev/null || true)
     if [[ -n "${vol_name}" ]] && docker volume inspect "${vol_name}" >/dev/null 2>&1; then
         docker run --rm -v "${vol_name}:/v" \
-            alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
+            alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
             chown -R 1000:1000 /v >/dev/null 2>&1 || echo "  ! could not re-own ${vol_name}; the edge may fail to start as uid 1000" >&2
     fi
 done
