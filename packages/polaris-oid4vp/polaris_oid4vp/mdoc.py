@@ -522,7 +522,7 @@ def _tdate(value):
 
 def _validity_window(validity, now, max_skew_seconds):
     if not isinstance(validity, dict):
-        raise _Refused("mso", "the MSO has no validityInfo map")
+        raise _Refused("mso", "the MSO's validityInfo is not a map")
     instants = {}
     for member in ("signed", "validFrom", "validUntil"):
         instants[member] = _tdate(validity.get(member))
