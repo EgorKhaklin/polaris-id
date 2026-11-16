@@ -1577,22 +1577,48 @@ class CheckLayerDrillVoidTests(unittest.TestCase):
     """The three drills over the check layer (constitution, coverage, move) run the unmutated checks
     first. A tree that is already red makes the run VOID: exit 2, and one line that counts and names
     the failing checks. The constitution drill handed the list itself to %d, so on a red tree it
-    raised a TypeError where its two siblings said why they stopped."""
+    raised a TypeError where its two siblings said why they stopped.
 
-    DRILLS = ("polaris-constitution-mutation-drill.py", "polaris-coverage-mutation-drill.py",
-              "polaris-move-mutation-drill.py")
+    A drill rewrites files of the tree it is loaded from, so no test here runs main() of this tree's
+    own drill: each is loaded from a copy under a temporary root, and every path it writes through
+    is built from that root when the module loads."""
+
+    #: drill -> its module-level paths, each of which must lie under the root it was loaded from.
+    DRILLS = {"polaris-constitution-mutation-drill.py": ["ROOT"],
+              "polaris-coverage-mutation-drill.py": ["ROOT"],
+              "polaris-move-mutation-drill.py": ["OID4VP_PKG", "ROOT", "VERIFY_PKG", "WEB"]}
+
+    def setUp(self):
+        import pathlib
+        import shutil
+        import tempfile
+        self.root = pathlib.Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, str(self.root))
+        (self.root / "scripts").mkdir()
+        # The constitution drill finds some of its targets by reading the application's modules.
+        (self.root / "polaris_web").mkdir()
+        for module in sorted(pathlib.Path(_HERE).parent.joinpath("polaris_web").glob("*.py")):
+            if not module.name.startswith("test_"):
+                shutil.copy(str(module), str(self.root / "polaris_web"))
+
+    def load(self, script):
+        """One drill, loaded from a copy under the temporary root."""
+        import shutil
+        copy = self.root / "scripts" / script
+        shutil.copy(os.path.join(_HERE, script), str(copy))
+        spec = importlib.util.spec_from_file_location("void_drill_" + script.split("-")[1], str(copy))
+        drill = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(drill)
+        return drill
 
     def void_run(self, script):
         """main() of one drill with two checks already failing: (exit code, stdout, stderr). git reports
-        a clean tree, the check layer is not loaded, and the drill returns before it rewrites a file."""
+        a clean tree and the check layer is not loaded."""
         import contextlib
         import sys
         import types
         from unittest import mock
-        spec = importlib.util.spec_from_file_location("void_drill_" + script.split("-")[1],
-                                                      os.path.join(_HERE, script))
-        drill = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(drill)
+        drill = self.load(script)
         clean = types.SimpleNamespace(stdout=b"", stderr=b"", returncode=0)
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(drill.subprocess, "run", lambda *a, **k: clean), \
@@ -1602,6 +1628,16 @@ class CheckLayerDrillVoidTests(unittest.TestCase):
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = drill.main()
         return code, out.getvalue(), err.getvalue()
+
+    def test_every_path_of_a_loaded_drill_is_under_the_temporary_root(self):
+        import pathlib
+        for script, names in self.DRILLS.items():
+            with self.subTest(script=script):
+                paths = {name: value for name, value in vars(self.load(script)).items()
+                         if isinstance(value, pathlib.PurePath)}
+                self.assertEqual(sorted(paths), names)
+                for name, path in paths.items():
+                    self.assertIn(self.root, [path] + list(path.parents), name)
 
     def test_a_red_tree_is_void_and_the_line_counts_and_names_the_checks(self):
         for script in self.DRILLS:
