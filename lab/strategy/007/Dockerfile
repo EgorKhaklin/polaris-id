@@ -9,7 +9,7 @@
 # needs no second backend here, since cryptography is a witness on its own. Lab image, not a
 # product artifact. The base image is pinned by digest and the dependency by hash
 # (requirements.txt), so a rebuild gets exactly these bytes.
-FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 COPY lab/strategy/007/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt

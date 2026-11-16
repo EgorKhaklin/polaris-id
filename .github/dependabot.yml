@@ -90,6 +90,25 @@ updates:
           - "minor"
           - "patch"
 
+  # The polaris-oid4vp image's hash-pinned set (the released package and its dependencies),
+  # compiled by pip-compile from requirements.in. A newer polaris-oid4vp here is a new image tag.
+  - package-ecosystem: pip
+    directory: /packages/polaris-oid4vp/image
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      pip-packages-polaris-oid4vp-image-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
   # What lab/interop/*/run.sh install beside polaris-oid4vp: its one dependency (requirements.txt,
   # Python 3.9) and, for a run that builds it from the tree, the build backend
   # (requirements-build.txt, Python 3.10), hash-pinned by pip-compile; Dependabot recompiles both.
@@ -250,9 +269,13 @@ updates:
   # Docker base images (the FROM lines of every Dockerfile here): a PR bumps a
   # pinned digest when the upstream tag moves, so a frozen digest still receives
   # security updates. This ecosystem reads Dockerfiles only; the compose files'
-  # images are the docker-compose entry below.
+  # images are the docker-compose entry below. The polaris-oid4vp image builds on the Python
+  # base polaris_web/Dockerfile.prod pins, so the two directories share the entry and that digest
+  # moves in both in one PR.
   - package-ecosystem: docker
-    directory: /polaris_web
+    directories:
+      - /polaris_web
+      - /packages/polaris-oid4vp/image
     schedule:
       interval: weekly
       day: monday
