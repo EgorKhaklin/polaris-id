@@ -262,7 +262,7 @@ def main() -> int:
     before = _build_name_map(mod, ROOT)
     if before:
         print("== VOID: %d check(s) already failing (%s). Every mutation below would look "
-              "detected by a tree that was already red ==" % (before, ", ".join(before)),
+              "detected by a tree that was already red ==" % (len(before), ", ".join(before)),
               file=sys.stderr)
         return 2
     print("   clean\n")

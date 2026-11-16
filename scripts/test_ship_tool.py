@@ -1276,6 +1276,91 @@ class RunLockTests(unittest.TestCase):
         self.assertNotIn("loading", out.getvalue())
 
 
+_SUITE_WORDS = ("unittest", "pytest", "cargo", "polaris_checks.run", "--probe-route")
+_SUBPROCESS_CALLS = ("run", "Popen", "call", "check_call", "check_output")
+
+
+def _suite_calls(source, name):
+    """Each subprocess call in one drill's source that runs a suite, as [(line, bounded)].
+
+    A call runs a suite when a suite word is in the text that builds its command: the call itself,
+    and one step behind its command. The command is the first argument or args=. Its parts are the
+    command, the operands of its `+` and the elements of its list or tuple. Behind a part that calls
+    a function of the same file is that function; behind a part that is a name is each value the
+    name is assigned, in the calling function or else at module level, and the function of the same
+    file such a value calls. bounded says whether the call carries timeout=."""
+    import ast
+    tree = ast.parse(source, name)
+    parent = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    functions = {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def text(node):
+        return ast.get_source_segment(source, node) or ""
+
+    def function_of(node):
+        while node in parent:
+            node = parent[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node
+        return None
+
+    def assigned(ident, statements):
+        values = []
+        for n in statements:
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == ident for t in n.targets):
+                values.append(n.value)
+            elif (isinstance(n, (ast.AnnAssign, ast.AugAssign)) and isinstance(n.target, ast.Name)
+                    and n.target.id == ident and n.value is not None):
+                values.append(n.value)
+        return values
+
+    def parts(command):
+        if isinstance(command, ast.BinOp) and isinstance(command.op, ast.Add):
+            return parts(command.left) + parts(command.right)
+        if isinstance(command, (ast.List, ast.Tuple)):
+            return [p for e in command.elts for p in parts(e.value if isinstance(e, ast.Starred) else e)]
+        return [command]
+
+    def behind(command, function, names=True):
+        found = []
+        for part in parts(command):
+            if isinstance(part, ast.Call) and isinstance(part.func, ast.Name) and part.func.id in functions:
+                found.append(text(functions[part.func.id]))
+            elif isinstance(part, ast.Name) and names:
+                values = assigned(part.id, ast.walk(function)) if function is not None else []
+                for value in values or assigned(part.id, tree.body):
+                    found.append(text(value))
+                    found.append(behind(value, function, names=False))
+        return "\n".join(found)
+
+    calls = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"
+                and node.func.attr in _SUBPROCESS_CALLS):
+            continue
+        own = text(node)
+        # The interpreter probe (`-c` with __import__) only imports; it is not a suite.
+        if "__import__" in own:
+            continue
+        command = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "args"), None)
+        built = own if command is None else own + "\n" + behind(command, function_of(node))
+        if any(word in built for word in _SUITE_WORDS):
+            calls.append((node.lineno, any(k.arg == "timeout" for k in node.keywords)))
+    return calls
+
+
+def _unbounded_suite_runs(paths):
+    """Over drill files: how many suite calls _suite_calls sees, and "file:line" for each with no bound."""
+    seen, unbounded = 0, []
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            calls = _suite_calls(f.read(), path)
+        seen += len(calls)
+        unbounded += ["%s:%d" % (os.path.basename(path), line) for line, bounded in calls if not bounded]
+    return seen, unbounded
+
+
 class BoundedSuiteRunTests(unittest.TestCase):
     """scripts/polaris_bounded_run.py: a drill's suite run has a bound, and hitting it is reported.
 
@@ -1407,31 +1492,170 @@ class BoundedSuiteRunTests(unittest.TestCase):
     def test_every_drill_suite_run_is_bounded(self):
         """Each subprocess call in a mutation drill that runs a suite goes through the helper or
         carries its own timeout=. A new drill written the old way fails here, by name."""
-        import ast
         import glob
-        suite_words = ("unittest", "pytest", "cargo", "polaris_checks.run", "--probe-route")
-        unbounded = []
         drills = sorted(glob.glob(os.path.join(_HERE, "polaris-*-mutation-drill.py")))
         self.assertGreaterEqual(len(drills), 10, "the drill glob found almost nothing")
-        seen = 0
-        for path in drills:
-            tree = ast.parse(open(path).read(), path)
-            for node in ast.walk(tree):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                        and isinstance(node.func.value, ast.Name)
-                        and node.func.value.id == "subprocess"
-                        and node.func.attr in ("run", "Popen", "call", "check_call",
-                                               "check_output")):
-                    continue
-                text = ast.get_source_segment(open(path).read(), node) or ""
-                # The interpreter probe (`-c` with __import__) only imports; it is not a suite.
-                if "__import__" in text or not any(w in text for w in suite_words):
-                    continue
-                seen += 1
-                if not any(k.arg == "timeout" for k in node.keywords):
-                    unbounded.append("%s:%d" % (os.path.basename(path), node.lineno))
+        seen, unbounded = _unbounded_suite_runs(drills)
         self.assertGreater(seen, 0, "no suite call was recognised; the scan is broken")
         self.assertEqual(unbounded, [], "suite runs with no bound; use polaris_bounded_run.run")
+
+    def test_an_unbounded_suite_run_is_reported_by_file_and_line(self):
+        """Two drill files, one suite run each: the bounded one is counted, the other is named."""
+        import tempfile
+        bounded = ("import subprocess\nimport sys\n"
+                   "def go():\n"
+                   "    subprocess.run([sys.executable, '-m', 'unittest'], timeout=60)\n")
+        unbounded = ("import subprocess\nimport sys\n\n"
+                     "def go():\n"
+                     "    cmd = [sys.executable, '-m', 'pytest']\n"
+                     "    subprocess.run(cmd)\n")
+        with tempfile.TemporaryDirectory(prefix="polaris-scan-") as d:
+            paths = []
+            for name, source in (("polaris-a-mutation-drill.py", bounded), ("polaris-b-mutation-drill.py", unbounded)):
+                paths.append(os.path.join(d, name))
+                with open(paths[-1], "w", encoding="utf-8") as f:
+                    f.write(source)
+            self.assertEqual(_unbounded_suite_runs(paths), (2, ["polaris-b-mutation-drill.py:6"]))
+            self.assertEqual(_unbounded_suite_runs(paths[:1]), (1, []))
+
+    def suite_calls(self, body):
+        return _suite_calls("import subprocess\nimport sys\n" + body, "a-drill.py")
+
+    def test_the_scan_sees_a_suite_command_however_it_is_built(self):
+        """The same unbounded suite run written five ways: in the call, in a name of the calling
+        function, in a name at module level, by a function of the file, and in a name such a function
+        fills. Each is reported with its line; with timeout= each is seen and bounded."""
+        forms = {
+            "in the call": (
+                "def go():\n"
+                "    subprocess.run([sys.executable, '-m', 'unittest', 't']%s)\n", 4),
+            "a name in the function": (
+                "def go():\n"
+                "    cmd = [sys.executable, '-m', 'pytest', '-q']\n"
+                "    subprocess.run(cmd, cwd='.'%s)\n", 5),
+            "a name at module level": (
+                "SUITE = [sys.executable, '-m', 'unittest']\n"
+                "def go(module):\n"
+                "    subprocess.run(SUITE + [module]%s)\n", 5),
+            "a function of the file": (
+                "def suite_command(module):\n"
+                "    return [sys.executable, '-m', 'unittest', module]\n"
+                "def go():\n"
+                "    subprocess.run(suite_command('t')%s)\n", 6),
+            "a name a function fills": (
+                "def suite_command(module):\n"
+                "    return [sys.executable, '-m', 'unittest', module]\n"
+                "def go():\n"
+                "    cmd = suite_command('t')\n"
+                "    subprocess.check_call(cmd%s)\n", 7),
+        }
+        for form, (body, line) in forms.items():
+            with self.subTest(form=form):
+                self.assertEqual(self.suite_calls(body % ""), [(line, False)])
+                self.assertEqual(self.suite_calls(body % ", timeout=60"), [(line, True)])
+
+    def test_the_scan_leaves_what_is_not_a_suite_run(self):
+        """A git command in a name is not a suite run, a name is read in its own function and not in
+        another's, and the interpreter probe is still left out."""
+        self.assertEqual(self.suite_calls(
+            "def go(paths):\n"
+            "    cmd = ['git', 'status', '--porcelain', '--']\n"
+            "    subprocess.run(cmd + [str(p) for p in paths])\n"), [])
+        self.assertEqual(self.suite_calls(
+            "def suite():\n"
+            "    cmd = [sys.executable, '-m', 'unittest']\n"
+            "    subprocess.run(cmd, timeout=5)\n"
+            "def status():\n"
+            "    cmd = ['git', 'status']\n"
+            "    subprocess.run(cmd)\n"), [(5, True)])
+        self.assertEqual(self.suite_calls(
+            "def probe():\n"
+            "    subprocess.run([sys.executable, '-c', \"__import__('unittest')\"])\n"), [])
+
+
+class CheckLayerDrillVoidTests(unittest.TestCase):
+    """The three drills over the check layer (constitution, coverage, move) run the unmutated checks
+    first. A tree that is already red makes the run VOID: exit 2, and one line that counts and names
+    the failing checks. The constitution drill handed the list itself to %d, so on a red tree it
+    raised a TypeError where its two siblings said why they stopped.
+
+    A drill rewrites files of the tree it is loaded from, so no test here runs main() of this tree's
+    own drill: each is loaded from a copy under a temporary root, and every path it writes through
+    is built from that root when the module loads."""
+
+    #: drill -> its module-level paths, each of which must lie under the root it was loaded from.
+    DRILLS = {"polaris-constitution-mutation-drill.py": ["ROOT"],
+              "polaris-coverage-mutation-drill.py": ["ROOT"],
+              "polaris-move-mutation-drill.py": ["OID4VP_PKG", "ROOT", "VERIFY_PKG", "WEB"]}
+    #: What the temporary root's name starts with. The coverage shards measure every file a test
+    #: loads, and their data is combined on another runner, where this root never existed: a copy
+    #: that was measured is a "No source for code" report error there. .coveragerc omits this name.
+    PREFIX = "polaris-runner-test-"
+
+    def setUp(self):
+        import pathlib
+        import shutil
+        import tempfile
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix=self.PREFIX)).resolve()
+        self.addCleanup(shutil.rmtree, str(self.root))
+        (self.root / "scripts").mkdir()
+        # The constitution drill finds some of its targets by reading the application's modules.
+        (self.root / "polaris_web").mkdir()
+        for module in sorted(pathlib.Path(_HERE).parent.joinpath("polaris_web").glob("*.py")):
+            if not module.name.startswith("test_"):
+                shutil.copy(str(module), str(self.root / "polaris_web"))
+
+    def load(self, script):
+        """One drill, loaded from a copy under the temporary root."""
+        import shutil
+        copy = self.root / "scripts" / script
+        shutil.copy(os.path.join(_HERE, script), str(copy))
+        spec = importlib.util.spec_from_file_location("void_drill_" + script.split("-")[1], str(copy))
+        drill = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(drill)
+        return drill
+
+    def void_run(self, script):
+        """main() of one drill with two checks already failing: (exit code, stdout, stderr). git reports
+        a clean tree and the check layer is not loaded."""
+        import contextlib
+        import sys
+        import types
+        from unittest import mock
+        drill = self.load(script)
+        clean = types.SimpleNamespace(stdout=b"", stderr=b"", returncode=0)
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(drill.subprocess, "run", lambda *a, **k: clean), \
+                mock.patch.object(drill, "_load_checks", lambda: object()), \
+                mock.patch.object(drill, "_build_name_map", lambda mod, root: ["first_check", "second_check"]), \
+                mock.patch.object(sys, "argv", [script]), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = drill.main()
+        return code, out.getvalue(), err.getvalue()
+
+    def test_every_path_of_a_loaded_drill_is_under_the_temporary_root(self):
+        import pathlib
+        for script, names in self.DRILLS.items():
+            with self.subTest(script=script):
+                paths = {name: value for name, value in vars(self.load(script)).items()
+                         if isinstance(value, pathlib.PurePath)}
+                self.assertEqual(sorted(paths), names)
+                for name, path in paths.items():
+                    self.assertIn(self.root, [path] + list(path.parents), name)
+
+    def test_the_temporary_root_is_one_the_coverage_measure_leaves_out(self):
+        with open(os.path.join(os.path.dirname(_HERE), ".coveragerc"), encoding="utf-8") as f:
+            omitted = [line.strip() for line in f]
+        self.assertIn("*/%s*/*" % self.PREFIX, omitted)
+        self.assertTrue(self.root.name.startswith(self.PREFIX), self.root.name)
+
+    def test_a_red_tree_is_void_and_the_line_counts_and_names_the_checks(self):
+        for script in self.DRILLS:
+            with self.subTest(script=script):
+                code, out, err = self.void_run(script)
+                self.assertEqual(code, 2)
+                self.assertIn("positive control", out)
+                self.assertIn("== VOID: 2 check(s) already failing (first_check, second_check).", err)
 
 
 class ReleaseNotesTests(unittest.TestCase):
