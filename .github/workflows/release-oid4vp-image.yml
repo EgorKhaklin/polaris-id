@@ -1,0 +1,411 @@
+# ============================================================================
+# The polaris-oid4vp image: the released package as a published, signed image.
+#
+# packages/polaris-oid4vp/image installs the released polaris-oid4vp wheel from PyPI, by hash, on
+# a base pinned by digest, and its entrypoint is the package's command. This workflow builds it on
+# native amd64 and arm64 runners, has the package suite's wallet present to each build
+# (scripts/polaris-oid4vp-image-drill.py) and gates it on fixable CRITICAL CVEs, and stops there
+# unless it is a publish. With confirm=PUBLISH, on main, and only once the maintainer approves the
+# `ghcr` environment, the image is pushed to ghcr.io by digest, its two architectures are joined
+# into one index under the tag v<package version> (a rebuild of the same package release adds a
+# revision: v<package version>-2), and the index is signed keyless with cosign:
+# the certificate names this workflow on main, and certificate and signature go to the public
+# Rekor log. SLSA build provenance is attached to the index at the registry, and each
+# architecture's SPDX SBOM, brought to the NTIA minimum elements and judged by the SPDX project's
+# checker as sbom.yml does, to that architecture's image. Any other confirm value is a dry run,
+# on any ref: both architectures build and are drilled, nothing is pushed, signed or attested.
+#
+# A publish is public and cannot be withdrawn (a digest stays addressable), so it is the
+# maintainer's call: the input must say PUBLISH, the run must be on main, and no job that writes
+# to the registry starts before the approval. A published tag never moves: a new package release
+# is a new version in requirements.in and a new tag, and a rebuild is a new revision.
+#
+# Verifying the image: packages/polaris-oid4vp/image/README.md.
+# ============================================================================
+
+name: Release the polaris-oid4vp image
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type PUBLISH to push, sign and attest (run it on main). Anything else is a dry run."
+        required: false
+        default: ""
+      revision:
+        description: "Empty for the first image of a package release. A rebuild of the same release (a new base, a dependency) is 2, then 3, and is tagged v<version>-<revision>."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-oid4vp-image
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/egorkhaklin/polaris-oid4vp
+  # The scanner and SBOM generator; equal to the image CVE scan's pin in image-cve-scan.yml and
+  # to sbom.yml.
+  TRIVY_IMAGE: aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7
+
+jobs:
+  validate:
+    name: A publish runs on main, under the version the image installs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # The version in the tag is read from the file the image is built from, never typed: v and
+      # the one released version requirements.in pins, which requirements.txt must pin by hash
+      # too. The first image of a package release carries that tag alone. A rebuild of the same
+      # release (a new base digest, a dependency, a system package) is a new tag, the version
+      # followed by a revision from 2 up, so a fixed base does not wait for the next release and
+      # no published tag moves. The revision reaches the shell as data in the environment.
+      - name: The tag is the package version the image installs, and a revision for a rebuild
+        id: tag
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          DIR=packages/polaris-oid4vp/image
+          VERSION=$(sed -n 's/^polaris-oid4vp==\([0-9][0-9A-Za-z.]*\)$/\1/p' "$DIR/requirements.in")
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::$DIR/requirements.in does not pin one released polaris-oid4vp version: '$VERSION'"; exit 1; }
+          grep -qxF "polaris-oid4vp==$VERSION \\" "$DIR/requirements.txt" \
+            || { echo "::error::$DIR/requirements.txt does not pin polaris-oid4vp $VERSION by hash"; exit 1; }
+          [[ "$REVISION" =~ ^([2-9]|[1-9][0-9]+)?$ ]] \
+            || { echo "::error::revision is empty for the first image of a package release, or a number from 2 up for a rebuild: '$REVISION'"; exit 1; }
+          echo "tag=v$VERSION${REVISION:+-$REVISION}" >> "$GITHUB_OUTPUT"
+          echo "the image installs polaris-oid4vp $VERSION and is tagged v$VERSION${REVISION:+-$REVISION}"
+
+      - name: Check the ref
+        # The values reach the shell as data in the environment, never spliced into the script.
+        # Whether this is a publish is decided once, by the expression every job's `if:` uses:
+        # an expression compares strings without regard to case and a shell test does not, so a
+        # shell test of the typed word would call `publish` a dry run while the jobs below ran.
+        env:
+          PUBLISH: ${{ inputs.confirm == 'PUBLISH' }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$PUBLISH" != "true" ]; then
+            echo "dry run on $REF: the image builds and nothing leaves the runners"
+            exit 0
+          fi
+          [ "$REF" = refs/heads/main ] \
+            || { echo "::error::a publish runs on main, not '$REF'"; exit 1; }
+
+  approve:
+    name: The maintainer approves the publish
+    needs: validate
+    if: inputs.confirm == 'PUBLISH'
+    runs-on: ubuntu-24.04
+    environment: ghcr
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Approved
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: echo "approved to publish $TAG"
+
+  # A dry run reads what a publish would meet at the image's tag, on the credentials the publish
+  # job uses, with read access only. It reports and never blocks; the publish job's guard refuses.
+  tag-state:
+    name: What a publish would meet at the tag
+    needs: validate
+    if: inputs.confirm != 'PUBLISH'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read        # read the tag; nothing is written
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Read the image's tag
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/polaris-release-tag-guard.py --dry --repo "${IMAGE#ghcr.io/}" --tag "$TAG"
+
+  build:
+    name: Build and drill the image (${{ matrix.arch }})
+    needs: [validate, approve]
+    # A dry run skips the approval; a publish builds only once the approval is given.
+    if: ${{ !cancelled() && needs.validate.result == 'success' && (inputs.confirm != 'PUBLISH' || needs.approve.result == 'success') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write   # push by digest, only on an approved publish
+    env:
+      PUSH: ${{ inputs.confirm == 'PUBLISH' && needs.approve.result == 'success' }}
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to ghcr.io
+        if: env.PUSH == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Built once into the runner's docker, where the drill and the scan read it. The push
+      # below builds the same Dockerfile, context and labels from this build's cache.
+      - name: Build the image for the drill
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: packages/polaris-oid4vp/image
+          platforms: linux/${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.validate.outputs.tag }}
+          load: true
+          tags: polaris-oid4vp:drill
+          provenance: false
+          sbom: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      # The package suite's wallet presents to the container: a valid presentation is accepted
+      # and one bound to the wrong nonce is refused, on this architecture, before anything is
+      # pushed. The wallet signs and encrypts with cryptography.
+      - name: The image judges a presentation
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --require-hashes -r polaris_web/requirements.txt
+          python scripts/polaris-oid4vp-image-drill.py --image polaris-oid4vp:drill
+
+      # The gate image-cve-scan.yml applies to the server images: a fixable CRITICAL that
+      # .trivyignore does not cover fails the build, and a scan that printed no report fails it too.
+      - name: Trivy GATE on fixable CRITICAL (after .trivyignore)
+        run: |
+          set -euo pipefail
+          rc=0
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/.trivyignore:/.trivyignore:ro" \
+            "$TRIVY_IMAGE" image \
+              --scanners vuln --severity CRITICAL --ignore-unfixed \
+              --ignorefile /.trivyignore --exit-code 1 --no-progress polaris-oid4vp:drill > trivy.txt 2>&1 || rc=$?
+          cat trivy.txt
+          grep -q '^Total: ' trivy.txt || { echo "::error::Trivy printed no report"; exit 1; }
+          [ "$rc" -eq 0 ] || { echo "::error::a fixable CRITICAL CVE not covered by .trivyignore, or the scan failed (exit $rc)"; exit 1; }
+
+      - name: On a publish, push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: packages/polaris-oid4vp/image
+          platforms: linux/${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.validate.outputs.tag }}
+          outputs: ${{ env.PUSH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
+          # Provenance and the SBOMs are attested by the publish job, keyless and in Rekor.
+          provenance: false
+          sbom: false
+
+      - name: Record the digest
+        if: env.PUSH == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for $ARCH"; exit 1; }
+          mkdir -p digests
+          printf '%s' "$DIGEST" > "digests/$ARCH"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.PUSH == 'true'
+        with:
+          name: digest-${{ matrix.arch }}
+          path: digests/*
+          retention-days: 1
+
+  publish:
+    name: Join, sign and attest the image
+    needs: [validate, approve, build]
+    if: inputs.confirm == 'PUBLISH'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write       # write the index, signature and attestations
+      id-token: write       # OIDC identity for keyless signing
+      attestations: write   # store the provenance and SBOM attestations
+    outputs:
+      ref: ${{ steps.index.outputs.image }}@${{ steps.index.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # `imagetools create -t` moves a tag that already exists, and the registry does not refuse.
+      # The tag must be absent, or name exactly this run's two digests ("Re-run failed jobs" in
+      # the run that published it); anything else, or any answer it cannot read, refuses before
+      # the tag can move. A new package release is a new version and a new tag.
+      - name: Refuse to move a published tag
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          AMD64=$(cat digests/amd64); ARM64=$(cat digests/arm64)
+          python3 scripts/polaris-release-tag-guard.py --repo "${IMAGE#ghcr.io/}" \
+            --tag "$TAG" --amd64 "$AMD64" --arm64 "$ARM64"
+
+      - name: Join the two architectures into one index
+        id: index
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          AMD64=$(cat digests/amd64); ARM64=$(cat digests/arm64)
+          docker buildx imagetools create -t "$IMAGE:$TAG" "$IMAGE@$AMD64" "$IMAGE@$ARM64"
+          DIGEST=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no index digest for $IMAGE"; exit 1; }
+          { echo "image=$IMAGE"; echo "digest=$DIGEST"; echo "amd64=$AMD64"; echo "arm64=$ARM64"; } >> "$GITHUB_OUTPUT"
+
+      - name: Sign the index, keyless
+        env:
+          REF: ${{ steps.index.outputs.image }}@${{ steps.index.outputs.digest }}
+        run: cosign sign --yes "$REF"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-name: ${{ steps.index.outputs.image }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
+
+      # One SBOM per architecture, each describing the image it is attached to. Trivy leaves
+      # the NTIA minimum elements short; scripts/polaris-sbom-enrich.py fills them and the SPDX
+      # project's checker decides, exactly as sbom.yml does for the release's SBOMs.
+      - name: The SBOMs (SPDX, Trivy), brought to the NTIA minimum elements and checked
+        env:
+          AMD64: ${{ steps.index.outputs.amd64 }}
+          ARM64: ${{ steps.index.outputs.arm64 }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/sbom-check"
+          "$RUNNER_TEMP/sbom-check/bin/pip" install --quiet --require-hashes -r .github/sbom/requirements.txt
+          PY="$RUNNER_TEMP/sbom-check/bin/python"
+          for arch in amd64 arm64; do
+            [ "$arch" = amd64 ] && D="$AMD64" || D="$ARM64"
+            docker run --rm -v "$HOME/.docker:/root/.docker:ro" "$TRIVY_IMAGE" \
+              image --quiet --platform "linux/$arch" --format spdx-json "$IMAGE@$D" > "sbom-$arch.spdx.json"
+            "$PY" scripts/polaris-sbom-enrich.py --version "${TAG#v}" "sbom-$arch.spdx.json"
+            "$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "sbom-$arch.spdx.json" > verdict.json || true
+            jq -e '.isConformant == true and (.validationMessages | length) == 0 and .graphValidation.floatingComponents.floatingComponentCount == 0 and .graphValidation.unknownPointers.hasUnknownPointers == false' verdict.json > /dev/null \
+              || { echo "::error::the $arch SBOM does not meet the NTIA minimum elements or is not valid SPDX 2.3"; exit 1; }
+          done
+
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ steps.index.outputs.image }}
+          subject-digest: ${{ steps.index.outputs.amd64 }}
+          sbom-path: sbom-amd64.spdx.json
+          push-to-registry: true
+
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ steps.index.outputs.image }}
+          subject-digest: ${{ steps.index.outputs.arm64 }}
+          sbom-path: sbom-arm64.spdx.json
+          push-to-registry: true
+
+  verify:
+    name: Verify what was published, and refuse what was not
+    needs: [approve, publish]
+    if: inputs.confirm == 'PUBLISH'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read        # read what was published, whatever the package's visibility
+      attestations: read    # gh attestation verify reads the stored attestations
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # The commands packages/polaris-oid4vp/image/README.md gives, run on the published digest,
+      # each beside a negative control that must be refused: the index under another branch's
+      # identity, and the build provenance asked of an architecture's digest, which carries only
+      # its SBOM. The index's cosign signature is also checked by its own predicate type.
+      - name: The image verifies as documented, and the controls are refused
+        env:
+          REF: ${{ needs.publish.outputs.ref }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          WORKFLOW="$REPO/.github/workflows/release-oid4vp-image.yml"
+          ID="https://github.com/$WORKFLOW@refs/heads/main"
+          OTHER="https://github.com/$WORKFLOW@refs/heads/not-main"
+          ISSUER=https://token.actions.githubusercontent.com
+          refused() { if "$@" > /dev/null 2>&1; then echo "::error::accepted: $*"; exit 1; fi; }
+          [[ "$REF" =~ ^ghcr\.io/[a-z0-9./-]+@sha256:[0-9a-f]{64}$ ]] || { echo "::error::no published reference: '$REF'"; exit 1; }
+          cosign verify "$REF" --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" > /dev/null
+          gh attestation verify "oci://$REF" --repo "$REPO" --signer-workflow "$WORKFLOW" \
+            --source-ref refs/heads/main > /dev/null
+          refused cosign verify "$REF" --certificate-identity "$OTHER" --certificate-oidc-issuer "$ISSUER"
+          cosign verify-attestation "$REF" --type https://sigstore.dev/cosign/sign/v1 \
+            --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" > /dev/null
+          for arch in amd64 arm64; do
+            D=$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest}}' \
+              | jq -r --arg a "$arch" '.manifests[] | select(.platform.architecture == $a) | .digest')
+            [[ "$D" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no $arch digest under $REF"; exit 1; }
+            gh attestation verify "oci://$IMAGE@$D" --repo "$REPO" --signer-workflow "$WORKFLOW" \
+              --source-ref refs/heads/main --predicate-type https://spdx.dev/Document/v2.3 > /dev/null
+            refused gh attestation verify "oci://$IMAGE@$D" --repo "$REPO" --signer-workflow "$WORKFLOW" \
+              --source-ref refs/heads/main
+          done
+          echo "$REF: signature, provenance and both SBOMs verify; both controls refused"

@@ -74,6 +74,10 @@ polaris-oid4vp keygen --out ./pki --host verifier.example
 polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 ```
 
+The same two commands run from a container:
+[the image](https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp/image)
+holds this package from PyPI, installed by hash.
+
 - `keygen` makes a CA, a leaf it signs and a listener certificate, and prints the `client_id`
   and the anchor a counterparty registers. The profile rejects a self-signed leaf and a trust
   anchor inside the chain; `keygen` avoids both. The CA and the leaf carry the key identifiers
