@@ -64,8 +64,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # --issuer-trust-anchor, which the run needs, is in every published release from 1.0.0rc8.
 PKG="${POLARIS_OID4VP:-$HERE/../../../packages/polaris-oid4vp}"
 # The images the wallet is built and run in, pinned by digest so a run is the run that was reviewed
-# (read from Docker Hub's manifest index on 2026-10-11: golang:1.26 and alpine:3.20).
-GO_IMAGE="golang:1.26@sha256:d7722066f0b60ceccb6c0643cbed1f5f9e15506ac237146c95333504d7805d89"
+# (read from Docker Hub's manifest index: golang:1.26 on 2026-11-16, Go 1.26.11; alpine:3.20 on
+# 2026-10-11).
+GO_IMAGE="golang:1.26@sha256:f6946db66567acc1497655237e58f06ec3a57478a5e0d67fca29d2ffcf2ea136"
 ALPINE_IMAGE="alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
 PORT="${PORT:-9443}"
 WALLET_PORT="${WALLET_PORT:-8443}"
