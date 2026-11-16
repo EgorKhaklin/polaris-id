@@ -433,6 +433,41 @@ VERIFY-RELEASE.md's status line to that release.
 
 ---
 
+## The polaris-oid4vp image
+
+[`packages/polaris-oid4vp/image`](../packages/polaris-oid4vp/image/README.md) installs the released
+`polaris-oid4vp` wheel from PyPI, by hash; nothing in the image is built from this repository. Its
+tag is `v` and the version its `requirements.in` pins, read by the workflow and never typed. A new
+package release reaches the image by a pull request that moves that pin and recompiles
+`requirements.txt`. A rebuild of the same package release (a new base digest, a dependency, a
+system package) is dispatched with `-f revision=2`, then `3`, and published as `v<version>-2`,
+`v<version>-3`.
+
+Actions → **Release the polaris-oid4vp image** → Run workflow, from `main`
+([`release-oid4vp-image.yml`](../.github/workflows/release-oid4vp-image.yml)); from a terminal,
+`gh workflow run release-oid4vp-image.yml --ref main -f confirm=PUBLISH`.
+
+- **Dry run** (the default, `confirm` empty), from any branch: the image builds on amd64 and
+  arm64, the package suite's wallet presents to each build
+  ([`scripts/polaris-oid4vp-image-drill.py`](../scripts/polaris-oid4vp-image-drill.py)) and each
+  is scanned for fixable CRITICAL CVEs. Nothing is pushed, signed or attested. It also reads the
+  image's tag, read-only, and reports what a publish would meet there.
+- **Real publish**: from `main`, with `PUBLISH` typed into `confirm`. The run waits at the `ghcr`
+  environment for the maintainer's approval before anything builds. Then each architecture's
+  build passes the same drill and scan and is pushed to `ghcr.io/egorkhaklin/polaris-oid4vp` by
+  digest, the two are joined into one index, the index is signed keyless with cosign and given
+  SLSA build provenance, and each architecture's image an SPDX SBOM that meets the NTIA minimum
+  elements, all at the registry.
+
+One-time setup: in the `ghcr` environment's deployment rules, allow the branch `main` beside the
+`v*` tags. The server images still publish only from a version tag: their workflow refuses any
+other ref before the approval is asked. A published tag never moves here either: the same tag
+guard runs before the index is joined, and a publish that fails part way is finished with
+**Re-run failed jobs** in that same run. Verifying the image:
+[its README](../packages/polaris-oid4vp/image/README.md).
+
+---
+
 ## After publishing
 
 Record it in [`lab/EXTERNAL-NOUNS.md`](../lab/EXTERNAL-NOUNS.md). Being installable is not

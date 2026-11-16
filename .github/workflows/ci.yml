@@ -4001,6 +4001,11 @@ jobs:
       # failed run each to discover. The tests assert the SHAPE, not that files appeared.
       - name: The verifier's entry point, and the certificates it must produce
         run: cd packages/polaris-oid4vp && python -m unittest test_cli
+      # The image a stranger pulls holds the released wheel, by hash, and nothing of this tree
+      # (packages/polaris-oid4vp/image). Built here, then presented to by the suite's wallet over
+      # TLS: a valid presentation accepted, the wrong nonce refused, as a user that is not root.
+      - name: The polaris-oid4vp image builds and judges a presentation
+        run: python scripts/polaris-oid4vp-image-drill.py
 
   # 2026-10-15: the OID4VP mutation drill, out of the product boundary job. Every refusal in
   # packages/polaris-oid4vp is made to accept and the package's suites must notice; the drill

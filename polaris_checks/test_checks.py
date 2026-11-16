@@ -3768,6 +3768,11 @@ def test_release_images_signed_check_discriminates(tmp_path):
            "must FAIL when the approval does not wait on the version-tag refusal")
     broken(wf, '[ "$REF_TYPE" = tag ]', '[ -n "$REF_TYPE" ]',
            "must FAIL when a publish from a branch is not refused")
+    broken(wf, "            || { echo \"::error::a publish runs on a release tag (vX.Y.Z or vX.Y.Z-rc.N), "
+               "not '$TAG'\"; exit 1; }\n", '            || echo "::warning::not a release tag"\n',
+           "must FAIL when a publish from a branch only warns")
+    broken(wf, '[ "$REF_TYPE" = tag ] && ', '[ "$REF_TYPE" = tag ] || true; ',
+           "must FAIL when another command answers for the release-tag test")
     broken(wf, "    needs: [approve, build]\n", "    needs: build\n",
            "must FAIL when a job that signs does not wait on the approval")
     broken(wf, "    needs: [approve, build]\n    if: inputs.confirm == 'PUBLISH'\n",
@@ -3835,6 +3840,381 @@ def test_release_images_signed_check_discriminates(tmp_path):
            "--repo-only", "must FAIL when the attestation check is not bound to the workflow")
 
 
+_OID4VP_IMAGE_RELEASE_FILES = (".github/workflows/release-oid4vp-image.yml",
+                               "packages/polaris-oid4vp/image/README.md",
+                               "scripts/polaris-oid4vp-image-drill.py")
+
+
+def _copied(tmp_path, files):
+    for rel in files:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text())
+
+
+def _breakers(tmp_path, check):
+    """Two ways to break one file of a copied fixture and require `check` to FAIL for the stated
+    reason: `broken` replaces a string that must be there, `edited` applies any edit."""
+    def edited(rel, edit, why, reason):
+        path = tmp_path / rel
+        good = path.read_text()
+        bad_text = edit(good)
+        assert bad_text != good, f"the fixture drifted: the edit for '{why}' changes nothing in {rel}"
+        path.write_text(bad_text)
+        bad = check(tmp_path)[0]
+        path.write_text(good)
+        assert bad.level == "FAIL", why
+        assert reason in bad.message, f"{why}, saying {reason!r}; it said {bad.message!r}"
+
+    def broken(rel, old, new, why, reason):
+        assert old in (tmp_path / rel).read_text(), f"the fixture drifted: {old!r} is no longer in {rel}"
+        edited(rel, lambda text: text.replace(old, new), why, reason)
+
+    return broken, edited
+
+
+def test_oid4vp_image_release_signed_check_discriminates(tmp_path):
+    check = checks.check_oid4vp_image_release_signed
+    wf, doc = ".github/workflows/release-oid4vp-image.yml", "packages/polaris-oid4vp/image/README.md"
+    _copied(tmp_path, (*_OID4VP_IMAGE_RELEASE_FILES, ".github/workflows/sbom.yml",
+                       ".github/workflows/sbom-build.yml", "scripts/polaris-release-tag-guard.py"))
+    ok = check(tmp_path)[0]
+    assert ok.level == "OK" and ok.check == "oid4vp_image_release", \
+        f"must PASS on the real workflow, the image's README, the drill and the tag guard: {ok.message}"
+    for rel, reason in (("scripts/polaris-release-tag-guard.py", "polaris-release-tag-guard.py"),
+                        ("scripts/polaris-oid4vp-image-drill.py", "before the step that can push")):
+        path = tmp_path / rel
+        text = path.read_text()
+        path.unlink()
+        gone = check(tmp_path)[0]
+        path.write_text(text)
+        assert gone.level == "FAIL" and reason in gone.message, \
+            f"must FAIL when {rel} does not exist, saying {reason!r}: {gone.message}"
+    broken, edited = _breakers(tmp_path, check)
+
+    # What it holds in common with the server images' release (the shared core).
+    broken(wf, "on:\n  workflow_dispatch:", "on:\n  push:\n    branches: [main]\n  workflow_dispatch:",
+           "must FAIL when a push to main publishes with no one dispatching it",
+           "must run only when dispatched by hand")
+    broken(wf, "permissions:\n  contents: read\n\nconcurrency",
+           "permissions:\n  contents: write\n\nconcurrency",
+           "must FAIL when the token is writable at the top", "read-only token at the top")
+    broken(wf, "actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e", "actions/attest-sbom@v4",
+           "must FAIL when an action is pinned by a movable tag", "not pinned to a commit")
+    broken(wf, "    environment: ghcr\n", "",
+           "must FAIL when no job waits for the maintainer's approval", "must have one approval job")
+    broken(wf, "    name: The maintainer approves the publish\n    needs: validate\n",
+           "    name: The maintainer approves the publish\n",
+           "must FAIL when the approval does not wait on the job that refuses another ref",
+           "from anything but main")
+    broken(wf, '[ "$REF" = refs/heads/main ]', '[ -n "$REF" ]',
+           "must FAIL when a publish from another branch is not refused", "from anything but main")
+    broken(wf, '[ "$REF" = refs/heads/main ]', '[ "$REF_TYPE" = tag ]',
+           "must FAIL when a publish runs on a tag, which the README's identity does not name",
+           "from anything but main")
+    broken(wf, "    needs: [validate, approve, build]\n", "    needs: [validate, build]\n",
+           "must FAIL when the job that signs does not wait on the approval",
+           "does not wait on the approval job")
+    broken(wf, "    needs: [validate, approve, build]\n    if: inputs.confirm == 'PUBLISH'\n",
+           "    needs: [validate, approve, build]\n    if: ${{ always() && inputs.confirm == 'PUBLISH' }}\n",
+           "must FAIL when the signing job's `if:` overrides a refused approval",
+           "overrides the approval's result")
+    broken(wf, "      PUSH: ${{ inputs.confirm == 'PUBLISH' && needs.approve.result == 'success' }}",
+           "      PUSH: ${{ inputs.confirm == 'PUBLISH' }}",
+           "must FAIL when the build pushes on PUBLISH without the approval", "runs for a dry run too")
+    broken(wf, "      - name: Log in to ghcr.io\n        if: env.PUSH == 'true'\n",
+           "      - name: Log in to ghcr.io\n",
+           "must FAIL when the build logs in to the registry on a dry run", "runs for a dry run too")
+    broken(wf, "      packages: write   # push by digest, only on an approved publish\n",
+           "      packages: write   # push by digest, only on an approved publish\n"
+           "      id-token: write\n",
+           "must FAIL when the job that also runs dry can mint a signing identity",
+           "mints a signing identity")
+    broken(wf, 'cosign sign --yes "$REF"', 'cosign sign --yes --key env://COSIGN_KEY "$REF"',
+           "must FAIL when the index is signed with a key instead of keyless", "signs with a key")
+    guard_call = ('          python3 scripts/polaris-release-tag-guard.py --repo "${IMAGE#ghcr.io/}" \\\n'
+                  '            --tag "$TAG" --amd64 "$AMD64" --arm64 "$ARM64"\n')
+    for new, why in (
+            ("          echo unguarded\n", "the publish job can move a published tag"),
+            (guard_call.replace('--amd64 "$AMD64" ', ""), "the guard is not given both digests the run built"),
+            (guard_call.replace(' --tag "$TAG"', ' --dry --tag "$TAG"'),
+             "the publish job runs the guard in its never-blocking dry mode"),
+            (guard_call.replace('"$ARM64"\n', '"$ARM64" || true\n'), "the guard's refusal is swallowed")):
+        broken(wf, guard_call, new, f"must FAIL when {why}", "polaris-release-tag-guard.py")
+    broken(wf, "      - name: Refuse to move a published tag\n",
+           "      - name: Refuse to move a published tag\n        continue-on-error: true\n",
+           "must FAIL when the guard's step may fail without stopping the job",
+           "polaris-release-tag-guard.py")
+    create = '          docker buildx imagetools create -t "$IMAGE:$TAG" "$IMAGE@$AMD64" "$IMAGE@$ARM64"\n'
+    assert create in (tmp_path / wf).read_text(), "the fixture drifted: the step that joins the index"
+    edited(wf, lambda t: t.replace(guard_call, "").replace(create, create + guard_call),
+           "must FAIL when the guard runs only after the index is joined", "polaris-release-tag-guard.py")
+    broken(wf, "          subject-digest: ${{ steps.index.outputs.digest }}\n"
+               "          push-to-registry: true\n",
+           "          subject-digest: ${{ steps.index.outputs.digest }}\n",
+           "must FAIL when the provenance is not attached at the registry",
+           "attach the build provenance")
+    broken(wf, "      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0\n"
+               "        with:\n          subject-name: ${{ steps.index.outputs.image }}\n"
+               "          subject-digest: ${{ steps.index.outputs.arm64 }}\n"
+               "          sbom-path: sbom-arm64.spdx.json\n          push-to-registry: true\n", "",
+           "must FAIL when one architecture's image carries no SBOM",
+           "an SBOM to each architecture's")
+    broken(wf, '"$RUNNER_TEMP/sbom-check/bin/ntia-checker" -r json "sbom-$arch.spdx.json" > verdict.json || true',
+           "true", "must FAIL when the registry SBOMs are attested unchecked", "NTIA minimum")
+    broken(wf, "TRIVY_IMAGE: aquasec/trivy:0.58.1", "TRIVY_IMAGE: aquasec/trivy:0.59.0",
+           "must FAIL when the registry SBOMs and sbom.yml use different Trivy versions",
+           "must be one version")
+    broken(wf, "    needs: [approve, publish]\n", "    needs: [approve]\n",
+           "must FAIL when nothing verifies the image once the index is out", "two controls")
+    broken(wf, 'cosign verify-attestation "$REF" --type https://sigstore.dev/cosign/sign/v1',
+           'cosign verify-attestation "$REF" --type slsaprovenance',
+           "must FAIL when the index's signature is not checked by its own predicate type", "two controls")
+    broken(wf, 'refused cosign verify "$REF" --certificate-identity "$OTHER"',
+           'cosign verify "$REF" --certificate-identity "$ID"',
+           "must FAIL when no control shows another branch's identity refused", "two controls")
+    broken(wf, 'refused gh attestation verify "oci://$IMAGE@$D"', 'gh attestation verify "oci://$IMAGE@$D"',
+           "must FAIL when no control shows provenance refused for an architecture's digest",
+           "two controls")
+    broken(wf, '          echo "$REF: signature, provenance and both SBOMs verify; both controls refused"\n',
+           '          helm push polaris.tgz "oci://${IMAGE%/*}/charts"\n',
+           "must FAIL when this workflow pushes a chart too", "publish nothing else")
+    broken(doc, "release-oid4vp-image.yml@refs/heads/main", "release-oid4vp-image.yml@",
+           "must FAIL when the README accepts a signature made from any ref", "must bind cosign verify")
+    broken(doc, "release-oid4vp-image.yml@refs/heads/main", "release-images.yml@refs/heads/main",
+           "must FAIL when the README names another workflow's identity", "must bind cosign verify")
+    broken(doc, "--signer-workflow EgorKhaklin/polaris-id/.github/workflows/release-oid4vp-image.yml",
+           "--repo-only", "must FAIL when the attestation check is not bound to the workflow",
+           "must bind cosign verify")
+
+    # The tag: v and the version the image installs, read from requirements.in, never typed.
+    tag_reason = "every TAG must be the validate job's output"
+    for other in ("${{ github.ref_name }}", "${{ inputs.tag }}", "v1.1.0"):
+        broken(wf, "        id: index\n        env:\n          TAG: ${{ needs.validate.outputs.tag }}\n",
+               f"        id: index\n        env:\n          TAG: {other}\n",
+               f"must FAIL when the index is joined under a tag taken from {other}", tag_reason)
+    version_reason = "must derive the tag"
+    broken(wf, '-t "$IMAGE:$TAG"', '-t "$IMAGE:latest"',
+           "must FAIL when the index is joined under another tag", version_reason)
+    # The script that derives the tag, written out here rather than taken from the check: every
+    # line of it gone or weakened in turn, each comparison with its refusal.
+    sed = "VERSION=$(sed -n 's/^polaris-oid4vp==\\([0-9][0-9A-Za-z.]*\\)$/\\1/p' \"$DIR/requirements.in\")"
+    shape = '[[ "$VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] \\\n'
+    shape_no = ("            || { echo \"::error::$DIR/requirements.in does not pin one released "
+                "polaris-oid4vp version: '$VERSION'\"; exit 1; }\n")
+    hashed = 'grep -qxF "polaris-oid4vp==$VERSION \\\\" "$DIR/requirements.txt" \\\n'
+    hashed_no = ('            || { echo "::error::$DIR/requirements.txt does not pin polaris-oid4vp '
+                 '$VERSION by hash"; exit 1; }\n')
+    revision = '[[ "$REVISION" =~ ^([2-9]|[1-9][0-9]+)?$ ]] \\\n'
+    revision_no = ("            || { echo \"::error::revision is empty for the first image of a package "
+                   "release, or a number from 2 up for a rebuild: '$REVISION'\"; exit 1; }\n")
+    tag_out = 'echo "tag=v$VERSION${REVISION:+-$REVISION}" >> "$GITHUB_OUTPUT"\n'
+    pad = "          "
+    for old, new, why in (
+            (pad + "set -euo pipefail\n" + pad + "DIR=", pad + "DIR=", "the tag's script does not stop on a failing command"),
+            (pad + "set -euo pipefail\n" + pad + "DIR=", pad + "set -euo pipefail\n" + pad + "exit 0\n" + pad + "DIR=",
+             "the tag's script can end before its comparisons"),
+            ("DIR=packages/polaris-oid4vp/image\n", "DIR=packages/polaris-oid4vp/fuzz\n",
+             "the version is read from another directory"),
+            (sed, 'VERSION="$TYPED_VERSION"', "the version is not read from requirements.in"),
+            (sed, sed.replace("[0-9][0-9A-Za-z.]*", ".*"), "the version read may be any text"),
+            (pad + shape + shape_no, "", "the version's shape is not checked"),
+            (shape, shape.replace("^[0-9]+\\.[0-9]+\\.[0-9]+$", "^[0-9]"), "a release candidate's version passes"),
+            (shape_no, '            || echo "::warning::not a released version"\n', "an unreleased version only warns"),
+            (pad + hashed + hashed_no, "", "nothing holds the tag's version to the hashed pin"),
+            (hashed, hashed.replace("grep -qxF", "grep -qF"), "the hashed pin is matched as a substring"),
+            (hashed_no, "            || true\n", "a version requirements.txt does not pin by hash passes"),
+            (pad + revision + revision_no, "", "the typed revision is not checked"),
+            (revision, revision.replace("^([2-9]|[1-9][0-9]+)?$", "^[0-9]*$"), "revision 1, 0 and 02 pass"),
+            (revision, revision.replace("^([2-9]|[1-9][0-9]+)?$", "^.*$"), "any typed text becomes part of the tag"),
+            (revision, revision.replace("^([2-9]|[1-9][0-9]+)?$", "^([2-9]|[1-9][0-9]+|rc[0-9]+)?$"),
+             "a revision that is not a number passes"),
+            (revision_no, '            || echo "::warning::odd revision"\n', "a refused revision only warns"),
+            (tag_out, 'echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"\n', "a rebuild is given the first image's tag"),
+            (tag_out, 'echo "tag=$REVISION" >> "$GITHUB_OUTPUT"\n', "the tag is what was typed"),
+            (tag_out, tag_out.replace("tag=v$VERSION", "tag=$VERSION"), "the tag loses its v"),
+            (tag_out, tag_out + pad + '{ echo "tag<<EOF"; echo latest; echo EOF; } >> "$GITHUB_OUTPUT"\n',
+             "a second write replaces the tag derived"),
+            ("          REVISION: ${{ inputs.revision }}\n", "          REVISION: ${{ github.ref_name }}\n",
+             "the revision is not the typed input"),
+            ("        id: tag\n        env:\n          REVISION:", "        id: version\n        env:\n          REVISION:",
+             "the step that derives the tag is not the one the job's output reads"),
+            ("      tag: ${{ steps.tag.outputs.tag }}\n", "      tag: v1.1.0\n",
+             "the job's output is a typed tag")):
+        broken(wf, old, new, f"must FAIL when {why}", version_reason)
+
+    # The script that ends a dry run and refuses a publish from any ref but main.
+    ref_reason = "must end a dry run and refuse"
+    for old, new, why in (
+            ('          if [ "$PUBLISH" != "true" ]; then\n', "          if true; then\n",
+             "every run ends as a dry run before the ref is judged"),
+            ('          if [ "$PUBLISH" != "true" ]; then\n',
+             '          if [ "$PUBLISH" != "true" ] || [ "$REF" != refs/heads/main ]; then\n',
+             "a publish from another ref ends as a dry run in this job alone"),
+            ("            exit 0\n          fi\n", "            exit 0\n          fi\n          exit 0\n",
+             "the script ends before the ref is judged"),
+            ("          REF: ${{ github.ref }}\n", "          REF: refs/heads/main\n",
+             "the ref judged is a constant"),
+            ("          PUBLISH: ${{ inputs.confirm == 'PUBLISH' }}\n", "          PUBLISH: ${{ inputs.confirm == 'GO' }}\n",
+             "the ref job judges another word than the jobs that publish"),
+            ("          PUBLISH: ${{ inputs.confirm == 'PUBLISH' }}\n", "          PUBLISH: ${{ inputs.confirm }}\n",
+             "the ref job is handed the typed word, which is never the string true")):
+        broken(wf, old, new, f"must FAIL when {why}", ref_reason)
+    # The typed word judged by a shell test: `publish` is a dry run to the shell and a publish to
+    # every job's `if:`, whose == ignores case, so the ref would go unjudged.
+    edited(wf, lambda t: t.replace("          PUBLISH: ${{ inputs.confirm == 'PUBLISH' }}\n",
+                                   "          CONFIRM: ${{ inputs.confirm }}\n")
+                          .replace('if [ "$PUBLISH" != "true" ]; then', 'if [ "$CONFIRM" != "PUBLISH" ]; then'),
+           "must FAIL when a shell test of the typed word decides what is a dry run", ref_reason)
+    broken(wf, "            || { echo \"::error::a publish runs on main, not '$REF'\"; exit 1; }\n",
+           '            || echo "::warning::not main"\n',
+           "must FAIL when a publish from another ref only warns", "from anything but main")
+    broken(wf, '[ "$REF" = refs/heads/main ] \\\n', '[ "$REF" = refs/heads/main ] || true \\\n',
+           "must FAIL when another command answers for the ref test", "from anything but main")
+
+    # Before the step that can push: the drill and the scan, on the image built, neither swallowed.
+    gate_reason = "before the step that can push"
+    drill_line = "          python scripts/polaris-oid4vp-image-drill.py --image polaris-oid4vp:drill\n"
+    broken(wf, drill_line, "", "must FAIL when the image is pushed undrilled", gate_reason)
+    broken(wf, drill_line, drill_line.replace("drill\n", "drill || true\n"),
+           "must FAIL when the drill's failure is swallowed", gate_reason)
+    broken(wf, drill_line, drill_line.replace("--image polaris-oid4vp:drill", "--image python:3.12-slim"),
+           "must FAIL when the drill runs against another image", gate_reason)
+    for name in ("The image judges a presentation", "Trivy GATE on fixable CRITICAL (after .trivyignore)"):
+        step = f"      - name: {name}\n"
+        for new, why in ((step + "        continue-on-error: true\n", "may fail without stopping the job"),
+                         (step + "        if: env.PUSH != 'true'\n", "is skipped on a publish"),
+                         (f"      - if: false\n        name: {name}\n", "never runs")):
+            broken(wf, step, new, f"must FAIL when the step '{name}' {why}", gate_reason)
+    drill_step = ("      - name: The image judges a presentation\n        run: |\n"
+                  "          set -euo pipefail\n"
+                  "          python -m pip install --quiet --require-hashes -r polaris_web/requirements.txt\n"
+                  + drill_line)
+    broken(wf, drill_step, drill_step.replace("          set -euo pipefail\n", ""),
+           "must FAIL when the drill's step does not stop on a failing command", gate_reason)
+    record = "      - name: Record the digest\n"
+    assert record in (tmp_path / wf).read_text() and drill_step in (tmp_path / wf).read_text()
+    edited(wf, lambda t: t.replace(drill_step, "").replace(record, drill_step + record),
+           "must FAIL when the drill runs only after the step that can push", gate_reason)
+    broken(wf, "          load: true\n", "          load: false\n",
+           "must FAIL when the image built is not loaded for the drill and the scan", gate_reason)
+    broken(wf, "          tags: polaris-oid4vp:drill\n", "          tags: polaris-oid4vp:other\n",
+           "must FAIL when the image built is not the one drilled and scanned", gate_reason)
+    broken(wf, "--scanners vuln --severity CRITICAL --ignore-unfixed", "--scanners vuln --severity LOW --ignore-unfixed",
+           "must FAIL when the scan does not look for CRITICAL CVEs", gate_reason)
+    broken(wf, "--exit-code 1 --no-progress polaris-oid4vp:drill", "--exit-code 0 --no-progress polaris-oid4vp:drill",
+           "must FAIL when a CRITICAL CVE does not fail the scan", gate_reason)
+    broken(wf, "          grep -q '^Total: ' trivy.txt || { echo \"::error::Trivy printed no report\"; exit 1; }\n", "",
+           "must FAIL when a scan that printed no report passes", gate_reason)
+    broken(wf, '(exit $rc)"; exit 1; }', '(exit $rc)"; }',
+           "must FAIL when the scan's exit code only prints", gate_reason)
+    push_context = ("          context: packages/polaris-oid4vp/image\n"
+                    "          platforms: linux/${{ matrix.arch }}\n"
+                    "          labels: |\n"
+                    "            org.opencontainers.image.revision=${{ github.sha }}\n"
+                    "            org.opencontainers.image.version=${{ needs.validate.outputs.tag }}\n"
+                    "          outputs:")
+    broken(wf, push_context, push_context.replace("context: packages/polaris-oid4vp/image", "context: ."),
+           "must FAIL when the push builds another context than the one drilled", gate_reason)
+
+
+def test_oid4vp_image_is_the_released_package_check_discriminates(tmp_path):
+    check = checks.check_oid4vp_image_is_the_released_package
+    image = "packages/polaris-oid4vp/image"
+    df, asked, locked = f"{image}/Dockerfile", f"{image}/requirements.in", f"{image}/requirements.txt"
+    ci, drill = ".github/workflows/ci.yml", "scripts/polaris-oid4vp-image-drill.py"
+    _copied(tmp_path, (df, asked, locked, ci, drill))
+    ok = check(tmp_path)[0]
+    assert ok.level == "OK" and ok.check == "oid4vp_image", \
+        f"must PASS on the real Dockerfile, its requirements, ci.yml and the drill: {ok.message}"
+    for rel, reason in ((df, "Dockerfile is missing"), (drill, "ci.yml must build the image")):
+        path = tmp_path / rel
+        text = path.read_text()
+        path.unlink()
+        gone = check(tmp_path)[0]
+        path.write_text(text)
+        assert gone.level == "FAIL" and reason in gone.message, \
+            f"must FAIL when {rel} does not exist, saying {reason!r}: {gone.message}"
+    broken, edited = _breakers(tmp_path, check)
+
+    base = re.search(r"(?m)^FROM \S+@sha256:[0-9a-f]{64}$", (tmp_path / df).read_text())
+    assert base, "the fixture drifted: the Dockerfile's FROM line is not a digest pin"
+    broken(df, base.group(0), base.group(0).split("@")[0],
+           "must FAIL when the base is a tag that can move", "pinned by digest")
+    broken(df, base.group(0), base.group(0)[:-1],
+           "must FAIL when the base's digest is cut short", "pinned by digest")
+    broken(df, base.group(0), "FROM python:3.12-slim AS build\n" + base.group(0),
+           "must FAIL when a second stage could build something into the image", "pinned by digest")
+    copy = "COPY requirements.txt /tmp/requirements.txt\n"
+    for extra in ("COPY . /src\n", "ADD https://example.org/tool.tar.gz /opt/\n",
+                  "COPY --chown=10001:10001 polaris_oid4vp /app/polaris_oid4vp\n"):
+        broken(df, copy, copy + extra,
+               f"must FAIL when the image also takes in {extra.strip()}", "nothing else")
+    broken(df, copy, "COPY requirements.in /tmp/requirements.txt\n",
+           "must FAIL when the image installs from the unhashed file", "nothing else")
+    install = "pip install --no-cache-dir --require-hashes --only-binary :all: -r /tmp/requirements.txt"
+    for flag in (" --require-hashes", " --only-binary :all:"):
+        broken(df, install, install.replace(flag, ""),
+               f"must FAIL when the install drops{flag}", "wheels only and each by hash")
+    broken(df, install, install.replace("-r /tmp/requirements.txt", "polaris-oid4vp==1.1.0"),
+           "must FAIL when the install names a package instead of the hashed file",
+           "wheels only and each by hash")
+    broken(df, "    && rm /tmp/requirements.txt\n",
+           "    && rm /tmp/requirements.txt \\\n    && pip install --no-cache-dir polaris-oid4vp\n",
+           "must FAIL when a second install is not held to the hashes", "must install once")
+    user = "USER 10001:10001\n"
+    for other in ("USER root\n", "USER 0:0\n", "USER 10001:0\n", "USER verifier\n", ""):
+        broken(df, user, other, f"must FAIL when the image runs as {other.strip() or 'the base user'}",
+               "numeric user and group")
+    edited(df, lambda t: t + "USER root\n",
+           "must FAIL when a later USER puts the image back to root", "numeric user and group")
+    entry = 'ENTRYPOINT ["polaris-oid4vp"]\n'
+    for other in ('ENTRYPOINT ["/entrypoint.sh"]\n', 'ENTRYPOINT ["sh", "-c"]\n', "",
+                  entry + 'ENTRYPOINT ["sh"]\n'):
+        broken(df, entry, other, "must FAIL when the entrypoint is not the package's command alone",
+               "entrypoint must be the package's")
+
+    pin = "polaris-oid4vp==1.1.0\n"
+    assert (tmp_path / asked).read_text().endswith(pin), \
+        "the fixture drifted: requirements.in no longer ends with the 1.1.0 pin"
+    for other, why in ((pin + "requests==2.32.0\n", "asks for a second package"),
+                       ("polaris-oid4vp>=1.1.0\n", "asks for a range"),
+                       ("polaris-oid4vp==1.1.0rc1\n", "asks for a release candidate"),
+                       ("polaris-oid4vp\n", "asks for whatever is newest"),
+                       ("", "asks for nothing")):
+        broken(asked, pin, other, f"must FAIL when requirements.in {why}", "must ask for one thing")
+    hashed_reason = "every other requirement by hash"
+    broken(locked, "polaris-oid4vp==1.1.0 \\\n", "polaris-oid4vp==1.0.0 \\\n",
+           "must FAIL when requirements.txt pins another version than requirements.in asks for",
+           hashed_reason)
+    edited(locked, lambda t: t + "idna==3.7\n",
+           "must FAIL when a requirement carries no hash", hashed_reason)
+    edited(locked, lambda t: t + "idna==3.7 \\\n    --hash=md5:0123456789abcdef0123456789abcdef\n",
+           "must FAIL when a requirement's hash is not a SHA-256", hashed_reason)
+    edited(locked, lambda t: re.sub(r"(?m)^(polaris-oid4vp==1\.1\.0 \\\n)(?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+",
+                                    r"\1", t),
+           "must FAIL when the package's own hashes are gone", hashed_reason)
+
+    step = "        run: python scripts/polaris-oid4vp-image-drill.py\n"
+    ci_reason = "ci.yml must build the image"
+    broken(ci, step, "        run: echo skipped\n", "must FAIL when CI no longer drills the image", ci_reason)
+    broken(ci, step, step.replace(".py\n", ".py || true\n"),
+           "must FAIL when CI swallows the drill's failure", ci_reason)
+    broken(ci, step, step.replace(".py\n", ".py --image python:3.12-slim\n"),
+           "must FAIL when CI drills an image it did not build from this directory", ci_reason)
+    named = "      - name: The polaris-oid4vp image builds and judges a presentation\n"
+    job = "  product-boundary:\n"
+    for old, new, why in (
+            (named, named + "        continue-on-error: true\n", "the drill's step may fail without failing the job"),
+            (named, named + "        if: false\n", "the drill's step never runs"),
+            (named, "      - if: github.event_name == 'push'\n" + named.replace("      - ", "        "),
+             "the drill's step is skipped on a pull request"),
+            (job, job + "    if: github.event_name == 'push'\n", "the drill's job is skipped on a pull request"),
+            (job, job + "    continue-on-error: true\n", "the drill's job may fail without failing the run"),
+            (step, step + "\n  another-job:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Again\n" + step,
+             "a second step runs the drill somewhere else")):
+        broken(ci, old, new, f"must FAIL when {why}", ci_reason)
+
+
 # The verdict both release gates read from ntia-checker's JSON report, written out here rather
 # than taken from checks._NTIA_VERDICT, so a clause dropped from the check itself is caught too.
 _NTIA_VERDICT_CLAUSES = (".isConformant == true", "(.validationMessages | length) == 0",
@@ -3849,7 +4229,9 @@ _NTIA_WEAKENED = {
 }
 _NTIA_GATES = {"sbom": (checks.check_sbom_workflow, ".github/workflows/sbom-build.yml"),
                "release_images": (checks.check_release_images_signed,
-                                  ".github/workflows/release-images.yml")}
+                                  ".github/workflows/release-images.yml"),
+               "oid4vp_image_release": (checks.check_oid4vp_image_release_signed,
+                                        ".github/workflows/release-oid4vp-image.yml")}
 
 
 @pytest.mark.parametrize("weakened", list(_NTIA_WEAKENED))
@@ -3862,7 +4244,8 @@ def test_ntia_verdict_refuses_a_weakened_verdict(tmp_path, name, weakened):
     check, rel = _NTIA_GATES[name]
     for f in (".github/workflows/release-images.yml", ".github/workflows/sbom.yml",
               ".github/workflows/sbom-build.yml", "docs/operator/VERIFY-RELEASE.md",
-              "scripts/polaris-pin-chart-images.py", "scripts/polaris-release-tag-guard.py"):
+              "scripts/polaris-pin-chart-images.py", "scripts/polaris-release-tag-guard.py",
+              *_OID4VP_IMAGE_RELEASE_FILES):
         (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / f).write_text((REPO / f).read_text())
     ok = check(tmp_path)[0]
@@ -26053,3 +26436,113 @@ def test_check_mutation_drill_reaches_the_trivy_gate_of_check_image_cve_scanning
     assert hidden, "the comment pass must find lines carrying what the check matches"
     assert checks.check_image_cve_scanning(tmp_path)[0].level == "FAIL", \
         "with the gate's lines commented out, the check must fail"
+
+
+def test_check_mutation_drill_follows_a_shared_core(tmp_path):
+    # 2026-11-15: check_release_images_signed's body became _signed_image_release, a core it shares
+    # with the polaris-oid4vp image's release check. The drill reads a check's own function, so it
+    # named no file for check_release_images_signed and nothing to search for: it deleted none of
+    # the check's inputs and no sentence of its runbook, and counted the check as having no input.
+    drill = _check_mutation_drill()
+    core = _check_def("_signed_image_release")
+    assert drill.needles_of(core) and drill.regexes_of(core), \
+        "the core's own strings and patterns must be readable, or the comparisons below hold of nothing"
+    shared = {".github/workflows/sbom.yml", ".github/workflows/sbom-build.yml"}
+    # The core reads a workflow's jobs through two helpers, cores themselves: a job list that
+    # parses empty fails the check, so what they match is searched for on the check's behalf.
+    parsing = drill.regexes_of(_check_def("_workflow_jobs")) | drill.regexes_of(_check_def("_needs_of"))
+    assert len(parsing) == 4, sorted(parsing)
+    for name, check, workflow, runbook, scripts in (
+            ("check_release_images_signed", checks.check_release_images_signed,
+             ".github/workflows/release-images.yml", "docs/operator/VERIFY-RELEASE.md",
+             ("scripts/polaris-pin-chart-images.py", "scripts/polaris-release-tag-guard.py")),
+            ("check_oid4vp_image_release_signed", checks.check_oid4vp_image_release_signed,
+             ".github/workflows/release-oid4vp-image.yml", "packages/polaris-oid4vp/image/README.md",
+             ("scripts/polaris-oid4vp-image-drill.py", "scripts/polaris-release-tag-guard.py"))):
+        fn = _check_def(name)
+        named, needles, patterns = set(drill.reads_of(fn)), drill.needles_of(fn), drill.regexes_of(fn)
+        assert {workflow, runbook} | shared <= named, \
+            f"the drill must name what {name} reads through the core: {sorted(named)}"
+        assert drill.needles_of(core) <= needles and drill.regexes_of(core) <= patterns, \
+            f"the drill must search for what the core searches for on behalf of {name}"
+        assert parsing <= patterns, \
+            f"the drill must search for what the core parses the jobs of {name}'s workflow with"
+        assert not drill.opaque_inputs(fn), f"{name} reads nothing the drill cannot enumerate"
+
+        # The effect, as the drill's passes over this check make it. Untouched, the copy passes;
+        # with the runbook's sentences that carry what the check searches for deleted, it fails;
+        # with the files the drill names deleted, it fails.
+        root = tmp_path / name
+        _copied(root, sorted(named | set(scripts)))
+        assert check(root)[0].level == "OK", check(root)[0].message
+        doc = root / runbook
+        text = doc.read_text()
+        kept = [l for l in text.split("\n") if not drill._line_carries(l, needles, patterns)]
+        assert len(kept) < len(text.split("\n")), "the document pass must find sentences to delete"
+        doc.write_text("\n".join(kept))
+        assert check(root)[0].level == "FAIL", \
+            f"with the sentences {name} searches {runbook} for deleted, it must fail"
+        doc.write_text(text)
+        assert check(root)[0].level == "OK"
+        for rel in named:
+            (root / rel).unlink()
+        assert check(root)[0].level == "FAIL", f"with the files the drill names deleted, {name} must fail"
+
+    # A path parameter is bound to what the call passes when that is a literal, a module path
+    # constant, or a name the check binds exactly once to one of those. Anything else stays
+    # unnamed, never guessed: a computed value, a name bound twice, a name a loop binds again.
+    def reads(body):
+        return set(drill.reads_of(ast.parse("def check_x(root):\n" + body).body[0]))
+
+    call = '    return _signed_image_release(root, "x", rel, runbook=%s)\n'
+    assert reads('    rel = "a/workflow.yml"\n' + call % "pick(root)") == {"a/workflow.yml"} | shared
+    assert reads("    rel = _OID4VP_IMAGE_DOCKERFILE\n" + call % '"a/RUNBOOK.md"') \
+        == {checks._OID4VP_IMAGE_DOCKERFILE, "a/RUNBOOK.md"} | shared
+    assert reads('    rel = "a/one.yml"\n    rel = "a/two.yml"\n' + call % "pick(root)") == shared
+    assert reads('    rel = "a/one.yml"\n    for rel in others(root):\n        pass\n'
+                 + call % "pick(root)") == shared
+
+    # Only a shared core is followed. The control is a check that reads and searches; a function
+    # that does nothing but call it is credited with none of that.
+    control = _check_def("check_image_cve_scanning")
+    assert drill.reads_of(control) and drill.regexes_of(control)
+    caller = ast.parse("def check_y(root):\n    return check_image_cve_scanning(root)\n").body[0]
+    assert drill.reads_of(caller) == [] and not drill.needles_of(caller) \
+        and not drill.regexes_of(caller)
+
+    # What a core globs, the check globs, and a file a core reads beyond the drill's reach makes
+    # the check opaque. Shown on cores of this test's own: the real one does neither.
+    caller = ast.parse('def check_z(root):\n'
+                       '    return _signed_image_release(root, "a/w.yml")\n').body[0]
+    for body, globs, opaque in (
+            ('    return [_read(root, rel) for p in (root / "a" / "b").glob("*.yml")]\n',
+             [("a/b", "*.yml")], False),
+            ("    return (root / rel).read_text()\n", [], True)):
+        lab = _check_mutation_drill()
+        lab._CORE_DEFS = {"_signed_image_release":
+                          ast.parse("def _signed_image_release(root, rel):\n" + body).body[0]}
+        assert lab.globs_of(caller) == globs and lab.opaque_inputs(caller) is opaque, body
+        assert lab.reads_of(caller) == (["a/w.yml"] if globs else []), body
+
+
+def test_check_mutation_drill_names_what_the_oid4vp_image_check_reads(tmp_path):
+    # 2026-11-15: the check read its Dockerfile and its requirements through paths built from the
+    # image directory's constant. The drill resolves a path constant, not a path built from one, so
+    # it named ci.yml alone, commented out lines there that carry none of the property, and
+    # reported the check as passing with its own search strings gone.
+    drill = _check_mutation_drill()
+    named = set(drill.reads_of(_check_def("check_oid4vp_image_is_the_released_package")))
+    image = {checks._OID4VP_IMAGE_DOCKERFILE, checks._OID4VP_IMAGE_ASKED, checks._OID4VP_IMAGE_LOCKED}
+    assert named == image | {".github/workflows/ci.yml"}, sorted(named)
+    assert all((REPO / rel).is_file() for rel in named), sorted(named)
+
+    # The effect, as the drill's deletion pass makes it: with any one of the image's files gone
+    # the check fails, so a file the drill could not name was a file nothing took away.
+    check = checks.check_oid4vp_image_is_the_released_package
+    _copied(tmp_path, sorted(named | {checks._OID4VP_IMAGE_DRILL}))
+    assert check(tmp_path)[0].level == "OK", check(tmp_path)[0].message
+    for rel in sorted(image):
+        text = (tmp_path / rel).read_text()
+        (tmp_path / rel).unlink()
+        assert check(tmp_path)[0].level == "FAIL", f"with {rel} deleted the check must fail"
+        (tmp_path / rel).write_text(text)
