@@ -8,10 +8,11 @@
 #   OUT=/some/dir lab/interop/mdoc/witness-oid4vcgo/run.sh
 #   OUT=/some/dir VECTORS=/path/to/mdoc-vectors.json lab/interop/mdoc/witness-oid4vcgo/run.sh
 #
-# The module and its dependencies are go.mod and go.sum here (github.com/idfoundry/oid4vcgo
-# v0.49.0). Phase 1, the only one with a network: go mod download, and nothing else, in the
-# pinned Go image, through the Go module proxy, into a fresh named volume; every URL it fetched
-# is logged (OUT/phase1-fetches.txt) and its hosts go into run.json. Phase 2 builds the witness
+# The module and its dependencies are go.mod and go.sum here (github.com/idfoundry/oid4vcgo at
+# the version go.mod names, which phase 1 prints). Phase 1, the only one with a network: go mod
+# download, and nothing else, in the pinned Go image, through the Go module proxy, into a fresh
+# named volume; every URL it fetched is logged (OUT/phase1-fetches.txt) and its hosts go into
+# run.json, and when it fails the last lines of its log are printed. Phase 2 builds the witness
 # with --network none, the module cache read-only, GOPROXY=off and -mod=readonly, so go.sum is
 # what was built. Phase 3 runs it with --network none, a read-only root, no capabilities and the
 # vectors file mounted read-only. DOCKER_CONFIG is a fresh directory seeded before any docker
@@ -33,8 +34,10 @@ VECTORS="${VECTORS:-$HERE/../../negative-vectors/mdoc-vectors.json}"
 VECTORS="$(cd "$(dirname "$VECTORS")" && pwd)/$(basename "$VECTORS")"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
-# The Go image (read from Docker Hub's manifest index on 2026-10-11: golang:1.26), as ../../oid4vcgo/run.sh pins it.
-GO_IMAGE="golang:1.26@sha256:d7722066f0b60ceccb6c0643cbed1f5f9e15506ac237146c95333504d7805d89"
+# The Go image (read from Docker Hub's manifest index on 2026-11-16: golang:1.26, Go 1.26.11), as
+# ../../oid4vcgo/run.sh pins it. Phases 1 and 2 run go with GOTOOLCHAIN=local, so the image's Go
+# is the Go that builds the witness, and it has to be at least the version go.mod's go line names.
+GO_IMAGE="golang:1.26@sha256:f6946db66567acc1497655237e58f06ec3a57478a5e0d67fca29d2ffcf2ea136"
 MODULE_VERSION="$(sed -n 's/^[[:space:]]*github.com\/idfoundry\/oid4vcgo \(v[0-9.]*\)$/\1/p' "$HERE/go.mod")"
 [ -n "$MODULE_VERSION" ] || { echo "go.mod names no github.com/idfoundry/oid4vcgo version" >&2; exit 2; }
 WORK="$(mktemp -d)"
@@ -54,8 +57,8 @@ echo "== phase 1: go mod download (github.com/idfoundry/oid4vcgo $MODULE_VERSION
 docker volume create "$VOL" >/dev/null
 COPYFILE_DISABLE=1 tar -C "$HERE" -cf - go.mod go.sum | docker run --rm -i -v "$VOL":/go/pkg/mod \
   -e GOFLAGS=-modcacherw -e GOTOOLCHAIN=local -e GOPROXY=https://proxy.golang.org "$GO_IMAGE" \
-  sh -c 'mkdir /src && cd /src && tar -xf - && go mod download -x 2> /tmp/phase1.log; rc=$?; grep -oE "https?://[^ :]+" /tmp/phase1.log | sort -u; exit $rc' \
-  > "$OUT/phase1-fetches.txt"
+  sh -c 'mkdir /src && cd /src && tar -xf - && go mod download -x 2> /tmp/phase1.log; rc=$?; grep -oE "https?://[^ :]+" /tmp/phase1.log | sort -u; [ "$rc" = 0 ] || tail -n 40 /tmp/phase1.log >&2; exit $rc' \
+  > "$OUT/phase1-fetches.txt" || { echo "phase 1 failed: go mod download in $GO_IMAGE (the last lines of its log are above)" >&2; exit 1; }
 grep -oE "https?://[^/ ]+" "$OUT/phase1-fetches.txt" | sort -u > "$WORK/phase1.hosts"
 [ -s "$WORK/phase1.hosts" ] || { echo "phase 1 logged no fetch" >&2; exit 1; }
 sed 's/^/        phase 1 contacted /' "$WORK/phase1.hosts"
