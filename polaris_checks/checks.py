@@ -7735,12 +7735,57 @@ def check_release_provenance(root: pathlib.Path) -> list[Finding]:
 # SBOM generator is the Trivy sbom.yml pins; and the operator's commands bind the signature to
 # this workflow at the release tag.
 def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
-    name = "release_images"
-    rel = ".github/workflows/release-images.yml"
+    return _signed_image_release(
+        root, "release_images", ".github/workflows/release-images.yml",
+        what="the server images and the chart have", ref_refusal=r'"\$REF_TYPE"\s*=\s*tag',
+        ref_words="a version tag", chart=True, runbook="docs/operator/VERIFY-RELEASE.md",
+        identity_ref="refs/tags/",
+        ok="release-images.yml runs only by hand; a publish needs PUBLISH, a version tag and "
+           "the maintainer's approval at the ghcr environment before any job can write to the "
+           "registry; a published tag never moves (the tag guard runs before each index is "
+           "joined); each image index and the chart are signed keyless, provenance and "
+           "NTIA-checked per-architecture SBOMs are attached at the registry, the chart is "
+           "pinned to the signed digests and everything published is verified with two "
+           "negative controls refused, every action is pinned by commit, and "
+           "VERIFY-RELEASE.md binds verification to the workflow at the tag")
+
+
+def _workflow_jobs(code: str) -> dict[str, str]:
+    """A workflow's jobs by name, each with its body, from the text with comment lines removed."""
+    jm = re.search(r"^jobs:[ \t]*\n", code, re.M)
+    body = code[jm.end():] if jm else ""
+    heads = list(re.finditer(r"^  ([A-Za-z0-9_-]+):[ \t]*$", body, re.M))
+    return {m.group(1): body[m.end(): heads[i + 1].start() if i + 1 < len(heads) else len(body)]
+            for i, m in enumerate(heads)}
+
+
+def _needs_of(job: str) -> set[str]:
+    m = re.search(r"^    needs:\s*(\[[^\]\n]*\]|[A-Za-z0-9_-]+)\s*$", job, re.M)
+    return set(re.findall(r"[A-Za-z0-9_-]+", m.group(1))) if m else set()
+
+
+# A script pinned line for line. Two lines may say anything in their message and nothing else:
+# an echo, and a refusal (`|| { echo "..."; exit 1; }`).
+_SCRIPT_ECHO, _SCRIPT_REFUSAL = object(), object()
+
+
+def _script_pattern(lines: tuple) -> re.Pattern:
+    """These lines, in this order, with nothing between them; indentation is free."""
+    shapes = {_SCRIPT_ECHO: r'echo "[^"\n]*"', _SCRIPT_REFUSAL: r'\|\| \{ echo "[^"\n]*"; exit 1; \}'}
+    return re.compile(r"(?m)^" + r"\n".join(
+        r"[ \t]*" + (shapes[l] if l in shapes else re.escape(l)) + r"[ \t]*" for l in lines) + r"$")
+
+
+def _signed_image_release(root: pathlib.Path, name: str, rel: str, *, what: str, ref_refusal: str,
+                          ref_words: str, chart: bool, runbook: str, identity_ref: str,
+                          ok: str) -> list[Finding]:
+    """What a workflow that publishes signed images holds. The caller names the workflow, the one
+    ref a publish may run on (`ref_refusal` is the test that refuses any other, `identity_ref`
+    what the runbook binds the signature to), whether it also publishes the chart, and the
+    runbook that tells an outsider how to verify."""
     wf = _read(root, rel)
     if not wf:
-        return _fail(name, f"{rel} is missing; the server images and the chart have no signed "
-                     "release path")
+        return _fail(name, f"{rel} is missing; {what} no signed release path")
     code = "\n".join(l for l in wf.splitlines() if not l.lstrip().startswith("#")) + "\n"
     on = re.search(r"^on:[ \t]*\n((?:[ \t]+[^\n]*\n|[ \t]*\n)*)", code, re.M)
     triggers = set(re.findall(r"^  ([a-z_]+):", on.group(1), re.M)) if on else set()
@@ -7756,15 +7801,7 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
     if unpinned:
         return _fail(name, f"{rel} uses action(s) not pinned to a commit: "
                      + ", ".join(unpinned[:3]))
-    jm = re.search(r"^jobs:[ \t]*\n", code, re.M)
-    body = code[jm.end():] if jm else ""
-    heads = list(re.finditer(r"^  ([A-Za-z0-9_-]+):[ \t]*$", body, re.M))
-    jobs = {m.group(1): body[m.end(): heads[i + 1].start() if i + 1 < len(heads) else len(body)]
-            for i, m in enumerate(heads)}
-
-    def needs(job: str) -> set[str]:
-        m = re.search(r"^    needs:\s*(\[[^\]\n]*\]|[A-Za-z0-9_-]+)\s*$", job, re.M)
-        return set(re.findall(r"[A-Za-z0-9_-]+", m.group(1))) if m else set()
+    jobs = _workflow_jobs(code)
 
     def cond(job: str) -> str:
         m = re.search(r"^    if:\s*(.+?)\s*$", job, re.M)
@@ -7777,16 +7814,21 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
         return _fail(name, f"{rel} must have one approval job, in the `ghcr` environment and run "
                      "only for `inputs.confirm == 'PUBLISH'`, that every registry write waits on")
     gate = gates[0]
-    if not any(re.search(r'"\$REF_TYPE"\s*=\s*tag', jobs.get(n, "")) for n in needs(jobs[gate])):
+    # The test alone refuses nothing: its line must run on into `|| { echo "..."; exit 1; }`, with
+    # no `||` or `;` between that could answer for it first.
+    refuses = (ref_refusal + r"(?:(?!\|\||;)[^\n])*\\\n[ \t]*"
+               + r'\|\| \{ echo "[^"\n]*"; exit 1; \}[ \t]*$')
+    if not any(re.search(refuses, jobs.get(n, ""), re.M) for n in _needs_of(jobs[gate])):
         return _fail(name, f"{rel}: the approval job must wait on a job that refuses a publish "
-                     "from anything but a version tag, so the signature names a release")
+                     f"from anything but {ref_words} (the test, then `|| {{ echo ...; exit 1; }}`), "
+                     "so the signature names a release")
     for job_name, job in jobs.items():
         perms = re.search(r"^    permissions:[ \t]*\n((?:      [^\n]*\n)*)", job, re.M)
         writes = set(re.findall(r"^      ([a-z-]+):\s*write", perms.group(1), re.M)) if perms else set()
         signs = "cosign sign" in job or "actions/attest-" in job
         if not (writes or signs):
             continue
-        if gate not in needs(job):
+        if gate not in _needs_of(job):
             return _fail(name, f"{rel}: job `{job_name}` can write to the registry but does not "
                          f"wait on the approval job `{gate}`")
         c = cond(job)
@@ -7814,10 +7856,11 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
                 return _fail(name, f"{rel}: job `{job_name}` signs with a key; the release is "
                              "signed keyless, so no key exists to leak")
     index = [j for j in jobs.values() if "imagetools create" in j]
-    chart = [j for j in jobs.values() if "helm push" in j]
-    if not (index and chart):
-        return _fail(name, f"{rel} must join and sign each image index and push and sign the "
-                     "chart; one of the two jobs is missing")
+    charts = [j for j in jobs.values() if "helm push" in j]
+    if not index or bool(charts) != chart:
+        return _fail(name, f"{rel} must join and sign each image index"
+                     + (" and push and sign the chart; one of the two jobs is missing" if chart
+                        else " and publish nothing else; it has no index job, or it pushes a chart"))
     i = index[0]
     if not re.search(r"cosign sign --yes \"\$REF\"", i):
         return _fail(name, f"{rel}: the publish job does not sign the image index it creates")
@@ -7863,54 +7906,245 @@ def check_release_images_signed(root: pathlib.Path) -> list[Finding]:
                      f"attested, as sbom.yml's are, by its JSON verdict (jq -e '{_NTIA_VERDICT_TEXT}'): "
                      "conformant, no validation message, and every listed component in the graph "
                      "the checker judged (no floating component, no unknown pointer)")
-    c = chart[0]
-    pin = c.find("scripts/polaris-pin-chart-images.py")
-    package = c.find("helm package")
-    if pin < 0 or package < pin or not (root / "scripts/polaris-pin-chart-images.py").is_file():
-        return _fail(name, f"{rel}: the chart job must pin the chart's images to the signed "
-                     "digests (scripts/polaris-pin-chart-images.py) before it packages the chart")
-    if "cosign sign --yes" not in c:
-        return _fail(name, f"{rel}: the chart job does not sign the chart it pushes")
-    chart_job = next(n for n, j in jobs.items() if "helm push" in j)
-    v = next((j for j in jobs.values() if chart_job in needs(j) and "cosign verify" in j), "")
+    # The job everything published has left by the time it ends: the chart's, else the index's.
+    last_job = next(n for n, j in jobs.items() if "imagetools create" in j)
+    if chart:
+        c = charts[0]
+        pin = c.find("scripts/polaris-pin-chart-images.py")
+        package = c.find("helm package")
+        if pin < 0 or package < pin or not (root / "scripts/polaris-pin-chart-images.py").is_file():
+            return _fail(name, f"{rel}: the chart job must pin the chart's images to the signed "
+                         "digests (scripts/polaris-pin-chart-images.py) before it packages the chart")
+        if "cosign sign --yes" not in c:
+            return _fail(name, f"{rel}: the chart job does not sign the chart it pushes")
+        last_job = next(n for n, j in jobs.items() if "helm push" in j)
+    v = next((j for j in jobs.values() if last_job in _needs_of(j) and "cosign verify" in j), "")
     if not (re.search(r'cosign verify "\$REF" --certificate-identity "\$ID"', v)
             and re.search(r'cosign verify-attestation "\$REF" --type https://sigstore\.dev/cosign/sign/v1', v)
             and re.search(r"--predicate-type https://spdx\.dev/Document/v2\.3", v)
-            and re.search(r'cosign verify "\$REGISTRY/charts/polaris@\$CHART" --certificate-identity "\$ID"', v)
+            and (not chart or re.search(
+                r'cosign verify "\$REGISTRY/charts/polaris@\$CHART" --certificate-identity "\$ID"', v))
             and re.search(r'^\s*refused cosign verify "\$REF"[^\n]*"\$OTHER"', v, re.M)
             and re.search(r"^\s*refused gh attestation verify\b", v, re.M)):
-        return _fail(name, f"{rel}: once the chart is out, a job must verify every published "
-                     "digest as VERIFY-RELEASE.md says (the signature by identity and by its "
-                     "predicate type, the provenance, each architecture's SBOM, the chart) and "
-                     "see two controls refused: another tag's identity, and provenance asked of "
-                     "an architecture's digest")
+        return _fail(name, f"{rel}: once the {'chart' if chart else 'index'} is out, a job must "
+                     f"verify every published digest as {pathlib.PurePosixPath(runbook).name} says "
+                     "(the signature by identity and by its predicate type, the provenance, each "
+                     f"architecture's SBOM{', the chart' if chart else ''}) and see two controls "
+                     "refused: another ref's identity, and provenance asked of an architecture's "
+                     "digest")
     trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", wf))
     sbom_trivy = set(re.findall(r"aquasec/trivy:([\w.-]+)", _read(root, ".github/workflows/sbom.yml")
                                 + _read(root, ".github/workflows/sbom-build.yml")))
     if not trivy or trivy != sbom_trivy:
         return _fail(name, f"{rel} generates the registry SBOMs with Trivy {sorted(trivy)}, "
                      f"sbom.yml with {sorted(sbom_trivy)}; the two must be one version")
-    doc = _read(root, "docs/operator/VERIFY-RELEASE.md")
+    doc = _read(root, runbook)
+    workflow = re.escape(pathlib.PurePosixPath(rel).name)
     if not (re.search(r"^cosign verify\b", doc, re.M)
             and re.search(r"--certificate-identity\s+\"?https://github\.com/EgorKhaklin/polaris-id/"
-                          r"\.github/workflows/release-images\.yml@refs/tags/", doc)
+                          r"\.github/workflows/" + workflow + "@" + re.escape(identity_ref), doc)
             and "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in doc
             and re.search(r"--signer-workflow\s+EgorKhaklin/polaris-id/\.github/workflows/"
-                          r"release-images\.yml", doc)
+                          + workflow, doc)
             and "--source-ref" in doc):
-        return _fail(name, "docs/operator/VERIFY-RELEASE.md must bind cosign verify to "
-                     "release-images.yml at the release tag and GitHub's OIDC issuer, and "
-                     "gh attestation verify to the same workflow and tag; a signature checked "
+        return _fail(name, f"{runbook} must bind cosign verify to "
+                     f"{pathlib.PurePosixPath(rel).name} at {ref_words} and GitHub's OIDC issuer, "
+                     "and the provenance command to the same workflow and ref; a signature checked "
                      "against any identity is decoration")
+    return _ok(name, ok)
+
+
+# 2026-11-15 (EXT-INTEROP): the polaris-oid4vp verifier as a published image, asked for by an
+# outside project's test stack. release-oid4vp-image.yml is the one path by which it reaches a
+# registry, and it holds what release-images.yml holds, with two differences. A publish runs on
+# main, because a package release has no tag in this repository. And the version in the image's
+# tag is never typed: it is v and the version requirements.in pins, read by the job the approval
+# waits on, so the tag cannot name a version the image does not hold. Before the step that can
+# push, each architecture's build is presented to by the package suite's wallet and gated on
+# fixable CRITICAL CVEs, and neither result can be skipped or swallowed.
+_OID4VP_IMAGE_DIR = "packages/polaris-oid4vp/image"
+# Each file the two checks read, named whole: the check-mutation drill resolves a path constant,
+# not a path built from one, and a file it cannot name is a file it never deletes.
+_OID4VP_IMAGE_DOCKERFILE = "packages/polaris-oid4vp/image/Dockerfile"
+_OID4VP_IMAGE_ASKED = "packages/polaris-oid4vp/image/requirements.in"
+_OID4VP_IMAGE_LOCKED = "packages/polaris-oid4vp/image/requirements.txt"
+_OID4VP_IMAGE_README = "packages/polaris-oid4vp/image/README.md"
+_OID4VP_IMAGE_DRILL = "scripts/polaris-oid4vp-image-drill.py"
+# The two scripts of the job the approval waits on, line for line (their messages are free). The
+# first derives the tag. A rebuild of the same package release (a new base digest, a dependency,
+# a system package) must not wait for the next release and may not move a published tag, so it
+# is published under a revision typed at dispatch, v1.1.0-2 and up; the pattern admits nothing
+# but a number from 2, and an empty revision is the release's first image. The second ends a dry
+# run and refuses a publish from any ref but main.
+_OID4VP_IMAGE_TAG_SCRIPT = _script_pattern((
+    "run: |",
+    "set -euo pipefail",
+    f"DIR={_OID4VP_IMAGE_DIR}",
+    "VERSION=$(sed -n 's/^polaris-oid4vp==\\([0-9][0-9A-Za-z.]*\\)$/\\1/p' \"$DIR/requirements.in\")",
+    '[[ "$VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] \\',
+    _SCRIPT_REFUSAL,
+    'grep -qxF "polaris-oid4vp==$VERSION \\\\" "$DIR/requirements.txt" \\',
+    _SCRIPT_REFUSAL,
+    '[[ "$REVISION" =~ ^([2-9]|[1-9][0-9]+)?$ ]] \\',
+    _SCRIPT_REFUSAL,
+    'echo "tag=v$VERSION${REVISION:+-$REVISION}" >> "$GITHUB_OUTPUT"',
+))
+_OID4VP_IMAGE_REF_SCRIPT = _script_pattern((
+    "run: |",
+    'if [ "$PUBLISH" != "true" ]; then',
+    _SCRIPT_ECHO,
+    "exit 0",
+    "fi",
+    '[ "$REF" = refs/heads/main ] \\',
+    _SCRIPT_REFUSAL,
+))
+# A step that may be skipped, or may fail without failing its job: an `if:` or a
+# `continue-on-error:` among its keys, the step read as the text after its `- `.
+_STEP_MAY_NOT_RUN_OR_FAIL = re.compile(r"(?m)^(?:        )?(?:if|continue-on-error):")
+
+
+def check_oid4vp_image_release_signed(root: pathlib.Path) -> list[Finding]:
+    name = "oid4vp_image_release"
+    rel = ".github/workflows/release-oid4vp-image.yml"
+    found = _signed_image_release(
+        root, name, rel, what="the polaris-oid4vp image has",
+        ref_refusal=r'\[ "\$REF" = refs/heads/main \]', ref_words="main", chart=False,
+        runbook=_OID4VP_IMAGE_README, identity_ref="refs/heads/main",
+        ok="release-oid4vp-image.yml runs only by hand; a publish needs PUBLISH, main and the "
+           "maintainer's approval at the ghcr environment before any job can write to the "
+           "registry; the tag is v and the version requirements.in pins, then a revision from 2 "
+           "up for a rebuild, and never moves once published; each architecture's build is "
+           "presented to by the suite's wallet and "
+           "gated on fixable CRITICAL CVEs before the step that can push; the index is signed "
+           "keyless, provenance and NTIA-checked per-architecture SBOMs are attached at the "
+           "registry, what was published is verified with two negative controls refused, and "
+           "the image's README binds verification to the workflow on main")
+    if found[0].level != "OK":
+        return found
+    wf = _read(root, rel)
+    code = "\n".join(l for l in wf.splitlines() if not l.lstrip().startswith("#")) + "\n"
+    tags = re.findall(r"^\s+TAG:\s*(.+?)\s*$", code, re.M)
+    if not tags or any(t != "${{ needs.validate.outputs.tag }}" for t in tags):
+        return _fail(name, f"{rel}: every TAG must be the validate job's output "
+                     "(needs.validate.outputs.tag), never an input or the ref's name: "
+                     + ", ".join(sorted(set(tags))[:3]))
+    jobs = _workflow_jobs(code)
+    gate = next(j for j in jobs.values() if re.search(r"^    environment:\s*ghcr\s*$", j, re.M))
+    holders = [n for n, j in jobs.items() if _OID4VP_IMAGE_TAG_SCRIPT.search(j)]
+    validate = jobs[holders[0]] if len(holders) == 1 and holders[0] in _needs_of(gate) else ""
+
+    def env(key: str) -> list[str]:
+        return re.findall(r"(?m)^\s+" + key + r":\s*(.+?)\s*$", validate)
+
+    # Both scripts are held from `run: |` to their last line, so nothing can run before or
+    # between the comparisons; what is left to hold is where their inputs and the output go.
+    tag_step = [s for s in re.split(r"\n      - ", validate) if _OID4VP_IMAGE_TAG_SCRIPT.search(s)]
+    if not (validate and re.search(r'-t "\$IMAGE:\$TAG"', code)
+            and len(tag_step) == 1 and re.search(r"(?m)^        id: tag[ \t]*$", tag_step[0])
+            and re.search(r"(?m)^      tag: \$\{\{ steps\.tag\.outputs\.tag \}\}[ \t]*$", validate)
+            and validate.count("GITHUB_OUTPUT") == 1
+            and env("REVISION") == ["${{ inputs.revision }}"]):
+        return _fail(name, f"{rel}: the job the approval waits on must derive the tag, and nothing "
+                     f"else may: v and the one version {_OID4VP_IMAGE_DIR}/requirements.in pins, "
+                     "which requirements.txt pins by hash, then for a rebuild a revision from 2 up "
+                     "(inputs.revision, refused unless it is empty or such a number), each "
+                     "comparison stopping the job; and the index must be joined under that tag")
+    if not (_OID4VP_IMAGE_REF_SCRIPT.search(validate)
+            and env("PUBLISH") == ["${{ inputs.confirm == 'PUBLISH' }}"]
+            and env("REF") == ["${{ github.ref }}"]):
+        return _fail(name, f"{rel}: the job that derives the tag must end a dry run and refuse a "
+                     "publish from any ref but refs/heads/main: it judges github.ref, and whether "
+                     "the run is a publish by the expression the jobs' `if:` use (inputs.confirm "
+                     "== 'PUBLISH', which ignores case as no shell test of the typed word does)")
+    build = next((j for j in jobs.values() if "push-by-digest=true" in j), "")
+    push_at = build.find("push-by-digest=true")
+    steps = re.split(r"\n      - ", build[:push_at])
+    drill = [s for s in steps
+             if re.search(r"^\s*python " + re.escape(_OID4VP_IMAGE_DRILL)
+                          + r" --image polaris-oid4vp:drill\s*$", s, re.M)]
+    scan = [s for s in steps
+            if re.search(r"--severity CRITICAL --ignore-unfixed", s)
+            and re.search(r"--exit-code 1 --no-progress polaris-oid4vp:drill > trivy\.txt 2>&1 \|\| rc=\$\?", s)
+            and re.search(r"^\s*grep -q '\^Total: ' trivy\.txt \|\| \{[^\n]*exit 1; \}\s*$", s, re.M)
+            and re.search(r'^\s*\[ "\$rc" -eq 0 \] \|\| \{[^\n]*exit 1; \}\s*$', s, re.M)]
+    contexts = set(re.findall(r"^\s+context:\s*(\S+)\s*$", build, re.M))
+    if not (drill and scan and (root / _OID4VP_IMAGE_DRILL).is_file()
+            and all("set -euo pipefail" in s and not _STEP_MAY_NOT_RUN_OR_FAIL.search(s)
+                    for s in drill + scan)
+            and re.search(r"^\s+load: true\s*$", build[:push_at], re.M)
+            and re.search(r"^\s+tags: polaris-oid4vp:drill\s*$", build[:push_at], re.M)
+            and contexts == {_OID4VP_IMAGE_DIR}):
+        return _fail(name, f"{rel}: before the step that can push, the build job must load the "
+                     f"image it built from {_OID4VP_IMAGE_DIR}, have {_OID4VP_IMAGE_DRILL} present "
+                     "to it, and fail on a fixable CRITICAL CVE or a scan with no report, in steps "
+                     "that always run and whose result is not swallowed (no `if:`, no "
+                     "`continue-on-error`); the push builds the same context")
+    return found
+
+
+# What the image is said to be (its README, the reply to the project that asked): the released
+# package from PyPI and nothing built from this tree, each wheel by hash, on a base pinned by
+# digest, run as a user that is not root, with the package's own command as the entrypoint. CI
+# builds it and has the suite's wallet present to it on every pull request.
+def check_oid4vp_image_is_the_released_package(root: pathlib.Path) -> list[Finding]:
+    name = "oid4vp_image"
+    df = _dockerfile_code(_read_raw(root, _OID4VP_IMAGE_DOCKERFILE))
+    if not df.strip():
+        return _fail(name, f"{_OID4VP_IMAGE_DIR}/Dockerfile is missing")
+    froms = re.findall(r"(?m)^FROM\s+(\S+)", df)
+    if len(froms) != 1 or not re.search(r"@sha256:[0-9a-f]{64}$", froms[0]):
+        return _fail(name, f"{_OID4VP_IMAGE_DIR}/Dockerfile must build from one base, pinned by "
+                     f"digest: {froms}")
+    copied = [c.strip() for c in re.findall(r"(?m)^(?:COPY|ADD)\s+(.+)$", df)]
+    if copied != ["requirements.txt /tmp/requirements.txt"]:
+        return _fail(name, f"{_OID4VP_IMAGE_DIR}/Dockerfile must copy in its requirements.txt and "
+                     f"nothing else, so nothing in the image is built from this tree: {copied}")
+    installs = re.findall(r"\bpip3? install\b[^&;\n]*", df)
+    if len(installs) != 1 or not all(flag in installs[0] for flag in (
+            "--require-hashes", "--only-binary :all:", "-r /tmp/requirements.txt")):
+        return _fail(name, f"{_OID4VP_IMAGE_DIR}/Dockerfile must install once, from "
+                     "requirements.txt, wheels only and each by hash (--require-hashes "
+                     f"--only-binary :all:): {installs}")
+    users = re.findall(r"(?m)^USER\s+(\S+)", df)
+    if not users or not re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*", users[-1]):
+        return _fail(name, f"{_OID4VP_IMAGE_DIR}/Dockerfile must end as a numeric user and group "
+                     f"that are not root: {users}")
+    if re.findall(r"(?m)^ENTRYPOINT\s+(.+?)\s*$", df) != ['["polaris-oid4vp"]']:
+        return _fail(name, f"{_OID4VP_IMAGE_DIR}/Dockerfile's entrypoint must be the package's "
+                     'command, ENTRYPOINT ["polaris-oid4vp"]')
+
+    def requirements(text: str) -> list[str]:
+        return [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+
+    asked = requirements(_read_raw(root, _OID4VP_IMAGE_ASKED))
+    if len(asked) != 1 or not re.fullmatch(r"polaris-oid4vp==[0-9]+\.[0-9]+\.[0-9]+", asked[0]):
+        return _fail(name, f"{_OID4VP_IMAGE_DIR}/requirements.in must ask for one thing, a "
+                     f"released polaris-oid4vp version (polaris-oid4vp==X.Y.Z): {asked}")
+    locked = requirements(_read_raw(root, _OID4VP_IMAGE_LOCKED))
+    pins = [n for n, l in enumerate(locked) if not l.startswith(" ")]
+    unhashed = [locked[n] for n in pins
+                if not (locked[n].endswith(" \\") and n + 1 < len(locked)
+                        and re.match(r"    --hash=sha256:[0-9a-f]{64}( \\)?$", locked[n + 1]))]
+    if asked[0] + " \\" not in locked or unhashed:
+        return _fail(name, f"{_OID4VP_IMAGE_DIR}/requirements.txt must pin {asked[0]} and every "
+                     f"other requirement by hash: {unhashed[:3] or 'the package is not pinned'}")
+    ci = "\n".join(l for l in _read(root, ".github/workflows/ci.yml").splitlines()
+                   if not l.lstrip().startswith("#")) + "\n"
+    drilling = [j for j in _workflow_jobs(ci).values() if _OID4VP_IMAGE_DRILL in j]
+    steps = [s for j in drilling for s in re.split(r"\n      - ", j) if _OID4VP_IMAGE_DRILL in s]
+    if not (len(steps) == 1 and (root / _OID4VP_IMAGE_DRILL).is_file()
+            and re.search(r"(?m)^        run: python " + re.escape(_OID4VP_IMAGE_DRILL) + r"[ \t]*$", steps[0])
+            and not _STEP_MAY_NOT_RUN_OR_FAIL.search(steps[0])
+            and not re.search(r"(?m)^    (?:if|continue-on-error):", drilling[0])):
+        return _fail(name, f"ci.yml must build the image and run {_OID4VP_IMAGE_DRILL} against "
+                     "it in one step, on every run and with its failure failing the job: neither "
+                     "the step nor its job may carry an `if:` or a `continue-on-error:`")
     return _ok(name,
-               "release-images.yml runs only by hand; a publish needs PUBLISH, a version tag and "
-               "the maintainer's approval at the ghcr environment before any job can write to the "
-               "registry; a published tag never moves (the tag guard runs before each index is "
-               "joined); each image index and the chart are signed keyless, provenance and "
-               "NTIA-checked per-architecture SBOMs are attached at the registry, the chart is "
-               "pinned to the signed digests and everything published is verified with two "
-               "negative controls refused, every action is pinned by commit, and "
-               "VERIFY-RELEASE.md binds verification to the workflow at the tag")
+               f"the polaris-oid4vp image installs {asked[0]} and its dependencies from "
+               "requirements.txt, wheels only and each by hash, on one base pinned by digest; it "
+               "copies in nothing else, ends as a numeric user that is not root, and its "
+               "entrypoint is the package's command; CI builds it and runs the image drill, in a "
+               "step and a job that carry no `if:` and no `continue-on-error:`")
 
 
 # 2026-10-07 (lab record 017, phase 4a): the rate limiter's Redis authenticates. An attacker on
@@ -31842,6 +32076,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_infra_alerts,
     check_session_key_rotation,
     check_release_images_signed,
+    check_oid4vp_image_release_signed,
+    check_oid4vp_image_is_the_released_package,
     check_redis_authenticated,
     check_redis_persists_nothing,
     check_ha_internal_auth,
