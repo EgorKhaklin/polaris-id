@@ -12,7 +12,7 @@ dependency, is a new tag with a revision after it (`v1.1.0-2`); a published tag 
 ## Run it
 
 Two commands, as with the package: `keygen` once, then `serve`. `/data` is the working directory
-and the one place the image's user can write, so mount a volume there.
+and belongs to the image's user, so mount a volume there.
 
 ```bash
 docker build -t polaris-oid4vp packages/polaris-oid4vp/image

@@ -29,7 +29,7 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --require-hashes --only-binary :all: -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-# /data is the working directory and the one place the user can write: a volume mounted there
+# /data is the working directory and belongs to the image's user: a volume mounted there
 # holds the certificates keygen makes and the result file serve keeps.
 RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin verifier \
     && mkdir /data \

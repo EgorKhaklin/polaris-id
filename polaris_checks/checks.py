@@ -7949,7 +7949,7 @@ def _signed_image_release(root: pathlib.Path, name: str, rel: str, *, what: str,
             and "--source-ref" in doc):
         return _fail(name, f"{runbook} must bind cosign verify to "
                      f"{pathlib.PurePosixPath(rel).name} at {ref_words} and GitHub's OIDC issuer, "
-                     "and gh attestation verify to the same workflow and ref; a signature checked "
+                     "and the provenance command to the same workflow and ref; a signature checked "
                      "against any identity is decoration")
     return _ok(name, ok)
 
