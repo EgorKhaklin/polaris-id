@@ -1587,12 +1587,16 @@ class CheckLayerDrillVoidTests(unittest.TestCase):
     DRILLS = {"polaris-constitution-mutation-drill.py": ["ROOT"],
               "polaris-coverage-mutation-drill.py": ["ROOT"],
               "polaris-move-mutation-drill.py": ["OID4VP_PKG", "ROOT", "VERIFY_PKG", "WEB"]}
+    #: What the temporary root's name starts with. The coverage shards measure every file a test
+    #: loads, and their data is combined on another runner, where this root never existed: a copy
+    #: that was measured is a "No source for code" report error there. .coveragerc omits this name.
+    PREFIX = "polaris-runner-test-"
 
     def setUp(self):
         import pathlib
         import shutil
         import tempfile
-        self.root = pathlib.Path(tempfile.mkdtemp()).resolve()
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix=self.PREFIX)).resolve()
         self.addCleanup(shutil.rmtree, str(self.root))
         (self.root / "scripts").mkdir()
         # The constitution drill finds some of its targets by reading the application's modules.
@@ -1638,6 +1642,12 @@ class CheckLayerDrillVoidTests(unittest.TestCase):
                 self.assertEqual(sorted(paths), names)
                 for name, path in paths.items():
                     self.assertIn(self.root, [path] + list(path.parents), name)
+
+    def test_the_temporary_root_is_one_the_coverage_measure_leaves_out(self):
+        with open(os.path.join(os.path.dirname(_HERE), ".coveragerc"), encoding="utf-8") as f:
+            omitted = [line.strip() for line in f]
+        self.assertIn("*/%s*/*" % self.PREFIX, omitted)
+        self.assertTrue(self.root.name.startswith(self.PREFIX), self.root.name)
 
     def test_a_red_tree_is_void_and_the_line_counts_and_names_the_checks(self):
         for script in self.DRILLS:
