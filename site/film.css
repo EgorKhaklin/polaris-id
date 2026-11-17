@@ -257,12 +257,32 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
 .crossing svg, .seals svg { display: block; width: 100%; height: auto; overflow: visible; color: var(--ink-3); }
 .crossing text, .seals text { font-family: var(--font-mono); letter-spacing: 0.06em; fill: var(--ink-2); }
 .seals circle { stroke: var(--ink-2); stroke-width: 1px; vector-effect: non-scaling-stroke; }
-/* recovery: three bearings drawn in gilt over a pool of night; the fix they make, lit */
+/* recovery: three bearings over a pool of night, each in its own colour and numbered at one end; the fix they
+   make, lit; under the drawing, the key: each line's name and how it works */
 .crossing { position: relative; }
 .crossing::before { content: ""; position: absolute; inset: -12% -8%; z-index: -1; border-radius: 50%;
                     background: radial-gradient(closest-side, oklch(0.27 0.035 255 / 0.55), oklch(0.18 0.02 255 / 0.2) 60%, transparent); }
-.crossing svg { color: var(--ink-2); filter: drop-shadow(0 0 6px oklch(0.85 0.08 85 / 0.35)); }
-.crossing .ch { stroke: var(--gold); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.crossing svg { color: var(--ink-2); filter: drop-shadow(0 0 6px oklch(0.9 0.02 250 / 0.3)); }
+.crossing .ch { stroke: var(--gold); stroke-width: 1.75px; vector-effect: non-scaling-stroke; }
+.crossing { --c1: var(--accent); --c2: var(--gold); --c3: var(--ink); }
+.crossing .c1 { stroke: var(--c1); } .crossing .c2 { stroke: var(--c2); } .crossing .c3 { stroke: var(--c3); }
+.crossing .nb text { font: 700 12px/1 var(--font-mono); letter-spacing: 0; fill: var(--ground); }
+.crossing .n1 circle { fill: var(--c1); } .crossing .n2 circle { fill: var(--c2); } .crossing .n3 circle { fill: var(--c3); }
+.crossing .nb g { transform-box: fill-box; transform-origin: center; }
+.key { margin-top: clamp(28px, 4vh, 48px); }
+.key ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 18px; counter-reset: key; }
+.key li, .key .fix { display: grid; grid-template-columns: 26px minmax(0, 1fr); column-gap: 14px; margin: 0;
+                     font: 400 15px/1.5 var(--font-sans); color: var(--ink-2); text-wrap: pretty; }
+.key li::before, .key .fix::before { grid-row: 1 / span 2; width: 26px; height: 26px; border-radius: 50%; display: grid;
+                                     place-items: center; font: 700 12px/1 var(--font-mono); color: var(--ground); }
+.key li { counter-increment: key; }
+.key li::before { content: counter(key) / ""; }
+.key .k1::before { background: var(--c1); } .key .k2::before { background: var(--c2); } .key .k3::before { background: var(--c3); }
+.key b { display: block; margin-bottom: 2px; font: 500 12px/1.6 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase;
+         color: var(--ink); }
+.key .fix { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line-strong); }
+.key .fix::before { content: "" / ""; width: 0; height: 0; margin: 5px 0 0 6px; border-radius: 0; border: 7px solid transparent;
+                    border-bottom: 12px solid oklch(0.97 0 0 / 0.55); border-top: 0; }
 .crossing .cut { fill-opacity: 0.6; }
 .crossing text { font-size: 12px; }
 /* migration: two seals in gilt, the incoming one lit; the outgoing dimmer, marked retired */
@@ -417,11 +437,8 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
 @media (max-width: 560px) {
     .duress { --pane-gap: 14px; }   /* two phones side by side even here, each the same screen */
     .tell { width: auto; margin-left: 0; }
-    /* the channels' names at a size a phone can read (the drawing scales them down with it): larger in its own
-       units, and the long one moved to the top, above the start of its line, where it has room */
-    .crossing .lb text { font-size: 21px; }
-    .crossing .lb text:nth-child(1) { translate: -40px 4px; }   /* clear of the sworn statement's line */
-    .crossing .lb text:nth-child(3) { text-anchor: start; translate: -300px -314px; }
+    /* the lines' numbers at a size a phone can read (the drawing scales them down with it) */
+    .crossing .nb g { scale: 1.5; }
     .eyebrow, .slate, .act h3, .tally span, .seen, .pane .code, .foot p { font-size: 13px; }
     .eyebrow, .act h3 { line-height: 1.5; text-wrap: balance; }
     .seals text { font-size: 11.6px; letter-spacing: 0; }   /* the seals draw about 1.12x here: 13px on the screen */
@@ -539,6 +556,11 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
         .crossing mask:nth-of-type(2) .rv { animation-range: cover 24% cover 38%; }
         .crossing mask:nth-of-type(3) .rv { animation-range: cover 30% cover 44%; }
         .crossing .cut { animation: cut linear both; animation-timeline: --cross; animation-range: cover 47.99% cover 48%; }
+        /* each number lights as its line reaches it: the first and second at their lines' ends, the third at its start */
+        .crossing .nb g { animation: appear linear both; animation-timeline: --cross; }
+        .crossing .nb .n1 { animation-range: cover 29% cover 32%; }
+        .crossing .nb .n2 { animation-range: cover 35% cover 38%; }
+        .crossing .nb .n3 { animation-range: cover 30% cover 33%; }
         .seals { view-timeline: --seals block; }
         .seals .rv { stroke-dasharray: 1 1; animation: draw-line linear both; animation-timeline: --seals; animation-range: cover 22% cover 46%; }
         .seals .retired { animation: cut linear both; animation-timeline: --seals; animation-range: cover 61.99% cover 62%; }
