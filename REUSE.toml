@@ -41,7 +41,14 @@ SPDX-License-Identifier = "CC-BY-SA-3.0-IGO"
 # The acts' other images: the project's own renders (Blender). Their lettering is set in Cinzel and JetBrains Mono,
 # the site's fonts (SIL Open Font License).
 [[annotations]]
-path = ["site/film/iii-*", "site/film/iv-*", "site/film/vii-*"]
+path = ["site/film/iii-*", "site/film/iv-*"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin and the Polaris contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# The founder's portrait on the site, in black and white.
+[[annotations]]
+path = ["site/film/founder-*"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Egor Khaklin"
+SPDX-License-Identifier = "LicenseRef-Portrait-All-Rights-Reserved"

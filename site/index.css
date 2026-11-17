@@ -3,8 +3,7 @@
    console); this file is layout and the few effects. The site's policy refuses inline style and
    all script, so everything visual is here, and every motion stops for prefers-reduced-motion.
 
-   01 Fonts  02 Base  03 Bar  04 Hero  05 Sections  06 Verify  07 Evidence  08 How
-   09 Design  10 Start  11 Footer  12 Responsive and motion
+   01 Fonts  02 Base  03 Bar  04 Hero  05 Responsive and motion  06 Scroll  07 The light
    ============================================================================ */
 
 /* ----- 01 Fonts: the console's own files cut to the Latin characters, every glyph, feature and axis kept (fonts/*-OFL.txt) ----- */
@@ -48,9 +47,7 @@ a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--
     text-underline-offset: 3px; text-decoration-thickness: 1px; transition: color .15s, text-decoration-color .15s; }
 a:hover { color: var(--gold); text-decoration-color: var(--gold); }
 :focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 3px; }
-b, strong { color: var(--ink); font-weight: 600; }
-code { font: 400 0.86em var(--font-mono); color: var(--ink); background: var(--surface-2);
-       border: 1px solid var(--line); border-radius: 4px; padding: 0.1em 0.4em; }
+b { color: var(--ink); font-weight: 600; }
 p { margin: 0 0 1.1em; }
 h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
 
@@ -59,8 +56,6 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
         text-decoration: none; }
 .skip:focus { top: 12px; }
 
-.wrap { max-width: 1160px; margin: 0 auto; padding: 0 40px; }
-
 /* ----- 03 Bar ----------------------------------------------------------- */
 /* No bar: the header sits over the sky at the top of the page and scrolls away with it. */
 .bar { position: absolute; top: 0; left: 0; right: 0; z-index: 20;
@@ -68,7 +63,16 @@ h1, h2, h3 { color: var(--ink); margin: 0; font-weight: 600; }
 .bar-in { max-width: 1160px; margin: 0 auto; padding: 0 40px; height: 64px;
           display: flex; align-items: center; gap: 28px; }
 .mark { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--gold); }
-.mark span { font: 600 15px/1 var(--font-display); letter-spacing: 0.22em; text-transform: uppercase; }
+.mark span { font: 600 15px/1 var(--font-display); letter-spacing: 0.22em; text-transform: uppercase;
+             animation: mark-glow 2.6s cubic-bezier(.33, 0, .2, 1) .9s both; }
+/* One slow breath of light on the wordmark as the coin lands and the headline starts: it brightens toward the
+   coin's pale gold and blooms, then settles back, once, at load. It runs on the span, so the bar's own fade on
+   scroll is untouched, and stops with every other motion for a reader who asks for less. */
+@keyframes mark-glow {
+    0%   { color: var(--gold); text-shadow: 0 0 0 rgba(246, 231, 195, 0), 0 0 0 rgba(221, 202, 155, 0); }
+    40%  { color: #f8ebcb; text-shadow: 0 0 7px rgba(246, 231, 195, 0.75), 0 0 22px rgba(221, 202, 155, 0.45); }
+    100% { color: var(--gold); text-shadow: 0 0 0 rgba(246, 231, 195, 0), 0 0 0 rgba(221, 202, 155, 0); }
+}
 .mark:hover { color: var(--gold); }
 .bar nav { display: flex; gap: 26px; margin-left: 12px; }
 .bar nav a { color: rgba(240, 240, 250, 0.9); text-decoration: none; font-size: 12.5px; font-weight: 600;
@@ -104,18 +108,22 @@ html { --spring: cubic-bezier(.3, 1.35, .5, 1); --spring-card: cubic-bezier(.3, 
    backdrop a blend is a plain paint, and the sky's black would cover the page's near-black. */
 .hero { position: relative; display: grid;
         grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-        grid-template-areas: "copy sky" "proof sky" "scope sky";
+        grid-template-areas: "copy sky" "cert sky";
         max-width: 1160px; margin: 0 auto; padding: 0 40px;
         min-height: min(calc(100vh - 64px), 860px); align-content: center; column-gap: 40px; }
-.hero-copy { grid-area: copy; align-self: end; padding: 72px 0 34px; }
+/* Beside the sky the words keep one right edge, the button row's: the column is as wide as that row (it does not
+   wrap, and no button shrinks), the headline's longest line ends at it, and the lead is justified to it. Under
+   the sky (900px and narrower) the words keep their own measure. */
+.hero-copy { grid-area: copy; align-self: end; padding: 72px 0 34px; width: min-content; }
 .eyebrow { font: 500 12px/1 var(--font-mono); letter-spacing: 0.16em; text-transform: uppercase;
            color: var(--gold); margin-bottom: 28px; }
-.hero h1 { font-size: clamp(36px, 4.3vw, 60px); line-height: 0.98; letter-spacing: -0.02em;
+.hero h1 { font-size: 52.8px; line-height: 0.98; letter-spacing: -0.02em;
            font-weight: 700; text-transform: uppercase; max-width: 12ch; margin-bottom: 30px; }
 .hero h1 .nb { white-space: normal; }
 .hero h1 em { font-style: normal; color: var(--gold); }
-.lead { font-size: 19px; line-height: 1.6; max-width: 34em; color: var(--ink-2); margin-bottom: 36px; }
-.cta { display: flex; flex-wrap: wrap; gap: 14px; }
+.lead { font-size: 19px; line-height: 1.6; color: var(--ink-2); margin-bottom: 36px; text-align: justify; }
+.cta { display: flex; flex-wrap: nowrap; gap: 14px; }
+.cta .btn { flex: none; white-space: nowrap; }
 .btn { display: inline-flex; align-items: center; gap: 12px; height: 50px; padding: 0 24px; border-radius: 3px;
        letter-spacing: 0.09em; text-transform: uppercase; font-size: 13px; font-weight: 600; text-decoration: none;
        --h: 5; --h0: 5; --rise: .75s; --ease-h: var(--spring-card);
@@ -139,7 +147,7 @@ html { --spring: cubic-bezier(.3, 1.35, .5, 1); --spring-card: cubic-bezier(.3, 
    Way out to 54 degrees from the celestial pole, at their places for October 2026, seen from the ground facing
    north in a stereographic view (the Great Bear and Cassiopeia keep their shapes). It is drawn on black and
    screen-blended, so only its light shows. The circle 11 degrees round the pole (0.18898 of the sky's width,
-   47% of this box) lies under the coin, whose face is 60% of the box. It turns about the pole
+   47% of this box) lies under the coin, whose face is 90% of the box. It turns about the pole
    counterclockwise, as the sky does, once in twelve minutes. It holds still behind the page: scrolling, the band
    slides up over it (13 Scroll), and the coin, carried up with the page, uncovers Polaris at the pole, the one
    star that stays while the sky turns. */
@@ -149,8 +157,8 @@ html { --spring: cubic-bezier(.3, 1.35, .5, 1); --spring-card: cubic-bezier(.3, 
    layers path-traced with the coin at rest 0.8 radii in front of the sky: the lamp's, cast down and to the right,
    and the room's, the light the coin keeps from the sky just behind it. Multiplied over the sky, they dim the
    stars and the Milky Way as a shadow would. Each layer follows the coin's poses, its press, its drop and its
-   lean (generated with the coin's states); each image spans 4.8 radii, 144% of this box. */
-.shade { position: absolute; left: -22%; top: -22%; width: 144%; aspect-ratio: 1; mix-blend-mode: multiply;
+   lean (generated with the coin's states); each image spans 4.8 radii, 216% of this box. */
+.shade { position: absolute; left: -58%; top: -58%; width: 216%; aspect-ratio: 1; mix-blend-mode: multiply;
          pointer-events: none; }
 .shade-drop, .shade img { position: absolute; inset: 0; width: 100%; height: 100%; }
 .shade img { transition: transform .9s var(--spring); }
@@ -174,7 +182,7 @@ html { --spring: cubic-bezier(.3, 1.35, .5, 1); --spring-card: cubic-bezier(.3, 
    that angle (.coin-rise, with its own faces). The faces of the other poses load once a pointer is over the
    hero. */
 .coin { --rx: 8deg; --ry: -16deg; --z: 0px;
-        position: absolute; z-index: 1; left: 50%; top: 50%; width: 60%; aspect-ratio: 1; translate: -50% -50%;
+        position: absolute; z-index: 1; left: 50%; top: 50%; width: 90%; aspect-ratio: 1; translate: -50% -50%;
         container-type: inline-size; }
 .coin-stage { position: absolute; inset: 0; perspective: 450cqw; }
 .coin-rise, .coin-wob, .coin-land { position: absolute; inset: 0; transform-style: preserve-3d; }
@@ -283,82 +291,124 @@ html { --spring: cubic-bezier(.3, 1.35, .5, 1); --spring-card: cubic-bezier(.3, 
 .coin-stage, .shade { --spring-scroll: linear(0.000 0.0%, 0.158 2.3%, 0.325 4.5%, 0.489 6.8%, 0.645 9.1%, 0.785 11.4%, 0.906 13.6%, 1.007 15.9%, 1.085 18.2%, 1.144 20.5%, 1.182 22.7%, 1.204 25.0%, 1.211 27.3%, 1.206 29.5%, 1.192 31.8%, 1.172 34.1%, 1.147 36.4%, 1.120 38.6%, 1.093 40.9%, 1.067 43.2%, 1.043 45.5%, 1.022 47.7%, 1.005 50.0%, 0.991 52.3%, 0.980 54.5%, 0.972 56.8%, 0.968 59.1%, 0.966 61.4%, 0.966 63.6%, 0.968 65.9%, 0.971 68.2%, 0.975 70.5%, 0.979 72.7%, 0.983 75.0%, 0.987 77.3%, 0.992 79.5%, 0.995 81.8%, 0.998 84.1%, 1.001 86.4%, 1.003 88.6%, 1.004 90.9%, 1.005 93.2%, 1.005 95.5%, 1.006 97.7%, 1.000 100.0%); }
 /* (end of the generated coin rules) */
 /* The sky ends at the band's foot as it ends at a horizon, fading into the ground rather than stopping at an
-   edge: one still layer above the sky, below the words and tiles. */
-.horizon { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; height: clamp(90px, 13vh, 130px);
-           pointer-events: none; background: linear-gradient(180deg, transparent, 62%, var(--ground)); }
+   edge: one still layer above the sky, below the words and the mark, eased, so it is ground well before its foot
+   and what lies above it (the hero's sky, the night's star trails) never stops short of the ground in a line. */
+.horizon { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; height: clamp(150px, 22vh, 240px); pointer-events: none;
+           background: linear-gradient(180deg in oklab, transparent,
+                       color-mix(in oklab, var(--ground) 30%, transparent) 30%,
+                       color-mix(in oklab, var(--ground) 70%, transparent) 55%,
+                       color-mix(in oklab, var(--ground) 94%, transparent) 75%, var(--ground) 86%); }
 
-.hero-copy > *, .proof li, .proof-scope { animation: up 1s cubic-bezier(.2, .7, .2, 1) both; }
+/* The words come in one at a time: the eyebrow, the headline typed out (below), then the lead, the buttons and
+   the mark, each as the one before it settles. */
+.hero-copy > :not(h1), .cert { animation: up 1s cubic-bezier(.2, .7, .2, 1) both; }
 .hero-copy > :nth-child(1) { animation-delay: .55s; }
-.hero-copy > :nth-child(2) { animation-delay: .68s; }
-.hero-copy > :nth-child(3) { animation-delay: .86s; }
-.hero-copy > :nth-child(4) { animation-delay: 1.0s; }
-.proof li:nth-child(1) { animation-delay: 1.15s; }
-.proof li:nth-child(2) { animation-delay: 1.23s; }
-.proof li:nth-child(3) { animation-delay: 1.31s; }
-.proof li:nth-child(4) { animation-delay: 1.39s; }
-.proof-scope { animation-delay: 1.39s; }
+.hero-copy > :nth-child(3) { animation-delay: 2.68s; }
+.hero-copy > :nth-child(4) { animation-delay: 2.83s; }
+.cert { animation-delay: 2.98s; }
 @keyframes up { from { opacity: 0; translate: 0 16px; } to { opacity: 1; translate: 0 0; } }
+/* The headline types itself out, 36 letters from .75s to 2.629s, in CSS alone (the page runs no script).
+   Each letter is a span, hidden while its own animation runs and shown when it ends, so wherever animation is
+   off (reduced motion, an engine without it) every letter simply stands. A gold caret rides the newest letter
+   and blinks out after the last. The h1 is named by its aria-label, the same sentence, and the letters are
+   hidden from assistive technology. A span edge costs the shaper the kern of the pair it splits, so each pair's
+   kern is given back in the left letter's own advance: letter-spacing, the h1's -0.02em plus the kern, measured
+   plain against split (bound to the font file; the render test holds the two widths equal). */
+.hero h1 .k { position: relative; animation-name: key-wait; animation-timing-function: step-end; }
+.hero h1 .k::after { content: ""; position: absolute; left: 100%; top: .06em; bottom: .02em; width: .07em; margin-left: .03em;
+                     background: var(--gold); opacity: 0; animation-name: caret-on; animation-timing-function: step-end; }
+.hero h1 .k36::after { animation-name: caret-end; animation-timing-function: linear; }
+@keyframes key-wait { from, to { visibility: hidden; } }
+@keyframes caret-on { from, to { opacity: 1; } }
+@keyframes caret-end { 0%, 24% { opacity: 1; } 25%, 49% { opacity: 0; } 50%, 74% { opacity: 1; } 75%, 100% { opacity: 0; } }
+/* (generated: each letter's time, its caret's stay, and the kern it gives back) */
+.hero h1 .k1 { animation-duration: .75s; } .hero h1 .k1::after { animation-delay: .75s; animation-duration: .047s; }
+.hero h1 .k2 { animation-duration: .797s; } .hero h1 .k2::after { animation-delay: .797s; animation-duration: .029s; }
+.hero h1 .k3 { animation-duration: .826s; } .hero h1 .k3::after { animation-delay: .826s; animation-duration: .039s; }
+.hero h1 .k4 { animation-duration: .865s; } .hero h1 .k4::after { animation-delay: .865s; animation-duration: .025s; }
+.hero h1 .k5 { animation-duration: .89s; } .hero h1 .k5::after { animation-delay: .89s; animation-duration: .044s; }
+.hero h1 .k6 { animation-duration: .934s; } .hero h1 .k6::after { animation-delay: .934s; animation-duration: .036s; }
+.hero h1 .k7 { animation-duration: .97s; } .hero h1 .k7::after { animation-delay: .97s; animation-duration: .032s; }
+.hero h1 .k8 { animation-duration: 1.002s; } .hero h1 .k8::after { animation-delay: 1.002s; animation-duration: .12s; }
+.hero h1 .k9 { animation-duration: 1.122s; } .hero h1 .k9::after { animation-delay: 1.122s; animation-duration: .027s; }
+.hero h1 .k10 { animation-duration: 1.149s; } .hero h1 .k10::after { animation-delay: 1.149s; animation-duration: .041s; }
+.hero h1 .k11 { animation-duration: 1.19s; } .hero h1 .k11::after { animation-delay: 1.19s; animation-duration: .031s; }
+.hero h1 .k12 { animation-duration: 1.221s; letter-spacing: -0.1117em; } .hero h1 .k12::after { animation-delay: 1.221s; animation-duration: .038s; }
+.hero h1 .k13 { animation-duration: 1.259s; } .hero h1 .k13::after { animation-delay: 1.259s; animation-duration: .122s; }
+.hero h1 .k14 { animation-duration: 1.381s; letter-spacing: -0.0585em; } .hero h1 .k14::after { animation-delay: 1.381s; animation-duration: .025s; }
+.hero h1 .k15 { animation-duration: 1.406s; } .hero h1 .k15::after { animation-delay: 1.406s; animation-duration: .114s; }
+.hero h1 .k16 { animation-duration: 1.52s; } .hero h1 .k16::after { animation-delay: 1.52s; animation-duration: .035s; }
+.hero h1 .k17 { animation-duration: 1.555s; } .hero h1 .k17::after { animation-delay: 1.555s; animation-duration: .118s; }
+.hero h1 .k18 { animation-duration: 1.673s; } .hero h1 .k18::after { animation-delay: 1.673s; animation-duration: .029s; }
+.hero h1 .k19 { animation-duration: 1.702s; } .hero h1 .k19::after { animation-delay: 1.702s; animation-duration: .036s; }
+.hero h1 .k20 { animation-duration: 1.738s; } .hero h1 .k20::after { animation-delay: 1.738s; animation-duration: .036s; }
+.hero h1 .k21 { animation-duration: 1.774s; } .hero h1 .k21::after { animation-delay: 1.774s; animation-duration: .046s; }
+.hero h1 .k22 { animation-duration: 1.82s; } .hero h1 .k22::after { animation-delay: 1.82s; animation-duration: .029s; }
+.hero h1 .k23 { animation-duration: 1.849s; } .hero h1 .k23::after { animation-delay: 1.849s; animation-duration: .04s; }
+.hero h1 .k24 { animation-duration: 1.889s; letter-spacing: -0.0638em; } .hero h1 .k24::after { animation-delay: 1.889s; animation-duration: .025s; }
+.hero h1 .k25 { animation-duration: 1.914s; letter-spacing: -0.0511em; } .hero h1 .k25::after { animation-delay: 1.914s; animation-duration: .278s; }
+.hero h1 .k26 { animation-duration: 2.192s; } .hero h1 .k26::after { animation-delay: 2.192s; animation-duration: .036s; }
+.hero h1 .k27 { animation-duration: 2.228s; letter-spacing: -0.0588em; } .hero h1 .k27::after { animation-delay: 2.228s; animation-duration: .033s; }
+.hero h1 .k28 { animation-duration: 2.261s; } .hero h1 .k28::after { animation-delay: 2.261s; animation-duration: .12s; }
+.hero h1 .k29 { animation-duration: 2.381s; } .hero h1 .k29::after { animation-delay: 2.381s; animation-duration: .027s; }
+.hero h1 .k30 { animation-duration: 2.408s; } .hero h1 .k30::after { animation-delay: 2.408s; animation-duration: .041s; }
+.hero h1 .k31 { animation-duration: 2.449s; } .hero h1 .k31::after { animation-delay: 2.449s; animation-duration: .031s; }
+.hero h1 .k32 { animation-duration: 2.48s; letter-spacing: -0.0378em; } .hero h1 .k32::after { animation-delay: 2.48s; animation-duration: .037s; }
+.hero h1 .k33 { animation-duration: 2.517s; } .hero h1 .k33::after { animation-delay: 2.517s; animation-duration: .047s; }
+.hero h1 .k34 { animation-duration: 2.564s; } .hero h1 .k34::after { animation-delay: 2.564s; animation-duration: .025s; }
+.hero h1 .k35 { animation-duration: 2.589s; letter-spacing: -0.0641em; } .hero h1 .k35::after { animation-delay: 2.589s; animation-duration: .04s; }
+.hero h1 .k36 { animation-duration: 2.629s; } .hero h1 .k36::after { animation-delay: 2.629s; animation-duration: 1.6s; }
+/* (end of the generated letter rules) */
 
-/* Three tiles under the words, large enough to read at a glance: the OpenID Certified mark itself, in the form
-   the Foundation publishes (opening the listing that states its scope); the EU's reference software it is tested
-   with; and the way to the mission. The column under the coin stays open sky, so the star the coin covered has
-   room to show when the page lifts the coin away. */
-.proof { grid-area: proof; align-self: start; list-style: none; margin: 0; padding: 0;
-         display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.proof li { display: flex; }
-.proof a { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 88px;
-           padding: 12px 10px; border: 1px solid var(--line-strong); border-radius: 8px; text-align: center;
-           background-color: rgba(255, 255, 255, 0.015);
-           background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.045), transparent 55%, rgba(0, 0, 0, 0.14));
-           color: var(--ink); text-decoration: none; --h: 4; --h0: 4; --rise: .75s; --ease-h: var(--spring-card);
-           transition: --h var(--rise) var(--ease-h), border-color .2s, background-color .2s; }
-.proof a:hover { --h: 14; border-color: var(--gold); background-color: rgba(221, 202, 155, 0.06); }
-.proof a:active { --h: 1; --rise: .12s; --ease-h: var(--settle); }
-.proof b { font: 600 13.5px/1.25 var(--font-display); letter-spacing: 0.01em; }
-.proof-cert img { height: 50px; width: auto; border-radius: 5px; }
-/* The mark's scope, said beside it: which package, which version, which profile. */
-.proof-scope { grid-area: scope; align-self: start; margin: 14px 0 56px; font: 400 12.5px/1.5 var(--font-sans);
-               letter-spacing: 0.01em; color: var(--ink-3); text-wrap: balance; }
-/* The star under the coin, named once the page has lifted the coin off it. It is part of the held sky (it
-   does not turn: Polaris circles the pole at 0.65 degrees, so its name stays beside it). */
-.polaris { position: absolute; z-index: 0; left: calc(50% + 16px); top: calc(50% - 9px); margin: 0;
-           pointer-events: none; opacity: 0; white-space: nowrap; font: 400 11px/1.5 var(--font-mono);
-           letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
-.polaris b { display: block; font-weight: 500; letter-spacing: 0.22em; color: var(--gold); }
+/* Under the words, the certification: the OpenID Certified mark, one link to the Foundation's listing, beside a
+   caption naming the certified package and version, the profile and the credential format (the page's one
+   mention). Beside the sky the caption's longer line ends at the words' right edge. The column under the coin
+   stays open sky. */
+.cert { grid-area: cert; align-self: start; margin: 0 0 56px; }
+.cert a { display: inline-flex; align-items: center; gap: 14px; min-height: 44px; text-decoration: none; }
+.cert img { height: 44px; width: auto; border-radius: 4px; }
+.cert span { font: 400 11.18px/1.3 var(--font-mono); letter-spacing: 0.02em; color: var(--ink-3); }
+.cert a:hover span { color: var(--ink-2); }
 
-/* After every `font` shorthand, which resets it: JetBrains Mono would draw == as one glyph. */
-code { font-variant-ligatures: none; }
-
-/* ----- 13 Responsive and motion ----------------------------------------- */
+/* ----- 05 Responsive and motion ----------------------------------------- */
 @media (max-width: 1080px) {
     .bar nav { gap: 18px; }
 }
 @media (max-width: 900px) {
-    .wrap, .bar-in, .hero { padding-left: 24px; padding-right: 24px; }
+    .bar-in, .hero { padding-left: var(--gutter); padding-right: var(--gutter); }   /* the acts' gutter (film.css), so one left edge */
     .bar nav { display: none; }
-    .hero { grid-template-columns: 1fr; grid-template-areas: "sky" "copy" "proof" "scope"; min-height: 0; }
+    .hero { grid-template-columns: 1fr; grid-template-areas: "sky" "copy" "cert"; min-height: 0; }
+    .hero h1 { font-size: clamp(36px, 4.3vw, 60px); }
     .hero h1 .nb { white-space: normal; }
+    .lead { max-width: 34em; text-align: start; }
+    .cta { flex-wrap: wrap; }
+    .cta .btn { flex: 0 1 auto; white-space: normal; }
     .sky { width: min(340px, 82vw); margin-top: 40px; }
-    .hero-copy { padding: 24px 0 48px; }
-    .proof a { min-height: 92px; padding: 12px 10px; }
-    /* one column: the star's name has no room beside the coin and would slide across the words */
-    .polaris { display: none; }
+    .hero-copy { padding: 24px 0 48px; width: auto; }
+    .cert span { font-size: 12px; line-height: 1.4; }
 }
 @media (max-width: 560px) {
     body { font-size: 16px; }
     .gh { display: none; }
-    .gh.gh-keep { display: inline-block; }
+    .gh.gh-keep { display: inline-flex; align-items: center; min-height: 44px; font-size: 13px; }
+    .mark { min-height: 44px; }
+    .cert { margin-bottom: 32px; }
     .sky { width: min(300px, 78vw); margin-top: 8px; }
     .hero-copy { padding-top: 12px; }
     .cta .btn { flex: 1 1 100%; justify-content: center; text-align: center; }
     .lead { font-size: 17px; }
+}
+@media (max-width: 360px) {
+    /* where the column is within a line's margin of the headline's 12ch, the headline takes the column: its three
+       lines, and the column's right edge */
+    .hero h1 { max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     .btn { transition: none; }
 }
 @media print {
-    .bar, .heavens, .shade, .polaris, .coin-touch, .horizon, .cta, .skip { display: none; }
+    .bar, .heavens, .shade, .coin-touch, .horizon, .cta, .skip { display: none; }
     /* on paper the sky goes and the coin stays, printed whole (its rim is painted with backgrounds) */
     .coin { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .hero-band { background: none; padding-top: 0; }   /* its top padding is room for a header paper does not get */
@@ -377,8 +427,6 @@ code { font-variant-ligatures: none; }
     .bar nav a:nth-child(1)   { animation-range: 24px 134px; }
     .bar nav a:nth-child(2)   { animation-range: 48px 158px; }
     .bar nav a:nth-child(3)   { animation-range: 72px 182px; }
-    .bar nav a:nth-child(4)   { animation-range: 96px 206px; }
-    .bar nav a:nth-child(5)   { animation-range: 120px 230px; }
     .gh                       { animation-range: 175px 285px; }
     .gh.gh-keep               { animation-range: 150px 260px; }
     /* A keyboard reader who comes back up to the header finds it whole, wherever the page is. */
@@ -388,8 +436,8 @@ code { font-variant-ligatures: none; }
 @keyframes item-out { from { opacity: 1; translate: 0 0; filter: blur(0); }
                       to   { opacity: 0; translate: 0 -16px; filter: blur(4px); pointer-events: none; } }
 
-/* The words and tiles sit above the horizon. */
-.hero-copy, .proof, .proof-scope { position: relative; z-index: 2; }
+/* The words and the mark sit above the horizon. */
+.hero-copy, .cert { position: relative; z-index: 2; }
 
 /* The page moves; the sky does not. The band is a window: as it scrolls up, the sky inside it is held where
    it was, one pixel down for every pixel scrolled, so the stars stay put while the band's edges, the words
@@ -413,8 +461,6 @@ code { font-variant-ligatures: none; }
     .heavens { animation: fade 2.4s ease-out both, hold linear both; animation-timeline: auto, scroll(root);
                animation-range: normal, 0 150vh; }
     .coin-rise { animation: rise linear both; animation-timeline: scroll(root); animation-range: 0 900px; }
-    .polaris { animation: name-in linear both, hold linear both; animation-timeline: scroll(root), scroll(root);
-               animation-range: 170px 260px, 0 150vh; }
     .coin-face b { animation: rise-face linear both; animation-timeline: scroll(root); }
     /* longhands, not the shorthand: the shorthand would reset each face's own range (generated above) */
     .coin-face b:nth-of-type(n + 2) { animation-name: rise-face, face-load; animation-timeline: scroll(root), scroll(root); }
@@ -430,30 +476,25 @@ code { font-variant-ligatures: none; }
                   66.667% { transform: rotateX(18.435deg); } 83.333% { transform: rotateX(22.62deg); }
                   100% { transform: rotateX(26.565deg); } }
 @keyframes rise-face { from { opacity: 0; } to { opacity: 1; } }
-@keyframes name-in { from { opacity: 0; translate: -6px 0; } to { opacity: 1; translate: 0 0; } }
 @keyframes face-load { from { background-image: none; } to { background-image: var(--face); } }
 
-/* ----- 14 Scroll: the first screen's words leave like the header ---------------------------------
+/* ----- 06 Scroll: the first screen's words leave like the header ---------------------------------
    Scroll-driven, no script. A browser without scroll timelines shows everything, still. The animations
-   use translate (not transform), so the hover lifts on the tiles keep working. The leaving half fills
+   use translate (not transform), so the hover lifts on the buttons keep working. The leaving half fills
    forwards only, so it never overrides the timed entrance. The acts after the first screen move by
    their own rules (film.css). */
 @supports (animation-timeline: view()) {
     /* The hero keeps its timed entrance and leaves the same way, but its fade starts only when a
        piece's top passes under the 64px header line: the hero sits near the top at load, and the
        quarter-view rule would start a tall screen with its first lines already dimmed. */
-    .hero-copy > *, .proof li, .proof-scope {
+    .hero-copy > :not(h1), .cert {
         animation: up 1s cubic-bezier(.2, .7, .2, 1) both, sink-out linear forwards;
         animation-timeline: auto, view(); animation-range: normal, exit -64px exit 100%; }
+    .hero h1 { animation: sink-out linear forwards; animation-timeline: view(); animation-range: exit -64px exit 100%; }
     .hero-copy > :nth-child(1) { animation-delay: .55s, 0s; }
-    .hero-copy > :nth-child(2) { animation-delay: .68s, 0s; }
-    .hero-copy > :nth-child(3) { animation-delay: .86s, 0s; }
-    .hero-copy > :nth-child(4) { animation-delay: 1.0s, 0s; }
-    .proof li:nth-child(1) { animation-delay: 1.15s, 0s; }
-    .proof li:nth-child(2) { animation-delay: 1.23s, 0s; }
-    .proof li:nth-child(3) { animation-delay: 1.31s, 0s; }
-    .proof li:nth-child(4) { animation-delay: 1.39s, 0s; }
-    .proof-scope { animation-delay: 1.39s, 0s; }
+    .hero-copy > :nth-child(3) { animation-delay: 2.68s, 0s; }
+    .hero-copy > :nth-child(4) { animation-delay: 2.83s, 0s; }
+    .cert { animation-delay: 2.98s, 0s; }
 }
 @keyframes sink-out { from { opacity: 1; translate: 0 0; } to { opacity: 0; translate: 0 -48px; } }
 
@@ -470,7 +511,7 @@ code { font-variant-ligatures: none; }
     .heavens, .shade, .horizon { display: none; }
 }
 
-/* ----- 15 The light: one light for the whole page ------------------------------------------------
+/* ----- 07 The light: one light for the whole page ------------------------------------------------
    The page is one lit world, the coin's: one soft light from the upper left, 60 degrees above the page, and
    the faint light of the night sky all round. A plate --h pixels above the page casts the light's shadow
    0.41 --h right and 0.41 --h down (the light's 60 degrees), softer the higher it is, and the sky's shadow
@@ -487,7 +528,7 @@ html { --shade: 1, 2, 6; --settle: cubic-bezier(.3, .7, .4, 1); }
    reader while the page scrolls under it, so the plates are lit, and cast their shadows, wherever they are. */
 body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
     background: radial-gradient(ellipse 85% 70% at 10% -8%, rgba(255, 244, 226, 0.05), rgba(255, 244, 226, 0.016) 50%, transparent 82%); }
-.proof a, .btn {
+.btn {
     box-shadow:
         inset 1px 1px 0 var(--rim-lit, rgba(255, 255, 255, 0.07)), inset -1px -1px 0 var(--rim-dark, rgba(0, 0, 0, 0.42)),
         calc(var(--h) * 0.41px) calc(var(--h) * 0.41px) calc(var(--h) * 0.6px + 1px) rgba(var(--shade), 0.5),
@@ -499,7 +540,7 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-even
     background-image: linear-gradient(160deg, #fff5dc 0%, #edd5a0 30%, #d2b37d 62%, #a98a5a 100%);
     -webkit-background-clip: text; background-clip: text; color: transparent; }
 @media (prefers-reduced-motion: reduce) {
-    .proof a, .btn { scale: none; }
+    .btn { scale: none; }
 }
 @media (forced-colors: active) {
     .hero h1 em { color: CanvasText; background: none; }

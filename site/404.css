@@ -38,5 +38,5 @@ p { margin: 0 0 28px; }
                          6px 6px 9px rgba(1, 2, 6, 0.5), 13px 13px 28px rgba(1, 2, 6, 0.28); }
 .btn:focus-visible, a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .foot { margin: 36px 0 0; font-size: 13px; }
-.foot a { color: var(--ink-3); }
+.foot a { display: inline-flex; align-items: center; min-height: 44px; color: var(--ink-3); }
 @media (prefers-reduced-motion: reduce) { .trail { animation: none; } .btn { transition: none; } }
