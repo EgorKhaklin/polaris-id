@@ -591,11 +591,12 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
             .motto { grid-row: 2; animation: track-in linear both; animation-timeline: --voy; animation-range: contain 30% contain 46%; }
         }
         .act-end > * { animation: dissolve linear both; animation-timeline: view(); animation-range: entry 0% entry 40%; }
-        /* On a phone the voyage is not held: its words rise as they come up the screen, each on its own view, and
-           the motto tracks in. */
+        /* On a phone the voyage is not held: its words rise as they come up the screen, each on its own view,
+           settling a third of the way up; the motto dissolves in (tracking its letters would wrap it mid-move on
+           a narrow screen). */
         @media (max-width: 900px) {
-            .creed, .aim { animation: rise-in linear both; animation-timeline: view(); animation-range: entry 0% entry 90%; }
-            .motto { animation: track-in linear both; animation-timeline: view(); animation-range: entry 20% cover 30%; }
+            .creed, .aim { animation: rise-in linear both; animation-timeline: view(); animation-range: entry 0% cover 35%; }
+            .motto { animation: dissolve linear both; animation-timeline: view(); animation-range: entry 20% cover 30%; }
         }
     }
 }
