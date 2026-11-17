@@ -133,6 +133,13 @@ holds this package from PyPI, installed by hash.
 - `--no-local-tls` serves the local listener over plain HTTP, for when that proxy or tunnel
   terminates TLS and provides the public HTTPS. The listener still binds `--bind` (127.0.0.1, this
   machine only, by default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
+- Browser wallets: `--cors-origin https://wallet.example` answers a wallet that runs in a browser
+  page at that origin (repeatable; `*` alone answers every origin). Its requests to `/request.jwt`
+  (`GET, POST`) and `/response` (`POST`) are answered with `Access-Control-Allow-Origin` and
+  `Vary: Origin`, refusals included, and their preflight `OPTIONS` with those methods and
+  `Content-Type, Accept` as the request headers allowed. Write the origin as the page's address
+  shows it, scheme, host and any port, with no path. Without the option no answer carries a CORS
+  header.
 - `--claim` names a claim to ask for (repeatable; without it, `given_name` and `family_name`): a
   name, a dotted path of object keys, or a JSON array of keys, optionally `=VALUE` (JSON) for
   the value it must have. A path asks for one member of a nested claim and nothing around it:
@@ -411,13 +418,14 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 689 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 716 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 179 refusals accept and requires a
   test to fail: 175 are caught, and the 4 survivors are declared with their reasons. It also makes
-  19 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
-  the x5c leaf and name constraints, the JWE bounds, when a request closes), each of which a test
-  must catch (all 19 are; measured 2026-10-30; CI runs it on every push).
+  22 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  the x5c leaf and name constraints, the JWE bounds, when a request closes, and which origin, path
+  and cache key a CORS answer names), each of which a test must catch (all 22 are; measured
+  2026-11-17; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

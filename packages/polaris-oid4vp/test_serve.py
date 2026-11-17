@@ -18,6 +18,7 @@ the socket changes none of them.
 """
 import json
 import os
+import re
 import sys
 import unittest
 import urllib.error
@@ -27,7 +28,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from polaris_oid4vp.serve import (  # noqa: E402
-    MAX_BODY_BYTES, _content_length, serve)
+    MAX_BODY_BYTES, _content_length, _CorsHandler, _Handler, cors_origin, cors_origins_of, serve)
 from polaris_oid4vp.verifier import Verifier  # noqa: E402
 from test_verifier import Wallet, _client_chain  # noqa: E402
 
@@ -975,3 +976,551 @@ class ContentLengthParsingTests(unittest.TestCase):
                            "the bound must leave room for a real presentation")
         self.assertLess(MAX_BODY_BYTES, 64 * 1024 * 1024,
                         "a bound this high is not a bound")
+
+
+# ---------------------------------------------------------------------------------------- CORS
+#
+# `serve(cors_origins=...)`, for a wallet that runs in a browser page. Every positive test names
+# its twin: the same request with the one thing changed that must take the headers away.
+
+#: The list the CORS listener serves: a name, and an address with a port, as a wallet page on a
+#: developer's machine has.
+CORS_LISTED = ("https://wallet.example", "http://127.0.0.1:8080")
+
+#: Refused when the list is given, by cors_origin, serve() and the CLI (exit 2): (value, reason).
+CORS_REFUSED_AT_STARTUP = (
+    ("ftp://wallet.example", "a scheme other than http or https"),
+    ("wallet.example", "no scheme"),
+    ("", "an empty value"),
+    ("null", "null, the origin of an opaque page"),
+    ("https://wallet.exämple", "a host outside ASCII"),
+    ("https://wallet .example", "a space"),
+    ("https://wallet.example\t", "a control character"),
+    ("https://wal%6cet.example", "a percent escape, which a browser decodes"),
+    ("https://wallet<.example", "<, which the URL Standard forbids in a host"),
+    ("https://wallet>.example", ">, which the URL Standard forbids in a host"),
+    ("https://wallet^.example", "^, which the URL Standard forbids in a host"),
+    ("https://wallet|.example", "|, which the URL Standard forbids in a host"),
+    ("https://wallet.example\x7f", "DEL, which the URL Standard forbids in a host"),
+    ("https://user@wallet.example", "user information"),
+    ("https://wallet.example/", "a bare slash"),
+    ("https://wallet.example/app", "a path"),
+    ("https://wallet.example\\app", "a backslash, a path to a browser"),
+    ("https://wallet.example?x=1", "a query"),
+    ("https://wallet.example#top", "a fragment"),
+    ("https://wallet.example,https://other.example", "two origins in one value"),
+    ("https://", "no host"),
+    ("https://:8443", "a port and no host"),
+    ("https://wallet.example:65536", "a port above 65535"),
+    ("https://wallet.example:123456", "a port of six digits"),
+    ("https://wallet.example:" + "9" * 5000, "a port of five thousand digits"),
+    ("https://wallet.example:+1", "a port with a sign"),
+    ("https://wallet.example:8x", "a port that is not digits"),
+    ("https://wallet.example:443:443", "two ports"),
+    ("https://[::1", "an IPv6 address not closed"),
+    ("https://[1::2::3]", "brackets around what is not an IPv6 address"),
+    ("http://[::ffff:7f00:1]", "an IPv4-mapped IPv6 address"),
+    ("http://[::FFFF:127.0.0.1]:8080", "an IPv4-mapped IPv6 address written with a dotted tail"),
+    ("http://[::ffff:0:1]", "an IPv4-mapped IPv6 address of 0.0.0.1"),
+    ("http://127.1:3000", "an IPv4 address in short form, 127.0.0.1 to a browser"),
+    ("http://0x7f.0.0.1", "an IPv4 part in hexadecimal"),
+    ("http://127.0.0.0x1", "an IPv4 address whose last part is hexadecimal"),
+    ("http://127.000.0.1", "an IPv4 part with a leading zero, octal to a browser"),
+    ("http://127.0.0.1.", "an IPv4 address with a trailing dot, which a browser drops"),
+    ("http://256.0.0.1", "an IPv4 part above 255"),
+    ("http://1.2.3." + "9" * 5000, "an IPv4 part of five thousand digits"),
+    ("http://127.0.1", "an IPv4 address of three parts"),
+    ("http://wallet.123", "a name ending in a number, which a browser reads as IPv4"),
+    (None, "not a string"),
+    (443, "a number, not a string"),
+    (b"https://wallet.example", "bytes, not a string"),
+)
+
+#: Accepted, and kept as a browser writes it in its Origin header: (given, kept, reason). Each
+#: kept form is the origin the URL Standard's parser gives for the given one (Node 24.11.1's
+#: URL, 2026-11-17).
+CORS_KEPT = (
+    ("https://wallet.example", "https://wallet.example", "as a browser writes it already"),
+    ("HTTPS://Wallet.Example:443", "https://wallet.example",
+     "lowercased, https's default port dropped"),
+    ("http://wallet.example:80", "http://wallet.example", "http's default port dropped"),
+    ("http://wallet.example:443", "http://wallet.example:443", "443 is not http's default port"),
+    ("https://wallet.example:8443", "https://wallet.example:8443", "another port kept"),
+    ("https://wallet.example:08443", "https://wallet.example:8443", "a port's leading zero dropped"),
+    ("https://wallet.example:0000000443", "https://wallet.example",
+     "leading zeros, then the default port"),
+    ("https://wallet.example:", "https://wallet.example", "an empty port is the default"),
+    ("https://wallet.example:0", "https://wallet.example:0", "port 0 kept"),
+    ("https://wallet.example.", "https://wallet.example.", "a name's trailing dot kept"),
+    ("http://localhost:3000", "http://localhost:3000", "a name with no dot"),
+    ("http://127.0.0.1:8080", "http://127.0.0.1:8080", "an IPv4 address as a browser writes it"),
+    ("http://[::1]:8080", "http://[::1]:8080", "an IPv6 address as a browser writes it"),
+    ("http://[0:0::1]:8080", "http://[::1]:8080", "an IPv6 address compressed"),
+    ("http://[2001:DB8::A]", "http://[2001:db8::a]", "IPv6 hexadecimal lowercased"),
+    ("http://[::1.2.3.4]", "http://[::102:304]", "an IPv4 tail that is not mapped, in hexadecimal"),
+    ("http://[1:0:0:2:0:0:3:4]", "http://[1::2:0:0:3:4]", "the first of two equal zero runs"),
+    ("http://[1:0:0:2:0:0:0:4]", "http://[1:0:0:2::4]", "the longest zero run"),
+    ("http://[1:0:2:3:4:5:6:7]", "http://[1:0:2:3:4:5:6:7]", "one zero piece is not a run"),
+    ("http://[0:0:0:0:0:0:0:0]", "http://[::]", "every piece zero"),
+    ("http://[2001:DB8::0001]", "http://[2001:db8::1]", "a piece's leading zeros dropped"),
+    ("*", "*", "every origin"),
+)
+
+#: Sent in an Origin header to the listener serving CORS_LISTED, and answered with Vary alone,
+#: no Access-Control-Allow-Origin: (sent, reason). The twin of each is a listed origin, answered.
+CORS_MUST_NOT_MATCH = (
+    ("https://wallet.example.evil.test", "the listed origin as the start of another host"),
+    ("https://evilwallet.example", "the listed host as the end of another"),
+    ("https://wallet.example:8443", "the listed host on another port"),
+    ("http://wallet.example", "the listed host under another scheme"),
+    ("http://127.0.0.1:8081", "the listed address on another port"),
+    ("http://127.0.0.1", "the listed address on the default port"),
+    ("https://WALLET.EXAMPLE", "the listed host in upper case, which no browser sends"),
+    ("https://wallet.example.", "the listed host with a trailing dot"),
+    ("https://wallet.example/app", "the listed origin with a path"),
+    ("https://wallet.example, https://evil.test", "two origins in one header"),
+    ("null", "the origin of an opaque page"),
+    ("", "an empty Origin"),
+)
+
+
+def _send_raw(httpd, raw):
+    """`raw` on a bare socket, and everything the listener sends back until it closes."""
+    import socket
+    s = socket.create_connection(httpd.server_address[:2], timeout=10)
+    try:
+        s.sendall(raw)
+        answer, chunk = b"", s.recv(65536)
+        while chunk:
+            answer, chunk = answer + chunk, s.recv(65536)
+        return answer
+    finally:
+        s.close()
+
+
+def _exchange(httpd, method, path, headers=(), body=b"", declare=None):
+    """One request as written, on a bare socket: urllib adds headers of its own and will not send
+    a preflight as a browser does, and these tests need the request exactly as given and every
+    header of the answer. `declare` sends a Content-Length other than the body's."""
+    lines = ["%s %s HTTP/1.1" % (method, path), "Host: 127.0.0.1"]
+    lines += ["%s: %s" % header for header in headers]
+    if declare is not None or body or method == "POST":
+        lines.append("Content-Length: %d" % (len(body) if declare is None else declare))
+    return _send_raw(httpd, ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + body)
+
+
+def _parse(raw):
+    """(status, [(name, value), ...] in the order sent, body)."""
+    head, _, body = raw.partition(b"\r\n\r\n")
+    lines = head.decode("latin-1").split("\r\n")
+    return int(lines[0].split()[1]), [tuple(line.split(": ", 1)) for line in lines[1:]], body
+
+
+def _cors(headers):
+    """The answer's Access-Control-* headers and its Vary, sorted: what the option adds."""
+    return sorted((name, value) for name, value in headers
+                  if name.lower().startswith("access-control-") or name.lower() == "vary")
+
+
+def _without_date(raw):
+    """The answer with its Date header cut, the one header two answers a second apart differ by."""
+    return re.sub(rb"\r\nDate: [^\r]*", b"", raw)
+
+
+class CorsTestCase(ServeTestCase):
+    """Three listeners on one verifier: ServeTestCase's, without the option; one serving
+    CORS_LISTED; one serving `*`. Each answers a request the verifier issued, so a test can put
+    the twin of each request beside it."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.cors = serve(cls.verifier, host="127.0.0.1", port=0, cors_origins=list(CORS_LISTED))
+        cls.star = serve(cls.verifier, host="127.0.0.1", port=0, cors_origins=["*"])
+
+    @classmethod
+    def tearDownClass(cls):
+        for httpd in (cls.cors, cls.star):
+            httpd.shutdown()
+            httpd.server_close()
+        super().tearDownClass()
+
+    def _request_object(self):
+        """A fetch of a fresh request's object: (status, label, method, path, body, declared)."""
+        state = self.verifier.new_request()[0].state
+        return (200, "the request object", "GET", "/request.jwt?state=%s" % state, b"", None)
+
+    def _requests(self):
+        """One request for each answer the two paths give, fresh where the verifier spends one."""
+        _, jar = self.verifier.new_request()
+        accepted = urllib.parse.urlencode({"response": self.wallet.respond(jar)["response"][0]})
+        return [
+            self._request_object(),
+            (200, "the request object by POST", "POST",
+             "/request.jwt?state=%s" % self.verifier.new_request()[0].state, b"", None),
+            (404, "an unknown state", "GET", "/request.jwt?state=nope", b"", None),
+            (400, "a wallet_nonce too long", "POST",
+             "/request.jwt?state=%s" % self.verifier.new_request()[0].state,
+             b"wallet_nonce=" + b"x" * 1025, None),
+            (200, "an accepted presentation", "POST", "/response", accepted.encode(), None),
+            (400, "an empty response", "POST", "/response", b"", None),
+            (400, "an empty response, a query on the path", "POST", "/response?x=1", b"", None),
+            (413, "a body over the bound", "POST", "/response", b"", MAX_BODY_BYTES + 1),
+        ]
+
+    def _ask(self, httpd, request, headers=()):
+        status, label, method, path, body, declare = request
+        got = _parse(_exchange(httpd, method, path, headers, body, declare))
+        self.assertEqual(got[0], status, "%s answered %d" % (label, got[0]))
+        return got
+
+
+class CorsOffTests(CorsTestCase):
+    """The option absent: the listener as it was before the option existed."""
+
+    def test_without_the_option_no_answer_carries_a_cors_header(self):
+        """Twin: test_a_listed_origin_is_answered_on_every_status, the same requests to the
+        listener with the option. Each carries a listed Origin and a preflight's
+        Access-Control-Request-Method; /done, another path and OPTIONS are asked too."""
+        preflight = [("Origin", CORS_LISTED[0]), ("Access-Control-Request-Method", "POST")]
+        requests = self._requests() + [
+            (404, "/done", "GET", "/done?response_code=x", b"", None),
+            (404, "another path", "GET", "/nope", b"", None),
+            (501, "OPTIONS on the request URI", "OPTIONS", "/request.jwt", b"", None),
+            (501, "OPTIONS on the response URI", "OPTIONS", "/response", b"", None),
+        ]
+        for request in requests:
+            with self.subTest(request=request[1]):
+                _, headers, _ = self._ask(self.httpd, request, preflight)
+                self.assertEqual(_cors(headers), [])
+
+    def test_without_the_option_the_handler_holds_no_cors_code(self):
+        """cors_origins absent, None, an empty list or an empty tuple: the handler serve() builds
+        derives from _Handler alone, with no do_OPTIONS. Twin: given origins, it derives from
+        _CorsHandler."""
+        for given in ({}, {"cors_origins": None}, {"cors_origins": []}, {"cors_origins": ()}):
+            with self.subTest(given=given):
+                httpd = serve(self.verifier, host="127.0.0.1", port=0, **given)
+                try:
+                    handler = httpd.RequestHandlerClass
+                    self.assertEqual(handler.__bases__, (_Handler,))
+                    self.assertFalse(hasattr(handler, "do_OPTIONS"))
+                    self.assertNotIn("cors_origins", vars(handler))
+                finally:
+                    httpd.shutdown()
+                    httpd.server_close()
+        self.assertEqual(self.cors.RequestHandlerClass.__bases__, (_CorsHandler,))
+        self.assertEqual(self.cors.RequestHandlerClass.cors_origins, CORS_LISTED)
+
+
+class CorsTests(CorsTestCase):
+    """The option given: what each answer on the two paths carries, by Origin."""
+
+    def test_a_listed_origin_is_answered_on_every_status(self):
+        """Access-Control-Allow-Origin naming the origin, and Vary: Origin, on every answer of the
+        two paths, refusals included, and nothing else. Twins:
+        test_an_unlisted_origin_is_answered_with_vary_alone (another origin);
+        test_no_origin_header_gets_the_answer_without_the_option (no Origin);
+        test_without_the_option_no_answer_carries_a_cors_header (the option off)."""
+        for origin in CORS_LISTED:
+            for request in self._requests():
+                with self.subTest(origin=origin, request=request[1]):
+                    _, headers, _ = self._ask(self.cors, request, [("Origin", origin)])
+                    self.assertEqual(_cors(headers), [("Access-Control-Allow-Origin", origin),
+                                                      ("Vary", "Origin")])
+
+    def test_an_unlisted_origin_is_answered_with_vary_alone(self):
+        """Twin: test_a_listed_origin_is_answered_on_every_status."""
+        for request in self._requests():
+            with self.subTest(request=request[1]):
+                _, headers, _ = self._ask(self.cors, request, [("Origin", "https://other.example")])
+                self.assertEqual(_cors(headers), [("Vary", "Origin")])
+
+    def test_no_origin_header_gets_the_answer_without_the_option(self):
+        """With no Origin header the listener with the option answers byte for byte as the one
+        without, the Date aside. A request object is signed afresh for each fetch and an accepted
+        presentation's redirect carries a fresh code, so for those the status and the headers
+        but Content-Length are compared. Twin: test_a_listed_origin_is_answered_on_every_status,
+        the same requests with an Origin."""
+        fresh = {"the request object", "the request object by POST", "an accepted presentation"}
+        for on, off in zip(self._requests(), self._requests()):
+            with self.subTest(request=on[1]):
+                with_option = _without_date(_exchange(self.cors, on[2], on[3], (), on[4], on[5]))
+                without = _without_date(_exchange(self.httpd, off[2], off[3], (), off[4], off[5]))
+                if on[1] not in fresh:
+                    self.assertEqual(with_option, without)
+                    continue
+                status_on, headers_on, _ = _parse(with_option)
+                status_off, headers_off, _ = _parse(without)
+                self.assertEqual(
+                    (status_on, [h for h in headers_on if h[0] != "Content-Length"]),
+                    (status_off, [h for h in headers_off if h[0] != "Content-Length"]))
+
+    def test_a_path_that_is_not_one_of_the_two_never_carries_cors(self):
+        """/done, served and not, another path, and paths that start like the two: no CORS header
+        and no Vary, for a listed Origin with a preflight's request method. Twin:
+        test_a_listed_origin_is_answered_on_every_status, the two paths."""
+        _, jar = self.verifier.new_request()
+        accepted = urllib.parse.urlencode({"response": self.wallet.respond(jar)["response"][0]})
+        redirect = json.loads(_parse(_exchange(self.httpd, "POST", "/response", (),
+                                               accepted.encode()))[2])["redirect_uri"]
+        done = urllib.parse.urlsplit(redirect)
+        asked = [(200, "GET", "%s?%s" % (done.path, done.query)),
+                 (404, "GET", "/done?response_code=x"), (404, "GET", "/nope"),
+                 (404, "POST", "/nope"), (404, "GET", "/request.jwt/"), (404, "GET", "/request.jwtx"),
+                 (404, "POST", "/response/x"), (404, "POST", "/responsex"),
+                 (501, "OPTIONS", "/done"), (501, "OPTIONS", "/nope")]
+        headers = [("Origin", CORS_LISTED[0]), ("Access-Control-Request-Method", "POST")]
+        for status, method, path in asked:
+            with self.subTest(method=method, path=path):
+                got = _parse(_exchange(self.cors, method, path, headers))
+                self.assertEqual(got[0], status)
+                self.assertEqual(_cors(got[1]), [])
+
+    def test_a_preflight_from_a_listed_origin_gets_its_paths_methods(self):
+        """204 and no body, with the path's methods, the request headers a wallet sends,
+        Allow-Origin naming the origin and Vary. Twins:
+        test_a_preflight_from_an_unlisted_origin_allows_nothing (another origin);
+        test_an_options_that_is_not_a_preflight_is_501 (no request method, or no Origin);
+        test_without_the_option_no_answer_carries_a_cors_header (the option off: 501)."""
+        for origin in CORS_LISTED:
+            for path, methods in (("/request.jwt", "GET, POST"), ("/request.jwt?state=x", "GET, POST"),
+                                  ("/response", "POST")):
+                with self.subTest(origin=origin, path=path):
+                    status, headers, body = _parse(_exchange(self.cors, "OPTIONS", path, [
+                        ("Origin", origin), ("Access-Control-Request-Method", "POST"),
+                        ("Access-Control-Request-Headers", "content-type")]))
+                    self.assertEqual((status, body), (204, b""))
+                    self.assertEqual(_cors(headers), [
+                        ("Access-Control-Allow-Headers", "Content-Type, Accept"),
+                        ("Access-Control-Allow-Methods", methods),
+                        ("Access-Control-Allow-Origin", origin), ("Vary", "Origin")])
+
+    def test_a_preflight_from_an_unlisted_origin_allows_nothing(self):
+        """204 with Vary alone: no Access-Control-Allow-Origin, -Methods or -Headers, so nothing
+        in it allows, and the browser's CORS check refuses on the missing Allow-Origin. Twin:
+        test_a_preflight_from_a_listed_origin_gets_its_paths_methods."""
+        for path in ("/request.jwt", "/response"):
+            for origin in ("https://other.example", "https://wallet.example.evil.test"):
+                with self.subTest(path=path, origin=origin):
+                    status, headers, body = _parse(_exchange(self.cors, "OPTIONS", path, [
+                        ("Origin", origin), ("Access-Control-Request-Method", "POST")]))
+                    self.assertEqual((status, body), (204, b""))
+                    self.assertEqual(_cors(headers), [("Vary", "Origin")])
+
+    def test_an_options_that_is_not_a_preflight_is_501(self):
+        """Without Access-Control-Request-Method, or without Origin, an OPTIONS is not a preflight
+        and gets the 501 the listener without the option gives every OPTIONS, the same body; on
+        the two paths it carries Allow-Origin and Vary for a listed Origin, as every answer there
+        does. Twin: test_a_preflight_from_a_listed_origin_gets_its_paths_methods."""
+        for path in ("/request.jwt", "/response"):
+            with self.subTest(path=path, asked="Origin and no request method"):
+                origin = [("Origin", CORS_LISTED[0])]
+                status, headers, body = _parse(_exchange(self.cors, "OPTIONS", path, origin))
+                self.assertEqual(status, 501)
+                self.assertEqual(_cors(headers), [("Access-Control-Allow-Origin", CORS_LISTED[0]),
+                                                  ("Vary", "Origin")])
+                self.assertEqual(body, _parse(_exchange(self.httpd, "OPTIONS", path, origin))[2])
+            with self.subTest(path=path, asked="a request method and no Origin"):
+                method = [("Access-Control-Request-Method", "POST")]
+                self.assertEqual(_without_date(_exchange(self.cors, "OPTIONS", path, method)),
+                                 _without_date(_exchange(self.httpd, "OPTIONS", path, method)))
+
+    def test_star_answers_every_origin_with_star(self):
+        """`*` alone: Allow-Origin `*` and Vary for every Origin, preflight included. Twins:
+        test_an_unlisted_origin_is_answered_with_vary_alone (a list answers its own origins);
+        and below, `*` with no Origin header adds nothing."""
+        for origin in ("https://wallet.example", "https://anything.example", "null"):
+            with self.subTest(origin=origin):
+                _, headers, _ = self._ask(self.star, self._request_object(), [("Origin", origin)])
+                self.assertEqual(_cors(headers), [("Access-Control-Allow-Origin", "*"),
+                                                  ("Vary", "Origin")])
+                status, headers, _ = _parse(_exchange(self.star, "OPTIONS", "/response", [
+                    ("Origin", origin), ("Access-Control-Request-Method", "POST")]))
+                self.assertEqual(status, 204)
+                self.assertEqual(_cors(headers), [
+                    ("Access-Control-Allow-Headers", "Content-Type, Accept"),
+                    ("Access-Control-Allow-Methods", "POST"),
+                    ("Access-Control-Allow-Origin", "*"), ("Vary", "Origin")])
+        _, headers, _ = self._ask(self.star, self._request_object())
+        self.assertEqual(_cors(headers), [], "`*` and no Origin header")
+
+    def test_a_request_that_fails_to_parse_carries_no_cors_header(self):
+        """414 for a request line too long, 400 for a bad one and 431 for too many headers, on
+        the request URI, with a listed Origin where one can be read: the bytes the listener
+        without the option sends, and no exception in the handler. Twin:
+        test_a_listed_origin_is_answered_on_every_status."""
+        import contextlib
+        import io
+        origin = "Origin: %s\r\n" % CORS_LISTED[0]
+        line = "GET /request.jwt?state="
+        raws = {
+            # Exactly the 65537 bytes the listener reads before it answers 414, and no more, so
+            # nothing is left unread when it closes.
+            414: (line + "x" * (65537 - len(line))).encode(),
+            # Four words: the version is read (so the answer has a status line) and the path is not.
+            400: ("GET /request.jwt x HTTP/1.1\r\n%s\r\n" % origin).encode(),
+            431: ("GET /request.jwt HTTP/1.1\r\n%s%s\r\n" % (origin, "X-N: 1\r\n" * 101)).encode(),
+        }
+        for status, raw in raws.items():
+            with self.subTest(status=status):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    answer = _send_raw(self.cors, raw)
+                    unchanged = _send_raw(self.httpd, raw)
+                self.assertEqual(_parse(answer)[0], status)
+                self.assertEqual(_without_date(answer), _without_date(unchanged))
+                self.assertNotIn("Traceback", stderr.getvalue())
+
+
+class CorsDecisionPerRequestTests(CorsTestCase):
+    """The handler decides whether a CORS answer is due for each request it parses."""
+
+    def _parsed(self, origin, left_over):
+        """A handler of the listener with the option, holding `left_over` as an earlier request on
+        it would have left it, after parsing a request to the request URI with `origin` (None:
+        no Origin header)."""
+        import io
+        handler = object.__new__(self.cors.RequestHandlerClass)
+        handler._cors_due = left_over
+        handler.client_address = ("127.0.0.1", 0)
+        handler.raw_requestline = b"GET /request.jwt?state=x HTTP/1.1\r\n"
+        head = "Host: 127.0.0.1\r\n" + ("Origin: %s\r\n" % origin if origin else "")
+        handler.rfile = io.BytesIO((head + "\r\n").encode("latin-1"))
+        handler.wfile = io.BytesIO()
+        self.assertTrue(handler.parse_request())
+        return handler._cors_due
+
+    def test_a_request_without_an_origin_is_due_nothing_an_earlier_one_was(self):
+        """Twin: the same request with an Origin is due its own answer, whatever was left."""
+        left_over = ("/response", CORS_LISTED[0])
+        self.assertIsNone(self._parsed(None, left_over))
+        self.assertEqual(self._parsed(CORS_LISTED[1], left_over), ("/request.jwt", CORS_LISTED[1]))
+
+
+class CorsOriginTableTests(CorsTestCase):
+    """The origin values, one row each with its reason: data in the tests, not in the published
+    vector files, which hold credential refusals; this is the listener."""
+
+    def test_each_value_refused_at_startup_raises_naming_itself(self):
+        """By cors_origin, and by serve() before it listens. Twin:
+        test_each_value_kept_is_written_as_a_browser_writes_it."""
+        for value, reason in CORS_REFUSED_AT_STARTUP:
+            with self.subTest(reason=reason):
+                with self.assertRaises(ValueError) as caught:
+                    cors_origin(value)
+                self.assertIn(repr(value), str(caught.exception))
+                with self.assertRaises(ValueError):
+                    serve(self.verifier, host="127.0.0.1", port=0, cors_origins=[value])
+
+    def test_a_comma_is_told_to_give_each_origin_its_own_option(self):
+        """Checked before anything else, so two origins joined by a comma are told what to write,
+        not that the second one's `//` is a path; and a comma a host could otherwise hold is
+        refused too. Twin: each origin alone is taken."""
+        for value in ("https://wallet.example,https://other.example",
+                      "https://wallet.example,other.example", "https://wallet.example,"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as caught:
+                    cors_origin(value)
+                self.assertEqual(str(caught.exception), "%r is not one origin: give each origin "
+                                 "its own --cors-origin" % value)
+        self.assertEqual(cors_origins_of(["https://wallet.example", "https://other.example"]),
+                         ("https://wallet.example", "https://other.example"))
+
+    def test_star_beside_an_origin_is_refused(self):
+        """Twin: `*` alone, and `*` given twice, are taken."""
+        for values in (["*", "https://wallet.example"], ["https://wallet.example", "*"]):
+            with self.subTest(values=values):
+                with self.assertRaises(ValueError) as caught:
+                    cors_origins_of(values)
+                self.assertIn("stands alone", str(caught.exception))
+        self.assertEqual(cors_origins_of(["*"]), ("*",))
+        self.assertEqual(cors_origins_of(["*", "*"]), ("*",))
+
+    def test_a_string_is_refused_as_the_list(self):
+        """A string would be read one character at a time (`"*"` would pass by accident):
+        refused, naming the list to write. Twin: the same origin in a list is taken."""
+        for values in ("https://wallet.example", "*", "", b"https://wallet.example"):
+            with self.subTest(values=values):
+                with self.assertRaises(ValueError) as caught:
+                    cors_origins_of(values)
+                self.assertIn("a list of origins", str(caught.exception))
+                with self.assertRaises(ValueError):
+                    serve(self.verifier, host="127.0.0.1", port=0, cors_origins=values)
+        self.assertEqual(cors_origins_of(["https://wallet.example"]), ("https://wallet.example",))
+
+    def test_none_and_an_empty_list_mean_no_cors(self):
+        """Twin: a list with an origin, test_a_string_is_refused_as_the_list's last line."""
+        for values in (None, [], ()):
+            with self.subTest(values=values):
+                self.assertIsNone(cors_origins_of(values))
+
+    def test_a_value_given_twice_is_kept_once(self):
+        """In any spelling written the same way, so the list and the startup line name it once.
+        Twin: two different origins are both kept, in the order given."""
+        self.assertEqual(cors_origins_of(["https://wallet.example", "HTTPS://Wallet.Example:443",
+                                          "https://wallet.example"]), ("https://wallet.example",))
+        self.assertEqual(cors_origins_of(list(reversed(CORS_LISTED))),
+                         tuple(reversed(CORS_LISTED)))
+
+    def test_a_refused_ip_address_is_told_what_to_write(self):
+        """An IPv4 address in another form is told the shape to write, never a rewriting of the
+        value (127.0.1 is 127.0.0.1 to a browser and 1.2.3 is 1.2.0.3); an IPv4-mapped IPv6
+        address is told how a browser writes it and the IPv4 address to open the page at. Twin:
+        test_each_value_kept_is_written_as_a_browser_writes_it, where 127.0.0.1 and the IPv6 rows
+        that are not mapped are kept."""
+        shape = ("write an IPv4 address as four decimal numbers, each 0 to 255 with no leading "
+                 "zero (for example 127.0.0.1)")
+        for value in ("http://127.1:3000", "http://127.0.1", "http://0x7f.0.0.1",
+                      "http://256.0.0.1", "http://wallet.123"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as caught:
+                    cors_origin(value)
+                self.assertTrue(str(caught.exception).endswith(": " + shape), caught.exception)
+        for value, written, ipv4 in (("http://[::FFFF:127.0.0.1]:8080", "[::ffff:7f00:1]",
+                                      "127.0.0.1"),
+                                     ("http://[::ffff:0:1]", "[::ffff:0:1]", "0.0.0.1")):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as caught:
+                    cors_origin(value)
+                self.assertIn("an IPv4-mapped IPv6 address, %s as a browser writes it; open the "
+                              "wallet page at its IPv4 address, %s, and name that origin"
+                              % (written, ipv4), str(caught.exception))
+
+    def test_each_value_kept_is_written_as_a_browser_writes_it(self):
+        """Twin: test_each_value_refused_at_startup_raises_naming_itself."""
+        for given, kept, reason in CORS_KEPT:
+            with self.subTest(reason=reason):
+                self.assertEqual(cors_origin(given), kept)
+                self.assertEqual(cors_origins_of([given]), (kept,))
+
+    def test_a_kept_value_is_answered_for_the_origin_a_browser_sends(self):
+        """A listener given each rewritten row as written answers the origin as a browser sends
+        it. Twin: test_each_value_that_must_not_match_is_answered_with_vary_alone."""
+        rewritten = [(given, kept, reason) for given, kept, reason in CORS_KEPT if given != kept]
+        httpd = serve(self.verifier, host="127.0.0.1", port=0,
+                      cors_origins=[given for given, _, _ in rewritten])
+        try:
+            for _, kept, reason in rewritten:
+                with self.subTest(reason=reason):
+                    _, headers, _ = self._ask(httpd, self._request_object(), [("Origin", kept)])
+                    self.assertEqual(_cors(headers), [("Access-Control-Allow-Origin", kept),
+                                                      ("Vary", "Origin")])
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_each_value_that_must_not_match_is_answered_with_vary_alone(self):
+        """At request time, against the listener serving CORS_LISTED, a fetch and a preflight.
+        The first rows are the twins: each listed origin, answered."""
+        for origin in CORS_LISTED:
+            with self.subTest(reason="listed, %s" % origin):
+                _, headers, _ = self._ask(self.cors, self._request_object(), [("Origin", origin)])
+                self.assertIn(("Access-Control-Allow-Origin", origin), _cors(headers))
+        for sent, reason in CORS_MUST_NOT_MATCH:
+            with self.subTest(reason=reason):
+                _, headers, _ = self._ask(self.cors, self._request_object(), [("Origin", sent)])
+                self.assertEqual(_cors(headers), [("Vary", "Origin")])
+                status, headers, _ = _parse(_exchange(self.cors, "OPTIONS", "/response", [
+                    ("Origin", sent), ("Access-Control-Request-Method", "POST")]))
+                self.assertEqual((status, _cors(headers)), (204, [("Vary", "Origin")]))

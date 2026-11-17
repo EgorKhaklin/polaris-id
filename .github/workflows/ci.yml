@@ -1684,6 +1684,7 @@ jobs:
       - test-oid4vp-drill
       - test-sdk-drill
       - test-mdoc-drill
+      - test-oid4vp-py39
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1697,7 +1698,7 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: >-
           python3 scripts/polaris-ci-gate.py --changes changes
-          --always test-core,test-coverage,test-procedures,test-mdoc-drill
+          --always test-core,test-coverage,test-procedures,test-mdoc-drill,test-oid4vp-py39
           --when full=test-app-role,test-zk,test-trigger-drill,test-trigger-refusals,ui-drill,docker-image,caddy-edge,page-drill,trace-drill,dr-drill,linux-install,custody-pkcs11,rolling-deploy,region-evacuation,ha-failover,helm-kind,pqc-real,pqc-real-web,federation-two-instances,image-cve-scan,prod-stack-boot,managed-postgres
           --when oid4vp=test-oid4vp-drill
           --when sdk=test-sdk-drill
@@ -4074,6 +4075,34 @@ jobs:
         env:
           POLARIS_DRILL_SHARD: "${{ matrix.shard }}/2"
         run: python scripts/polaris-mdoc-mutation-drill.py --shard "$POLARIS_DRILL_SHARD"
+
+  # 2026-11-17: polaris-oid4vp declares requires-python >=3.9, and the product boundary runs its
+  # seven suites under 3.12 only. A defect can show at 3.9 alone: http.server there writes an
+  # HTTPStatus by its name in an error page, so serve.py's own 501 matches the stdlib's only when
+  # it makes the same call (test_serve's test_an_options_that_is_not_a_preflight_is_501 is red on
+  # 3.9 otherwise). ubuntu-latest is Ubuntu 26.04, which has no Python 3.9 build, so this runs on
+  # ubuntu-24.04 as the plug-and-play matrix does. The package's one dependency comes from
+  # lab/interop/requirements.txt, the hashed set compiled under 3.9 that Dependabot keeps; that
+  # path is on the changes allowlist, so this runs on every change.
+  test-oid4vp-py39:
+    name: polaris-oid4vp's suites under Python 3.9, the oldest it declares
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.9
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.9"
+      - name: Install cryptography (lab/interop/requirements.txt, compiled under Python 3.9, by hash)
+        run: python -m pip install --quiet --require-hashes -r lab/interop/requirements.txt
+      - name: The package's seven suites under Python 3.9
+        run: >-
+          cd packages/polaris-oid4vp && python -m unittest
+          test_sdjwt test_jwe test_verifier test_serve test_cli test_conformance_capture test_status
 
   # 2026-10-15: the SDK mutation drill, out of Real PQC, where it had no time bound and took 65
   # minutes on a change to the detached verifier (run 38667231409). Every refusal in both reference

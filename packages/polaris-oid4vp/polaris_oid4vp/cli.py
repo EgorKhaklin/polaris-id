@@ -51,7 +51,7 @@ except ImportError:  # pragma: no cover
 from .jwe import _loads_depth_bounded
 from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
                     b64u_decode)
-from .serve import REQUEST_PATH, RESPONSE_PATH, serve
+from .serve import REQUEST_PATH, RESPONSE_PATH, cors_origins_of, serve
 from .verifier import (VERIFIER_INFO_PROFILES, Verifier, claim_query, transaction_data_entries,
                        verifier_info_entries, verify_response)
 
@@ -387,6 +387,11 @@ def _cmd_serve(args) -> int:
               "address: 127.0.0.1 for this machine only, 0.0.0.0 for every interface",
               file=sys.stderr)
         return 2
+    try:
+        cors_origins = cors_origins_of(args.cors_origin)
+    except ValueError as exc:
+        print("polaris-oid4vp: --cors-origin %s" % exc, file=sys.stderr)
+        return 2
     pki = pathlib.Path(args.pki)
     missing = [name for name in FILES.values() if not (pki / name).is_file()]
     if missing:
@@ -486,7 +491,8 @@ def _cmd_serve(args) -> int:
                   certfile=None if args.no_local_tls else str(pki / FILES["tls_cert"]),
                   keyfile=None if args.no_local_tls else str(pki / FILES["tls_key"]),
                   verbose=args.verbose, on_verdict=on_verdict,
-                  on_request_object=result.request_object if result is not None else None)
+                  on_request_object=result.request_object if result is not None else None,
+                  cors_origins=cors_origins)
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     if args.no_local_tls:
@@ -495,6 +501,8 @@ def _cmd_serve(args) -> int:
     print("  request_uri   %s%s" % (verifier.request_uri, ""))
     print("  response_uri  %s" % verifier.response_uri)
     print("  anchor to register: %s" % (pki / FILES["anchor"]))
+    if cors_origins:
+        print("  cors origins  %s" % " ".join(cors_origins))
     if verifier.verifier_info_profile:
         print("  verifier_info meets %s: ETSI TS 119 472-2 V1.2.1 RO-01 to RO-16, shape and labels "
               "only (the registration certificate's signature, chain and registry are not "
@@ -647,6 +655,11 @@ and one that judges a response already captured:
                    help="serve the local listener over plain HTTP, for when a reverse proxy or "
                         "tunnel terminates TLS and provides the public HTTPS (pair with "
                         "--public-base-url); the listener still binds --bind")
+    s.add_argument("--cors-origin", action="append", default=[], metavar="ORIGIN",
+                   help="for a wallet that runs in a browser page: answer requests from ORIGIN "
+                        "(e.g. https://wallet.example, repeatable, or * alone for every origin) "
+                        "to /request.jwt and /response with Access-Control-Allow-Origin and "
+                        "Vary: Origin, and their preflight OPTIONS; off by default")
     s.add_argument("--issuer-jwks", default=None,
                    help="a JSON file of issuer public JWKs to trust")
     s.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",

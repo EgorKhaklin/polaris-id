@@ -460,6 +460,113 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         self.assertIn("--bind", err)
         self.assertIn("0.0.0.0", err)
 
+    def test_cors_origins_reach_the_listener_as_a_browser_writes_them(self):
+        """Repeatable, each written as a browser writes it, and named on the startup line. Twin:
+        test_without_cors_origin_the_listener_gets_none_and_no_line_is_printed."""
+        rc, seen, out, _ = self._serve("--cors-origin", "HTTPS://Wallet.Example:443",
+                                       "--cors-origin", "http://127.0.0.1:8080")
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["kwargs"]["cors_origins"],
+                         ("https://wallet.example", "http://127.0.0.1:8080"))
+        self.assertIn("  cors origins  https://wallet.example http://127.0.0.1:8080",
+                      out.splitlines())
+
+    def test_without_cors_origin_the_listener_gets_none_and_no_line_is_printed(self):
+        """Twin: test_cors_origins_reach_the_listener_as_a_browser_writes_them."""
+        rc, seen, out, _ = self._serve()
+        self.assertEqual(rc, 0)
+        self.assertIsNone(seen["kwargs"]["cors_origins"])
+        self.assertNotIn("cors", out)
+
+    def test_an_origin_that_is_not_one_stops_it_starting(self):
+        """Each string row of test_serve's startup table, and `*` beside an origin: exit 2 naming
+        the value, and nothing listens. Twin:
+        test_cors_origins_reach_the_listener_as_a_browser_writes_them."""
+        from test_serve import CORS_REFUSED_AT_STARTUP
+        rows = [(value, reason) for value, reason in CORS_REFUSED_AT_STARTUP
+                if isinstance(value, str)]
+        rows.append(("*", "* beside an origin"))
+        for value, reason in rows:
+            with self.subTest(reason=reason):
+                extra = ("--cors-origin", "https://wallet.example") if value == "*" else ()
+                rc, seen, _, err = self._serve("--cors-origin", value, *extra)
+                self.assertEqual(rc, 2)
+                self.assertNotIn("kwargs", seen, "nothing may listen on an origin refused")
+                self.assertIn("--cors-origin", err)
+                self.assertIn("stands alone" if value == "*" else repr(value), err)
+
+    def test_the_origin_is_checked_before_the_pki_is_read(self):
+        """A refused origin stops it before a missing PKI does. Twin: an origin that is one, with
+        the same missing PKI, stops on the PKI."""
+        import contextlib
+        import io
+        absent = str(self.tmp / "absent")
+        for origin, says in (("ftp://wallet.example", "--cors-origin"),
+                             ("https://wallet.example", "is missing")):
+            with self.subTest(origin=origin):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    rc = main(["serve", "--pki", absent, "--cors-origin", origin])
+                self.assertEqual(rc, 2)
+                self.assertIn(says, err.getvalue())
+
+    def test_the_readme_the_help_and_the_startup_line_say_what_the_listener_sends(self):
+        """The mirror. The README's browser-wallet paragraph (its paths, each path's methods, the
+        request headers allowed and the response headers named), the paths --cors-origin's help
+        names, and the origins the startup line names, each held to what a listener started from
+        the same command sends. Its twins are the docs themselves: change a constant, or a doc,
+        and this goes red."""
+        import contextlib
+        import io
+        import re
+        from unittest import mock
+        from polaris_oid4vp.serve import serve
+        from test_serve import _cors, _exchange, _parse
+        readme = pathlib.Path(__file__).with_name("README.md").read_text()
+        paragraph = " ".join(re.search(r"^- Browser wallets: .*?(?=^- |^#)", readme,
+                                       re.M | re.S).group(0).split())
+        readme_methods = dict(re.findall(r"`(/[^`\s]+)` \(`([^`]+)`\)", paragraph))
+        readme_allowed = re.search(r"`([^`]+)` as the request headers allowed", paragraph).group(1)
+        readme_named = set(re.findall(r"`(Access-Control-[A-Za-z-]+|Vary)(?:: Origin)?`", paragraph))
+        with mock.patch.dict(os.environ, {"COLUMNS": "1000"}), \
+                contextlib.redirect_stdout(io.StringIO()) as shown, self.assertRaises(SystemExit):
+            main(["serve", "--help"])
+        help_text = re.search(r"^  --cors-origin ORIGIN(.*?)(?=\n  -)", shown.getvalue(),
+                              re.M | re.S).group(1)
+        help_paths = set(re.findall(r"(?<![\w/:])/[a-z][a-z.]*", help_text))
+        _, seen, printed, _ = self._serve("--cors-origin", "https://wallet.example",
+                                          "--cors-origin", "http://127.0.0.1:8080")
+        startup = [line for line in printed.splitlines() if line.startswith("  cors origins  ")]
+        self.assertEqual(len(startup), 1, "one startup line names the origins")
+        named = startup[0].split()[2:]
+        httpd = serve(seen["verifier"], host="127.0.0.1", port=0,
+                      cors_origins=seen["kwargs"]["cors_origins"])
+        try:
+            answered = {}
+            for path in ("/request.jwt", "/response", "/done", "/nope"):
+                status, headers, _ = _parse(_exchange(httpd, "OPTIONS", path, [
+                    ("Origin", named[0]), ("Access-Control-Request-Method", "POST")]))
+                if status == 204:
+                    answered[path] = dict(headers)
+            self.assertEqual({path: h["Access-Control-Allow-Methods"] for path, h in answered.items()},
+                             readme_methods, "the README's paths and their methods")
+            self.assertEqual({h["Access-Control-Allow-Headers"] for h in answered.values()},
+                             {readme_allowed}, "the README's request headers allowed")
+            self.assertEqual(help_paths, set(answered), "the paths --cors-origin's help names")
+            state = seen["verifier"].new_request()[0].state
+            _, headers, _ = _parse(_exchange(httpd, "GET", "/request.jwt?state=%s" % state,
+                                             [("Origin", named[0])]))
+            self.assertEqual({name for name, _ in _cors(headers)}, readme_named,
+                             "the README's response headers")
+            for origin in named:
+                status, headers, _ = _parse(_exchange(httpd, "OPTIONS", "/response", [
+                    ("Origin", origin), ("Access-Control-Request-Method", "POST")]))
+                self.assertIn(("Access-Control-Allow-Origin", origin), headers,
+                              "the startup line names %s" % origin)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_an_unreadable_trust_anchor_file_is_refused(self):
         bad = self.tmp / "not-a-cert.pem"
         bad.write_text("hello")

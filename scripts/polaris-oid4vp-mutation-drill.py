@@ -48,9 +48,10 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PKG = ROOT / "packages" / "polaris-oid4vp"
 
-#: The three files that decide. `serve.py` is transport: it has no refusal of its own, it
-#: relays the verdict, and inverting a status code there is tested by `test_serve.py`
-#: directly rather than through mutation.
+#: The files whose refusals are inverted one by one. `serve.py` relays the verifier's verdict, and
+#: inverting a status code there is tested by `test_serve.py` directly; what it decides itself
+#: (the done page's code, and which origin, path and cache key a CORS answer names) is held by
+#: the named mutants below.
 #: `status.py` joined on 2026-09-23. It decides whether a credential is revoked, it refuses
 #: through the same `_refuse`, and it was absent from this tuple and its suite from SUITES:
 #: measured that day, 6 of its 12 raise-refusals could be inverted with the package green.
@@ -197,6 +198,17 @@ NAMED_MUTANTS = (
     ("verifier:a-refused-presentation-closes-the-request", "polaris_oid4vp/verifier.py",
      "            # gets the same constant refusal every other cause gets. The request stays open.\n",
      "            self._sessions.pop(session.state, None)\n"),
+    # serve --cors-origin: an answer names only a listed origin, only on the two paths, and says
+    # that it varies by Origin, so no cache hands one origin's answer to another.
+    ("serve:cors-allows-any-origin", "polaris_oid4vp/serve.py",
+     "        return origin if origin in self.cors_origins else None\n",
+     "        return origin\n"),
+    ("serve:cors-on-every-path", "polaris_oid4vp/serve.py",
+     "        if path in CORS_METHODS and origin is not None:\n",
+     "        if origin is not None:\n"),
+    ("serve:cors-without-vary", "polaris_oid4vp/serve.py",
+     "            self.send_header(\"Vary\", \"Origin\")\n",
+     ""),
 )
 
 
