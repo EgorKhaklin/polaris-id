@@ -597,6 +597,14 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
         @media (max-width: 900px) {
             .creed, .aim { animation: rise-in linear both; animation-timeline: view(); animation-range: entry 0% cover 35%; }
             .motto { animation: dissolve linear both; animation-timeline: view(); animation-range: entry 20% cover 30%; }
+            /* how it works, unheld: each object settles as it comes up, the grille slides over the page and the
+               loupe comes down on the table as they cross the screen; each step's words rise after its object */
+            .obj { animation: dissolve linear both; animation-timeline: view(); animation-range: entry 0% cover 30%; }
+            .obj picture:first-child img { animation: push linear both; animation-timeline: view(); animation-range: entry 0% cover 45%; }
+            .obj-paper { view-timeline: --paper block; } .obj-table { view-timeline: --table block; }
+            .grille { animation: grille linear both; animation-timeline: --paper; animation-range: cover 25% cover 55%; }
+            .loupe { animation: loupe linear both; animation-timeline: --table; animation-range: cover 25% cover 60%; }
+            .steps li { animation: dissolve linear both; animation-timeline: view(); animation-range: entry 0% cover 25%; }
         }
     }
 }
