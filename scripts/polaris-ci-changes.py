@@ -339,6 +339,9 @@ REVIEWED_MENTIONS = {
         "the same registry value, in the drill's expected document",
     ("polaris_cli/test_cli.py", "site"):
         "os.path.join(cls.tmp, \"site\"): a directory of that name inside the test's temporary directory",
+    ("packages/polaris-oid4vp/test_cli.py", "README.md"):
+        "pathlib.Path(__file__).with_name(\"README.md\"): the package's own README beside the test, "
+        "which is not on the allowlist",
 }
 
 
