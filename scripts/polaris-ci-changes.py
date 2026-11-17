@@ -256,11 +256,12 @@ OID4VP_INPUTS = (
 #: TypeScript SDK is required; the product boundary is required; and the product suite's core
 #: part and its coverage shards run polaris_checks over the whole tree (measured: the checks
 #: and their detection tests open every tracked file), so no path is unread by them. The mdoc
-#: drill reads lab/interop/, which is on the allowlist, so it runs on every change too.
+#: drill reads lab/interop/, which is on the allowlist, so it runs on every change too, and so does
+#: the package's 3.9 job, which installs from lab/interop/requirements.txt.
 ALWAYS_RUN_JOBS = (
     "changes", "test-core", "test-coverage-shard", "test-coverage", "test-procedures", "test",
     "product-boundary", "sdk-typescript", "invariants", "dco", "osv-scan", "cve-scan",
-    "test-mdoc-drill",
+    "test-mdoc-drill", "test-oid4vp-py39",
 )
 
 #: Code outside polaris_checks/ that only always-run jobs execute, so what it reads does not
