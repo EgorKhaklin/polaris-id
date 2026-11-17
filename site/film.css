@@ -276,12 +276,12 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
 .key li::before, .key .fix::before { grid-row: 1 / span 2; width: 26px; height: 26px; border-radius: 50%; display: grid;
                                      place-items: center; font: 700 12px/1 var(--font-mono); color: var(--ground); }
 .key li { counter-increment: key; }
-.key li::before { content: counter(key) / ""; }
+.key li::before { content: counter(key); content: counter(key) / ""; }   /* the first for engines without the alt-text form */
 .key .k1::before { background: var(--c1); } .key .k2::before { background: var(--c2); } .key .k3::before { background: var(--c3); }
 .key b { display: block; margin-bottom: 2px; font: 500 12px/1.6 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase;
          color: var(--ink); }
 .key .fix { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line-strong); }
-.key .fix::before { content: "" / ""; width: 0; height: 0; margin: 5px 0 0 6px; border-radius: 0; border: 7px solid transparent;
+.key .fix::before { content: ""; content: "" / ""; width: 0; height: 0; margin: 5px 0 0 6px; border-radius: 0; border: 7px solid transparent;
                     border-bottom: 12px solid oklch(0.97 0 0 / 0.55); border-top: 0; }
 .crossing .cut { fill-opacity: 0.6; }
 .crossing text { font-size: 12px; }
@@ -506,9 +506,10 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
    inscription reveals left to right; a push settles 4% of scale (the night's, 6%); the aperture opens the 2.39:1
    frame. The night's words have three of their own: a rise out of a soft focus, a drift that keeps a held frame
    moving, and a track-in that closes a line's letter-spacing.
-   A phone (900 px wide and under) gets the still: the page is read there, not played. The act headlines are the
-   one exception, typed at every width (the last block below). */
-@media screen and (prefers-reduced-motion: no-preference) and (forced-colors: none) and (min-width: 901px) {
+   A phone (900 px wide and under) plays every move that needs no held frame: the rules are cut, the cases draw,
+   the night's exposure grows, the last act comes up. The two held acts (how it works, the voyage) stay the still
+   there: a held frame on a small screen hides more than it shows. */
+@media screen and (prefers-reduced-motion: no-preference) and (forced-colors: none) {
     @supports (animation-timeline: view()) {
         /* How it works: the frame holds; the die settles, dissolves to the written page, the grille slides
            over it, dissolves to the table of keys, the loupe comes down onto it. */
@@ -579,7 +580,7 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
         @media (min-width: 1100px) and (min-aspect-ratio: 16/10) {
             .aperture { animation: aperture linear both; animation-timeline: --night; animation-range: cover 0% cover 22%; }
         }
-        @media (min-height: 600px) {
+        @media (min-width: 901px) and (min-height: 600px) {
             .voyage { block-size: 160svh; view-timeline: --voy block; }
             .voyage-frame { position: sticky; top: 0; block-size: 100svh; align-content: center; padding-block: 0; }
             .purpose { grid-row: 1; align-self: center; margin: 0;
@@ -590,6 +591,12 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
             .motto { grid-row: 2; animation: track-in linear both; animation-timeline: --voy; animation-range: contain 30% contain 46%; }
         }
         .act-end > * { animation: dissolve linear both; animation-timeline: view(); animation-range: entry 0% entry 40%; }
+        /* On a phone the voyage is not held: its words rise as they come up the screen, each on its own view, and
+           the motto tracks in. */
+        @media (max-width: 900px) {
+            .creed, .aim { animation: rise-in linear both; animation-timeline: view(); animation-range: entry 0% entry 90%; }
+            .motto { animation: track-in linear both; animation-timeline: view(); animation-range: entry 20% cover 30%; }
+        }
     }
 }
 /* The act headlines type themselves out when the reader reaches them, at every width, with the hero's keyframes
