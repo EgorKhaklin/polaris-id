@@ -681,3 +681,9 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
 @keyframes draw-line { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 @keyframes retire    { from { opacity: 1; } to { opacity: 0.5; } }
 @keyframes seen-flip { from { --seen: 0; } to { --seen: 1; } }
+
+/* On a narrow phone the hero's first line is two lines, the name over the description, with no dot between. */
+@media (max-width: 520px) {
+    .eyebrow .sep { display: none; }
+    .eyebrow .tag { display: block; white-space: nowrap; }
+}
