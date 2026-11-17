@@ -321,6 +321,11 @@ html { --spring: cubic-bezier(.3, 1.35, .5, 1); --spring-card: cubic-bezier(.3, 
 @keyframes key-wait { from, to { visibility: hidden; } }
 @keyframes caret-on { from, to { opacity: 1; } }
 @keyframes caret-end { 0%, 24% { opacity: 1; } 25%, 49% { opacity: 0; } 50%, 74% { opacity: 1; } 75%, 100% { opacity: 0; } }
+/* WebKit paints a background clipped to text through letters that are still hidden, so the gold word would
+   stand before it is typed. While it is typed it is plain gold, and its metal comes on as its last letter
+   lands (k24's time). Where animation is off it is metal from the start. */
+.hero h1 em { animation: metal-wait 1.889s step-end; }
+@keyframes metal-wait { from, to { background-image: none; color: var(--gold); } }
 /* (generated: each letter's time, its caret's stay, and the kern it gives back) */
 .hero h1 .k1 { animation-duration: .75s; } .hero h1 .k1::after { animation-delay: .75s; animation-duration: .047s; }
 .hero h1 .k2 { animation-duration: .797s; } .hero h1 .k2::after { animation-delay: .797s; animation-duration: .029s; }
