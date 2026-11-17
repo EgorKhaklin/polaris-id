@@ -86,6 +86,7 @@ jobs:
       full: ${{ steps.classify.outputs.full }}
       oid4vp: ${{ steps.classify.outputs.oid4vp }}
       sdk: ${{ steps.classify.outputs.sdk }}
+      beyond_site: ${{ steps.classify.outputs.beyond_site }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -106,7 +107,11 @@ jobs:
         run: python scripts/polaris-ci-changes.py --event "$EVENT" --base "$BASE" --head "$HEAD"
 
   test-core:
+    # 2026-11-17: skipped on a change wholly under site/ (beyond_site=false, judged by the required
+    # gate); the invariant checks job runs the checks and the link check on every change.
     name: "Product suite: checks and drills"
+    needs: [changes]
+    if: needs.changes.outputs.beyond_site == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -641,9 +646,6 @@ jobs:
           path: /tmp/perf-baseline.json
           if-no-files-found: ignore
 
-      - name: polaris-link-check
-        run: bash scripts/polaris-link-check.sh --ci
-
       # The disaster-recovery path (backup -> restore) is operator-critical and,
       # like the Docker images, was never exercised in CI — a broken restore is
       # only discovered during an actual disaster. v9.100 fixed the restore
@@ -697,8 +699,11 @@ jobs:
     # 2026-10-15: the coverage step was CI's critical path, one step of 22 to 38 minutes. Each of
     # three shards runs a third of it (the sharded database suites dealt over the three machines by
     # polaris-ship.py --part, and every third of the other suites) and keeps its coverage data;
-    # test-coverage below combines the three and applies the floors. Never skipped: the suites
-    # here include polaris_checks/test_checks.py, which opens every file in the tree.
+    # test-coverage below combines the three and applies the floors. Skipped only on a change
+    # wholly under site/ (beyond_site=false): the suites here include polaris_checks/test_checks.py,
+    # which opens every file in the tree, and the invariant checks job runs it whole on every change.
+    needs: [changes]
+    if: needs.changes.outputs.beyond_site == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -856,7 +861,7 @@ jobs:
     # --combine fails on a missing, empty or mismatched shard), and the combined numbers clear the
     # same floors the single run applied.
     name: "Product suite: Python suites under coverage + floor gate"
-    needs: [test-coverage-shard]
+    needs: [changes, test-coverage-shard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -874,20 +879,25 @@ jobs:
       - name: Every coverage shard passed
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: python scripts/polaris-ci-gate.py --always test-coverage-shard
+        run: python scripts/polaris-ci-gate.py --changes changes --when beyond_site=test-coverage-shard
 
+      # The floor, from here on, runs exactly when the shards do: on a change wholly under site/
+      # there is no shard data to combine, and the gate step above has judged the shards' skip.
       # coverage.py from the same hashed set the shards installed (requirements-dev.txt pulls in
       # requirements-test.txt), so the data files are read by the version that wrote them.
       - name: Install coverage.py
+        if: needs.changes.outputs.beyond_site == 'true'
         run: pip install --require-hashes -r polaris_web/requirements-test.txt
 
       - name: Download every shard's coverage data
+        if: needs.changes.outputs.beyond_site == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: coverage-data-shard-*
           path: ${{ runner.temp }}/coverage-shards
 
       - name: Combine the three shards + floor gate
+        if: needs.changes.outputs.beyond_site == 'true'
         env:
           COVERAGE_FLOOR: "86"
           BRANCH_FLOOR: "84"
@@ -1653,6 +1663,9 @@ jobs:
     # succeeded, or when it was skipped AND the changes output that governs it says "false";
     # any other skip, a failure, a cancellation or a missing result fails this
     # (scripts/polaris-ci-gate.py, tested by scripts/test_ci_gate.py).
+    # 2026-11-17: and every job a change wholly under site/ skips (beyond_site=false), the
+    # required TypeScript SDK and CVE scan included: GitHub reports their skip to the ruleset as
+    # passing, so this is where the skip is judged.
     name: Polaris product test suite
     needs:
       - changes
@@ -1684,6 +1697,8 @@ jobs:
       - test-oid4vp-drill
       - test-sdk-drill
       - test-mdoc-drill
+      - sdk-typescript
+      - cve-scan
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1697,7 +1712,8 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: >-
           python3 scripts/polaris-ci-gate.py --changes changes
-          --always test-core,test-coverage,test-procedures,test-mdoc-drill
+          --always test-coverage,test-procedures
+          --when beyond_site=test-core,test-mdoc-drill,sdk-typescript,cve-scan
           --when full=test-app-role,test-zk,test-trigger-drill,test-trigger-refusals,ui-drill,docker-image,caddy-edge,page-drill,trace-drill,dr-drill,linux-install,custody-pkcs11,rolling-deploy,region-evacuation,ha-failover,helm-kind,pqc-real,pqc-real-web,federation-two-instances,image-cve-scan,prod-stack-boot,managed-postgres
           --when oid4vp=test-oid4vp-drill
           --when sdk=test-sdk-drill
@@ -4048,11 +4064,13 @@ jobs:
   # vectors other verifiers run; each refusal of its CBOR, COSE_Sign1, MSO, device-authentication
   # and request checks is switched off one at a time, and the suites that read it (the vectors,
   # test_verify_mdoc, the witness replay) must notice. Two shards (--shard, proved a partition by
-  # scripts/test_mdoc_drill.py) of about four minutes each. On every change: lab/interop/ is on
-  # the changes allowlist, so a change to the verifier alone would skip a job gated on the full
-  # suite.
+  # scripts/test_mdoc_drill.py) of about four minutes each. On every change but one wholly under
+  # site/: lab/interop/ is on the changes allowlist, so a change to the verifier alone would skip a
+  # job gated on the full suite.
   test-mdoc-drill:
     name: "mdoc verifier mutation drill, shard ${{ matrix.shard }} of 2"
+    needs: [changes]
+    if: needs.changes.outputs.beyond_site == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -4161,6 +4179,8 @@ jobs:
 
   sdk-typescript:
     name: TypeScript SDK — typecheck, tests, conformance
+    needs: [changes]
+    if: needs.changes.outputs.beyond_site == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -4212,6 +4232,10 @@ jobs:
         run: |
           python3 scripts/polaris-compose-parse.py
           cd scripts && python3 -m unittest test_compose_parse
+      # Every relative link and quoted path in the tree resolves. Here since 2026-11-17, so it runs
+      # on every change: a change wholly under site/ skips the product suite's core part.
+      - name: polaris-link-check
+        run: bash scripts/polaris-link-check.sh --ci
 
   dco:
     # OpenSSF Baseline OSPS-LE-01.01: every commit a person contributes asserts, with a
@@ -4320,6 +4344,8 @@ jobs:
   # --------------------------------------------------------------------------
   cve-scan:
     name: Dependency CVE scan + SAST
+    needs: [changes]
+    if: needs.changes.outputs.beyond_site == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

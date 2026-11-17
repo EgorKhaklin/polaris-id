@@ -16,22 +16,25 @@ change may skip, and it is built so that the mistake it can make is running too 
   - An empty diff, a base that is not in the checkout, or a git that fails, runs everything.
     "I could not tell" and "nothing changed" must not look alike.
 
-It writes three outputs for the workflow (GITHUB_OUTPUT), each "true" or "false":
+It writes four outputs for the workflow (GITHUB_OUTPUT), each "true" or "false":
 
-  full    every job outside the always-run set: false only when every changed path is on the
-          allowlist.
-  oid4vp  the OID4VP mutation drill: true when the change touches what that drill reads (it
-          copies packages/polaris-oid4vp and runs the package's suites in the copy, so its
-          inputs are the package, the drill, the interpreter's requirements and the workflow).
-  sdk     the SDK mutation drill: true when the change touches what the drill's own --changed
-          mode looks at (_SDK_PATHS, read out of the drill so the two cannot disagree).
+  full         every job outside the always-run and site-skipped sets: false only when every
+               changed path is on the allowlist.
+  oid4vp       the OID4VP mutation drill: true when the change touches what that drill reads (it
+               copies packages/polaris-oid4vp and runs the package's suites in the copy, so its
+               inputs are the package, the drill, the interpreter's requirements and the workflow).
+  sdk          the SDK mutation drill: true when the change touches what the drill's own --changed
+               mode looks at (_SDK_PATHS, read out of the drill so the two cannot disagree).
+  beyond_site  the jobs only a change to the project site may skip (SITE_SKIPPED_JOBS), 2026-11-17:
+               false only when every changed path is site-only (site_only()), which implies
+               full=false. The same fail-closed rules: anything unknown says true.
 
 The required gate ("Polaris product test suite", scripts/polaris-ci-gate.py) reads these
 outputs back: a job it needs counts as passed when it succeeded, or when it was skipped AND
 the output that governs it says it was not needed. Nothing else passes.
 
     python3 scripts/polaris-ci-changes.py --event pull_request --base SHA --head SHA
-    python3 scripts/polaris-ci-changes.py --audit       # re-measure the allowlist (no git diff)
+    python3 scripts/polaris-ci-changes.py --audit       # re-measure both lists (no git diff)
     python3 scripts/polaris-ci-changes.py --measure     # the measurement behind the allowlist
 """
 from __future__ import annotations
@@ -56,7 +59,8 @@ CI_YML = ".github/workflows/ci.yml"
 #: read of an allowlisted path, skipped on the pull request, shows on main, after the merge.
 CLASSIFIED_EVENTS = ("pull_request",)
 
-#: What a change may touch and still skip every job outside the always-run set. A directory
+#: What a change may touch and still skip every job outside the always-run and site-skipped sets
+#: (a site-skipped job runs on any change that is not site-only: SITE_SKIPPED_JOBS). A directory
 #: entry ends in "/" and covers everything under it, including a file added there later; the
 #: audit then holds the new file to the same measurement on the pull request that adds it. Each
 #: entry was measured on 2026-10-15 (`--measure`): no file a skippable job executes names it, by
@@ -251,25 +255,95 @@ OID4VP_INPUTS = (
     CI_YML,
 )
 
-#: The jobs that run on every change, skippable by nothing here. The invariant checks and their
-#: detection tests, the sign-off and the two dependency scans are required checks; the
-#: TypeScript SDK is required; the product boundary is required; and the product suite's core
-#: part and its coverage shards run polaris_checks over the whole tree (measured: the checks
-#: and their detection tests open every tracked file), so no path is unread by them. The mdoc
-#: drill reads lab/interop/, which is on the allowlist, so it runs on every change too.
+#: The jobs that run on every change, skippable by nothing here: the classifier itself, the gates
+#: (a gate runs `if: always()`), and the invariant checks job, the sign-off, the OSV scan and the
+#: product boundary, which are required checks (check_oid4vp_image also holds the image drill the
+#: product boundary runs to every run, its job carrying no `if:`). The invariant checks job runs polaris_checks and its detection tests over
+#: the whole tree (measured: they open every tracked file) and the link check, so no path is
+#: unread on any change. The coverage gate's floor steps after its gate step are skipped with its
+#: shards on a site-only change; the site measurement reads them as site-skipped.
 ALWAYS_RUN_JOBS = (
-    "changes", "test-core", "test-coverage-shard", "test-coverage", "test-procedures", "test",
-    "product-boundary", "sdk-typescript", "invariants", "dco", "osv-scan", "cve-scan",
-    "test-mdoc-drill",
+    "changes", "test-coverage", "test-procedures", "test", "invariants", "dco", "osv-scan",
+    "product-boundary",
 )
 
-#: Code outside polaris_checks/ that only always-run jobs execute, so what it reads does not
-#: bound the allowlist. `--audit` verifies each entry: ci.yml names it only inside an always-run
-#: job, and no file a skippable job executes names it.
+#: The jobs every change outside the site-only class runs (2026-11-17), whatever the allowlist says,
+#: and only `beyond_site` may skip: the product suite's core part and its coverage shards run
+#: polaris_checks over the whole tree, which the invariant checks job also does on every change;
+#: the TypeScript SDK and the dependency CVE scan are required checks that read sdk/ and the
+#: requirement sets; the mdoc drill reads lab/interop/, which is on the allowlist. The required
+#: gate needs each, and passes its skip only on beyond_site=false.
+SITE_SKIPPED_JOBS = (
+    "test-core", "test-coverage-shard", "sdk-typescript", "cve-scan", "test-mdoc-drill",
+)
+
+#: The site-only class (2026-11-17): a change whose every path is under site/ and of a type the
+#: site serves (SITE_ONLY_TYPES, or a host rule or key-directory file), less site/polaris_logo.webp,
+#: the default emblem the Yivi check-in example serves, and any file whose name says it is a
+#: dependency manifest or lockfile, which the dependency scans read. Any other file under site/
+#: runs everything: code (the product suite's
+#: core part lints every Python file in the tree, a walk of the whole tree this audit cannot tie to
+#: a path), configuration, or a type not listed. `--audit` measures the rest as it measures the
+#: allowlist: no code a site-skipped job may run names a site-only path, polaris_checks/ aside,
+#: which the invariant checks job runs on every change (SITE_ONLY_RESTS_ON).
+SITE_ONLY_DIR = "site/"
+SITE_NOT_ONLY = ("site/polaris_logo.webp",)
+#: The types the site serves: pages, styles, images, fonts, text, Markdown and JSON. Besides
+#: these, a name with no dot is site-only when it is one of the host's rule files (SITE_RULE_FILES)
+#: or sits under site/.well-known/ (the OpenPGP key directory's files). A name ending otherwise, or
+#: one with a leading dot, is not site-only, whatever it holds.
+SITE_ONLY_TYPES = (".html", ".css", ".avif", ".webp", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+                   ".woff2", ".woff", ".txt", ".md", ".json")
+SITE_KEYS_DIR = "site/.well-known/"
+SITE_RULE_FILES = ("_headers", "_redirects")
+#: Dependency manifests and lockfiles by file name, the ones OSV-Scanner and Dependabot read for
+#: the ecosystems this tree uses or could add: never site-only, under site/ or anywhere else.
+_DEPENDENCY_FILE = re.compile(
+    r"(?i)^(?:requirements[\w.-]*\.(?:txt|in)|constraints[\w.-]*\.txt|[\w.-]*\.lockb?|package(?:-lock)?\.json|"
+    r"npm-shrinkwrap\.json|pnpm-lock\.ya?ml|pnpm-workspace\.ya?ml|go\.(?:mod|sum)|pyproject\.toml|Pipfile|"
+    r"Gemfile|Cargo\.toml|composer\.json|pom\.xml|[\w.-]*\.gradle(?:\.kts)?|gradle\.lockfile|pubspec\.ya?ml|"
+    r"deno\.jsonc?|[\w.-]*\.csproj|packages\.config|mix\.exs|setup\.(?:py|cfg))$")
+#: And any name that says it is one, however it is spelled (dev-requirements.txt,
+#: test_constraints.txt, packages.lock.json): the class errs toward running everything.
+_DEPENDENCY_WORD = re.compile(r"(?i)requirement|constraint|shrinkwrap|(?:^|[._-])lock(?:b|file|ed)?(?:[._-]|$)")
+
+#: What the site-only class rests on: the jobs a site-only change still runs, and the steps each
+#: must hold, since the jobs it skips ran them too (2026-11-17: the product suite's core part ran
+#: the checks and the link check; the coverage shards ran the detection tests). Each step is pinned
+#: whole, as check_oid4vp_image pins the image drill: its first line is `- name:` and nothing else,
+#: and its other lines, comments and blank lines aside, are exactly these, so no `if:`, `shell:`,
+#: `env:`, `|| true`, folded line or extra flag fits. What they run in is held too: the job carries
+#: no `if:`, `continue-on-error:`, `defaults:` or `env:`, no line of it names $GITHUB_ENV or
+#: $GITHUB_PATH, and the workflow's own `env:` is WORKFLOW_ENV exactly, with no `defaults:`. A
+#: change to one of these changes its pin with it.
+SITE_ONLY_RESTS_ON = {
+    "invariants": (
+        ("        run: python3 -m polaris_checks.run",),
+        ("        run: |",
+         "          pip install --require-hashes -r polaris_web/requirements-test.txt",
+         "          python3 -m pytest polaris_checks/test_checks.py -q -p no:cacheprovider"),
+        ("        run: bash scripts/polaris-link-check.sh --ci",),
+    ),
+}
+#: The workflow's top-level `env:`, its lines as written (comments and blank lines aside).
+WORKFLOW_ENV = ('  PYTHONUNBUFFERED: "1"',)
+
+
+def _pinned(step: str) -> tuple:
+    """A step as SITE_ONLY_RESTS_ON pins it: the lines after its `- name:` line, comments and
+    blank lines dropped; () when its first line is not a `- name:` line alone."""
+    lines = step.splitlines()
+    if not lines or not re.fullmatch(r"      - name:[ \t]*\S.*", lines[0]):
+        return ()
+    return tuple(l.rstrip() for l in lines[1:] if l.strip() and not l.lstrip().startswith("#"))
+
+#: Code outside polaris_checks/ that only always-run and site-skipped jobs execute, so what it
+#: reads does not bound the allowlist (the site measurement reads it: site_skipped_code). `--audit`
+#: verifies each entry: no file a skippable job executes names it.
 ALWAYS_RUN_ONLY = {
-    "scripts/polaris-coverage.sh": "the coverage shards (always run)",
+    "scripts/polaris-coverage.sh": "the coverage shards (site-skipped)",
     "scripts/polaris-ship.py": "run by polaris-coverage.sh; locally the ship tool",
-    "scripts/polaris-link-check.sh": "the product suite's core part (always run)",
+    "scripts/polaris-link-check.sh": "the invariant checks job (always run)",
     "scripts/polaris-review-packet-drill.py": "the product suite's core part",
     "scripts/polaris-assurance-mapping-drill.py": "the product suite's core part",
     "scripts/polaris-check-mutation-drill.py": "the product suite's core part",
@@ -286,7 +360,7 @@ ALWAYS_RUN_ONLY = {
     "scripts/test_doctor.py": "the coverage shards",
     "scripts/test_ci_changes.py": "the coverage shards",
     "scripts/polaris-product-boundary-drill.py": "the product boundary job (always run)",
-    "scripts/polaris-mdoc-mutation-drill.py": "the mdoc drill job (always run)",
+    "scripts/polaris-mdoc-mutation-drill.py": "the mdoc drill job (site-skipped)",
     "scripts/test_mdoc_drill.py": "the coverage shards",
     "packages/polaris-oid4vp/examples/yivi-checkin/app.py": "the product boundary job",
     "packages/polaris-oid4vp/examples/yivi-checkin/test_checkin.py": "the product boundary job",
@@ -339,6 +413,14 @@ REVIEWED_MENTIONS = {
         "the same registry value, in the drill's expected document",
     ("polaris_cli/test_cli.py", "site"):
         "os.path.join(cls.tmp, \"site\"): a directory of that name inside the test's temporary directory",
+    ("scripts/test_ci_changes.py", "site/index.html"):
+        "a path handed to the classifier and written into a temporary repository; the test reads no site file",
+    ("scripts/test_ci_changes.py", "site"):
+        "(self.repo / \"site\"): a directory of that name inside the test's temporary repository",
+    ("scripts/polaris-ci-changes.py", "site/index.html"):
+        "the key of the reviewed mention above, in this file's own source",
+    ("scripts/polaris-ci-changes.py", "site/.well-known/"):
+        "SITE_KEYS_DIR, a prefix site_only() compares paths with; this file opens no site file",
 }
 
 
@@ -355,6 +437,18 @@ def allowlisted(path: str) -> bool:
     return _under(path, ALLOWLIST)
 
 
+def site_only(path: str) -> bool:
+    """May a site-only change touch `path`? It must be under site/, of a type the site serves, not
+    the emblem an example serves, and not named as a dependency file. A strict prefix: a file
+    named "site" is not under the site."""
+    name = path.rsplit("/", 1)[-1]
+    return bool(path.startswith(SITE_ONLY_DIR) and path not in SITE_NOT_ONLY
+                and name and not name.startswith(".")
+                and (name.lower().endswith(SITE_ONLY_TYPES)
+                     or ("." not in name and (name in SITE_RULE_FILES or path.startswith(SITE_KEYS_DIR))))
+                and not _DEPENDENCY_FILE.match(name) and not _DEPENDENCY_WORD.search(name))
+
+
 def sdk_inputs(root: pathlib.Path = ROOT) -> tuple:
     """The SDK drill's own `_SDK_PATHS`, so `sdk` and the drill's --changed cannot disagree."""
     spec = importlib.util.spec_from_file_location(
@@ -368,8 +462,8 @@ def sdk_inputs(root: pathlib.Path = ROOT) -> tuple:
 
 
 def classify(event: str, changed, sdk_paths) -> dict:
-    """{"full", "oid4vp", "sdk": bool, "reason": str}. `changed` is None when unknown."""
-    everything = {"full": True, "oid4vp": True, "sdk": True}
+    """{"full", "oid4vp", "sdk", "beyond_site": bool, "reason": str}. `changed` is None when unknown."""
+    everything = {"full": True, "oid4vp": True, "sdk": True, "beyond_site": True}
     if event not in CLASSIFIED_EVENTS:
         return dict(everything, reason="a %s run is not classified: everything runs" % (event or "nameless"))
     if changed is None:
@@ -382,12 +476,20 @@ def classify(event: str, changed, sdk_paths) -> dict:
     full = bool(outside)
     oid4vp = any(_under(p, OID4VP_INPUTS) for p in changed)
     sdk = any(_under(p, sdk_paths) for p in changed)
+    # Site-only implies allowlisted (the audit holds it), and beyond_site still reads full, so
+    # a site-only change can never skip what an allowlisted one runs.
+    beyond = [p for p in changed if not site_only(p)]
+    beyond_site = full or bool(beyond)
     if full:
         reason = "%d of %d changed path(s) are not on the allowlist (first: %s)" % (
             len(outside), len(changed), outside[0])
+    elif beyond_site:
+        reason = "all %d changed path(s) are on the allowlist, %d of them not site-only (first: %s)" % (
+            len(changed), len(beyond), beyond[0])
     else:
-        reason = "all %d changed path(s) are on the allowlist" % len(changed)
-    return {"full": full, "oid4vp": oid4vp and full, "sdk": sdk and full, "reason": reason}
+        reason = "all %d changed path(s) are site-only" % len(changed)
+    return {"full": full, "oid4vp": oid4vp and full, "sdk": sdk and full, "beyond_site": beyond_site,
+            "reason": reason}
 
 
 def changed_paths(root: pathlib.Path, base: str, head: str):
@@ -466,6 +568,24 @@ def skippable_code(files: list, root: pathlib.Path = ROOT) -> list:
         if allowlisted(p) or p in ALWAYS_RUN_ONLY or p in NOT_RUN_IN_CI:
             continue
         if p.startswith("polaris_checks/"):
+            continue
+        if p.startswith(".github/") and p != CI_YML and not p.startswith(".github/ci/") and p not in called:
+            continue
+        if _is_code(p) or _has_shebang(root, p):
+            out.append(p)
+    return out
+
+
+def site_skipped_code(files: list, root: pathlib.Path = ROOT) -> list:
+    """The files a job a site-only change skips may execute or read as configuration: every
+    code-like file outside site/, less the never-run ones, polaris_checks/ (the invariant checks
+    job runs the checks and their detection tests whole on every change: SITE_ONLY_RESTS_ON), and
+    the other workflows but the ones a site-skipped job calls. Wider than skippable_code: the
+    always-run-only scripts count, since most run in jobs a site-only change skips."""
+    called = set(called_workflows(root, text=_site_skipped_ci_text(root)))
+    out = []
+    for p in files:
+        if p.startswith(SITE_ONLY_DIR) or p in NOT_RUN_IN_CI or p.startswith("polaris_checks/"):
             continue
         if p.startswith(".github/") and p != CI_YML and not p.startswith(".github/ci/") and p not in called:
             continue
@@ -706,39 +826,165 @@ def _ci_job_blocks(text: str) -> dict:
     return {k: "\n".join(v) for k, v in jobs.items()}
 
 
-def _skippable_ci_text(root: pathlib.Path, strict: bool = True) -> str:
-    """ci.yml as the skippable jobs run it: their blocks only. The always-run jobs may read
-    anything, and the trigger section's paths-ignore names files without reading them."""
+_SITE_COND = "needs.changes.outputs.beyond_site == 'true'"
+
+
+def _steps(block: str) -> list:
+    """A job block's steps, each as its text."""
+    body = block.split("\n    steps:\n", 1)
+    return re.split(r"(?m)^(?=      - )", body[1])[1:] if len(body) == 2 else []
+
+
+#: Where a step's keys sit: on its "- " line (its first key) or below it.
+_STEP_KEY = "(?:      - |        )"
+
+
+def _conditions(text: str, indent: str) -> list:
+    """The `if:` conditions at this indent (a pattern: _STEP_KEY for a step) that read the
+    changes outputs."""
+    return [c.strip() for c in re.findall(r"(?m)^%sif:(.*)$" % indent, text) if "needs.changes.outputs" in c]
+
+
+_JOB_NAME = r"['\"]?([A-Za-z0-9_-]+)['\"]?"
+
+
+def _needs(block: str) -> list:
+    """The jobs a job block needs, read only in the plain one-line forms (`needs: [a, b]` or
+    `needs: a`), the forms every non-gate job of this workflow uses. Any other spelling of the key
+    (a block list, a quoted key, a flow list over two lines, a comment anywhere in it) raises: a
+    need this cannot read is a need nobody measured (2026-11-17, in review)."""
+    found = [l for l in block.splitlines() if re.match(r"^    ['\"]?needs['\"]?[ \t]*:", l)]
+    if not found:
+        return []
+    m = re.fullmatch(r"    needs:[ \t]*(\[[ \t]*%s(?:[ \t]*,[ \t]*%s)*[ \t]*\]|%s)[ \t]*"
+                     % (_JOB_NAME, _JOB_NAME, _JOB_NAME), found[0])
+    if len(found) != 1 or not m:
+        raise RuntimeError("a job's needs cannot be read: %r" % found[0].strip())
+    return [v.strip().strip("'\"") for v in m.group(1).strip("[]").split(",")]
+
+
+#: A gate: a job that runs whatever its needs did, and judges them (scripts/polaris-ci-gate.py).
+_GATE_IF = re.compile(r"(?m)^    if:[ \t]*always\(\)[ \t]*$")
+#: An expression that reads a job's needs (`needs.x`, `needs.*`, `needs['x']`, `toJSON(needs)`).
+_NEEDS_READ = re.compile(r"\bneeds\s*[.\[)]")
+#: The one other read: a gate's step that runs scripts/polaris-ci-gate.py hands it every result.
+_GATE_RESULTS = re.compile(r"[ \t]*RESULTS: \$\{\{ toJSON\(needs\) \}\}[ \t]*")
+#: A step's line that runs the gate script (`run: python3 scripts/...`, or a folded `run: >-`'s line).
+_GATE_RUN = re.compile(r"[ \t]*(?:run:[ \t]*)?python3? scripts/polaris-ci-gate\.py(?:[ \t].*)?")
+
+
+def _reads_needs(block: str) -> bool:
+    """Whether a job reads its needs other than as the one `if:` form: every line of the job,
+    comments aside, wherever it sits. A gate's (`if: always()`) RESULTS line is not such a read
+    in the step that runs the gate script, and only there."""
+    lines = block.splitlines()
+    exempt = set()
+    if _GATE_IF.search(block) and "    steps:" in lines:
+        first = lines.index("    steps:")
+        starts = [k for k in range(first + 1, len(lines)) if lines[k].startswith("      - ")]
+        ends = starts[1:] + [len(lines)]
+        for a, b in zip(starts, ends):
+            b = next((k for k in range(a + 1, b) if re.match(r"    \S", lines[k])), b)
+            if any(_GATE_RUN.fullmatch(l) for l in lines[a:b]):
+                exempt.update(k for k in range(a, b) if _GATE_RESULTS.fullmatch(lines[k]))
+    return any(_NEEDS_READ.search(l) and not _SITE_IF.fullmatch(l) and k not in exempt
+               for k, l in enumerate(lines) if not l.lstrip().startswith("#"))
+
+
+def _misread_layout(block: str) -> bool:
+    """Whether a job is laid out other than as this audit reads it: its keys at four spaces and
+    unquoted, its steps a list at six with one space after each dash (so their keys sit at eight). A compact list (`- ` at four or five spaces), a quoted key or
+    a key at another indent could hold a step or a condition the rules read past."""
+    lines = [l for l in block.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+    if not lines or not re.match(r"    [A-Za-z][\w-]*:", lines[0]):
+        return True
+    if any(re.match(r" {4,5}- | {4}['\"]| {5}\S| {1,3}\S", l) for l in lines):
+        return True
+    if any(l.startswith("    steps:") and l != "    steps:" for l in lines):
+        return True
+    if any(re.match(r" {6}-(?! \S)", l) for l in lines):
+        return True
+    if "    steps:" in lines:
+        after = lines[lines.index("    steps:") + 1:]
+        return not (after and after[0].startswith("      - "))
+    return False
+#: The one read of the changes outputs an always-run or site-skipped job may make.
+_SITE_IF = re.compile(r"\s*(?:- )?if:[ \t]*needs\.changes\.outputs\.beyond_site == 'true'[ \t]*")
+
+
+def _ci_jobs(root: pathlib.Path, strict: bool) -> dict:
     path = root / CI_YML
     if not path.is_file():
         raise RuntimeError("%s is missing" % CI_YML)
     jobs = _ci_job_blocks(path.read_text(encoding="utf-8"))
     if not jobs:
         raise RuntimeError("%s has no jobs this audit can read" % CI_YML)
-    missing = [j for j in ALWAYS_RUN_JOBS if j not in jobs]
+    missing = [j for j in ALWAYS_RUN_JOBS + SITE_SKIPPED_JOBS if j not in jobs]
     if missing and strict:
-        raise RuntimeError("the always-run job(s) %s are not in %s" % (", ".join(missing), CI_YML))
+        raise RuntimeError("the always-run or site-skipped job(s) %s are not in %s" % (", ".join(missing), CI_YML))
     if strict:
-        governed = [j for j in ALWAYS_RUN_JOBS if j in jobs
-                    and re.search(r"(?m)^    if:.*needs\.changes\.outputs", jobs[j])]
+        governed = [j for j in ALWAYS_RUN_JOBS if j in jobs and _conditions(jobs[j], "    ")]
         if governed:
-            # An always-run job is left out of the measurement below; one that can be skipped
+            # An always-run job is left out of both measurements; one that can be skipped
             # would leave its reads unmeasured.
             raise RuntimeError("the always-run job(s) %s are skipped by the changes outputs"
                                % ", ".join(governed))
-    return "\n".join(b for j, b in jobs.items() if j not in ALWAYS_RUN_JOBS)
+        waiting = ["%s (%s)" % (j, ", ".join(n for n in _needs(jobs[j]) if n not in ALWAYS_RUN_JOBS))
+                   for j in ALWAYS_RUN_JOBS if j in jobs and not _GATE_IF.search(jobs[j])
+                   and any(n not in ALWAYS_RUN_JOBS for n in _needs(jobs[j]))]
+        if waiting:
+            # GitHub skips a job whose need was skipped, unless the job runs `if: always()`, exactly
+            # (a gate; `always() && ...` is skipped when the rest is false).
+            raise RuntimeError("the always-run job(s) %s need a job the changes outputs can skip, so GitHub "
+                               "would skip them with it" % "; ".join(waiting))
+        laid = [j for j in ALWAYS_RUN_JOBS + SITE_SKIPPED_JOBS if j in jobs and _misread_layout(jobs[j])]
+        if laid:
+            # 2026-11-17, in review: the rules read keys at four spaces and steps at
+            # six; a compact step list, a quoted key or another indent is valid YAML they read past.
+            raise RuntimeError("the always-run or site-skipped job(s) %s are not laid out as this audit reads "
+                               "them (keys at four spaces, unquoted; steps a list at six)" % ", ".join(laid))
+        reading = [j for j in ALWAYS_RUN_JOBS + SITE_SKIPPED_JOBS if j in jobs and _reads_needs(jobs[j])]
+        if reading:
+            # Neither job set is in the allowlist's measurement, so a job or step skipped on full,
+            # oid4vp or sdk would leave its reads unmeasured on the changes that skip it; only the
+            # site measurement reads these jobs, and it reads every step skipped on beyond_site.
+            # 2026-11-17, in review: a condition over two lines, a filter
+            # (`needs.*`), or an output passed through env skips as surely as a one-line `if:`, so
+            # every read of needs counts. Only a gate's own gate step reads its needs, and
+            # scripts/polaris-ci-gate.py judges what it reads.
+            raise RuntimeError("the always-run or site-skipped job(s) %s read their needs other than as "
+                               "`if: %s`" % (", ".join(reading), _SITE_COND))
+    return jobs
+
+
+def _skippable_ci_text(root: pathlib.Path, strict: bool = True) -> str:
+    """ci.yml as the skippable jobs run it: their blocks only. The always-run and site-skipped
+    jobs run on every allowlisted change and may read anything on the list, and the trigger
+    section's paths-ignore names files without reading them."""
+    jobs = _ci_jobs(root, strict)
+    return "\n".join(b for j, b in jobs.items() if j not in ALWAYS_RUN_JOBS + SITE_SKIPPED_JOBS)
+
+
+def _site_skipped_ci_text(root: pathlib.Path, strict: bool = True) -> str:
+    """ci.yml as a site-only change skips it: every job but the always-run ones, and each step of
+    an always-run job that is skipped on beyond_site."""
+    jobs = _ci_jobs(root, strict)
+    parts = [b for j, b in jobs.items() if j not in ALWAYS_RUN_JOBS]
+    parts += [s for j, b in jobs.items() if j in ALWAYS_RUN_JOBS for s in _steps(b)
+              if _SITE_COND in _conditions(s, _STEP_KEY)]
+    return "\n".join(parts)
 
 
 #: A job that calls a workflow of this repository (`uses: ./.github/workflows/x.yml`).
 _CALLS = re.compile(r"(?m)^\s+uses:\s*['\"]?\./(\.github/workflows/[\w.-]+\.ya?ml)['\"]?(?=\s|$)")
 
 
-def called_workflows(root: pathlib.Path, strict: bool = True) -> list:
-    """The workflows the skippable jobs call, and the ones those call in turn. A called
-    workflow's jobs run as the job that calls it, so its whole text is skippable code
-    (2026-10-21: the image CVE scan's steps moved into one). One that is not there is listed
-    all the same: the audit reports it rather than measuring nothing."""
-    seen, todo = [], _CALLS.findall(_skippable_ci_text(root, strict))
+def called_workflows(root: pathlib.Path, strict: bool = True, text: str | None = None) -> list:
+    """The workflows the skippable jobs call (or the jobs `text` holds), and the ones those call
+    in turn. A called workflow's jobs run as the job that calls it, so its whole text is
+    skippable code (2026-10-21: the image CVE scan's steps moved into one). One that is not there
+    is listed all the same: the audit reports it rather than measuring nothing."""
+    seen, todo = [], _CALLS.findall(_skippable_ci_text(root, strict) if text is None else text)
     while todo:
         rel = todo.pop(0)
         if rel in seen or rel == CI_YML:
@@ -809,9 +1055,55 @@ def audit(root: pathlib.Path = ROOT, out=sys.stdout) -> list:
                 if (here, name) in modules:
                     problems.append("%s is declared always-run-only or not run, but %s imports it"
                                     % (modules[(here, name)], path))
-    print("audit: %d allowlisted file(s) under %d entr(ies), against %d file(s) of skippable code: %s"
-          % (len(candidates), len(ALLOWLIST), len(code), "%d problem(s)" % len(problems) if problems else "clean"),
-          file=out)
+    # The site-only class (2026-11-17). Every site-only path is on the allowlist, so a site-only
+    # change skips at least what an allowlisted one does; no file a site-skipped job may run names
+    # one; and the jobs a site-only change still runs do the work the skipped ones did.
+    site = [p for p in files if site_only(p)]
+    if not site:
+        problems.append("no tracked file is site-only, so the site measurement covers nothing")
+    problems += ["%s is site-only but not on the allowlist" % p for p in site if not allowlisted(p)]
+    site_code = site_skipped_code(files, root)
+    for rel in called_workflows(root, text=_site_skipped_ci_text(root)):
+        if rel not in fset:
+            problems.append("a site-skipped job calls %s, which is not tracked, so what it runs is unmeasured" % rel)
+    site_texts = {CI_YML: _site_skipped_ci_text(root)}
+    for path, where in sorted(references(root, site_code, site, site_texts).items()):
+        problems.append("%s is site-only but %s names it" % (path, ", ".join(where[:3])))
+    jobs = _ci_job_blocks((root / CI_YML).read_text(encoding="utf-8"))
+    for job, needles in SITE_ONLY_RESTS_ON.items():
+        label = "invariant checks" if job == "invariants" else job
+        if job not in ALWAYS_RUN_JOBS:
+            problems.append("SITE_ONLY_RESTS_ON names %s, which is not an always-run job" % job)
+        block = jobs.get(job, "")
+        if re.search(r"(?m)^    (?:if|continue-on-error|defaults|env):", block):
+            problems.append("the %s job carries an `if:`, a `continue-on-error:`, `defaults:` or `env:`, so what "
+                            "a site-only change relies on may not run as pinned, or may fail without failing the "
+                            "job" % label)
+        if any(re.search(r"\bGITHUB_(?:ENV|PATH)\b", l) for l in block.splitlines()
+               if not l.lstrip().startswith("#")):
+            # 2026-11-17, in review: a step that writes either changes what every
+            # later step runs in, the pinned ones included.
+            problems.append("a line of the %s job names $GITHUB_ENV or $GITHUB_PATH, through which a step "
+                            "changes what the steps a site-only change relies on run in" % label)
+        held = {_pinned(s) for s in _steps(block)}
+        for step in needles:
+            if tuple(step) not in held:
+                # 2026-11-17, in review: a command found by its line can still be
+                # skipped, swallowed, folded into another or neutered by a flag; a step pinned whole
+                # cannot.
+                problems.append("the %s job does not hold the step `%s` as pinned, which a site-only change "
+                                "relies on" % (label, step[-1].strip()))
+    ci = "\n".join(l for l in (root / CI_YML).read_text(encoding="utf-8").splitlines()
+                   if not l.lstrip().startswith("#")) + "\n"
+    env = re.findall(r"(?ms)^env:[ \t]*\n(.*?)(?=^\S|\Z)", ci)
+    if (len(env) != 1 or re.search(r"(?m)^defaults:", ci)
+            or tuple(l.rstrip() for l in env[0].splitlines() if l.strip()) != WORKFLOW_ENV):
+        problems.append("%s's top-level `env:` is not WORKFLOW_ENV, or it carries `defaults:`, so the steps a "
+                        "site-only change relies on may not run as pinned" % CI_YML)
+    print("audit: %d allowlisted file(s) under %d entr(ies), against %d file(s) of skippable code; "
+          "site: %d site-only file(s) against %d file(s) of site-skipped code: %s"
+          % (len(candidates), len(ALLOWLIST), len(code), len(site), len(site_code),
+             "%d problem(s)" % len(problems) if problems else "clean"), file=out)
     return problems
 
 
@@ -833,9 +1125,13 @@ def measure(root: pathlib.Path = ROOT, out=sys.stdout) -> int:
     return 0
 
 
+#: The outputs, in the order they are written.
+OUTPUTS = ("full", "oid4vp", "sdk", "beyond_site")
+
+
 def _write_outputs(path: str, result: dict) -> None:
     with open(path, "a", encoding="utf-8") as fh:
-        for key in ("full", "oid4vp", "sdk"):
+        for key in OUTPUTS:
             fh.write("%s=%s\n" % (key, "true" if result[key] else "false"))
 
 
@@ -845,8 +1141,8 @@ def main(argv=None) -> int:
     ap.add_argument("--base", default="")
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--output", default=os.environ.get("GITHUB_OUTPUT", ""),
-                    help="append full=, oid4vp=, sdk= here (default: $GITHUB_OUTPUT)")
-    ap.add_argument("--audit", action="store_true", help="re-measure the allowlist and exit")
+                    help="append full=, oid4vp=, sdk=, beyond_site= here (default: $GITHUB_OUTPUT)")
+    ap.add_argument("--audit", action="store_true", help="re-measure the allowlist and the site class, and exit")
     ap.add_argument("--measure", action="store_true", help="print the measurement and exit")
     args = ap.parse_args(argv)
 
@@ -872,16 +1168,16 @@ def main(argv=None) -> int:
         changed = changed_paths(ROOT, args.base.strip(), args.head.strip())
     result = classify(args.event, changed, sdk_paths or ())
     if sdk_paths is None:
-        result.update(full=True, oid4vp=True, sdk=True,
+        result.update(full=True, oid4vp=True, sdk=True, beyond_site=True,
                       reason=result["reason"] + "; the SDK drill's paths are unknown, so everything runs")
     print("changes: %s" % result["reason"])
     if changed:
         for p in changed[:40]:
-            print("  %s %s" % ("allowlisted" if allowlisted(p) else "runs      ", p))
+            print("  %s %s" % ("site-only  " if site_only(p) else "allowlisted" if allowlisted(p)
+                               else "runs       ", p))
         if len(changed) > 40:
             print("  ... and %d more" % (len(changed) - 40))
-    print("changes: full=%s oid4vp=%s sdk=%s" % tuple(
-        "true" if result[k] else "false" for k in ("full", "oid4vp", "sdk")))
+    print("changes: " + " ".join("%s=%s" % (k, "true" if result[k] else "false") for k in OUTPUTS))
     if args.output:
         try:
             _write_outputs(args.output, result)

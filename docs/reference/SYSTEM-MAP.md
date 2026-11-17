@@ -100,7 +100,7 @@ polaris/
 
 **CI jobs** ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)):
 
-- `changes`: which parts of CI a change needs (`scripts/polaris-ci-changes.py`). A pull request whose every changed path is on the measured allowlist (documentation, the site, `lab/` and the like) skips the jobs that cannot read them; anything else, and every push, runs everything.
+- `changes`: which parts of CI a change needs (`scripts/polaris-ci-changes.py`). A pull request whose every changed path is on the measured allowlist (documentation, the site, `lab/` and the like) skips the jobs that cannot read them; one whose every path is a page, style, image, font, text, host rule or key file under `site/` (less the emblem an example serves and any file named as a dependency manifest or lockfile) also skips `test-core`, the coverage shards, `sdk-typescript`, `cve-scan` and `test-mdoc-drill`; anything else, and every push, runs everything.
 - `test`: the required product-suite check; it needs every job the `changes` outputs can skip, and passes only when each part succeeded or was skipped with its output saying the change does not need it (`scripts/polaris-ci-gate.py`).
 - `test-core`: the product suite against Postgres 16 and Redis; the checks layer, the constraint drill, the encrypted backup and restore round trip, the abuse drill, the performance smoke.
 - `test-coverage-shard`: the DB suites under coverage as a matrix of three shards, each keeping its coverage data.
@@ -131,9 +131,9 @@ polaris/
   material from a directory that is not the repository, with none of Polaris importable.
   Carries a negative control: a verifier that drags `psycopg2` in with it must be caught.
 - `test-oid4vp-drill`: the OpenID4VP mutation drill (every refusal in `packages/polaris-oid4vp`, inverted) as three shards, when a change touches the package, the drill, its requirements or the workflow, and on every push to `main`.
-- `test-mdoc-drill`: the mdoc verifier mutation drill (each refusal of `lab/interop/mdoc/verify_mdoc.py`'s CBOR, COSE_Sign1, MSO, device-authentication and request checks, switched off) as two shards, on every change.
+- `test-mdoc-drill`: the mdoc verifier mutation drill (each refusal of `lab/interop/mdoc/verify_mdoc.py`'s CBOR, COSE_Sign1, MSO, device-authentication and request checks, switched off) as two shards, on every change but a site-only one (see `changes`).
 - `sdk-typescript`: the TypeScript verify SDK (`sdk/typescript/`) type-checked, unit-tested, and driven through the language-agnostic conformance runner (`@noble/post-quantum` ML-DSA-65 agreeing with liboqs and OpenSSL).
-- `invariants`: the invariant layer and every check's detection test, with no database, in minutes; the required check that keeps a failing invariant from merging.
+- `invariants`: the invariant layer, every check's detection test and the link check, with no database, in minutes, on every change; the required check that keeps a failing invariant from merging.
 - `dco`: on a pull request, every commit a person made carries a Developer Certificate of Origin sign-off.
 - `osv-scan`: malicious packages and known vulnerabilities (OSV-Scanner) in each image's installed Python set and the npm and Rust lockfiles.
 - `cve-scan`: dependency CVE audit (pip-audit) plus SAST (bandit).

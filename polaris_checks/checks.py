@@ -31527,7 +31527,8 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
 
 
 #: The outputs the changes job writes, each "true" or "false" (scripts/polaris-ci-changes.py).
-_CHANGES_OUTPUTS = ("full", "oid4vp", "sdk")
+#: beyond_site since 2026-11-17: the jobs only a change wholly under site/ skips.
+_CHANGES_OUTPUTS = ("full", "oid4vp", "sdk", "beyond_site")
 
 #: What moved out of a required job on 2026-10-15, as each must still run.
 _MOVED_DRILLS = (
@@ -31684,7 +31685,10 @@ def check_ci_changes_allowlist_measured(root: pathlib.Path) -> list[Finding]:
     the change that makes a test open a document is not the change that touches the document.
     This runs the script's own audit (`--audit`): no skippable code names an allowlisted path,
     every entry matches a file, no drill input is on the list, and every script declared as run
-    only by always-run jobs is named by no skippable one.
+    only by always-run jobs is named by no skippable one. Since 2026-11-17 the same audit measures
+    the site-only class: no code a site-skipped job may run names a site-only path, and the
+    invariant checks job, which a site-only change still runs, runs the checks, their detection
+    tests and the link check.
     """
     name = "ci_changes_allowlist_measured"
     path = root / "scripts" / "polaris-ci-changes.py"
