@@ -256,15 +256,16 @@ OID4VP_INPUTS = (
 )
 
 #: The jobs that run on every change, skippable by nothing here: the classifier itself, the gates
-#: (a gate runs `if: always()`), and the invariant checks job, the sign-off, the OSV scan and the
+#: (a gate runs `if: always()`), the invariant checks job, the sign-off, the OSV scan and the
 #: product boundary, which are required checks (check_oid4vp_image also holds the image drill the
-#: product boundary runs to every run, its job carrying no `if:`). The invariant checks job runs polaris_checks and its detection tests over
-#: the whole tree (measured: they open every tracked file) and the link check, so no path is
-#: unread on any change. The coverage gate's floor steps after its gate step are skipped with its
-#: shards on a site-only change; the site measurement reads them as site-skipped.
+#: product boundary runs to every run, its job carrying no `if:`), and the package's 3.9 job, which
+#: installs from lab/interop/requirements.txt. The invariant checks job runs polaris_checks and its
+#: detection tests over the whole tree (measured: they open every tracked file) and the link check,
+#: so no path is unread on any change. The coverage gate's floor steps after its gate step are
+#: skipped with its shards on a site-only change; the site measurement reads them as site-skipped.
 ALWAYS_RUN_JOBS = (
     "changes", "test-coverage", "test-procedures", "test", "invariants", "dco", "osv-scan",
-    "product-boundary",
+    "product-boundary", "test-oid4vp-py39",
 )
 
 #: The jobs every change outside the site-only class runs (2026-11-17), whatever the allowlist says,
@@ -436,6 +437,9 @@ REVIEWED_MENTIONS = {
         "the key of the reviewed mention above, in this file's own source",
     ("scripts/polaris-ci-changes.py", "site/index.css"):
         "the key of the reviewed mention above, in this file's own source",
+    ("packages/polaris-oid4vp/test_cli.py", "README.md"):
+        "pathlib.Path(__file__).with_name(\"README.md\"): the package's own README beside the test, "
+        "which is not on the allowlist",
 }
 #: The same, for the site measurement alone (2026-11-17): mentions of SITE_SHIP_FILES in code a
 #: site-skipped job may run, each read by hand and found to open neither file of this tree. The

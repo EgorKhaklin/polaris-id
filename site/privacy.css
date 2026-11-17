@@ -14,3 +14,7 @@ p { margin: 0 0 12px; }
 a { color: var(--gold); }
 a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .foot { margin: 40px 0 0; font-size: 14px; }
+/* every link a 44 px target: the one on its own line by its box, the one inside a sentence by padding
+   that its negative margin takes back, so the line keeps its height */
+.foot a { display: inline-flex; align-items: center; min-height: 44px; }
+p:not(.foot) a { display: inline-block; padding-block: 9px; margin-block: -9px; }

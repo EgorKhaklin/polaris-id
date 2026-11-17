@@ -1,3 +1,5 @@
-# The Polaris project site. One page, no private paths.
+# The Polaris project site: no private paths.
 User-agent: *
 Allow: /
+
+Sitemap: https://polaris-id.org/sitemap.xml
