@@ -420,7 +420,7 @@ html { --gilt-hi: oklch(0.93 0.06 88); --gilt-lo: oklch(0.55 0.07 75); --hair: o
     /* the channels' names at a size a phone can read (the drawing scales them down with it): larger in its own
        units, and the long one moved to the top, above the start of its line, where it has room */
     .crossing .lb text { font-size: 21px; }
-    .crossing .lb text:nth-child(1) { translate: 0 4px; }
+    .crossing .lb text:nth-child(1) { translate: -40px 4px; }   /* clear of the sworn statement's line */
     .crossing .lb text:nth-child(3) { text-anchor: start; translate: -300px -314px; }
     .eyebrow, .slate, .act h3, .tally span, .seen, .pane .code, .foot p { font-size: 13px; }
     .eyebrow, .act h3 { line-height: 1.5; text-wrap: balance; }
