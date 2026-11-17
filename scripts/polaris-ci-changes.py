@@ -26,8 +26,8 @@ It writes four outputs for the workflow (GITHUB_OUTPUT), each "true" or "false":
   sdk          the SDK mutation drill: true when the change touches what the drill's own --changed
                mode looks at (_SDK_PATHS, read out of the drill so the two cannot disagree).
   beyond_site  the jobs only a change to the project site may skip (SITE_SKIPPED_JOBS), 2026-11-17:
-               false only when every changed path is site-only (site_only()), which implies
-               full=false. The same fail-closed rules: anything unknown says true.
+               false only when every changed path is site-only (site_only(): a file the
+               site serves, or one of the two a site change carries), which implies full=false. The same fail-closed rules: anything unknown says true.
 
 The required gate ("Polaris product test suite", scripts/polaris-ci-gate.py) reads these
 outputs back: a job it needs counts as passed when it succeeded, or when it was skipped AND
@@ -277,7 +277,8 @@ SITE_SKIPPED_JOBS = (
     "test-core", "test-coverage-shard", "sdk-typescript", "cve-scan", "test-mdoc-drill",
 )
 
-#: The site-only class (2026-11-17): a change whose every path is under site/ and of a type the
+#: The site-only class (2026-11-17): a change whose every path is one of the two files a site
+#: change carries (SITE_SHIP_FILES), or under site/ and of a type the
 #: site serves (SITE_ONLY_TYPES, or a host rule or key-directory file), less site/polaris_logo.webp,
 #: the default emblem the Yivi check-in example serves, and any file whose name says it is a
 #: dependency manifest or lockfile, which the dependency scans read. Any other file under site/
@@ -288,6 +289,12 @@ SITE_SKIPPED_JOBS = (
 #: which the invariant checks job runs on every change (SITE_ONLY_RESTS_ON).
 SITE_ONLY_DIR = "site/"
 SITE_NOT_ONLY = ("site/polaris_logo.webp",)
+#: What a site change carries beside its pages (2026-11-17): its changelog line, and the manifest
+#: its sentences are held to. Without them the class missed the site changes actually sent: each
+#: carried a changelog line. Measured like the rest: no code a site-skipped job may run opens the
+#: tree's copy of either (SITE_REVIEWED_MENTIONS records each mention read by hand); the checks,
+#: which read both, run in the invariant checks job on every change.
+SITE_SHIP_FILES = ("CHANGELOG.md", "docs/reference/claims.json")
 #: The types the site serves: pages, styles, images, fonts, text, Markdown and JSON. Besides
 #: these, a name with no dot is site-only when it is one of the host's rule files (SITE_RULE_FILES)
 #: or sits under site/.well-known/ (the OpenPGP key directory's files). A name ending otherwise, or
@@ -421,6 +428,52 @@ REVIEWED_MENTIONS = {
         "the key of the reviewed mention above, in this file's own source",
     ("scripts/polaris-ci-changes.py", "site/.well-known/"):
         "SITE_KEYS_DIR, a prefix site_only() compares paths with; this file opens no site file",
+    ("scripts/test_ci_changes.py", "site/film.css"):
+        "a path handed to the classifier; the test reads no site file",
+    ("scripts/test_ci_changes.py", "site/index.css"):
+        "a path handed to the classifier; the test reads no site file",
+    ("scripts/polaris-ci-changes.py", "site/film.css"):
+        "the key of the reviewed mention above, in this file's own source",
+    ("scripts/polaris-ci-changes.py", "site/index.css"):
+        "the key of the reviewed mention above, in this file's own source",
+}
+#: The same, for the site measurement alone (2026-11-17): mentions of SITE_SHIP_FILES in code a
+#: site-skipped job may run, each read by hand and found to open neither file of this tree. The
+#: allowlist's measurement does not read this table, so nothing here hides a read from it.
+SITE_REVIEWED_MENTIONS = {
+    ("scripts/polaris-ci-changes.py", "CHANGELOG.md"):
+        "an entry of ALLOWLIST and of SITE_SHIP_FILES, compared with changed paths; this file opens no changelog",
+    ("scripts/polaris-link-check.sh", "CHANGELOG.md"):
+        "named to be left unwalked: the link check does not follow the changelog's references; and the "
+        "invariant checks job runs the link check on every change",
+    ("scripts/polaris-release-notes.sh", "CHANGELOG.md"):
+        "read from the directory above the script's own; no job of this workflow runs the script on this tree, "
+        "and test_ship_tool runs a copy in a temporary directory beside a changelog it writes there",
+    ("scripts/polaris-release-notes.sh", "/CHANGELOG.md"):
+        "the same read, as ${ROOT}/CHANGELOG.md",
+    ("scripts/polaris-ci-changes.py", "/CHANGELOG.md"):
+        "the key of the reviewed mention above, in this file's own source",
+    ("scripts/polaris-ci-changes.py", "docs/reference/claims.json"):
+        "an entry of SITE_SHIP_FILES, compared with changed paths; this file opens no manifest",
+    ("scripts/test_ci_changes.py", "CHANGELOG.md"):
+        "a path handed to the classifier, and a file written into a temporary repository",
+    ("scripts/test_ci_changes.py", "docs/reference/claims.json"):
+        "a path handed to the classifier, and a file written into a temporary repository",
+    ("scripts/test_ship_tool.py", "CHANGELOG.md"):
+        "a changelog the test writes into its own temporary directory or scratch repository",
+    ("scripts/polaris-ci-changes.py", "docs/reference/"):
+        "an entry of ALLOWLIST, a prefix allowlisted() compares paths with; this file opens no manifest",
+    ("scripts/test_ci_changes.py", "docs/reference/"):
+        "paths handed to the classifier, and files written into a temporary repository",
+    ("scripts/test_ci_changes.py", "docs"):
+        "the same paths, their first segment",
+    ("scripts/test_compose_parse.py", "docs"):
+        "(self.root / \"docs\"): a directory of that name inside the test's temporary root",
+    ("docs/reference/openapi.yaml", "**Not"): "Markdown emphasis in a description; the document opens no file",
+    ("docs/reference/openapi.yaml", "*as"): "Markdown emphasis in a description",
+    ("docs/reference/openapi.yaml", "**Two"): "Markdown emphasis in a description",
+    ("docs/reference/openapi.yaml", "*possession*"): "Markdown emphasis in a description",
+    ("docs/reference/openapi.yaml", "**No"): "Markdown emphasis in a description",
 }
 
 
@@ -438,11 +491,15 @@ def allowlisted(path: str) -> bool:
 
 
 def site_only(path: str) -> bool:
-    """May a site-only change touch `path`? It must be under site/, of a type the site serves, not
-    the emblem an example serves, and not named as a dependency file. A strict prefix: a file
-    named "site" is not under the site."""
+    """May a site-only change touch `path`? It must be one of the two files a site change carries
+    (SITE_SHIP_FILES), or under site/, of a type the site serves, not the emblem an example
+    serves, and not named as a dependency file. A strict prefix: a file named "site" is not under
+    the site, and a path that climbs ("site/../x") is not either."""
+    if path in SITE_SHIP_FILES:
+        return True
     name = path.rsplit("/", 1)[-1]
     return bool(path.startswith(SITE_ONLY_DIR) and path not in SITE_NOT_ONLY
+                and ".." not in path.split("/")
                 and name and not name.startswith(".")
                 and (name.lower().endswith(SITE_ONLY_TYPES)
                      or ("." not in name and (name in SITE_RULE_FILES or path.startswith(SITE_KEYS_DIR))))
@@ -748,7 +805,8 @@ def code_view(path: str, src: str):
 _CONFIG_SUFFIXES = (".toml", ".cfg", ".ini", ".in", ".txt", ".json", ".jsonc")
 
 
-def references(root: pathlib.Path, code: list, candidates: list, texts=None, exact=False) -> dict:
+def references(root: pathlib.Path, code: list, candidates: list, texts=None, exact=False,
+               reviewed=None) -> dict:
     """{candidate path: [where it is named]} over the skippable code.
 
     A candidate is named when a path token of a file (see code_view) is its path, or a
@@ -759,7 +817,9 @@ def references(root: pathlib.Path, code: list, candidates: list, texts=None, exa
     prose. Globs with no literal directory, and paths assembled only from variables, are not
     seen; REVIEWED_MENTIONS records the reads of that kind found by hand. With `exact`, only a
     candidate's own path counts (whether a job runs a given script, not whether it reads a
-    directory that holds it)."""
+    directory that holds it). `reviewed` adds one measurement's own reviewed mentions to
+    REVIEWED_MENTIONS (the site measurement's: SITE_REVIEWED_MENTIONS)."""
+    known = set(REVIEWED_MENTIONS) | set(reviewed or ())
     cset = set(candidates)
     below = {}
     for c in candidates:
@@ -781,7 +841,7 @@ def references(root: pathlib.Path, code: list, candidates: list, texts=None, exa
         tokens = code_view(path, src)
         for token, joined in tokens:
             t = token.strip("()[]{}'\"`").rstrip(".,;:")
-            if not t or t in (".", "..") or (path, t) in REVIEWED_MENTIONS:
+            if not t or t in (".", "..") or (path, t) in known:
                 continue
             # "$ROOT/docs/x.md" reaches the tokenizer as "ROOT/docs/x.md", and "/opt/app/x" may be
             # a copy of the tree: every tail after a slash is read as a path too.
@@ -1026,7 +1086,7 @@ def audit(root: pathlib.Path = ROOT, out=sys.stdout) -> list:
     for path in declared:
         if path not in fset:
             problems.append("%s is declared always-run-only or not run, but is not tracked" % path)
-    for (path, _token) in REVIEWED_MENTIONS:
+    for (path, _token) in list(REVIEWED_MENTIONS) + list(SITE_REVIEWED_MENTIONS):
         if path not in fset:
             problems.append("REVIEWED_MENTIONS names %s, which is not tracked" % path)
     for path, where in sorted(references(root, code, [p for p in declared if p in fset], texts,
@@ -1059,7 +1119,7 @@ def audit(root: pathlib.Path = ROOT, out=sys.stdout) -> list:
     # change skips at least what an allowlisted one does; no file a site-skipped job may run names
     # one; and the jobs a site-only change still runs do the work the skipped ones did.
     site = [p for p in files if site_only(p)]
-    if not site:
+    if not [p for p in site if p.startswith(SITE_ONLY_DIR)]:
         problems.append("no tracked file is site-only, so the site measurement covers nothing")
     problems += ["%s is site-only but not on the allowlist" % p for p in site if not allowlisted(p)]
     site_code = site_skipped_code(files, root)
@@ -1067,7 +1127,10 @@ def audit(root: pathlib.Path = ROOT, out=sys.stdout) -> list:
         if rel not in fset:
             problems.append("a site-skipped job calls %s, which is not tracked, so what it runs is unmeasured" % rel)
     site_texts = {CI_YML: _site_skipped_ci_text(root)}
-    for path, where in sorted(references(root, site_code, site, site_texts).items()):
+    problems += ["%s is a file a site change carries, but is not tracked" % p
+                 for p in SITE_SHIP_FILES if p not in fset]
+    for path, where in sorted(references(root, site_code, site, site_texts,
+                                         reviewed=SITE_REVIEWED_MENTIONS).items()):
         problems.append("%s is site-only but %s names it" % (path, ", ".join(where[:3])))
     jobs = _ci_job_blocks((root / CI_YML).read_text(encoding="utf-8"))
     for job, needles in SITE_ONLY_RESTS_ON.items():

@@ -163,6 +163,34 @@ class WhatOnlyASiteChangeMaySkip(unittest.TestCase):
             self.assertEqual((r["full"], r["oid4vp"], r["sdk"], r["beyond_site"]), (False, False, False, False),
                              paths)
 
+    def test_what_a_site_change_carries_skips_them_too(self):
+        # The path lists of the two site changes sent on 2026-11-17: each carried its changelog
+        # line, and ran everything the allowlist does not skip. The manifest the site's sentences
+        # are held to is the other file such a change carries.
+        for paths in (["CHANGELOG.md", "site/film.css", "site/index.css"],
+                      ["CHANGELOG.md", "site/film.css", "site/index.html"],
+                      ["docs/reference/claims.json", "site/index.html"],
+                      ["CHANGELOG.md", "docs/reference/claims.json", "site/index.html"]):
+            r = classify(paths)
+            self.assertEqual((r["full"], r["oid4vp"], r["sdk"], r["beyond_site"]), (False, False, False, False),
+                             paths)
+        self.assertEqual(ch.SITE_SHIP_FILES, ("CHANGELOG.md", "docs/reference/claims.json"))
+        # The changelog beside one path of the application runs everything.
+        r = classify(["CHANGELOG.md", "polaris_web/app.py"])
+        self.assertEqual((r["full"], r["beyond_site"]), (True, True))
+        r = classify(["CHANGELOG.md", "site/index.html", "polaris_web/app.py"])
+        self.assertEqual((r["full"], r["beyond_site"]), (True, True))
+        # Only those two: a neighbour of either, or a file of the same name elsewhere, runs them.
+        for other in ("docs/reference/claims.md", "docs/reference/API.md", "docs/history/CHANGELOG-v9.md",
+                      "changelog.md", "CHANGELOG.md.orig") + tuple("lab/" + f for f in ch.SITE_SHIP_FILES):
+            self.assertFalse(ch.site_only(other), other)
+            self.assertTrue(classify(["site/index.html", other])["beyond_site"], other)
+
+    def test_a_path_that_climbs_out_of_the_site_runs_them(self):
+        for p in ("site/../scripts/x.html", "site/a/../../x.css", "site/a/../b.html", "site/.."):
+            self.assertFalse(ch.site_only(p), p)
+            self.assertTrue(classify(["site/index.html", p])["beyond_site"], p)
+
     def test_the_site_with_any_other_path_runs_them(self):
         r = classify(["site/index.html", "polaris_web/app.py"])
         self.assertEqual((r["full"], r["beyond_site"]), (True, True))
@@ -645,7 +673,7 @@ class TheSiteMeasurement(unittest.TestCase):
     """2026-11-17: no file a site-skipped job may run names a site-only path, and the jobs a
     site-only change still runs do the site's checks."""
 
-    def fixture(self, files, jobs=None, invariants=INVARIANTS, site=True, workflow=WORKFLOW):
+    def fixture(self, files, jobs=None, invariants=INVARIANTS, site=True, workflow=WORKFLOW, ship=True):
         root = pathlib.Path(tempfile.mkdtemp(prefix="polaris-ci-site-"))
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         jobs = jobs or {}
@@ -655,6 +683,8 @@ class TheSiteMeasurement(unittest.TestCase):
                 "docs/reference/API.md": "# API\n"}
         if site:
             base["site/index.html"] = "<p>x</p>\n"
+        if ship:
+            base.update({p: "x\n" for p in ch.SITE_SHIP_FILES})
         _write(root, dict(base, **files))
         return ch.audit(root, out=io.StringIO())
 
@@ -690,6 +720,52 @@ class TheSiteMeasurement(unittest.TestCase):
         kept = ("  test-coverage:\n    runs-on: x\n    steps:\n      - name: Gate\n        run: wc -l site/index.html\n")
         self.assertNotIn("site/index.html is site-only but .github/workflows/ci.yml names it",
                          self.fixture({}, jobs={"test-coverage": kept}))
+
+    def test_a_site_skipped_script_that_opens_what_a_site_change_carries_is_caught(self):
+        for target, read in (("CHANGELOG.md", "head -1 CHANGELOG.md\n"),
+                             ("docs/reference/claims.json", "jq . docs/reference/claims.json\n"),
+                             ("docs/reference/claims.json", "ls docs/reference/\n")):
+            caught = "%s is site-only but scripts/polaris-coverage.sh names it" % target
+            self.assertIn(caught, self.fixture({"scripts/polaris-coverage.sh": read}), read)
+            self.assertNotIn(caught, self.fixture({"scripts/polaris-coverage.sh": "cat docs/operator/DR.md\n"}))
+        # A job a site-only change skips, the same.
+        core = ("  test-core:\n    needs: [changes]\n    if: needs.changes.outputs.beyond_site == 'true'\n"
+                "    runs-on: x\n    steps:\n      - run: head -1 CHANGELOG.md\n")
+        self.assertIn("CHANGELOG.md is site-only but .github/workflows/ci.yml names it",
+                      self.fixture({}, jobs={"test-core": core}))
+        # Each must be there to be measured.
+        for p in ch.SITE_SHIP_FILES:
+            absent = "%s is a file a site change carries, but is not tracked" % p
+            self.assertNotIn(absent, self.fixture({}))
+            self.assertIn(absent, self.fixture({q: "x\n" for q in ch.SITE_SHIP_FILES if q != p}, ship=False))
+
+    def test_a_mention_reviewed_for_the_site_is_reviewed_for_the_site_alone(self):
+        # SITE_REVIEWED_MENTIONS excuses a mention in the site measurement, by file and token, and
+        # nowhere else: the allowlist's measurement still counts the same mention.
+        script, caught = "scripts/polaris-release-notes.sh", "CHANGELOG.md is site-only but %s names it"
+        self.assertIn((script, "CHANGELOG.md"), ch.SITE_REVIEWED_MENTIONS)
+        self.assertNotIn((script, "CHANGELOG.md"), ch.REVIEWED_MENTIONS)
+        self.assertFalse(set(ch.SITE_REVIEWED_MENTIONS) & set(ch.REVIEWED_MENTIONS))
+        root = pathlib.Path(tempfile.mkdtemp(prefix="polaris-ci-site-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        _write(root, {script: "head -1 CHANGELOG.md\n", "scripts/other.sh": "head -1 CHANGELOG.md\n",
+                      "CHANGELOG.md": "x\n"})
+        code = [script, "scripts/other.sh"]
+        self.assertEqual(ch.references(root, code, ["CHANGELOG.md"]), {"CHANGELOG.md": ["scripts/other.sh", script]})
+        self.assertEqual(ch.references(root, code, ["CHANGELOG.md"], reviewed=ch.SITE_REVIEWED_MENTIONS),
+                         {"CHANGELOG.md": ["scripts/other.sh"]})
+        # Another token of a reviewed file is still counted.
+        _write(root, {script: "head -1 docs/reference/claims.json\n", "docs/reference/claims.json": "{}\n"})
+        self.assertEqual(ch.references(root, [script], ["docs/reference/claims.json"],
+                                       reviewed=ch.SITE_REVIEWED_MENTIONS),
+                         {"docs/reference/claims.json": [script]})
+        self.assertIn(caught % "scripts/polaris-coverage.sh",
+                      self.fixture({"scripts/polaris-coverage.sh": "head -1 CHANGELOG.md\n"}))
+        # Every reviewed file is one the tree holds.
+        gone = "REVIEWED_MENTIONS names scripts/gone.sh, which is not tracked"
+        self.assertNotIn(gone, self.fixture({}))
+        with unittest.mock.patch.dict(ch.SITE_REVIEWED_MENTIONS, {("scripts/gone.sh", "CHANGELOG.md"): "x"}):
+            self.assertIn(gone, self.fixture({}))
 
     def test_the_emblem_an_example_serves_is_not_site_only(self):
         problems = self.fixture({"packages/x/app.py": 'LOGO = ROOT / "site" / "polaris_logo.webp"\n'})
