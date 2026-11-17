@@ -57,7 +57,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
-- On Safari the site's gold headline word no longer shows before it is typed, and on phones the crossing's first label no longer meets a line.
+- On Safari the site's gold headline word no longer shows before it is typed.
 - Certificate chain handling in the OpenID4VP verifier (polaris-oid4vp).
 - Negative vectors 0.4.1 (lab/interop/negative-vectors): the intermediate of `x5c-intermediate-not-ca` carries its siblings' key usage (keyCertSign, cRLSign), so cA FALSE is its one defect; in 0.4.0 it also had no keyCertSign, and a verifier that checks key usage first refused it for that. Reported by an outside verifier's run of the set. Its id and verdict are unchanged, and the other 36 vectors are byte for byte those of 0.4.0. A test now holds each `x5c` vector's chain to the property it names, against its control's, certificate by certificate. Lab only; no product change.
 - `scripts/polaris-dev-tunnel.sh` stops its cloudflared tunnel and the verifier and deletes the tunnel's log when the verifier returns (`--once` returns after one presentation), on Ctrl-C and on a TERM, as its help says; it exits with the verifier's status. Before, the verifier ran under `exec`, the cleanup never ran and the tunnel kept running: stop any `cloudflared tunnel --url http://localhost:<port>` that an earlier run left.
@@ -117,6 +117,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- The site's recovery figure gives each line its own colour and number, with a key under it that says how each one works.
 - polaris-oid4vp moves to 1.1.0: the package as this block lists it, among them the `response_code` redirect with `Verifier.redeem`, the x5c critical-extension and name-constraint checks, ASCII-only DNS names and `serve` on 127.0.0.1 by default. `Verifier.redeem` and `serve --result` are new, so the version is a minor one.
 - `check_assurance_mapping` and `scripts/polaris-assurance-mapping-drill.py` require the NIST SP 800-63 mapping's first paragraph to say Polaris is pre-pilot.
 - ROADMAP.md's Have list names IDFoundry/OID4VCgo's daily CI run of `polaris-oid4vp`. `check_roadmap_consistent` requires the protocol layer in that list and refuses a "Do not have" list.
