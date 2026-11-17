@@ -82,7 +82,8 @@ def cors_origin(value):
     compressed (`HTTPS://Wallet.Example:443` is `https://wallet.example`, `http://[0:0::1]:8080`
     is `http://[::1]:8080`), because the comparison with the header is exact. Anything else
     raises ValueError saying what to write:
-    a value that is not a string; a scheme other than http or https (`null` and an empty value
+    a value that is not a string; a comma (two origins in one value: give each origin its own
+    --cors-origin); a scheme other than http or https (`null` and an empty value
     among them); a character outside ASCII, or one the URL Standard forbids in a host (a space, a
     control character, `<`, `>`, `^`, `|` or `%`); user information, a path (a bare `/` and a `\\`
     included), a query or a fragment; no host; a port that is not a number from 0 to 65535; a
@@ -93,6 +94,8 @@ def cors_origin(value):
     if not isinstance(value, str):
         raise ValueError("%r is not an origin: an origin is a string, scheme://host[:port]"
                          % (value,))
+    if "," in value:
+        raise ValueError("%r is not one origin: give each origin its own --cors-origin" % value)
     if value == "*":
         return value
     scheme, _, rest = value.partition("://")
@@ -354,8 +357,9 @@ class _CorsHandler(_Handler):
     the tuple cors_origins_of makes; without them the handler is _Handler, and not one line here
     runs."""
 
-    #: (path, Origin) when the request being answered is one a CORS answer is due to, else None.
-    #: The listener speaks HTTP/1.0, so a handler answers one request and starts at None.
+    #: (path, Origin) when the request being answered is one a CORS answer is due to, else None:
+    #: None for an error sent before a request is parsed, and set afresh by each parse, so no
+    #: answer carries what an earlier request on the same handler was due.
     _cors_due = None
 
     def parse_request(self):
@@ -363,6 +367,7 @@ class _CorsHandler(_Handler):
         # one of CORS_METHODS' and an Origin header came with the request. An error sent before
         # then (414, a bad request line, 431) is decided by nothing, and carries nothing; with
         # no Origin header the answer is exactly the one without the option.
+        self._cors_due = None
         if not super().parse_request():
             return False
         path, origin = self.path.partition("?")[0], self.headers.get("Origin")

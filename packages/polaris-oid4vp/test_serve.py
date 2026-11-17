@@ -1008,6 +1008,7 @@ CORS_REFUSED_AT_STARTUP = (
     ("https://wallet.example\\app", "a backslash, a path to a browser"),
     ("https://wallet.example?x=1", "a query"),
     ("https://wallet.example#top", "a fragment"),
+    ("https://wallet.example,https://other.example", "two origins in one value"),
     ("https://", "no host"),
     ("https://:8443", "a port and no host"),
     ("https://wallet.example:65536", "a port above 65535"),
@@ -1372,6 +1373,31 @@ class CorsTests(CorsTestCase):
                 self.assertNotIn("Traceback", stderr.getvalue())
 
 
+class CorsDecisionPerRequestTests(CorsTestCase):
+    """The handler decides whether a CORS answer is due for each request it parses."""
+
+    def _parsed(self, origin, left_over):
+        """A handler of the listener with the option, holding `left_over` as an earlier request on
+        it would have left it, after parsing a request to the request URI with `origin` (None:
+        no Origin header)."""
+        import io
+        handler = object.__new__(self.cors.RequestHandlerClass)
+        handler._cors_due = left_over
+        handler.client_address = ("127.0.0.1", 0)
+        handler.raw_requestline = b"GET /request.jwt?state=x HTTP/1.1\r\n"
+        head = "Host: 127.0.0.1\r\n" + ("Origin: %s\r\n" % origin if origin else "")
+        handler.rfile = io.BytesIO((head + "\r\n").encode("latin-1"))
+        handler.wfile = io.BytesIO()
+        self.assertTrue(handler.parse_request())
+        return handler._cors_due
+
+    def test_a_request_without_an_origin_is_due_nothing_an_earlier_one_was(self):
+        """Twin: the same request with an Origin is due its own answer, whatever was left."""
+        left_over = ("/response", CORS_LISTED[0])
+        self.assertIsNone(self._parsed(None, left_over))
+        self.assertEqual(self._parsed(CORS_LISTED[1], left_over), ("/request.jwt", CORS_LISTED[1]))
+
+
 class CorsOriginTableTests(CorsTestCase):
     """The origin values, one row each with its reason: data in the tests, not in the published
     vector files, which hold credential refusals; this is the listener."""
@@ -1386,6 +1412,20 @@ class CorsOriginTableTests(CorsTestCase):
                 self.assertIn(repr(value), str(caught.exception))
                 with self.assertRaises(ValueError):
                     serve(self.verifier, host="127.0.0.1", port=0, cors_origins=[value])
+
+    def test_a_comma_is_told_to_give_each_origin_its_own_option(self):
+        """Checked before anything else, so two origins joined by a comma are told what to write,
+        not that the second one's `//` is a path; and a comma a host could otherwise hold is
+        refused too. Twin: each origin alone is taken."""
+        for value in ("https://wallet.example,https://other.example",
+                      "https://wallet.example,other.example", "https://wallet.example,"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as caught:
+                    cors_origin(value)
+                self.assertEqual(str(caught.exception), "%r is not one origin: give each origin "
+                                 "its own --cors-origin" % value)
+        self.assertEqual(cors_origins_of(["https://wallet.example", "https://other.example"]),
+                         ("https://wallet.example", "https://other.example"))
 
     def test_star_beside_an_origin_is_refused(self):
         """Twin: `*` alone, and `*` given twice, are taken."""

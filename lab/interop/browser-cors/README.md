@@ -30,7 +30,7 @@ fails the reads too, so the column of the listener without the option also needs
         [--without URL --without-from WHAT]
 
 `tree` starts both listeners in the process, from this checkout's `packages/polaris-oid4vp`. `url`
-reads a listener already running, such as the image, started with
+reads a listener already running, started with
 `--cors-origin http://127.0.0.1:8765`; `serve --once` prints the `state` of the request it issues.
 `--from` and `--without-from` name what each listener was started from, such as its image digest,
 and end every result line of the column that reads it. It needs Playwright's Chromium

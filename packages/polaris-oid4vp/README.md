@@ -418,13 +418,14 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 714 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 716 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 179 refusals accept and requires a
   test to fail: 175 are caught, and the 4 survivors are declared with their reasons. It also makes
-  19 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
-  the x5c leaf and name constraints, the JWE bounds, when a request closes), each of which a test
-  must catch (all 19 are; measured 2026-10-30; CI runs it on every push).
+  22 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  the x5c leaf and name constraints, the JWE bounds, when a request closes, and which origin, path
+  and cache key a CORS answer names), each of which a test must catch (all 22 are; measured
+  2026-11-17; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.
