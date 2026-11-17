@@ -1,0 +1,16 @@
+/* The styles for privacy.html, kept out of the page so the site's Content-Security-Policy
+   (site/_headers) can refuse inline styles. The palette lives in tokens.css; the font is
+   index.css's file, declared again here because this page does not load index.css. */
+@font-face { font-family: "Inter"; src: url("/fonts/inter.ce552fd9.woff2") format("woff2");
+             font-weight: 100 900; font-display: swap; }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { color: var(--ink-2); font: 400 16px/1.65 var(--font-sans); -webkit-font-smoothing: antialiased;
+       background: var(--ground); }
+main { max-width: 640px; margin: 0 auto; padding: 64px 16px; }
+h1 { font-size: 26px; line-height: 1.25; letter-spacing: -0.015em; font-weight: 600; color: var(--ink); margin: 0 0 24px; }
+h2 { font-size: 17px; font-weight: 600; color: var(--ink); margin: 32px 0 8px; }
+p { margin: 0 0 12px; }
+a { color: var(--gold); }
+a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.foot { margin: 40px 0 0; font-size: 14px; }
