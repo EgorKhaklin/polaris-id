@@ -54,6 +54,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Anonymity-set verification in polaris-verify and the holder wallet.
 - polaris-sdk-python and polaris-sdk-ts: a fix to the generic signed-artifact check.
 - polaris-verify's `oqs` extra requires liboqs-python 0.16.0.2 or later, and the server's lock (`polaris_web/requirements-pqc.txt`) pins 0.16.0.2: the release that fixes GHSA-w696-4vrr-x6x3.
+- polaris-oid4vp `serve`: the operator log lines it prints are hardened.
 
 ### Fixed
 
@@ -100,9 +101,13 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - docs/operator/DEPLOYMENT.md, scripts/README.md and the CI step said an edge configuration reload drops nothing, and docs/PRODUCTION-READINESS.md that it may drop one in-flight request. The window drill now judges the reload under traffic that retries a connection closed before an answer once: it fails on a request still failed after the retry, on any failure of another class (a close after the status line among them), on more retried closes than workers times reloads, and on traffic that served fewer than 40 requests (`scripts/polaris-window-traffic.py`).
 - `GET /api/v1/federation-manifest/<agency_id>` publishes each signed attestation with `attesting_agency_id` and `algorithm`, two of its signed fields (WIRE-SPEC 3.14), so polaris-verify, polaris-sdk-python and polaris-sdk-ts verify the edge; without them every signed edge the route published was refused. The long-term-validation evidence a signed document carries includes the same manifest.
 - lab/EXTERNAL-NOUNS.md listed the FIDES organization and relying-party catalogs as proposed; both merged Polaris's entries on 2026-10-06 (FIDEScommunity/fides-organization-catalog#21, FIDEScommunity/fides-rp-catalog#15).
+- polaris-oid4vp `Verifier` raises `ValueError` for an empty `claims` or `vct_values`, a `vct_values` entry that is not a non-empty string, and either one given as a bare string, instead of signing a DCQL query built from them (OpenID4VP 1.0 section 6.1).
 
 ### Added
 
+- polaris-oid4vp `serve --once --rearm` starts the next request, with the same specification, when the current one ends (an answer about it at the response URI, accepted, refused or a wallet's error response, or the end of its lifetime, which a timer notices) and prints its parameters as `--once` does; `--result` then describes the current request, adds `request` and keeps the one that ended as `previous`.
+- polaris-oid4vp `serve --control-token-file FILE` adds `POST /control/request` on the listener: with `Authorization: Bearer <token>` it starts a request, optionally with its own `claims` and `vct`, and answers 201 with its launch links; each request it starts ends at an answer, accepted, refused or a wallet's error response, or when it expires; at most 64 requests outstanding (429 beyond), no CORS headers on the path, 401 with no body for a missing or wrong token; refused with `--rearm`.
+- polaris-oid4vp `Verifier.new_request(claims=..., vct_values=...)`: one request asks for its own claims and credential types in place of the verifier's, and its answer is judged by them; a bare string, an empty list or a credential type that is not a non-empty string raises `ValueError` and no request is made.
 - polaris-oid4vp `serve --cors-origin ORIGIN` (repeatable, or `*` alone) answers a wallet that runs in a browser page at that origin: the answers to its requests to `/request.jwt` and `/response`, refusals included, carry `Access-Control-Allow-Origin` and `Vary: Origin`, and their preflight is answered; `serve(cors_origins=...)` does the same for a caller of the library. Without it no answer changes. Asked for in rcbj/id-proto-debugger #423.
 - polaris-oid4vp `Verifier(accept_vp_token_as_json_string=True)` reads a `vp_token` that a wallet sends in the `direct_post.jwt` payload as a JSON string holding the object (the swiyu Sandbox Wallet 1.19.0 for iOS does) as that object, once and under the payload's depth and size bounds, held to every rule the object form is; a verdict reached after that read, accepted or refused, carries `vp_token_from_string`. Off by default.
 - Negative vectors 0.5.0: 33 of the 34 SD-JWT VC negatives carry a repaired twin, the same presentation with its one defect put back, which a correct verifier accepts; suggested by Neil Berkman (Attesto).

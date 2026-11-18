@@ -1251,12 +1251,14 @@ class PinTests(unittest.TestCase):
         def names(fn):
             return list(inspect.signature(fn).parameters)
         self.assertEqual(names(Verifier._request_object), ["self", "session", "wallet_nonce"])
-        self.assertEqual(names(Verifier._dcql_query), ["self"])
+        # the lab calls it with none: its new_request takes no per-request claims or types
+        self.assertEqual(names(Verifier._dcql_query), ["self", "claims", "vct_values"])
         self.assertEqual(names(Verifier._single_presentation), ["self", "vp_token"])
         self.assertEqual(names(Verifier._read_vp_token), ["self", "member"])
         self.assertEqual(names(Verifier.handle_direct_post), ["self", "form"])
         self.assertEqual(names(Verifier.request_object), ["self", "state", "wallet_nonce", "wallet_metadata"])
-        self.assertEqual(names(Verifier.new_request), ["self", "transaction_data"])
+        # the lab's override takes transaction_data only and passes the parent nothing
+        self.assertEqual(names(Verifier.new_request), ["self", "transaction_data", "claims", "vct_values"])
         self.assertEqual(names(Verifier.redeem), ["self", "response_code", "state"])
         self.assertEqual(names(Verifier.authorization_request_params), ["self", "session"])
         self.assertEqual(names(parent._sign_es256), ["key", "header", "claims"])
@@ -1274,7 +1276,7 @@ class PinTests(unittest.TestCase):
         self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)', inspect.getsource(sdjwt._revocation_state))
         # the response path the lab sits in front of: it decrypts, then asks _single_presentation
         source = inspect.getsource(Verifier.handle_direct_post)
-        for fragment in ("decrypt_response(token, candidate.enc_key)", "self._single_presentation(self._read_vp_token(body.get(\"vp_token\")))",
+        for fragment in ("_open_response(compact, candidate.enc_key)", "self._single_presentation(self._read_vp_token(body.get(\"vp_token\")))",
                          "status_resolver=self.status_resolver", "expected_audience=self.client_id"):
             self.assertIn(fragment, source)
 

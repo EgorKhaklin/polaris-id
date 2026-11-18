@@ -228,6 +228,73 @@ class VerifierTestCase(unittest.TestCase):
         return session, status, body
 
 
+class AVerifierAsksForAtLeastOneClaimAndOneTypeTests(unittest.TestCase):
+    """OpenID4VP 1.0 section 6.1: a credential query's `claims` is "A non-empty array of objects".
+    A verifier built with no claim, or with no credential type, or with a type that is not a
+    non-empty string, or with either given as a bare string, is refused when it is built, instead
+    of signing a DCQL query built from them (OpenID4VP 1.0 section 6.1)."""
+
+    def build(self, **kw):
+        cert_pem, key_pem = _client_chain()
+        return Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response",
+                        issuer_jwks=[Wallet().issuer_jwk], **kw)
+
+    def test_a_verifier_with_no_claim_is_refused(self):
+        for claims in ([], ()):
+            with self.subTest(claims=claims):
+                with self.assertRaises(ValueError):
+                    self.build(claims=claims)
+
+    def test_a_verifier_with_no_credential_type_is_refused(self):
+        for vct_values in ([], ()):
+            with self.subTest(vct_values=vct_values):
+                with self.assertRaises(ValueError):
+                    self.build(vct_values=vct_values)
+
+    def test_a_null_credential_type_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build(vct_values=[None])
+
+    def test_an_empty_string_credential_type_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build(vct_values=[""])
+
+    def test_a_credential_type_that_is_not_a_string_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build(vct_values=[1])
+
+    def test_a_null_beside_a_good_credential_type_is_refused(self):
+        # Every entry is held to the rule, not one of them: this list once signed
+        # meta.vct_values [null, "urn:eudi:pid:1"] and a PID answered it.
+        with self.assertRaises(ValueError):
+            self.build(vct_values=[None, "urn:eudi:pid:1"])
+
+    def test_an_empty_string_beside_a_good_credential_type_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build(vct_values=["", "urn:eudi:pid:1"])
+
+    def test_claims_given_as_a_string_is_refused(self):
+        # It was taken one character at a time: claims g, i, v, e, n, ...
+        with self.assertRaises(ValueError) as caught:
+            self.build(claims="given_name")
+        self.assertIn("claims", str(caught.exception))
+
+    def test_vct_values_given_as_a_string_is_refused(self):
+        # It was taken one character at a time: meta.vct_values u, r, n, :, ...
+        with self.assertRaises(ValueError) as caught:
+            self.build(vct_values="urn:eudi:pid:1")
+        self.assertIn("vct_values", str(caught.exception))
+
+    def test_one_claim_and_one_credential_type_are_enough(self):
+        verifier = self.build(claims=["given_name"], vct_values=["urn:example:other:1"])
+        _, jar = verifier.new_request()
+        query = Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]
+        self.assertEqual(query["claims"], [{"path": ["given_name"]}])
+        self.assertEqual(query["meta"]["vct_values"], ["urn:example:other:1"])
+
+
 class PidWallet(Wallet):
     """A wallet holding an EUDI-PID-shaped credential. `age_equal_or_over` is an object whose
     statements are each selectively disclosable, as the PID Rulebook issues it, so a wallet can
@@ -333,19 +400,19 @@ class NestedClaimTests(unittest.TestCase):
 
     def test_the_object_without_the_statement_does_not_answer(self):
         _, status, verdict = self.exchange(PidWallet(disclose=(), names=()), [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
 
     def test_a_false_statement_is_not_the_value_asked_for(self):
         wallet = PidWallet(ages=(("18", False),), disclose=("18",), names=())
         _, status, verdict = self.exchange(wallet, [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("a value the request does not accept", verdict.reason)
 
     def test_a_value_of_another_type_is_not_the_value_asked_for(self):
         # DCQL compares type and value: 1 is not true, although Python says 1 == True.
         wallet = PidWallet(ages=(("18", 1),), disclose=("18",), names=())
         _, status, verdict = self.exchange(wallet, [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
 
     def test_without_values_the_disclosed_statement_answers_whatever_it_says(self):
         wallet = PidWallet(ages=(("18", False),), disclose=("18",), names=())
@@ -377,13 +444,13 @@ class OverDisclosureTests(unittest.TestCase):
 
     def test_a_claim_the_request_did_not_select_is_refused(self):
         _, status, verdict = self.exchange(PidWallet(disclose=("18",)), [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("did not select", verdict.reason)
         self.assertIn("'given_name'", verdict.reason)
 
     def test_an_array_element_the_request_did_not_select_is_refused(self):
         _, status, verdict = self.exchange(NationalityWallet(), ["given_name"])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("did not select", verdict.reason)
         self.assertIn("nationalities", verdict.reason)
 
@@ -399,7 +466,7 @@ class OverDisclosureTests(unittest.TestCase):
     def test_a_statement_beside_the_one_asked_for_is_refused(self):
         _, status, verdict = self.exchange(PidWallet(disclose=("18", "65"), names=()),
                                            [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("'age_equal_or_over.65'", verdict.reason)
 
     def test_the_object_a_requested_member_is_reached_through_is_not_extra(self):
@@ -546,11 +613,20 @@ class _EtsiProfile(unittest.TestCase):
         """The refusal's message, after asserting it names each of `says`. Every refusal test
         names its requirement: one that asserted ValueError alone would pass on another rule's
         refusal, and could not see this rule's absence."""
-        with self.assertRaises(VerifierInfoError) as caught:
+        try:
             self.verifier(verifier_info, **kw)
+        except VerifierInfoError as exc:
+            caught = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            # 2026-11-18: assertRaises let another exception through as an ERROR, which says
+            # only that something crashed; the mutation drill reads a red of ERRORs alone as
+            # not caught. Another exception escaping is the refusal missing.
+            self.fail("%r escaped where VerifierInfoError is the refusal" % (exc,))
+        else:
+            self.fail("nothing was refused")
         for text in says:
-            self.assertIn(text, str(caught.exception))
-        return str(caught.exception)
+            self.assertIn(text, caught)
+        return caught
 
 
 class EtsiVerifierInfoTests(_EtsiProfile):
@@ -1308,7 +1384,7 @@ class RevocationReachesTheOperatorTests(unittest.TestCase):
         status, _, verdict = v.handle_direct_post(
             self.wallet.respond(jar, status=self.STATUS))
         # A checked INVALID is refused on the wire (2026-10-01); it was answered 200.
-        self.assertEqual((status, verdict.code), (400, "revoked"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "revoked"))
         self.assertEqual(asked, [("https://issuer.example/sl/1", 5, "https://issuer.example")])
         self.assertTrue(verdict.revocation["checked"])
         self.assertEqual(verdict.revocation["meaning"], "INVALID")
@@ -1364,7 +1440,7 @@ class TheRequestIsWhatIsAnsweredTests(unittest.TestCase):
         v = self._verifier(claims=("given_name", "family_name", "birthdate"))
         _, jar = v.new_request()
         status, _, verdict = v.handle_direct_post(self.wallet.respond(jar))
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("birthdate", verdict.reason)
 
     def test_a_request_past_its_lifetime_is_not_served(self):
@@ -1609,7 +1685,7 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         to exercise is never entered. Coverage said so.
 
         So the window is held open deliberately: both threads are made to sit inside
-        `decrypt_response`, after the snapshot and before the lock, until both have arrived.
+        `_open_response`, after the snapshot and before the lock, until both have arrived.
         The refusal is then asserted BY NAME, because "one of them got a 400" is true of the
         wrong reason too.
         """
@@ -1621,17 +1697,17 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         form = self.wallet.respond(jar)
         results = []
         inside = threading.Barrier(2, timeout=10)
-        real_decrypt = verifier_module.decrypt_response
+        real_open = verifier_module._open_response
 
-        def decrypt_then_wait(token, key):
-            body = real_decrypt(token, key)
+        def open_then_wait(compact, key):
+            body = real_open(compact, key)
             inside.wait()
             return body
 
         def race():
             results.append(self.verifier.handle_direct_post(form))
 
-        verifier_module.decrypt_response = decrypt_then_wait
+        verifier_module._open_response = open_then_wait
         try:
             threads = [threading.Thread(target=race) for _ in range(2)]
             for t in threads:
@@ -1639,7 +1715,7 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
             for t in threads:
                 t.join(timeout=15)
         finally:
-            verifier_module.decrypt_response = real_decrypt
+            verifier_module._open_response = real_open
 
         statuses = sorted(status for status, _, _ in results)
         self.assertEqual(statuses, [200, 400],
@@ -1647,6 +1723,55 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         loser = [v for status, _, v in results if status == 400][0]
         self.assertIn("already been answered", loser.reason)
 
+
+
+class AResponseIsDecodedOnceTests(VerifierTestCase):
+    """A response at the response URI is tried against every open request's key, because the
+    `state` that would name its request is inside the ciphertext. Only the key agreement and the
+    tag depend on the key, so the response's segments are decoded once, whatever the number of
+    open requests."""
+
+    OPEN = 3
+
+    def post_counting(self, form):
+        """Post `form`; returns the answer and how often its protected header and its ciphertext
+        were base64url-decoded on the way."""
+        from unittest import mock
+
+        from polaris_oid4vp import jwe as jwe_module
+
+        protected, _, _, ciphertext, _ = form["response"][0].split(".")
+        real = jwe_module.b64u_decode
+        seen = []
+
+        def counting(segment):
+            seen.append(segment)
+            return real(segment)
+
+        with mock.patch.object(jwe_module, "b64u_decode", counting):
+            answer = self.verifier.handle_direct_post(form)
+        return answer, seen.count(protected), seen.count(ciphertext)
+
+    def test_an_answer_to_the_newest_of_three_open_requests_is_decoded_once(self):
+        jars = [self.verifier.new_request()[1] for _ in range(self.OPEN)]
+        (status, _, verdict), headers, ciphertexts = self.post_counting(
+            self.wallet.respond(jars[-1]))
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertEqual((headers, ciphertexts), (1, 1))
+
+    def test_a_response_no_open_request_can_open_is_decoded_once(self):
+        for _ in range(self.OPEN):
+            self.verifier.new_request()
+        cert_pem, key_pem = _client_chain()
+        other = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                         request_uri="https://verifier.test/request.jwt",
+                         response_uri="https://verifier.test/response",
+                         issuer_jwks=[self.wallet.issuer_jwk])
+        _, jar = other.new_request()
+        (status, _, verdict), headers, ciphertexts = self.post_counting(self.wallet.respond(jar))
+        self.assertEqual(status, 400)
+        self.assertIn("did not decrypt under any outstanding", verdict.reason)
+        self.assertEqual((headers, ciphertexts), (1, 1))
 
 
 class HeldOutTransportTests(VerifierTestCase):
@@ -2092,12 +2217,12 @@ class ATokenTooLongIsMeasuredOnceTests(VerifierTestCase):
         jars = [self.verifier.new_request()[1] for _ in range(5)]
         head, _, rest = self.wallet.respond(jars[0])["response"][0].partition(".")
         token = head + "." + rest + "A" * MAX_COMPACT_CHARS
-        tried, real = [], module.decrypt_response
+        tried, real = [], module._open_response
 
-        def counted(token, key):
+        def counted(compact, key):
             tried.append(key)
-            return real(token, key)
-        with mock.patch.object(module, "decrypt_response", counted):
+            return real(compact, key)
+        with mock.patch.object(module, "_open_response", counted):
             status, body, verdict = self.verifier.handle_direct_post({"response": [token]})
         self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
         self.assertIn("over the %d" % MAX_COMPACT_CHARS, verdict.reason)
@@ -2608,7 +2733,7 @@ class TransactionDataOnTheWireTests(_PayVerifier):
     def test_a_jti_answers_once_across_requests(self):
         self.assertEqual(self.exchange(kb={"jti": "one-and-the-same"})[0], 200)
         status, _, verdict = self.exchange(kb={"jti": "one-and-the-same"})
-        self.assertEqual((status, verdict.code), (400, "ts12_jti"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "ts12_jti"))
 
     def test_a_presentation_under_another_query_id_is_refused(self):
         _, jar = self.v.new_request(transaction_data=[RAW_PAYMENT])
@@ -2885,3 +3010,162 @@ class AnEntryNamingTwoPresentedCredentialsTests(unittest.TestCase):
             with self.subTest(binds=binds):
                 result = _TwoCredentials(entries).judge(binds)
                 self.assertIs(result["accepted"], accepted, result["problem"])
+
+
+class ARequestMayCarryItsOwnSpecificationTests(VerifierTestCase):
+    """`new_request(claims=..., vct_values=...)`: one request asked for something other than the
+    verifier's own, and everything about THAT request (its request object, the judging of its
+    answer, the over-asking check against a registration certificate) follows its own
+    specification, while the verifier's and every other request's are untouched."""
+
+    def _asked(self, jar):
+        return Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]
+
+    def test_the_request_object_asks_for_what_the_request_names(self):
+        _, jar = self.verifier.new_request(
+            claims=[{"path": ["age_equal_or_over", "18"], "values": [True]}],
+            vct_values=["urn:example:other:1"])
+        query = self._asked(jar)
+        self.assertEqual(query["claims"], [{"path": ["age_equal_or_over", "18"], "values": [True]}])
+        self.assertEqual(query["meta"]["vct_values"], ["urn:example:other:1"])
+
+    def test_a_request_without_them_asks_for_the_verifiers_own_and_the_verifier_is_untouched(self):
+        self.verifier.new_request(claims=["birthdate"], vct_values=["urn:example:other:1"])
+        self.assertEqual(self.verifier.claims, [(("given_name",), None), (("family_name",), None)])
+        self.assertEqual(self.verifier.vct_values, ["urn:eudi:pid:1"])
+        _, jar = self.verifier.new_request()
+        query = self._asked(jar)
+        self.assertEqual(query["claims"], [{"path": ["given_name"]}, {"path": ["family_name"]}])
+        self.assertEqual(query["meta"]["vct_values"], ["urn:eudi:pid:1"])
+
+    def test_a_claim_the_verifier_refuses_is_refused_and_no_request_is_made(self):
+        before = dict(self.verifier._sessions)
+        for claims in ([[]], [["a", 3]], [{"path": ["a"], "values": []}], [7]):
+            with self.subTest(claims=claims):
+                with self.assertRaises(ValueError):
+                    self.verifier.new_request(claims=claims)
+        self.assertEqual(self.verifier._sessions, before)
+
+    def test_a_request_asks_for_at_least_one_claim_and_one_credential_type_that_is_a_string(self):
+        for kwargs in ({"claims": []}, {"vct_values": []}, {"vct_values": [1]}, {"vct_values": [""]},
+                       {"vct_values": ["urn:example:ok", None]}):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    self.verifier.new_request(**kwargs)
+        self.assertEqual(self.verifier.outstanding(), 0)
+
+    def test_claims_given_as_a_string_is_refused_and_no_request_is_made(self):
+        # It was taken one character at a time: claims g, i, v, e, n, ...
+        with self.assertRaises(ValueError) as caught:
+            self.verifier.new_request(claims="given_name")
+        self.assertIn("claims", str(caught.exception))
+        self.assertEqual(self.verifier.outstanding(), 0)
+
+    def test_vct_values_given_as_a_string_is_refused_and_no_request_is_made(self):
+        # It was taken one character at a time: meta.vct_values u, r, n, :, ...
+        with self.assertRaises(ValueError) as caught:
+            self.verifier.new_request(vct_values="urn:eudi:pid:1")
+        self.assertIn("vct_values", str(caught.exception))
+        self.assertEqual(self.verifier.outstanding(), 0)
+
+    def test_the_answer_is_judged_by_the_requests_own_claims_and_not_the_verifiers(self):
+        # Asks for given_name only. A wallet that withholds family_name answers it, though it
+        # would not answer the verifier's own two names.
+        own, jar = self.verifier.new_request(claims=["given_name"])
+        status, _, verdict = self.verifier.handle_direct_post(
+            self.wallet.respond(jar, withhold=("family_name",)))
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertTrue(verdict.authentic)
+        # The reverse: both names disclosed satisfies the verifier's own claims and does not
+        # answer a request that selected given_name alone.
+        _, jar = self.verifier.new_request(claims=["given_name"])
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"), verdict.reason)
+        self.assertIn("family_name", verdict.reason)
+        # And the verifier's own request still wants both.
+        _, jar = self.verifier.new_request()
+        status, _, verdict = self.verifier.handle_direct_post(
+            self.wallet.respond(jar, withhold=("family_name",)))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"), verdict.reason)
+        self.assertIn("family_name", verdict.reason)
+
+    def test_the_answer_is_judged_by_the_requests_own_credential_type(self):
+        _, jar = self.verifier.new_request(vct_values=["urn:example:other:1"])
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual(status, 400)
+        self.assertFalse(verdict.authentic)
+        _, jar = self.verifier.new_request(vct_values=["urn:example:other:1"])
+        status, _, verdict = self.verifier.handle_direct_post(
+            self.wallet.respond(jar, vct="urn:example:other:1"))
+        self.assertEqual(status, 200, verdict.reason)
+
+    def test_close_request_closes_exactly_the_one_and_says_whether_it_was_open(self):
+        first, _ = self.verifier.new_request()
+        second, _ = self.verifier.new_request()
+        self.assertTrue(self.verifier.close_request(first.state))
+        self.assertFalse(self.verifier.close_request(first.state))
+        self.assertIsNone(self.verifier.request_object(first.state))
+        self.assertIsNotNone(self.verifier.request_object(second.state))
+        self.assertEqual(self.verifier.outstanding(), 1)
+        self.assertFalse(self.verifier.is_outstanding(first.state))
+        self.assertTrue(self.verifier.is_outstanding(second.state))
+        second.created -= self.verifier.request_ttl_seconds + 1
+        self.assertFalse(self.verifier.is_outstanding(second.state))
+
+    def test_outstanding_counts_what_is_open_and_not_what_has_expired(self):
+        sessions = [self.verifier.new_request()[0] for _ in range(3)]
+        self.assertEqual(self.verifier.outstanding(), 3)
+        sessions[0].created -= self.verifier.request_ttl_seconds + 1
+        self.assertEqual(self.verifier.outstanding(), 2)
+
+    def test_what_an_answer_was_about_is_known_to_the_thread_that_asked(self):
+        session, jar = self.verifier.new_request()
+        self.assertIsNone(self.verifier.attributed_request())
+        self.verifier.handle_direct_post({"response": ["not.a.compact.jwe.token"]})
+        self.assertIsNone(self.verifier.attributed_request(), "garbage was about no request")
+        self.verifier.handle_direct_post(self.wallet.respond(jar, nonce="wrong"))
+        self.assertEqual(self.verifier.attributed_request(), session.state)
+        self.verifier.handle_direct_post(self.wallet.respond_error(jar))
+        self.assertEqual(self.verifier.attributed_request(), session.state)
+        self.verifier.handle_direct_post({"response": ["not.a.compact.jwe.token"]})
+        self.assertIsNone(self.verifier.attributed_request(), "a later call left the earlier one")
+        self.verifier.request_object(session.state)
+        self.assertEqual(self.verifier.attributed_request(), session.state)
+        self.verifier.request_object("nonsense")
+        self.assertIsNone(self.verifier.attributed_request())
+        # An answer to a closed request is about no outstanding one.
+        self.verifier.close_request(session.state)
+        self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertIsNone(self.verifier.attributed_request())
+
+
+class ARequestsOwnSpecificationIsHeldToTheRegistrationCertificateTests(_EtsiProfile):
+    """Under the profile, construction holds the verifier's own request to the registration
+    certificate it carries. A request with a specification of its own is held to it too, by the
+    same refusal, before it is made: otherwise the startup line saying the request asks for no
+    more than the certificate registers would stop being true the moment one asked for more."""
+
+    def setUp(self):
+        self.v = self.verifier([_registrar(), _certificate()])
+
+    def test_a_request_asking_beyond_the_certificate_is_refused_as_construction_refuses_it(self):
+        with self.assertRaises(VerifierInfoError) as caught:
+            self.v.new_request(claims=["given_name", "birthdate"])
+        self.assertIn("the over-asking check refuses this request", str(caught.exception))
+        self.assertIn('asks for the claim path ["birthdate"]', str(caught.exception))
+        self.assertEqual(self.v.outstanding(), 0, "a request was made")
+        with self.assertRaises(VerifierInfoError) as caught:
+            self.v.new_request(vct_values=["urn:example:other:1"])
+        self.assertIn("the over-asking check refuses this request", str(caught.exception))
+        self.assertEqual(self.v.outstanding(), 0)
+
+    def test_a_request_asking_for_no_more_than_the_certificate_registers_is_made(self):
+        _, jar = self.v.new_request(claims=["given_name"])
+        self.assertEqual(Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["claims"],
+                         [{"path": ["given_name"]}])
+        self.assertEqual(self.v.outstanding(), 1)
+
+    def test_without_the_profile_a_request_may_ask_for_what_it_likes(self):
+        v = self.verifier([_registrar(), _certificate()], profile=None)
+        _, jar = v.new_request(claims=["given_name", "birthdate"])
+        self.assertEqual(len(Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["claims"]), 2)
