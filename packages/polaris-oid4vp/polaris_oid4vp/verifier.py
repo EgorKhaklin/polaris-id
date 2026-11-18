@@ -991,6 +991,11 @@ class Verifier:
         """
         entries = (() if transaction_data is None
                    else transaction_data_entries(transaction_data, (self.query_id,)))
+        # A string is iterable, and was taken one character at a time, as the constructor's was.
+        if isinstance(claims, str):
+            raise ValueError("claims is a list of claims, not a string")
+        if isinstance(vct_values, str):
+            raise ValueError("vct_values is a list of credential types, not a string")
         asked_claims = asked_types = None
         if claims is not None:
             asked_claims = [claim_query(c) for c in claims]

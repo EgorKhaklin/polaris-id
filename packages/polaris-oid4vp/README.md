@@ -371,6 +371,10 @@ request's credential query (`--credential-query-id`, default `pid`), and a TS12 
 (`urn:eudi:sca:payment:1`) must satisfy TS12's own JSON Schema for it, or the request is refused
 before it is sent. A request without `transaction_data` is unchanged.
 
+A request may also ask for its own claims and credential types in place of the verifier's,
+`Verifier.new_request(claims=[...], vct_values=[...])`, each as the constructor takes them, and its
+answer is judged by them; a bare string or an empty list raises `ValueError` and no request is made.
+
 The presentation's key-binding JWT must then carry:
 
 - `transaction_data_hashes`: base64url(HASH(the ASCII bytes of each string as sent)), never of the
@@ -498,7 +502,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 817 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 819 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 179 refusals accept and requires a

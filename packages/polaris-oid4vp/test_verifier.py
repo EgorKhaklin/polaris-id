@@ -3045,6 +3045,20 @@ class ARequestMayCarryItsOwnSpecificationTests(VerifierTestCase):
                     self.verifier.new_request(**kwargs)
         self.assertEqual(self.verifier.outstanding(), 0)
 
+    def test_claims_given_as_a_string_is_refused_and_no_request_is_made(self):
+        # It was taken one character at a time: claims g, i, v, e, n, ...
+        with self.assertRaises(ValueError) as caught:
+            self.verifier.new_request(claims="given_name")
+        self.assertIn("claims", str(caught.exception))
+        self.assertEqual(self.verifier.outstanding(), 0)
+
+    def test_vct_values_given_as_a_string_is_refused_and_no_request_is_made(self):
+        # It was taken one character at a time: meta.vct_values u, r, n, :, ...
+        with self.assertRaises(ValueError) as caught:
+            self.verifier.new_request(vct_values="urn:eudi:pid:1")
+        self.assertIn("vct_values", str(caught.exception))
+        self.assertEqual(self.verifier.outstanding(), 0)
+
     def test_the_answer_is_judged_by_the_requests_own_claims_and_not_the_verifiers(self):
         # Asks for given_name only. A wallet that withholds family_name answers it, though it
         # would not answer the verifier's own two names.
