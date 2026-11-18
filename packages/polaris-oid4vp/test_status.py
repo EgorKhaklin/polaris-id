@@ -235,12 +235,18 @@ class RefusalsTests(unittest.TestCase):
         ]
         for label, tok in cases:
             with self.subTest(case=label):
-                v = decide(tok, issuer_key_verify=accept)
-                self.assertFalse(v["checked"])
+                self.assertFalse(self._never_raises(tok)["checked"])
         for label, idx in (("negative", -1), ("boolean", True), ("string", "1"), ("float", 1.5)):
             with self.subTest(index=label):
-                v = decide(token(p), index=idx, issuer_key_verify=accept)
-                self.assertFalse(v["checked"])
+                self.assertFalse(self._never_raises(token(p), index=idx)["checked"])
+
+    def _never_raises(self, tok, **kw):
+        # 2026-11-18: an exception here was an ERROR, which says only that something crashed;
+        # the mutation drill reads a red of ERRORs alone as not caught. It is the promise broken.
+        try:
+            return decide(tok, issuer_key_verify=accept, **kw)
+        except Exception as exc:  # noqa: BLE001
+            self.fail("decide raised %r" % (exc,))
 
 
 class HostileJsonTests(unittest.TestCase):
@@ -414,17 +420,26 @@ class PrimitiveRefusalsTests(unittest.TestCase):
     whole package suite green, because every caller also refuses the malformed list for some
     later reason; the primitive's own promise was never asserted."""
 
+    def refuses(self, call, msg):
+        # 2026-11-18: assertRaises let another exception through as an ERROR. The primitive's
+        # refusal is ValueError; anything else escaping is that refusal missing.
+        try:
+            call()
+        except ValueError:
+            return
+        except Exception as exc:  # noqa: BLE001
+            self.fail("%r: %r escaped where ValueError is the refusal" % (msg, exc))
+        self.fail("%r: nothing was refused" % (msg,))
+
     def test_a_status_value_at_an_unknown_width_is_refused(self):
         self.assertEqual(S.status_at(b"\xb9", 0, 1), 1)
         for bits in (0, 3, 16, None, "1"):
-            with self.assertRaises(ValueError, msg=bits):
-                S.status_at(b"\xb9", 0, bits)
+            self.refuses(lambda bits=bits: S.status_at(b"\xb9", 0, bits), bits)
 
     def test_base64url_that_does_not_decode_is_refused(self):
         self.assertEqual(S._b64u("AQI", "list"), b"\x01\x02")
         for bad in ("a", "ab$c"):
-            with self.assertRaises(ValueError, msg=bad):
-                S._b64u(bad, "list")
+            self.refuses(lambda bad=bad: S._b64u(bad, "list"), bad)
 
     def test_a_bomb_is_refused_at_the_primitive(self):
         # The first site refuses before the bomb is built; the bomb test above asserts it by

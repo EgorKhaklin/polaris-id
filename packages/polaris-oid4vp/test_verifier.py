@@ -400,19 +400,19 @@ class NestedClaimTests(unittest.TestCase):
 
     def test_the_object_without_the_statement_does_not_answer(self):
         _, status, verdict = self.exchange(PidWallet(disclose=(), names=()), [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
 
     def test_a_false_statement_is_not_the_value_asked_for(self):
         wallet = PidWallet(ages=(("18", False),), disclose=("18",), names=())
         _, status, verdict = self.exchange(wallet, [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("a value the request does not accept", verdict.reason)
 
     def test_a_value_of_another_type_is_not_the_value_asked_for(self):
         # DCQL compares type and value: 1 is not true, although Python says 1 == True.
         wallet = PidWallet(ages=(("18", 1),), disclose=("18",), names=())
         _, status, verdict = self.exchange(wallet, [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
 
     def test_without_values_the_disclosed_statement_answers_whatever_it_says(self):
         wallet = PidWallet(ages=(("18", False),), disclose=("18",), names=())
@@ -444,13 +444,13 @@ class OverDisclosureTests(unittest.TestCase):
 
     def test_a_claim_the_request_did_not_select_is_refused(self):
         _, status, verdict = self.exchange(PidWallet(disclose=("18",)), [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("did not select", verdict.reason)
         self.assertIn("'given_name'", verdict.reason)
 
     def test_an_array_element_the_request_did_not_select_is_refused(self):
         _, status, verdict = self.exchange(NationalityWallet(), ["given_name"])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("did not select", verdict.reason)
         self.assertIn("nationalities", verdict.reason)
 
@@ -466,7 +466,7 @@ class OverDisclosureTests(unittest.TestCase):
     def test_a_statement_beside_the_one_asked_for_is_refused(self):
         _, status, verdict = self.exchange(PidWallet(disclose=("18", "65"), names=()),
                                            [self.AGE])
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("'age_equal_or_over.65'", verdict.reason)
 
     def test_the_object_a_requested_member_is_reached_through_is_not_extra(self):
@@ -613,11 +613,20 @@ class _EtsiProfile(unittest.TestCase):
         """The refusal's message, after asserting it names each of `says`. Every refusal test
         names its requirement: one that asserted ValueError alone would pass on another rule's
         refusal, and could not see this rule's absence."""
-        with self.assertRaises(VerifierInfoError) as caught:
+        try:
             self.verifier(verifier_info, **kw)
+        except VerifierInfoError as exc:
+            caught = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            # 2026-11-18: assertRaises let another exception through as an ERROR, which says
+            # only that something crashed; the mutation drill reads a red of ERRORs alone as
+            # not caught. Another exception escaping is the refusal missing.
+            self.fail("%r escaped where VerifierInfoError is the refusal" % (exc,))
+        else:
+            self.fail("nothing was refused")
         for text in says:
-            self.assertIn(text, str(caught.exception))
-        return str(caught.exception)
+            self.assertIn(text, caught)
+        return caught
 
 
 class EtsiVerifierInfoTests(_EtsiProfile):
@@ -1375,7 +1384,7 @@ class RevocationReachesTheOperatorTests(unittest.TestCase):
         status, _, verdict = v.handle_direct_post(
             self.wallet.respond(jar, status=self.STATUS))
         # A checked INVALID is refused on the wire (2026-10-01); it was answered 200.
-        self.assertEqual((status, verdict.code), (400, "revoked"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "revoked"))
         self.assertEqual(asked, [("https://issuer.example/sl/1", 5, "https://issuer.example")])
         self.assertTrue(verdict.revocation["checked"])
         self.assertEqual(verdict.revocation["meaning"], "INVALID")
@@ -1431,7 +1440,7 @@ class TheRequestIsWhatIsAnsweredTests(unittest.TestCase):
         v = self._verifier(claims=("given_name", "family_name", "birthdate"))
         _, jar = v.new_request()
         status, _, verdict = v.handle_direct_post(self.wallet.respond(jar))
-        self.assertEqual((status, verdict.code), (400, "claims"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"))
         self.assertIn("birthdate", verdict.reason)
 
     def test_a_request_past_its_lifetime_is_not_served(self):
@@ -2724,7 +2733,7 @@ class TransactionDataOnTheWireTests(_PayVerifier):
     def test_a_jti_answers_once_across_requests(self):
         self.assertEqual(self.exchange(kb={"jti": "one-and-the-same"})[0], 200)
         status, _, verdict = self.exchange(kb={"jti": "one-and-the-same"})
-        self.assertEqual((status, verdict.code), (400, "ts12_jti"))
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "ts12_jti"))
 
     def test_a_presentation_under_another_query_id_is_refused(self):
         _, jar = self.v.new_request(transaction_data=[RAW_PAYMENT])
@@ -3071,13 +3080,13 @@ class ARequestMayCarryItsOwnSpecificationTests(VerifierTestCase):
         # answer a request that selected given_name alone.
         _, jar = self.verifier.new_request(claims=["given_name"])
         status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
-        self.assertEqual((status, verdict.code), (400, "claims"), verdict.reason)
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"), verdict.reason)
         self.assertIn("family_name", verdict.reason)
         # And the verifier's own request still wants both.
         _, jar = self.verifier.new_request()
         status, _, verdict = self.verifier.handle_direct_post(
             self.wallet.respond(jar, withhold=("family_name",)))
-        self.assertEqual((status, verdict.code), (400, "claims"), verdict.reason)
+        self.assertEqual((status, getattr(verdict, "code", None)), (400, "claims"), verdict.reason)
         self.assertIn("family_name", verdict.reason)
 
     def test_the_answer_is_judged_by_the_requests_own_credential_type(self):
