@@ -478,6 +478,36 @@ The approach follows EUDIPLO's `registration_cert` configuration and ERICA's req
   list signed with the credential's own key. The resolver is given `issuer=None` for such a
   credential, so a `StatedAuthority` entry for the name in its `iss` is never found.
 
+## Experimental: mdoc (ISO/IEC 18013-5)
+
+Off by default. With `--experimental`, `serve --format mso_mdoc` asks for an mdoc and judges the
+DeviceResponse a wallet returns over `direct_post.jwt`:
+
+```bash
+polaris-oid4vp serve --pki ./pki --port 9443 --experimental --format mso_mdoc \
+  --doctype org.iso.18013.5.1.mDL --iaca-root iaca.pem \
+  --claim '["org.iso.18013.5.1","age_over_21"]=true'
+```
+
+- `--doctype` names the docType to ask for. `--iaca-root` (repeatable) is a PEM file of the IACA
+  root certificates a document's signer must chain to, each trusted for that docType. Trust comes
+  from these files only: a certificate the response carries is never a root.
+- `--claim` is a JSON array of a namespace and an element, optionally `=VALUE` (JSON) for the
+  value it must have. `--once --result FILE` names each accepted element the same way,
+  `["org.iso.18013.5.1", "age_over_21"]`.
+- A response is authentic when a document signer certificate that chains to a configured root
+  signed the Mobile Security Object, every disclosed element matches the digest that object signs
+  for it, the object is inside its validity window, and the key it names signed this session's
+  transcript, which the verifier builds from its own request (OpenID4VP 1.0, B.2.6.1).
+- A refusal names the one check that made it: `malformed`, `doctype`, `issuer_signature`,
+  `issuer_key`, `mso`, `credential_validity`, `digest`, `device_auth`, `device_key`,
+  `device_namespaces` or `device_signature`.
+- `verdict --experimental --iaca-root iaca.pem` judges a captured response to a request that
+  asked for `mso_mdoc`; `--now SECONDS` judges it as of that time.
+- In the API: `Verifier(credential_format="mso_mdoc", doctype_value="org.iso.18013.5.1.mDL",
+  iaca_roots=[mdoc.IacaRoot(pem, ["org.iso.18013.5.1.mDL"])],
+  claims=[["org.iso.18013.5.1", "age_over_21"]])`, with `mdoc` imported from `polaris_oid4vp`.
+
 ## Conformance run
 
 ```bash
@@ -499,17 +529,17 @@ package instead of the tree). A run is not a certification.
 
 ```bash
 cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verifier \
-    test_serve test_cli test_conformance_capture test_status
+    test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 833 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1008 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 179 refusals accept and requires a
-  test to fail: 175 are caught, and the 4 survivors are declared with their reasons. It also makes
-  22 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
-  the x5c leaf and name constraints, the JWE bounds, when a request closes, and which origin, path
-  and cache key a CORS answer names), each of which a test must catch (all 22 are; measured
-  2026-11-17; CI runs it on every push).
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 329 refusals accept and requires a
+  test to fail: 325 are caught, and the 4 survivors are declared with their reasons. It also makes
+  25 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
+  and cache key a CORS answer names, and the control endpoint waiting on a body it will not read),
+  each of which a test must catch (all 25 are; measured 2026-11-18; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

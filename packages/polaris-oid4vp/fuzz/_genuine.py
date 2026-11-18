@@ -41,6 +41,7 @@ def _key(label):
 ISSUER_KEY = _key("polaris-oid4vp fuzz issuer")
 HOLDER_KEY = _key("polaris-oid4vp fuzz holder")
 VERIFIER_ENC_KEY = _key("polaris-oid4vp fuzz verifier encryption")
+IACA_KEY = _key("polaris-oid4vp fuzz IACA")
 
 GIVEN, FAMILY = "Jean", "Dupont"
 

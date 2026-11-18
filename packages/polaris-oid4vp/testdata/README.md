@@ -91,3 +91,17 @@ a JWT typed `rc-wrp+jwt` signed by a throwaway P-256 key made for these files an
 registrar's. Nothing checks that signature: the profile checks no certificate's signature.
 `VerifierInfoVectorTests` judges every file through `Verifier`, and `VerifierInfoProfileServeTests`
 through `serve`.
+
+## mdoc/: three DeviceResponses a wallet library this project did not write built
+
+`mdoc/capture-pid/`, `mdoc/capture-mdl/` and `mdoc/capture-mdl-direct-post/` each hold four files of
+the capture of the same name under [`lab/interop/mdoc`](../../../lab/interop/mdoc/), byte for byte:
+`device-response.cbor`, the DeviceResponse as the wallet sent it, built by walt.id's mdoc library
+from a credential the EU reference issuer issued (2026-10-11); `openid4vp-inputs.json`, the request
+values its SessionTranscript is made from; `captured-at.txt`, the instant it was captured; and
+`iaca-root.pem`, the issuer's root.
+
+They are copies so that `test_mdoc.py` reads nothing outside the package.
+`check_oid4vp_mdoc_captures_match_the_lab` fails the build when a copy and its original differ.
+`test_mdoc.py` holds the package's CBOR decoder to cbor2 on each, and judges each at its captured
+instant.

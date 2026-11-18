@@ -4,11 +4,10 @@
 record. It moves plan 025 (verify ISO/IEC 18013-5 mdoc presentations over OpenID4VP redirects, accepted 2026-10-11) into
 `lab/strategy/` and extends it to the browser's Digital Credentials API (the DC API), which plan 025 left to a record of
 its own. State: OPEN. Lab M1 ran on 2026-10-11 and M1b on 2026-10-14 ([lab/interop/mdoc](../interop/mdoc/README.md));
-nothing in the product has changed. The next step is M2, paused from 2026-10-14 while the effort goes to a pilot and a
-design partner. Falsifiers 1 to 4 are plan 025's, written before its build and kept
-with their numbers; 5 to 9 were written before any DC API code. Outside sources (S1 to S16) were read on 2026-10-13 and
-are listed at the end. None of the tests named in this record exists yet: each is named in its unittest form,
-`Class.test_name`, so that its name is stable and says where it will live.
+M2 is in `polaris-oid4vp`, experimental and off by default (built 2026-11-16). Falsifiers 1 to 4 are plan 025's,
+written before its build and kept with their numbers; 5 to 9 were written before any DC API code. Outside sources (S1
+to S16) were read on 2026-10-13 and are listed at the end. Each test this record names is in its unittest form,
+`Class.test_name`, so that its name is stable; the tests named for M3 to M6 do not exist yet.
 
 **Qualifying reason: STRATEGIC-BUILD, not yet EXT-INTEROP.** The bet rests on three named ecosystems that chose mdoc and
 the DC API: Google Wallet (`openid4vp-v1-signed` over the DC API, which Chrome ships from 141), Apple Wallet
@@ -427,15 +426,19 @@ left without a negative.
 ### M2: `mso_mdoc` over `direct_post.jwt`
 
 **Scope.** The product verifies a DeviceResponse answering its own `mso_mdoc` query over `direct_post.jwt`, closes the
-threat model's gaps that fall to it (below), and passes the OpenID Foundation's `iso_mdl` verifier modules locally. One
+threat model's gaps that fall to it (below), and runs five of the OpenID Foundation suite's `iso_mdl` verifier modules
+locally with no failure, as its HAIP verifier plan names them at commit `daca6ad2` (read 2026-11-16): `happy-flow`,
+`request-uri-method-post`, `request-uri-fetched-twice` and `present-credential-without-status` to the suite's review
+step, where it asks for a screenshot, and `invalid-session-transcript` to its automatic pass. One
 credential query per request, as today; one document per DeviceResponse (HAIP 5.3.1: "each ISO mdoc MUST be returned in
 a separate DeviceResponse"). Off by default behind `--experimental` (M7). Not: DeviceMac, transaction data for mdoc,
-device-signed elements, mdoc revocation. When M2 merges, four sentences change, because "supports neither" would be
-false while `--help` shows `--format mso_mdoc`: README's "When to use something else" becomes "mdoc (ISO/IEC 18013-5):
-experimental in `polaris-oid4vp`, off by default, not exercised by any outside wallet or suite; the browser's Digital
-Credentials API: not supported. For either in production, Multipaz", and the package README and
-SPEC-COMPLIANCE's current-version row and OpenID4VP section say the same. When M3 merges, the DC API joins the
-experimental half.
+device-signed elements, mdoc revocation. When M2 merges, the sentences that say what the verifier reads change, because
+"supports neither" would be false while `--help` shows `--format mso_mdoc`: SPEC-COMPLIANCE's OpenID4VP section says
+"mdoc (ISO/IEC 18013-5, `mso_mdoc`) over `direct_post.jwt` is experimental and off by default", the package README
+documents the format under a heading that says experimental, and the CHANGELOG line says experimental. The README's
+"When to use something else", which this record named, left the README on 2026-10-24, and SPEC-COMPLIANCE's version
+rows describe released versions, so they change with the release that carries the format. When M3 merges, the DC API
+joins the experimental half.
 
 **Module and API.**
 - The common modules, the mutation drill change and the fuzz target.
@@ -458,10 +461,13 @@ experimental half.
 - `cli.py`: `serve --format mso_mdoc --doctype D --iaca-root PEM --experimental`; the existing `--claim` already takes a
   JSON path (`--claim '["org.iso.18013.5.1","age_over_21"]=true'`); `verdict` judges captured mdoc responses and says it
   judged them at the supplied instant.
-- `fuzz/fuzz_mdoc.py`: on every input, our decoder either refuses with `malformed` or returns cbor2's value and the same
-  tag-24 bytes; any other exception, or a value cbor2 reads differently, fails. It joins `.github/workflows/fuzz.yml`'s
-  target list and `fuzz/requirements.in` (cbor2, hash-pinned, as the oracle), and like the other targets its README row
-  records a guard removed and found: the duplicate-key check.
+- `fuzz/fuzz_mdoc.py`: on every input, our decoder either refuses (and the verdict on those bytes is `malformed`) or
+  returns cbor2's value, type for type, with the same tag-24 bytes, and the encoder writes the value back as cbor2
+  does; any other exception, or a value cbor2 reads differently, fails. The verdict on a DeviceResponse never raises,
+  and nothing authentic differs from what the document signer signed. It is in `.github/workflows/fuzz.yml`'s target
+  list and `fuzz/requirements.in` (cbor2 6.2.1, hash-pinned, as the oracle, in the strict mode the target's controls
+  hold at every start), and like the other targets its README row records a guard removed and found: with the refusal
+  of a repeated map key removed, the target failed within seconds (2026-11-16, emulated x86-64).
 - Dependencies unchanged: `cryptography>=42`. M2 needs no `cryptography` API newer than the package already uses.
 
 **Wire.** OpenID4VP 1.0 (S1): section 5 (request), 6.1 and B.2.3 to B.2.4 (DCQL), 7.2 (claims path pointer), B.2.2
@@ -598,8 +604,10 @@ named test, written first. GAP-7 is closed by saying so; GAP-8 and GAP-9 belong 
 of the mechanisms defined in ISO/IEC 18013-5 ([ISO.18013-5.second.edition])". That text is paywalled and was not read,
 none of M1's captures carries a status, and `status.py` decides Token Status Lists for SD-JWT VC only. So a revoked but
 unexpired mdoc is accepted until its MSO expires. The verdict says `unsupported_status` or `no_status_claim`, never "not
-revoked", and the README, the M5 page and this record say so. Checking mdoc status is a record of its own, opened when a
-named issuer publishes one.
+revoked", and the README, the M5 page and this record say so. Checking mdoc status is a record of its own. The OpenID
+Foundation's suite asks for it under `iso_mdl` in two modules, `present-revoked-credential` and
+`present-credential-on-identifier-list` (a status list and an identifier list, each served as a CWT; the plan at
+`daca6ad2`, read 2026-11-16), and those two are what that record has to pass.
 
 **Deferred with it: a status list signed outside the DS chain.** A PID issued on France's EUDI wallet playground points
 its MSO at a status list whose signing certificate is self-signed and chains to neither the DS nor its IACA (S16). The
@@ -611,10 +619,13 @@ signed the DS. The record that adds mdoc status starts from the test this needs,
 (`list_refused`) and the credential's revocation never `checked`. It is not an M2 test and is not counted.
 
 **External witnesses.**
-- The OpenID Foundation's suite, HAIP verifier plan, `iso_mdl` with `direct_post.jwt`: four modules, the happy flow,
-  `request_uri` by POST, `request_uri` fetched twice, and the negative "invalid session transcript" (a nonce with
-  "INVALID" appended), locally through `scripts/polaris-oid4vp-conformance-drill.py`, then hosted (S12). Its wallet
-  builds mdocs with Multipaz; the EU reference verifier witnesses those runs at its own stages, as M1b counts them.
+- The OpenID Foundation's suite, HAIP verifier plan at commit `daca6ad2`, `iso_mdl` with `direct_post.jwt`, locally
+  through `scripts/polaris-oid4vp-conformance-drill.py --credential-format iso_mdl`: five modules. `happy-flow`,
+  `request-uri-method-post`, `request-uri-fetched-twice` and `present-credential-without-status` are accepted and reach
+  the suite's review step with no failure; `invalid-session-transcript` (a nonce with "INVALID" appended) is refused at
+  the device signature and finishes PASSED; a verifier that answers 400 to everything and one that answers 200 to
+  everything are each noticed (2026-11-16, the suite from its prebuilt images). Then hosted (S12). Its wallet builds
+  mdocs with Multipaz; the EU reference verifier witnesses those runs at its own stages, as M1b counts them.
 - M1's harness (the EU reference issuer and wallet libraries with walt.id's mdoc library) against the released package,
   driven by the product's own query, with no request rewrite.
 - Multipaz on its JVM target (extending lab/interop/multipaz) and Procivis One Core's `core-server`, each presenting an
@@ -919,7 +930,7 @@ Apple Wallet, Google Wallet or age-verification attestations, until for that pat
    under that state's IACA root, presented by a named person, on a date.
 
 Until both hold, the path ships off by default behind `--experimental`; its documentation and the public surfaces carry
-the smallest true sentence, "experimental, off by default, not exercised by any outside wallet or suite" (M2 names the
+the smallest true sentence, "experimental and off by default" (M2 names the
 first such edit); the CHANGELOG records each such path as experimental. No certification is claimed for mdoc or the DC
 API: rc7's covers `sd_jwt_vc` over `direct_post.jwt`, and an `iso_mdl` certification would need a version re-tested in
 the OpenID Foundation's suite and submitted. No verifier profile for the DC API appears on the Foundation's listing, and
@@ -933,7 +944,7 @@ pass"), made stricter.
 |---|---|---|
 | `check_mdoc_dc_api_claims_are_gated`, with its detection test in `polaris_checks/test_checks.py` | the outward surfaces: README, site, the package README, SPEC-COMPLIANCE, INTEROP, release notes, CHANGELOG | passes on the experimental sentence. Fails on a fixture sentence claiming any path above without its scoreboard row, including its paraphrases ("mDL", "mobile driver's licence", "ISO/IEC 18013-5", Apple Wallet or Google Wallet IDs, "age verification", "Digital Credentials API"); fails when a listed surface cannot be read; a CHANGELOG line about these paths passes only if it says "experimental" |
 | `PublicationRuleTests.test_the_unexercised_paths_are_off_by_default` | `Verifier()` and `serve` without flags | no mdoc query and no DC API page; `--format mso_mdoc` without `--experimental` refused |
-| `PublicationRuleTests.test_a_scoreboard_row_unlocks_only_its_path` | a fixture row for M2's path | wording for mdoc over redirects passes; DC API wording still fails |
+| `test_mdoc_claims_a_scoreboard_row_opens_only_its_path`, in `polaris_checks/test_checks.py` beside the check's detection test | a fixture row for M2's path | wording for mdoc over redirects passes; DC API wording still fails |
 
 ## Effort and parallelism
 

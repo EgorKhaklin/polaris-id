@@ -49,8 +49,10 @@ updates:
       - dependency-name: "ydiff"
         versions: [">=1.5"]
 
-  # The fuzz job's hash-pinned set (atheris and polaris-oid4vp's one dependency),
-  # compiled by pip-compile from requirements.in; Dependabot recompiles the hashes.
+  # The fuzz job's hash-pinned set (atheris, polaris-oid4vp's one dependency, and cbor2, the
+  # mdoc target's oracle), compiled by pip-compile from requirements.in; Dependabot recompiles
+  # the hashes. A cbor2 release that reads differently fails the mdoc target's controls at
+  # its start, on the pull request that moves it.
   - package-ecosystem: pip
     directory: /packages/polaris-oid4vp/fuzz
     schedule:
@@ -68,6 +70,33 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # The package's Python 3.9 job's cbor2 (py39/requirements.txt, hash-pinned by hand: cbor2 has no
+  # dependencies), which test_mdoc builds its fixtures with. The job runs the suites on the oldest
+  # Python the package declares, so this set stays on releases that install there.
+  - package-ecosystem: pip
+    directory: /packages/polaris-oid4vp/py39
+    schedule:
+      interval: weekly
+      day: thursday
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+    commit-message:
+      prefix: deps
+    groups:
+      pip-packages-polaris-oid4vp-py39-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # cbor2 6 requires Python >= 3.10, and this set installs with --require-hashes on the
+      # Python 3.9 the package declares as its oldest. Remove this block when the package's
+      # requires-python moves past 3.9.
+      - dependency-name: "cbor2"
+        versions: [">=6"]
 
   # The check-in example's hash-pinned set (fastapi, uvicorn, segno, cryptography), compiled by
   # pip-compile from requirements.in; monthly, as the lab entries are.
@@ -111,7 +140,7 @@ updates:
   # Python 3.9) and, for a run that builds it from the tree, the build backend
   # (requirements-build.txt, Python 3.10), hash-pinned by pip-compile; Dependabot recompiles both.
   # lab/interop/mdoc's verifier set (cbor2, and cryptography as ../requirements.txt pins it) shares
-  # the entry and its Python 3.9 floor.
+  # the entry, but its floor is Python 3.10: cbor2 6 requires it.
   - package-ecosystem: pip
     directories:
       - /lab/interop

@@ -4184,24 +4184,24 @@ def test_oid4vp_image_is_the_released_package_check_discriminates(tmp_path):
         broken(df, entry, other, "must FAIL when the entrypoint is not the package's command alone",
                "entrypoint must be the package's")
 
-    pin = "polaris-oid4vp==1.1.0\n"
+    pin = "polaris-oid4vp==1.2.0\n"
     assert (tmp_path / asked).read_text().endswith(pin), \
-        "the fixture drifted: requirements.in no longer ends with the 1.1.0 pin"
+        "the fixture drifted: requirements.in no longer ends with the 1.2.0 pin"
     for other, why in ((pin + "requests==2.32.0\n", "asks for a second package"),
-                       ("polaris-oid4vp>=1.1.0\n", "asks for a range"),
-                       ("polaris-oid4vp==1.1.0rc1\n", "asks for a release candidate"),
+                       ("polaris-oid4vp>=1.2.0\n", "asks for a range"),
+                       ("polaris-oid4vp==1.2.0rc1\n", "asks for a release candidate"),
                        ("polaris-oid4vp\n", "asks for whatever is newest"),
                        ("", "asks for nothing")):
         broken(asked, pin, other, f"must FAIL when requirements.in {why}", "must ask for one thing")
     hashed_reason = "every other requirement by hash"
-    broken(locked, "polaris-oid4vp==1.1.0 \\\n", "polaris-oid4vp==1.0.0 \\\n",
+    broken(locked, "polaris-oid4vp==1.2.0 \\\n", "polaris-oid4vp==1.1.0 \\\n",
            "must FAIL when requirements.txt pins another version than requirements.in asks for",
            hashed_reason)
     edited(locked, lambda t: t + "idna==3.7\n",
            "must FAIL when a requirement carries no hash", hashed_reason)
     edited(locked, lambda t: t + "idna==3.7 \\\n    --hash=md5:0123456789abcdef0123456789abcdef\n",
            "must FAIL when a requirement's hash is not a SHA-256", hashed_reason)
-    edited(locked, lambda t: re.sub(r"(?m)^(polaris-oid4vp==1\.1\.0 \\\n)(?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+",
+    edited(locked, lambda t: re.sub(r"(?m)^(polaris-oid4vp==1\.2\.0 \\\n)(?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+",
                                     r"\1", t),
            "must FAIL when the package's own hashes are gone", hashed_reason)
 
@@ -23048,6 +23048,381 @@ def test_oid4vp_verifier_boundary_check_discriminates(tmp_path):
      / "polaris_oid4vp" / "jwe.py").write_text("import flask\n")
     bad = checks.check_oid4vp_verifier_boundary(tmp_path / ("case%d" % (write.n - 1)))
     assert any(f.level == "FAIL" for f in bad), bad
+
+
+def test_oid4vp_mdoc_captures_check_discriminates(tmp_path):
+    # The package's copies of the lab's mdoc captures are the originals, byte for byte, there is
+    # no file beside them, and the suite's list of captures is the list compared.
+    copies = checks._OID4VP_MDOC_CAPTURE_COPIES
+    assert len(copies) == 12
+    SUITE = 'CAPTURES = ("capture-pid", "capture-mdl", "capture-mdl-direct-post")\n'
+
+    def original_of(rel):
+        return checks._OID4VP_MDOC_LAB + rel[len(checks._OID4VP_MDOC_TESTDATA):]
+
+    def write(suite=SUITE, change=None):
+        root = tmp_path / ("case%d" % write.n)
+        write.n += 1
+        for n, rel in enumerate(copies):
+            # Not UTF-8, so that two files differing only in such a byte read as the same text.
+            content = b"capture %d \xff\x00" % n
+            for path in (root / rel, root / original_of(rel)):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+        (root / checks._OID4VP_MDOC_SUITE).write_text(suite)
+        if change:
+            change(root)
+        return root
+    write.n = 0
+
+    def failed(findings, *words):
+        return any(f.level == "FAIL" and all(w in f.message for w in words) for f in findings)
+
+    ok = checks.check_oid4vp_mdoc_captures_match_the_lab(write())
+    assert all(f.level == "OK" for f in ok), ok
+
+    # One byte, and one that reads as the same text when the file is decoded with replacement.
+    for rel in (copies[0], copies[-1]):
+        bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(
+            change=lambda root, rel=rel: (root / rel).write_bytes(
+                (root / rel).read_bytes().replace(b"\xff", b"\xfe"))))
+        assert failed(bad, rel, "differs from"), bad
+        # The original moved and the copy did not: the same finding.
+        bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(
+            change=lambda root, rel=rel: (root / original_of(rel)).write_bytes(b"another capture")))
+        assert failed(bad, rel, "differs from"), bad
+
+    bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(change=lambda root: (root / copies[3]).unlink()))
+    assert failed(bad, copies[3], "missing or empty"), bad
+    # Empty on both sides is equal and is not a capture.
+    bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(
+        change=lambda root: [(root / p).write_bytes(b"") for p in (copies[5], original_of(copies[5]))]))
+    assert failed(bad, copies[5], "missing or empty"), bad
+    bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(
+        change=lambda root: (root / original_of(copies[7])).unlink()))
+    assert failed(bad, copies[7], "not in the tree"), bad
+
+    # A file beside the copies, and a whole capture, that nothing compares.
+    extra = checks._OID4VP_MDOC_TESTDATA + "capture-pid/issued.txt"
+    bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(
+        change=lambda root: (root / extra).write_text("x")))
+    assert failed(bad, extra, "not one of the copies"), bad
+
+    # The suite reads a capture this check does not compare, or states no list at all.
+    bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(
+        suite=SUITE.replace('"capture-mdl-direct-post"', '"capture-mdl-direct-post", "capture-other"')))
+    assert failed(bad, "capture-other"), bad
+    bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(suite=SUITE.replace('"capture-mdl", ', "")))
+    assert failed(bad, "reads the captures"), bad
+    for no_list in ("", "# " + SUITE, "CAPTURES = ()\n"):
+        bad = checks.check_oid4vp_mdoc_captures_match_the_lab(write(suite=no_list))
+        assert failed(bad, "(none it states)"), bad
+
+
+def _mdoc_claims_tree(tmp_path):
+    """A tree the mdoc publication rule passes, and a writer of copies of it with one change."""
+    surfaces = {rel: "# A surface\n\nIt says nothing of the paths.\n" for rel in checks._MDOC_CLAIM_SURFACES}
+    surfaces.update({
+        "README.md": "# Polaris\n\n- **Verifiers can test themselves.** [`lab/interop/negative-vectors`](x)\n"
+                     "  holds SD-JWT VC presentations and mdoc device responses.\n",
+        "site/index.html": "<h1>Polaris</h1>\n<p>One claim and its proof.</p>\n",
+        "CHANGELOG.md": "## Unreleased\n\n### Added\n"
+                        "- `polaris-oid4vp serve --format mso_mdoc` (experimental, off by default) verifies an "
+                        "ISO/IEC 18013-5 DeviceResponse.\n"
+                        "- polaris-verify `verify_mdoc` digests each item of an mdoc as received.\n"
+                        "- The gate reads lab/interop/mdoc, mdoc-vectors.json and `/api/v1/mdoc`.\n",
+        "docs/reference/SPEC-COMPLIANCE.md":
+            "| OpenID4VP | `polaris-oid4vp` 1.1.0 | `sd_jwt_vc` only, no mdoc; no Digital Credentials API; one query |\n\n"
+            "It verifies SD-JWT VC. mdoc (ISO/IEC 18013-5,\n`mso_mdoc`) is experimental and off by default. It "
+            "does not support the browser's\nDigital Credentials API.\n",
+        "docs/reference/INTEROP.md":
+            "| EU issuer | its keystore's `mso_mdoc` signing certificate lacks the ISO 18013-5 Annex B extensions | open |\n",
+        "packages/polaris-oid4vp/README.md":
+            "# polaris-oid4vp\n\nAn issuer may hold ISO 18013-5's document signer key usage.\n\n"
+            "## Experimental: mdoc\n\n`--format mso_mdoc` asks for an mdoc, an mDL among them.\n\n"
+            "### Flags\n\nThe docType of an mDL is named with `--doctype`.\n\n"
+            "```\npolaris-oid4vp serve --format mso_mdoc --experimental\n```\n\n"
+            "## Status\n\nIt verifies SD-JWT VC.\n",
+    })
+    files = dict(surfaces)
+    files[checks._MDOC_CLAIM_CLI] = ('if not args.experimental:\n'
+                                     '    why = "--format %s is experimental and off by default" % MDOC_FORMAT\n')
+    files[checks._MDOC_CLAIM_CLI_SUITE] = ("class PublicationRuleTests:\n"
+                                           "    def test_the_unexercised_paths_are_off_by_default(self):\n"
+                                           "        pass\n")
+    files[checks._MDOC_CLAIM_SCOREBOARD] = (
+        "### Wallets\n\n| Date | Wallet | Verifier | Result | Controls, each refused | Evidence |\n"
+        "|---|---|---|---|---|---|\n"
+        "| 2026-09-15 | walt.id Wallet API | PyPI: 1.0.0rc7 | accepted: `200 authentic` | a wrong issuer key | [lab](x) |\n"
+        "| 2026-11-13 | a test app presenting `mso_mdoc` over `direct_post.jwt` | this repository, lab/interop/altid "
+        "| accepted by the lab verifier | another nonce | [lab](x) |\n")
+
+    def write(change=None, **replaced):
+        root = tmp_path / ("case%d" % write.n)
+        write.n += 1
+        for rel, text in {**files, **replaced}.items():
+            if text is not None:
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text, encoding="utf-8")
+        if change:
+            change(root)
+        return root
+    write.n = 0
+
+    def said(rel, sentence, **more):
+        """The tree with one more paragraph (a line, in the CHANGELOG) on a surface."""
+        addition = "- %s\n" % sentence if rel == "CHANGELOG.md" else "\n%s\n" % sentence
+        return write(**{rel: files[rel] + addition}, **more)
+
+    return files, write, said
+
+
+def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
+    # lab/strategy/025, M7: no outward surface says the verifier reads mdoc, the browser's Digital
+    # Credentials API, wallet-platform or US IDs or age-verification attestations ahead of its
+    # evidence. The path built behind --experimental may be called experimental; the others
+    # may only be called absent.
+    check = checks.check_mdoc_dc_api_claims_are_gated
+    files, write, said = _mdoc_claims_tree(tmp_path)
+    surfaces = checks._MDOC_CLAIM_SURFACES
+    assert len(surfaces) == 12 and "CHANGELOG.md" in surfaces
+    REDIRECT, DC, ANNEX_C, IDS, AGE = (path[0] for path in checks._MDOC_CLAIM_PATHS)
+
+    def failed(findings, *words):
+        return any(f.level == "FAIL" and all(w in f.message for w in words) for f in findings)
+
+    def passed(findings):
+        return bool(findings) and all(f.level == "OK" for f in findings)
+
+    ok = check(write())
+    assert passed(ok), ok
+    # 1 in the README, 4 in the CHANGELOG (verify_mdoc and the three paths in its third line are
+    # not mentions), 6 in SPEC-COMPLIANCE, 2 in INTEROP, 7 in the package README, its heading included.
+    assert "20 mentions" in ok[0].message and "row opens: none" in ok[0].message, ok
+
+    # Every name a path goes by, on every surface.
+    claims = (
+        ("polaris-oid4vp verifies mdoc presentations.", REDIRECT),
+        ("It reads mdocs a wallet presents.", REDIRECT),
+        ("It accepts `mso_mdoc` credentials.", REDIRECT),
+        ("Verify an mDL in one command.", REDIRECT),
+        ("It reads mDLs.", REDIRECT),
+        ("Verify a mobile driver's licence.", REDIRECT),
+        ("Verify a mobile driver's license.", REDIRECT),
+        ("Verify mobile drivers licenses.", REDIRECT),
+        ("Verify a mobile driving licence.", REDIRECT),
+        ("Verify a driver's license.", REDIRECT),
+        ("Verify a mobile ID.", REDIRECT),
+        ("It implements ISO/IEC 18013-5.", REDIRECT),
+        ("It implements ISO 18013-5:2021.", REDIRECT),
+        ("It verifies a DeviceResponse.", REDIRECT),
+        ("Works with the browser's Digital Credentials API.", DC),
+        ("Works with the Digital Credential API.", DC),
+        ("Presentations arrive over the DC API.", DC),
+        ("The response mode is `dc_api.jwt`.", DC),
+        ("The page calls navigator.credentials.get.", DC),
+        ("It follows ISO/IEC 18013-7 Annex C.", ANNEX_C),
+        ("It answers `org-iso-mdoc`.", ANNEX_C),
+        ("Accepts IDs from Apple Wallet.", IDS),
+        ("Accepts IDs from Google Wallet.", IDS),
+        ("Verifies US IDs.", IDS),
+        ("Verifies US mobile IDs.", IDS),
+        ("Verifies a state-issued credential.", IDS),
+        ("Verifies a state ID.", IDS),
+        ("Age verification for platforms.", AGE),
+        ("An age-verification service.", AGE),
+        ("It checks a proof of age.", AGE),
+        ("It checks a Proof-of-Age.", AGE),
+        ("It reads an age attestation.", AGE),
+        # In whatever case they are written.
+        ("An MDOC verifier.", REDIRECT),
+        ("it supports the digital credentials api.", DC),
+        ("ids from apple wallet.", IDS),
+        ("AGE VERIFICATION.", AGE),
+    )
+    for rel in surfaces:
+        for sentence, path in claims:
+            bad = check(said(rel, sentence))
+            assert failed(bad, rel, "names " + path), (rel, sentence, bad)
+
+    # Experimental, in the same sentence, is what the path behind the flag may be called, and only it.
+    for rel in surfaces:
+        assert passed(check(said(rel, "polaris-oid4vp verifies mdoc presentations, an mDL among them (experimental)."))), rel
+        for sentence, path in (("Experimental: the Digital Credentials API.", DC),
+                               ("Experimental: ISO/IEC 18013-7 Annex C.", ANNEX_C),
+                               ("Experimental support for Apple Wallet IDs.", IDS),
+                               ("Experimental age verification.", AGE)):
+            assert failed(check(said(rel, sentence)), rel, "names " + path, "it is not built"), (rel, sentence)
+    # A sentence that takes the word back has not said it.
+    for rel in ("README.md", "CHANGELOG.md"):
+        for text in ("polaris-oid4vp verifies mdoc presentations, which are no longer experimental.",
+                     "polaris-oid4vp verifies mdoc presentations and this is not experimental.",
+                     "polaris-oid4vp verifies mdoc presentations in a non-experimental build."):
+            assert failed(check(said(rel, text)), rel, "names " + REDIRECT), (rel, text)
+    # The word in the sentence before, or the paragraph before, says nothing of this sentence.
+    for rel in ("README.md", "site/index.html", "packages/polaris-oid4vp/README.md"):
+        for text in ("This release is experimental. It verifies mdoc presentations.",
+                     "This release is experimental; it verifies mdoc presentations.",
+                     "This release is experimental.\n\nIt verifies mdoc presentations."):
+            assert failed(check(said(rel, text)), rel, "names " + REDIRECT, "say experimental"), (rel, text)
+
+    # A heading that says experimental covers its section and the sections under it; not the next one.
+    pkg = "packages/polaris-oid4vp/README.md"
+    assert failed(check(said(pkg, "It reads an mDL.")), pkg, "names " + REDIRECT)       # under "## Status"
+    assert passed(check(write(**{pkg: files[pkg].replace("## Status", "### Status")})))
+    assert failed(check(write(**{pkg: files[pkg].replace("## Experimental: mdoc", "## mdoc")})), pkg, "'mso_mdoc'")
+    # A fenced line stands alone, and a comment inside a fence is not a heading.
+    assert failed(check(said(pkg, "```\npolaris-oid4vp serve --format mso_mdoc\n```")), pkg, "'mso_mdoc'")
+    assert failed(check(said(pkg, "```\n# experimental\n```\n\nIt reads an mDL.")), pkg, "'mDL'")
+    assert failed(check(said(pkg, "```\npolaris-oid4vp serve --experimental\npolaris-oid4vp serve --format mso_mdoc\n```")),
+                  pkg, "'mso_mdoc'")
+    # The CHANGELOG has no sections of that kind: the line says it.
+    log = "CHANGELOG.md"
+    assert failed(check(write(**{log: files[log] + "### Experimental\n- polaris-oid4vp verifies mdoc presentations.\n"})),
+                  log, "names " + REDIRECT)
+
+    # Saying a path is absent claims nothing for it; in the CHANGELOG that is not a way to pass.
+    absent = ("It supports neither mdoc (ISO/IEC 18013-5) nor the browser's Digital Credentials API.",
+              "`sd_jwt_vc` only, no mdoc; no Digital Credentials API; no `org-iso-mdoc`.",
+              "It does not support Apple Wallet or Google Wallet IDs.",
+              "Age verification is not supported.",
+              "Wallets do not present an mDL to it.")
+    for rel in surfaces:
+        for sentence in absent:
+            findings = check(said(rel, sentence))
+            assert (failed(findings, rel, "names ") if rel == log else passed(findings)), (rel, sentence, findings)
+    # The absence is the sentence's own (a table cell is a sentence), and "no" stands before the
+    # word it refuses.
+    for rel, text, word in (("README.md", "It does not store keys. It verifies mdoc presentations.", "'mdoc'"),
+                            ("README.md", "It does not store keys; it verifies mdoc presentations.", "'mdoc'"),
+                            ("docs/reference/INTEROP.md", "| it does not store keys | it verifies mdoc presentations |", "'mdoc'"),
+                            ("README.md", "It is not only an SD-JWT VC verifier: it verifies mdoc presentations.", "'mdoc'"),
+                            ("README.md", "No setup: it verifies an mDL.", "'mDL'"),
+                            ("README.md", "There is no faster way to verify a mobile ID.", "'mobile ID'")):
+        assert failed(check(said(rel, text)), rel, word), text
+
+    # The subjects that share a word with the first path are excused for that word, in their own block.
+    for rel in surfaces:
+        for sentence in ("The negative-vectors corpus holds mdoc device responses.",
+                         "The negative vectors hold a DeviceResponse per case.",
+                         "`verify_mdoc` reads an mdoc this project issued.",
+                         "The certificate is ISO 18013-5's document signer.",
+                         "Its `mso_mdoc` signing certificate lacks an extension.",
+                         "Put the refusal tests in your CI: 32 mdoc device responses that must be refused.",
+                         "A change to the site alone skips the CVE scan and the mdoc drill."):
+            assert passed(check(said(rel, sentence))), (rel, sentence)
+        for sentence, word in (("The negative-vectors corpus holds mDLs.", "'mDLs'"),
+                               ("The negative-vectors corpus covers Apple Wallet.", "'Apple Wallet'"),
+                               ("The refusal tests cover Apple Wallet.", "'Apple Wallet'"),
+                               ("The mdoc drill reads the Digital Credentials API.", "'Digital Credentials API'"),
+                               ("`verify_mdoc` reads the Digital Credentials API.", "'Digital Credentials API'"),
+                               ("The document signer of an age-verification attestation.", "'age-verification'")):
+            assert failed(check(said(rel, sentence)), rel, word), (rel, sentence)
+    for rel, text in (("README.md", "The negative-vectors corpus is public.\n\nIt verifies mdoc presentations."),
+                      ("README.md", "The refusal tests are public.\n\nIt verifies mdoc presentations."),
+                      ("README.md", "The mdoc drill runs in CI.\n\nIt verifies mdoc presentations."),
+                      ("README.md", "- The negative-vectors corpus is public.\n- It verifies mdoc presentations."),
+                      ("docs/reference/INTEROP.md", "| the negative-vectors corpus | public |\n| it verifies mdoc | yes |"),
+                      ("site/index.html", "<p>The negative-vectors corpus.</p>\n<p>It verifies mdoc presentations.</p>"),
+                      ("CITATION.cff", "abstract: the negative-vectors corpus\n  and a verifier of mdoc presentations")):
+        assert failed(check(said(rel, text)), rel, "'mdoc'"), (rel, text)
+    # A path in the tree and a file's name are not sentences about the format.
+    assert passed(check(said("README.md", "See lab/interop/mdoc/README.md, mdoc-vectors.json and `/api/v1/mdoc`.")))
+
+    # A surface that cannot be read is unchecked, whichever it is.
+    for rel in surfaces:
+        for gone in (None, "", " \n"):
+            assert failed(check(write(**{rel: gone})), rel, "could not be read"), (rel, gone)
+
+    # "Experimental, off by default" is true while the command refuses the format without the flag
+    # and the suite holds the refusal. Commented out is gone.
+    cli, suite = checks._MDOC_CLAIM_CLI, checks._MDOC_CLAIM_CLI_SUITE
+    for rel, needle in ((cli, "if not args.experimental:"), (cli, "is experimental and off by default"),
+                        (suite, "def test_the_unexercised_paths_are_off_by_default(self):")):
+        line = next(text for text in files[rel].splitlines() if needle in text)
+        commented = line[:len(line) - len(line.lstrip())] + "# " + line.lstrip()
+        for text in (files[rel].replace(needle, ""), files[rel].replace(line, commented), None):
+            assert text != files[rel]
+            assert failed(check(write(**{rel: text})), rel, "off by default"), (rel, needle, text)
+
+    # The scoreboard is read: gone, or with no dated row, is a failure and not "no row opens a path".
+    board = checks._MDOC_CLAIM_SCOREBOARD
+    for text in (None, "", "### Wallets\n\n| Date | Wallet |\n|---|---|\n| Wallets | 8 wallets presented |\n"):
+        assert failed(check(write(**{board: text})), board, "no dated row"), text
+
+    # Surfaces that name none of it at all: the check has stopped seeing, or they have stopped saying.
+    silent = {rel: "# A surface\n\nIt says nothing of the paths.\n" for rel in surfaces}
+    assert failed(check(write(**silent)), "at all")
+
+
+def test_mdoc_claims_a_scoreboard_row_opens_only_its_path(tmp_path):
+    # lab/strategy/025, M7: a row opens the path it names and no other, and only a row of a named
+    # outside party accepted by a released verifier is such a row.
+    check = checks.check_mdoc_dc_api_claims_are_gated
+    files, write, said = _mdoc_claims_tree(tmp_path)
+    board = checks._MDOC_CLAIM_SCOREBOARD
+    REDIRECT, DC, ANNEX_C, IDS, AGE = (path[0] for path in checks._MDOC_CLAIM_PATHS)
+    M2 = ("| 2027-01-10 | Example Wallet 2.1 | PyPI: 1.2.0 | accepted: `mso_mdoc` over `direct_post.jwt`, "
+          "`200 authentic` | another IACA root; another nonce | [lab](x) |\n")
+    M3 = M2.replace("`direct_post.jwt`", "`dc_api.jwt`")
+
+    def failed(findings, *words):
+        return any(f.level == "FAIL" and all(w in f.message for w in words) for f in findings)
+
+    def passed(findings):
+        return bool(findings) and all(f.level == "OK" for f in findings)
+
+    mdoc_wording = ("polaris-oid4vp verifies mdoc presentations.", "Verify an mDL in one command.",
+                    "Verify a mobile driver's licence.", "It implements ISO/IEC 18013-5.")
+    others = (("Works with the browser's Digital Credentials API.", DC), ("It answers `org-iso-mdoc`.", ANNEX_C),
+              ("Accepts IDs from Apple Wallet.", IDS), ("Age verification for platforms.", AGE))
+
+    # Without the row every such sentence fails (the other test); with M2's row, mdoc wording passes
+    # on every surface, the CHANGELOG included, and the other paths' wording still fails.
+    with_m2 = {board: files[board] + M2}
+    ok = check(write(**with_m2))
+    assert passed(ok) and ("row opens: " + REDIRECT) in ok[0].message, ok
+    for rel in checks._MDOC_CLAIM_SURFACES:
+        for sentence in mdoc_wording:
+            assert failed(check(said(rel, sentence)), rel, "names " + REDIRECT), (rel, sentence)
+            assert passed(check(said(rel, sentence, **with_m2))), (rel, sentence)
+        for sentence, path in others:
+            assert failed(check(said(rel, sentence, **with_m2)), rel, "names " + path), (rel, sentence)
+
+    # The Digital Credentials API's row opens that path and not mdoc over redirects.
+    with_m3 = {board: files[board] + M3}
+    ok = check(write(**with_m3))
+    assert passed(ok) and ("row opens: " + DC) in ok[0].message, ok
+    assert passed(check(said("README.md", others[0][0], **with_m3)))
+    assert failed(check(said("README.md", mdoc_wording[0], **with_m3)), "README.md", "names " + REDIRECT)
+    # Both rows, both paths, and still neither wallet-platform IDs nor age verification.
+    both = {board: files[board] + M2 + M3}
+    assert passed(check(said("README.md", mdoc_wording[0] + " " + others[0][0], **both)))
+    for sentence, path in others[2:]:
+        assert failed(check(said("README.md", sentence, **both)), "README.md", "names " + path)
+
+    # Rows that open nothing: each is M2's row with one of its conditions gone.
+    lookalikes = {
+        "the tree, not a release": M2.replace("PyPI: 1.2.0", "this repository, 0a1b2c3"),
+        "a release named outside the verifier cell": M2.replace("PyPI: 1.2.0", "this repository").replace(
+            "Example Wallet 2.1", "Example Wallet 2.1 (PyPI: 1.2.0)"),
+        "refused": M2.replace("accepted:", "refused:"),
+        "the marks outside the result": M2.replace("accepted: `mso_mdoc` over `direct_post.jwt`, ", "accepted: ").replace(
+            "Example Wallet 2.1", "Example Wallet 2.1, `mso_mdoc` over `direct_post.jwt`"),
+        "one mark": M2.replace(" over `direct_post.jwt`", ""),
+        "the other mark": M2.replace("`mso_mdoc` over ", ""),
+        "marks that are not code": M2.replace("`mso_mdoc` over `direct_post.jwt`", "mso_mdoc over direct_post.jwt"),
+        "no controls": M2.replace("another IACA root; another nonce", " "),
+        "five cells": M2.replace(" | [lab](x) |", " |"),
+        "no date": M2.replace("| 2027-01-10 |", "| Wallets |"),
+        "a date that is not first": M2.replace("| 2027-01-10 | Example Wallet 2.1 |", "| Example Wallet 2.1 | 2027-01-10 |"),
+    }
+    for why, row in lookalikes.items():
+        assert row != M2, why
+        closed = {board: files[board] + row}
+        ok = check(write(**closed))
+        assert passed(ok) and "row opens: none" in ok[0].message, (why, ok)
+        assert failed(check(said("README.md", mdoc_wording[0], **closed)), "README.md", "names " + REDIRECT), why
 
 
 def test_published_readme_links_check_discriminates(tmp_path):

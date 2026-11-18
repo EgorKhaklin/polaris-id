@@ -4012,12 +4012,18 @@ jobs:
       - name: The listening surface — status codes, content types, routing
         run: cd packages/polaris-oid4vp && python -m unittest test_serve
       # The OID4VP mutation drill ran here until 2026-10-15, 34 of this job's 35 minutes on every
-      # pull request. It is test-oid4vp-drill now: six shards, run when a change touches what
+      # pull request. It is test-oid4vp-drill now: eight shards, run when a change touches what
       # the drill reads, and on every push to main.
       # keygen encodes two certificate rules the conformance suite enforces and that cost a
       # failed run each to discover. The tests assert the SHAPE, not that files appeared.
       - name: The verifier's entry point, and the certificates it must produce
         run: cd packages/polaris-oid4vp && python -m unittest test_cli
+      # Decision record 025, milestone 2: an ISO/IEC 18013-5 DeviceResponse. The package's CBOR
+      # decoder is held to cbor2 (in the hash-pinned set installed above, and never imported by
+      # the package), and each refusal is asserted with its code, on three responses a wallet
+      # library this project did not write built and on ones this file mints.
+      - name: An mdoc DeviceResponse, decoded and each defect refused by its own check
+        run: cd packages/polaris-oid4vp && python -m unittest test_mdoc
       # The image a stranger pulls holds the released wheel, by hash, and nothing of this tree
       # (packages/polaris-oid4vp/image). Built here, then presented to by the suite's wallet over
       # TLS: a valid presentation accepted, the wrong nonce refused, as a user that is not root.
@@ -4028,21 +4034,23 @@ jobs:
   # packages/polaris-oid4vp is made to accept and the package's suites must notice; the drill
   # copies the package and runs its suites in the copy, so it reads only the package, itself, the
   # interpreter's requirements and this workflow, and the changes job runs it when one of those
-  # moved (and on every push to main). Six shards, each a sixth of the mutations
+  # moved (and on every push to main). Eight shards, each an eighth of the mutations
   # (--shard, the procedure drill's form), each with the baseline and the negative control.
   test-oid4vp-drill:
-    name: "OID4VP mutation drill, shard ${{ matrix.shard }} of 6"
+    name: "OID4VP mutation drill, shard ${{ matrix.shard }} of 8"
     needs: [changes]
     if: needs.changes.outputs.oid4vp == 'true'
     runs-on: ubuntu-latest
     # 2026-11-18: three shards of 67 mutations reached the 30-minute limit once each mutant's
     # suites took about 32 s (measured locally; 21 s before the --rearm and control tests). Six
-    # shards of 33 or 34 mutations, the procedure drill's split; bounded.
+    # shards of 33 or 34 mutations, the procedure drill's split; bounded. At 201 mutations six
+    # shards took 20.9 to 24.4 minutes (three runs, 2026-11-18); serve.py's 13 refusals and 2
+    # named mutants make 216, so eight shards of 27.
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -4060,7 +4068,7 @@ jobs:
       # and the conformance drill that would notice needs Docker and a running suite.
       - name: OID4VP mutation, one shard (every refusal is caught when inverted)
         env:
-          POLARIS_DRILL_SHARD: "${{ matrix.shard }}/6"
+          POLARIS_DRILL_SHARD: "${{ matrix.shard }}/8"
         run: python scripts/polaris-oid4vp-mutation-drill.py --shard "$POLARIS_DRILL_SHARD"
 
   # 2026-11-03: the mdoc verifier drill. lab/interop/mdoc/verify_mdoc.py judges the mdoc negative
@@ -4097,13 +4105,15 @@ jobs:
         run: python scripts/polaris-mdoc-mutation-drill.py --shard "$POLARIS_DRILL_SHARD"
 
   # 2026-11-17: polaris-oid4vp declares requires-python >=3.9, and the product boundary runs its
-  # seven suites under 3.12 only. A defect can show at 3.9 alone: http.server there writes an
+  # eight suites under 3.12 only. A defect can show at 3.9 alone: http.server there writes an
   # HTTPStatus by its name in an error page, so serve.py's own 501 matches the stdlib's only when
   # it makes the same call (test_serve's test_an_options_that_is_not_a_preflight_is_501 is red on
   # 3.9 otherwise). ubuntu-latest is Ubuntu 26.04, which has no Python 3.9 build, so this runs on
   # ubuntu-24.04 as the plug-and-play matrix does. The package's one dependency comes from
   # lab/interop/requirements.txt, the hashed set compiled under 3.9 that Dependabot keeps; that
-  # path is on the changes allowlist, so this runs on every change.
+  # path is on the changes allowlist, so this runs on every change. test_mdoc's cbor2 comes from
+  # packages/polaris-oid4vp/py39/requirements.txt at 5.9.0, the newest release that installs on
+  # 3.9 (cbor2 6 requires 3.10; without cbor2 three suites fail to import test_mdoc's fixtures).
   test-oid4vp-py39:
     name: polaris-oid4vp's suites under Python 3.9, the oldest it declares
     runs-on: ubuntu-24.04
@@ -4117,12 +4127,15 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.9"
-      - name: Install cryptography (lab/interop/requirements.txt, compiled under Python 3.9, by hash)
-        run: python -m pip install --quiet --require-hashes -r lab/interop/requirements.txt
-      - name: The package's seven suites under Python 3.9
+      - name: Install cryptography and cbor2 (two sets for Python 3.9, by hash)
+        run: >-
+          python -m pip install --quiet --require-hashes -r lab/interop/requirements.txt
+          -r packages/polaris-oid4vp/py39/requirements.txt
+      - name: The package's eight suites under Python 3.9
         run: >-
           cd packages/polaris-oid4vp && python -m unittest
           test_sdjwt test_jwe test_verifier test_serve test_cli test_conformance_capture test_status
+          test_mdoc
 
   # 2026-10-15: the SDK mutation drill, out of Real PQC, where it had no time bound and took 65
   # minutes on a change to the detached verifier (run 38667231409). Every refusal in both reference
