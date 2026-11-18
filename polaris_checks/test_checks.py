@@ -4184,24 +4184,24 @@ def test_oid4vp_image_is_the_released_package_check_discriminates(tmp_path):
         broken(df, entry, other, "must FAIL when the entrypoint is not the package's command alone",
                "entrypoint must be the package's")
 
-    pin = "polaris-oid4vp==1.1.0\n"
+    pin = "polaris-oid4vp==1.2.0\n"
     assert (tmp_path / asked).read_text().endswith(pin), \
-        "the fixture drifted: requirements.in no longer ends with the 1.1.0 pin"
+        "the fixture drifted: requirements.in no longer ends with the 1.2.0 pin"
     for other, why in ((pin + "requests==2.32.0\n", "asks for a second package"),
-                       ("polaris-oid4vp>=1.1.0\n", "asks for a range"),
-                       ("polaris-oid4vp==1.1.0rc1\n", "asks for a release candidate"),
+                       ("polaris-oid4vp>=1.2.0\n", "asks for a range"),
+                       ("polaris-oid4vp==1.2.0rc1\n", "asks for a release candidate"),
                        ("polaris-oid4vp\n", "asks for whatever is newest"),
                        ("", "asks for nothing")):
         broken(asked, pin, other, f"must FAIL when requirements.in {why}", "must ask for one thing")
     hashed_reason = "every other requirement by hash"
-    broken(locked, "polaris-oid4vp==1.1.0 \\\n", "polaris-oid4vp==1.0.0 \\\n",
+    broken(locked, "polaris-oid4vp==1.2.0 \\\n", "polaris-oid4vp==1.1.0 \\\n",
            "must FAIL when requirements.txt pins another version than requirements.in asks for",
            hashed_reason)
     edited(locked, lambda t: t + "idna==3.7\n",
            "must FAIL when a requirement carries no hash", hashed_reason)
     edited(locked, lambda t: t + "idna==3.7 \\\n    --hash=md5:0123456789abcdef0123456789abcdef\n",
            "must FAIL when a requirement's hash is not a SHA-256", hashed_reason)
-    edited(locked, lambda t: re.sub(r"(?m)^(polaris-oid4vp==1\.1\.0 \\\n)(?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+",
+    edited(locked, lambda t: re.sub(r"(?m)^(polaris-oid4vp==1\.2\.0 \\\n)(?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+",
                                     r"\1", t),
            "must FAIL when the package's own hashes are gone", hashed_reason)
 

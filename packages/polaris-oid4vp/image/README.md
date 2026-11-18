@@ -7,7 +7,7 @@ package's command, and it runs as a user that is not root (uid 10001).
 
 The version is the one line of [`requirements.in`](requirements.in); an image's tag is that
 version with a `v` in front. A rebuild of the same package release, on a newer base or
-dependency, is a new tag with a revision after it (`v1.1.0-2`); a published tag never moves.
+dependency, is a new tag with a revision after it (`v1.2.0-2`); a published tag never moves.
 
 ## Run it
 
@@ -57,7 +57,7 @@ Pull by digest, never by tag alone. Use cosign 3 or later.
 
 ```bash
 IMAGE=ghcr.io/egorkhaklin/polaris-oid4vp
-TAG=v1.1.0
+TAG=v1.2.0
 DIGEST=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
 
 # The signature: made by this repository's workflow on main, logged in Rekor.
