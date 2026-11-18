@@ -14,7 +14,7 @@
 # PKI that ships in the issuer's own compose as its only --issuer-trust-anchor.
 #
 #   lab/interop/eudi-issuer/run.sh                                  # the newest polaris-oid4vp
-#   POLARIS_OID4VP=polaris-oid4vp==1.0.0rc15 lab/interop/eudi-issuer/run.sh
+#   POLARIS_OID4VP=polaris-oid4vp==1.2.0 lab/interop/eudi-issuer/run.sh
 #   POLARIS_OID4VP=$PWD/packages/polaris-oid4vp lab/interop/eudi-issuer/run.sh   # the tree
 #
 # Exits 0 only if the PID is issued, the presentation is accepted AND every control is refused where
@@ -74,6 +74,11 @@ fi
 venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
+RESULT_HELP="$(venv/bin/polaris-oid4vp serve --help 2>&1)" || { echo "polaris-oid4vp serve --help failed: $RESULT_HELP" >&2; exit 2; }
+case "$RESULT_HELP" in  # captured: grep -q at the end of a pipe can trip pipefail
+  *--result*) ;;
+  *) echo "this walk reads the verifier's verdict from serve --result, which polaris-oid4vp 1.1.0 and later have; set POLARIS_OID4VP to such a release" >&2; exit 2 ;;
+esac
 
 # The issuer's own files, from the release's commit, each checked against the SHA-256 it had when
 # this walk was written. A changed file stops the run rather than being used.
@@ -206,6 +211,17 @@ wallet() {  # $1 log file, then the wallet's arguments. It runs in HAProxy's net
 }
 
 fail=0
+verdict() {  # $1 label, $2 the --result file, $3 a Python expression over doc that must be True
+  if venv/bin/python - "$2" "$3" <<'EOF'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as e:
+    sys.exit("cannot read %s: %s" % (sys.argv[1], e))
+sys.exit(0 if eval(sys.argv[2], {}, {"doc": doc}) is True else "doc is %s" % json.dumps(doc, sort_keys=True))
+EOF
+  then echo "  ok    $1"; else echo "  FAIL  $1 ($2: see above)"; fail=1; fi
+}
 expect() {  # $1 label, $2 file, $3 pattern that must appear
   if grep -qE "$3" "$2"; then echo "  ok    $1"; else echo "  FAIL  $1 (no /$3/ in $2)"; fail=1; fi
 }
@@ -245,10 +261,11 @@ venv/bin/polaris-oid4vp keygen --out other-pki --host host.docker.internal --por
 
 start_verifier() {  # $1 issuer trust anchor, $2 log
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host host.docker.internal \
-    --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once > "$2" 2>&1 &
+    --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once \
+    --result "${2%.log}.result.json" > "$2" 2> "${2%.log}.err" &
   VERIFIER_PID=$!
   for _ in $(seq 1 240); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start; see $WORK/$2" >&2
+  echo "verifier did not start; see $WORK/$2 and $WORK/${2%.log}.err" >&2
   exit 2
 }
 
@@ -278,7 +295,7 @@ start_verifier issuer-ca.pem verifier.log
 URI=$(launch_uri verifier.log)
 present "$URI" wallet.log pki/anchor.pem
 expect "the wallet dispatched and the verifier accepted" wallet.log '^DISPATCHED Accepted'
-expect "the verifier accepted it" verifier.log "<- 200 authentic, claims .*'family_name', 'given_name'"
+verdict "the verifier accepted it" verifier.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200 and set(doc["claims"]) - {"iss", "iat", "nbf", "exp", "cnf", "vct", "status", "sub"} == {"family_name", "given_name"}'
 { grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
@@ -298,7 +315,7 @@ expect "the wallet refused the request, for the chain" wallet-d.log '^REQUEST RE
 echo "== control (a): the verifier trusts an unrelated CA instead of the issuer's"
 present "$(launch_uri verifier-other.log)" wallet-a.log pki/anchor.pem
 expect "the wallet was not accepted" wallet-a.log 'Rejected|DISPATCH FAILED'
-expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: issuer_key'
+verdict "the verifier refused the issuer" verifier-other.result.json 'doc["outcome"] == "refused" and doc["check"] == "issuer_key" and doc["response"]["status_code"] == 400'
 { grep -E '<- 400' verifier-other.log || true; } | sed 's/^/        /'
 stop_verifier
 

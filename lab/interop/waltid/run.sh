@@ -12,7 +12,7 @@
 #
 #   lab/interop/waltid/run.sh                                          # wallet-api2 1.1.1, by digest
 #   WALTID_IMAGE=waltid/wallet-api2:1.0.0 lab/interop/waltid/run.sh    # the first recorded run's
-#   POLARIS_OID4VP=polaris-oid4vp==1.0.0rc7 lab/interop/waltid/run.sh  # a release, pinned
+#   POLARIS_OID4VP=polaris-oid4vp==1.2.0 lab/interop/waltid/run.sh  # a release, pinned
 #
 # Exits 0 only if the genuine presentation is accepted AND both controls are refused. A run that
 # only printed the success line would say nothing: a verifier that accepts everything prints it too.
@@ -71,6 +71,11 @@ fi
 venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
+RESULT_HELP="$(venv/bin/polaris-oid4vp serve --help 2>&1)" || { echo "polaris-oid4vp serve --help failed: $RESULT_HELP" >&2; exit 2; }
+case "$RESULT_HELP" in  # captured: grep -q at the end of a pipe can trip pipefail
+  *--result*) ;;
+  *) echo "this walk reads the verifier's verdict from serve --result, which polaris-oid4vp 1.1.0 and later have; set POLARIS_OID4VP to such a release" >&2; exit 2 ;;
+esac
 
 VERIFIER_PID=""
 stop_verifier() {  # `wait` returns the killed server's 143, which set -e would take as ours
@@ -94,10 +99,11 @@ WID="$(cat wallet-id.txt)" KID="$(cat key-id.txt)"
 
 start_verifier() {  # $1 the issuer JWKS the verifier trusts, $2 log file
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host host.docker.internal \
-    --bind 0.0.0.0 --port "$PORT" --issuer-jwks "$1" --once > "$2" 2>&1 &
+    --bind 0.0.0.0 --port "$PORT" --issuer-jwks "$1" --once \
+    --result "${2%.log}.result.json" > "$2" 2> "${2%.log}.err" &
   VERIFIER_PID=$!
   for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start; see $WORK/$2" >&2
+  echo "verifier did not start; see $WORK/$2 and $WORK/${2%.log}.err" >&2
   exit 2
 }
 
@@ -121,6 +127,17 @@ present() {  # $1 launch URI, $2 wallet response file. /credentials/present, not
 }
 
 fail=0
+verdict() {  # $1 label, $2 the --result file, $3 a Python expression over doc that must be True
+  if venv/bin/python - "$2" "$3" <<'EOF'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as e:
+    sys.exit("cannot read %s: %s" % (sys.argv[1], e))
+sys.exit(0 if eval(sys.argv[2], {}, {"doc": doc}) is True else "doc is %s" % json.dumps(doc, sort_keys=True))
+EOF
+  then echo "  ok    $1"; else echo "  FAIL  $1 ($2: see above)"; fail=1; fi
+}
 expect() {  # $1 label, $2 file, $3 pattern that must appear
   if grep -qE "$3" "$2"; then echo "  ok    $1"; else echo "  FAIL  $1 (no /$3/ in $2)"; fail=1; fi
 }
@@ -130,7 +147,7 @@ start_verifier issuer-jwks.json verifier.log
 URI=$(launch_uri verifier.log)
 present "$URI" wallet.json
 expect "the wallet transmitted and was answered" wallet.json '"transmission_success":true'
-expect "the verifier accepted it" verifier.log '<- 200 authentic'
+verdict "the verifier accepted it" verifier.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200'
 { grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control: the same request again, after it was answered"
@@ -151,7 +168,7 @@ EOF
 start_verifier issuer-jwks-other.json verifier-other.log
 present "$(launch_uri verifier-other.log)" wallet-other.json
 expect "the wallet was told only that it was not accepted" wallet-other.json 'the presentation was not accepted'
-expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: issuer_signature'
+verdict "the verifier refused the issuer" verifier-other.result.json 'doc["outcome"] == "refused" and doc["check"] == "issuer_signature" and doc["response"]["status_code"] == 400'
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and both controls refused" || echo "RESULT: FAILED"
