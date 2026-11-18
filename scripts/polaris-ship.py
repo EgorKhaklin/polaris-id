@@ -141,7 +141,7 @@ VERIFICATION = [
     # it had no row.
     (r"^packages/polaris-oid4vp/",
      ["cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_verifier test_jwe "
-      "test_serve test_cli test_conformance_capture test_status",
+      "test_serve test_cli test_conformance_capture test_status test_mdoc",
       "python3 -m unittest lab/strategy/007/test_gate.py",
       "python3 -m unittest lab/interop/eudi-dev/capture/test_capture.py",
       "python3 -m unittest lab/interop/negative-vectors/test_vectors.py",
@@ -416,7 +416,7 @@ UNSHARDED_SUITES = {
     # network and no ML-DSA, so there is no reason to learn about a break from CI.
     "sdk/python": ["test_sdk"],
     "packages/polaris-oid4vp": ["test_sdjwt", "test_jwe", "test_verifier", "test_serve",
-                                "test_cli", "test_conformance_capture", "test_status"],
+                                "test_cli", "test_conformance_capture", "test_status", "test_mdoc"],
     "lab/strategy/007": ["test_gate"],
     "lab/interop/eudi-dev/capture": ["test_capture"],
     "lab/interop/eudi-dev": ["test_walk"],

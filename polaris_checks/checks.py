@@ -27151,6 +27151,258 @@ def check_oid4vp_verifier_boundary(root: pathlib.Path) -> list[Finding]:
                "held to a response the OpenID Foundation conformance suite produced")
 
 
+# polaris-oid4vp's mdoc tests are held to three DeviceResponses a wallet library this project
+# did not write built. The captures are the lab's (lab/interop/mdoc, where the run that made
+# them is recorded); the package holds copies of the four files its suite reads, so that the
+# suite, and the refusal drill that copies the package alone, read nothing outside the package.
+# A copy that drifted from its original would have the suite verifying something no wallet
+# sent. The paths are written out, not built from parts: the check-mutation drill resolves a
+# path literal, not a join.
+_OID4VP_MDOC_TESTDATA = "packages/polaris-oid4vp/testdata/mdoc/"
+_OID4VP_MDOC_LAB = "lab/interop/mdoc/"
+_OID4VP_MDOC_SUITE = "packages/polaris-oid4vp/test_mdoc.py"
+_OID4VP_MDOC_CAPTURE_COPIES = (
+    "packages/polaris-oid4vp/testdata/mdoc/capture-pid/device-response.cbor",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-pid/openid4vp-inputs.json",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-pid/captured-at.txt",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-pid/iaca-root.pem",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-mdl/device-response.cbor",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-mdl/openid4vp-inputs.json",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-mdl/captured-at.txt",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-mdl/iaca-root.pem",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-mdl-direct-post/device-response.cbor",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-mdl-direct-post/openid4vp-inputs.json",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-mdl-direct-post/captured-at.txt",
+    "packages/polaris-oid4vp/testdata/mdoc/capture-mdl-direct-post/iaca-root.pem",
+)
+
+
+def check_oid4vp_mdoc_captures_match_the_lab(root: pathlib.Path) -> list[Finding]:
+    name = "oid4vp_mdoc_captures_match_the_lab"
+    problems = []
+    for rel in _OID4VP_MDOC_CAPTURE_COPIES:
+        original = _OID4VP_MDOC_LAB + rel[len(_OID4VP_MDOC_TESTDATA):]
+        if not _read_raw(root, rel):
+            problems.append("%s is missing or empty" % rel)
+        elif not (root / original).is_file():
+            problems.append("%s is a copy of %s, which is not in the tree" % (rel, original))
+        elif (root / rel).read_bytes() != (root / original).read_bytes():
+            problems.append("%s differs from %s" % (rel, original))
+    # A file beside the copies that this check does not compare is a capture nothing ties to
+    # the lab's record.
+    held = root / _OID4VP_MDOC_TESTDATA
+    for path in sorted(held.rglob("*")) if held.is_dir() else ():
+        rel = path.relative_to(root).as_posix()
+        if path.is_file() and rel not in _OID4VP_MDOC_CAPTURE_COPIES:
+            problems.append("%s is not one of the copies this check compares" % rel)
+    # The suite's own list of captures is the list of directories compared here.
+    stated = re.search(r"^CAPTURES = \(([^)]*)\)", _read(root, _OID4VP_MDOC_SUITE), re.M)
+    named = sorted(re.findall(r'"([^"]+)"', stated.group(1))) if stated else []
+    copied = sorted({rel[len(_OID4VP_MDOC_TESTDATA):].split("/")[0] for rel in _OID4VP_MDOC_CAPTURE_COPIES})
+    if named != copied:
+        problems.append("%s reads the captures %s and this check compares %s"
+                        % (_OID4VP_MDOC_SUITE, ", ".join(named) or "(none it states)", ", ".join(copied)))
+    if problems:
+        return _fail(name, "polaris-oid4vp's mdoc captures: " + "; ".join(problems))
+    return _ok(name, "the %d files polaris-oid4vp's mdoc tests read are, byte for byte, the lab's captures "
+                     "of %s" % (len(_OID4VP_MDOC_CAPTURE_COPIES), ", ".join(copied)))
+
+
+# The publication rule for mdoc and the browser's Digital Credentials API
+# (lab/strategy/025-mdoc-dc-api.md, M7). The verifier's mdoc path ships off by default behind
+# --experimental, and no outward surface says more of it than that until the scoreboard holds
+# a row for the path: a named outside wallet or suite presented to a released polaris-oid4vp
+# and was accepted. The surfaces are written out, not built from parts: the check-mutation
+# drill resolves a path literal, not a join.
+_MDOC_CLAIM_SURFACES = (
+    "README.md",
+    "site/index.html",
+    "CHANGELOG.md",
+    "ROADMAP.md",
+    "CITATION.cff",
+    "docs/reference/SPEC-COMPLIANCE.md",
+    "docs/reference/INTEROP.md",
+    "packages/polaris-oid4vp/README.md",
+    "packages/polaris-verify/README.md",
+    "sdk/python/README.md",
+    "sdk/typescript/README.md",
+    "polaris_cli/README.md",
+)
+_MDOC_CLAIM_CHANGELOG = "CHANGELOG.md"
+_MDOC_CLAIM_SCOREBOARD = "lab/EXTERNAL-NOUNS.md"
+_MDOC_CLAIM_CLI = "packages/polaris-oid4vp/polaris_oid4vp/cli.py"
+_MDOC_CLAIM_CLI_SUITE = "packages/polaris-oid4vp/test_cli.py"
+
+#: Each path: its name; the words a surface may call it by; whether it is built and behind the
+#: flag, which is what lets a sentence call it experimental; and what its scoreboard row's
+#: Result cell names beside "accepted". A path with no such marks has no row that opens it
+#: yet: the rule asks more of it than a row (a state-issued document, a named person), and
+#: this check gains the marks together with that evidence.
+_MDOC_CLAIM_PATHS = (
+    ("mdoc over OpenID4VP redirects",
+     re.compile(r"(?i:(?<![\w/.-])(?:mdocs?|mso_mdoc|mDLs?|DeviceResponses?)(?![\w/-])|18013-5"
+                r"|(?:mobile\s+)?driv(?:er'?s?|ing)\s+licen[cs]es?|\bmobile\s+IDs?\b)"),
+     True, ("`mso_mdoc`", "`direct_post.jwt`")),
+    ("the Digital Credentials API",
+     re.compile(r"(?i:digital\s+credentials?\s+api|\bDC\s+API\b|(?<![\w/.-])dc_api|navigator\.credentials)"),
+     False, ("`dc_api.jwt`",)),
+    ("ISO/IEC 18013-7 Annex C",
+     re.compile(r"18013-7|org-iso-mdoc"),
+     False, ("`org-iso-mdoc`",)),
+    ("US and wallet-platform IDs",
+     re.compile(r"(?i:apple\s+wallet|google\s+wallet|state-issued|\bstate\s+IDs?\b)|\bUS\s+(?:mobile\s+)?IDs?\b"),
+     False, None),
+    ("age verification",
+     re.compile(r"(?i:age[- ]verification|proof[- ]of[- ]age|\bage\s+attestations?\b)"),
+     False, None),
+)
+
+#: Words of the first path that also name something else this tree has long said, each with
+#: the subject that carries them. A block that names the subject is about it. Only these
+#: words are excused, never a wallet's name, a licence, an age check or the browser API.
+_MDOC_CLAIM_SHARED_WORDS = re.compile(r"(?i:mdocs?|mso_mdoc|DeviceResponses?|18013-5)\Z")
+_MDOC_CLAIM_OTHER_SUBJECTS = (
+    # the corpus other verifiers test themselves against, which holds mdoc device responses
+    re.compile(r"negative[- ]vectors"),
+    # the same corpus, as the site's doors name it
+    re.compile(r"refusal tests"),
+    # the CI job that mutates the lab's mdoc verifier (lab/interop/mdoc/verify_mdoc.py)
+    re.compile(r"mdoc (?:verifier )?(?:mutation )?drill"),
+    # polaris-verify reading this project's own credential in its mdoc form
+    re.compile(r"verify_mdoc"),
+    # a certificate's profile: the key usage an issuer's certificate carries
+    re.compile(r"document signer|signing certificate"),
+)
+
+#: A sentence that says the path is absent claims nothing for it.
+_MDOC_CLAIM_ABSENT = re.compile(r"(?i:\b(?:neither|nor)\b|\b(?:does|do)\s+not\b|\bnot\s+supported\b)")
+_MDOC_CLAIM_ABSENT_BEFORE = re.compile(r"(?i:\bno\s+[`(]?\Z)")
+#: The word, unless the sentence takes it back.
+_MDOC_CLAIM_EXPERIMENTAL = re.compile(r"(?i:(?<!not )(?<!no longer )(?<!non-)\bexperimental\b)")
+
+
+def _mdoc_claim_blocks(text: str, by_line: bool):
+    """(first line, headings above, block) for each block of a surface: a paragraph, a list
+    item, a table row, a heading, or one line of a fenced block; every line of a surface
+    that is not Markdown."""
+    above, fenced, start, lines, alone = [], False, 0, [], False
+    for number, line in enumerate(text.splitlines() + [""], 1):
+        stripped = line.strip()
+        fence = not by_line and stripped.startswith("```")
+        title = None if by_line or fenced else re.match(r"(#{1,6})\s", stripped)
+        item = re.match(r"(?:[-*+]|\d+\.)\s|\|", stripped)
+        if lines and (alone or not stripped or fence or title or item):
+            yield start, " ".join(text for _, text in above), " ".join(lines)
+            lines = []
+        if fence:
+            fenced = not fenced
+            continue
+        if title:
+            above = [(level, text) for level, text in above if level < len(title.group(1))]
+            above.append((len(title.group(1)), stripped))
+        if stripped:
+            if not lines:
+                start = number
+            lines.append(stripped)
+            alone = by_line or fenced or bool(title)
+
+
+def _mdoc_paths_a_row_opens(scoreboard: str):
+    """(dated rows seen, the names of the paths a row opens). A row opens a path when its
+    first cell is a date, its verifier a release on PyPI, no cell is empty, and its Result
+    cell says accepted beside each of the path's marks."""
+    rows = []
+    for line in scoreboard.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if re.match(r"20\d\d-\d\d-\d\d\b", cells[0]):
+            rows.append(cells)
+    opened = []
+    for name, _, _, marks in _MDOC_CLAIM_PATHS:
+        for cells in rows if marks else ():
+            if (len(cells) >= 6 and all(cells) and re.search(r"PyPI: \d+\.\d+", cells[2])
+                    and "accepted" in cells[3] and all(mark in cells[3] for mark in marks)):
+                opened.append(name)
+                break
+    return len(rows), opened
+
+
+def check_mdoc_dc_api_claims_are_gated(root: pathlib.Path) -> list[Finding]:
+    """No outward surface says the verifier reads mdoc, the browser's Digital Credentials API,
+    wallet-platform or US IDs, or age-verification attestations, ahead of its evidence.
+
+    A sentence that names one of these paths passes when the scoreboard holds the path's row,
+    when it says the path is absent, or, for a path built behind --experimental, when the
+    sentence or the heading it stands under says experimental; that last holds only while the
+    command refuses the format without the flag and the suite tests that refusal. A CHANGELOG
+    line passes only with the row or the word experimental. Sentences about the negative
+    vectors, polaris-verify's verify_mdoc and a certificate's profile carry some of the same
+    words and are about those.
+
+    What this holds is a list of words on a list of surfaces. A claim made in other words, or
+    on another surface, is the reviewer's to catch; the rule's second half, two witnesses
+    agreeing stage by stage, is recorded with the row and is not read here.
+    """
+    name = "mdoc_dc_api_claims_are_gated"
+    problems = []
+    # What keeps "experimental, off by default" true of a path: the command refuses the format
+    # without the flag, and the package's suite holds that refusal. The words are written here,
+    # where the check-mutation drill finds them.
+    command, suite = _read(root, _MDOC_CLAIM_CLI), _read(root, _MDOC_CLAIM_CLI_SUITE)
+    for rel, code, needle in (
+            (_MDOC_CLAIM_CLI, command, "if not args.experimental:"),
+            (_MDOC_CLAIM_CLI, command, "is experimental and off by default"),
+            (_MDOC_CLAIM_CLI_SUITE, suite, "def test_the_unexercised_paths_are_off_by_default(self):")):
+        if needle not in code:
+            problems.append("%s no longer carries %r, so nothing keeps the mdoc path off by default and "
+                            "no sentence may call it experimental" % (rel, needle))
+    scoreboard = _read_raw(root, _MDOC_CLAIM_SCOREBOARD)
+    dated, opened = _mdoc_paths_a_row_opens(scoreboard)
+    if not dated:
+        problems.append("%s shows no dated row, so either the scoreboard is gone or this check stopped "
+                        "seeing its rows" % _MDOC_CLAIM_SCOREBOARD)
+    if problems:
+        return _fail(name, "; ".join(problems))
+
+    mentions = 0
+    for rel in _MDOC_CLAIM_SURFACES:
+        text = _read_raw(root, rel)
+        if not text.strip():
+            problems.append("%s could not be read, so what it says of mdoc and the Digital Credentials API "
+                            "is unchecked" % rel)
+            continue
+        changelog = rel == _MDOC_CLAIM_CHANGELOG
+        for start, heading, block in _mdoc_claim_blocks(text, not rel.endswith(".md")):
+            other_subject = any(subject.search(block) for subject in _MDOC_CLAIM_OTHER_SUBJECTS)
+            for sentence in re.split(r"(?<=[.;!?])\s+|\s*\|\s*", block):
+                for path, words, behind_the_flag, _ in _MDOC_CLAIM_PATHS:
+                    for found in words.finditer(sentence):
+                        mentions += 1
+                        if path in opened:
+                            continue
+                        if other_subject and _MDOC_CLAIM_SHARED_WORDS.match(found.group(0)):
+                            continue
+                        if not changelog and (_MDOC_CLAIM_ABSENT.search(sentence)
+                                              or _MDOC_CLAIM_ABSENT_BEFORE.search(sentence[:found.start()])):
+                            continue
+                        said = block if changelog else sentence + " " + heading
+                        if behind_the_flag and _MDOC_CLAIM_EXPERIMENTAL.search(said):
+                            continue
+                        problems.append(
+                            "%s:%d names %s (%r) and %s has no row for that path: %s"
+                            % (rel, start, path, found.group(0), _MDOC_CLAIM_SCOREBOARD,
+                               "say experimental, in the sentence%s" % ("" if changelog else " or its heading")
+                               if behind_the_flag else "it is not built, so the sentence comes out"))
+    if not mentions and not problems:
+        problems.append("no listed surface names mdoc or the Digital Credentials API at all, so either they "
+                        "stopped saying what the verifier reads or this check stopped seeing it")
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name, "%d mentions of mdoc, the Digital Credentials API, wallet-platform IDs and age "
+                     "verification on %d surfaces: each is experimental behind the flag, says the path is "
+                     "absent, or is about another subject; paths a scoreboard row opens: %s"
+                     % (mentions, len(_MDOC_CLAIM_SURFACES), ", ".join(opened) or "none"))
+
+
 # A package README becomes the project page on PyPI or npm, where a relative path into this
 # repository is a dead link. It is also PERMANENT: a published version's description cannot
 # be edited, so the broken link outlives the fix. The repair is an absolute blob URL, which
@@ -31979,6 +32231,8 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_real_pqc_default_boot,
     check_detached_verifier,
     check_oid4vp_verifier_boundary,
+    check_oid4vp_mdoc_captures_match_the_lab,
+    check_mdoc_dc_api_claims_are_gated,
     check_advisory_locks_have_a_contention_test,
     check_test_runners_are_last_in_their_file,
     check_logs_exclude_pii,

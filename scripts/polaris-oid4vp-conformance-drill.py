@@ -24,8 +24,11 @@ automatically: the suite's wallet sends a presentation broken in one specific wa
 module passes the moment the verifier answers 4xx. Those are real, machine-checked verdicts
 from somebody else's code. The four positive modules end in REVIEW instead, because the suite
 wants a screenshot of a verifier displaying a successful verification, and this drill cannot
-produce one and will not pretend to. A run here is not a certification and is not published:
-see `lab/EXTERNAL-NOUNS.md` for what would be.
+produce one and will not pretend to. The suite runs a module's end-of-test checks after that
+screenshot, so they are outside this drill; the one that asks whether the verifier read the
+credential's status is answered here by the verdict's own word, printed with each accepted
+presentation. A run here is not a certification and is not published: see
+`lab/EXTERNAL-NOUNS.md` for what would be.
 
 TWO NEGATIVE CONTROLS, one per direction, because the two halves of this plan fail in
 opposite ways and a control for one says nothing about the other.
@@ -35,6 +38,11 @@ always answers **200** must break all seven negative ones, and that is the contr
 matters: the negative modules pass on a 4xx and nothing else, so seven green modules and a
 suite that had quietly stopped sending anything look exactly alike without it. The run is VOID
 if either control goes unnoticed, and says which.
+
+`--credential-format iso_mdl` runs the plan's mdoc variant instead: the suite's wallet presents
+an ISO/IEC 18013-5 mdoc signed under the IACA root the suite serves at `/mdoc-iaca-root.pem`,
+which this reads from the suite and gives the verifier as its one trusted root. Five modules,
+four positive and one negative (`invalid-session-transcript`), under the same two controls.
 """
 import argparse
 import json
@@ -77,7 +85,7 @@ PUBLIC_ORIGIN = os.environ.get("POLARIS_PUBLIC_ORIGIN", "")
 ALIAS_BASE = "polaris-verifier"
 PLAN = "oid4vp-1final-verifier-haip-test-plan"
 
-#: The eleven modules that apply to sd_jwt_vc. The seven marked False are scored
+#: The eleven sd_jwt_vc modules this drill runs. The seven marked False are scored
 #: automatically on a 4xx; the four marked True end in REVIEW and need a human screenshot.
 MODULES = [
     ("oid4vp-1final-verifier-happy-flow", True),
@@ -92,6 +100,25 @@ MODULES = [
     ("oid4vp-1final-verifier-kb-jwt-iat-in-past", False),
     ("oid4vp-1final-verifier-kb-jwt-iat-in-future", False),
 ]
+
+#: The five iso_mdl modules this drill runs, named as the suite's plan names them (read at its
+#: commit daca6ad2, 2026-11-13). The negative one presents an mdoc whose device signature is
+#: over a session transcript built from the verifier's nonce with "INVALID" appended.
+MDOC_MODULES = [
+    ("oid4vp-1final-verifier-happy-flow", True),
+    ("oid4vp-1final-verifier-request-uri-method-post", True),
+    ("oid4vp-1final-verifier-request-uri-fetched-twice", True),
+    ("oid4vp-1final-verifier-present-credential-without-status", True),
+    ("oid4vp-1final-verifier-invalid-session-transcript", False),
+]
+
+#: The plan's `credential_format` variant, and the modules run under each.
+FORMATS = {"sd_jwt_vc": MODULES, "iso_mdl": MDOC_MODULES}
+
+#: What the mdoc query asks for: the mDL docType and two elements the suite's wallet holds.
+MDL_DOCTYPE = "org.iso.18013.5.1.mDL"
+MDL_NAMESPACE = "org.iso.18013.5.1"
+MDL_CLAIMS = [[MDL_NAMESPACE, "family_name"], [MDL_NAMESPACE, "given_name"]]
 
 _CTX = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 _CTX.check_hostname = False
@@ -153,15 +180,27 @@ def credential_signing_jwk():
             "y": b64u_encode(pub.y.to_bytes(32, "big"))}
 
 
-def create_plan(suite, config):
+def suite_iaca_root(suite):
+    """The IACA root the suite's wallet signs its mdocs under, as the suite itself serves it:
+    its configuration form tells a verifier under test to trust this certificate."""
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=_CTX))
+    with opener.open(suite + "/mdoc-iaca-root.pem", timeout=60) as response:
+        pem = response.read()
+    if b"-----BEGIN CERTIFICATE-----" not in pem:
+        raise SystemExit("%s/mdoc-iaca-root.pem did not answer with a PEM certificate, so there "
+                         "is no root to hold the suite's mdocs to" % suite)
+    return pem
+
+
+def create_plan(suite, config, credential_format="sd_jwt_vc"):
     """One plan on the suite; returns its id."""
-    variant = urllib.parse.quote(json.dumps({"credential_format": "sd_jwt_vc",
+    variant = urllib.parse.quote(json.dumps({"credential_format": credential_format,
                                              "response_mode": "direct_post.jwt"}))
     plan = api(suite, "/api/plan?planName=%s&variant=%s" % (PLAN, variant), "POST", config)
     return (plan or {}).get("_id") or (plan or {}).get("id")
 
 
-def run_module(suite, verifier, config, module, plan_id=None):
+def run_module(suite, verifier, config, module, plan_id=None, credential_format="sd_jwt_vc"):
     """Create the test, drive it, and return (result, tally, failures).
 
     With `plan_id`, the module runs inside that existing plan under the plan's own alias,
@@ -170,7 +209,7 @@ def run_module(suite, verifier, config, module, plan_id=None):
     if plan_id is None:
         alias = "%s-%s" % (ALIAS_BASE, secrets.token_hex(4))
         config = dict(config, alias=alias)
-        plan_id = create_plan(suite, config)
+        plan_id = create_plan(suite, config, credential_format)
     else:
         alias = config["alias"]
     run = api(suite, "/api/runner?test=%s&plan=%s" % (module, plan_id), "POST") or {}
@@ -305,6 +344,8 @@ def main() -> int:
     ap.add_argument("--suite", default="https://localhost:8443")
     ap.add_argument("--workdir", default="/tmp/polaris-oid4vp-drill")
     ap.add_argument("--only", default=None, help="run only these modules (comma-separated names)")
+    ap.add_argument("--credential-format", default="sd_jwt_vc", choices=sorted(FORMATS),
+                    help="the plan's credential_format variant (default sd_jwt_vc)")
     ap.add_argument("--certification", action="store_true",
                     help="run every module inside ONE plan, one at a time, waiting for each to "
                          "finish (and for the screenshot on the four positive ones); no "
@@ -322,23 +363,45 @@ def main() -> int:
         print("verifier   the tree's polaris_oid4vp at %s" % where)
     pki = build_pki(workdir)
     issuer_jwk = credential_signing_jwk()
+    fmt = args.credential_format
+    all_modules = FORMATS[fmt]
+    negative = [m for m, needs_screenshot in all_modules if not needs_screenshot]
 
+    if fmt == "iso_mdl":
+        try:
+            from polaris_oid4vp.mdoc import IacaRoot
+        except ImportError:
+            print("this polaris_oid4vp has no mdoc verifier, so there is nothing to run the "
+                  "iso_mdl modules against", file=sys.stderr)
+            return 2
+        # The suite signs its mdocs itself; the signing JWK below is for SD-JWT VC alone.
+        trust = {"credential_format": "mso_mdoc", "doctype_value": MDL_DOCTYPE,
+                 "iaca_roots": [IacaRoot(suite_iaca_root(args.suite), [MDL_DOCTYPE])],
+                 "claims": MDL_CLAIMS}
+        print("format     iso_mdl: docType %s, trusting the root at %s/mdoc-iaca-root.pem"
+              % (MDL_DOCTYPE, args.suite))
+    else:
+        trust = {"issuer_jwks": [{k: v for k, v in issuer_jwk.items() if k != "d"}]}
     verifier = Verifier(
         client_cert_pem=pki["leaf_pem"], client_key_pem=pki["leaf_key_pem"],
         request_uri=(PUBLIC_ORIGIN or "https://%s:%d" % (HOST, PORT)) + "/request.jwt",
         response_uri=(PUBLIC_ORIGIN or "https://%s:%d" % (HOST, PORT)) + "/response",
-        issuer_jwks=[{k: v for k, v in issuer_jwk.items() if k != "d"}])
+        **trust)
     # The four positive modules end by asking a human to "upload a screenshot showing
     # that the verifier successfully verified the presented credential (for example, a
     # page displaying the credential contents)" -- OID4VP-1FINAL-8.2. A verifier that
     # prints nothing gives the human nothing to photograph, so the verdict is displayed
-    # here exactly as the shipped `polaris-oid4vp serve` displays it.
+    # here: the line the shipped `polaris-oid4vp serve` prints, then the claims and the
+    # verdict's revocation state.
     def _show(status, body, verdict):
         if verdict and verdict.authentic:
             print("\n  ================ VERIFIER: PRESENTATION ACCEPTED ================")
             print("  <- %d authentic" % status)
             for name in sorted(verdict.claims):
                 print("       %-14s %s" % (name, verdict.claims[name]))
+            # What the verifier did about the credential's status, in the verdict's own word.
+            revocation = verdict.revocation if isinstance(verdict.revocation, dict) else {}
+            print("       %-14s %s" % ("revocation", revocation.get("state")))
             print("  ================================================================\n",
                   flush=True)
         elif getattr(verdict, "wallet_error", None) is not None:
@@ -364,15 +427,16 @@ def main() -> int:
     }
 
     wanted = None if args.only is None else set(args.only.split(","))
-    modules = [m for m in MODULES if wanted is None or m[0] in wanted]
+    modules = [m for m in all_modules if wanted is None or m[0] in wanted]
     if args.certification:
         config = dict(config, alias="%s-cert-%s" % (ALIAS_BASE, secrets.token_hex(4)))
-        plan_id = create_plan(args.suite, config)
+        plan_id = create_plan(args.suite, config, fmt)
         print("  certification plan %s  %s/plan-detail.html?plan=%s\n"
               % (plan_id, args.suite, plan_id), flush=True)
         final = []
         for module, needs_screenshot in modules:
-            test_id, tally, failures = run_module(args.suite, verifier, config, module, plan_id)
+            test_id, tally, failures = run_module(args.suite, verifier, config, module, plan_id,
+                                                  credential_format=fmt)
             status, result = wait_finished(args.suite, test_id, needs_screenshot)
             final.append((module, status, result))
             print("  %-32s %s / %s" % (module.replace("oid4vp-1final-verifier-", ""),
@@ -390,7 +454,8 @@ def main() -> int:
         return 0 if not bad else 1
     rows, not_clean = [], []
     for module, needs_screenshot in modules:
-        _, tally, failures = run_module(args.suite, verifier, config, module)
+        _, tally, failures = run_module(args.suite, verifier, config, module,
+                                        credential_format=fmt)
         verdict, clean = outcome(tally, needs_screenshot)
         if not clean:
             not_clean.append(module)
@@ -415,7 +480,8 @@ def main() -> int:
     verifier.handle_direct_post = lambda form: (400, {"error": "invalid_request",
                                                       "error_description": "control"}, None)
     try:
-        _, tally, _ = run_module(args.suite, verifier, config, "oid4vp-1final-verifier-happy-flow")
+        _, tally, _ = run_module(args.suite, verifier, config, "oid4vp-1final-verifier-happy-flow",
+                                 credential_format=fmt)
     finally:
         verifier.handle_direct_post = original
     controls.append(("always 400, against happy-flow", tally.get("FAILURE", 0)))
@@ -430,17 +496,15 @@ def main() -> int:
                                                None)
     accepted_everything = []
     try:
-        for module, needs_screenshot in MODULES:
-            if needs_screenshot:
-                continue
-            _, tally, _ = run_module(args.suite, verifier, config, module)
+        for module in negative:
+            _, tally, _ = run_module(args.suite, verifier, config, module, credential_format=fmt)
             # Not "did it record a failure": it does not. "Did it withhold the automatic
             # pass", which is the thing the seven negative modules actually grant.
             accepted_everything.append((module, 0 if tally.get("FINISHED") else 1))
     finally:
         verifier.handle_direct_post = original
     unnoticed = [m for m, noticed in accepted_everything if not noticed]
-    controls.append(("always 200, against all %d negative modules" % len(accepted_everything),
+    controls.append(("always 200, against all %d negative module(s)" % len(accepted_everything),
                      len(accepted_everything) - len(unnoticed)))
 
     for label, noticed in controls:

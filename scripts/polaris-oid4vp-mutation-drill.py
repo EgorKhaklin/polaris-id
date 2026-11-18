@@ -37,6 +37,12 @@ is not a mutation runs in every shard: the unmutated baseline, the negative cont
 check that every named mutation still matches its code. A declared survivor is answered for by
 the shard that mutates it, and one that names no refusal at all by every shard. Unsharded the
 drill was 34 of the product boundary job's 35 minutes; CI runs eight shards in a job of its own.
+
+NO BYTECODE (2026-11-16). A mutant is one file rewritten, and two raise-mutants of a file have
+the same size. Python keys a bytecode file by the source's size and whole-second mtime, so a
+suite run that writes one hands the NEXT mutant, written in the same second, the previous
+mutant's code: a mutant nothing catches is then reported caught. So a suite run is started
+with PYTHONDONTWRITEBYTECODE=1, and neither its interpreter nor one a test starts writes any.
 """
 import argparse
 import hashlib
@@ -60,15 +66,28 @@ PKG = ROOT / "packages" / "polaris-oid4vp"
 #: `status.py` joined on 2026-09-23. It decides whether a credential is revoked, it refuses
 #: through the same `_refuse`, and it was absent from this tuple and its suite from SUITES:
 #: measured that day, 6 of its 12 raise-refusals could be inverted with the package green.
+#: `cbor.py`, `cose.py` and `mdoc.py` joined on 2026-11-16 with the mso_mdoc format: the CBOR
+#: decoder, the COSE reader and the mdoc judge, which refuse by raising.
 SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py",
-           "polaris_oid4vp/status.py", "polaris_oid4vp/serve.py")
+           "polaris_oid4vp/status.py", "polaris_oid4vp/serve.py", "polaris_oid4vp/cbor.py",
+           "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py")
+
+#: The package's other modules, each with the reason it has no refusal for this drill to
+#: invert. A module that is in neither list fails the drill (`module_problems`): status.py sat
+#: outside it for want of a line here, and a new module's refusals would go uninverted the
+#: same way, with every shard green.
+NO_REFUSALS = {
+    "polaris_oid4vp/__init__.py": "names what the package exports",
+    "polaris_oid4vp/cli.py": "the command line: it hands flags and files to the verifier, and "
+                             "test_cli holds its refusals of flags directly",
+}
 
 #: Every suite in the package. A new test file that is not listed here is invisible to this
 #: drill, which is a silent way to lose coverage of a refusal: the file exists, the refusal
 #: is tested, and the drill still calls it unprotected or, worse, calls it protected by
 #: something else.
 SUITES = ("test_sdjwt", "test_jwe", "test_verifier", "test_serve", "test_cli",
-          "test_conformance_capture", "test_status")
+          "test_conformance_capture", "test_status", "test_mdoc")
 
 #: Refusals a passing suite cannot reach, with the reason. Every one is the same shape: the
 #: guard fires only when `cryptography` is ABSENT, and a suite that runs has it installed,
@@ -144,6 +163,19 @@ _STATUS_PATTERNS = (
     (re.compile(r"^(\s*)raise ValueError\(.*\)\s*$"), r"\1pass  # MUTANT"),
 )
 
+
+#: cbor.py, cose.py and mdoc.py, 2026-11-16. They refuse by raising: the decoder a CborError,
+#: the COSE reader a CoseError, the mdoc judge a `_Refused` (which `verify_device_response`
+#: turns into the refusing verdict), an `_Unread`, or a ValueError for a root or an argument it
+#: will not take. Accepting is the guard not firing, so the raise is put behind `if False:`.
+#: The statement stays whole however many lines it spans and whether or not it ends in
+#: `from None`, which a bare call would not survive: a mutant that does not compile fails every
+#: test and reads as caught.
+_RAISING = ("polaris_oid4vp/cbor.py", "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py")
+_RAISE_PATTERNS = (
+    (re.compile(r"^(\s*)raise (CborError|CoseError|_Refused|_Unread|ValueError)\b"),
+     r"\1pass  # MUTANT\n\1if False: raise \2"),
+)
 
 #: 2026-11-18, decode-once. `raise JweError(...)` becomes `return b'{}'`, which means "the
 #: plaintext of a token that did not authenticate" only where the function's return IS the
@@ -233,8 +265,15 @@ NAMED_MUTANTS = (
     # A request closes only on an authentic presentation: anything else anyone who saw the
     # request can send.
     ("verifier:garbage-closes-the-request", "polaris_oid4vp/verifier.py",
-     "        if presentation is None:\n",
-     "        if presentation is None:\n            self._sessions.pop(session.state, None)\n"),
+     "        if presentation is None:\n            return self._error(\"invalid_request\",\n",
+     "        if presentation is None:\n            self._sessions.pop(session.state, None)\n"
+     "            return self._error(\"invalid_request\",\n"),
+    # 2026-11-16, the same property on the mso_mdoc path: a response `_judge_mdoc` refuses, garbage
+    # included, leaves the request open for the holder's own.
+    ("verifier:a-refused-mdoc-closes-the-request", "polaris_oid4vp/verifier.py",
+     "            if not verdict.authentic:\n                return self._error(verdict.code, verdict.reason)\n",
+     "            if not verdict.authentic:\n                self._sessions.pop(session.state, None)\n"
+     "                return self._error(verdict.code, verdict.reason)\n"),
     ("verifier:a-refused-presentation-closes-the-request", "polaris_oid4vp/verifier.py",
      "            # gets the same constant refusal every other cause gets. The request stays open.\n",
      "            self._sessions.pop(session.state, None)\n"),
@@ -296,10 +335,28 @@ def _invert(line: str, source: str = ""):
                 out = pattern.sub(replacement, line.rstrip("\n"), count=1)
                 return out + "\n"
         return None
-    for pattern, replacement in _PATTERNS:
+    for pattern, replacement in (_RAISE_PATTERNS if source in _RAISING else _PATTERNS):
         if pattern.match(line):
             return pattern.sub(replacement, line, count=1)
     return None
+
+
+def module_problems(modules: list, sited: set) -> list:
+    """What is wrong between the package's modules and the two lists, one line each. `modules`
+    is every module of the package, as SOURCES names them; `sited` the sources in which a
+    refusal matched."""
+    problems = []
+    for module in sorted(set(modules) | set(SOURCES) | set(NO_REFUSALS)):
+        if module not in modules:
+            problems.append("%s is listed and is not a module of the package" % module)
+        elif module in SOURCES and module in NO_REFUSALS:
+            problems.append("%s is in SOURCES and in NO_REFUSALS: it is one or the other" % module)
+        elif module in SOURCES and module not in sited:
+            problems.append("%s is in SOURCES and no refusal in it matched a pattern" % module)
+        elif module not in SOURCES and module not in NO_REFUSALS:
+            problems.append("%s is in neither SOURCES nor NO_REFUSALS: its refusals would go "
+                            "uninverted" % module)
+    return problems
 
 
 def _def_lines(lines, name):
@@ -373,14 +430,36 @@ def _label(lines, i, source):
                            "#%d" % (seen + 1) if seen else "")
 
 
-def _run_suite(work: pathlib.Path):
+#: The suite that listens on real sockets: 11 of the 14 seconds a passing run takes (measured
+#: 2026-11-16, 859 tests). It runs last, and a run stops at its first failing test, so a
+#: mutation another suite catches costs a second or two instead of the whole run. The verdict
+#: is the one a full run gives: the exit status is non-zero exactly when some test fails.
+SLOW_SUITES = ("test_serve",)
+
+
+def unittest_command(failfast=True):
+    """The command one suite run is: every suite, the slow ones last, stopping at a failure
+    unless `failfast` is False (the full run `_judged_run` falls back to)."""
+    ordered = [s for s in SUITES if s not in SLOW_SUITES] + [s for s in SUITES if s in SLOW_SUITES]
+    return [sys.executable, "-m", "unittest", *(["--failfast"] if failfast else []), *ordered]
+
+
+def _run_suite(work: pathlib.Path, failfast=True):
     # 2026-11-18: no bytecode. Python takes a .pyc as current when the source's mtime, in whole
     # seconds, and its size match, and most mutants of one file are the same size: a suite run
     # inside a second, then the next mutant written within that second, ran the previous
-    # mutant's bytecode, and its verdict was the other mutant's.
-    return subprocess.run([sys.executable, "-m", "unittest", *SUITES],
-                          cwd=str(work), capture_output=True, text=True, timeout=600,
+    # mutant's bytecode, and its verdict was the other mutant's. The variable reaches the suite's
+    # own interpreter and every interpreter a test starts, so none of them writes bytecode.
+    return subprocess.run(unittest_command(failfast), cwd=str(work), capture_output=True,
+                          text=True, timeout=600,
                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+
+
+def _what_failed(proc) -> list:
+    """The lines of a failing suite run that name what failed, and its last line."""
+    lines = [line for line in (proc.stderr or proc.stdout or "").strip().splitlines() if line.strip()]
+    named = [line for line in lines if line.startswith(("FAIL: ", "ERROR: "))]
+    return (named + lines[-1:])[:4] or ["(the run printed nothing)"]
 
 
 def _suite_passes(work: pathlib.Path) -> bool:
@@ -415,6 +494,21 @@ def verdict(proc) -> str:
     return "crashed"
 
 
+def _judged_run(work: pathlib.Path):
+    """One suite run's verdict and its output. The run stops at the first failure or error
+    (`--failfast`), so a catch is usually seen in seconds. A run that reads `crashed` stopped at
+    an ERROR, and a test later in the run may still have failed on the mutant: then the whole
+    run, without `--failfast`, decides, as `verdict` was written to read it. Without this a
+    refusal a test asserts would be reported red only by ERROR whenever an earlier test crashed
+    on the same mutant."""
+    proc = _run_suite(work)
+    judged = verdict(proc)
+    if judged == "crashed":
+        proc = _run_suite(work, failfast=False)
+        judged = verdict(proc)
+    return judged, proc
+
+
 def _confirm_survivor(work: pathlib.Path):
     """A survivor has to pass TWICE, and the second run's output is kept.
 
@@ -426,8 +520,7 @@ def _confirm_survivor(work: pathlib.Path):
     acted on from a CI log. A crash is re-run the same way, since it is not a catch either.
     Returns the second run's verdict and its output.
     """
-    proc = _run_suite(work)
-    return verdict(proc), proc
+    return _judged_run(work)
 
 
 def main(argv=None) -> int:
@@ -459,6 +552,15 @@ def main(argv=None) -> int:
             print("oid4vp-mutation drill: no refusals matched; the patterns and the package "
                   "have drifted and a clean result would mean nothing", file=sys.stderr)
             return 1
+        problems = module_problems(
+            sorted(str(f.relative_to(pkg)) for f in (pkg / "polaris_oid4vp").glob("*.py")),
+            {source for source, _i, _m, _l in sites})
+        if problems:
+            print("oid4vp-mutation drill: the package's modules and this drill's lists disagree, "
+                  "so a clean result would not cover the package:", file=sys.stderr)
+            for problem in problems:
+                print("  %s" % problem, file=sys.stderr)
+            return 1
         print("== %d refusals across %s ==" % (len(sites), ", ".join(SOURCES)))
         mine = shard_of(units, args.shard)
         if shard_n > 1:
@@ -488,7 +590,7 @@ def main(argv=None) -> int:
                 mutated_text(originals[source], source,
                              [(i, mutated) for src, i, mutated, _ in sites if src == source]),
                 encoding="utf-8")
-        control = verdict(_run_suite(pkg))
+        control, _ = _judged_run(pkg)
         for source in SOURCES:
             (pkg / source).write_text(originals[source], encoding="utf-8")
         if control != "caught":
@@ -499,22 +601,43 @@ def main(argv=None) -> int:
             return 1
         print("  negative control: a package with every refusal inverted is caught")
 
-        survivors, flaky = [], []
+        survivors, flaky, unsteady = [], [], []
         for source, i, mutated, label in my_sites:
             (pkg / source).write_text(mutated_text(originals[source], source, [(i, mutated)]),
                                       encoding="utf-8")
             try:
-                if verdict(_run_suite(pkg)) != "caught":
-                    again, proc = _confirm_survivor(pkg)
-                    if again != "caught":
-                        survivors.append((label, mutated.split("# MUTANT")[0].strip(), again))
-                        if label not in DECLARED_SURVIVORS:
-                            print("  ! %s %s twice. The suite's second run said:"
-                                  % (label, _NOT_CAUGHT[again]))
-                            for out_line in (proc.stdout or proc.stderr).strip().splitlines()[-4:]:
-                                print("      %s" % out_line[:100])
-                    else:
+                first, first_proc = _judged_run(pkg)
+                declared = label in DECLARED_SURVIVORS
+                if first != "caught" or declared:
+                    again, second = _confirm_survivor(pkg)
+                    missed = (first != "caught") + (again != "caught")
+                    if missed == 2 or (declared and missed == 1):
+                        # What is reported is the run that did not catch it, the second's first.
+                        kind = again if again != "caught" else first
+                        survivors.append((label, mutated.split("# MUTANT")[0].strip(), kind))
+                    if not declared and missed == 2:
+                        print("  ! %s %s twice. The suite's second run said:"
+                              % (label, _NOT_CAUGHT[again]))
+                        for out_line in (second.stdout or second.stderr).strip().splitlines()[-4:]:
+                            print("      %s" % out_line[:100])
+                    elif not declared:
                         flaky.append(label)
+                    elif missed < 2:
+                        # A declared survivor is run twice whatever its first run said. One
+                        # caught run of the two, in either order, does not close a declared
+                        # gap; two do. What the catching run said is printed either way: "no
+                        # longer survives" with no output cannot be acted on from a CI log.
+                        failed = first_proc if first == "caught" else second
+                        missing = {"passed": "passed", "crashed": "was red only by ERROR"}
+                        print("  ! %s is declared a survivor and its suite run %s. That run said:"
+                              % (label, "failed twice" if missed == 0
+                                 else "failed, then %s on the re-run" % missing[again]
+                                 if first == "caught"
+                                 else "%s, then failed on the re-run" % missing[first]))
+                        for out_line in _what_failed(failed):
+                            print("      %s" % out_line[:160])
+                        if missed == 1:
+                            unsteady.append(label)
             finally:
                 (pkg / source).write_text(originals[source], encoding="utf-8")
             if args.verbose:
@@ -534,7 +657,7 @@ def main(argv=None) -> int:
                 continue    # matched exactly once above, in every shard; mutated by its own
             (pkg / source).write_text(text.replace(old, new), encoding="utf-8")
             try:
-                if verdict(_run_suite(pkg)) != "caught":
+                if _judged_run(pkg)[0] != "caught":
                     again, proc = _confirm_survivor(pkg)
                     if again != "caught":
                         named_survivors.append(label)
@@ -567,6 +690,10 @@ def main(argv=None) -> int:
     if flaky:
         print("  %d mutation(s) passed once and failed on the re-run, so they are CAUGHT: %s"
               % (len(flaky), ", ".join(flaky)))
+    if unsteady:
+        print("  %d declared survivor(s) failed one of their two runs, so they SURVIVE and "
+              "the suite failed once for a reason of its own, printed above: %s"
+              % (len(unsteady), ", ".join(unsteady)))
     print("  refusals inverted           %4d%s" % (len(my_sites), (" of %d (shard %d/%d)"
                                                               % (len(sites), shard_i, shard_n))
                                                              if shard_n > 1 else ""))

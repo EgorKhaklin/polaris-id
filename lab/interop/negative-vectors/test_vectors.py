@@ -9,6 +9,7 @@ status-required policy only."""
 import base64
 import contextlib
 import copy
+import datetime
 import importlib.util
 import io
 import json
@@ -2599,6 +2600,82 @@ class Quotes(unittest.TestCase):
                                          HERE)
         self.assertEqual(problems, ["v: RFC 9999 s1 has no row in MANIFEST"])
         self.assertEqual(self.q.quote_problems([{"vectors": []}], HERE), ["no quoted clause in the files"])
+
+
+class MdocVectorsUnderThePackage(unittest.TestCase):
+    """mdoc-vectors.json, judged by polaris-oid4vp's mdoc verifier: every vector made
+    for a redirect request whose defect a DeviceResponse verifier can see. The three whose defect
+    is in the request's claims are the query check's, and the four made for the Digital
+    Credentials API are milestone 3's; both sets are held by name, so that none leaves unnoticed."""
+
+    CODES = {
+        "md-st-nonce": "device_signature", "md-st-client-id-other": "device_signature",
+        "md-st-client-id-no-prefix": "device_signature", "md-st-response-uri": "device_signature",
+        "md-st-thumbprint-other-key": "device_signature", "md-st-thumbprint-absent": "device_signature",
+        "md-st-dcapi-handover-on-redirect": "device_signature",
+        "md-devicesig-other-key": "device_signature", "md-devicesig-missing": "device_auth",
+        "md-devicesig-not-detached": "device_auth", "md-devicesig-doctype-other": "device_signature",
+        "md-devicekey-kty-crv": "device_key", "md-devicesigned-unauthorized-ns": "device_namespaces",
+        "md-doctype-not-requested": "doctype",
+        "md-issuerauth-sig-flipped": "issuer_signature", "md-issuerauth-sig-der": "issuer_signature",
+        "md-issuerauth-alg-curve": "issuer_signature", "md-issuerauth-crit-unknown": "issuer_signature",
+        "md-issuerauth-dup-label": "issuer_signature", "md-mso-not-tag24": "mso",
+        "md-digest-value-modified": "digest", "md-digest-reencoded-item": "digest", "md-digest-id-absent": "digest",
+        "md-digest-alg-sha1": "mso", "md-digest-length": "digest", "md-doctype-vs-mso": "doctype",
+    }
+    THE_QUERY_CHECKS = ("md-sd-claim-absent", "md-sd-claim-sets-unmet", "md-sd-value-other")
+    MILESTONE_3 = ("md-accept-dcapi-oid4vp", "md-st-dcapi-origin-other", "md-st-dcapi-origin-prefixed",
+                   "md-st-redirect-handover-on-dcapi")
+    #: A twin this verifier refuses, and why: it carries device-signed elements the MSO authorizes,
+    #: and this verifier reads no device-signed element.
+    REFUSED_TWINS = {"md-devicesigned-unauthorized-ns": "device_namespaces"}
+
+    MDL, PID, MDL_NS = "org.iso.18013.5.1.mDL", "eu.europa.ec.eudi.pid.1", "org.iso.18013.5.1"
+
+    @classmethod
+    def judge_vector(cls, vector, case=None):
+        from polaris_oid4vp import mdoc
+        case = case or vector
+        inputs = case["inputs"]
+        at = datetime.datetime.strptime(vector["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+        pems = vector["trust_anchors_pem"]
+        pems = [pems] if isinstance(pems, str) else pems
+        roots = [mdoc.IacaRoot(pem, [cls.MDL, cls.PID]) for pem in pems]
+        transcript = mdoc.redirect_session_transcript(
+            client_id=inputs["client_id"], nonce=inputs["nonce"], response_uri=inputs["response_uri"],
+            jwk_thumbprint=mdoc.jwk_thumbprint(inputs["encryption_jwk"]))
+        response = base64.urlsafe_b64decode(case["response"] + "=" * (-len(case["response"]) % 4))
+        return mdoc.verify_device_response(response, session_transcript=transcript, iaca_roots=roots,
+                                           doctype=inputs["doctype_value"], now=at)
+
+    def test_every_redirect_vector_gets_its_verdict(self):
+        with open(os.path.join(HERE, "mdoc-vectors.json")) as fh:
+            corpus = json.load(fh)
+        vectors = {v["id"]: v for v in corpus["vectors"]}
+        self.assertEqual(len(vectors), 34)
+        redirect = {i: v for i, v in vectors.items() if v["inputs"]["response_mode"] == "direct_post.jwt"}
+        self.assertEqual(sorted(set(vectors) - set(redirect)), sorted(self.MILESTONE_3))
+        judged = {i: v for i, v in redirect.items() if "claims" not in v["inputs"]}
+        self.assertEqual(sorted(set(redirect) - set(judged)), sorted(self.THE_QUERY_CHECKS))
+        self.assertEqual(sorted(i for i in judged if judged[i]["expected"] == "reject"), sorted(self.CODES))
+        self.assertEqual([i for i in judged if judged[i]["expected"] == "accept"], ["md-accept-redirect"])
+        control = self.judge_vector(judged["md-accept-redirect"])
+        self.assertTrue(control.authentic, "%s: %s" % (control.code, control.reason))
+        self.assertEqual(set(control.claims[self.MDL_NS]), {"family_name", "given_name", "birth_date"})
+        twins = 0
+        for vector_id, code in self.CODES.items():
+            vector = judged[vector_id]
+            with self.subTest(vector=vector_id):
+                v = self.judge_vector(vector)
+                self.assertEqual((v.authentic, v.code), (False, code), v.reason)
+                # The repaired twin: the same vector with its one defect put back.
+                twin = self.judge_vector(vector, vector["repaired"])
+                if vector_id in self.REFUSED_TWINS:
+                    self.assertEqual((twin.authentic, twin.code), (False, self.REFUSED_TWINS[vector_id]), twin.reason)
+                else:
+                    self.assertTrue(twin.authentic, "the twin: %s: %s" % (twin.code, twin.reason))
+                    twins += 1
+        self.assertEqual(twins, len(self.CODES) - len(self.REFUSED_TWINS))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # Fuzzing polaris-oid4vp
 
 Coverage-guided fuzz targets ([atheris](https://github.com/google/atheris), libFuzzer) for the
-functions that read what a wallet, or a status list server, sends. Each target holds one
+functions that read what a wallet, or a status list server, sends. Each target holds a
 function to the promise its own docstring makes:
 
 | Target | Function | The promise |
@@ -11,6 +11,8 @@ function to the promise its own docstring makes:
 | `fuzz_jwe.py` | `jwe.decrypt_response` | raises nothing but `JweError` |
 | `fuzz_response.py` | `Verifier.handle_direct_post` | answers 200 or 400, never an exception; 200 only for an authentic presentation, or for a wallet's error response with an empty body and no claims |
 | `fuzz_status.py` | `status.decide` | total on hostile input; a checked verdict carries a status |
+| `fuzz_mdoc.py` | `cbor.decode` | raises nothing but `CborError`; what it returns is what cbor2 reads from the same bytes |
+| `fuzz_mdoc.py` | `mdoc.verify_device_response` | returns a Verdict and never raises; nothing authentic differs from what the document signer signed |
 
 Keys and the clock are fixed (`_genuine.py`), so an input that crashes a target reproduces
 anywhere. Each target seeds an empty corpus directory with genuine artifacts from the suite's
@@ -22,7 +24,7 @@ caused it is uploaded as the `fuzz-crashes` artifact.
 
 A target that finds nothing proves nothing until it has found something. Each was run against a
 copy of the package with one guard removed, a defect of a kind this package has actually had, and
-each found it within five minutes (2026-09-30, emulated x86-64):
+each found it within five minutes (2026-09-30, and `fuzz_mdoc.py` on 2026-11-16; emulated x86-64):
 
 | Target | Guard removed | Found |
 |---|---|---|
@@ -31,6 +33,7 @@ each found it within five minutes (2026-09-30, emulated x86-64):
 | `fuzz_jwe.py` | `isinstance(enc, str)` before the `enc` lookup | `TypeError`, unhashable `enc` |
 | `fuzz_response.py` | `isinstance(vp_token, dict)` | `TypeError` on a missing or `null` vp_token |
 | `fuzz_status.py` | `isinstance(lst, str)` | `TypeError` on a number as `lst` |
+| `fuzz_mdoc.py` | the refusal of a map key that repeats, in `cbor.decode` | a map cbor2 refuses for its repeated key, read as a value |
 
 The status target missed its defect in five minutes of byte mutation and found it only after the
 typed field forms were added (`_genuine.with_field`), which the signed, JWE and status targets

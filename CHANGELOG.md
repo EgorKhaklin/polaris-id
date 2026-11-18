@@ -105,6 +105,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Added
 
+- polaris-oid4vp: `mso_mdoc` (ISO/IEC 18013-5) over `direct_post.jwt`, an experimental format, off by default: `serve --experimental --format mso_mdoc --doctype D --iaca-root PEM` asks for it, and `verdict --experimental` judges a captured response.
 - polaris-oid4vp `serve --once --rearm` starts the next request, with the same specification, when the current one ends (an answer about it at the response URI, accepted, refused or a wallet's error response, or the end of its lifetime, which a timer notices) and prints its parameters as `--once` does; `--result` then describes the current request, adds `request` and keeps the one that ended as `previous`.
 - polaris-oid4vp `serve --control-token-file FILE` adds `POST /control/request` on the listener: with `Authorization: Bearer <token>` it starts a request, optionally with its own `claims` and `vct`, and answers 201 with its launch links; each request it starts ends at an answer, accepted, refused or a wallet's error response, or when it expires; at most 64 requests outstanding (429 beyond), no CORS headers on the path, 401 with no body for a missing or wrong token; refused with `--rearm`.
 - polaris-oid4vp `Verifier.new_request(claims=..., vct_values=...)`: one request asks for its own claims and credential types in place of the verifier's, and its answer is judged by them; a bare string, an empty list or a credential type that is not a non-empty string raises `ValueError` and no request is made.
