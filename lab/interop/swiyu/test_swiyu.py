@@ -1276,7 +1276,7 @@ class PinTests(unittest.TestCase):
         self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)', inspect.getsource(sdjwt._revocation_state))
         # the response path the lab sits in front of: it decrypts, then asks _single_presentation
         source = inspect.getsource(Verifier.handle_direct_post)
-        for fragment in ("decrypt_response(token, candidate.enc_key)", "self._single_presentation(self._read_vp_token(body.get(\"vp_token\")))",
+        for fragment in ("_open_response(compact, candidate.enc_key)", "self._single_presentation(self._read_vp_token(body.get(\"vp_token\")))",
                          "status_resolver=self.status_resolver", "expected_audience=self.client_id"):
             self.assertIn(fragment, source)
 

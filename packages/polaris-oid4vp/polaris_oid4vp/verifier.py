@@ -49,8 +49,8 @@ except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
 from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, MAX_RESPONSE_BYTES, JweError, _loads_depth_bounded,
-                  _public_key_from_jwk, b64u_decode, b64u_encode, check_compact_length,
-                  decrypt_response, encrypt_compact)
+                  _open_response, _public_key_from_jwk, _read_compact, b64u_decode, b64u_encode,
+                  check_compact_length, encrypt_compact)
 from .sdjwt import (ALL_ENTRIES, PER_CREDENTIAL, TRANSACTION_DATA_HASH_ALGS,
                     TRANSACTION_DATA_SCOPES, JtiMemory, TransactionDataBinding,
                     TransactionDataEntry, Verdict, verify_presentation)
@@ -1211,7 +1211,9 @@ class Verifier:
         # `state` that would let us look it up directly is INSIDE the ciphertext, and
         # trusting an unauthenticated state parameter to pick a decryption key is how a
         # verifier gets steered onto the wrong session. Its length is checked once, first, so a
-        # token too long to be a response is not decoded and decrypted once per open request.
+        # token too long to be a response is refused before anything is decoded. It is then read
+        # once, and only what depends on the key (the key agreement and the tag) is tried per
+        # open request.
         try:
             check_compact_length(token)
         except JweError as exc:
@@ -1219,9 +1221,15 @@ class Verifier:
         with self._lock:
             self._expire_locked()
             candidates = list(self._sessions.values())
+        compact = None
+        if candidates:
+            try:
+                compact = _read_compact(token)
+            except JweError:
+                candidates = []
         for candidate in candidates:
             try:
-                body = decrypt_response(token, candidate.enc_key)
+                body = _open_response(compact, candidate.enc_key)
             except JweError:
                 continue
             session = candidate

@@ -1676,7 +1676,7 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         to exercise is never entered. Coverage said so.
 
         So the window is held open deliberately: both threads are made to sit inside
-        `decrypt_response`, after the snapshot and before the lock, until both have arrived.
+        `_open_response`, after the snapshot and before the lock, until both have arrived.
         The refusal is then asserted BY NAME, because "one of them got a 400" is true of the
         wrong reason too.
         """
@@ -1688,17 +1688,17 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         form = self.wallet.respond(jar)
         results = []
         inside = threading.Barrier(2, timeout=10)
-        real_decrypt = verifier_module.decrypt_response
+        real_open = verifier_module._open_response
 
-        def decrypt_then_wait(token, key):
-            body = real_decrypt(token, key)
+        def open_then_wait(compact, key):
+            body = real_open(compact, key)
             inside.wait()
             return body
 
         def race():
             results.append(self.verifier.handle_direct_post(form))
 
-        verifier_module.decrypt_response = decrypt_then_wait
+        verifier_module._open_response = open_then_wait
         try:
             threads = [threading.Thread(target=race) for _ in range(2)]
             for t in threads:
@@ -1706,7 +1706,7 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
             for t in threads:
                 t.join(timeout=15)
         finally:
-            verifier_module.decrypt_response = real_decrypt
+            verifier_module._open_response = real_open
 
         statuses = sorted(status for status, _, _ in results)
         self.assertEqual(statuses, [200, 400],
@@ -1714,6 +1714,55 @@ class TheLastTwoRefusalsTests(VerifierTestCase):
         loser = [v for status, _, v in results if status == 400][0]
         self.assertIn("already been answered", loser.reason)
 
+
+
+class AResponseIsDecodedOnceTests(VerifierTestCase):
+    """A response at the response URI is tried against every open request's key, because the
+    `state` that would name its request is inside the ciphertext. Only the key agreement and the
+    tag depend on the key, so the response's segments are decoded once, whatever the number of
+    open requests."""
+
+    OPEN = 3
+
+    def post_counting(self, form):
+        """Post `form`; returns the answer and how often its protected header and its ciphertext
+        were base64url-decoded on the way."""
+        from unittest import mock
+
+        from polaris_oid4vp import jwe as jwe_module
+
+        protected, _, _, ciphertext, _ = form["response"][0].split(".")
+        real = jwe_module.b64u_decode
+        seen = []
+
+        def counting(segment):
+            seen.append(segment)
+            return real(segment)
+
+        with mock.patch.object(jwe_module, "b64u_decode", counting):
+            answer = self.verifier.handle_direct_post(form)
+        return answer, seen.count(protected), seen.count(ciphertext)
+
+    def test_an_answer_to_the_newest_of_three_open_requests_is_decoded_once(self):
+        jars = [self.verifier.new_request()[1] for _ in range(self.OPEN)]
+        (status, _, verdict), headers, ciphertexts = self.post_counting(
+            self.wallet.respond(jars[-1]))
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertEqual((headers, ciphertexts), (1, 1))
+
+    def test_a_response_no_open_request_can_open_is_decoded_once(self):
+        for _ in range(self.OPEN):
+            self.verifier.new_request()
+        cert_pem, key_pem = _client_chain()
+        other = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                         request_uri="https://verifier.test/request.jwt",
+                         response_uri="https://verifier.test/response",
+                         issuer_jwks=[self.wallet.issuer_jwk])
+        _, jar = other.new_request()
+        (status, _, verdict), headers, ciphertexts = self.post_counting(self.wallet.respond(jar))
+        self.assertEqual(status, 400)
+        self.assertIn("did not decrypt under any outstanding", verdict.reason)
+        self.assertEqual((headers, ciphertexts), (1, 1))
 
 
 class HeldOutTransportTests(VerifierTestCase):
@@ -2159,12 +2208,12 @@ class ATokenTooLongIsMeasuredOnceTests(VerifierTestCase):
         jars = [self.verifier.new_request()[1] for _ in range(5)]
         head, _, rest = self.wallet.respond(jars[0])["response"][0].partition(".")
         token = head + "." + rest + "A" * MAX_COMPACT_CHARS
-        tried, real = [], module.decrypt_response
+        tried, real = [], module._open_response
 
-        def counted(token, key):
+        def counted(compact, key):
             tried.append(key)
-            return real(token, key)
-        with mock.patch.object(module, "decrypt_response", counted):
+            return real(compact, key)
+        with mock.patch.object(module, "_open_response", counted):
             status, body, verdict = self.verifier.handle_direct_post({"response": [token]})
         self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
         self.assertIn("over the %d" % MAX_COMPACT_CHARS, verdict.reason)
