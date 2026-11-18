@@ -130,7 +130,7 @@ polaris/
   `packages/polaris-verify/`, installs it into a throwaway venv, and verifies real signed
   material from a directory that is not the repository, with none of Polaris importable.
   Carries a negative control: a verifier that drags `psycopg2` in with it must be caught.
-- `test-oid4vp-drill`: the OpenID4VP mutation drill (every refusal in `packages/polaris-oid4vp`, inverted) as six shards, when a change touches the package, the drill, its requirements or the workflow, and on every push to `main`.
+- `test-oid4vp-drill`: the OpenID4VP mutation drill (every refusal in `packages/polaris-oid4vp`, inverted) as eight shards, when a change touches the package, the drill, its requirements or the workflow, and on every push to `main`.
 - `test-mdoc-drill`: the mdoc verifier mutation drill (each refusal of `lab/interop/mdoc/verify_mdoc.py`'s CBOR, COSE_Sign1, MSO, device-authentication and request checks, switched off) as two shards, on every change but a site-only one (see `changes`).
 - `test-oid4vp-py39`: the OpenID4VP package's seven suites under Python 3.9, the oldest it declares, on Ubuntu 24.04 with `cryptography` from the hashed set in `lab/interop/requirements.txt`, on every change.
 - `sdk-typescript`: the TypeScript verify SDK (`sdk/typescript/`) type-checked, unit-tested, and driven through the language-agnostic conformance runner (`@noble/post-quantum` ML-DSA-65 agreeing with liboqs and OpenSSL).

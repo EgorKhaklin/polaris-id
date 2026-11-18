@@ -1917,6 +1917,7 @@ class ControlEndpointCommandTests(_RunningCase):
         with self.serve_control() as run:
             cases = [({"flavour": 1}, "flavour"), ({"claims": ["a"], "colour": 1}, "colour"),
                      ({"claims": "given_name"}, "claims"), ({"claims": []}, "claims"),
+                     ({"claims": {"path": ["given_name"]}}, "claims"),
                      ({"claims": [7]}, "claims"), ({"claims": [["given_name"]]}, "claims"),
                      ({"claims": [{"path": ["a"]}]}, "claims"), ({"claims": [None]}, "claims"),
                      ({"vct": "urn:example:x"}, "vct"), ({"vct": []}, "vct"),

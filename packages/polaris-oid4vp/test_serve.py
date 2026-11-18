@@ -1116,10 +1116,10 @@ CORS_MUST_NOT_MATCH = (
 )
 
 
-def _send_raw(httpd, raw):
+def _send_raw(httpd, raw, timeout=10):
     """`raw` on a bare socket, and everything the listener sends back until it closes."""
     import socket
-    s = socket.create_connection(httpd.server_address[:2], timeout=10)
+    s = socket.create_connection(httpd.server_address[:2], timeout=timeout)
     try:
         s.sendall(raw)
         answer, chunk = b"", s.recv(65536)
@@ -1146,7 +1146,7 @@ def _stop_now(httpd, shutdown=None):
         done.join(0.02)
 
 
-def _exchange(httpd, method, path, headers=(), body=b"", declare=None):
+def _exchange(httpd, method, path, headers=(), body=b"", declare=None, timeout=10):
     """One request as written, on a bare socket: urllib adds headers of its own and will not send
     a preflight as a browser does, and these tests need the request exactly as given and every
     header of the answer. `declare` sends a Content-Length other than the body's."""
@@ -1154,7 +1154,7 @@ def _exchange(httpd, method, path, headers=(), body=b"", declare=None):
     lines += ["%s: %s" % header for header in headers]
     if declare is not None or body or method == "POST":
         lines.append("Content-Length: %d" % (len(body) if declare is None else declare))
-    return _send_raw(httpd, ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + body)
+    return _send_raw(httpd, ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + body, timeout)
 
 
 def _parse(raw):
@@ -1609,9 +1609,19 @@ class ControlEndpointTestCase(ServeTestCase):
         del self.calls[:]
 
     def ask(self, httpd, body=b"", token=CONTROL_TOKEN, extra=(), declare=None,
-            path="/control/request", method="POST"):
+            path="/control/request", method="POST", timeout=10):
         headers = ([("Authorization", "Bearer " + token)] if token is not None else []) + list(extra)
-        return _parse(_exchange(httpd, method, path, headers, body, declare))
+        return _parse(_exchange(httpd, method, path, headers, body, declare, timeout))
+
+    def ask_unread(self, why, httpd=None, **kwargs):
+        """A body declared and never sent. An answer comes at once only if the listener does not
+        wait on that body; one that waits never answers, and the client's timeout then FAILS the
+        test with `why` rather than erroring it."""
+        import socket
+        try:
+            return self.ask(httpd or self.control, timeout=3, **kwargs)
+        except socket.timeout:
+            self.fail("no answer within 3 s to a body declared and never sent: " + why)
 
 
 class ControlOffTests(ControlEndpointTestCase):
@@ -1687,7 +1697,8 @@ class ControlAuthenticationTests(ControlEndpointTestCase):
         timeout and the client's gives up; authenticated first, the 401 comes at once."""
         for declare in (100, 8192, 8193, 5 << 20):
             with self.subTest(declared=declare):
-                self.assert_refused_bare(self.ask(self.control, token="wrong", declare=declare))
+                self.assert_refused_bare(self.ask_unread("the body was read before the token",
+                                                         token="wrong", declare=declare))
 
     def test_the_scheme_is_matched_without_regard_to_case_and_a_good_token_reaches_the_callback(self):
         for scheme in ("Bearer", "bearer", "BEARER"):
@@ -1739,7 +1750,7 @@ class ControlRequestTests(ControlEndpointTestCase):
         self.assertEqual(self.calls, [])
 
     def test_a_body_over_8_KiB_is_refused_on_its_declared_length_and_8_KiB_is_read(self):
-        status, _, _ = self.ask(self.control, declare=8193)
+        status, _, _ = self.ask_unread("a body over 8 KiB was read", declare=8193)
         self.assertEqual(status, 413)
         body = b'{"claims": ["a"]}'
         status, _, _ = self.ask(self.control, body + b" " * (8192 - len(body)))
@@ -1764,6 +1775,20 @@ class ControlRequestTests(ControlEndpointTestCase):
             s.close()
         self.assertIn(" 400 ", data.decode("latin-1").split("\r\n")[0])
         self.assertIn(b"shorter than Content-Length", data)
+        self.assertEqual(self.calls, [])
+
+    def test_a_content_length_that_is_not_digits_is_400_and_never_reaches_the_callback(self):
+        """The control endpoint frames its body as the listener does (`_content_length`, DIGIT+
+        only), and an authenticated caller whose Content-Length is not a decimal number of octets
+        is refused, not served."""
+        for value in ("abc", "-1", "+9", "1_0", ""):
+            with self.subTest(value=repr(value)):
+                raw = ("POST /control/request HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n"
+                       "Content-Length: %s\r\n\r\n{}" % (CONTROL_TOKEN, value)).encode()
+                status, _, answer = _parse(_send_raw(self.control, raw, timeout=6))
+                self.assertEqual(status, 400)
+                self.assertEqual(json.loads(answer)["error"], "invalid_request")
+                self.assertIn("not a decimal number", json.loads(answer)["error_description"])
         self.assertEqual(self.calls, [])
 
     def test_a_callback_that_raises_is_a_500_that_says_nothing(self):
@@ -1821,7 +1846,11 @@ class ControlNeverCarriesCorsTests(ControlEndpointTestCase):
         for label, kwargs in (("good token", {}), ("no token", {"token": None}),
                               ("bad body", {"body": b"[]"}), ("too long", {"declare": 9000})):
             with self.subTest(case=label):
-                status, headers, _ = self.ask(self.control_cors, extra=origin, **kwargs)
+                if "declare" in kwargs:
+                    status, headers, _ = self.ask_unread("a body over 8 KiB was read", httpd=self.control_cors,
+                                                         extra=origin, **kwargs)
+                else:
+                    status, headers, _ = self.ask(self.control_cors, extra=origin, **kwargs)
                 self.assertIn(status, (201, 401, 400, 413))
                 self.assertEqual(_cors(headers), [], headers)
         # The twin: a path the option does serve carries them.
