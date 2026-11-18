@@ -2,7 +2,7 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """The OID4VP mutation drill's shards make every mutation exactly once (2026-10-15).
 
-CI runs the drill as three shards (`--shard I/3`) rather than one step of 34 minutes. Sharding
+CI runs the drill as six shards (`--shard I/6`) rather than one step of 34 minutes. Sharding
 must lose nothing: the shards together make exactly the mutations one unsharded run makes, none
 twice, and each shard answers for the declared survivors it mutated while a declaration that
 names no refusal fails every shard. These tests prove the partition on the real package, then
@@ -26,7 +26,7 @@ _spec = importlib.util.spec_from_file_location("oid4vp_drill", HERE / "polaris-o
 drill = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(drill)
 
-SHARD_COUNTS = (1, 2, 3, 5)        # 3 is what CI runs
+SHARD_COUNTS = (1, 2, 3, 5, 6)     # 6 is what CI runs
 
 #: What every scratch directory this file makes is named with. CI's coverage step measures the
 #: child interpreters these tests start, and combines its shards on another runner, where the

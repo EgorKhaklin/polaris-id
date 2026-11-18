@@ -36,7 +36,7 @@ together make each one exactly once (scripts/test_oid4vp_drill.py proves the par
 is not a mutation runs in every shard: the unmutated baseline, the negative control and the
 check that every named mutation still matches its code. A declared survivor is answered for by
 the shard that mutates it, and one that names no refusal at all by every shard. Unsharded the
-drill was 34 of the product boundary job's 35 minutes; CI runs three shards in a job of its own.
+drill was 34 of the product boundary job's 35 minutes; CI runs six shards in a job of its own.
 """
 import argparse
 import hashlib
