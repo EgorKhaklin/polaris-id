@@ -563,8 +563,9 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under
-  its lock and not after their lifetime, the records it keeps and the answer each keeps, and the
-  values kept out of the result file and the printed lines), each of which a test must catch (all
-  41 are; measured 2026-11-18; CI runs it on every push).
+  its lock and not after their lifetime, the records it keeps and the answer each keeps, the
+  values kept out of the result file and the printed lines, and the values of an experimental
+  `mso_mdoc` presentation never held), each of which a test must catch (all 41 are; measured
+  2026-11-18; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.
