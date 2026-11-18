@@ -36,7 +36,7 @@ together make each one exactly once (scripts/test_oid4vp_drill.py proves the par
 is not a mutation runs in every shard: the unmutated baseline, the negative control and the
 check that every named mutation still matches its code. A declared survivor is answered for by
 the shard that mutates it, and one that names no refusal at all by every shard. Unsharded the
-drill was 34 of the product boundary job's 35 minutes; CI runs six shards in a job of its own.
+drill was 34 of the product boundary job's 35 minutes; CI runs eight shards in a job of its own.
 """
 import argparse
 import hashlib
@@ -51,15 +51,17 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PKG = ROOT / "packages" / "polaris-oid4vp"
 
-#: The files whose refusals are inverted one by one. `serve.py` relays the verifier's verdict, and
-#: inverting a status code there is tested by `test_serve.py` directly; what it decides itself
-#: (the done page's code, and which origin, path and cache key a CORS answer names) is held by
-#: the named mutants below.
+#: The files whose refusals are inverted one by one. `serve.py` joined on 2026-11-18: it relays the
+#: verifier's verdict, but it also refuses on its own (an unknown path, a body it will not read,
+#: and the control endpoint's 401, 400 and 413), and none of those was inverted while it was
+#: absent here. What it decides that is not a refusal (the done page's code, which origin, path
+#: and cache key a CORS answer names, and whether the control endpoint waits on a body) is held
+#: by the named mutants below.
 #: `status.py` joined on 2026-09-23. It decides whether a credential is revoked, it refuses
 #: through the same `_refuse`, and it was absent from this tuple and its suite from SUITES:
 #: measured that day, 6 of its 12 raise-refusals could be inverted with the package green.
 SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py",
-           "polaris_oid4vp/status.py")
+           "polaris_oid4vp/status.py", "polaris_oid4vp/serve.py")
 
 #: Every suite in the package. A new test file that is not listed here is invisible to this
 #: drill, which is a silent way to lose coverage of a refusal: the file exists, the refusal
@@ -119,6 +121,13 @@ _PATTERNS = (
     # built and dropped, and the statement, however many lines it spans, stays whole.
     (re.compile(r"^(\s*)raise (VerifierInfoError|_etsi_refusal|_over_asking_refusal)\("),
      r"\1pass  # MUTANT\n\1\2("),
+    # 2026-11-18, serve.py: a refusal the listener answers itself, a 4xx through `_send`, or the
+    # control endpoint's bare 401, becomes a 200, which is the status a served request object
+    # and an accepted response carry. A 500 is not a refusal and is left alone.
+    (re.compile(r"^(\s*)return self\._send\((4\d\d),"),
+     r"\1return self._send(200, {})  # MUTANT\n\1return self._send(\2,"),
+    (re.compile(r"^(\s*)self\.send_response\(401\)"),
+     r"\1return self._send(200, {})  # MUTANT\n\1self.send_response(401)"),
 )
 
 
@@ -157,6 +166,20 @@ _PASSTHROUGH = {
 #: longer appears exactly once fails the drill: the code it guards has moved, and a pass would
 #: mean nothing.
 NAMED_MUTANTS = (
+    # 2026-11-18: the control endpoint answers before it reads a body it will not use. Without the
+    # declared-length bound, or with the body read before the token is checked, it waits on a
+    # body declared and never sent, and the test's only sign was the client's timeout, an ERROR.
+    # The second reads the declared body once, before the token, and hands it to the read that
+    # follows (rfile becomes a buffer of it): a mutant that read it twice would hang every
+    # authenticated request with a body, which says nothing about the order it is meant to test.
+    ("serve:control-reads-a-body-over-its-bound", "polaris_oid4vp/serve.py",
+     "        if length > CONTROL_MAX_BODY_BYTES:\n",
+     "        if False:  # MUTANT\n"),
+    ("serve:control-reads-the-body-before-the-token", "polaris_oid4vp/serve.py",
+     "        if not self._control_authorized():\n",
+     "        self.rfile = __import__('io').BytesIO(  # MUTANT\n"
+     "            self.rfile.read(_content_length(self.headers) or 0))\n"
+     "        if not self._control_authorized():\n"),
     ("verifier:redirect-without-a-response-code", "polaris_oid4vp/verifier.py",
      'return 200, {"redirect_uri": _with_response_code(self.redirect_uri, code)}, verdict',
      'return 200, {"redirect_uri": self.redirect_uri}, verdict'),
@@ -501,8 +524,6 @@ def main(argv=None) -> int:
 
         named_survivors, named_kind = [], {}
         for label, source, old, new in NAMED_MUTANTS:
-            # serve.py is not among SOURCES (it has no refusal of its own), but its done page
-            # redeems the code, so a named mutant may live there.
             text = originals.get(source) or (pkg / source).read_text(encoding="utf-8")
             if text.count(old) != 1:
                 print("oid4vp-mutation drill: the named mutant %s matches its code %d time(s), "

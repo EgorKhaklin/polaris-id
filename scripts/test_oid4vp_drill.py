@@ -2,7 +2,7 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 """The OID4VP mutation drill's shards make every mutation exactly once (2026-10-15).
 
-CI runs the drill as six shards (`--shard I/6`) rather than one step of 34 minutes. Sharding
+CI runs the drill as eight shards (`--shard I/8`) rather than one step of 34 minutes. Sharding
 must lose nothing: the shards together make exactly the mutations one unsharded run makes, none
 twice, and each shard answers for the declared survivors it mutated while a declaration that
 names no refusal fails every shard. These tests prove the partition on the real package, then
@@ -100,7 +100,7 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
         made = []
 
         def suite(work):
-            for source in drill.SOURCES + ("polaris_oid4vp/serve.py",):
+            for source in drill.SOURCES:
                 label = self.by_text.get((work / source).read_text(encoding="utf-8"))
                 if label is not None:
                     made.append(label)
