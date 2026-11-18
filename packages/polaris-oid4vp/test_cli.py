@@ -2233,5 +2233,75 @@ class ControlTokenFileTests(_RunningCase):
         self.assertNotIn("/control/request", self._serve()[2])
 
 
+class AWalletErrorSaysWhatBecameOfTheRequestTests(_RunningCase):
+    """2026-11-18. Under --rearm, and for a request the control endpoint started, a wallet's error
+    response ends the request, and the `<-` line and --result said the verifier's "so it does not
+    close the request", true of the Verifier and of the plain rule only. They say what happened;
+    the stderr line, which cannot know, names the error and the request; a line that names its
+    request names it once. Under the plain rule the sentence and the open request stay."""
+
+    PLAIN = ("access_denied for request %s, which anyone who saw the request could send, so it "
+             "does not close the request")
+    BY_REARM = ("access_denied, which anyone who saw the request could send, and it ended the "
+                "request: under --rearm any answer about the current request ends it")
+    BY_CONTROL = ("access_denied, which anyone who saw the request could send, and it ended the "
+                  "request: a request the control endpoint started ends at any answer about it")
+
+    def send_error(self, run, state):
+        status, jar = run.jar(state)
+        self.assertEqual(status, 200, "no such outstanding request")
+        self.assertEqual(run.respond(self.wallet.respond_error(jar))[0], 200)
+        out = [x for x in run.out.getvalue().splitlines() if x.startswith("  <- 200 wallet error: ")]
+        err = [x for x in run.err.getvalue().splitlines() if x.startswith("polaris-oid4vp: wallet error: ")]
+        self.assertEqual((len(out), len(err)), (1, 1), run.out.getvalue() + run.err.getvalue())
+        return out[0], err[0]
+
+    def test_under_rearm_the_line_and_the_file_say_the_error_ended_the_request(self):
+        with self.run_serve("--once", "--rearm", "--result", str(self.path)) as run:
+            state = _state_of(run.blocks()[0])
+            out, err = self.send_error(run, state)
+            self.assertEqual(len(run.blocks()), 2, "the next request started")
+            previous = self.read().get("previous")
+        self.assertIsNotNone(previous, "the request that ended is kept as previous")
+        self.assertEqual(out, "  <- 200 wallet error: %s (request %s)" % (self.BY_REARM, state))
+        self.assertEqual(err, "polaris-oid4vp: wallet error: access_denied (request %s)" % state)
+        self.assertEqual((previous["state"], previous["outcome"]), (state, "wallet_error"))
+        self.assertEqual(previous["reason"], self.BY_REARM.replace(
+            "access_denied,", "access_denied for request %s," % state, 1))
+
+    def test_a_request_the_control_endpoint_started_says_so_too(self):
+        with self.run_serve("--control-token-file", str(self.token_file),
+                            "--result", str(self.path)) as run:
+            state = run.control({})[1]["state"]
+            out, err = self.send_error(run, state)
+            doc = self.read()
+            self.assertEqual(run.jar(state)[0], 404, "the error ended the request")
+        self.assertEqual(out, "  <- 200 wallet error: %s (request %s)" % (self.BY_CONTROL, state))
+        self.assertEqual(err, "polaris-oid4vp: wallet error: access_denied (request %s)" % state)
+        self.assertEqual((doc["state"], doc["outcome"]), (state, "wallet_error"))
+        self.assertEqual(doc["reason"], self.BY_CONTROL.replace(
+            "access_denied,", "access_denied for request %s," % state, 1))
+
+    def test_under_the_plain_rule_the_request_stays_open_and_the_sentence_says_so(self):
+        with self.run_serve("--once", "--result", str(self.path)) as run:
+            state = _state_of(run.blocks()[0])
+            out, err = self.send_error(run, state)
+            doc = self.read()
+            self.assertEqual(run.jar(state)[0], 200, "the request is still open")
+        self.assertEqual(out, "  <- 200 wallet error: " + self.PLAIN % state)
+        self.assertEqual(err, "polaris-oid4vp: wallet error: " + self.PLAIN % state)
+        self.assertEqual((doc["outcome"], doc["reason"]), ("wallet_error", self.PLAIN % state))
+
+    def test_beside_the_control_endpoint_the_once_request_keeps_the_plain_rule_named_once(self):
+        with self.run_serve("--once", "--control-token-file", str(self.token_file)) as run:
+            state = _state_of(run.blocks()[0])
+            out, err = self.send_error(run, state)
+            self.assertEqual(run.jar(state)[0], 200, "the request is still open")
+        self.assertEqual(out, "  <- 200 wallet error: access_denied, which anyone who saw the "
+                              "request could send, so it does not close the request (request %s)"
+                              % state)
+        self.assertEqual(err, "polaris-oid4vp: wallet error: access_denied (request %s)" % state)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

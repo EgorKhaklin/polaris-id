@@ -227,6 +227,16 @@ def _content_length(headers):
         return None
 
 
+def _wallet_error_named(verdict):
+    """A wallet error on a line that names its request: the error code and the sender's
+    description as verifier.py's _printable left it, and nothing of what became of the request,
+    which the caller's own rule decides (2026-11-18)."""
+    w = verdict.wallet_error
+    if w["error_description"] is None:
+        return w["error"]
+    return '%s; error_description "%s"' % (w["error"], w["error_description"])
+
+
 def about_request(verifier):
     """` (request STATE)` for the request the answer just given on this thread was about
     (`Verifier.attributed_request`), or ` (request not known)`: how a line for an answer at the
@@ -315,8 +325,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self.log_error("refused: %s: %s%s", verdict.code, verdict.reason, self._about())
             elif getattr(verdict, "wallet_error", None) is not None:
                 # A wallet's error response, answered 200 and accepted as nothing. Its reason
-                # carries the sender's text only as verifier.py's _printable left it.
-                self.log_error("wallet error: %s%s", verdict.reason, self._about())
+                # carries the sender's text only as verifier.py's _printable left it. A caller
+                # that names requests ends them by a rule of its own (`serve --rearm`, the control
+                # endpoint), so the verifier's "it does not close the request" is not this line's
+                # to say, and the request is named once, by `_about`.
+                self.log_error("wallet error: %s%s", _wallet_error_named(verdict)
+                               if self.name_requests else verdict.reason, self._about())
         except Exception:  # noqa: BLE001
             # The wallet must never see a 5xx for a response it sent: a 5xx says "retry",
             # and nothing it can retry will help. An unexpected exception here is this
@@ -566,7 +580,8 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
 
     `name_requests`, for a caller that can hold more than one request open (`serve --rearm`, the
     control endpoint): each line logged for an answer at the response URI then ends with the
-    request it was about (`about_request`).
+    request it was about (`about_request`), and a wallet error's names the error and not what
+    became of the request, which the caller's rule decides.
 
     Shut it down with `httpd.shutdown()` followed by `httpd.server_close()`: the first stops
     the loop and the second releases the socket, and skipping the second leaks a listening

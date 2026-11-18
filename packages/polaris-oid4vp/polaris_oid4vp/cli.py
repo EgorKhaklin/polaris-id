@@ -281,31 +281,62 @@ def _cmd_keygen(args) -> int:
     return 0
 
 
-def _operator_line(verdict):
+#: The rule that ended a request at an answer, said in a wallet error's reason in place of the
+#: verifier's "so it does not close the request", which is true only of a request under the plain
+#: rule (2026-11-18).
+_ENDED_BY = {
+    "rearm": "under --rearm any answer about the current request ends it",
+    "control": "a request the control endpoint started ends at any answer about it",
+}
+
+
+def _wallet_error_reason(verdict, ended_by=None, named=False):
+    """The reason a wallet's error response is reported with. The verifier's own says the
+    request stays open: true of the Verifier, and of a request under the plain rule, where it is
+    used as it is. `ended_by`, a key of _ENDED_BY, is the rule that ended the request instead,
+    and the reason says so. `named`: the line names the request itself (`about_request`), so the
+    reason does not name it again."""
+    if ended_by is None and not named:
+        return verdict.reason
+    w = verdict.wallet_error
+    text = w["error"] if named else "%s for request %s" % (w["error"], w["state"])
+    text += ", which anyone who saw the request could send, " + (
+        "so it does not close the request" if ended_by is None
+        else "and it ended the request: " + _ENDED_BY[ended_by])
+    if w["error_description"] is not None:
+        text += '; error_description "%s"' % w["error_description"]
+    return text
+
+
+def _operator_line(verdict, ended_by=None, named=False):
     """What `serve` prints after `<- STATUS` for one answer at the response URI. Only an
     authentic presentation reads `authentic`: the lab walks grep `<- 200 authentic` for an
-    acceptance, and a wallet's error response is answered 200 too (OpenID4VP 1.0 section 8.2)."""
+    acceptance, and a wallet's error response is answered 200 too (OpenID4VP 1.0 section 8.2).
+    A wallet's error response is said as _wallet_error_reason says it."""
     if verdict is None:
         return "refused"
     if verdict.authentic:
         return "authentic, claims %s" % sorted(verdict.claims)
     if getattr(verdict, "wallet_error", None) is not None:
-        return "wallet error: %s" % operator_text(verdict.reason)
+        return "wallet error: %s" % operator_text(_wallet_error_reason(verdict, ended_by, named))
     return "refused: %s: %s" % (operator_text(verdict.code), operator_text(verdict.reason))
 
 
-def _result_of(status, verdict):
+def _result_of(status, verdict, ended_by=None):
     """The members `--result` writes for one answer at the response URI, decided as
     `_operator_line` decides: the HTTP status the wallet was answered, and for anything but an
-    acceptance the check that refused (the verdict's code) and its reason. Claim names only, as
-    the line prints them; never the response_code a redirect carries, which redeems the result."""
+    acceptance the check that refused (the verdict's code) and its reason, a wallet error's as
+    _wallet_error_reason says it, `ended_by` the rule that ended the request if one did. Claim
+    names only, as the line prints them; never the response_code a redirect carries, which
+    redeems the result."""
     out = {"response": {"status_code": status}}
     if verdict is None:
         out.update(outcome="refused", check=None, reason=None)
     elif verdict.authentic:
         out.update(outcome="accepted", claims=sorted(verdict.claims))
     elif getattr(verdict, "wallet_error", None) is not None:
-        out.update(outcome="wallet_error", check=verdict.code, reason=verdict.reason)
+        out.update(outcome="wallet_error", check=verdict.code,
+                   reason=_wallet_error_reason(verdict, ended_by))
     else:
         out.update(outcome="refused", check=verdict.code, reason=verdict.reason)
     return out
@@ -370,14 +401,14 @@ class _ResultFile:
             self._fetches["served" if status == 200 else "refused"] += 1
             self._rewrite()
 
-    def verdict(self, status, verdict):
+    def verdict(self, status, verdict, ended_by=None):
         with self._lock:
             self._responses += 1
             # An acceptance is never judged after the close (the verifier refuses it), so one is
             # recorded even when the lifetime ends before this line runs.
             accepted = verdict is not None and verdict.authentic
             if self._latest["outcome"] != "accepted" and (accepted or self._open()):
-                self._latest = _result_of(status, verdict)
+                self._latest = _result_of(status, verdict, ended_by)
             self._rewrite()
 
     def _rewrite(self):
@@ -590,18 +621,19 @@ class _Requests:
 
     def answered(self, status, verdict):
         """An answer at the response URI. Recorded in the result file when it is about the
-        current request. Returns the state of the request it is about when that answer ends the
-        request (the current one under `--rearm`, one the control endpoint started), else None."""
+        current request. Returns (the state of the request it is about, the rule that ends it, a
+        key of _ENDED_BY) when that answer ends the request (one the control endpoint started,
+        the current one under `--rearm`), else None."""
         state = self.verifier.attributed_request()
         with self._lock:
             if state is None:
                 return None
             current = state == self._current
+            ended_by = ("control" if state in self._ends_on_answer
+                        else "rearm" if current and self.rearm else None)
             if current and self.result is not None:
-                self.result.verdict(status, verdict)
-            if state in self._ends_on_answer or (current and self.rearm):
-                return state
-            return None
+                self.result.verdict(status, verdict, ended_by)
+            return None if ended_by is None else (state, ended_by)
 
     def fetched(self, status):
         """An answer at the request URI, counted for the current request only."""
@@ -774,14 +806,15 @@ def _cmd_serve(args) -> int:
     requests = _Requests(verifier, result, transaction_data, rearm=args.rearm, announce=_announce)
 
     def on_verdict(status, body, verdict):
-        about = None
+        ending = None
         if several:
-            about = requests.answered(status, verdict)
+            ending = requests.answered(status, verdict)
         elif result is not None:
             result.verdict(status, verdict)
         # The operator sees the reason; the wallet never does. body carries the same constant
-        # refusal whatever went wrong.
-        line = _operator_line(verdict)
+        # refusal whatever went wrong. A wallet error says what became of the request, and with
+        # more than one request the line names its own, so the reason does not name it again.
+        line = _operator_line(verdict, ending[1] if ending else None, named=several)
         if several:
             # More than one request can be open, so the line names the one this answer was about,
             # by the state its launch parameters carry; --result follows the newest.
@@ -791,8 +824,8 @@ def _cmd_serve(args) -> int:
         # wallet's error response, and the next starts before the wallet has its answer; a request
         # the control endpoint started ends at an answer the same way. With neither, a
         # refusal still leaves the request open.
-        if about is not None:
-            requests.close(about)
+        if ending is not None:
+            requests.close(ending[0])
 
     on_request_object = None
     if result is not None:
