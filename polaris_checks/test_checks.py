@@ -26137,6 +26137,7 @@ def _changes_job():
     return ("  changes:\n    name: Which parts of CI this change needs\n    runs-on: ubuntu-latest\n"
             "    outputs:\n      full: ${{ steps.classify.outputs.full }}\n"
             "      oid4vp: ${{ steps.classify.outputs.oid4vp }}\n      sdk: ${{ steps.classify.outputs.sdk }}\n"
+            "      beyond_site: ${{ steps.classify.outputs.beyond_site }}\n"
             "    steps:\n      - name: Classify\n        id: classify\n"
             "        run: python scripts/polaris-ci-changes.py --event \"$EVENT\"\n")
 
@@ -26207,6 +26208,12 @@ def test_ci_skips_are_gated_check_discriminates(tmp_path):
         "a shard gate that explains skips without the changes job must FAIL"
     assert write(changes=_changes_job().replace("      sdk: ${{ steps.classify.outputs.sdk }}\n", "")).level == "FAIL", \
         "a changes job that does not export an output must FAIL"
+    assert write(changes=_changes_job().replace("      beyond_site: ${{ steps.classify.outputs.beyond_site }}\n",
+                                                "")).level == "FAIL", \
+        "a changes job that does not export beyond_site must FAIL"
+    assert write(jobs=job("test-drill-shard") + shard_gate + job("test-app")
+                 + job("test-oid", cond="needs.changes.outputs.beyond_site != 'false'")).level == "FAIL", \
+        "a beyond_site condition a missing output does not skip on must FAIL"
     assert write(changes="").level == "FAIL", "no changes job must FAIL"
     always_skipped = job("test-drill-shard") + shard_gate + job("test-app") \
         + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")
@@ -26265,10 +26272,22 @@ def test_ci_changes_allowlist_measured_check_discriminates(tmp_path):
     reader.unlink()
     ci = tree / ".github" / "workflows" / "ci.yml"
     text = ci.read_text()
-    ci.write_text(text.replace("  test-core:\n", "  test-core:\n    if: needs.changes.outputs.full == 'true'\n", 1))
+    ci.write_text(text.replace("  invariants:\n", "  invariants:\n    if: needs.changes.outputs.full == 'true'\n", 1))
     assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
         "an always-run job the outputs can skip leaves its reads unmeasured, and must FAIL"
+    ci.write_text(text.replace("    if: needs.changes.outputs.beyond_site == 'true'\n",
+                               "    if: needs.changes.outputs.full == 'true'\n", 1))
+    assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
+        "a site-skipped job skipped by full leaves its reads unmeasured, and must FAIL"
+    ci.write_text(text.replace("        run: bash scripts/polaris-link-check.sh --ci\n", "        run: 'true'\n"))
+    assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
+        "with the link check gone from every job a site-only change runs, the check must FAIL"
+    reader.write_text('import pathlib\nROOT = pathlib.Path(__file__).parent.parent\n'
+                      'print((ROOT / "site" / "index.html").read_text()[:10])\n')
     ci.write_text(text)
+    bad = checks.check_ci_changes_allowlist_measured(tree)[0]
+    assert bad.level == "FAIL" and "site/index.html is site-only" in bad.message, bad.message
+    reader.unlink()
     (tree / "scripts" / "polaris-ci-changes.py").unlink()
     assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
         "with the classifier gone there is nothing measured, and the check must FAIL"

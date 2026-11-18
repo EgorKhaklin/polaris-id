@@ -206,7 +206,8 @@ class TheWorkflowsGate(unittest.TestCase):
 
     def doc(self, overrides=None, outputs=None):
         d = {j: {"result": "success", "outputs": {}} for j in self.needs}
-        d["changes"]["outputs"] = dict({"full": "true", "oid4vp": "true", "sdk": "true"}, **(outputs or {}))
+        d["changes"]["outputs"] = dict({"full": "true", "oid4vp": "true", "sdk": "true", "beyond_site": "true"},
+                                       **(outputs or {}))
         for j, r in (overrides or {}).items():
             d[j]["result"] = r
         return json.dumps(d)
@@ -215,10 +216,10 @@ class TheWorkflowsGate(unittest.TestCase):
         return [j for j in self.needs
                 if self.jobs[j].get("if") == "needs.changes.outputs.%s == 'true'" % output]
 
-    def run_gate(self, text):
+    def run_gate(self, text, argv=None):
         out = io.StringIO()
         with mock.patch.dict(os.environ, {"RESULTS": text}), redirect_stdout(out):
-            return gate.main(self.argv), out.getvalue()
+            return gate.main(self.argv if argv is None else argv), out.getvalue()
 
     def test_the_gate_runs_always(self):
         self.assertEqual(self.condition, "always()")
@@ -228,7 +229,7 @@ class TheWorkflowsGate(unittest.TestCase):
         self.assertEqual(code, 0, out)
 
     def test_every_job_the_outputs_can_skip_is_judged_by_its_own_output(self):
-        for output in ("full", "oid4vp", "sdk"):
+        for output in ("full", "oid4vp", "sdk", "beyond_site"):
             jobs = self.governed(output)
             self.assertTrue(jobs, output)
             skipped = {j: "skipped" for j in jobs}
@@ -241,6 +242,55 @@ class TheWorkflowsGate(unittest.TestCase):
         skipped = {j: "skipped" for o in ("full", "oid4vp", "sdk") for j in self.governed(o)}
         code, out = self.run_gate(self.doc(skipped, {"full": "false", "oid4vp": "false", "sdk": "false"}))
         self.assertEqual(code, 0, out)
+
+    def test_a_site_only_change_passes_with_everything_it_skips_skipped(self):
+        outputs = ("full", "oid4vp", "sdk", "beyond_site")
+        skipped = {j: "skipped" for o in outputs for j in self.governed(o)}
+        for j in ("test-core", "sdk-typescript", "cve-scan", "test-mdoc-drill"):
+            self.assertIn(j, skipped)
+        # check_oid4vp_image holds the image drill the product boundary runs to every run.
+        self.assertNotIn("product-boundary", skipped)
+        self.assertIsNone(self.jobs["product-boundary"].get("if"))
+        code, out = self.run_gate(self.doc(skipped, {o: "false" for o in outputs}))
+        self.assertEqual(code, 0, out)
+        self.assertIn("ok   test-core: skipped, and beyond_site=false says this change does not need it", out)
+
+    def test_a_site_only_skip_without_beyond_site_saying_false_fails(self):
+        # The jobs only a site-only change skips, skipped while beyond_site is missing, empty,
+        # "true" or anything but exactly "false": the gate fails, every other output saying "false".
+        skipped = {j: "skipped" for o in ("full", "oid4vp", "sdk", "beyond_site") for j in self.governed(o)}
+        for value in (None, "", "true", "False", "FALSE", " false", "0", "no"):
+            d = json.loads(self.doc(skipped, {"full": "false", "oid4vp": "false", "sdk": "false"}))
+            if value is None:
+                del d["changes"]["outputs"]["beyond_site"]
+            else:
+                d["changes"]["outputs"]["beyond_site"] = value
+            code, out = self.run_gate(json.dumps(d))
+            self.assertEqual(code, 1, (value, out))
+
+    def test_the_coverage_floor_runs_exactly_when_its_shards_do(self):
+        cov, cond = self.jobs["test-coverage"], "needs.changes.outputs.beyond_site == 'true'"
+        self.assertEqual(cov.get("if"), "always()")
+        self.assertEqual(sorted(cov["needs"]), ["changes", "test-coverage-shard"])
+        self.assertEqual(self.jobs["test-coverage-shard"].get("if"), cond)
+        steps = cov["steps"]
+        at = next(i for i, s in enumerate(steps) if "polaris-ci-gate.py" in s.get("run", ""))
+        self.assertTrue(steps[at + 1:], "no floor after the gate")
+        for s in steps[:at + 1]:
+            self.assertIsNone(s.get("if"), s.get("name"))
+        for s in steps[at + 1:]:
+            self.assertEqual(s.get("if"), cond, s.get("name"))
+        argv = shlex.split(steps[at]["run"])[2:]
+
+        def doc(shard, out):
+            outputs = {} if out is None else {"beyond_site": out}
+            return json.dumps({"changes": {"result": "success", "outputs": outputs},
+                               "test-coverage-shard": {"result": shard, "outputs": {}}})
+        self.assertEqual(self.run_gate(doc("success", "true"), argv)[0], 0)
+        self.assertEqual(self.run_gate(doc("skipped", "false"), argv)[0], 0)
+        for shard, out in (("skipped", "true"), ("skipped", None), ("skipped", ""), ("failure", "false"),
+                           ("cancelled", "false"), ("failure", "true")):
+            self.assertEqual(self.run_gate(doc(shard, out), argv)[0], 1, (shard, out))
 
     def test_each_need_failing_or_skipped_without_cause_fails_the_gate(self):
         for job in self.needs:

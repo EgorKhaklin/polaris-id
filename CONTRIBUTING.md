@@ -65,8 +65,11 @@ The full suites run on every pull request too, except where a change is
 wholly documentation, the site, `lab/` or another path on the allowlist in
 [`scripts/polaris-ci-changes.py`](scripts/polaris-ci-changes.py): the jobs measured not to read
 those paths are skipped, and the product suite's gate passes a skipped part only on that
-classification. A push to `main` runs everything, whatever the change touched. GitHub offers merge
-queues only to organization-owned repositories, so this one has none.
+classification. A change made only of the site's pages, styles, images, fonts and text under
+`site/` skips more: the product suite's core part, the coverage shards, the TypeScript SDK, the
+CVE scan and the mdoc drill, while the invariant checks job still runs the checks, their
+detection tests and the link check. A push to `main` runs everything, whatever the change
+touched. GitHub offers merge queues only to organization-owned repositories, so this one has none.
 
 Before opening one:
 
