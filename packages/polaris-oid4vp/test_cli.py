@@ -13,6 +13,7 @@ is right, so these tests check the properties the suite checked, rather than che
 five files appeared.
 """
 import base64
+import io
 import os
 import pathlib
 import shutil
@@ -1303,16 +1304,79 @@ def _launch_of(block):
             if "://?" in line}
 
 
+class _HeldAt(io.StringIO):
+    """What the command prints, where the first write holding `text` first waits on `wait()`."""
+
+    def __init__(self, text, wait):
+        super().__init__()
+        self._text, self._wait = text, wait
+
+    def write(self, s):
+        if self._wait is not None and self._text in s:
+            wait, self._wait = self._wait, None
+            wait()
+        return super().write(s)
+
+
+class _Clock:
+    """The time a test runs on: `time.time()` stays where it is until `advance` moves it, and a
+    `threading.Timer` runs when `advance` passes its interval, in the caller's thread. A test can
+    hold the command up past a request's lifetime this way without waiting it out."""
+
+    def __init__(self, test):
+        import threading
+        import time
+        from unittest import mock
+        clock = self
+        self.now, self.timers = time.time(), []
+
+        class Timer:
+            def __init__(self, interval, function, args=None, kwargs=None):
+                self.interval, self.function = interval, function
+                self.args, self.kwargs = args or (), kwargs or {}
+                self.daemon, self.due = False, None
+
+            def start(self):
+                self.due = clock.now + self.interval
+                clock.timers.append(self)
+
+            def cancel(self):
+                if self in clock.timers:
+                    clock.timers.remove(self)
+
+        for patch in (mock.patch.object(time, "time", lambda: clock.now),
+                      mock.patch.object(threading, "Timer", Timer)):
+            patch.start()
+            test.addCleanup(patch.stop)
+
+    def advance(self, seconds):
+        self.now += seconds
+        for timer in [t for t in self.timers if t.due <= self.now]:
+            if timer in self.timers:
+                self.timers.remove(timer)
+                timer.function(*timer.args, **timer.kwargs)
+
+
+def _object_times(jar_text):
+    """The `iat` and `exp` of a request object as the request URI served it."""
+    import json
+    payload = jar_text.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    return claims["iat"], claims["exp"]
+
+
 class _Running:
     """`polaris-oid4vp serve` run to the end of its wait in a thread: the real command, a real
     listener on an ephemeral port (`--port 0`), plain HTTP. `ttl` shortens the request lifetime
     the command's verifier is built with. `out` and `err` are what it printed."""
 
-    def __init__(self, test, *extra, ttl=None):
+    def __init__(self, test, *extra, ttl=None, listening=None, held_at=None):
         import io
         import threading
-        self.test, self.extra, self.ttl = test, extra, ttl
-        self.out, self.err = io.StringIO(), io.StringIO()
+        self.test, self.extra, self.ttl, self.listening = test, extra, ttl, listening
+        # held_at, (text, wait): stdout as a pipe nobody reads yet, its first write holding `text`
+        # waiting on `wait()` first, as the command does at the line it cannot print.
+        self.out, self.err = (_HeldAt(*held_at) if held_at else io.StringIO()), io.StringIO()
         self.ready, self.stop = threading.Event(), threading.Event()
         self.rc = self.httpd = self.verifier = self.kwargs = None
 
@@ -1331,6 +1395,9 @@ class _Running:
             # that call does not wait out the serve loop's poll (test_serve._stop_now).
             shutdown = httpd.shutdown
             httpd.shutdown = lambda: _stop_now(httpd, shutdown)
+            # What reaches the listener the moment it accepts, before the command goes on.
+            if self.listening is not None:
+                self.listening(kwargs)
             return httpd
 
         def verifier_from_(*args, **kwargs):
@@ -1904,6 +1971,20 @@ class ControlEndpointCommandTests(_RunningCase):
             statuses = [run.control({})[0] for _ in range(64)]
             self.assertEqual(statuses, [201] * 63 + [429])
 
+    def test_control_requests_made_while_the_command_starts_count_the_once_request(self):
+        # 2026-11-18: the listener accepts from the moment serve() returns, and the request
+        # --once starts is made later, where it is announced. So 64 control requests in that
+        # moment and then the command's own were 65 outstanding. A place is held for it now.
+        statuses = []
+
+        def at_listening(kwargs):
+            statuses.extend(kwargs["on_control"]({})[0] for _ in range(64))
+
+        with self.run_serve("--once", "--control-token-file", str(self.token_file),
+                            listening=at_listening) as run:
+            self.assertEqual(statuses, [201] * 63 + [429])
+            self.assertEqual(run.verifier.outstanding(), 64)
+
     def test_sixty_five_at_once_make_exactly_sixty_four(self):
         import threading
         with self.serve_control() as run:
@@ -2123,6 +2204,216 @@ class AnAnswerLineNamesItsRequestTests(_RunningCase):
             self.assertEqual(self.answer(run, state1)[0], 200)
             (line,) = self.lines(run)
             self.assertTrue(line.endswith(" (request %s)" % state1), line)
+
+
+class TheOnceRequestIsMadeWhereItIsAnnounced(_RunningCase):
+    """2026-11-18: the control path holds a place among the 64 for the request --once starts
+    from before the listener accepts anything. The request itself is made where it is announced,
+    so its lifetime, its signed request object, its --result entry and its --rearm timer start
+    there, however long the command takes to get there."""
+
+    def refused_at_listen(self, *extra, made=None):
+        import contextlib
+        import io
+        import json
+        import socket
+        from unittest import mock
+        from polaris_oid4vp import cli
+        real = cli._Requests
+
+        def recording(*args, **kwargs):
+            requests = real(*args, **kwargs)
+            if made is not None:
+                made.append(requests)
+            return requests
+
+        taken = socket.socket()
+        self.addCleanup(taken.close)
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        out = io.StringIO()
+        with mock.patch.object(cli.time, "sleep", side_effect=AssertionError("it listened")), \
+                mock.patch.object(cli, "_Requests", recording), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(OSError):
+                main(["serve", "--pki", str(self.tmp), "--host", "verifier.test",
+                      "--bind", "127.0.0.1", "--port", str(taken.getsockname()[1]),
+                      "--no-local-tls", "--issuer-jwks", str(self.jwks), "--once",
+                      "--result", str(self.path), *extra])
+        return json.loads(self.path.read_text(encoding="utf-8")), out.getvalue()
+
+    def test_a_port_that_is_taken_leaves_the_result_file_naming_no_request(self):
+        doc, out = self.refused_at_listen()
+        self.assertIsNone(doc["state"])
+        self.assertEqual(doc["outcome"], "nothing_received")
+        self.assertNotIn("://?", out)
+
+    def test_so_it_does_with_the_control_endpoint(self):
+        doc, out = self.refused_at_listen("--control-token-file", str(self.token_file))
+        self.assertIsNone(doc["state"])
+        self.assertEqual(doc["request"], 0)
+        self.assertNotIn("://?", out)
+
+    def test_a_port_that_is_taken_gives_back_the_place_held_for_the_request(self):
+        made = []
+        self.refused_at_listen("--control-token-file", str(self.token_file), made=made)
+        (requests,) = made
+        self.assertEqual(requests.verifier.outstanding(), 0)
+        # All 64 places are open again: none is held for a request that will not be made.
+        self.assertEqual([requests.control({})[0] for _ in range(65)], [201] * 64 + [429])
+
+    def test_a_port_that_is_taken_under_rearm_leaves_nothing_running(self):
+        import contextlib
+        import io
+        import json
+        import socket
+        import threading
+        from unittest import mock
+        from polaris_oid4vp import cli
+        real = cli.verifier_from
+
+        def short(*a, **k):
+            v = real(*a, **k)
+            v.request_ttl_seconds = 0.2
+            return v
+
+        taken = socket.socket()
+        self.addCleanup(taken.close)
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        out = io.StringIO()
+        with mock.patch.object(cli, "verifier_from", short), \
+                mock.patch.object(cli.time, "sleep", side_effect=AssertionError("it listened")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(OSError):
+                main(["serve", "--pki", str(self.tmp), "--host", "verifier.test",
+                      "--bind", "127.0.0.1", "--port", str(taken.getsockname()[1]),
+                      "--no-local-tls", "--issuer-jwks", str(self.jwks), "--once", "--rearm",
+                      "--result", str(self.path)])
+            threading.Event().wait(0.8)
+        doc = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertIsNone(doc["state"], doc)
+        self.assertNotIn("://?", out.getvalue())
+
+    def test_the_place_is_given_back_in_the_step_that_makes_the_request(self):
+        # Given back first and made after, a control request between the two takes the 64th
+        # place and the request then makes 65. Threads switch every microsecond here, so that gap
+        # is reached in a few rounds of the 600: each fills the endpoint, holds the place, and
+        # makes the request while eight threads ask for one until it is made.
+        import sys
+        import threading
+        from unittest import mock
+        from polaris_oid4vp import cli
+        made, real = [], cli._Requests
+
+        def recording(*args, **kwargs):
+            made.append(real(*args, **kwargs))
+            return made[-1]
+
+        with mock.patch.object(cli, "_Requests", recording), \
+                self.run_serve("--once", "--control-token-file", str(self.token_file)) as run:
+            (requests,) = made
+            self.assertEqual([requests.control({})[0] for _ in range(62)], [201] * 62)
+            counts, interval = [], sys.getswitchinterval()
+            sys.setswitchinterval(1e-6)
+            try:
+                for _ in range(600):
+                    requests.reserve()
+                    gate, extra, done = threading.Barrier(9), [], threading.Event()
+
+                    def knock():
+                        gate.wait(10)
+                        while not done.is_set():
+                            status, answer = requests.control({})
+                            if status == 201:
+                                extra.append(answer["state"])
+
+                    threads = [threading.Thread(target=knock) for _ in range(8)]
+                    for thread in threads:
+                        thread.start()
+                    gate.wait(10)
+                    started = requests.start(reserved=True)
+                    done.set()
+                    for thread in threads:
+                        thread.join(10)
+                    counts.append(run.verifier.outstanding())
+                    for state in [started.session.state, *extra]:
+                        run.verifier.close_request(state)
+            finally:
+                sys.setswitchinterval(interval)
+            over = sum(count > 64 for count in counts)
+            self.assertEqual((over, max(counts)), (0, 64), "%d of 600 rounds over 64" % over)
+
+    # A start held up at its first printed line (stdout a pipe nobody reads yet) for longer than
+    # a request's lifetime. The test's clock (_Clock) stands in for the wait: the hold moves it
+    # past the lifetime, which runs every timer that came due, then makes a call that sweeps
+    # ended requests (every fetch and control call makes one). What the wallet is served is read
+    # from the request object itself: its iat and exp.
+
+    def assert_served_from(self, run, state, clock):
+        status, text = run.jar(state)
+        self.assertEqual(status, 200, text)
+        now = int(clock.now)
+        self.assertEqual(_object_times(text), (now, now + run.verifier.request_ttl_seconds))
+
+    def test_a_start_held_up_past_the_lifetime_serves_a_request_from_its_announce(self):
+        clock, running = _Clock(self), []
+
+        def held():
+            clock.advance(running[0].verifier.request_ttl_seconds + 1)
+            running[0].verifier.outstanding()
+
+        running.append(self.run_serve("--once", held_at=("serving on", held)))
+        with running[0] as run:
+            state = _state_of(run.blocks()[-1])
+            self.assert_served_from(run, state, clock)
+            # One lifetime after the announce, the request has ended.
+            clock.advance(run.verifier.request_ttl_seconds + 1)
+            self.assertFalse(run.verifier.is_outstanding(state))
+
+    def test_so_it_does_with_a_control_call_while_it_is_held_up(self):
+        clock, running, made = _Clock(self), [], []
+
+        def held():
+            clock.advance(running[0].verifier.request_ttl_seconds + 1)
+            made.append(running[0].kwargs["on_control"]({}))
+
+        running.append(self.run_serve("--once", "--result", str(self.path), "--control-token-file",
+                                      str(self.token_file), held_at=("serving on", held)))
+        with running[0] as run:
+            self.assertEqual(made[0][0], 201, made)
+            state = _state_of(run.blocks()[-1])
+            self.assert_served_from(run, state, clock)
+            # The --once request is the newer of the two, and the file names it.
+            self.assertEqual((self.read()["request"], self.read()["state"]), (2, state))
+            self.assertEqual(run.verifier.outstanding(), 2)
+
+    def test_under_rearm_the_log_ends_on_the_request_served_from_its_announce(self):
+        import re
+        clock, running = _Clock(self), []
+
+        def held():
+            clock.advance(running[0].verifier.request_ttl_seconds + 1)
+            running[0].verifier.outstanding()
+
+        def last_state(run):
+            # What the lab walks read: the last `state=` the command printed.
+            return re.findall(r"state=([A-Za-z0-9_-]+)", run.out.getvalue())[-1]
+
+        running.append(self.run_serve("--once", "--rearm", "--result", str(self.path),
+                                      held_at=("serving on", held)))
+        with running[0] as run:
+            states = [_state_of(block) for block in run.blocks()]
+            self.assertEqual(len(states), 1, "a request ended before one was announced")
+            self.assertEqual((last_state(run), self.read()["state"]), (states[0], states[0]))
+            self.assert_served_from(run, states[0], clock)
+            # Its timer runs from the announce: past the lifetime, the next request is announced,
+            # and the log and the file end on that one, served from its own announce.
+            clock.advance(run.verifier.request_ttl_seconds + 1)
+            states = [_state_of(block) for block in run.blocks()]
+            self.assertEqual(len(states), 2)
+            self.assertEqual((last_state(run), self.read()["state"]), (states[1], states[1]))
+            self.assert_served_from(run, states[1], clock)
 
 
 class ControlResultFileTests(_RunningCase):
