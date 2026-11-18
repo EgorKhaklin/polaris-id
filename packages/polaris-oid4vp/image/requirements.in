@@ -4,5 +4,5 @@
 # and installed with pip install --require-hashes --only-binary :all: -r requirements.txt.
 # The image's tag is this version with a v in front: a new package release is a new version on
 # the line below and a new image tag. A rebuild of the same release is tagged with a revision
-# (v1.1.0-2); no tag is published twice.
-polaris-oid4vp==1.1.0
+# (v1.2.0-2); no tag is published twice.
+polaris-oid4vp==1.2.0
