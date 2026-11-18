@@ -31,6 +31,22 @@ from polaris_oid4vp.jwe import (  # noqa: E402
 BODY = {"vp_token": {"pid": ["eyJ...~~kb"]}, "state": "0bf2c1"}
 
 
+def refused(case, call, fragment=None):
+    """`call()` refused as this module promises: JweError, carrying `fragment`, and no other
+    exception. assertRaises lets any other exception through as an ERROR, which says only that
+    something crashed; here it is a FAILURE, since a TypeError or ValueError escaping is the
+    contract broken (2026-11-18: the mutation drill reads a red of ERRORs alone as not caught)."""
+    try:
+        call()
+    except JweError as exc:
+        if fragment is not None:
+            case.assertIn(fragment, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        case.fail("%r escaped where JweError is the refusal" % (exc,))
+    else:
+        case.fail("nothing was refused" + ("" if fragment is None else " (expected %r)" % (fragment,)))
+
+
 class RoundTripTests(unittest.TestCase):
     """The positive control. Without it every refusal below is a verifier that never opens."""
 
@@ -75,9 +91,7 @@ class RefusalTests(unittest.TestCase):
         self.token = encrypt_compact(json.dumps(BODY).encode(), self.key.public_key())
 
     def _expect(self, token, fragment, key=None):
-        with self.assertRaises(JweError) as caught:
-            decrypt_compact(token, key or self.key)
-        self.assertIn(fragment, str(caught.exception))
+        refused(self, lambda: decrypt_compact(token, key or self.key), fragment)
 
     def test_a_response_encrypted_to_another_verifier_is_refused(self):
         """The whole point of publishing a key: somebody else's response is not ours."""
@@ -138,8 +152,8 @@ class RefusalTests(unittest.TestCase):
 
     def test_structural_junk_is_refused_without_raising_something_else(self):
         for junk in ("", "a.b.c", "a.b.c.d.e.f", "....", "not a jwe", "\x00.\x00.\x00.\x00.\x00"):
-            with self.assertRaises(JweError, msg="%r did not raise JweError" % junk):
-                decrypt_compact(junk, self.key)
+            with self.subTest(junk=junk):
+                refused(self, lambda junk=junk: decrypt_compact(junk, self.key))
 
     def test_a_decrypted_non_json_body_is_refused_by_decrypt_response(self):
         token = encrypt_compact(b"not json at all", self.key.public_key())
@@ -156,14 +170,12 @@ class StructuralRefusalsCoverageFoundTests(unittest.TestCase):
         self.token = encrypt_compact(json.dumps(BODY).encode(), self.key.public_key())
 
     def _expect(self, token, fragment, key=None):
-        with self.assertRaises(JweError) as caught:
-            decrypt_compact(token, key or self.key)
-        self.assertIn(fragment, str(caught.exception))
+        refused(self, lambda: decrypt_compact(token, key or self.key), fragment)
 
     def test_a_token_that_is_not_a_string_is_refused(self):
         for junk in (None, 42, b"bytes", ["a", "b"]):
-            with self.assertRaises(JweError):
-                decrypt_compact(junk, self.key)
+            with self.subTest(junk=junk):
+                refused(self, lambda junk=junk: decrypt_compact(junk, self.key), "a compact JWE is a string")
 
     def test_a_protected_header_that_is_not_an_object_is_refused(self):
         parts = self.token.split(".")
@@ -517,9 +529,7 @@ class HeldOutHeaderTests(unittest.TestCase):
         for kty in ("OKP", "oct", None):
             with self.subTest(kty=kty):
                 token, key = self._seal(lambda h, n: h["epk"].update(kty=kty))
-                with self.assertRaises(JweError) as caught:
-                    decrypt_compact(token, key)
-                self.assertIn("not an EC P-256 JWK", str(caught.exception))
+                refused(self, lambda token=token, key=key: decrypt_compact(token, key), "not an EC P-256 JWK")
 
 
 class JsonBoundsTests(unittest.TestCase):

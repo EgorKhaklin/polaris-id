@@ -12,6 +12,8 @@ So this takes every refusal in the package, one at a time, makes it ACCEPT what 
 and runs the whole suite. A refusal the suite still passes with is unprotected.
 
   survivor = a refusal that can be inverted with every test still green
+  caught   = a test FAILED on the inverted refusal. A suite red with ERRORs only crashed on the
+             mutant, asserted nothing, and is reported as crashed, NOT caught (2026-11-18)
 
 WHY IT MATTERS MORE HERE THAN ELSEWHERE. Seven of the eleven modules in the OpenID
 Foundation's HAIP verifier plan are negative: the wallet sends a presentation broken in one
@@ -38,6 +40,7 @@ drill was 34 of the product boundary job's 35 minutes; CI runs three shards in a
 """
 import argparse
 import hashlib
+import os
 import pathlib
 import re
 import shutil
@@ -131,6 +134,20 @@ _STATUS_PATTERNS = (
      r"age_seconds=0, authority=SAME_KEY, code=None, reason=None)  # MUTANT\n\1return _refuse("),
     (re.compile(r"^(\s*)raise ValueError\(.*\)\s*$"), r"\1pass  # MUTANT"),
 )
+
+
+#: 2026-11-18, decode-once. `raise JweError(...)` becomes `return b'{}'`, which means "the
+#: plaintext of a token that did not authenticate" only where the function's return IS the
+#: plaintext. decrypt_compact now hands _read_compact's return (the token as read) to
+#: _open_compact, so a refusal in _read_compact inverted that way handed b'{}' to _open_compact,
+#: which crashed on it: 13 of its 14 refusals went red by ERROR alone, and the drill counted each
+#: one caught. Each entry: (the file, the function a refusal is in) -> the function its return
+#: goes to. When a refusal in the first is inverted, the mutant copy also gets, first in the
+#: second's body, a passthrough that returns a bytes argument as it came, so b'{}' is again a
+#: plaintext the verifier acts on, as it was before the split.
+_PASSTHROUGH = {
+    ("polaris_oid4vp/jwe.py", "_read_compact"): "_open_compact",
+}
 
 
 #: Changes that are not refusals and must still be caught, each as (label, file, the exact text,
@@ -262,6 +279,54 @@ def _invert(line: str, source: str = ""):
     return None
 
 
+def _def_lines(lines, name):
+    """The index of every line that opens `def name(`."""
+    pattern = re.compile(r"^\s*def %s\(" % re.escape(name))
+    return [j for j, line in enumerate(lines) if pattern.match(line)]
+
+
+def _with_passthrough(lines, name):
+    """`lines` with a bytes passthrough as the first statement of `name`'s body."""
+    (j,) = _def_lines(lines, name)
+    m = re.match(r"^(\s*)def \w+\((\w+)", lines[j])
+    indent, arg = m.group(1) + "    ", m.group(2)
+    end = j
+    while not lines[end].rstrip().endswith(":"):     # a signature over several lines
+        end += 1
+    return (lines[:end + 1]
+            + ["%sif isinstance(%s, bytes):  # MUTANT\n" % (indent, arg),
+               "%s    return %s  # MUTANT\n" % (indent, arg)]
+            + lines[end + 1:])
+
+
+def mutated_text(original: str, source: str, sites) -> str:
+    """The file `original` (at `source`) with each (line index, mutated line) of `sites` put in,
+    and the passthrough _PASSTHROUGH names for any of them. The drill writes this, one refusal at
+    a time and for the negative control all at once, and its tests build their texts with it."""
+    lines = original.splitlines(keepends=True)
+    receivers = {_PASSTHROUGH[(source, _function_of(lines, i))] for i, _ in sites
+                 if (source, _function_of(lines, i)) in _PASSTHROUGH}
+    for i, mutated in sites:
+        lines[i] = mutated
+    for name in sorted(receivers):
+        lines = _with_passthrough(lines, name)
+    return "".join(lines)
+
+
+def passthrough_drift(originals: dict, sites) -> list:
+    """Why a _PASSTHROUGH entry no longer describes the code, one line each: its function holds
+    no refusal, or the function its return goes to is not defined exactly once."""
+    problems = []
+    for (source, fn), receiver in sorted(_PASSTHROUGH.items()):
+        lines = originals[source].splitlines(keepends=True)
+        if not any(src == source and _function_of(lines, i) == fn for src, i, _m, _l in sites):
+            problems.append("%s:%s holds no refusal" % (source, fn))
+        n = len(_def_lines(lines, receiver))
+        if n != 1:
+            problems.append("%s:%s is defined %d time(s), not once" % (source, receiver, n))
+    return problems
+
+
 def _fingerprint(line: str) -> str:
     """Six hex of the refusal's own text. Not a line number: a line number drifts under any
     edit above it, and the SDK drill's declared list was silently rehomed by exactly that."""
@@ -286,12 +351,45 @@ def _label(lines, i, source):
 
 
 def _run_suite(work: pathlib.Path):
+    # 2026-11-18: no bytecode. Python takes a .pyc as current when the source's mtime, in whole
+    # seconds, and its size match, and most mutants of one file are the same size: a suite run
+    # inside a second, then the next mutant written within that second, ran the previous
+    # mutant's bytecode, and its verdict was the other mutant's.
     return subprocess.run([sys.executable, "-m", "unittest", *SUITES],
-                          cwd=str(work), capture_output=True, text=True, timeout=600)
+                          cwd=str(work), capture_output=True, text=True, timeout=600,
+                          env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
 
 
 def _suite_passes(work: pathlib.Path) -> bool:
     return _run_suite(work).returncode == 0
+
+
+#: 2026-11-18. A red suite is not by itself a catch. A refusal inverted to an acceptance is caught
+#: only when a test asserts it, and a test that asserts FAILS. A suite red with ERRORs alone
+#: crashed on the mutant (an exception the mutation provoked, a module it broke) and asserted
+#: nothing: after decode-once 13 refusals in jwe.py were red that way, and the drill counted each
+#: one caught. unittest's last summary line decides.
+_SUMMARY = re.compile(r"^FAILED \(([^)]*)\)\s*$", re.M)
+
+#: How each verdict that is not a catch is said.
+_NOT_CAUGHT = {"passed": "survived", "crashed": "was red only by ERROR (crashed, NOT caught)"}
+
+
+def verdict(proc) -> str:
+    """'passed' (green), 'caught' (red, with at least one failure) or 'crashed' (red with errors
+    only, or red with no summary line to read: nothing shows that a test asserted)."""
+    if proc.returncode == 0:
+        return "passed"
+    found = _SUMMARY.findall("%s\n%s" % (proc.stdout or "", proc.stderr or ""))
+    if found:
+        counts = {}
+        for part in found[-1].split(","):
+            key, _, value = part.strip().partition("=")
+            counts[key] = value
+        failures = counts.get("failures", "0")
+        if failures.isdigit() and int(failures) > 0:
+            return "caught"
+    return "crashed"
 
 
 def _confirm_survivor(work: pathlib.Path):
@@ -302,10 +400,11 @@ def _confirm_survivor(work: pathlib.Path):
     undetected, only that one run did not detect it, and the two are worth telling apart. So
     a survivor is confirmed by a second run, and when it is undeclared the suite's own output
     is printed, because "1 undeclared survivor" with no output is a message that cannot be
-    acted on from a CI log.
+    acted on from a CI log. A crash is re-run the same way, since it is not a catch either.
+    Returns the second run's verdict and its output.
     """
     proc = _run_suite(work)
-    return proc.returncode == 0, proc
+    return verdict(proc), proc
 
 
 def main(argv=None) -> int:
@@ -354,35 +453,41 @@ def main(argv=None) -> int:
         my_sites = [(u[2], u[3], u[4], u[1]) for u in mine if u[0] == "site"]
         my_named = {u[1] for u in mine if u[0] == "named"}
 
+        drift = passthrough_drift(originals, sites)
+        if drift:
+            print("oid4vp-mutation drill: a passthrough no longer describes the code (%s), so the "
+                  "refusals it serves would be judged on a crash" % "; ".join(drift), file=sys.stderr)
+            return 1
+
         # NEGATIVE CONTROL first. Everything inverted at once must be caught.
         for source in SOURCES:
-            lines = originals[source].splitlines(keepends=True)
-            for src, i, mutated, _ in sites:
-                if src == source:
-                    lines[i] = mutated
-            (pkg / source).write_text("".join(lines), encoding="utf-8")
-        caught = not _suite_passes(pkg)
+            (pkg / source).write_text(
+                mutated_text(originals[source], source,
+                             [(i, mutated) for src, i, mutated, _ in sites if src == source]),
+                encoding="utf-8")
+        control = verdict(_run_suite(pkg))
         for source in SOURCES:
             (pkg / source).write_text(originals[source], encoding="utf-8")
-        if not caught:
-            print("oid4vp-mutation drill: a package with EVERY refusal inverted still passes "
-                  "its own suite. Nothing below would mean anything", file=sys.stderr)
+        if control != "caught":
+            print("oid4vp-mutation drill: a package with EVERY refusal inverted %s. Nothing below "
+                  "would mean anything" % ("still passes its own suite" if control == "passed"
+                                           else "is red only by ERROR, so no test failed on it"),
+                  file=sys.stderr)
             return 1
         print("  negative control: a package with every refusal inverted is caught")
 
         survivors, flaky = [], []
         for source, i, mutated, label in my_sites:
-            lines = originals[source].splitlines(keepends=True)
-            lines[i] = mutated
-            (pkg / source).write_text("".join(lines), encoding="utf-8")
+            (pkg / source).write_text(mutated_text(originals[source], source, [(i, mutated)]),
+                                      encoding="utf-8")
             try:
-                if _suite_passes(pkg):
+                if verdict(_run_suite(pkg)) != "caught":
                     again, proc = _confirm_survivor(pkg)
-                    if again:
-                        survivors.append((label, lines[i].split("# MUTANT")[0].strip()))
+                    if again != "caught":
+                        survivors.append((label, mutated.split("# MUTANT")[0].strip(), again))
                         if label not in DECLARED_SURVIVORS:
-                            print("  ! %s survived twice. The suite's second run said:"
-                                  % label)
+                            print("  ! %s %s twice. The suite's second run said:"
+                                  % (label, _NOT_CAUGHT[again]))
                             for out_line in (proc.stdout or proc.stderr).strip().splitlines()[-4:]:
                                 print("      %s" % out_line[:100])
                     else:
@@ -390,10 +495,11 @@ def main(argv=None) -> int:
             finally:
                 (pkg / source).write_text(originals[source], encoding="utf-8")
             if args.verbose:
-                print("  %-52s %s" % (label, "SURVIVED" if survivors and
-                                      survivors[-1][0] == label else "caught"))
+                last = survivors[-1] if survivors and survivors[-1][0] == label else None
+                print("  %-52s %s" % (label, "caught" if last is None else
+                                      "SURVIVED" if last[2] == "passed" else "CRASHED, not caught"))
 
-        named_survivors = []
+        named_survivors, named_kind = [], {}
         for label, source, old, new in NAMED_MUTANTS:
             # serve.py is not among SOURCES (it has no refusal of its own), but its done page
             # redeems the code, so a named mutant may live there.
@@ -407,11 +513,13 @@ def main(argv=None) -> int:
                 continue    # matched exactly once above, in every shard; mutated by its own
             (pkg / source).write_text(text.replace(old, new), encoding="utf-8")
             try:
-                if _suite_passes(pkg):
+                if verdict(_run_suite(pkg)) != "caught":
                     again, proc = _confirm_survivor(pkg)
-                    if again:
+                    if again != "caught":
                         named_survivors.append(label)
-                        print("  ! %s survived twice. The suite's second run said:" % label)
+                        named_kind[label] = again
+                        print("  ! %s %s twice. The suite's second run said:"
+                              % (label, _NOT_CAUGHT[again]))
                         for out_line in (proc.stdout or proc.stderr).strip().splitlines()[-4:]:
                             print("      %s" % out_line[:100])
                     else:
@@ -423,8 +531,9 @@ def main(argv=None) -> int:
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
-    names = {label for label, _ in survivors}
-    undeclared = [(label, text) for label, text in survivors if label not in DECLARED_SURVIVORS]
+    names = {label for label, _text, _kind in survivors}
+    undeclared = [(label, text, kind) for label, text, kind in survivors
+                  if label not in DECLARED_SURVIVORS]
     # A declared survivor is answered for by the shard that mutated it. One that names no
     # refusal at all (the refusal was edited or removed) belongs to no shard, so every shard
     # reports it: dropping it from all of them would let the list go stale with every shard green.
@@ -443,10 +552,13 @@ def main(argv=None) -> int:
     print("  named mutations             %4d  (%d survived)" % (len(my_named),
                                                               len(named_survivors)))
     print("  ...accepted by the suite    %4d  (%d declared)"
-          % (len(survivors), len([d for d in DECLARED_SURVIVORS if d in my_labels])))
-    for label, text in survivors:
+          % (len([s for s in survivors if s[2] == "passed"]),
+             len([d for d in DECLARED_SURVIVORS if d in my_labels])))
+    print("  ...red only by ERROR        %4d  (crashed, NOT caught)"
+          % len([s for s in survivors if s[2] == "crashed"]))
+    for label, text, kind in survivors:
         mark = " " if label in DECLARED_SURVIVORS else "!"
-        print("    %s %-50s %s" % (mark, label, text[:56]))
+        print("    %s %-50s %s%s" % (mark, label, text[:56], "" if kind == "passed" else "  [crashed]"))
 
     if stale:
         print("\n== OID4VP MUTATION DRILL FAILED: %d declared survivor(s) no longer survive, "
@@ -454,17 +566,26 @@ def main(argv=None) -> int:
               % (len(stale), ", ".join(stale)), file=sys.stderr)
         return 1
     if named_survivors:
-        print("\n== OID4VP MUTATION DRILL FAILED: %d named mutation(s) pass with every test still "
-              "green: %s ==" % (len(named_survivors), ", ".join(named_survivors)), file=sys.stderr)
+        print("\n== OID4VP MUTATION DRILL FAILED: %d named mutation(s) are not caught, no test "
+              "failing on them: %s ==" % (len(named_survivors), ", ".join(
+                  "%s [%s]" % (label, named_kind[label]) for label in named_survivors)),
+              file=sys.stderr)
         return 1
     if undeclared:
-        print("\n== OID4VP MUTATION DRILL FAILED: %d refusal(s) can be made to ACCEPT what "
-              "they refuse with every test still green. Seven of the conformance plan's "
-              "modules pass only on a 4xx, and a refusal nothing asserts on is one the plan "
-              "will find first ==" % len(undeclared), file=sys.stderr)
+        accepted = [label for label, _text, kind in undeclared if kind == "passed"]
+        crashed = [label for label, _text, kind in undeclared if kind == "crashed"]
+        if accepted:
+            print("\n== OID4VP MUTATION DRILL FAILED: %d refusal(s) can be made to ACCEPT what "
+                  "they refuse with every test still green. Seven of the conformance plan's "
+                  "modules pass only on a 4xx, and a refusal nothing asserts on is one the plan "
+                  "will find first ==" % len(accepted), file=sys.stderr)
+        if crashed:
+            print("\n== OID4VP MUTATION DRILL FAILED: %d refusal(s) are red only by ERROR when "
+                  "inverted: the suite crashed on each and no test failed, so nothing shows the "
+                  "refusal is asserted: %s ==" % (len(crashed), ", ".join(crashed)), file=sys.stderr)
         return 1
     print("\n== OID4VP MUTATION DRILL PASSED: every one of the %d refusals is caught when "
-          "inverted, except %d declared with reasons, and the negative control proves the "
+          "inverted (a test failed on it), except %d declared with reasons, and the negative control proves the "
           "harness can produce a survivor%s ==" % (
               len(my_sites), len([d for d in DECLARED_SURVIVORS if d in my_labels]),
               (" (shard %d/%d of %d refusals and %d named mutations; the other shards make the rest)"
