@@ -51,7 +51,8 @@ except ImportError:  # pragma: no cover
 from .jwe import _loads_depth_bounded
 from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
                     b64u_decode)
-from .serve import REQUEST_PATH, RESPONSE_PATH, cors_origins_of, serve
+from .serve import (CONTROL_PATH, REQUEST_PATH, RESPONSE_PATH, control_token_problem,
+                    cors_origins_of, serve)
 from .verifier import (VERIFIER_INFO_PROFILES, Verifier, claim_query, transaction_data_entries,
                        verifier_info_entries, verify_response)
 
@@ -71,6 +72,11 @@ FILES = {
 #: OIDFVP-HAIP-REDIRECTS-03), and WE BUILD CS-02 v1.2 has a verifier support it beside
 #: `openid4vp://`.
 LAUNCH_SCHEMES = ("openid4vp", "haip-vp", "eu-eaap")
+
+#: How many requests may be outstanding at once when `--control-token-file` lets a caller start them:
+#: the 65th is answered 429 until one is answered or expires. Whoever holds the token cannot make
+#: the verifier hold more.
+CONTROL_OUTSTANDING_LIMIT = 64
 
 
 def _now():
@@ -322,11 +328,22 @@ class _ResultFile:
     cannot be rewritten later is removed and the failure said on stderr: a document left saying
     what it said before an answer would be read as the result, and the wallet still gets its
     answer.
+
+    With `--rearm` or `--control-token-file` (`numbered`, 2026-11-17) the file describes the
+    newest request started, and says which: `request` is 1, 2, 3 ... in start order, 0 and a
+    `state` of null before the first. `state` is what it always was, the request's OAuth state
+    value. A new request rewrites the whole file to its own pending form, so nothing about an
+    older one is left in it; under `--rearm` the request that closed is kept, whole, as
+    `previous`, in the same rename, and `previous` is absent for request 1. Plain `--once` is
+    one request and its document is as it was, with no `request` and no `previous`.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, numbered=False):
         self.path = pathlib.Path(path)
         self._lock = threading.Lock()
+        self._numbered = numbered
+        self._number = 0
+        self._previous = None
         self._state = None
         self._fetches = {"served": 0, "refused": 0}
         self._responses = 0
@@ -334,10 +351,18 @@ class _ResultFile:
         self._open = lambda: True
         self._write()
 
-    def request(self, state, is_open):
+    def request(self, state, is_open, number=None, keep_previous=False):
         with self._lock:
+            # The closed request's document, taken as it stands (the answer that closed it is in it)
+            # and rewritten away in the same rename that writes this one's pending form.
+            self._previous = self._document() if keep_previous and self._number else None
             self._state = state
             self._open = is_open
+            self._fetches = {"served": 0, "refused": 0}
+            self._responses = 0
+            self._latest = {"outcome": "nothing_received"}
+            if number is not None:
+                self._number = number
             self._rewrite()
 
     def request_object(self, status):
@@ -366,9 +391,17 @@ class _ResultFile:
             print("polaris-oid4vp: --result %s could not be rewritten (%s); it was removed rather "
                   "than left stale" % (self.path, exc), file=sys.stderr, flush=True)
 
-    def _write(self):
+    def _document(self):
         doc = dict(self._latest, state=self._state, request_object=dict(self._fetches),
                    responses=self._responses)
+        if self._numbered:
+            doc["request"] = self._number
+        return doc
+
+    def _write(self):
+        doc = self._document()
+        if self._previous is not None:
+            doc["previous"] = self._previous
         fd, tmp = tempfile.mkstemp(prefix=self.path.name + ".", dir=str(self.path.parent))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -378,6 +411,246 @@ class _ResultFile:
         except BaseException:
             os.unlink(tmp)
             raise
+
+
+class _Started:
+    """One request `_Requests.start` made: its number, its session and the launch parameters."""
+
+    __slots__ = ("number", "session", "params", "launch")
+
+    def __init__(self, number, session, params):
+        self.number, self.session, self.params = number, session, params
+        # The same query behind each scheme. The one place a launch link is made: what `--once`
+        # prints, what a `--rearm` successor prints and what the control endpoint answers.
+        query = urllib.parse.urlencode(params)
+        self.launch = {scheme: "%s://?%s" % (scheme, query) for scheme in LAUNCH_SCHEMES}
+
+
+def _announce(started):
+    """What `--once` prints for a request, and what each `--rearm` successor prints: its
+    authorization request parameters, then the launch links. Written in one piece, so two
+    requests' lines do not interleave."""
+    session = started.session
+    lines = ["", "authorization request parameters:"]
+    lines += ["  %-18s %s" % (key, value) for key, value in started.params.items()]
+    if session.transaction_data:
+        lines.append("  the request object carries %d transaction_data entr%s, which the key "
+                     "binding JWT must bind" % (len(session.transaction_data),
+                                                "y" if len(session.transaction_data) == 1
+                                                else "ies"))
+    # After the parameters, which the lab walks read: the three lines under the heading, the
+    # first `x509_hash:` and the last `state=` in the log. A link's values are percent-encoded,
+    # so it carries neither, and those reads find what they found before.
+    lines += ["", "launch links, the same request behind each scheme:"]
+    lines += ["  " + started.launch[scheme] for scheme in LAUNCH_SCHEMES]
+    sys.stdout.write("\n".join(lines) + "\n")
+    sys.stdout.flush()
+
+
+def _control_specification(spec):
+    """What a control request body asks for: (claims, vct), each None for the serve command's own.
+    Each claim is a string in `--claim` syntax and goes through `parse_claim`, the function that
+    validates `--claim`; `--vct` is validated by nothing but its being a string, and so is this.
+    Anything else raises ValueError saying which member."""
+    unknown = sorted(set(spec) - {"claims", "vct"})
+    if unknown:
+        raise ValueError("%s is not a member of a control request; it has claims and vct only"
+                         % json.dumps(unknown[0][:64]))
+    claims = vct = None
+    if "claims" in spec:
+        texts = spec["claims"]
+        if not isinstance(texts, list) or not texts:
+            raise ValueError("claims is a non-empty list of strings, each as --claim takes it")
+        claims = []
+        for n, text in enumerate(texts):
+            if not isinstance(text, str):
+                raise ValueError("claims[%d] is not a string; write it as --claim takes it" % n)
+            try:
+                claims.append(parse_claim(text))
+            except ValueError as exc:
+                raise ValueError("claims[%d]: %s" % (n, exc)) from None
+    if "vct" in spec:
+        vct = spec["vct"]
+        if not isinstance(vct, list) or not vct or not all(isinstance(v, str) and v for v in vct):
+            raise ValueError("vct is a non-empty list of non-empty strings, each as --vct takes it")
+    return claims, vct
+
+
+class _Requests:
+    """Starts the requests of one `serve` command and follows the current one.
+
+    `start` is the one function that makes a request, tells the result file about it and
+    prepares what is printed or answered: `--once` calls it, each `--rearm` successor and each
+    answer of the control endpoint, so the three cannot drift apart.
+
+    `--rearm` (2026-11-17). A request ends in one of two ways, and each calls `close` or
+    `expired` with the state of the request it is about; both go through one lock and one test,
+    that the request is still the current one, so a closing answer and the expiry arriving
+    together start one successor and not two. The successor has the same specification, and
+    `announce` prints its parameters as `--once` printed the first. The expiry is a timer
+    thread started with each request, so an idle server starts and prints a new request each time
+    one expires, and no wallet has to ask for it to be noticed. An answer for a request that is no
+    longer the current one (the verifier no longer has it, so it is about none) is neither
+    recorded nor does it end anything.
+
+    The control endpoint (`control`) starts requests of its own, each independent of the others
+    and of the current one, and each ended by an answer at the response URI, accepted,
+    refused or a wallet's error response, the rule `--rearm` has for the current request, or by
+    its own expiry. So a refusal frees the request's place among the 64 outstanding, and a
+    second presentation to it is refused as one to a request that has closed. The request `--once`
+    starts beside the endpoint is not one of these: it keeps the plain rule, that a refusal leaves
+    it open. `--result` follows the newest request.
+    """
+
+    def __init__(self, verifier, result, transaction_data=None, *, rearm=False, announce=None):
+        self.verifier, self.result, self.transaction_data = verifier, result, transaction_data
+        self.rearm, self.announce = rearm, announce
+        self._lock = threading.Lock()
+        self._number = 0
+        self._current = None
+        self._timer = None
+        self._stopped = False
+        # The states of the outstanding requests the control endpoint started: each ends at an
+        # answer. Pruned of the expired at each start, so it holds at most the 64 bound.
+        self._ends_on_answer = set()
+
+    def current_state(self):
+        with self._lock:
+            return self._current
+
+    def start(self, claims=None, vct_values=None):
+        """Make a request, with this command's own specification or the claims and credential
+        types given, and return it. Raises ValueError, making none, for one a wallet would refuse."""
+        with self._lock:
+            return self._start_locked(claims, vct_values)
+
+    def _start_locked(self, claims=None, vct_values=None, ends_on_answer=False):
+        verifier = self.verifier
+        session, _ = verifier.new_request(transaction_data=self.transaction_data, claims=claims,
+                                          vct_values=vct_values)
+        self._number += 1
+        self._current = session.state
+        self._ends_on_answer = {s for s in self._ends_on_answer if verifier.is_outstanding(s)}
+        if ends_on_answer:
+            self._ends_on_answer.add(session.state)
+        if self.result is not None:
+            # Open while inside its lifetime, the verifier's own test (Verifier._expire_locked).
+            self.result.request(session.state,
+                                lambda: time.time() - session.created <= verifier.request_ttl_seconds,
+                                self._number, keep_previous=self.rearm)
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if self.rearm and not self._stopped:
+            self._timer = threading.Timer(verifier.request_ttl_seconds, self.expired,
+                                          args=(session.state,))
+            self._timer.daemon = True
+            self._timer.start()
+        return _Started(self._number, session, verifier.authorization_request_params(session))
+
+    def close(self, state):
+        """An answer ended the request `state`. A request the control endpoint started is closed.
+        Under `--rearm`, and if it is still the current request, it is closed and its successor
+        starts and is announced. Returns whether it did either."""
+        return self._end(state)
+
+    def expired(self, state):
+        """The timer of the request `state` ran out: the same as `close`."""
+        return self._end(state)
+
+    def _end(self, state):
+        with self._lock:
+            if state in self._ends_on_answer:
+                self._ends_on_answer.discard(state)
+                self.verifier.close_request(state)
+                return True
+            if not self.rearm or self._stopped or state != self._current:
+                return False
+            try:
+                self.verifier.close_request(state)
+                started = self._start_locked()
+                if self.announce is not None:
+                    self.announce(started)
+            except Exception as exc:  # noqa: BLE001
+                print("polaris-oid4vp: --rearm could not start the next request: %s: %s"
+                      % (type(exc).__name__, exc), file=sys.stderr, flush=True)
+                return False
+            return True
+
+    def stop(self):
+        with self._lock:
+            self._stopped = True
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+
+    # What the listener's hooks call when the result file or `--rearm` follows the newest request.
+    # The verifier says which request an answer or a fetch was about (`attributed_request`), on
+    # the thread that answered, and only the current request's are recorded.
+
+    def answered(self, status, verdict):
+        """An answer at the response URI. Recorded in the result file when it is about the
+        current request. Returns the state of the request it is about when that answer ends the
+        request (the current one under `--rearm`, one the control endpoint started), else None."""
+        state = self.verifier.attributed_request()
+        with self._lock:
+            if state is None:
+                return None
+            current = state == self._current
+            if current and self.result is not None:
+                self.result.verdict(status, verdict)
+            if state in self._ends_on_answer or (current and self.rearm):
+                return state
+            return None
+
+    def fetched(self, status):
+        """An answer at the request URI, counted for the current request only."""
+        state = self.verifier.attributed_request()
+        with self._lock:
+            if self.result is not None and state is not None and state == self._current:
+                self.result.request_object(status)
+
+    def control(self, spec):
+        """POST /control/request: (status, document). 201 with the launch parameters; 400 for a
+        body or a specification refused; 429 at CONTROL_OUTSTANDING_LIMIT outstanding requests.
+        The count and the request are made under one lock, so no number of callers at once makes
+        more than the limit."""
+        try:
+            claims, vct = _control_specification(spec)
+        except ValueError as exc:
+            return 400, {"error": "invalid_request", "error_description": str(exc)}
+        with self._lock:
+            if self.verifier.outstanding() >= CONTROL_OUTSTANDING_LIMIT:
+                return 429, {"error": "too_many_requests",
+                             "error_description": "%d requests are outstanding; one must be "
+                                                  "answered or expire first"
+                                                  % CONTROL_OUTSTANDING_LIMIT}
+            try:
+                started = self._start_locked(claims, vct, ends_on_answer=True)
+            except ValueError as exc:
+                return 400, {"error": "invalid_request", "error_description": str(exc)}
+        return 201, {"request": started.number, "state": started.session.state,
+                     "launch": started.launch, "request_uri": started.params["request_uri"],
+                     "client_id": started.params["client_id"]}
+
+
+def _read_control_token(path):
+    """The token in `--control-token-file`, stripped. ValueError says why it cannot be used, and
+    never what it held."""
+    try:
+        raw = pathlib.Path(path).read_bytes()
+    except OSError as exc:
+        raise ValueError("--control-token-file %s: %s" % (path, exc.strerror or "unreadable"))
+    try:
+        token = raw.decode("ascii").strip()
+    except ValueError:
+        raise ValueError("--control-token-file %s: the token is ASCII text" % path) from None
+    if not token:
+        raise ValueError("--control-token-file %s: the file holds no token" % path)
+    problem = control_token_problem(token)
+    if problem:
+        raise ValueError("--control-token-file %s: %s" % (path, problem))
+    return token
 
 
 def _cmd_serve(args) -> int:
@@ -424,7 +697,23 @@ def _cmd_serve(args) -> int:
             print("polaris-oid4vp: --verifier-info %s: %s" % (args.verifier_info, exc),
                   file=sys.stderr)
             return 2
-    if args.result and not args.once:
+    if args.rearm and not args.once:
+        print("polaris-oid4vp: --rearm starts the next request when the one --once starts ends; "
+              "add --once", file=sys.stderr)
+        return 2
+    if args.rearm and args.control_token_file:
+        print("polaris-oid4vp: --rearm and --control-token-file are not combined: under --rearm "
+              "the command owns which request is the current one, and the control endpoint "
+              "starts requests of its own; use one", file=sys.stderr)
+        return 2
+    control_token = None
+    if args.control_token_file:
+        try:
+            control_token = _read_control_token(args.control_token_file)
+        except ValueError as exc:
+            print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+            return 2
+    if args.result and not (args.once or control_token):
         print("polaris-oid4vp: --result reports on the request --once starts; add --once",
               file=sys.stderr)
         return 2
@@ -472,27 +761,44 @@ def _cmd_serve(args) -> int:
               "answer to an unconfigured verifier, and it is probably not what you wanted.",
               file=sys.stderr)
 
+    # With --rearm or the control endpoint there is more than one request over the command's life,
+    # so each answer and fetch is held to the request it was about and the file is numbered.
+    several = bool(args.rearm or control_token)
     result = None
     if args.result:
         try:
-            result = _ResultFile(args.result)
+            result = _ResultFile(args.result, numbered=several)
         except OSError as exc:
             print("polaris-oid4vp: --result %s: %s" % (args.result, exc), file=sys.stderr)
             return 2
+    requests = _Requests(verifier, result, transaction_data, rearm=args.rearm, announce=_announce)
 
     def on_verdict(status, body, verdict):
-        if result is not None:
+        about = None
+        if several:
+            about = requests.answered(status, verdict)
+        elif result is not None:
             result.verdict(status, verdict)
         # The operator sees the reason; the wallet never does. body carries the same constant
         # refusal whatever went wrong.
         print("  <- %d %s" % (status, _operator_line(verdict)), flush=True)
+        # Under --rearm any answer about the current request ends it, accepted, refused or a
+        # wallet's error response, and the next starts before the wallet has its answer; a request
+        # the control endpoint started ends at an answer the same way. With neither, a
+        # refusal still leaves the request open.
+        if about is not None:
+            requests.close(about)
 
+    on_request_object = None
+    if result is not None:
+        on_request_object = requests.fetched if several else result.request_object
     httpd = serve(verifier, host=args.bind, port=args.port,
                   certfile=None if args.no_local_tls else str(pki / FILES["tls_cert"]),
                   keyfile=None if args.no_local_tls else str(pki / FILES["tls_key"]),
                   verbose=args.verbose, on_verdict=on_verdict,
-                  on_request_object=result.request_object if result is not None else None,
-                  cors_origins=cors_origins)
+                  on_request_object=on_request_object,
+                  cors_origins=cors_origins, control_token=control_token,
+                  on_control=requests.control if control_token else None)
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     if args.no_local_tls:
@@ -503,6 +809,9 @@ def _cmd_serve(args) -> int:
     print("  anchor to register: %s" % (pki / FILES["anchor"]))
     if cors_origins:
         print("  cors origins  %s" % " ".join(cors_origins))
+    if control_token:
+        print("  control       POST %s, bearer token from %s, at most %d outstanding requests"
+              % (CONTROL_PATH, args.control_token_file, CONTROL_OUTSTANDING_LIMIT))
     if verifier.verifier_info_profile:
         print("  verifier_info meets %s: ETSI TS 119 472-2 V1.2.1 RO-01 to RO-16, shape and labels "
               "only (the registration certificate's signature, chain and registry are not "
@@ -513,26 +822,7 @@ def _cmd_serve(args) -> int:
                         "no registration certificate carried; the over-asking check did not run"))
     print("\nStart a request with --once to print the parameters a wallet is launched with.")
     if args.once:
-        session, _ = verifier.new_request(transaction_data=transaction_data)
-        if result is not None:
-            # Open while inside its lifetime, the verifier's own test (Verifier._expire_locked).
-            result.request(session.state, lambda: time.time() - session.created
-                           <= verifier.request_ttl_seconds)
-        params = verifier.authorization_request_params(session)
-        print("\nauthorization request parameters:")
-        for key, value in params.items():
-            print("  %-18s %s" % (key, value))
-        if session.transaction_data:
-            print("  the request object carries %d transaction_data entr%s, which the key "
-                  "binding JWT must bind" % (len(session.transaction_data),
-                                             "y" if len(session.transaction_data) == 1 else "ies"))
-        # After the parameters, which the lab walks read: the three lines under the heading, the
-        # first `x509_hash:` and the last `state=` in the log. A link's values are
-        # percent-encoded, so it carries neither, and those reads find what they found before.
-        print("\nlaunch links, the same request behind each scheme:")
-        query = urllib.parse.urlencode(params)
-        for scheme in LAUNCH_SCHEMES:
-            print("  %s://?%s" % (scheme, query))
+        _announce(requests.start())
     # Read while it serves, and stdout is often not a terminal (a pipe, a file, a container log
     # without -t), where Python holds what was printed until the buffer fills or the process
     # exits. So the lines above go out now, and each verdict line as it is printed (2026-10-15).
@@ -543,6 +833,7 @@ def _cmd_serve(args) -> int:
     except KeyboardInterrupt:
         print("\nstopping")
     finally:
+        requests.stop()
         httpd.shutdown()
         httpd.server_close()
     return 0
@@ -694,14 +985,41 @@ and one that judges a response already captured:
     s.add_argument("--once", action="store_true",
                    help="start one authorization request at startup and print its parameters "
                         "and its launch links (openid4vp://, haip-vp://, eu-eaap://)")
+    s.add_argument("--rearm", action="store_true",
+                   help="with --once: when the request ends, start the next with the same "
+                        "specification and print its parameters and launch links as --once "
+                        "does. Under --rearm any answer at the response URI about the current "
+                        "request ends it (accepted, refused, or a wallet's error response; "
+                        "with neither --rearm nor --control-token-file a refusal leaves the "
+                        "request open), and so does the "
+                        "end of its lifetime, which a timer notices with no wallet asking: an "
+                        "idle server starts and prints a new request each time one expires. "
+                        "--result then describes the current request and keeps the one that "
+                        "ended as previous; refused with --control-token-file")
+    s.add_argument("--control-token-file", default=None, metavar="FILE",
+                   help="turn on POST /control/request on this listener, same TLS mode: FILE "
+                        "holds the bearer token (read at startup, never from the command line; "
+                        "at least 32 printable ASCII characters). A call with "
+                        "`Authorization: Bearer TOKEN` starts a request and is answered 201 "
+                        "with its request number, state, launch links, request_uri and "
+                        "client_id; an optional JSON body names claims (each as --claim takes "
+                        "it) and vct for that request alone. A request started here ends at an "
+                        "answer, accepted, refused or a wallet's error response, as under "
+                        "--rearm, or when it expires. Without the header, or with a "
+                        "wrong token, 401 and nothing else; at most 64 requests outstanding "
+                        "(429 beyond). The path never carries CORS headers. --result follows "
+                        "the newest request; refused with --rearm")
     s.add_argument("--result", default=None, metavar="FILE",
-                   help="with --once: keep FILE a JSON object saying what became of that "
-                        "request, rewritten whole at startup and before each answer goes out: "
-                        "outcome (nothing_received until a response arrives, then accepted, "
-                        "refused or wallet_error), response.status_code (the HTTP status the "
-                        "wallet was answered), check and reason (what refused it, as the <- "
-                        "line says), claims (the names accepted), state, request_object (the "
-                        "fetches served and refused) and responses (how many arrived)")
+                   help="with --once (or --control-token-file): keep FILE a JSON object saying "
+                        "what became of that request, rewritten whole at startup and before "
+                        "each answer goes out: outcome (nothing_received until a response "
+                        "arrives, then accepted, refused or wallet_error), response.status_code "
+                        "(the HTTP status the wallet was answered), check and reason (what "
+                        "refused it, as the <- line says), claims (the names accepted), state, "
+                        "request_object (the fetches served and refused) and responses (how "
+                        "many arrived). With --rearm or --control-token-file it describes the "
+                        "newest request and adds request (1, 2, 3 ... in start order, 0 before "
+                        "the first), and under --rearm previous (the request that ended, whole)")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
 

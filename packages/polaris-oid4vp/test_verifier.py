@@ -2885,3 +2885,148 @@ class AnEntryNamingTwoPresentedCredentialsTests(unittest.TestCase):
             with self.subTest(binds=binds):
                 result = _TwoCredentials(entries).judge(binds)
                 self.assertIs(result["accepted"], accepted, result["problem"])
+
+
+class ARequestMayCarryItsOwnSpecificationTests(VerifierTestCase):
+    """`new_request(claims=..., vct_values=...)`: one request asked for something other than the
+    verifier's own, and everything about THAT request (its request object, the judging of its
+    answer, the over-asking check against a registration certificate) follows its own
+    specification, while the verifier's and every other request's are untouched."""
+
+    def _asked(self, jar):
+        return Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]
+
+    def test_the_request_object_asks_for_what_the_request_names(self):
+        _, jar = self.verifier.new_request(
+            claims=[{"path": ["age_equal_or_over", "18"], "values": [True]}],
+            vct_values=["urn:example:other:1"])
+        query = self._asked(jar)
+        self.assertEqual(query["claims"], [{"path": ["age_equal_or_over", "18"], "values": [True]}])
+        self.assertEqual(query["meta"]["vct_values"], ["urn:example:other:1"])
+
+    def test_a_request_without_them_asks_for_the_verifiers_own_and_the_verifier_is_untouched(self):
+        self.verifier.new_request(claims=["birthdate"], vct_values=["urn:example:other:1"])
+        self.assertEqual(self.verifier.claims, [(("given_name",), None), (("family_name",), None)])
+        self.assertEqual(self.verifier.vct_values, ["urn:eudi:pid:1"])
+        _, jar = self.verifier.new_request()
+        query = self._asked(jar)
+        self.assertEqual(query["claims"], [{"path": ["given_name"]}, {"path": ["family_name"]}])
+        self.assertEqual(query["meta"]["vct_values"], ["urn:eudi:pid:1"])
+
+    def test_a_claim_the_verifier_refuses_is_refused_and_no_request_is_made(self):
+        before = dict(self.verifier._sessions)
+        for claims in ([[]], [["a", 3]], [{"path": ["a"], "values": []}], [7]):
+            with self.subTest(claims=claims):
+                with self.assertRaises(ValueError):
+                    self.verifier.new_request(claims=claims)
+        self.assertEqual(self.verifier._sessions, before)
+
+    def test_a_request_asks_for_at_least_one_claim_and_one_credential_type_that_is_a_string(self):
+        for kwargs in ({"claims": []}, {"vct_values": []}, {"vct_values": [1]}, {"vct_values": [""]},
+                       {"vct_values": ["urn:example:ok", None]}):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    self.verifier.new_request(**kwargs)
+        self.assertEqual(self.verifier.outstanding(), 0)
+
+    def test_the_answer_is_judged_by_the_requests_own_claims_and_not_the_verifiers(self):
+        # Asks for given_name only. A wallet that withholds family_name answers it, though it
+        # would not answer the verifier's own two names.
+        own, jar = self.verifier.new_request(claims=["given_name"])
+        status, _, verdict = self.verifier.handle_direct_post(
+            self.wallet.respond(jar, withhold=("family_name",)))
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertTrue(verdict.authentic)
+        # The reverse: both names disclosed satisfies the verifier's own claims and does not
+        # answer a request that selected given_name alone.
+        _, jar = self.verifier.new_request(claims=["given_name"])
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual((status, verdict.code), (400, "claims"), verdict.reason)
+        self.assertIn("family_name", verdict.reason)
+        # And the verifier's own request still wants both.
+        _, jar = self.verifier.new_request()
+        status, _, verdict = self.verifier.handle_direct_post(
+            self.wallet.respond(jar, withhold=("family_name",)))
+        self.assertEqual((status, verdict.code), (400, "claims"), verdict.reason)
+        self.assertIn("family_name", verdict.reason)
+
+    def test_the_answer_is_judged_by_the_requests_own_credential_type(self):
+        _, jar = self.verifier.new_request(vct_values=["urn:example:other:1"])
+        status, _, verdict = self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertEqual(status, 400)
+        self.assertFalse(verdict.authentic)
+        _, jar = self.verifier.new_request(vct_values=["urn:example:other:1"])
+        status, _, verdict = self.verifier.handle_direct_post(
+            self.wallet.respond(jar, vct="urn:example:other:1"))
+        self.assertEqual(status, 200, verdict.reason)
+
+    def test_close_request_closes_exactly_the_one_and_says_whether_it_was_open(self):
+        first, _ = self.verifier.new_request()
+        second, _ = self.verifier.new_request()
+        self.assertTrue(self.verifier.close_request(first.state))
+        self.assertFalse(self.verifier.close_request(first.state))
+        self.assertIsNone(self.verifier.request_object(first.state))
+        self.assertIsNotNone(self.verifier.request_object(second.state))
+        self.assertEqual(self.verifier.outstanding(), 1)
+        self.assertFalse(self.verifier.is_outstanding(first.state))
+        self.assertTrue(self.verifier.is_outstanding(second.state))
+        second.created -= self.verifier.request_ttl_seconds + 1
+        self.assertFalse(self.verifier.is_outstanding(second.state))
+
+    def test_outstanding_counts_what_is_open_and_not_what_has_expired(self):
+        sessions = [self.verifier.new_request()[0] for _ in range(3)]
+        self.assertEqual(self.verifier.outstanding(), 3)
+        sessions[0].created -= self.verifier.request_ttl_seconds + 1
+        self.assertEqual(self.verifier.outstanding(), 2)
+
+    def test_what_an_answer_was_about_is_known_to_the_thread_that_asked(self):
+        session, jar = self.verifier.new_request()
+        self.assertIsNone(self.verifier.attributed_request())
+        self.verifier.handle_direct_post({"response": ["not.a.compact.jwe.token"]})
+        self.assertIsNone(self.verifier.attributed_request(), "garbage was about no request")
+        self.verifier.handle_direct_post(self.wallet.respond(jar, nonce="wrong"))
+        self.assertEqual(self.verifier.attributed_request(), session.state)
+        self.verifier.handle_direct_post(self.wallet.respond_error(jar))
+        self.assertEqual(self.verifier.attributed_request(), session.state)
+        self.verifier.handle_direct_post({"response": ["not.a.compact.jwe.token"]})
+        self.assertIsNone(self.verifier.attributed_request(), "a later call left the earlier one")
+        self.verifier.request_object(session.state)
+        self.assertEqual(self.verifier.attributed_request(), session.state)
+        self.verifier.request_object("nonsense")
+        self.assertIsNone(self.verifier.attributed_request())
+        # An answer to a closed request is about no outstanding one.
+        self.verifier.close_request(session.state)
+        self.verifier.handle_direct_post(self.wallet.respond(jar))
+        self.assertIsNone(self.verifier.attributed_request())
+
+
+class ARequestsOwnSpecificationIsHeldToTheRegistrationCertificateTests(_EtsiProfile):
+    """Under the profile, construction holds the verifier's own request to the registration
+    certificate it carries. A request with a specification of its own is held to it too, by the
+    same refusal, before it is made: otherwise the startup line saying the request asks for no
+    more than the certificate registers would stop being true the moment one asked for more."""
+
+    def setUp(self):
+        self.v = self.verifier([_registrar(), _certificate()])
+
+    def test_a_request_asking_beyond_the_certificate_is_refused_as_construction_refuses_it(self):
+        with self.assertRaises(VerifierInfoError) as caught:
+            self.v.new_request(claims=["given_name", "birthdate"])
+        self.assertIn("the over-asking check refuses this request", str(caught.exception))
+        self.assertIn('asks for the claim path ["birthdate"]', str(caught.exception))
+        self.assertEqual(self.v.outstanding(), 0, "a request was made")
+        with self.assertRaises(VerifierInfoError) as caught:
+            self.v.new_request(vct_values=["urn:example:other:1"])
+        self.assertIn("the over-asking check refuses this request", str(caught.exception))
+        self.assertEqual(self.v.outstanding(), 0)
+
+    def test_a_request_asking_for_no_more_than_the_certificate_registers_is_made(self):
+        _, jar = self.v.new_request(claims=["given_name"])
+        self.assertEqual(Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["claims"],
+                         [{"path": ["given_name"]}])
+        self.assertEqual(self.v.outstanding(), 1)
+
+    def test_without_the_profile_a_request_may_ask_for_what_it_likes(self):
+        v = self.verifier([_registrar(), _certificate()], profile=None)
+        _, jar = v.new_request(claims=["given_name", "birthdate"])
+        self.assertEqual(len(Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["claims"]), 2)

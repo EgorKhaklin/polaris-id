@@ -1098,6 +1098,22 @@ def _send_raw(httpd, raw):
         s.close()
 
 
+def _stop_now(httpd, shutdown=None):
+    """`httpd.shutdown()` without its wait: shutdown returns when the serve loop next looks, which
+    is at its next poll, half a second away, or at the next connection. So one is made. The
+    listener is stopped exactly as shutdown stops it; only the wait is gone."""
+    import socket
+    import threading
+    done = threading.Thread(target=shutdown or httpd.shutdown, daemon=True)
+    done.start()
+    while done.is_alive():
+        try:
+            socket.create_connection(httpd.server_address[:2], 1).close()
+        except OSError:
+            pass
+        done.join(0.02)
+
+
 def _exchange(httpd, method, path, headers=(), body=b"", declare=None):
     """One request as written, on a bare socket: urllib adds headers of its own and will not send
     a preflight as a browser does, and these tests need the request exactly as given and every
@@ -1524,3 +1540,307 @@ class CorsOriginTableTests(CorsTestCase):
                 status, headers, _ = _parse(_exchange(self.cors, "OPTIONS", "/response", [
                     ("Origin", sent), ("Access-Control-Request-Method", "POST")]))
                 self.assertEqual((status, _cors(headers)), (204, [("Vary", "Origin")]))
+
+
+# ---------------------------------------------------------------------------------------------
+# `serve(control_token=..., on_control=...)`: POST /control/request, opt-in, on the main listener.
+
+CONTROL_TOKEN = "control-token-0123456789abcdef0123456789abcdef"
+
+
+class ControlEndpointTestCase(ServeTestCase):
+    """The listener without the option (ServeTestCase's), one with it, and one with it beside
+    `--cors-origin *`. `on_control` records what it was handed and answers 201."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.calls = []
+
+        def on_control(spec):
+            cls.calls.append(spec)
+            return 201, {"request": len(cls.calls), "state": "s"}
+
+        cls.control = serve(cls.verifier, host="127.0.0.1", port=0, control_token=CONTROL_TOKEN,
+                            on_control=on_control)
+        cls.control_cors = serve(cls.verifier, host="127.0.0.1", port=0, control_token=CONTROL_TOKEN,
+                                 on_control=on_control, cors_origins=["*"])
+
+    @classmethod
+    def tearDownClass(cls):
+        for httpd in (cls.control, cls.control_cors):
+            httpd.shutdown()
+            httpd.server_close()
+        super().tearDownClass()
+
+    def setUp(self):
+        del self.calls[:]
+
+    def ask(self, httpd, body=b"", token=CONTROL_TOKEN, extra=(), declare=None,
+            path="/control/request", method="POST"):
+        headers = ([("Authorization", "Bearer " + token)] if token is not None else []) + list(extra)
+        return _parse(_exchange(httpd, method, path, headers, body, declare))
+
+
+class ControlOffTests(ControlEndpointTestCase):
+
+    def test_without_the_option_the_path_answers_exactly_what_an_unknown_path_answers(self):
+        auth = [("Authorization", "Bearer " + CONTROL_TOKEN)]
+        for method, body in (("POST", b"{}"), ("POST", b""), ("GET", b"")):
+            with self.subTest(method=method, body=body):
+                control = _without_date(_exchange(self.httpd, method, "/control/request", auth, body))
+                unknown = _without_date(_exchange(self.httpd, method, "/control/other", auth, body))
+                self.assertEqual(control, unknown)
+                self.assertTrue(control.startswith(b"HTTP/1.0 404"), control[:40])
+        self.assertEqual(
+            _without_date(_exchange(self.httpd, "OPTIONS", "/control/request", auth)),
+            _without_date(_exchange(self.httpd, "OPTIONS", "/control/other", auth)))
+
+    def test_the_option_given_to_serve_without_what_it_needs_is_refused_before_listening(self):
+        def callback(spec):
+            return 201, {}
+
+        for kwargs in ({"control_token": CONTROL_TOKEN},
+                       {"on_control": callback},
+                       {"control_token": "short", "on_control": callback},
+                       {"control_token": "", "on_control": callback},
+                       {"control_token": "x" * 31 + "é", "on_control": callback},
+                       {"control_token": "x" * 16 + " " + "y" * 16, "on_control": callback},
+                       {"control_token": b"x" * 40, "on_control": callback}):
+            with self.subTest(kwargs=sorted(kwargs)):
+                with self.assertRaises(ValueError):
+                    serve(self.verifier, host="127.0.0.1", port=0, **kwargs)
+
+
+class ControlAuthenticationTests(ControlEndpointTestCase):
+
+    def assert_refused_bare(self, answer):
+        status, headers, body = answer
+        self.assertEqual((status, body), (401, b""))
+        names = {name.lower() for name, _ in headers}
+        self.assertFalse([n for n in names if n.startswith("access-control-") or n == "vary"], headers)
+        self.assertIn(("WWW-Authenticate", "Bearer"), headers)
+        self.assertIn(("Content-Length", "0"), headers)
+        self.assertEqual(self.calls, [], "the callback ran for an unauthenticated caller")
+
+    def test_no_token_a_wrong_token_and_a_token_differing_in_the_last_byte_are_401_and_empty(self):
+        for label, kwargs in (
+                ("none", {"token": None}),
+                ("wrong", {"token": "x" * len(CONTROL_TOKEN)}),
+                ("last byte", {"token": CONTROL_TOKEN[:-1] + "g"}),
+                ("a prefix", {"token": CONTROL_TOKEN[:-1]}),
+                ("longer", {"token": CONTROL_TOKEN + "0"}),
+                ("empty", {"token": ""}),
+                ("another scheme", {"token": None,
+                                    "extra": [("Authorization", "Basic " + CONTROL_TOKEN)]}),
+                ("no scheme", {"token": None, "extra": [("Authorization", CONTROL_TOKEN)]}),
+                ("a bare scheme", {"token": None, "extra": [("Authorization", "Bearer")]}),
+                ("not ASCII", {"token": None,
+                               "extra": [("Authorization", "Bearer ÿþé")]}),
+                ("in another header", {"token": None, "extra": [("X-Token", CONTROL_TOKEN)]}),
+                ("in the query", {"token": None, "path": "/control/request?token=" + CONTROL_TOKEN}),
+                ("in the body", {"token": None,
+                                 "body": json.dumps({"token": CONTROL_TOKEN}).encode()})):
+            with self.subTest(token=label):
+                self.assert_refused_bare(self.ask(self.control, **kwargs))
+
+    def test_the_answer_is_the_same_for_a_missing_and_a_wrong_token(self):
+        missing = _without_date(_exchange(self.control, "POST", "/control/request", (), b"{}"))
+        wrong = _without_date(_exchange(self.control, "POST", "/control/request",
+                                        [("Authorization", "Bearer nope")], b"{}"))
+        self.assertEqual(missing, wrong)
+
+    def test_the_caller_is_authenticated_before_its_body_is_read(self):
+        """A body declared and never sent: read first, the listener waits on it until its own
+        timeout and the client's gives up; authenticated first, the 401 comes at once."""
+        for declare in (100, 8192, 8193, 5 << 20):
+            with self.subTest(declared=declare):
+                self.assert_refused_bare(self.ask(self.control, token="wrong", declare=declare))
+
+    def test_the_scheme_is_matched_without_regard_to_case_and_a_good_token_reaches_the_callback(self):
+        for scheme in ("Bearer", "bearer", "BEARER"):
+            with self.subTest(scheme=scheme):
+                status, headers, body = self.ask(self.control, token=None, extra=[
+                    ("Authorization", "%s %s" % (scheme, CONTROL_TOKEN))])
+                self.assertEqual(status, 201, body)
+        self.assertEqual(self.calls, [{}, {}, {}])
+
+    def test_the_token_is_compared_with_compare_digest(self):
+        import hmac
+        from unittest import mock
+        seen = []
+        real = hmac.compare_digest
+
+        def spy(a, b):
+            seen.append((type(a), type(b)))
+            return real(a, b)
+
+        with mock.patch("polaris_oid4vp.serve.hmac.compare_digest", spy):
+            self.ask(self.control, token="x" * len(CONTROL_TOKEN))
+            self.ask(self.control)
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(all(a is bytes and b is bytes for a, b in seen), seen)
+
+
+class ControlRequestTests(ControlEndpointTestCase):
+
+    def test_a_good_token_and_no_body_or_an_empty_object_hands_the_callback_an_empty_object(self):
+        for body in (b"", b"{}", b" {} ", b"\n"):
+            with self.subTest(body=body):
+                status, headers, answer = self.ask(self.control, body)
+                self.assertEqual(status, 201)
+                self.assertIn(("Content-Type", "application/json"), headers)
+        self.assertEqual(self.calls, [{}] * 4)
+
+    def test_the_callbacks_answer_is_the_answer(self):
+        status, _, body = self.ask(self.control, b'{"claims": ["given_name"]}')
+        self.assertEqual((status, json.loads(body)), (201, {"request": 1, "state": "s"}))
+        self.assertEqual(self.calls, [{"claims": ["given_name"]}])
+
+    def test_a_body_that_is_not_one_json_object_is_400_and_never_reaches_the_callback(self):
+        for body in (b"[]", b'"claims"', b"null", b"3", b"true", b"{", b"not json", b"\xff\xfe",
+                     b'{"claims": NaN}', b"[" * 5000):
+            with self.subTest(body=body[:20]):
+                status, _, answer = self.ask(self.control, body)
+                self.assertEqual(status, 400)
+                self.assertEqual(json.loads(answer)["error"], "invalid_request")
+        self.assertEqual(self.calls, [])
+
+    def test_a_body_over_8_KiB_is_refused_on_its_declared_length_and_8_KiB_is_read(self):
+        status, _, _ = self.ask(self.control, declare=8193)
+        self.assertEqual(status, 413)
+        body = b'{"claims": ["a"]}'
+        status, _, _ = self.ask(self.control, body + b" " * (8192 - len(body)))
+        self.assertEqual((status, self.calls), (201, [{"claims": ["a"]}]))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_body_shorter_than_it_declared_is_400_and_never_reaches_the_callback(self):
+        import socket
+        s = socket.create_connection(self.control.server_address[:2], timeout=6)
+        s.settimeout(6)
+        s.sendall(("POST /control/request HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\n"
+                   "Content-Length: 50\r\n\r\n{}" % CONTROL_TOKEN).encode())
+        s.shutdown(socket.SHUT_WR)
+        data = b""
+        try:
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+        finally:
+            s.close()
+        self.assertIn(" 400 ", data.decode("latin-1").split("\r\n")[0])
+        self.assertIn(b"shorter than Content-Length", data)
+        self.assertEqual(self.calls, [])
+
+    def test_a_callback_that_raises_is_a_500_that_says_nothing(self):
+        import contextlib
+        import io
+
+        def boom(spec):
+            raise RuntimeError("secret-detail")
+
+        httpd = serve(self.verifier, host="127.0.0.1", port=0, control_token=CONTROL_TOKEN,
+                      on_control=boom)
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                status, _, body = self.ask(httpd, b'{"claims": ["do-not-log-this-value"]}')
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        self.assertEqual(status, 500)
+        self.assertNotIn(b"secret-detail", body)
+        self.assertNotIn("do-not-log-this-value", err.getvalue())
+        self.assertNotIn(CONTROL_TOKEN, err.getvalue())
+
+    def test_the_other_paths_are_answered_as_without_the_option(self):
+        for method, path, body in (("GET", "/nope", b""), ("POST", "/nope", b"x"),
+                                   ("POST", "/response", b""), ("POST", "/response", b"response=x"),
+                                   ("GET", "/done?response_code=x", b""), ("GET", "/request.jwt", b""),
+                                   ("GET", "/control/request", b""), ("POST", "/control", b"{}"),
+                                   ("POST", "/control/request/", b"{}")):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(_without_date(_exchange(self.control, method, path, (), body)),
+                                 _without_date(_exchange(self.httpd, method, path, (), body)))
+
+    def test_nothing_is_logged_of_the_token_or_the_body(self):
+        import contextlib
+        import io
+        httpd = serve(self.verifier, host="127.0.0.1", port=0, control_token=CONTROL_TOKEN,
+                      on_control=lambda spec: (201, {}), verbose=True)
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.ask(httpd, b'{"claims": ["a-claim-value-nobody-logs"]}')
+                self.ask(httpd, b"{}", token="wrong-token-value")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        for text in (CONTROL_TOKEN, "wrong-token-value", "a-claim-value-nobody-logs", "Bearer"):
+            self.assertNotIn(text, err.getvalue())
+
+
+class ControlNeverCarriesCorsTests(ControlEndpointTestCase):
+
+    def test_no_cors_header_on_the_control_path_whatever_cors_origin_says(self):
+        origin = [("Origin", "https://wallet.example")]
+        for label, kwargs in (("good token", {}), ("no token", {"token": None}),
+                              ("bad body", {"body": b"[]"}), ("too long", {"declare": 9000})):
+            with self.subTest(case=label):
+                status, headers, _ = self.ask(self.control_cors, extra=origin, **kwargs)
+                self.assertIn(status, (201, 401, 400, 413))
+                self.assertEqual(_cors(headers), [], headers)
+        # The twin: a path the option does serve carries them.
+        status, headers, _ = _parse(_exchange(self.control_cors, "GET", "/request.jwt?state=x", origin))
+        self.assertEqual(_cors(headers), [("Access-Control-Allow-Origin", "*"), ("Vary", "Origin")])
+
+    def test_a_preflight_to_the_control_path_is_answered_as_an_unknown_path_is(self):
+        preflight = [("Origin", "https://wallet.example"), ("Access-Control-Request-Method", "POST"),
+                     ("Access-Control-Request-Headers", "authorization, content-type")]
+        control = _exchange(self.control_cors, "OPTIONS", "/control/request", preflight)
+        unknown = _exchange(self.control_cors, "OPTIONS", "/control/unknown", preflight)
+        self.assertEqual(_without_date(control), _without_date(unknown))
+        status, headers, _ = _parse(control)
+        self.assertEqual((status, _cors(headers)), (501, []))
+        # The twin: the same preflight to a path the option serves is answered.
+        status, headers, _ = _parse(_exchange(self.control_cors, "OPTIONS", "/response", preflight))
+        self.assertEqual(status, 204)
+        self.assertIn(("Access-Control-Allow-Origin", "*"), headers)
+
+
+class ControlLoggingTests(ControlEndpointTestCase):
+    """--verbose logs `METHOD path` for each request. The control option changes that for the
+    control path only: its query (the caller's, which may hold what is not to be logged) is cut,
+    and every other path is logged exactly as it is without the option."""
+
+    def logged(self, httpd_kwargs, method, path, headers=(), body=b""):
+        import contextlib
+        import io
+        httpd = serve(self.verifier, host="127.0.0.1", port=0, verbose=True, **httpd_kwargs)
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                _exchange(httpd, method, path, headers, body)
+            return err.getvalue()
+        finally:
+            _stop_now(httpd)
+            httpd.server_close()
+
+    def test_a_path_other_than_the_control_path_is_logged_as_without_the_option(self):
+        on = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {})}
+        for method, path in (("GET", "/request.jwt?state=abc123&x=1"), ("GET", "/done?response_code=zz"),
+                             ("GET", "/nope?q=1"), ("POST", "/response?a=b")):
+            with self.subTest(path=path):
+                self.assertEqual(self.logged(on, method, path), self.logged({}, method, path))
+                self.assertIn("%s %s\n" % (method, path), self.logged(on, method, path))
+
+    def test_the_control_path_is_logged_without_its_query(self):
+        on = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {})}
+        for headers in ([("Authorization", "Bearer " + CONTROL_TOKEN)], []):
+            text = self.logged(on, "POST", "/control/request?token=" + CONTROL_TOKEN + "&x=1",
+                               headers, b"{}")
+            self.assertIn("POST /control/request\n", text)
+            self.assertNotIn("token", text)
+            self.assertNotIn("?", text)
