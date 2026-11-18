@@ -864,6 +864,12 @@ def _printable(text, limit=ERROR_DESCRIPTION_MAX):
     return kept if len(kept) <= limit else kept[:limit - 3] + "..."
 
 
+def operator_text(text):
+    """`text` as it goes on a line `serve` prints for an operator: printable ASCII, and `?` for
+    `<` and for every other character (`_printable` keeps less, and cuts)."""
+    return "".join(ch if " " <= ch <= "~" and ch != "<" else "?" for ch in str(text))
+
+
 class Verifier:
     """Builds requests and judges responses. Holds no socket: see `serve()` for that.
 

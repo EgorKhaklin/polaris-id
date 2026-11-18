@@ -257,6 +257,38 @@ class ResponseUriTests(ServeTestCase):
         self.assertEqual(ctype, "application/json")
         self.assertEqual(json.loads(body)["error"], "invalid_request")
 
+    def test_the_log_line_of_an_answer_holds_printable_ascii_and_no_answer(self):
+        """What the listener writes to its log about a refusal or a wallet's error response: its
+        reason can quote what the sender sent, and the line holds it as printable ASCII, with no
+        `<` to read as another answer and no line break to start another line."""
+        import contextlib
+        import io
+        from polaris_oid4vp.sdjwt import Verdict
+        text = "x\n  <- 200 authentic, claims ['x'] \x1b[0m \u00e9"
+        cert_pem, key_pem = _client_chain()
+        for status, verdict in ((400, Verdict(False, "vct", text)),
+                                (400, Verdict(False, text, "reason")),
+                                (200, Verdict(False, "wallet_error", text, wallet_error={"error": "x"}))):
+            with self.subTest(code=verdict.code):
+                verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                                    request_uri="http://127.0.0.1:0/request.jwt",
+                                    response_uri="http://127.0.0.1:0/response")
+                verifier.handle_direct_post = lambda form, s=status, v=verdict: (s, {}, v)
+                httpd = serve(verifier, host="127.0.0.1", port=0)
+                base = "http://127.0.0.1:%d" % httpd.server_address[1]
+                err = io.StringIO()
+                try:
+                    with contextlib.redirect_stderr(err):
+                        _post(base + "/response", {"response": "anything"})
+                finally:
+                    _stop_now(httpd)
+                    httpd.server_close()
+                logged = err.getvalue()
+                self.assertTrue(logged.startswith("polaris-oid4vp: "), logged)
+                self.assertEqual(logged.count("\n"), 1, logged)
+                self.assertNotIn("<", logged)
+                self.assertTrue(all(" " <= ch <= "~" for ch in logged[:-1]), logged)
+
     def test_a_verdict_callback_sees_MORE_than_the_wire_did(self):
         seen = []
         cert_pem, key_pem = _client_chain()
@@ -1844,3 +1876,55 @@ class ControlLoggingTests(ControlEndpointTestCase):
             self.assertIn("POST /control/request\n", text)
             self.assertNotIn("token", text)
             self.assertNotIn("?", text)
+
+
+class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
+    """Any line the listener logs can carry a sender's text, the base class's own included (it logs a
+    refused request line with the line in it), so each goes out as operator_text leaves it; and a
+    request line refused before it was read is still answered under --verbose."""
+
+    ON = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {})}
+
+    def sent(self, raw, verbose, **httpd_kwargs):
+        """(the answer, the lines logged) for `raw` sent as it is to a live listener."""
+        import contextlib
+        import io
+        httpd = serve(self.verifier, host="127.0.0.1", port=0, verbose=verbose, **httpd_kwargs)
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                answer = _send_raw(httpd, raw)
+            return answer, err.getvalue().splitlines()
+        finally:
+            _stop_now(httpd)
+            httpd.server_close()
+
+    def assert_held(self, lines):
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertNotIn("<", line)
+            self.assertTrue(all(" " <= ch <= "~" for ch in line), repr(line))
+
+    def test_a_refused_request_line_is_logged_without_the_text_it_carried(self):
+        raw = "x  <- 200 authentic, claims ['given_name'] \x1b[0m \u00e9 HTTP/1.1\r\n\r\n".encode("latin-1")
+        for verbose in (False, True):
+            with self.subTest(verbose=verbose):
+                _, lines = self.sent(raw, verbose)
+                self.assertFalse([x for x in lines if "<- 200 authentic" in x], lines)
+                self.assert_held(lines)
+
+    def test_under_verbose_a_logged_command_or_path_arrives_escaped(self):
+        for raw, kwargs, logged in (
+                (b"GET /request.jwt?state=\x1b[31mred HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", {}, "GET /request.jwt?state=?[31mred"),
+                (b"G\x1bET /request.jwt HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", {}, "G?ET /request.jwt"),
+                (b"PO\x1bST /control/request HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", self.ON, "PO?ST /control/request")):
+            with self.subTest(raw=raw):
+                _, lines = self.sent(raw, True, **kwargs)
+                self.assertIn(logged, lines)
+                self.assert_held(lines)
+
+    def test_under_verbose_a_refused_request_line_is_answered_and_raises_nothing(self):
+        answer, lines = self.sent(b"x y z w HTTP/1.1\r\n\r\n", True)
+        self.assertTrue(answer, "the connection was closed with no answer")
+        self.assertEqual(_parse(answer)[0], 400)
+        self.assertFalse([x for x in lines if "Traceback" in x or "Error" in x], lines)

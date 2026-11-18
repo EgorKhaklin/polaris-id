@@ -25,7 +25,7 @@ import threading
 import urllib.parse
 
 from .jwe import _loads_depth_bounded
-from .verifier import Verifier, wallet_nonce_acceptable  # noqa: F401  Verifier re-exported for callers of serve()
+from .verifier import Verifier, operator_text, wallet_nonce_acceptable  # noqa: F401  Verifier re-exported for callers of serve()
 
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
@@ -227,9 +227,18 @@ def _content_length(headers):
         return None
 
 
+def about_request(verifier):
+    """` (request STATE)` for the request the answer just given on this thread was about
+    (`Verifier.attributed_request`), or ` (request not known)`: how a line for an answer at the
+    response URI names it when more than one request can be open, on both streams."""
+    state = verifier.attributed_request()
+    return " (request %s)" % operator_text(state) if state else " (request not known)"
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     verifier = None
     on_verdict = None
+    name_requests = False
     on_request_object = None
     verbose = False
     server_version = "polaris-oid4vp"
@@ -303,11 +312,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # The operator's side of the split. Everything the wallet is NOT told goes here,
             # where the person running the verifier can read it and an attacker cannot.
             if status != 200 and verdict is not None:
-                self.log_error("refused: %s: %s", verdict.code, verdict.reason)
+                self.log_error("refused: %s: %s%s", verdict.code, verdict.reason, self._about())
             elif getattr(verdict, "wallet_error", None) is not None:
                 # A wallet's error response, answered 200 and accepted as nothing. Its reason
                 # carries the sender's text only as verifier.py's _printable left it.
-                self.log_error("wallet error: %s", verdict.reason)
+                self.log_error("wallet error: %s%s", verdict.reason, self._about())
         except Exception:  # noqa: BLE001
             # The wallet must never see a 5xx for a response it sent: a 5xx says "retry",
             # and nothing it can retry will help. An unexpected exception here is this
@@ -367,9 +376,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _about(self):
+        return about_request(self.verifier) if self.name_requests else ""
+
     def log_error(self, format, *args, **kwargs):  # noqa: A002
         import traceback
-        sys.stderr.write("polaris-oid4vp: " + (format % args if args else format) + "\n")
+        # The whole line as operator_text leaves it. Any line here can carry a sender's text, the
+        # base class's own included: it logs a refused request line with the line in it.
+        sys.stderr.write("polaris-oid4vp: " + operator_text(format % args if args else format) + "\n")
         if kwargs.get("exc_info"):
             traceback.print_exc()
 
@@ -377,8 +391,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # Silent by default. A library that writes to a caller's stderr uninvited is a
         # library that has to be grepped around, and the base class's default does exactly
         # that. `serve(verbose=True)` opts in.
-        if self.verbose:
-            sys.stderr.write("%s %s\n" % (self.command, self.path))
+        # A request line refused before it was read has no path, and its refusal is log_error's.
+        if self.verbose and getattr(self, "path", None) is not None:
+            sys.stderr.write("%s %s\n" % (operator_text(self.command), operator_text(self.path)))
 
 
 class _ControlHandler:
@@ -458,7 +473,7 @@ class _ControlHandler:
         if getattr(self, "path", "").partition("?")[0] != CONTROL_PATH:
             return super().log_message(format, *args)
         if self.verbose:
-            sys.stderr.write("%s %s\n" % (self.command, CONTROL_PATH))
+            sys.stderr.write("%s %s\n" % (operator_text(self.command), CONTROL_PATH))
         return None
 
 
@@ -524,7 +539,7 @@ class _CorsHandler(_Handler):
 
 def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
           on_verdict=None, background=True, verbose=False, on_request_object=None,
-          cors_origins=None, control_token=None, on_control=None):
+          cors_origins=None, control_token=None, on_control=None, name_requests=False):
     """Start the two endpoints. Returns the HTTPServer so a caller can shut it down.
 
     TLS is not optional in the profile: the suite refuses a `request_uri` that is not HTTPS
@@ -549,12 +564,16 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
     with no space (`control_token_problem`), or ValueError is raised before anything listens.
     The path never carries a CORS header, whatever `cors_origins` says.
 
+    `name_requests`, for a caller that can hold more than one request open (`serve --rearm`, the
+    control endpoint): each line logged for an answer at the response URI then ends with the
+    request it was about (`about_request`).
+
     Shut it down with `httpd.shutdown()` followed by `httpd.server_close()`: the first stops
     the loop and the second releases the socket, and skipping the second leaks a listening
     port for the life of the process.
     """
     origins = cors_origins_of(cors_origins)
-    members = {"verifier": verifier, "verbose": verbose,
+    members = {"verifier": verifier, "verbose": verbose, "name_requests": bool(name_requests),
                "on_verdict": staticmethod(on_verdict) if on_verdict else None,
                "on_request_object": (staticmethod(on_request_object) if on_request_object
                                      else None)}

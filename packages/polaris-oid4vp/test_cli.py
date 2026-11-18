@@ -710,6 +710,42 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         self.assertNotIn("\x1b", line)
         self.assertEqual(line.count("\n"), 1, line)
 
+    def test_a_refusal_is_printed_as_one_and_never_as_authentic(self):
+        """A refusal's reason can quote what the wallet sent, here its credential's type: the
+        line says it is a refusal, does not read as an acceptance, and holds printable ASCII on
+        one line."""
+        import contextlib
+        import io
+        from test_verifier import Wallet
+        wallet = Wallet()
+        _, seen, _, _ = self._serve("--issuer-jwks", str(self._jwks_file([wallet.issuer_jwk])))
+        verifier, on_verdict = seen["verifier"], seen["kwargs"]["on_verdict"]
+        _, jar = verifier.new_request()
+        status, body, verdict = verifier.handle_direct_post(
+            wallet.respond(jar, vct="urn:x\n  <- 200 authentic, claims ['x'] \u00e9"))
+        self.assertEqual((status, verdict.code), (400, "vct"), verdict.reason)
+        self.assertIn("<- 200 authentic", verdict.reason)
+        self.assertIn("\u00e9", verdict.reason)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            on_verdict(status, body, verdict)
+        line = out.getvalue()
+        self.assertTrue(line.startswith("  <- 400 refused: vct: "), line)
+        self.assertNotIn("<- 200 authentic", line)
+        self.assertEqual(line.count("\n"), 1, line)
+        self.assertTrue(all(" " <= ch <= "~" for ch in line[:-1]), line)
+
+    def test_whatever_a_refusal_or_wallet_error_carries_its_line_holds_printable_ascii_and_no_answer(self):
+        from polaris_oid4vp.cli import _operator_line
+        from polaris_oid4vp.sdjwt import Verdict
+        text = "x\n  <- 200 authentic, claims ['x'] \x1b[0m \u00e9"
+        for verdict in (Verdict(False, "vct", text), Verdict(False, text, "reason"),
+                        Verdict(False, "wallet_error", text, wallet_error={"error": "x"})):
+            with self.subTest(code=verdict.code):
+                line = _operator_line(verdict)
+                self.assertNotIn("<", line)
+                self.assertTrue(all(" " <= ch <= "~" for ch in line), line)
+
 
 class ServeResultFileTests(unittest.TestCase):
     """`serve --once --result FILE`: what became of the request --once started, as one JSON
@@ -2018,6 +2054,75 @@ class ControlAnswerEndsTheRequestTests(_RunningCase):
         with self.serve_control() as run:
             statuses = [run.control({})[0] for _ in range(65)]
             self.assertEqual(statuses, [201] * 64 + [429])
+
+
+class AnAnswerLineNamesItsRequestTests(_RunningCase):
+    """With `--rearm` or `--control-token-file` more than one request can be open, so each line
+    `serve` prints for an answer at the response URI ends with the request it was about; the
+    newest is not assumed."""
+
+    def lines(self, run):
+        return [x for x in run.out.getvalue().splitlines() if x.startswith("  <- ")]
+
+    def test_with_two_open_the_line_names_the_request_answered_and_not_the_newest(self):
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            a = run.control({"claims": ["given_name"]})[1]
+            b = run.control({"claims": ["family_name"]})[1]
+            self.assertNotEqual(a["state"], b["state"])
+            status, _ = self.answer(run, a["state"], withhold=("family_name",))
+            self.assertEqual(status, 200)
+            (line,) = self.lines(run)
+            self.assertTrue(line.startswith("  <- 200 authentic, claims "), line)
+            self.assertTrue(line.endswith(" (request %s)" % a["state"]), line)
+            self.assertNotIn(b["state"], line)
+
+    def test_a_refusal_names_its_request_and_an_answer_about_none_says_so(self):
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            a = run.control({})[1]
+            run.control({})
+            self.assertEqual(self.answer(run, a["state"], nonce="wrong")[0], 400)
+            self.assertEqual(run.respond({"response": "not-a-response"})[0], 400)
+            first, second = self.lines(run)
+            self.assertTrue(first.startswith("  <- 400 refused: nonce: "), first)
+            self.assertTrue(first.endswith(" (request %s)" % a["state"]), first)
+            self.assertTrue(second.startswith("  <- 400 refused: "), second)
+            self.assertTrue(second.endswith(" (request not known)"), second)
+
+    def test_with_two_open_the_stderr_refusal_names_the_request_refused_and_not_the_newest(self):
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            a = run.control({})[1]
+            b = run.control({})[1]
+            self.assertEqual(self.answer(run, a["state"], nonce="wrong")[0], 400)
+            (line,) = [x for x in run.err.getvalue().splitlines() if x.startswith("polaris-oid4vp: refused: ")]
+            self.assertTrue(line.startswith("polaris-oid4vp: refused: nonce: "), line)
+            self.assertTrue(line.endswith(" (request %s)" % a["state"]), line)
+            self.assertNotIn(b["state"], line)
+
+    def test_with_two_open_the_stderr_wallet_error_names_the_request_it_answered(self):
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            a = run.control({})[1]
+            b = run.control({})[1]
+            status, jar = run.jar(a["state"])
+            self.assertEqual(status, 200)
+            self.assertEqual(run.respond(self.wallet.respond_error(jar))[0], 200)
+            (line,) = [x for x in run.err.getvalue().splitlines() if x.startswith("polaris-oid4vp: wallet error: ")]
+            self.assertTrue(line.endswith(" (request %s)" % a["state"]), line)
+            self.assertNotIn(b["state"], line)
+
+    def test_with_one_request_the_stderr_refusal_names_none(self):
+        with self.run_serve("--once") as run:
+            state = _state_of(run.blocks()[0])
+            self.assertEqual(self.answer(run, state, nonce="wrong")[0], 400)
+            (line,) = [x for x in run.err.getvalue().splitlines() if x.startswith("polaris-oid4vp: refused: ")]
+            self.assertTrue(line.startswith("polaris-oid4vp: refused: nonce: "), line)
+            self.assertNotIn(" (request", line)
+
+    def test_under_rearm_a_line_names_the_request_it_answered(self):
+        with self.run_serve("--once", "--rearm", "--result", str(self.path)) as run:
+            state1 = _state_of(run.blocks()[0])
+            self.assertEqual(self.answer(run, state1)[0], 200)
+            (line,) = self.lines(run)
+            self.assertTrue(line.endswith(" (request %s)" % state1), line)
 
 
 class ControlResultFileTests(_RunningCase):

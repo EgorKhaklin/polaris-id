@@ -51,10 +51,10 @@ except ImportError:  # pragma: no cover
 from .jwe import _loads_depth_bounded
 from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
                     b64u_decode)
-from .serve import (CONTROL_PATH, REQUEST_PATH, RESPONSE_PATH, control_token_problem,
-                    cors_origins_of, serve)
-from .verifier import (VERIFIER_INFO_PROFILES, Verifier, claim_query, transaction_data_entries,
-                       verifier_info_entries, verify_response)
+from .serve import (CONTROL_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
+                    control_token_problem, cors_origins_of, serve)
+from .verifier import (VERIFIER_INFO_PROFILES, Verifier, claim_query, operator_text,
+                       transaction_data_entries, verifier_info_entries, verify_response)
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -290,8 +290,8 @@ def _operator_line(verdict):
     if verdict.authentic:
         return "authentic, claims %s" % sorted(verdict.claims)
     if getattr(verdict, "wallet_error", None) is not None:
-        return "wallet error: %s" % verdict.reason
-    return "refused: %s: %s" % (verdict.code, verdict.reason)
+        return "wallet error: %s" % operator_text(verdict.reason)
+    return "refused: %s: %s" % (operator_text(verdict.code), operator_text(verdict.reason))
 
 
 def _result_of(status, verdict):
@@ -781,7 +781,12 @@ def _cmd_serve(args) -> int:
             result.verdict(status, verdict)
         # The operator sees the reason; the wallet never does. body carries the same constant
         # refusal whatever went wrong.
-        print("  <- %d %s" % (status, _operator_line(verdict)), flush=True)
+        line = _operator_line(verdict)
+        if several:
+            # More than one request can be open, so the line names the one this answer was about,
+            # by the state its launch parameters carry; --result follows the newest.
+            line += about_request(verifier)
+        print("  <- %d %s" % (status, line), flush=True)
         # Under --rearm any answer about the current request ends it, accepted, refused or a
         # wallet's error response, and the next starts before the wallet has its answer; a request
         # the control endpoint started ends at an answer the same way. With neither, a
@@ -798,7 +803,8 @@ def _cmd_serve(args) -> int:
                   verbose=args.verbose, on_verdict=on_verdict,
                   on_request_object=on_request_object,
                   cors_origins=cors_origins, control_token=control_token,
-                  on_control=requests.control if control_token else None)
+                  on_control=requests.control if control_token else None,
+                  name_requests=several)
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     if args.no_local_tls:

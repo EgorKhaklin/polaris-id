@@ -162,7 +162,9 @@ holds this package from PyPI, installed by hash.
   answer goes out; without `--once` (or `--control-token-file`) it is refused (exit 2). With
   `--rearm` or `--control-token-file` it describes the newest request and adds `request`, 1, 2,
   3 and so on in start order (0 before the first); `state` stays the request's OAuth state
-  value.
+  value. With either, each line printed for an answer at the response URI, the `<-` line and the
+  `polaris-oid4vp:` line on stderr, ends with the request it was about, `(request STATE)`, or
+  `(request not known)`.
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
@@ -496,7 +498,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 803 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 815 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 179 refusals accept and requires a
