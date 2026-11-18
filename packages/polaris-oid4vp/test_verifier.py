@@ -228,6 +228,73 @@ class VerifierTestCase(unittest.TestCase):
         return session, status, body
 
 
+class AVerifierAsksForAtLeastOneClaimAndOneTypeTests(unittest.TestCase):
+    """OpenID4VP 1.0 section 6.1: a credential query's `claims` is "A non-empty array of objects".
+    A verifier built with no claim, or with no credential type, or with a type that is not a
+    non-empty string, or with either given as a bare string, is refused when it is built, instead
+    of signing a DCQL query built from them (OpenID4VP 1.0 section 6.1)."""
+
+    def build(self, **kw):
+        cert_pem, key_pem = _client_chain()
+        return Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response",
+                        issuer_jwks=[Wallet().issuer_jwk], **kw)
+
+    def test_a_verifier_with_no_claim_is_refused(self):
+        for claims in ([], ()):
+            with self.subTest(claims=claims):
+                with self.assertRaises(ValueError):
+                    self.build(claims=claims)
+
+    def test_a_verifier_with_no_credential_type_is_refused(self):
+        for vct_values in ([], ()):
+            with self.subTest(vct_values=vct_values):
+                with self.assertRaises(ValueError):
+                    self.build(vct_values=vct_values)
+
+    def test_a_null_credential_type_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build(vct_values=[None])
+
+    def test_an_empty_string_credential_type_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build(vct_values=[""])
+
+    def test_a_credential_type_that_is_not_a_string_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build(vct_values=[1])
+
+    def test_a_null_beside_a_good_credential_type_is_refused(self):
+        # Every entry is held to the rule, not one of them: this list once signed
+        # meta.vct_values [null, "urn:eudi:pid:1"] and a PID answered it.
+        with self.assertRaises(ValueError):
+            self.build(vct_values=[None, "urn:eudi:pid:1"])
+
+    def test_an_empty_string_beside_a_good_credential_type_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build(vct_values=["", "urn:eudi:pid:1"])
+
+    def test_claims_given_as_a_string_is_refused(self):
+        # It was taken one character at a time: claims g, i, v, e, n, ...
+        with self.assertRaises(ValueError) as caught:
+            self.build(claims="given_name")
+        self.assertIn("claims", str(caught.exception))
+
+    def test_vct_values_given_as_a_string_is_refused(self):
+        # It was taken one character at a time: meta.vct_values u, r, n, :, ...
+        with self.assertRaises(ValueError) as caught:
+            self.build(vct_values="urn:eudi:pid:1")
+        self.assertIn("vct_values", str(caught.exception))
+
+    def test_one_claim_and_one_credential_type_are_enough(self):
+        verifier = self.build(claims=["given_name"], vct_values=["urn:example:other:1"])
+        _, jar = verifier.new_request()
+        query = Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]
+        self.assertEqual(query["claims"], [{"path": ["given_name"]}])
+        self.assertEqual(query["meta"]["vct_values"], ["urn:example:other:1"])
+
+
 class PidWallet(Wallet):
     """A wallet holding an EUDI-PID-shaped credential. `age_equal_or_over` is an object whose
     statements are each selectively disclosable, as the PID Rulebook issues it, so a wallet can

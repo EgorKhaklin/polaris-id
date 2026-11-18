@@ -910,8 +910,23 @@ class Verifier:
         self.issuer_jwks = list(issuer_jwks or [])
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
         self.request_ttl_seconds = request_ttl_seconds
+        # A string is iterable, and was taken one character at a time.
+        if isinstance(claims, str):
+            raise ValueError("claims is a list of claims, not a string")
+        if isinstance(vct_values, str):
+            raise ValueError("vct_values is a list of credential types, not a string")
         self.vct_values = list(vct_values)
         self.claims = [claim_query(c) for c in claims]
+        # OpenID4VP 1.0 section 6.1: a credential query's `claims` is "A non-empty array of
+        # objects". A verifier built with no claim, no credential type for `meta.vct_values`, or a
+        # type that is not a non-empty string would sign a DCQL query built from them. It is
+        # refused here by the rule `new_request` holds one request to.
+        if not self.claims:
+            raise ValueError("a verifier asks for at least one claim")
+        if not self.vct_values:
+            raise ValueError("a verifier asks for at least one credential type")
+        if not all(isinstance(v, str) and v for v in self.vct_values):
+            raise ValueError("a verifier's credential types are non-empty strings")
         # Revocation. None means the verdict reports `not_evaluated`, which is what this
         # verifier can honestly say about a status list nobody read. Threaded from here
         # rather than left on `verify_presentation` alone because THIS is the surface an
