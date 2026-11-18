@@ -4105,13 +4105,15 @@ jobs:
         run: python scripts/polaris-mdoc-mutation-drill.py --shard "$POLARIS_DRILL_SHARD"
 
   # 2026-11-17: polaris-oid4vp declares requires-python >=3.9, and the product boundary runs its
-  # seven suites under 3.12 only. A defect can show at 3.9 alone: http.server there writes an
+  # eight suites under 3.12 only. A defect can show at 3.9 alone: http.server there writes an
   # HTTPStatus by its name in an error page, so serve.py's own 501 matches the stdlib's only when
   # it makes the same call (test_serve's test_an_options_that_is_not_a_preflight_is_501 is red on
   # 3.9 otherwise). ubuntu-latest is Ubuntu 26.04, which has no Python 3.9 build, so this runs on
   # ubuntu-24.04 as the plug-and-play matrix does. The package's one dependency comes from
   # lab/interop/requirements.txt, the hashed set compiled under 3.9 that Dependabot keeps; that
-  # path is on the changes allowlist, so this runs on every change.
+  # path is on the changes allowlist, so this runs on every change. test_mdoc's cbor2 comes from
+  # packages/polaris-oid4vp/py39/requirements.txt at 5.9.0, the newest release that installs on
+  # 3.9 (cbor2 6 requires 3.10; without cbor2 three suites fail to import test_mdoc's fixtures).
   test-oid4vp-py39:
     name: polaris-oid4vp's suites under Python 3.9, the oldest it declares
     runs-on: ubuntu-24.04
@@ -4125,12 +4127,15 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.9"
-      - name: Install cryptography (lab/interop/requirements.txt, compiled under Python 3.9, by hash)
-        run: python -m pip install --quiet --require-hashes -r lab/interop/requirements.txt
-      - name: The package's seven suites under Python 3.9
+      - name: Install cryptography and cbor2 (two sets for Python 3.9, by hash)
+        run: >-
+          python -m pip install --quiet --require-hashes -r lab/interop/requirements.txt
+          -r packages/polaris-oid4vp/py39/requirements.txt
+      - name: The package's eight suites under Python 3.9
         run: >-
           cd packages/polaris-oid4vp && python -m unittest
           test_sdjwt test_jwe test_verifier test_serve test_cli test_conformance_capture test_status
+          test_mdoc
 
   # 2026-10-15: the SDK mutation drill, out of Real PQC, where it had no time bound and took 65
   # minutes on a change to the detached verifier (run 38667231409). Every refusal in both reference
