@@ -983,6 +983,54 @@
       "reproduce": "docs/design/recovery-ceremony.md: recovery requires a biometric check, a sworn statement and a witnessing agency."
     },
     {
+      "id": "site-recovery-biometric",
+      "kind": "statement",
+      "claim": "Attested by an operator other than the one who opened the request.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md, Recording them: the biometric check is recorded by an active operator or admin who is not the requester."
+    },
+    {
+      "id": "site-recovery-sworn",
+      "kind": "statement",
+      "claim": "Recorded as its SHA-256 fingerprint, never as text.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md, Recording them: the statement is recorded as its SHA-256, never its text."
+    },
+    {
+      "id": "site-recovery-witness",
+      "kind": "statement",
+      "claim": "An operator from another authority signs as witness, in their own name.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md, Recording them: the witness co-signs as themselves, bound to an authority other than the requesting one."
+    },
+    {
+      "id": "site-recovery-approval",
+      "kind": "statement",
+      "claim": "After a 48-hour wait, an admin who neither opened the request nor witnessed it approves. The lost credentials are revoked and a new one is issued.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md, Completing, by an admin: the cool-down, the approver who is neither requester nor witness, the LOST marks with revocation rows, and the replacement."
+    },
+    {
       "id": "site-migration-two-signatures",
       "kind": "statement",
       "claim": "During a move between algorithms a credential carries two signatures, and the database never leaves it without an active one.",
