@@ -249,6 +249,28 @@ answered request is refused as one to a request that has closed. The request `--
 the endpoint keeps the plain rule: a refusal leaves it open. `--result` describes the newest request
 started.
 
+`GET /control/request/N`, with the same token, answers what became of request N, and for an accepted
+SD-JWT VC presentation the claims it disclosed, returned in one read only, the first after the
+acceptance, and not after the request lifetime from the answer:
+
+```json
+{"request": 2, "state": "...", "outcome": "accepted", "response": {"status_code": 200},
+ "claims": ["cnf", "family_name", "given_name", "iat", "iss", "vct"],
+ "released": {"cnf": {"jwk": {"kty": "EC", "crv": "P-256", "x": "...", "y": "..."}},
+              "family_name": "...", "given_name": "...", "iat": 1763485200, "iss": "...", "vct": "..."}}
+```
+
+Until an answer arrives `outcome` is `nothing_received`; after it the document holds what `--result`
+records for that answer. A later read of an accepted presentation has `"released": null` and
+`released_withheld`, `returned` or `expired`; a refusal and a wallet's error response have no
+`released`, nor does an `mso_mdoc` presentation. A number the endpoint did not start (the `--once`
+request among them) is `404`, as is one whose record is no longer kept: the newest 64 finished
+requests are kept, the oldest dropped first, and an outstanding one always. The values reach no file
+`serve` writes and no line it prints, and the answer carries `Cache-Control: no-store`. The read is
+served on the same listener as the wallet's paths, so it is reachable wherever they are, and request
+numbers are not secret: the token is the only gate. It is for a conformance harness on the operator's
+own machine.
+
 The shape a test harness uses, with the token in a mounted file:
 
 ```yaml
@@ -532,14 +554,18 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1008 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1031 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 329 refusals accept and requires a
-  test to fail: 325 are caught, and the 4 survivors are declared with their reasons. It also makes
-  25 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 330 refusals accept and requires a
+  test to fail: 326 are caught, and the 4 survivors are declared with their reasons. It also makes
+  41 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
-  and cache key a CORS answer names, and the control endpoint waiting on a body it will not read),
-  each of which a test must catch (all 25 are; measured 2026-11-18; CI runs it on every push).
+  and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
+  the control read: its token, its cache header, its log line, the claims returned once, under
+  its lock and not after their lifetime, the records it keeps and the answer each keeps, the
+  values kept out of the result file and the printed lines, and the values of an experimental
+  `mso_mdoc` presentation never held), each of which a test must catch (all 41 are; measured
+  2026-11-18; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

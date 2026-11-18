@@ -1814,6 +1814,17 @@ class _Running:
         status, answer = self._call(request)
         return status, (json.loads(answer) if answer else None)
 
+    def read(self, number, token=CONTROL_TOKEN):
+        """GET /control/request/{number}: (status, the JSON answer, or None when the body is
+        empty, the raw body)."""
+        import json
+        import urllib.request
+        request = urllib.request.Request("%s/control/request/%s" % (self.base, number))
+        if token is not None:
+            request.add_header("Authorization", "Bearer " + token)
+        status, answer = self._call(request)
+        return status, (json.loads(answer) if answer else None), answer
+
     def blocks(self):
         return _blocks(self.out.getvalue())
 
@@ -2838,6 +2849,331 @@ class ControlResultFileTests(_RunningCase):
             self.assertEqual(run.jar(answer["state"])[0], 200)
             self.assertEqual(run.jar("nonsense")[0], 404)
             self.assertEqual(self.read()["request_object"], {"served": 1, "refused": 0})
+
+
+class ControlReadCommandTests(_RunningCase):
+    """`GET /control/request/{n}` beside `--control-token-file` (2026-11-18): what became of request
+    n, and for an accepted SD-JWT VC presentation the claims it disclosed, returned in one read
+    only, the first after the acceptance, and not after the request lifetime from the answer. The
+    test wallet discloses given_name "Jean" and family_name "Dupont"."""
+
+    def serve_control(self, *extra, **kw):
+        return self.run_serve("--control-token-file", str(self.token_file), *extra, **kw)
+
+    def started(self, run, body=None):
+        status, answer = run.control({} if body is None else body)
+        self.assertEqual(status, 201, answer)
+        return answer["request"], answer["state"]
+
+    def accepted(self, run):
+        """A request started, presented to and accepted: (its number, its state)."""
+        number, state = self.started(run)
+        self.assertEqual(self.answer(run, state)[0], 200)
+        return number, state
+
+    @staticmethod
+    def requests_of(run):
+        return run.kwargs["on_control_read"].__self__
+
+    def test_an_accepted_presentation_is_read_with_its_claims_once(self):
+        with self.serve_control() as run:
+            number, state = self.started(run)
+            status, doc, _ = run.read(number)
+            self.assertEqual((status, doc), (200, {"request": number, "state": state,
+                                                   "outcome": "nothing_received"}))
+            self.assertEqual(self.answer(run, state)[0], 200)
+            status, doc, _ = run.read(number)
+            self.assertEqual((status, doc["request"], doc["state"], doc["outcome"]),
+                             (200, number, state, "accepted"))
+            self.assertEqual(doc["response"], {"status_code": 200})
+            self.assertEqual((doc["released"]["given_name"], doc["released"]["family_name"]),
+                             ("Jean", "Dupont"))
+            # One source: the names --result and the line give are the released claims' own.
+            self.assertEqual(sorted(doc["released"]), doc["claims"])
+            self.assertNotIn("released_withheld", doc)
+            for _ in range(2):
+                status, again, _ = run.read(number)
+                self.assertEqual(status, 200)
+                self.assertEqual((again.get("outcome"), again.get("claims"), again.get("released"),
+                                  again.get("released_withheld")),
+                                 ("accepted", doc["claims"], None, "returned"))
+
+    def test_a_refusal_a_wallet_error_and_a_pending_request_carry_no_released(self):
+        with self.serve_control() as run:
+            refused, refused_state = self.started(run)
+            self.assertEqual(self.answer(run, refused_state, nonce="wrong")[0], 400)
+            erred, erred_state = self.started(run)
+            jar = run.jar(erred_state)[1]
+            self.assertEqual(run.respond(self.wallet.respond_error(jar))[0], 200)
+            pending, _ = self.started(run)
+            for number, outcome in ((refused, "refused"), (erred, "wallet_error"),
+                                    (pending, "nothing_received")):
+                for _ in range(2):
+                    with self.subTest(outcome=outcome):
+                        status, doc, _ = run.read(number)
+                        self.assertEqual((status, doc["outcome"]), (200, outcome))
+                        self.assertNotIn("released", doc)
+                        self.assertNotIn("released_withheld", doc)
+            self.assertEqual(run.read(refused)[1]["check"], "nonce")
+
+    def test_the_once_request_and_a_number_never_started_are_404(self):
+        with self.run_serve("--once", "--control-token-file", str(self.token_file)) as run:
+            self.assertEqual(run.jar(_state_of(run.blocks()[0]))[0], 200, "the --once request is open")
+            number, _ = self.accepted(run)
+            self.assertEqual(number, 2, "the --once request is request 1")
+            for unknown in (1, 3, 99):
+                with self.subTest(number=unknown):
+                    status, doc, _ = run.read(unknown)
+                    self.assertEqual((status, doc["error"]), (404, "not_found"))
+            self.assertEqual(run.read(number)[0], 200)
+
+    def test_without_the_token_401_and_without_the_option_404(self):
+        with self.serve_control() as run:
+            number, _ = self.accepted(run)
+            for token in (None, "x" * len(CONTROL_TOKEN)):
+                with self.subTest(token=token):
+                    self.assertEqual(run.read(number, token=token)[::2], (401, b""))
+            # Unread by the refused callers: the first read with the token returns the claims.
+            self.assertIn("family_name", run.read(number)[1]["released"])
+        with self.run_serve("--once") as run:
+            status, doc, _ = run.read(1)
+            self.assertEqual((status, doc), (404, {"error": "not_found"}))
+
+    def test_two_requests_answered_out_of_order_each_read_answers_its_own(self):
+        with self.serve_control("--result", str(self.path)) as run:
+            first, first_state = self.started(run)
+            second, second_state = self.started(run)
+            self.assertEqual(self.answer(run, second_state, nonce="wrong")[0], 400)
+            self.assertEqual(self.answer(run, first_state)[0], 200)
+            status, doc_first, _ = run.read(first)
+            self.assertEqual((status, doc_first["state"], doc_first["outcome"]),
+                             (200, first_state, "accepted"))
+            self.assertIn("released", doc_first)
+            status, doc_second, _ = run.read(second)
+            self.assertEqual((status, doc_second["state"], doc_second["outcome"], doc_second["check"]),
+                             (200, second_state, "refused", "nonce"))
+            # --result follows the newest request, and says what the read of it says, from the
+            # same function.
+            in_file = self.read()
+            for key in ("request", "state", "outcome", "response", "check", "reason"):
+                self.assertEqual(in_file[key], doc_second[key], key)
+
+    def test_the_claims_are_not_returned_after_the_request_lifetime_from_the_answer(self):
+        with self.serve_control(ttl=60) as run:
+            requests = self.requests_of(run)
+            # Whole seconds, so the boundary is compared exactly.
+            requests._clock = lambda: 1763485200
+            inside, _ = self.accepted(run)
+            outside, _ = self.accepted(run)
+            self.assertEqual({requests._records[n].answered_at for n in (inside, outside)},
+                             {1763485200})
+            # At the lifetime exactly the claims are still returned, as the verifier keeps a
+            # request live until it is older than its lifetime (it expires a session when
+            # created < now - ttl); a second later they are not.
+            requests._clock = lambda: 1763485260
+            status, doc, _ = run.read(inside)
+            self.assertEqual((status, (doc.get("released") or {}).get("family_name")),
+                             (200, "Dupont"))
+            requests._clock = lambda: 1763485261
+            status, doc, _ = run.read(outside)
+            self.assertEqual((status, doc.get("outcome"), doc.get("released"),
+                              doc.get("released_withheld")),
+                             (200, "accepted", None, "expired"))
+
+    def test_a_start_after_the_lifetime_lets_the_claims_go_unread(self):
+        with self.serve_control(ttl=60) as run:
+            requests = self.requests_of(run)
+            number, _ = self.accepted(run)
+            record = requests._records[number]
+            self.assertIsNotNone(record.released)
+            answered_at = record.answered_at
+            # time.time itself is moved, as the verifier's clock is: the record's is looked up at
+            # each call, so it moves with it.
+            from unittest import mock
+            from polaris_oid4vp import cli
+            with mock.patch.object(cli.time, "time", return_value=answered_at + 61):
+                self.started(run)
+            self.assertEqual((record.released, record.withheld), (None, "expired"))
+
+    def test_the_oldest_record_no_longer_outstanding_is_dropped_first(self):
+        from unittest import mock
+        from polaris_oid4vp import cli
+        self.assertEqual(cli.CONTROL_FINISHED_KEPT, cli.CONTROL_OUTSTANDING_LIMIT)
+        with mock.patch.object(cli, "CONTROL_FINISHED_KEPT", 3), self.serve_control() as run:
+            open_number, _ = self.started(run)
+            finished = []
+            for _ in range(4):
+                number, state = self.started(run)
+                self.assertEqual(self.answer(run, state, nonce="wrong")[0], 400)
+                finished.append(number)
+            newest, _ = self.started(run)
+            # Four finished, one over the three kept: the oldest finished one goes at the next
+            # start, and the outstanding one, older still, is kept.
+            status, doc, _ = run.read(open_number)
+            self.assertEqual((status, doc.get("outcome")), (200, "nothing_received"))
+            self.assertEqual(run.read(finished[0])[0], 404)
+            for number in finished[1:] + [newest]:
+                self.assertEqual(run.read(number)[0], 200, number)
+
+    def test_of_reads_at_once_exactly_one_gets_the_claims(self):
+        import threading
+        with self.serve_control() as run:
+            for _ in range(5):
+                number, _ = self.accepted(run)
+                barrier = threading.Barrier(8)
+                docs = []
+
+                def reader():
+                    barrier.wait()
+                    docs.append(run.read(number)[1])
+
+                threads = [threading.Thread(target=reader) for _ in range(8)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(30)
+                self.assertEqual(len(docs), 8)
+                got = [doc for doc in docs if doc["released"] is not None]
+                self.assertEqual(len(got), 1, docs)
+                self.assertEqual(got[0]["released"]["family_name"], "Dupont")
+                self.assertEqual({doc.get("released_withheld") for doc in docs if doc is not got[0]},
+                                 {"returned"})
+
+    def test_a_read_waits_for_the_lock_every_writer_takes(self):
+        """Readers at once cannot show it (the check and the set are a few bytecodes in one
+        interpreter slice), so the lock is held here: the read waits for it, then decides."""
+        import threading
+        with self.serve_control() as run:
+            requests = self.requests_of(run)
+            number, _ = self.accepted(run)
+            docs = []
+            reader = threading.Thread(target=lambda: docs.append(requests.control_read(number)))
+            with requests._lock:
+                reader.start()
+                reader.join(0.5)
+                self.assertTrue(reader.is_alive(), "the read went ahead without the lock")
+                self.assertEqual(docs, [])
+            reader.join(30)
+            self.assertEqual(len(docs), 1)
+            status, doc = docs[0]
+            self.assertEqual((status, (doc.get("released") or {}).get("family_name")),
+                             (200, "Dupont"))
+
+    def test_two_answers_about_one_request_keep_what_result_keeps(self):
+        """Two answers reach one record only when they race on one outstanding request (the
+        control endpoint ends it at the first), driven here by asking the verifier's
+        attribution for that request twice. The read keeps what --result keeps: the latest
+        answer until an acceptance, which stays."""
+        import types
+        from unittest import mock
+        accepted = (200, types.SimpleNamespace(
+            authentic=True, claims={"family_name": "Dupont", "given_name": "Jean"}))
+        refused = (400, types.SimpleNamespace(authentic=False, code="nonce",
+                                              reason="not this request's nonce", wallet_error=None))
+        # The answers 50 s apart and the read 100 s after the first, with a 60 s lifetime: past
+        # the first answer's lifetime, inside the second's. The claims are held for the lifetime
+        # from the answer that carried them, which a later refusal does not extend.
+        for order, family_name, withheld in (((refused, accepted), "Dupont", None),
+                                             ((accepted, refused), None, "expired")):
+            with self.subTest(first=order[0][1].authentic), \
+                    self.serve_control("--result", str(self.path), ttl=60) as run:
+                requests = self.requests_of(run)
+                requests._clock = lambda: 1763485200
+                number, state = self.started(run)
+                with mock.patch.object(requests.verifier, "attributed_request",
+                                       return_value=state):
+                    for at, (status, verdict) in zip((1763485200, 1763485250), order):
+                        requests._clock = lambda at=at: at
+                        requests.answered(status, verdict)
+                requests._clock = lambda: 1763485300
+                in_file = self.read()
+                status, doc, _ = run.read(number)
+                self.assertEqual((status, doc.get("outcome"), in_file.get("outcome")),
+                                 (200, "accepted", "accepted"))
+                for key in ("response", "claims", "check"):
+                    self.assertEqual(doc.get(key), in_file.get(key), key)
+                self.assertEqual(((doc.get("released") or {}).get("family_name"),
+                                  doc.get("released_withheld")), (family_name, withheld))
+
+    def test_a_read_racing_the_answer_finds_it_pending_or_with_its_claims(self):
+        import threading
+        with self.serve_control() as run:
+            for _ in range(5):
+                number, state = self.started(run)
+                docs, stop = [], threading.Event()
+
+                def reader():
+                    while not stop.is_set():
+                        doc = run.read(number)[1]
+                        docs.append(doc)
+                        if doc["outcome"] != "nothing_received":
+                            return
+
+                thread = threading.Thread(target=reader)
+                thread.start()
+                self.assertEqual(self.answer(run, state)[0], 200)
+                thread.join(30)
+                stop.set()
+                # Every read before the last found the request pending, and the first read to find
+                # it answered found it accepted with its claims: never accepted without them.
+                outcomes = [doc["outcome"] for doc in docs]
+                self.assertTrue(docs)
+                self.assertEqual(outcomes[:-1], ["nothing_received"] * (len(docs) - 1))
+                self.assertEqual(outcomes[-1], "accepted", outcomes)
+                self.assertEqual(docs[-1]["released"]["family_name"], "Dupont")
+
+    def test_the_claims_reach_no_line_printed_and_no_result_file(self):
+        with self.serve_control("--verbose", "--result", str(self.path)) as run:
+            number, _ = self.accepted(run)
+            # Read while the file describes the accepted request, between its answer and the next
+            # start; then after a second request, the newest, rewrote it, and after the read.
+            on_disk = [self.path.read_text(encoding="utf-8")]
+            self.assertEqual(self.read()["outcome"], "accepted")
+            self.started(run)
+            on_disk.append(self.path.read_text(encoding="utf-8"))
+            _, doc, raw = run.read(number)
+            on_disk.append(self.path.read_text(encoding="utf-8"))
+            printed = run.out.getvalue() + run.err.getvalue()
+        # The positive control: the read's own answer carries the values the greps look for.
+        self.assertEqual(doc["released"]["family_name"], "Dupont")
+        self.assertIn(b"Dupont", raw)
+        self.assertIn(b"Jean", raw)
+        self.assertIn("GET /control/request/%d" % number, printed, "--verbose logged the read")
+        for value in ("Dupont", "Jean"):
+            self.assertNotIn(value, printed)
+            for text in on_disk:
+                self.assertNotIn(value, text)
+
+    def test_under_mso_mdoc_an_accepted_presentation_is_read_without_released(self):
+        from cryptography.hazmat.primitives import serialization
+        root = self.tmp / "iaca.pem"
+        root.write_bytes(md.IACA.public_bytes(serialization.Encoding.PEM))
+        with _Running(self, "--format", "mso_mdoc", "--experimental", "--doctype", md.MDL,
+                      "--iaca-root", str(root), "--claim", MDL_AGE,
+                      "--control-token-file", str(self.token_file)) as run:
+            number, state = self.started(run)
+            self.assertEqual(run.respond(MdocWallet().respond(run.jar(state)[1]))[0], 200)
+            # Not held for a read that never returns them.
+            self.assertIsNone(self.requests_of(run)._records[number].released)
+            for _ in range(2):
+                status, doc, _ = run.read(number)
+                self.assertEqual((status, doc["outcome"], doc["claims"]),
+                                 (200, "accepted", [["org.iso.18013.5.1", "age_over_21"]]))
+                self.assertNotIn("released", doc)
+                self.assertNotIn("released_withheld", doc)
+
+    def test_the_help_says_what_a_read_returns(self):
+        import contextlib
+        out = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stdout(out):
+            main(["serve", "--help"])
+        text = " ".join(out.getvalue().split())
+        self.assertIn("GET /control/request/N with the same token answers what became of request N, "
+                      "and for an accepted SD-JWT VC presentation the claims it disclosed, returned "
+                      "in one read only, the first after the acceptance, and not after the request "
+                      "lifetime from the answer.",
+                      text)
+
 
 
 class ControlTokenFileTests(_RunningCase):

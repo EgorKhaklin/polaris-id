@@ -1907,6 +1907,166 @@ class ControlLoggingTests(ControlEndpointTestCase):
             self.assertNotIn("?", text)
 
 
+class ControlReadTests(ControlEndpointTestCase):
+    """`GET /control/request/{n}`, when serve() is also given `on_control_read` (2026-11-18): behind
+    the same token, the number read strictly, the answer marked no-store and never with a
+    CORS header. `on_control_read` records the numbers it was handed; 404404 answers 404, 500500 raises
+    and 600600 returns a document that is not JSON."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.reads = []
+
+        def on_control_read(number):
+            cls.reads.append(number)
+            if number == 404404:
+                return 404, {"error": "not_found"}
+            if number == 500500:
+                raise RuntimeError("Dupont raised for %d" % number)
+            if number == 600600:
+                return 200, {"released": {"family_name": object()}}
+            return 200, {"request": number, "released": {"family_name": "Dupont"}}
+
+        cls.ON_READ = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {}),
+                       "on_control_read": on_control_read}
+        cls.reader = serve(cls.verifier, host="127.0.0.1", port=0, **cls.ON_READ)
+        cls.reader_cors = serve(cls.verifier, host="127.0.0.1", port=0, cors_origins=["*"],
+                                **cls.ON_READ)
+
+    @classmethod
+    def tearDownClass(cls):
+        for httpd in (cls.reader, cls.reader_cors):
+            httpd.shutdown()
+            httpd.server_close()
+        super().tearDownClass()
+
+    def setUp(self):
+        super().setUp()
+        del self.reads[:]
+
+    def read(self, httpd, path, token=CONTROL_TOKEN, extra=()):
+        return self.ask(httpd, path=path, method="GET", token=token, extra=extra)
+
+    def logged(self, method, path, headers=(), **httpd_kwargs):
+        import contextlib
+        import io
+        httpd = serve(self.verifier, host="127.0.0.1", port=0, **httpd_kwargs)
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                answer = _exchange(httpd, method, path, headers)
+            return answer, err.getvalue()
+        finally:
+            _stop_now(httpd)
+            httpd.server_close()
+
+    def test_a_good_token_reads_the_number_and_the_answer_is_never_cached(self):
+        for path in ("/control/request/7", "/control/request/7?x=1", "/control/request/123456789"):
+            with self.subTest(path=path):
+                del self.reads[:]
+                status, headers, body = self.read(self.reader, path)
+                number = int(path.split("/")[3].partition("?")[0])
+                self.assertEqual(status, 200, body)
+                self.assertEqual(json.loads(body), {"request": number,
+                                                    "released": {"family_name": "Dupont"}})
+                self.assertEqual(self.reads, [number])
+                for header in (("Cache-Control", "no-store"), ("Pragma", "no-cache"),
+                               ("Content-Type", "application/json")):
+                    self.assertIn(header, headers)
+        # The callback's own status is the answer's.
+        status, _, body = self.read(self.reader, "/control/request/404404")
+        self.assertEqual((status, json.loads(body)), (404, {"error": "not_found"}))
+
+    def test_without_the_token_401_and_empty_and_the_same_for_any_number(self):
+        for token in (None, "x" * len(CONTROL_TOKEN), CONTROL_TOKEN[:-1] + "g", ""):
+            with self.subTest(token=token):
+                status, headers, body = self.read(self.reader, "/control/request/7", token=token)
+                self.assertEqual((status, body), (401, b""))
+                self.assertIn(("WWW-Authenticate", "Bearer"), headers)
+        self.assertEqual(self.reads, [], "the callback ran for an unauthenticated caller")
+        wrong = [("Authorization", "Bearer nope")]
+        answers = {_without_date(_exchange(self.reader, "GET", path, wrong))
+                   for path in ("/control/request/7", "/control/request/404404",
+                                "/control/request/x", "/control/request", "/control/request/")}
+        self.assertEqual(len(answers), 1, answers)
+        self.assertEqual(self.reads, [])
+
+    def test_a_number_is_read_strictly_and_anything_else_is_404(self):
+        for path in ("/control/request", "/control/request/", "/control/request/0",
+                     "/control/request/01", "/control/request/1/", "/control/request/x",
+                     "/control/request/1x", "/control/request/-1", "/control/request/+1",
+                     "/control/request/%31", "/control/request/1/2",
+                     "/control/request/1234567890", "/control/request//1"):
+            with self.subTest(path=path):
+                status, _, body = self.read(self.reader, path)
+                self.assertEqual((status, json.loads(body)), (404, {"error": "not_found"}))
+        self.assertEqual(self.reads, [])
+
+    def test_an_exception_or_a_document_that_is_not_json_is_500_and_only_its_type_is_logged(self):
+        for number, raised in ((500500, "RuntimeError"), (600600, "TypeError")):
+            with self.subTest(number=number):
+                answer, err = self.logged("GET", "/control/request/%d" % number,
+                                          [("Authorization", "Bearer " + CONTROL_TOKEN)],
+                                          **self.ON_READ)
+                status, _, body = _parse(answer)
+                self.assertEqual((status, json.loads(body)), (500, {"error": "server_error"}))
+                self.assertIn(raised, err)
+                self.assertNotIn("Dupont", err)
+                self.assertNotIn("family_name", err)
+
+    def test_no_cors_header_on_a_read_whatever_cors_origin_says(self):
+        origin = [("Origin", "https://wallet.example")]
+        for label, kwargs in (("good token", {}), ("no token", {"token": None}),
+                              ("not a number", {"path": "/control/request/x"})):
+            with self.subTest(case=label):
+                status, headers, _ = self.read(self.reader_cors, kwargs.pop("path", "/control/request/7"),
+                                               extra=origin, **kwargs)
+                self.assertIn(status, (200, 401, 404))
+                self.assertEqual(_cors(headers), [], headers)
+        # The twin: a path the option does serve carries them.
+        status, headers, _ = _parse(_exchange(self.reader_cors, "GET", "/request.jwt?state=x", origin))
+        self.assertEqual(_cors(headers), [("Access-Control-Allow-Origin", "*"), ("Vary", "Origin")])
+
+    def test_without_on_control_read_a_get_there_is_answered_as_without_the_option(self):
+        auth = [("Authorization", "Bearer " + CONTROL_TOKEN)]
+        for path in ("/control/request/1", "/control/request/1?x=1", "/control/request"):
+            with self.subTest(path=path):
+                control = _without_date(_exchange(self.control, "GET", path, auth))
+                off = _without_date(_exchange(self.httpd, "GET", path, auth))
+                self.assertEqual(control, off)
+                self.assertEqual(_parse(control)[:1], (404,))
+                self.assertEqual(json.loads(_parse(control)[2]), {"error": "not_found"})
+
+    def test_on_control_read_without_the_token_or_not_a_function_is_refused_before_listening(self):
+        def read(number):
+            return 200, {}
+
+        for kwargs in ({"on_control_read": read},
+                       {"on_control_read": read, "on_control": lambda spec: (201, {})},
+                       {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {}),
+                        "on_control_read": "read"}):
+            with self.subTest(kwargs=sorted(kwargs)):
+                with self.assertRaises(ValueError):
+                    serve(self.verifier, host="127.0.0.1", port=0, **kwargs)
+
+    def test_a_read_and_any_path_under_control_is_logged_without_its_query(self):
+        secret = "token=" + CONTROL_TOKEN + "&given_name=Jean"
+        for headers in ([("Authorization", "Bearer " + CONTROL_TOKEN)], []):
+            for path, logged in (("/control/request/7?" + secret, "GET /control/request/7\n"),
+                                 ("/control/other?" + secret, "GET /control/other\n")):
+                with self.subTest(path=path.partition("?")[0], token=bool(headers)):
+                    _, err = self.logged("GET", path, headers, verbose=True, **self.ON_READ)
+                    self.assertIn(logged, err)
+                    self.assertNotIn("token=", err)
+                    self.assertNotIn("Jean", err)
+                    self.assertNotIn("?", err)
+        # The positive control: without the option the same request line is logged whole, query
+        # and all, so the grep above can find what it looks for.
+        _, err = self.logged("GET", "/control/other?" + secret, verbose=True)
+        self.assertIn("GET /control/other?" + secret, err)
+
+
 class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
     """Any line the listener logs can carry a sender's text, the base class's own included (it logs a
     refused request line with the line in it), so each goes out as operator_text leaves it; and a

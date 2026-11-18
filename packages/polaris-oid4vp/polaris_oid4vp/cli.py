@@ -80,6 +80,12 @@ LAUNCH_SCHEMES = ("openid4vp", "haip-vp", "eu-eaap")
 #: the verifier hold more.
 CONTROL_OUTSTANDING_LIMIT = 64
 
+#: How many finished requests (answered, or no longer outstanding without an answer) the control
+#: endpoint started `GET /control/request/{n}` keeps a record of (2026-11-18): at each start the
+#: oldest beyond these are dropped, and a read of one is then 404. The record of an outstanding
+#: request is never dropped, and at most CONTROL_OUTSTANDING_LIMIT are outstanding.
+CONTROL_FINISHED_KEPT = CONTROL_OUTSTANDING_LIMIT
+
 
 def _now():
     return datetime.datetime.now(datetime.timezone.utc)
@@ -494,6 +500,20 @@ class _ResultFile:
             raise
 
 
+class _ControlRecord:
+    """What `GET /control/request/{n}` answers for one request the control endpoint started:
+    `document`, _result_of's members for the answer `--result` keeps (None until one arrives,
+    then the latest until an acceptance, which stays), and `released`, the claims an accepted
+    SD-JWT VC presentation disclosed, held for the one read that returns them. `withheld` says
+    why `released` is gone once it is: `returned` or `expired`."""
+
+    __slots__ = ("state", "document", "released", "answered_at", "withheld")
+
+    def __init__(self, state):
+        self.state = state
+        self.document = self.released = self.answered_at = self.withheld = None
+
+
 class _Started:
     """One request `_Requests.start` made: its number, its session and the launch parameters."""
 
@@ -597,6 +617,14 @@ class _Requests:
         # Places among the 64 held for a request not made yet: the one `--once` starts, from
         # before the listener accepts anything until it is made (`reserve`, `start`, `release`).
         self._reserved = 0
+        # What `GET /control/request/{n}` reads (2026-11-18): a record for each request the control
+        # endpoint started, by number in start order, and the number of each by its state. Never
+        # the outstanding window: an accepted request leaves it at its answer, before any read.
+        self._records = {}
+        self._record_numbers = {}
+        # The clock a record's lifetime is measured on: the wall clock, looked up at each call as
+        # the verifier looks it up, so a test that moves time.time moves both; a test may set its own.
+        self._clock = lambda: time.time()
 
     def current_state(self):
         with self._lock:
@@ -702,7 +730,24 @@ class _Requests:
                         else "rearm" if current and self.rearm else None)
             if current and self.result is not None:
                 self.result.verdict(status, verdict, ended_by)
+            number = self._record_numbers.get(state)
+            if number is not None:
+                self._record_answer_locked(self._records[number], status, verdict, ended_by)
             return None if ended_by is None else (state, ended_by)
+
+    def _record_answer_locked(self, record, status, verdict, ended_by):
+        # The answer --result keeps (_ResultFile.verdict): the latest until an acceptance, which
+        # stays, so the read and the file say the same of one request. A second answer reaches
+        # here only when two race on one outstanding request: the control endpoint ends the
+        # request at the first, and no later answer is about it.
+        if record.document is not None and record.document["outcome"] == "accepted":
+            return
+        record.document = _result_of(status, verdict, ended_by,
+                                     credential_format=self.verifier.credential_format)
+        record.answered_at = self._clock()
+        if (record.document["outcome"] == "accepted"
+                and self.verifier.credential_format == SD_JWT_FORMAT):
+            record.released = verdict.claims
 
     def fetched(self, status):
         """An answer at the request URI, counted for the current request only."""
@@ -730,9 +775,66 @@ class _Requests:
                 started = self._start_locked(claims, vct, ends_on_answer=True)
             except ValueError as exc:
                 return 400, {"error": "invalid_request", "error_description": str(exc)}
+            self._keep_record_locked(started)
         return 201, {"request": started.number, "state": started.session.state,
                      "launch": started.launch, "request_uri": started.params["request_uri"],
                      "client_id": started.params["client_id"]}
+
+    def _keep_record_locked(self, started):
+        # Under self._lock, and is_outstanding takes the verifier's inside it: the order
+        # _start_locked takes them in. Nothing takes them the other way (`answered` asks the
+        # verifier which request an answer was about before it takes self._lock).
+        state = started.session.state
+        self._records[started.number] = _ControlRecord(state)
+        self._record_numbers[state] = started.number
+        now = self._clock()
+        # In start order, so the oldest finished are first.
+        finished = [number for number, record in self._records.items()
+                    if record.document is not None or not self.verifier.is_outstanding(record.state)]
+        for number in finished[:max(0, len(finished) - CONTROL_FINISHED_KEPT)]:
+            del self._record_numbers[self._records.pop(number).state]
+        for record in self._records.values():
+            self._expire_released_locked(record, now)
+
+    def _expire_released_locked(self, record, now):
+        # The claims are held for the request lifetime, measured from the answer that carried them.
+        if (record.released is not None
+                and now - record.answered_at > self.verifier.request_ttl_seconds):
+            record.released, record.withheld = None, "expired"
+
+    def control_read(self, number):
+        """GET /control/request/{number}: (status, document). 404 for a number the control
+        endpoint did not start or no longer keeps (CONTROL_FINISHED_KEPT); the request `--once`
+        starts is not one. Else 200 with `request`, `state` and, until an answer about it arrives,
+        `outcome` nothing_received; after it, what `--result` records for an answer
+        (_result_of's members, kept as `--result` keeps them). For an accepted SD-JWT VC
+        presentation `released` is the claims it disclosed, with their values, in one read only,
+        the first after the acceptance, and not after the request lifetime from the answer;
+        after that `released` is null and `released_withheld` says which
+        (`returned`, `expired`). Nothing else carries `released`. The read that returns the claims
+        and the one that finds them gone are decided under the lock the answer is recorded under,
+        so of two reads at once exactly one returns them."""
+        with self._lock:
+            record = self._records.get(number)
+            if record is None:
+                return 404, {"error": "not_found",
+                             "error_description": "no request the control endpoint started has "
+                                                  "that number, or its record is no longer kept"}
+            document = {"request": number, "state": record.state}
+            if record.document is None:
+                document["outcome"] = "nothing_received"
+                return 200, document
+            document.update(record.document)
+            if (document["outcome"] == "accepted"
+                    and self.verifier.credential_format == SD_JWT_FORMAT):
+                self._expire_released_locked(record, self._clock())
+                if record.released is not None:
+                    document["released"] = record.released
+                    record.released, record.withheld = None, "returned"
+                else:
+                    document["released"] = None
+                    document["released_withheld"] = record.withheld
+            return 200, document
 
 
 def _read_control_token(path):
@@ -955,6 +1057,7 @@ def _cmd_serve(args) -> int:
                       on_request_object=on_request_object,
                       cors_origins=cors_origins, control_token=control_token,
                       on_control=requests.control if control_token else None,
+                      on_control_read=requests.control_read if control_token else None,
                       name_requests=several)
     except BaseException:
         if args.once:
@@ -1224,8 +1327,13 @@ and one that judges a response already captured:
                         "answer, accepted, refused or a wallet's error response, as under "
                         "--rearm, or when it expires. Without the header, or with a "
                         "wrong token, 401 and nothing else; at most 64 requests outstanding "
-                        "(429 beyond). The path never carries CORS headers. --result follows "
-                        "the newest request; refused with --rearm")
+                        "(429 beyond). The path never carries CORS headers. "
+                        "GET /control/request/N with the same token answers what became of "
+                        "request N, and for an accepted SD-JWT VC presentation the claims it "
+                        "disclosed, returned in one read only, the first after the acceptance, "
+                        "and not after the request lifetime from the answer. --result follows "
+                        "the newest request; "
+                        "refused with --rearm")
     s.add_argument("--result", default=None, metavar="FILE",
                    help="with --once (or --control-token-file): keep FILE a JSON object saying "
                         "what became of that request, rewritten whole at startup and before "

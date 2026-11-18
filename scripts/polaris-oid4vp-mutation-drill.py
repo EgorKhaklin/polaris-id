@@ -288,6 +288,68 @@ NAMED_MUTANTS = (
     ("serve:cors-without-vary", "polaris_oid4vp/serve.py",
      "            self.send_header(\"Vary\", \"Origin\")\n",
      ""),
+    # 2026-11-18, GET /control/request/{n}: what became of a request the control endpoint started,
+    # with the claims an accepted SD-JWT VC presentation disclosed. Each takes away one part of
+    # the read: the token, the no-store answer, the logging of a path under /control/ without its
+    # query, the one read that returns the claims, their lifetime from the answer, the bound on
+    # the records kept and the rule that an outstanding one is never dropped. The last two put the
+    # values where they never go: on disk in the --result file, and in the line serve prints.
+    ("serve:control-read-without-the-token", "polaris_oid4vp/serve.py",
+     "        if not authorized:\n",
+     "        if False:  # MUTANT\n"),
+    ("serve:control-read-cached", "polaris_oid4vp/serve.py",
+     "        self.send_header(\"Cache-Control\", \"no-store\")\n"
+     "        self.send_header(\"Pragma\", \"no-cache\")\n"
+     "        self.end_headers()\n"
+     "        self.wfile.write(raw)\n"
+     "        return None\n",
+     "        self.end_headers()  # MUTANT\n"
+     "        self.wfile.write(raw)\n"
+     "        return None\n"),
+    ("serve:control-logged-with-its-query-off-the-exact-path", "polaris_oid4vp/serve.py",
+     "        if not path.startswith(_CONTROL_LOGGED):\n",
+     "        if path != CONTROL_PATH:  # MUTANT\n"),
+    ("cli:control-read-returns-the-claims-twice", "polaris_oid4vp/cli.py",
+     "                    record.released, record.withheld = None, \"returned\"\n",
+     "                    pass  # MUTANT\n"),
+    ("cli:control-read-after-the-lifetime", "polaris_oid4vp/cli.py",
+     "                and now - record.answered_at > self.verifier.request_ttl_seconds):\n",
+     "                and False):  # MUTANT\n"),
+    ("cli:control-records-unbounded", "polaris_oid4vp/cli.py",
+     "        for number in finished[:max(0, len(finished) - CONTROL_FINISHED_KEPT)]:\n",
+     "        for number in []:  # MUTANT\n"),
+    ("cli:control-drops-an-outstanding-record", "polaris_oid4vp/cli.py",
+     "                    if record.document is not None or not self.verifier.is_outstanding(record.state)]\n",
+     "                    if True]  # MUTANT\n"),
+    ("cli:claims-on-disk-in-the-result-file", "polaris_oid4vp/cli.py",
+     "        out.update(outcome=\"accepted\", claims=_claim_names(verdict, credential_format))\n",
+     "        out.update(outcome=\"accepted\", claims=_claim_names(verdict, credential_format),  # MUTANT\n"
+     "                   released=verdict.claims)\n"),
+    ("cli:claims-in-the-answer-line", "polaris_oid4vp/cli.py",
+     "        return \"authentic, claims %s\" % _claim_names(verdict, credential_format)\n",
+     "        return \"authentic, claims %s\" % (verdict.claims,)  # MUTANT\n"),
+    ("cli:control-read-without-the-lock", "polaris_oid4vp/cli.py",
+     "        with self._lock:\n            record = self._records.get(number)\n",
+     "        with threading.Lock():  # MUTANT\n            record = self._records.get(number)\n"),
+    ("cli:control-read-refused-at-the-lifetime", "polaris_oid4vp/cli.py",
+     "                and now - record.answered_at > self.verifier.request_ttl_seconds):\n",
+     "                and now - record.answered_at >= self.verifier.request_ttl_seconds):  # MUTANT\n"),
+    ("cli:control-record-replaces-an-acceptance", "polaris_oid4vp/cli.py",
+     "        if record.document is not None and record.document[\"outcome\"] == \"accepted\":\n",
+     "        if False:  # MUTANT\n"),
+    ("cli:control-record-keeps-the-first-answer", "polaris_oid4vp/cli.py",
+     "        if record.document is not None and record.document[\"outcome\"] == \"accepted\":\n",
+     "        if record.document is not None:  # MUTANT\n"),
+    ("cli:mdoc-values-held-for-a-read", "polaris_oid4vp/cli.py",
+     "        if (record.document[\"outcome\"] == \"accepted\"\n"
+     "                and self.verifier.credential_format == SD_JWT_FORMAT):\n",
+     "        if (record.document[\"outcome\"] == \"accepted\"):  # MUTANT\n"),
+    ("cli:control-lifetime-from-the-first-answer", "polaris_oid4vp/cli.py",
+     "        record.answered_at = self._clock()\n",
+     "        record.answered_at = record.answered_at or self._clock()  # MUTANT\n"),
+    ("cli:control-clock-bound-at-start", "polaris_oid4vp/cli.py",
+     "        self._clock = lambda: time.time()\n",
+     "        self._clock = time.time  # MUTANT\n"),
 )
 
 

@@ -69,6 +69,17 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 #: this listener does not serve.
 CONTROL_PATH = "/control/request"
 
+#: `GET /control/request/{n}` (2026-11-18), on the same listener, behind the same token, when
+#: `serve(on_control_read=...)` is given: what became of request n. `n` is the request number POST
+#: answered with, written as a decimal number with no leading zero and at most nine digits; any other
+#: path under the control path is 404. Request numbers are not a secret: the token is the only gate.
+CONTROL_READ_PREFIX = CONTROL_PATH + "/"
+_CONTROL_READ_NUMBER = re.compile(r"[1-9][0-9]{0,8}\Z")
+
+#: The paths a control listener logs without their query: everything under `/control/`, so that a
+#: query on a path the listener does not serve there is not logged either.
+_CONTROL_LOGGED = "/control/"
+
 #: The largest body a control request may carry, judged on the length it declares. What a control
 #: request says is a few claim names and credential types.
 CONTROL_MAX_BODY_BYTES = 8192
@@ -427,21 +438,26 @@ class _ControlHandler:
     no header, another scheme and a value that is not ASCII. Then the body is read (at most
     CONTROL_MAX_BODY_BYTES, judged on the declared length), read as one JSON object (none is `{}`)
     and handed to `on_control(spec)`, whose (status, JSON document) is the answer. Nothing of the
-    token, the header or the body is logged."""
+    token, the header or the body is logged.
+
+    `GET /control/request/{n}`, when the listener was also given `on_control_read`: the caller is
+    authenticated first, as above, so an unknown number and a known one get the same 401. Then a
+    path that is not CONTROL_READ_PREFIX and a number as _CONTROL_READ_NUMBER reads it is 404, and
+    `on_control_read(n)` is called. Its (status, JSON document) is answered with `Cache-Control:
+    no-store` and `Pragma: no-cache`, because the document can carry the claims a presentation
+    disclosed. An exception there, or a document that is not JSON, is a 500, and only the
+    exception's type is logged. Without `on_control_read` a GET under the control path is answered
+    as it is without the control option."""
 
     control_token_digest = None
     on_control = None
+    on_control_read = None
 
     def do_POST(self):
         if self.path.partition("?")[0] != CONTROL_PATH:
             return super().do_POST()
         if not self._control_authorized():
-            self.close_connection = True
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", "Bearer")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return None
+            return self._refuse_unauthorized()
         length = _content_length(self.headers)
         if length is None:
             self.close_connection = True
@@ -477,6 +493,45 @@ class _ControlHandler:
             return self._send(500, {"error": "server_error"})
         return self._send(status, document)
 
+    def do_GET(self):
+        path = self.path.partition("?")[0]
+        if self.on_control_read is None or not (path == CONTROL_PATH
+                                                or path.startswith(CONTROL_READ_PREFIX)):
+            return super().do_GET()
+        # The token before anything about the number, so a known and an unknown one answer alike.
+        authorized = self._control_authorized()
+        if not authorized:
+            return self._refuse_unauthorized()
+        number = path[len(CONTROL_READ_PREFIX):]
+        if not path.startswith(CONTROL_READ_PREFIX) or not _CONTROL_READ_NUMBER.match(number):
+            return self._send(404, {"error": "not_found"})
+        try:
+            status, document = self.on_control_read(int(number))
+            raw = json.dumps(document).encode("utf-8")
+        except Exception as exc:  # noqa: BLE001
+            # The type only: the document can hold the claims a presentation disclosed, and what
+            # an exception says can hold the document.
+            self.log_error("the control read raised %s", type(exc).__name__)
+            return self._send(500, {"error": "server_error"})
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.end_headers()
+        self.wfile.write(raw)
+        return None
+
+    def _refuse_unauthorized(self):
+        """401 with an empty body and `WWW-Authenticate: Bearer`, the connection closed with any
+        body unread: the one answer to a caller without the token, whatever it asked for."""
+        self.close_connection = True
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", "Bearer")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return None
+
     def _control_authorized(self):
         header = self.headers.get("Authorization") or ""
         scheme, _, presented = header.partition(" ")
@@ -486,13 +541,14 @@ class _ControlHandler:
         return same and scheme.lower() == "bearer"
 
     def log_message(self, format, *args):  # noqa: A002  the base class names it this
-        # The control path without its query: a query there is the caller's, and may hold what is
-        # not to be logged. Every other path is logged as the listener logs it without the option.
-        # (`path` is not set when the request line itself was refused.)
-        if getattr(self, "path", "").partition("?")[0] != CONTROL_PATH:
+        # A path under /control/ without its query: a query there is the caller's, and may hold
+        # what is not to be logged. Every other path is logged as the listener logs it without the
+        # option. (`path` is not set when the request line itself was refused.)
+        path = getattr(self, "path", "").partition("?")[0]
+        if not path.startswith(_CONTROL_LOGGED):
             return super().log_message(format, *args)
         if self.verbose:
-            sys.stderr.write("%s %s\n" % (operator_text(self.command), CONTROL_PATH))
+            sys.stderr.write("%s %s\n" % (operator_text(self.command), operator_text(path)))
         return None
 
 
@@ -558,7 +614,8 @@ class _CorsHandler(_Handler):
 
 def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
           on_verdict=None, background=True, verbose=False, on_request_object=None,
-          cors_origins=None, control_token=None, on_control=None, name_requests=False):
+          cors_origins=None, control_token=None, on_control=None, name_requests=False,
+          on_control_read=None):
     """Start the two endpoints. Returns the HTTPServer so a caller can shut it down.
 
     TLS is not optional in the profile: the suite refuses a `request_uri` that is not HTTPS
@@ -583,6 +640,11 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
     with no space (`control_token_problem`), or ValueError is raised before anything listens.
     The path never carries a CORS header, whatever `cors_origins` says.
 
+    `on_control_read`, only beside them, adds `GET /control/request/{n}` behind the same token:
+    `on_control_read(n)` returns the (status, JSON document) it is answered with, and the answer
+    carries `Cache-Control: no-store` (`_ControlHandler`). Given without `control_token`, or not callable, it
+    raises ValueError before anything listens.
+
     `name_requests`, for a caller that can hold more than one request open (`serve --rearm`, the
     control endpoint): each line logged for an answer at the response URI then ends with the
     request it was about (`about_request`), and a wallet error's names the error and not what
@@ -602,6 +664,9 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         base = _CorsHandler
         members["cors_origins"] = origins
     mixins = ()
+    if on_control_read is not None and (control_token is None or not callable(on_control_read)):
+        raise ValueError("on_control_read is given beside control_token and on_control, and is a "
+                         "function that answers a read of a control request")
     if control_token is not None or on_control is not None:
         if control_token is None or not callable(on_control):
             raise ValueError("control_token and on_control are given together: a token and a "
@@ -612,6 +677,8 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         mixins = (_ControlHandler,)
         members["control_token_digest"] = hashlib.sha256(control_token.encode("ascii")).digest()
         members["on_control"] = staticmethod(on_control)
+        if on_control_read is not None:
+            members["on_control_read"] = staticmethod(on_control_read)
     handler = type("_BoundHandler", mixins + (base,), members)
     # ThreadingHTTPServer, not HTTPServer, and a read timeout on every connection. Both are
     # about one thing: a client that opens a socket and then goes quiet must not take the
