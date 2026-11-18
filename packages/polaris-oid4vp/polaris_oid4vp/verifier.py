@@ -49,8 +49,8 @@ except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
 from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, MAX_RESPONSE_BYTES, JweError, _loads_depth_bounded,
-                  _public_key_from_jwk, b64u_decode, b64u_encode, check_compact_length,
-                  decrypt_response, encrypt_compact)
+                  _open_response, _public_key_from_jwk, _read_compact, b64u_decode, b64u_encode,
+                  check_compact_length, encrypt_compact)
 from .sdjwt import (ALL_ENTRIES, PER_CREDENTIAL, TRANSACTION_DATA_HASH_ALGS,
                     TRANSACTION_DATA_SCOPES, JtiMemory, TransactionDataBinding,
                     TransactionDataEntry, Verdict, verify_presentation)
@@ -388,9 +388,10 @@ def mdoc_query_refusal(claims, elements):
 class Session:
     """One outstanding presentation request, and the secrets that make it answerable once."""
 
-    __slots__ = ("state", "nonce", "enc_key", "created", "answered", "transaction_data")
+    __slots__ = ("state", "nonce", "enc_key", "created", "answered", "transaction_data", "claims",
+                 "vct_values")
 
-    def __init__(self, enc_key, transaction_data=()):
+    def __init__(self, enc_key, transaction_data=(), claims=None, vct_values=None):
         self.state = secrets.token_urlsafe(16)
         # 256 bits. OpenID4VP 1.0 section 5.2 requires "sufficient entropy" and the suite
         # warns below 128 bits, which is a floor rather than a target.
@@ -400,6 +401,11 @@ class Session:
         self.answered = False
         # This request's transaction_data entries (TransactionDataEntry), empty for none.
         self.transaction_data = tuple(transaction_data)
+        # What THIS request asks for when it was made with a specification of its own
+        # (Verifier.new_request): the claims as `claim_query` returns them and the credential
+        # types. None, the default, means the verifier's own, read at the time it is used.
+        self.claims = claims
+        self.vct_values = vct_values
 
 
 
@@ -413,6 +419,7 @@ def _says_how_the_vp_token_came(handler):
     def handle(self, form):
         read = self._vp_token_read
         read.from_string = False
+        self._attributed.state = None
         result = handler(self, form)
         if isinstance(result[2], Verdict):
             result[2].vp_token_from_string = read.from_string
@@ -903,6 +910,12 @@ def _printable(text, limit=ERROR_DESCRIPTION_MAX):
     return kept if len(kept) <= limit else kept[:limit - 3] + "..."
 
 
+def operator_text(text):
+    """`text` as it goes on a line `serve` prints for an operator: printable ASCII, and `?` for
+    `<` and for every other character (`_printable` keeps less, and cuts)."""
+    return "".join(ch if " " <= ch <= "~" and ch != "<" else "?" for ch in str(text))
+
+
 class Verifier:
     """Builds requests and judges responses. Holds no socket: see `serve()` for that.
 
@@ -959,6 +972,11 @@ class Verifier:
         self.issuer_jwks = list(issuer_jwks or [])
         self.issuer_trust_anchors = list(issuer_trust_anchors or [])
         self.request_ttl_seconds = request_ttl_seconds
+        # A string is iterable, and was taken one character at a time.
+        if isinstance(claims, str):
+            raise ValueError("claims is a list of claims, not a string")
+        if isinstance(vct_values, str):
+            raise ValueError("vct_values is a list of credential types, not a string")
         # None asks for the default type. It is None rather than the type itself so that a value
         # given with an mso_mdoc query, which names a docType and has no vct, is seen and refused.
         self.vct_values = list(DEFAULT_VCT_VALUES if vct_values is None else vct_values)
@@ -1000,6 +1018,16 @@ class Verifier:
                 raise ValueError("doctype_value and iaca_roots belong to credential_format %s; "
                                  "this verifier asks for %s" % (MDOC_FORMAT, credential_format))
             self.claims = [claim_query(c) for c in claims]
+            # OpenID4VP 1.0 section 6.1: a credential query's `claims` is "A non-empty array of
+            # objects". A verifier built with no claim, no credential type for `meta.vct_values`,
+            # or a type that is not a non-empty string would sign a DCQL query built from them. It
+            # is refused here by the rule `new_request` holds one request to.
+            if not self.claims:
+                raise ValueError("a verifier asks for at least one claim")
+            if not self.vct_values:
+                raise ValueError("a verifier asks for at least one credential type")
+            if not all(isinstance(v, str) and v for v in self.vct_values):
+                raise ValueError("a verifier's credential types are non-empty strings")
         # Revocation. None means the verdict reports `not_evaluated`, which is what this
         # verifier can honestly say about a status list nobody read. Threaded from here
         # rather than left on `verify_presentation` alone because THIS is the surface an
@@ -1025,13 +1053,19 @@ class Verifier:
         # the code's SHA-256 so the lookup compares no secret: digest -> (when, state, verdict).
         self._results = {}
         self._lock = threading.Lock()
+        # What a request with a specification of its own is held to when the profile is on: the
+        # verifier_info as it was given, which is what `check_etsi_119472_2` reads.
+        self._verifier_info_given = verifier_info
         # Per call of handle_direct_post: whether it read the vp_token out of a JSON string.
         self._vp_token_read = threading.local()
+        # Per thread: the request the last `request_object` or `handle_direct_post` call on it was
+        # about (`attributed_request`).
+        self._attributed = threading.local()
         self._jti_memory = JtiMemory(retention_seconds=JTI_RETENTION_SECONDS)
 
     # ------------------------------------------------------------------ the request
 
-    def new_request(self, transaction_data=None):
+    def new_request(self, transaction_data=None, claims=None, vct_values=None):
         """Start one presentation request. Returns (session, the signed request object).
 
         `transaction_data`, opt-in per request, is the entries this request asks the wallet to
@@ -1040,20 +1074,89 @@ class Verifier:
         carries them, and the presentation's key binding JWT must bind every one: with one
         credential query, every entry names it, so both readings of which entries a key binding
         JWT binds expect all of them. Without it the request is exactly what it always was.
+
+        `claims` and `vct_values`, opt-in per request (2026-11-17), are what THIS request asks
+        for in place of the verifier's own: each claim as `claim_query` takes it, the credential
+        types as strings. They govern the whole life of the request, held on its session: its
+        request object, the judging of its answer (the claims it must disclose and may not
+        exceed, the credential type it must be) and, under the verifier_info profile, the
+        over-asking check against the registration certificate, which refuses here with the
+        refusal construction gives. Anything refused raises ValueError and no request is made.
+        The verifier's own claims and types, and every request made without these, are untouched.
         """
         if transaction_data is not None and self.credential_format == MDOC_FORMAT:
             raise ValueError("transaction_data is not read for an %s presentation: what binds it "
                              "is an SD-JWT VC's key binding JWT" % MDOC_FORMAT)
+        # A request's own claims and types are a dc+sd-jwt query's paths and vct values. An
+        # mso_mdoc query asks for the docType and elements the verifier was built with, and its
+        # request object is built from those alone (`_dcql_query`): one given here is refused,
+        # never parsed as SD-JWT paths and then judged against while the wallet was asked for
+        # something else.
+        if (claims is not None or vct_values is not None) and self.credential_format == MDOC_FORMAT:
+            raise ValueError("claims and vct_values per request are read for a %s query; an %s "
+                             "verifier asks for the docType and elements it was built with"
+                             % (SD_JWT_FORMAT, MDOC_FORMAT))
         entries = (() if transaction_data is None
                    else transaction_data_entries(transaction_data, (self.query_id,)))
+        # A string is iterable, and was taken one character at a time, as the constructor's was.
+        if isinstance(claims, str):
+            raise ValueError("claims is a list of claims, not a string")
+        if isinstance(vct_values, str):
+            raise ValueError("vct_values is a list of credential types, not a string")
+        asked_claims = asked_types = None
+        if claims is not None:
+            asked_claims = [claim_query(c) for c in claims]
+            if not asked_claims:
+                raise ValueError("a request asks for at least one claim")
+        if vct_values is not None:
+            asked_types = list(vct_values)
+            if not asked_types or not all(isinstance(v, str) and v for v in asked_types):
+                raise ValueError("a request's credential types are one or more non-empty strings")
+        if (asked_claims is not None or asked_types is not None) \
+                and self.verifier_info_profile == ETSI_119472_2:
+            check_etsi_119472_2(self._verifier_info_given, self._dcql_query(asked_claims, asked_types))
         enc_key = ec.generate_private_key(ec.SECP256R1())
-        session = Session(enc_key, entries)
+        session = Session(enc_key, entries, asked_claims, asked_types)
         jar = self._request_object(session)
         with self._lock:
             self._expire_locked()
             self._sessions[session.state] = session
             self._by_request[session.state] = jar
         return session, jar
+
+    def close_request(self, state):
+        """End the outstanding request `state`: it is served no more, and a response to it is
+        refused as one to no outstanding request is. Returns whether it was outstanding. Only a
+        caller that owns the request's lifetime calls this (`serve --once --rearm` does, for a
+        request any answer has ended); nothing in the verifier does."""
+        with self._lock:
+            self._expire_locked()
+            outstanding = self._sessions.pop(state, None) is not None
+            self._by_request.pop(state, None)
+        return outstanding
+
+    def outstanding(self):
+        """How many requests are outstanding now: made, not answered, not expired."""
+        with self._lock:
+            self._expire_locked()
+            return len(self._sessions)
+
+    def is_outstanding(self, state):
+        """Whether the request `state` is outstanding now."""
+        with self._lock:
+            self._expire_locked()
+            return state in self._sessions
+
+    def attributed_request(self):
+        """The `state` of the request the last `request_object` or `handle_direct_post` call on
+        THIS thread was about, or None. A response is about a request when it decrypted under that
+        request's key and carried its state (an error response in the clear, when its state names
+        one outstanding); a fetch, when the state it asked for is outstanding. A response that
+        decrypted under no outstanding request's key, which is also what an answer to a request
+        that has closed looks like, is about none. Read by a caller that holds hooks run on the
+        thread that answered, to tell an answer about the request it follows from one about
+        another."""
+        return getattr(self._attributed, "state", None)
 
     def request_object(self, state, wallet_nonce=None, wallet_metadata=None):
         """The JAR for an outstanding request, served as many times as it is asked for.
@@ -1080,6 +1183,7 @@ class Verifier:
             self._expire_locked()
             session = self._sessions.get(state)
             cached = self._by_request.get(state)
+        self._attributed.state = state if session is not None else None
         if wallet_nonce is None:
             jar = cached
         elif session is None or not wallet_nonce_acceptable(wallet_nonce):
@@ -1135,7 +1239,7 @@ class Verifier:
                 "vp_formats_supported": self._vp_formats(),
                 "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
             },
-            "dcql_query": self._dcql_query(),
+            "dcql_query": self._dcql_query(session.claims, session.vct_values),
         }
         if session.transaction_data:
             # The strings exactly as they will be hashed: never re-encoded after this point.
@@ -1147,12 +1251,14 @@ class Verifier:
         header = {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.x5c}
         return _sign_es256(self.key, header, claims)
 
-    def _dcql_query(self):
+    def _dcql_query(self, claims=None, vct_values=None):
         """The DCQL query every request object carries, one credential query. Built in one place
         so the over-asking check holds the registration certificate to the query that is sent.
+        `claims` and `vct_values` are a request's own (`new_request`); None is the verifier's.
 
         An mso_mdoc query (OpenID4VP 1.0 B.2.3, B.2.4) names its docType in `meta` and marks every
-        element `intent_to_retain` false."""
+        element `intent_to_retain` false. It is always the verifier's own: `new_request` takes no
+        claims or types for one."""
         if self.credential_format == MDOC_FORMAT:
             return {"credentials": [{
                 "id": self.query_id,
@@ -1162,12 +1268,13 @@ class Verifier:
                                 intent_to_retain=False)
                            for path, values in self.claims],
             }]}
+        claims = self.claims if claims is None else claims
         return {"credentials": [{
             "id": self.query_id,
             "format": "dc+sd-jwt",
-            "meta": {"vct_values": self.vct_values},
+            "meta": {"vct_values": self.vct_values if vct_values is None else vct_values},
             "claims": [dict({"path": list(path)}, **({"values": list(values)} if values else {}))
-                       for path, values in self.claims],
+                       for path, values in claims],
         }]}
 
     def authorization_request_params(self, session):
@@ -1243,7 +1350,9 @@ class Verifier:
         # `state` that would let us look it up directly is INSIDE the ciphertext, and
         # trusting an unauthenticated state parameter to pick a decryption key is how a
         # verifier gets steered onto the wrong session. Its length is checked once, first, so a
-        # token too long to be a response is not decoded and decrypted once per open request.
+        # token too long to be a response is refused before anything is decoded. It is then read
+        # once, and only what depends on the key (the key agreement and the tag) is tried per
+        # open request.
         try:
             check_compact_length(token)
         except JweError as exc:
@@ -1251,9 +1360,15 @@ class Verifier:
         with self._lock:
             self._expire_locked()
             candidates = list(self._sessions.values())
+        compact = None
+        if candidates:
+            try:
+                compact = _read_compact(token)
+            except JweError:
+                candidates = []
         for candidate in candidates:
             try:
-                body = decrypt_response(token, candidate.enc_key)
+                body = _open_response(compact, candidate.enc_key)
             except JweError:
                 continue
             session = candidate
@@ -1268,6 +1383,7 @@ class Verifier:
             return self._error("invalid_request",
                                "the response's state does not match the request its "
                                "encryption key belongs to")
+        self._attributed.state = session.state
 
         # An error response encrypted to this request's key is answered as the same response in
         # the clear is: 200, recorded, and the request left open, before anything below can
@@ -1319,7 +1435,8 @@ class Verifier:
                                       # credential and accepted any kind the same issuer
                                       # signed. Measured 2026-09-17: a loyalty card's
                                       # `given_name` came back as though it were a PID's.
-                                      expected_vct=self.vct_values,
+                                      expected_vct=(self.vct_values if session.vct_values is None
+                                                    else session.vct_values),
                                       status_resolver=self.status_resolver,
                                       transaction_data=binding)
         if not verdict.authentic:
@@ -1334,7 +1451,8 @@ class Verifier:
         # is answered by that one statement and not by the object around it.
         disclosed = verdict.claims if isinstance(verdict.claims, dict) else {}
         missing, unaccepted = [], []
-        for path, values in self.claims:
+        asked = self.claims if session.claims is None else session.claims
+        for path, values in asked:
             found, value = disclosed_at(disclosed, path)
             if not found:
                 missing.append(path)
@@ -1354,7 +1472,7 @@ class Verifier:
         # tool, sends one as a negative case (OVER_DISCLOSURE); until 2026-10-04 it got 200 and
         # the operator received claims nobody asked for. What the issuer signed in clear text is
         # not a disclosure and is not judged here.
-        requested = [path for path, _ in self.claims]
+        requested = [path for path, _ in asked]
         extra = sorted((p for p in verdict.disclosed if not _selected(p, requested)), key=repr)
         if extra:
             return self._error("claims", "the presentation discloses %s, which the request did "
@@ -1533,6 +1651,7 @@ class Verifier:
         never authentic. Refused instead when its `error` is not a code of the shape `_ERROR_CODE`
         holds, or its `error_description` is not a string. What the operator is shown of the
         description is `_printable`: it is the sender's free text."""
+        self._attributed.state = session.state
         if not isinstance(error, str) or not _ERROR_CODE.fullmatch(error):
             return self._error("invalid_request", "the error response's error is not an error "
                                                   "code: 1 to 64 letters, digits or underscores")

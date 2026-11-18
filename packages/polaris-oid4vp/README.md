@@ -20,7 +20,7 @@ Verifier profile**: it passed all eleven modules of the Foundation's hosted HAIP
 independent verification. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** This release, 1.1.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
+**Status:** This release, 1.2.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
 The newest release runs against the OpenID Foundation's conformance suite every week in CI. It is re-run weekly against the outside implementations in the table
 below. One outside project, IDFoundry/OID4VCgo, runs it in its CI, daily and on each of its
 releases, since 2026-10-11.
@@ -133,6 +133,13 @@ holds this package from PyPI, installed by hash.
 - `--no-local-tls` serves the local listener over plain HTTP, for when that proxy or tunnel
   terminates TLS and provides the public HTTPS. The listener still binds `--bind` (127.0.0.1, this
   machine only, by default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
+- Browser wallets: `--cors-origin https://wallet.example` answers a wallet that runs in a browser
+  page at that origin (repeatable; `*` alone answers every origin). Its requests to `/request.jwt`
+  (`GET, POST`) and `/response` (`POST`) are answered with `Access-Control-Allow-Origin` and
+  `Vary: Origin`, refusals included, and their preflight `OPTIONS` with those methods and
+  `Content-Type, Accept` as the request headers allowed. Write the origin as the page's address
+  shows it, scheme, host and any port, with no path. Without the option no answer carries a CORS
+  header.
 - `--claim` names a claim to ask for (repeatable; without it, `given_name` and `family_name`): a
   name, a dotted path of object keys, or a JSON array of keys, optionally `=VALUE` (JSON) for
   the value it must have. A path asks for one member of a nested claim and nothing around it:
@@ -152,12 +159,18 @@ holds this package from PyPI, installed by hash.
   response is counted and changes nothing else. `response.status_code` is the HTTP status the
   wallet was answered, `request_object` counts the fetches `served` and `refused`, and
   `responses` the responses received. The file is replaced whole at startup and before each
-  answer goes out; without `--once` it is refused (exit 2).
+  answer goes out; without `--once` (or `--control-token-file`) it is refused (exit 2). With
+  `--rearm` or `--control-token-file` it describes the newest request and adds `request`, 1, 2,
+  3 and so on in start order (0 before the first); `state` stays the request's OAuth state
+  value. With either, each line printed for an answer at the response URI, the `<-` line and the
+  `polaris-oid4vp:` line on stderr, ends with the request it was about, `(request STATE)`, or
+  `(request not known)`.
 - `serve` with neither `--issuer-jwks` nor `--issuer-trust-anchor` refuses every presentation
   (`issuer_key`) and says so on stderr. An `--issuer-jwks` file it cannot read, or none of whose keys
   can verify ES256 when no anchor is given, stops `serve` before it listens (exit 2).
 - The CLI is a test harness. A deployment embeds `Verifier` (it needs your status policy; see
-  Revocation).
+  Revocation). `--rearm` and `--control-token-file` are for a harness that sends one answer per
+  request: an answer from any holder of the request link ends the request.
 
 **Trust, in two steps.** Start with pinned trust: `--issuer-trust-anchor` (`trust_anchors=` in
 the API) holds the issuer CA certificates a relying party received directly, and `--issuer-jwks`
@@ -187,6 +200,80 @@ is one you name, and never pin on `unbound_iss` or `issuer_subject`.
 This is a separate package from `polaris-verify` because it listens on a socket and requires
 `cryptography`; `polaris-verify` listens on nothing and takes `cryptography` only as an optional
 backend.
+
+### A fresh request without a restart: `--rearm`
+
+`serve --once --rearm` starts the next request, with the same claims, credential types,
+transaction data and schemes, each time the current one ends, and prints its parameters and launch
+links exactly as `--once` printed the first. A request ends when an answer at the response URI
+about it arrives, whether accepted, refused or a wallet's error response (with neither `--rearm`
+nor `--control-token-file` a refusal leaves the request open), and when its lifetime runs out. The lifetime is watched by a
+timer, so an idle server starts and prints a new request each time one expires, with no wallet
+asking. A closing answer and an expiry at the same moment start one successor.
+
+With `--result FILE`, the file describes the current request: `request` is its number, `state` its
+OAuth state value, and `previous` is the request that ended, whole (its `request`, `state`,
+`outcome` and the rest), written in the same rename that writes the new request's pending form.
+`previous` is absent for request 1. An answer or a fetch for a request that has ended is answered
+as it is without `--rearm` (404, or the refusal) and does not touch the file.
+
+`--rearm` needs `--once` and cannot be combined with `--control-token-file`.
+
+### A fresh request on demand: the control endpoint
+
+`serve --control-token-file FILE` adds `POST /control/request` to the listener, in the same TLS
+mode. FILE holds a bearer token of at least 32 printable ASCII characters, read at startup (it is
+never taken from the command line, where `ps` and `docker inspect` would show it). A call with
+`Authorization: Bearer TOKEN` starts a request and is answered `201` with JSON:
+
+```json
+{"request": 2, "state": "...", "request_uri": "https://verifier:9443/request.jwt?state=...",
+ "client_id": "x509_hash:...",
+ "launch": {"openid4vp": "openid4vp://?...", "haip-vp": "haip-vp://?...", "eu-eaap": "eu-eaap://?..."}}
+```
+
+`launch` holds the links `--once` prints, made by the same function. The body is optional: absent
+or `{}` starts a request with the serve command's own specification, and `claims` (a list of
+strings, each as `--claim` takes it) and `vct` (a list of credential types) replace them for that
+request alone. A request with its own specification is judged by it for its whole life: its
+request object, the claims a presentation must disclose, the credential type it must be and, when
+`--verifier-info-profile` is set, the check against the registration certificate (a request that
+asks for more than the certificate registers is `400`, as at startup). Any other member, a claim
+`--claim` would refuse, or a body over 8 KiB is `400` (`413` for the size). A missing or wrong
+token is `401` with no body. At most 64 requests are outstanding at once (the one `--once` starts
+counts); the next is `429` until one is answered or expires. The path never carries CORS headers,
+whatever `--cors-origin` says. Requests started here are independent, and each ends at an answer at the
+response URI (accepted, refused or a wallet's error response, as under `--rearm`) or when its own
+lifetime runs out, so a refusal frees its place among the 64, and a second presentation to an
+answered request is refused as one to a request that has closed. The request `--once` starts beside
+the endpoint keeps the plain rule: a refusal leaves it open. `--result` describes the newest request
+started.
+
+The shape a test harness uses, with the token in a mounted file:
+
+```yaml
+services:
+  verifier:
+    image: polaris-oid4vp        # built from packages/polaris-oid4vp/image
+    command: >
+      serve --pki /data/pki --host verifier --bind 0.0.0.0 --port 9443
+      --issuer-jwks /issuers.json --control-token-file /run/secrets/control-token
+    volumes:
+      - verifier-data:/data
+      - ./issuers.json:/issuers.json:ro
+    secrets:
+      - control-token
+secrets:
+  control-token:
+    file: ./control-token         # python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+volumes:
+  verifier-data:
+```
+
+```bash
+curl --cacert pki/tls.pem -H "Authorization: Bearer $(cat control-token)" \
+     -d '{"claims": ["age_equal_or_over.18=true"]}' https://verifier:9443/control/request
+```
 
 ## Verifying a presentation
 
@@ -283,6 +370,10 @@ is a base64url string, sent exactly as given, or a JSON object, encoded once. It
 request's credential query (`--credential-query-id`, default `pid`), and a TS12 payment
 (`urn:eudi:sca:payment:1`) must satisfy TS12's own JSON Schema for it, or the request is refused
 before it is sent. A request without `transaction_data` is unchanged.
+
+A request may also ask for its own claims and credential types in place of the verifier's,
+`Verifier.new_request(claims=[...], vct_values=[...])`, each as the constructor takes them, and its
+answer is judged by them; a bare string or an empty list raises `ValueError` and no request is made.
 
 The presentation's key-binding JWT must then carry:
 
@@ -441,13 +532,14 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 859 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1008 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 316 refusals accept and requires a
-  test to fail: 312 are caught, and the 4 survivors are declared with their reasons. It also makes
-  20 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
-  the x5c leaf and name constraints, the JWE bounds, when a request closes), each of which a test
-  must catch (all 20 are; measured 2026-11-16; CI runs it on every push).
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 329 refusals accept and requires a
+  test to fail: 325 are caught, and the 4 survivors are declared with their reasons. It also makes
+  25 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
+  and cache key a CORS answer names, and the control endpoint waiting on a body it will not read),
+  each of which a test must catch (all 25 are; measured 2026-11-18; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

@@ -13,14 +13,19 @@ rate limiting, no access log discipline and no graceful shutdown story; it is he
 verifier can be exercised end to end against a conformance suite, and a deployment would put
 `Verifier` behind whatever it already runs.
 """
+import hashlib
+import hmac
 import http.server
+import ipaddress
 import json
+import re
 import ssl
 import sys
 import threading
 import urllib.parse
 
-from .verifier import Verifier, wallet_nonce_acceptable  # noqa: F401  Verifier re-exported for callers of serve()
+from .jwe import _loads_depth_bounded
+from .verifier import Verifier, operator_text, wallet_nonce_acceptable  # noqa: F401  Verifier re-exported for callers of serve()
 
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
@@ -46,6 +51,147 @@ DONE_PAGE = (b'<!doctype html><meta charset="utf-8"><title>Presentation complete
 #: 117 MiB was measured verifying as authentic in 1.46 s, having built a two-million-element
 #: set on the way.
 MAX_BODY_BYTES = 1 << 20
+
+#: The two paths a wallet running in a browser page fetches across origins, and the methods
+#: each answers. With `serve(cors_origins=...)` a request to either that carries an Origin
+#: header on the list is answered with the CORS response headers, whatever its status: a page
+#: is handed no answer at all without them (the Fetch Standard's CORS check, section 4.10).
+#: rcbj/id-proto-debugger #423 asked for it, to run a browser wallet against the published
+#: image without a proxy that adds them. The pattern is Starlette's CORSMiddleware (BSD-3-Clause):
+#: an exact list or `*` alone, Access-Control-Allow-Origin only for an origin on it, Vary: Origin.
+CORS_METHODS = {REQUEST_PATH: "GET, POST", RESPONSE_PATH: "POST"}
+CORS_ALLOW_HEADERS = "Content-Type, Accept"
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+#: The path `serve(control_token=..., on_control=...)` answers, on the same listener and in the same
+#: TLS mode as the rest (2026-11-17). Not in CORS_METHODS: whatever `cors_origins` says, nothing on
+#: this path is answered with a CORS header, and a preflight to it is answered as one to any path
+#: this listener does not serve.
+CONTROL_PATH = "/control/request"
+
+#: The largest body a control request may carry, judged on the length it declares. What a control
+#: request says is a few claim names and credential types.
+CONTROL_MAX_BODY_BYTES = 8192
+
+#: The shortest control token `serve` takes. Anything that can reach the listener can try a token,
+#: so it is one a person would not choose.
+CONTROL_TOKEN_MIN_LENGTH = 32
+#: What follows `scheme://` in an origin, lowercased: a host (in brackets, what ipaddress then
+#: reads as IPv6, or else a name or IPv4 address with no colon or bracket), then, if any, `:` and
+#: a port of ASCII digits, of which at most five follow the leading zeros.
+_HOST_PORT = re.compile(r"(\[[^\[\]]*\]|[^\[\]:]+)(?::(?:0*([0-9]{1,5}))?)?\Z")
+
+
+def _ends_in_a_number(host):
+    """The URL Standard's ends-in-a-number checker: a host whose last label, one trailing dot
+    aside, is ASCII digits, or `0x` and hexadecimal digits, is one a browser reads as IPv4."""
+    labels = host.split(".")
+    if labels[-1] == "" and len(labels) > 1:
+        labels.pop()
+    last = labels[-1]
+    return last.isdigit() or (last[:2] == "0x" and all(c in "0123456789abcdef" for c in last[2:]))
+
+
+def cors_origin(value):
+    """`value` as a browser writes an origin in its Origin header, or `*`.
+
+    The scheme and the host are lowercased, a default port is dropped and an IPv6 address is
+    compressed (`HTTPS://Wallet.Example:443` is `https://wallet.example`, `http://[0:0::1]:8080`
+    is `http://[::1]:8080`), because the comparison with the header is exact. Anything else
+    raises ValueError saying what to write:
+    a value that is not a string; a comma (two origins in one value: give each origin its own
+    --cors-origin); a scheme other than http or https (`null` and an empty value
+    among them); a character outside ASCII, or one the URL Standard forbids in a host (a space, a
+    control character, `<`, `>`, `^`, `|` or `%`); user information, a path (a bare `/` and a `\\`
+    included), a query or a fragment; no host; a port that is not a number from 0 to 65535; a
+    bracketed host that is not an IPv6 address, or is an IPv4-mapped one (`[::ffff:7f00:1]`); and
+    an IPv4 address in any form but four decimal numbers from 0 to 255 with no leading zero,
+    which a browser would rewrite (127.1, 0x7f.1, 127.0.0.1.).
+    """
+    if not isinstance(value, str):
+        raise ValueError("%r is not an origin: an origin is a string, scheme://host[:port]"
+                         % (value,))
+    if "," in value:
+        raise ValueError("%r is not one origin: give each origin its own --cors-origin" % value)
+    if value == "*":
+        return value
+    scheme, _, rest = value.partition("://")
+    scheme = scheme.lower()
+    if scheme not in _DEFAULT_PORTS:
+        raise ValueError("%r is not an origin: write scheme://host[:port] with http or https, "
+                         "e.g. https://wallet.example, or * for every origin" % value)
+    if not value.isascii() or any(c <= " " or c in "<>^|%\x7f" for c in rest):
+        raise ValueError("%r is not an origin: a host is ASCII (an internationalized name in its "
+                         "punycode form) with no space, control character, <, >, ^, | or %%"
+                         % value)
+    for c, what in (("@", "user information"), ("/", "a path"), ("?", "a query"),
+                    ("#", "a fragment"), ("\\", "a path")):
+        if c in rest:
+            raise ValueError("%r is not an origin: it carries %s; an origin is scheme://host"
+                             "[:port] and nothing after it" % (value, what))
+    match = _HOST_PORT.match(rest.lower())
+    port = int(match.group(2)) if match and match.group(2) else None
+    if match is None or (port is not None and port > 65535):
+        raise ValueError("%r is not an origin: write scheme://host[:port], a host and then, if "
+                         "any, a port from 0 to 65535" % value)
+    host = match.group(1)
+    if host.startswith("["):
+        try:
+            address = ipaddress.IPv6Address(host[1:-1])
+        except ValueError:
+            raise ValueError("%r is not an origin: %s is not an IPv6 address" % (value, host)) \
+                from None
+        mapped = address.ipv4_mapped
+        if mapped is not None:
+            high, low = divmod(int(mapped), 0x10000)
+            raise ValueError("%r is not taken: an IPv4-mapped IPv6 address, [::ffff:%x:%x] as a "
+                             "browser writes it; open the wallet page at its IPv4 address, %s, "
+                             "and name that origin" % (value, high, low, mapped))
+        host = "[%s]" % address.compressed
+    elif _ends_in_a_number(host) and not _dotted_quad(host):
+        raise ValueError("%r is not an origin as a browser writes it: write an IPv4 address as "
+                         "four decimal numbers, each 0 to 255 with no leading zero (for example "
+                         "127.0.0.1)" % value)
+    if port is None or port == _DEFAULT_PORTS[scheme]:
+        return "%s://%s" % (scheme, host)
+    return "%s://%s:%d" % (scheme, host, port)
+
+
+def _dotted_quad(host):
+    """True when `host` is an IPv4 address as a browser writes one: four decimal numbers from 0 to
+    255 with no leading zero (127.0.0.1, not 127.000.0.1)."""
+    parts = host.split(".")
+    return len(parts) == 4 and all(p.isdigit() and len(p) <= 3 and int(p) <= 255
+                                   and str(int(p)) == p for p in parts)
+
+
+def cors_origins_of(values):
+    """The origins `serve(cors_origins=...)` answers, each as `cors_origin` writes it and each
+    once, or None when none are given (no CORS headers at all). A string is refused, since it
+    would be read one character at a time: give a list, `["https://wallet.example"]`. `*` stands
+    alone: beside an origin it raises ValueError."""
+    if isinstance(values, (str, bytes)):
+        raise ValueError("cors_origins is a list of origins, not one string: write [%r]"
+                         % (values,))
+    if not values:
+        return None
+    origins = tuple(dict.fromkeys(cors_origin(v) for v in values))
+    if "*" in origins and len(origins) > 1:
+        raise ValueError("* answers every origin, so it stands alone; name origins or *, not both")
+    return origins
+
+
+def control_token_problem(token):
+    """Why `token` cannot be a control token, or None. It is sent as `Authorization: Bearer <token>`,
+    so it is printable ASCII with no space, and it is at least CONTROL_TOKEN_MIN_LENGTH long."""
+    if not isinstance(token, str):
+        return "the control token is a string"
+    if not token or not all("!" <= c <= "~" for c in token):
+        return ("the control token is printable ASCII with no space or control character, as a "
+                "bearer token in a header is")
+    if len(token) < CONTROL_TOKEN_MIN_LENGTH:
+        return "the control token is at least %d characters" % CONTROL_TOKEN_MIN_LENGTH
+    return None
 
 
 def _content_length(headers):
@@ -81,9 +227,28 @@ def _content_length(headers):
         return None
 
 
+def _wallet_error_named(verdict):
+    """A wallet error on a line that names its request: the error code and the sender's
+    description as verifier.py's _printable left it, and nothing of what became of the request,
+    which the caller's own rule decides (2026-11-18)."""
+    w = verdict.wallet_error
+    if w["error_description"] is None:
+        return w["error"]
+    return '%s; error_description "%s"' % (w["error"], w["error_description"])
+
+
+def about_request(verifier):
+    """` (request STATE)` for the request the answer just given on this thread was about
+    (`Verifier.attributed_request`), or ` (request not known)`: how a line for an answer at the
+    response URI names it when more than one request can be open, on both streams."""
+    state = verifier.attributed_request()
+    return " (request %s)" % operator_text(state) if state else " (request not known)"
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     verifier = None
     on_verdict = None
+    name_requests = False
     on_request_object = None
     verbose = False
     server_version = "polaris-oid4vp"
@@ -141,6 +306,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             posted = urllib.parse.parse_qs(raw)
             wallet_nonce = (posted.get("wallet_nonce") or [None])[0]
             if wallet_nonce is not None and not wallet_nonce_acceptable(wallet_nonce):
+                # Asked of the verifier all the same: it refuses the nonce (None, nothing signed)
+                # and so ties the fetch to the request the URI names, which is how a caller that
+                # counts answers per request (serve --rearm --result) counts this refused fetch.
+                self.verifier.request_object((urllib.parse.parse_qs(query).get("state") or [""])[0],
+                                             wallet_nonce=wallet_nonce)
                 self._request_object_answered(400)
                 return self._send(400, {"error": "invalid_request",
                                         "error_description": "wallet_nonce is not 1 to 1024 "
@@ -157,11 +327,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # The operator's side of the split. Everything the wallet is NOT told goes here,
             # where the person running the verifier can read it and an attacker cannot.
             if status != 200 and verdict is not None:
-                self.log_error("refused: %s: %s", verdict.code, verdict.reason)
+                self.log_error("refused: %s: %s%s", verdict.code, verdict.reason, self._about())
             elif getattr(verdict, "wallet_error", None) is not None:
                 # A wallet's error response, answered 200 and accepted as nothing. Its reason
-                # carries the sender's text only as verifier.py's _printable left it.
-                self.log_error("wallet error: %s", verdict.reason)
+                # carries the sender's text only as verifier.py's _printable left it. A caller
+                # that names requests ends them by a rule of its own (`serve --rearm`, the control
+                # endpoint), so the verifier's "it does not close the request" is not this line's
+                # to say, and the request is named once, by `_about`.
+                self.log_error("wallet error: %s%s", _wallet_error_named(verdict)
+                               if self.name_requests else verdict.reason, self._about())
         except Exception:  # noqa: BLE001
             # The wallet must never see a 5xx for a response it sent: a 5xx says "retry",
             # and nothing it can retry will help. An unexpected exception here is this
@@ -221,9 +395,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _about(self):
+        return about_request(self.verifier) if self.name_requests else ""
+
     def log_error(self, format, *args, **kwargs):  # noqa: A002
         import traceback
-        sys.stderr.write("polaris-oid4vp: " + (format % args if args else format) + "\n")
+        # The whole line as operator_text leaves it. Any line here can carry a sender's text, the
+        # base class's own included: it logs a refused request line with the line in it.
+        sys.stderr.write("polaris-oid4vp: " + operator_text(format % args if args else format) + "\n")
         if kwargs.get("exc_info"):
             traceback.print_exc()
 
@@ -231,12 +410,155 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # Silent by default. A library that writes to a caller's stderr uninvited is a
         # library that has to be grepped around, and the base class's default does exactly
         # that. `serve(verbose=True)` opts in.
+        # A request line refused before it was read has no path, and its refusal is log_error's.
+        if self.verbose and getattr(self, "path", None) is not None:
+            sys.stderr.write("%s %s\n" % (operator_text(self.command), operator_text(self.path)))
+
+
+class _ControlHandler:
+    """`POST /control/request`, for a listener that was given `control_token` and `on_control`.
+    serve() puts this in front of the handler it builds only then; without them not one line here
+    runs and every answer is the one the handler gave before it existed.
+
+    The caller is authenticated BEFORE its body is read: the token is compared (as the SHA-256 of
+    each side, with `hmac.compare_digest`, so the comparison takes the same time whatever was
+    sent and whatever its length) and a caller that fails it gets 401, an empty body and
+    `WWW-Authenticate: Bearer`, and the connection is closed with the body unread. The same for
+    no header, another scheme and a value that is not ASCII. Then the body is read (at most
+    CONTROL_MAX_BODY_BYTES, judged on the declared length), read as one JSON object (none is `{}`)
+    and handed to `on_control(spec)`, whose (status, JSON document) is the answer. Nothing of the
+    token, the header or the body is logged."""
+
+    control_token_digest = None
+    on_control = None
+
+    def do_POST(self):
+        if self.path.partition("?")[0] != CONTROL_PATH:
+            return super().do_POST()
+        if not self._control_authorized():
+            self.close_connection = True
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", "Bearer")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        length = _content_length(self.headers)
+        if length is None:
+            self.close_connection = True
+            return self._send(400, {"error": "invalid_request",
+                                    "error_description": "Content-Length is not a decimal "
+                                                         "number of octets"})
+        if length > CONTROL_MAX_BODY_BYTES:
+            self.close_connection = True
+            return self._send(413, {"error": "invalid_request",
+                                    "error_description": "the request body exceeds %d bytes"
+                                                         % CONTROL_MAX_BODY_BYTES})
+        body = self.rfile.read(length)
+        if len(body) < length:
+            self.close_connection = True
+            return self._send(400, {"error": "invalid_request",
+                                    "error_description": "the body is shorter than "
+                                                         "Content-Length declared"})
+        spec = {}
+        if body.strip():
+            try:
+                spec = _loads_depth_bounded(body, "request body", finite=True)
+            except ValueError:
+                spec = None
+            if not isinstance(spec, dict):
+                return self._send(400, {"error": "invalid_request",
+                                        "error_description": "the body is one JSON object, or "
+                                                             "empty"})
+        try:
+            status, document = self.on_control(spec)
+        except Exception as exc:  # noqa: BLE001
+            # The type only: what the exception says may carry what the caller sent.
+            self.log_error("the control request raised %s", type(exc).__name__)
+            return self._send(500, {"error": "server_error"})
+        return self._send(status, document)
+
+    def _control_authorized(self):
+        header = self.headers.get("Authorization") or ""
+        scheme, _, presented = header.partition(" ")
+        # Every caller goes through the comparison, so a missing header costs what a wrong one does.
+        same = hmac.compare_digest(hashlib.sha256(presented.encode("utf-8", "replace")).digest(),
+                                   self.control_token_digest)
+        return same and scheme.lower() == "bearer"
+
+    def log_message(self, format, *args):  # noqa: A002  the base class names it this
+        # The control path without its query: a query there is the caller's, and may hold what is
+        # not to be logged. Every other path is logged as the listener logs it without the option.
+        # (`path` is not set when the request line itself was refused.)
+        if getattr(self, "path", "").partition("?")[0] != CONTROL_PATH:
+            return super().log_message(format, *args)
         if self.verbose:
-            sys.stderr.write("%s %s\n" % (self.command, self.path))
+            sys.stderr.write("%s %s\n" % (operator_text(self.command), CONTROL_PATH))
+        return None
+
+
+class _CorsHandler(_Handler):
+    """_Handler, answering CORS for a wallet that runs in a browser page. serve() builds its
+    handler on this class only when it was given cors_origins, and sets `cors_origins` on it to
+    the tuple cors_origins_of makes; without them the handler is _Handler, and not one line here
+    runs."""
+
+    #: (path, Origin) when the request being answered is one a CORS answer is due to, else None:
+    #: None for an error sent before a request is parsed, and set afresh by each parse, so no
+    #: answer carries what an earlier request on the same handler was due.
+    _cors_due = None
+
+    def parse_request(self):
+        # Decided once the request line and headers are read: due when the path, query cut, is
+        # one of CORS_METHODS' and an Origin header came with the request. An error sent before
+        # then (414, a bad request line, 431) is decided by nothing, and carries nothing; with
+        # no Origin header the answer is exactly the one without the option.
+        self._cors_due = None
+        if not super().parse_request():
+            return False
+        path, origin = self.path.partition("?")[0], self.headers.get("Origin")
+        if path in CORS_METHODS and origin is not None:
+            self._cors_due = (path, origin)
+        return True
+
+    def _cors_allows(self, origin):
+        """The Access-Control-Allow-Origin value for `origin`: `*` when that is the list, the
+        origin itself when it is on the list exactly, else None."""
+        if self.cors_origins == ("*",):
+            return "*"
+        return origin if origin in self.cors_origins else None
+
+    def end_headers(self):
+        # Every answer on the two paths passes here, refusals included (a 400 at the response URI
+        # is the wallet's to read), so no send helper can leave one out.
+        if self._cors_due is not None:
+            self.send_header("Vary", "Origin")
+            allowed = self._cors_allows(self._cors_due[1])
+            if allowed is not None:
+                self.send_header("Access-Control-Allow-Origin", allowed)
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        """A CORS preflight (the Fetch Standard, section 4.8): an OPTIONS on one of the two paths
+        that carries Origin and Access-Control-Request-Method is answered 204. For an origin on
+        the list it carries the path's methods and the request headers a wallet sends, and
+        end_headers adds Access-Control-Allow-Origin and Vary; for any other origin it carries
+        Vary and nothing that allows, and the browser's own check refuses. Any other OPTIONS gets
+        the 501 _Handler answers, which has no do_OPTIONS, in the same call (on Python 3.9 its body
+        names the status as `HTTPStatus.NOT_IMPLEMENTED`)."""
+        if self._cors_due is None or self.headers.get("Access-Control-Request-Method") is None:
+            return self.send_error(http.HTTPStatus.NOT_IMPLEMENTED,
+                                   "Unsupported method (%r)" % self.command)
+        path, origin = self._cors_due
+        self.send_response(204)
+        if self._cors_allows(origin) is not None:
+            self.send_header("Access-Control-Allow-Methods", CORS_METHODS[path])
+            self.send_header("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS)
+        self.end_headers()
 
 
 def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
-          on_verdict=None, background=True, verbose=False, on_request_object=None):
+          on_verdict=None, background=True, verbose=False, on_request_object=None,
+          cors_origins=None, control_token=None, on_control=None, name_requests=False):
     """Start the two endpoints. Returns the HTTPServer so a caller can shut it down.
 
     TLS is not optional in the profile: the suite refuses a `request_uri` that is not HTTPS
@@ -248,15 +570,49 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
     for no such outstanding request, 400 for a posted wallet_nonce out of bounds. Each is called
     before its answer is sent.
 
+    `cors_origins`, for a wallet that runs in a browser page: a list of the origins (or `*`
+    alone) whose requests to the request URI and the response URI are answered with
+    Access-Control-Allow-Origin and Vary: Origin, and whose preflight is answered (see
+    CORS_METHODS). None, the default, or an empty list adds no header and no OPTIONS handler. A
+    string, or a member that is not an origin, raises ValueError before anything listens.
+
+    `control_token` and `on_control`, given together or not at all, add `POST /control/request` on
+    this listener (`_ControlHandler`): the caller sends `Authorization: Bearer <control_token>`
+    and a JSON object, and `on_control(spec)` returns the (status, JSON document) it is answered
+    with. The token is a string of at least CONTROL_TOKEN_MIN_LENGTH printable ASCII characters
+    with no space (`control_token_problem`), or ValueError is raised before anything listens.
+    The path never carries a CORS header, whatever `cors_origins` says.
+
+    `name_requests`, for a caller that can hold more than one request open (`serve --rearm`, the
+    control endpoint): each line logged for an answer at the response URI then ends with the
+    request it was about (`about_request`), and a wallet error's names the error and not what
+    became of the request, which the caller's rule decides.
+
     Shut it down with `httpd.shutdown()` followed by `httpd.server_close()`: the first stops
     the loop and the second releases the socket, and skipping the second leaks a listening
     port for the life of the process.
     """
-    handler = type("_BoundHandler", (_Handler,),
-                   {"verifier": verifier, "verbose": verbose,
-                    "on_verdict": staticmethod(on_verdict) if on_verdict else None,
-                    "on_request_object": (staticmethod(on_request_object) if on_request_object
-                                          else None)})
+    origins = cors_origins_of(cors_origins)
+    members = {"verifier": verifier, "verbose": verbose, "name_requests": bool(name_requests),
+               "on_verdict": staticmethod(on_verdict) if on_verdict else None,
+               "on_request_object": (staticmethod(on_request_object) if on_request_object
+                                     else None)}
+    base = _Handler
+    if origins:
+        base = _CorsHandler
+        members["cors_origins"] = origins
+    mixins = ()
+    if control_token is not None or on_control is not None:
+        if control_token is None or not callable(on_control):
+            raise ValueError("control_token and on_control are given together: a token and a "
+                             "function that answers a control request")
+        problem = control_token_problem(control_token)
+        if problem:
+            raise ValueError(problem)
+        mixins = (_ControlHandler,)
+        members["control_token_digest"] = hashlib.sha256(control_token.encode("ascii")).digest()
+        members["on_control"] = staticmethod(on_control)
+    handler = type("_BoundHandler", mixins + (base,), members)
     # ThreadingHTTPServer, not HTTPServer, and a read timeout on every connection. Both are
     # about one thing: a client that opens a socket and then goes quiet must not take the
     # listener off the air for every wallet. With a single accept loop it did, and it cost

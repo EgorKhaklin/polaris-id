@@ -2926,8 +2926,7 @@ def test_claims_manifest_holds_the_certification_sentences_on_the_tree(monkeypat
 
     page = "site/index.html"
     D, O = '<meta name="description" content="', '<meta property="og:description" content="'
-    claim = ("OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile at polaris-oid4vp "
-             "1.0.0rc7, a self-certification. ")
+    claim = "polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC. "
 
     def tag(text, start):
         i = text.index(start)
@@ -2946,25 +2945,37 @@ def test_claims_manifest_holds_the_certification_sentences_on_the_tree(monkeypat
             ("a second description tag", D, lambda t: t.replace(tag(t, D), tag(t, D) + '\n<meta name="description" '
                                                                  'content="Another.">', 1)),
             ("the version changes", D, told(D, claim.replace("1.0.0rc7", "1.0.0rc8"))),
-            ("the package name is dropped", D, told(D, claim.replace("at polaris-oid4vp ", "at "))),
+            ("the subject is dropped", D, told(D, claim.replace("polaris-oid4vp 1.0.0rc7 is ", ""))),
             ("the profile is cut", O, told(O, claim.replace(" Verifier profile", " profile"))),
-            ("'a self-certification' is cut", D, told(D, claim.replace(", a self-certification", ""))),
-            ("'by Egor Khaklin' is cut from og:description", O, told(O, claim.replace(" by Egor Khaklin", ""))),
+            ("the format is cut from the description", D, told(D, claim.replace(" for SD-JWT VC", ""))),
+            ("the format is cut from og:description", O, told(O, claim.replace(" for SD-JWT VC", ""))),
             ("a tagline moves before the claim", D, told(D, "Polaris ID. " + claim))):
         f = finding(page, change)
         surface = page + "#meta:" + ("description" if start == D else "og:description")
         assert f.level == "FAIL" and surface + " " in f.message, (why, f.message[:200])
     first = lambda t: t.replace(tag(t, D), '<meta content="%s" name="description">' % tag(t, D)[len(D):-2], 1)  # noqa: E731
     assert finding(page, first).level == "OK", "a tag with its content first is read"
-    assert finding(page, lambda t: first(t).replace(", a self-certification", "", 1)).level == "FAIL", \
+    assert finding(page, lambda t: first(t).replace(" for SD-JWT VC", "", 1)).level == "FAIL", \
         "a tag with its content first is read, not skipped"
     # The page-wide reader takes double-quoted content only, so a single-quoted description fails closed, never unread.
     assert finding(page, lambda t: t.replace(tag(t, D), tag(t, D).replace('"', "'"), 1)).level == "FAIL"
-    assert red("site/index.html", r'content="OpenID Certified by Egor Khaklin to', 'content="OpenID Certified to', 0), \
-        "both tags without 'by Egor Khaklin'"
+    assert red("site/index.html", r'content="polaris-oid4vp 1\.0\.0rc7 is OpenID', 'content="Polaris is OpenID', 0), \
+        "both tags name Polaris instead of the package"
+    assert red("site/llms.txt", r"`polaris-oid4vp 1\.0\.0rc7` is OpenID", "`polaris-oid4vp 1.0.0rc8` is OpenID"), \
+        "llms.txt: the version changes"
+    assert red("site/llms.txt", r"\(`sd_jwt_vc`, `direct_post\.jwt`;", "(`direct_post.jwt`;"), \
+        "llms.txt: the format is cut"
     assert red("lab/EXTERNAL-NOUNS.md", r" \(Certification Terms 3\(e\)\)", ""), "the scoreboard without the terms' clause"
+    # The mark on the site stands beside its caption, the certified package and version, the profile and the
+    # credential format (owner, 2026-11-17): either one without the other, or the caption changed, turns the check red.
+    assert red(page, r"polaris-oid4vp 1\.0\.0rc7<br>OpenID4VP 1\.0 \+ HAIP 1\.0 Verifier &middot; SD-JWT VC", ""), \
+        "the mark without its caption"
+    assert red(page, r'<img src="openid-certified-mark-on-white\.png"[^>]*>', ""), "the caption without the mark"
+    assert red(page, r"polaris-oid4vp 1\.0\.0rc7<br>", "polaris-oid4vp 1.0.0rc8<br>"), "the caption's version changes"
+    assert red(page, r"HAIP 1\.0 Verifier &middot;", "HAIP 1.0 &middot;"), "the caption's profile is cut"
+    assert red(page, r"&middot; SD-JWT VC</span>", "</span>"), "the caption's credential format is cut"
     tail = r"not\s+an\s+endorsement\s+(?:or\s+an|and\s+not\s+an)\s+independent\s+verification"
-    for path in ("README.md", "site/index.html", "site/llms.txt", "polaris_web/templates/landing.html", "TRADEMARKS.md",
+    for path in ("README.md", "polaris_web/templates/landing.html", "TRADEMARKS.md",
                  "LICENSES/LicenseRef-OpenID-Certified-Mark.txt", "ROADMAP.md", "docs/INTEGRATION.md",
                  "docs/PRODUCTION-READINESS.md", "docs/reference/SPEC-COMPLIANCE.md", "packages/polaris-oid4vp/README.md",
                  "lab/EXTERNAL-NOUNS.md", "lab/interop/README.md"):
@@ -4173,24 +4184,24 @@ def test_oid4vp_image_is_the_released_package_check_discriminates(tmp_path):
         broken(df, entry, other, "must FAIL when the entrypoint is not the package's command alone",
                "entrypoint must be the package's")
 
-    pin = "polaris-oid4vp==1.1.0\n"
+    pin = "polaris-oid4vp==1.2.0\n"
     assert (tmp_path / asked).read_text().endswith(pin), \
-        "the fixture drifted: requirements.in no longer ends with the 1.1.0 pin"
+        "the fixture drifted: requirements.in no longer ends with the 1.2.0 pin"
     for other, why in ((pin + "requests==2.32.0\n", "asks for a second package"),
-                       ("polaris-oid4vp>=1.1.0\n", "asks for a range"),
-                       ("polaris-oid4vp==1.1.0rc1\n", "asks for a release candidate"),
+                       ("polaris-oid4vp>=1.2.0\n", "asks for a range"),
+                       ("polaris-oid4vp==1.2.0rc1\n", "asks for a release candidate"),
                        ("polaris-oid4vp\n", "asks for whatever is newest"),
                        ("", "asks for nothing")):
         broken(asked, pin, other, f"must FAIL when requirements.in {why}", "must ask for one thing")
     hashed_reason = "every other requirement by hash"
-    broken(locked, "polaris-oid4vp==1.1.0 \\\n", "polaris-oid4vp==1.0.0 \\\n",
+    broken(locked, "polaris-oid4vp==1.2.0 \\\n", "polaris-oid4vp==1.1.0 \\\n",
            "must FAIL when requirements.txt pins another version than requirements.in asks for",
            hashed_reason)
     edited(locked, lambda t: t + "idna==3.7\n",
            "must FAIL when a requirement carries no hash", hashed_reason)
     edited(locked, lambda t: t + "idna==3.7 \\\n    --hash=md5:0123456789abcdef0123456789abcdef\n",
            "must FAIL when a requirement's hash is not a SHA-256", hashed_reason)
-    edited(locked, lambda t: re.sub(r"(?m)^(polaris-oid4vp==1\.1\.0 \\\n)(?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+",
+    edited(locked, lambda t: re.sub(r"(?m)^(polaris-oid4vp==1\.2\.0 \\\n)(?:    --hash=sha256:[0-9a-f]{64}(?: \\)?\n)+",
                                     r"\1", t),
            "must FAIL when the package's own hashes are gone", hashed_reason)
 
@@ -11744,6 +11755,73 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     write(readme="# POLARIS\n\nRelying parties cannot link two presentations.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
         "must FAIL when unlinkability is claimed as 'cannot link' with no two-sided correlation statement"
+
+
+def test_public_claims_honest_holds_a_headline_title_to_the_page_h1(tmp_path):
+    # Owner, 2026-11-17: a name field may read "Polaris ID: " and exactly the page's own h1, so the
+    # tab says what the page says first and nothing more; og:site_name stays the bare name.
+    (tmp_path / "README.md").write_text("# POLARIS\n\nPre-pilot, on notional data.\n")
+    (tmp_path / "site").mkdir()
+    H1 = '<h1 id="hero-h">Identity built to be <span class="nb"><em>checked</em>, not trusted.</span></h1>'
+    TITLE = "Polaris ID: Identity built to be checked, not trusted."
+
+    def level(title=TITLE, og=TITLE, extra="", body=H1):
+        (tmp_path / "site" / "index.html").write_text(
+            f'<title>{title}</title>\n<meta property="og:title" content="{og}">\n{extra}<body>{body}</body>\n')
+        return checks.check_public_claims_honest(tmp_path)[0].level
+
+    assert level() == "OK", "must PASS a title and og:title that are 'Polaris ID: ' and the page's h1, tags stripped"
+    assert level(title="Polaris ID:  Identity built\n  to be checked, not trusted.") == "OK", \
+        "must compare with whitespace normalised"
+    assert level(extra=f'<meta name="twitter:title" content="{TITLE}">\n') == "OK", "must PASS twitter:title in the h1 form"
+    assert level(body=H1 + "<p>The text after the headline.</p>") == "OK", "must read the h1 alone, not what follows it"
+    assert level(title="Polaris ID", og="Polaris ID") == "OK", "the bare name still passes beside an h1"
+    for why, title in (("one word off the h1", "Polaris ID: Identity built to be checked, not believed."),
+                       ("the h1's final period dropped", "Polaris ID: Identity built to be checked, not trusted"),
+                       ("another case", "Polaris ID: identity built to be checked, not trusted."),
+                       ("another tagline", "Polaris ID: the identity token system"),
+                       ("the shorter name before the h1", "Polaris: Identity built to be checked, not trusted."),
+                       ("the h1 alone", "Identity built to be checked, not trusted.")):
+        assert level(title=title) == "FAIL", f"must FAIL on the title: {why}"
+        assert level(og=title) == "FAIL", f"must FAIL on og:title: {why}"
+    assert level(extra=f'<meta property="og:site_name" content="{TITLE}">\n') == "FAIL", \
+        "must FAIL on og:site_name in the h1 form: it stays the bare name"
+    assert level(body=H1 + "<h1>A second headline</h1>") == "FAIL", "must FAIL when the page has two h1s"
+    assert level(body="<p>No headline</p>") == "FAIL", "must FAIL when the page has no h1"
+    assert level(body='<svg viewBox="0 0 1 1"><text>Identity built to be checked, not trusted.</text></svg>') == "FAIL", \
+        "must FAIL when the text is in a drawing, not an h1"
+    for word, h1 in (("deployed", "Identity deployed to a population."), ("national", "The national identity."),
+                     ("certified", "Identity, OpenID Certified.")):
+        title = "Polaris ID: " + h1
+        assert level(title=title, og=title, body=f"<h1>{h1}</h1>") == "FAIL", \
+            f"must FAIL when the h1 itself carries {word!r}: the other rules still read the field"
+    # The typed headline: its letters are spans hidden from assistive technology and the h1 is named by an aria-label,
+    # which must be exactly its own text.
+    def keys(s):
+        return "".join(c if c == " " else f'<span class="k">{c}</span>' for c in s)
+
+    TYPED = ('<h1 id="hero-h" aria-label="{label}"><span class="type" aria-hidden="true">' + keys("Identity built to be ")
+             + '<span class="nb"><em>' + keys("checked") + "</em>" + keys(", not trusted.") + "</span></span></h1>")
+    SENTENCE = "Identity built to be checked, not trusted."
+    assert level(body=TYPED.format(label=SENTENCE)) == "OK", "must PASS the typed h1 named by its own sentence"
+    assert level(body=TYPED.format(label=" Identity built to be\n  checked, not trusted. ")) == "OK", \
+        "must compare the label with whitespace normalised"
+    for why, body in (("another sentence", TYPED.format(label="Identity built to be trusted.")),
+                      ("an empty label", TYPED.format(label="")),
+                      ("a label with no value", TYPED.replace('aria-label="{label}"', "aria-label")),
+                      ("a refused word only in the label", TYPED.format(label="Deployed identity, built to be checked."))):
+        assert level(body=body) == "FAIL", f"must FAIL on an h1 aria-label that is not its own text: {why}"
+    # An act's typed headline, an h2, is held the same way, beside the h1.
+    H2 = '<h2 id="how-h" aria-label="{label}"><span class="ty" aria-hidden="true">' + keys("Issue. Hold. Verify.") + "</span></h2>"
+    assert level(body=H1 + H2.format(label="Issue. Hold. Verify.")) == "OK", "must PASS a typed h2 named by its own sentence"
+    assert level(body=H1 + "<h2>Issue. Hold. Verify.</h2>") == "OK", "must PASS an h2 with no aria-label"
+    for why, h2 in (("another sentence", H2.format(label="Issue. Verify.")),
+                    ("an empty label", H2.format(label="")),
+                    ("a label with no value", H2.replace('aria-label="{label}"', "aria-label")),
+                    ("a refused word only in the label", H2.format(label="Issue. Hold. Verify. Deployed."))):
+        assert level(body=H1 + h2) == "FAIL", f"must FAIL on an h2 aria-label that is not its own text: {why}"
+        assert level(body=H1 + H2.format(label="Issue. Hold. Verify.") + h2) == "FAIL", \
+            f"must FAIL on a second h2 whose aria-label is not its own text: {why}"
 
 
 def test_detached_verifier_check_discriminates(tmp_path):
@@ -23229,14 +23307,20 @@ def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
                          "The negative vectors hold a DeviceResponse per case.",
                          "`verify_mdoc` reads an mdoc this project issued.",
                          "The certificate is ISO 18013-5's document signer.",
-                         "Its `mso_mdoc` signing certificate lacks an extension."):
+                         "Its `mso_mdoc` signing certificate lacks an extension.",
+                         "Put the refusal tests in your CI: 32 mdoc device responses that must be refused.",
+                         "A change to the site alone skips the CVE scan and the mdoc drill."):
             assert passed(check(said(rel, sentence))), (rel, sentence)
         for sentence, word in (("The negative-vectors corpus holds mDLs.", "'mDLs'"),
                                ("The negative-vectors corpus covers Apple Wallet.", "'Apple Wallet'"),
+                               ("The refusal tests cover Apple Wallet.", "'Apple Wallet'"),
+                               ("The mdoc drill reads the Digital Credentials API.", "'Digital Credentials API'"),
                                ("`verify_mdoc` reads the Digital Credentials API.", "'Digital Credentials API'"),
                                ("The document signer of an age-verification attestation.", "'age-verification'")):
             assert failed(check(said(rel, sentence)), rel, word), (rel, sentence)
     for rel, text in (("README.md", "The negative-vectors corpus is public.\n\nIt verifies mdoc presentations."),
+                      ("README.md", "The refusal tests are public.\n\nIt verifies mdoc presentations."),
+                      ("README.md", "The mdoc drill runs in CI.\n\nIt verifies mdoc presentations."),
                       ("README.md", "- The negative-vectors corpus is public.\n- It verifies mdoc presentations."),
                       ("docs/reference/INTEROP.md", "| the negative-vectors corpus | public |\n| it verifies mdoc | yes |"),
                       ("site/index.html", "<p>The negative-vectors corpus.</p>\n<p>It verifies mdoc presentations.</p>"),
@@ -26428,6 +26512,7 @@ def _changes_job():
     return ("  changes:\n    name: Which parts of CI this change needs\n    runs-on: ubuntu-latest\n"
             "    outputs:\n      full: ${{ steps.classify.outputs.full }}\n"
             "      oid4vp: ${{ steps.classify.outputs.oid4vp }}\n      sdk: ${{ steps.classify.outputs.sdk }}\n"
+            "      beyond_site: ${{ steps.classify.outputs.beyond_site }}\n"
             "    steps:\n      - name: Classify\n        id: classify\n"
             "        run: python scripts/polaris-ci-changes.py --event \"$EVENT\"\n")
 
@@ -26498,6 +26583,12 @@ def test_ci_skips_are_gated_check_discriminates(tmp_path):
         "a shard gate that explains skips without the changes job must FAIL"
     assert write(changes=_changes_job().replace("      sdk: ${{ steps.classify.outputs.sdk }}\n", "")).level == "FAIL", \
         "a changes job that does not export an output must FAIL"
+    assert write(changes=_changes_job().replace("      beyond_site: ${{ steps.classify.outputs.beyond_site }}\n",
+                                                "")).level == "FAIL", \
+        "a changes job that does not export beyond_site must FAIL"
+    assert write(jobs=job("test-drill-shard") + shard_gate + job("test-app")
+                 + job("test-oid", cond="needs.changes.outputs.beyond_site != 'false'")).level == "FAIL", \
+        "a beyond_site condition a missing output does not skip on must FAIL"
     assert write(changes="").level == "FAIL", "no changes job must FAIL"
     always_skipped = job("test-drill-shard") + shard_gate + job("test-app") \
         + job("test-oid", cond="needs.changes.outputs.oid4vp == 'true'")
@@ -26556,10 +26647,22 @@ def test_ci_changes_allowlist_measured_check_discriminates(tmp_path):
     reader.unlink()
     ci = tree / ".github" / "workflows" / "ci.yml"
     text = ci.read_text()
-    ci.write_text(text.replace("  test-core:\n", "  test-core:\n    if: needs.changes.outputs.full == 'true'\n", 1))
+    ci.write_text(text.replace("  invariants:\n", "  invariants:\n    if: needs.changes.outputs.full == 'true'\n", 1))
     assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
         "an always-run job the outputs can skip leaves its reads unmeasured, and must FAIL"
+    ci.write_text(text.replace("    if: needs.changes.outputs.beyond_site == 'true'\n",
+                               "    if: needs.changes.outputs.full == 'true'\n", 1))
+    assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
+        "a site-skipped job skipped by full leaves its reads unmeasured, and must FAIL"
+    ci.write_text(text.replace("        run: bash scripts/polaris-link-check.sh --ci\n", "        run: 'true'\n"))
+    assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
+        "with the link check gone from every job a site-only change runs, the check must FAIL"
+    reader.write_text('import pathlib\nROOT = pathlib.Path(__file__).parent.parent\n'
+                      'print((ROOT / "site" / "index.html").read_text()[:10])\n')
     ci.write_text(text)
+    bad = checks.check_ci_changes_allowlist_measured(tree)[0]
+    assert bad.level == "FAIL" and "site/index.html is site-only" in bad.message, bad.message
+    reader.unlink()
     (tree / "scripts" / "polaris-ci-changes.py").unlink()
     assert checks.check_ci_changes_allowlist_measured(tree)[0].level == "FAIL", \
         "with the classifier gone there is nothing measured, and the check must FAIL"
@@ -26672,8 +26775,8 @@ def test_edge_tls_state_shared_check_discriminates(tmp_path):
 
 def test_interop_page_count_check_discriminates(tmp_path):
     """The interop page's rows, its sentence, the scoreboard's summary, the README badge, the claims manifest and the
-    site's count, tally and Evidence list must count and name the same implementations: each one changed, or the page
-    emptied, must FAIL."""
+    site's count, tally and Evidence list must count and name the same implementations: each one changed, the page
+    emptied, or the site saying "outside projects" in a form the check does not read, must FAIL."""
     files = {rel: (REPO / rel).read_text(encoding="utf-8") for rel in (
         "README.md", "lab/EXTERNAL-NOUNS.md", "docs/reference/claims.json", "docs/reference/INTEROP.md",
         "site/index.html")}
@@ -26692,8 +26795,18 @@ def test_interop_page_count_check_discriminates(tmp_path):
     page, board, readme, manifest, site = (files[r] for r in (
         "docs/reference/INTEROP.md", "lab/EXTERNAL-NOUNS.md", "README.md", "docs/reference/claims.json",
         "site/index.html"))
-    swiyu_item = next(ln for ln in site.splitlines() if "swiyu Sandbox Wallet</a>" in ln)
+    # the ledger item by its link, not its label, which the site may reword
+    swiyu_item = next(ln for ln in site.splitlines() if 'href="https://github.com/swiyu-admin-ch/eidch-ios-wallet"' in ln)
     axle_row = next(ln for ln in page.splitlines() if ln.startswith("| Axle "))
+    # Since 2026-11-17 the tally carries the count alone; a sentence that says the rows' count beside it still passes.
+    tally = '<p class="tally"><b>16</b><span>outside projects</span></p>'
+    assert site.count(tally) == 1, "the site's tally is not where this test looks for it"
+
+    def said(n):
+        return f"<p>In all, Polaris was tested against {n} outside projects.</p>"
+
+    write(**{"site/index.html": site.replace(tally, tally + said(16))})
+    assert level() == "OK", "must PASS a sentence beside the tally that says the count the rows give"
     broken = [
         {"docs/reference/INTEROP.md": page.replace("Eight wallets and eight more", "Nine wallets and eight more")},
         {"docs/reference/INTEROP.md": page.replace("Eight wallets and eight more", "Eight wallets and seven more")},
@@ -26720,10 +26833,14 @@ def test_interop_page_count_check_discriminates(tmp_path):
                                                          '        "readme-six-wallets",\n        "readme-six-wallets",\n'
                                                          '        "readme-nine-more"\n', 1)},
         {"docs/reference/claims.json": ""},
-        {"site/index.html": site.replace("tested against 16 outside projects", "tested against 15 outside projects", 1)},
-        {"site/index.html": site.replace("tested against 16 outside projects", "tested against many outside projects")},
+        {"site/index.html": site.replace(tally, tally + said(15))},
+        {"site/index.html": site.replace(tally, tally + "<p>Polaris was tested against many outside projects.</p>")},
+        {"site/index.html": site.replace(tally, tally + "<p>Sixteen outside projects.</p>")},
+        {"site/index.html": site.replace(tally, tally + "<p>Tested with 16 outside projects.</p>")},
+        {"site/index.html": site.replace(tally, tally + '<meta name="description" content="Tested with 16 outside projects.">')},
         {"site/index.html": site.replace("<b>16</b><span>outside projects", "<b>15</b><span>outside projects")},
-        {"site/index.html": site.replace('<p class="tally" aria-hidden', '<p class="count" aria-hidden')},
+        {"site/index.html": site.replace('<p class="tally">', '<p class="count">')},
+        {"site/index.html": site.replace(tally, tally + tally)},
         {"site/index.html": site.replace(swiyu_item + "\n", "")},
         {"site/index.html": site.replace(swiyu_item, swiyu_item + "\n" + swiyu_item)},
         {"site/index.html": ""},

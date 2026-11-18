@@ -13,6 +13,7 @@ is right, so these tests check the properties the suite checked, rather than che
 five files appeared.
 """
 import base64
+import io
 import os
 import pathlib
 import shutil
@@ -461,6 +462,113 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         self.assertIn("--bind", err)
         self.assertIn("0.0.0.0", err)
 
+    def test_cors_origins_reach_the_listener_as_a_browser_writes_them(self):
+        """Repeatable, each written as a browser writes it, and named on the startup line. Twin:
+        test_without_cors_origin_the_listener_gets_none_and_no_line_is_printed."""
+        rc, seen, out, _ = self._serve("--cors-origin", "HTTPS://Wallet.Example:443",
+                                       "--cors-origin", "http://127.0.0.1:8080")
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["kwargs"]["cors_origins"],
+                         ("https://wallet.example", "http://127.0.0.1:8080"))
+        self.assertIn("  cors origins  https://wallet.example http://127.0.0.1:8080",
+                      out.splitlines())
+
+    def test_without_cors_origin_the_listener_gets_none_and_no_line_is_printed(self):
+        """Twin: test_cors_origins_reach_the_listener_as_a_browser_writes_them."""
+        rc, seen, out, _ = self._serve()
+        self.assertEqual(rc, 0)
+        self.assertIsNone(seen["kwargs"]["cors_origins"])
+        self.assertNotIn("cors", out)
+
+    def test_an_origin_that_is_not_one_stops_it_starting(self):
+        """Each string row of test_serve's startup table, and `*` beside an origin: exit 2 naming
+        the value, and nothing listens. Twin:
+        test_cors_origins_reach_the_listener_as_a_browser_writes_them."""
+        from test_serve import CORS_REFUSED_AT_STARTUP
+        rows = [(value, reason) for value, reason in CORS_REFUSED_AT_STARTUP
+                if isinstance(value, str)]
+        rows.append(("*", "* beside an origin"))
+        for value, reason in rows:
+            with self.subTest(reason=reason):
+                extra = ("--cors-origin", "https://wallet.example") if value == "*" else ()
+                rc, seen, _, err = self._serve("--cors-origin", value, *extra)
+                self.assertEqual(rc, 2)
+                self.assertNotIn("kwargs", seen, "nothing may listen on an origin refused")
+                self.assertIn("--cors-origin", err)
+                self.assertIn("stands alone" if value == "*" else repr(value), err)
+
+    def test_the_origin_is_checked_before_the_pki_is_read(self):
+        """A refused origin stops it before a missing PKI does. Twin: an origin that is one, with
+        the same missing PKI, stops on the PKI."""
+        import contextlib
+        import io
+        absent = str(self.tmp / "absent")
+        for origin, says in (("ftp://wallet.example", "--cors-origin"),
+                             ("https://wallet.example", "is missing")):
+            with self.subTest(origin=origin):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    rc = main(["serve", "--pki", absent, "--cors-origin", origin])
+                self.assertEqual(rc, 2)
+                self.assertIn(says, err.getvalue())
+
+    def test_the_readme_the_help_and_the_startup_line_say_what_the_listener_sends(self):
+        """The mirror. The README's browser-wallet paragraph (its paths, each path's methods, the
+        request headers allowed and the response headers named), the paths --cors-origin's help
+        names, and the origins the startup line names, each held to what a listener started from
+        the same command sends. Its twins are the docs themselves: change a constant, or a doc,
+        and this goes red."""
+        import contextlib
+        import io
+        import re
+        from unittest import mock
+        from polaris_oid4vp.serve import serve
+        from test_serve import _cors, _exchange, _parse
+        readme = pathlib.Path(__file__).with_name("README.md").read_text()
+        paragraph = " ".join(re.search(r"^- Browser wallets: .*?(?=^- |^#)", readme,
+                                       re.M | re.S).group(0).split())
+        readme_methods = dict(re.findall(r"`(/[^`\s]+)` \(`([^`]+)`\)", paragraph))
+        readme_allowed = re.search(r"`([^`]+)` as the request headers allowed", paragraph).group(1)
+        readme_named = set(re.findall(r"`(Access-Control-[A-Za-z-]+|Vary)(?:: Origin)?`", paragraph))
+        with mock.patch.dict(os.environ, {"COLUMNS": "1000"}), \
+                contextlib.redirect_stdout(io.StringIO()) as shown, self.assertRaises(SystemExit):
+            main(["serve", "--help"])
+        help_text = re.search(r"^  --cors-origin ORIGIN(.*?)(?=\n  -)", shown.getvalue(),
+                              re.M | re.S).group(1)
+        help_paths = set(re.findall(r"(?<![\w/:])/[a-z][a-z.]*", help_text))
+        _, seen, printed, _ = self._serve("--cors-origin", "https://wallet.example",
+                                          "--cors-origin", "http://127.0.0.1:8080")
+        startup = [line for line in printed.splitlines() if line.startswith("  cors origins  ")]
+        self.assertEqual(len(startup), 1, "one startup line names the origins")
+        named = startup[0].split()[2:]
+        httpd = serve(seen["verifier"], host="127.0.0.1", port=0,
+                      cors_origins=seen["kwargs"]["cors_origins"])
+        try:
+            answered = {}
+            for path in ("/request.jwt", "/response", "/done", "/nope"):
+                status, headers, _ = _parse(_exchange(httpd, "OPTIONS", path, [
+                    ("Origin", named[0]), ("Access-Control-Request-Method", "POST")]))
+                if status == 204:
+                    answered[path] = dict(headers)
+            self.assertEqual({path: h["Access-Control-Allow-Methods"] for path, h in answered.items()},
+                             readme_methods, "the README's paths and their methods")
+            self.assertEqual({h["Access-Control-Allow-Headers"] for h in answered.values()},
+                             {readme_allowed}, "the README's request headers allowed")
+            self.assertEqual(help_paths, set(answered), "the paths --cors-origin's help names")
+            state = seen["verifier"].new_request()[0].state
+            _, headers, _ = _parse(_exchange(httpd, "GET", "/request.jwt?state=%s" % state,
+                                             [("Origin", named[0])]))
+            self.assertEqual({name for name, _ in _cors(headers)}, readme_named,
+                             "the README's response headers")
+            for origin in named:
+                status, headers, _ = _parse(_exchange(httpd, "OPTIONS", "/response", [
+                    ("Origin", origin), ("Access-Control-Request-Method", "POST")]))
+                self.assertIn(("Access-Control-Allow-Origin", origin), headers,
+                              "the startup line names %s" % origin)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_an_unreadable_trust_anchor_file_is_refused(self):
         bad = self.tmp / "not-a-cert.pem"
         bad.write_text("hello")
@@ -603,6 +711,42 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         self.assertNotIn("<- 200 authentic", line)
         self.assertNotIn("\x1b", line)
         self.assertEqual(line.count("\n"), 1, line)
+
+    def test_a_refusal_is_printed_as_one_and_never_as_authentic(self):
+        """A refusal's reason can quote what the wallet sent, here its credential's type: the
+        line says it is a refusal, does not read as an acceptance, and holds printable ASCII on
+        one line."""
+        import contextlib
+        import io
+        from test_verifier import Wallet
+        wallet = Wallet()
+        _, seen, _, _ = self._serve("--issuer-jwks", str(self._jwks_file([wallet.issuer_jwk])))
+        verifier, on_verdict = seen["verifier"], seen["kwargs"]["on_verdict"]
+        _, jar = verifier.new_request()
+        status, body, verdict = verifier.handle_direct_post(
+            wallet.respond(jar, vct="urn:x\n  <- 200 authentic, claims ['x'] \u00e9"))
+        self.assertEqual((status, verdict.code), (400, "vct"), verdict.reason)
+        self.assertIn("<- 200 authentic", verdict.reason)
+        self.assertIn("\u00e9", verdict.reason)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            on_verdict(status, body, verdict)
+        line = out.getvalue()
+        self.assertTrue(line.startswith("  <- 400 refused: vct: "), line)
+        self.assertNotIn("<- 200 authentic", line)
+        self.assertEqual(line.count("\n"), 1, line)
+        self.assertTrue(all(" " <= ch <= "~" for ch in line[:-1]), line)
+
+    def test_whatever_a_refusal_or_wallet_error_carries_its_line_holds_printable_ascii_and_no_answer(self):
+        from polaris_oid4vp.cli import _operator_line
+        from polaris_oid4vp.sdjwt import Verdict
+        text = "x\n  <- 200 authentic, claims ['x'] \x1b[0m \u00e9"
+        for verdict in (Verdict(False, "vct", text), Verdict(False, text, "reason"),
+                        Verdict(False, "wallet_error", text, wallet_error={"error": "x"})):
+            with self.subTest(code=verdict.code):
+                line = _operator_line(verdict)
+                self.assertNotIn("<", line)
+                self.assertTrue(all(" " <= ch <= "~" for ch in line), line)
 
 
 class ServeResultFileTests(unittest.TestCase):
@@ -1441,6 +1585,1385 @@ class VerdictCommandTests(unittest.TestCase):
         rc, result, _ = self._verdict("per_credential", "--transaction-data-scope", "per_credential",
                                       "--now", str(self.v["at"] + 365 * 86400))
         self.assertEqual((rc, result["verdicts"]["pid"]["code"]), (1, "kb_freshness"))
+
+
+# ---------------------------------------------------------------------------------------------
+# `serve --once --rearm` (a fresh request each time one ends) and `serve --control-token-file`
+# (POST /control/request). Each case runs the real command in a thread, on a listener on an
+# ephemeral port, and talks to it over HTTP, so what is asserted is what a wallet and a harness
+# are told and what the log and the result file say.
+
+CONTROL_TOKEN = "control-token-" + "0123456789abcdef" * 3
+
+
+def _until(test, condition, what, timeout=15.0):
+    """Wait, without time.sleep (the command's wait is patched), until `condition()` holds."""
+    import threading
+    import time
+    pause, deadline = threading.Event(), time.monotonic() + timeout
+    while not condition():
+        test.assertLess(time.monotonic(), deadline, "gave up waiting for " + what)
+        pause.wait(0.02)
+
+
+def _blocks(out):
+    """What `--once` prints for a request, once per request, as the lines it printed: from
+    `authorization request parameters:` to its last launch link."""
+    lines, blocks, i = out.splitlines(), [], 0
+    while i < len(lines):
+        if lines[i] != "authorization request parameters:":
+            i += 1
+            continue
+        end = i
+        while end < len(lines) and not lines[end].startswith("launch links"):
+            end += 1
+        end += 1
+        while end < len(lines) and "://?" in lines[end]:
+            end += 1
+        blocks.append("\n".join(lines[i:end]))
+        i = end
+    return blocks
+
+
+def _state_of(block):
+    import re
+    return re.search(r"request_uri +\S+\?state=([A-Za-z0-9_-]+)", block).group(1)
+
+
+def _launch_of(block):
+    return {line.strip().split("://?")[0]: line.strip() for line in block.splitlines()
+            if "://?" in line}
+
+
+class _HeldAt(io.StringIO):
+    """What the command prints, where the first write holding `text` first waits on `wait()`."""
+
+    def __init__(self, text, wait):
+        super().__init__()
+        self._text, self._wait = text, wait
+
+    def write(self, s):
+        if self._wait is not None and self._text in s:
+            wait, self._wait = self._wait, None
+            wait()
+        return super().write(s)
+
+
+class _Clock:
+    """The time a test runs on: `time.time()` stays where it is until `advance` moves it, and a
+    `threading.Timer` runs when `advance` passes its interval, in the caller's thread. A test can
+    hold the command up past a request's lifetime this way without waiting it out."""
+
+    def __init__(self, test):
+        import threading
+        import time
+        from unittest import mock
+        clock = self
+        self.now, self.timers = time.time(), []
+
+        class Timer:
+            def __init__(self, interval, function, args=None, kwargs=None):
+                self.interval, self.function = interval, function
+                self.args, self.kwargs = args or (), kwargs or {}
+                self.daemon, self.due = False, None
+
+            def start(self):
+                self.due = clock.now + self.interval
+                clock.timers.append(self)
+
+            def cancel(self):
+                if self in clock.timers:
+                    clock.timers.remove(self)
+
+        for patch in (mock.patch.object(time, "time", lambda: clock.now),
+                      mock.patch.object(threading, "Timer", Timer)):
+            patch.start()
+            test.addCleanup(patch.stop)
+
+    def advance(self, seconds):
+        self.now += seconds
+        for timer in [t for t in self.timers if t.due <= self.now]:
+            if timer in self.timers:
+                self.timers.remove(timer)
+                timer.function(*timer.args, **timer.kwargs)
+
+
+def _object_times(jar_text):
+    """The `iat` and `exp` of a request object as the request URI served it."""
+    import json
+    payload = jar_text.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    return claims["iat"], claims["exp"]
+
+
+class _Running:
+    """`polaris-oid4vp serve` run to the end of its wait in a thread: the real command, a real
+    listener on an ephemeral port (`--port 0`), plain HTTP. `ttl` shortens the request lifetime
+    the command's verifier is built with. `out` and `err` are what it printed."""
+
+    def __init__(self, test, *extra, ttl=None, listening=None, held_at=None):
+        import io
+        import threading
+        self.test, self.extra, self.ttl, self.listening = test, extra, ttl, listening
+        # held_at, (text, wait): stdout as a pipe nobody reads yet, its first write holding `text`
+        # waiting on `wait()` first, as the command does at the line it cannot print.
+        self.out, self.err = (_HeldAt(*held_at) if held_at else io.StringIO()), io.StringIO()
+        self.ready, self.stop = threading.Event(), threading.Event()
+        self.rc = self.httpd = self.verifier = self.kwargs = None
+
+    def __enter__(self):
+        import contextlib
+        import threading
+        from unittest import mock
+        from polaris_oid4vp import cli
+        real_serve, real_verifier_from = cli.serve, cli.verifier_from
+
+        def serve_(verifier, **kwargs):
+            from test_serve import _stop_now
+            self.kwargs = kwargs
+            self.httpd = httpd = real_serve(verifier, **kwargs)
+            # The command stops its listener with httpd.shutdown(), as it does outside a test; here
+            # that call does not wait out the serve loop's poll (test_serve._stop_now).
+            shutdown = httpd.shutdown
+            httpd.shutdown = lambda: _stop_now(httpd, shutdown)
+            # What reaches the listener the moment it accepts, before the command goes on.
+            if self.listening is not None:
+                self.listening(kwargs)
+            return httpd
+
+        def verifier_from_(*args, **kwargs):
+            self.verifier = real_verifier_from(*args, **kwargs)
+            if self.ttl is not None:
+                self.verifier.request_ttl_seconds = self.ttl
+            return self.verifier
+
+        def park(_seconds):
+            self.ready.set()
+            self.stop.wait()
+            raise KeyboardInterrupt
+
+        self.stack = contextlib.ExitStack()
+        for patch in (mock.patch.object(cli, "serve", serve_),
+                      mock.patch.object(cli, "verifier_from", verifier_from_),
+                      mock.patch.object(cli.time, "sleep", park),
+                      contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(self.err)):
+            self.stack.enter_context(patch)
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        self.ready.wait(30)
+        if self.rc is not None:
+            self.__exit__(None, None, None)
+            self.test.fail("it stopped at startup, rc %s: %s" % (self.rc, self.err.getvalue()))
+        return self
+
+    def _run(self):
+        try:
+            self.rc = main(["serve", "--pki", str(self.test.tmp), "--host", "verifier.test",
+                            "--bind", "127.0.0.1", "--port", "0", "--no-local-tls", *self.extra])
+        except SystemExit as exc:      # the parser refusing an option
+            self.rc = exc.code
+        except BaseException as exc:  # noqa: BLE001  said on stderr, not lost with the thread
+            self.rc = -1
+            self.err.write("%s: %s\n" % (type(exc).__name__, exc))
+        finally:
+            self.ready.set()
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        self.thread.join(15)
+        self.stack.close()
+        return False
+
+    @property
+    def base(self):
+        return "http://127.0.0.1:%d" % self.httpd.server_address[1]
+
+    def _call(self, request):
+        import urllib.error
+        import urllib.request
+        try:
+            with urllib.request.urlopen(request, timeout=20) as answer:
+                return answer.status, answer.read()
+        except urllib.error.HTTPError as err:
+            return err.code, err.read()
+
+    def jar(self, state):
+        """The request object for `state`: (status, text)."""
+        import urllib.request
+        status, body = self._call(urllib.request.Request("%s/request.jwt?state=%s" % (self.base, state)))
+        return status, body.decode("ascii", "replace")
+
+    def respond(self, form):
+        """One response at the response URI, as a wallet posts it: (status, body)."""
+        import urllib.parse
+        import urllib.request
+        data = urllib.parse.urlencode(form, doseq=True).encode()
+        return self._call(urllib.request.Request(self.base + "/response", data=data, method="POST"))
+
+    def control(self, body=None, token=CONTROL_TOKEN, raw=None, headers=()):
+        """POST /control/request: (status, the JSON answer, or None when the body is empty)."""
+        import json
+        import urllib.request
+        data = raw if raw is not None else (None if body is None else json.dumps(body).encode())
+        request = urllib.request.Request(self.base + "/control/request", data=data or b"",
+                                         method="POST")
+        if token is not None:
+            request.add_header("Authorization", "Bearer " + token)
+        for name, value in headers:
+            request.add_header(name, value)
+        status, answer = self._call(request)
+        return status, (json.loads(answer) if answer else None)
+
+    def blocks(self):
+        return _blocks(self.out.getvalue())
+
+
+class _RunningCase(unittest.TestCase):
+    """A directory with the keys, a wallet the verifier trusts the issuer of, and the files
+    the options name."""
+
+    def setUp(self):
+        import json
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-rearm-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        keygen(self.tmp, "verifier.test")
+        self.wallet = Wallet()
+        self.jwks = self.tmp / "issuers.json"
+        self.jwks.write_text(json.dumps([self.wallet.issuer_jwk]))
+        self.path = self.tmp / "result.json"
+        self.token_file = self.tmp / "control-token"
+        self.token_file.write_text(CONTROL_TOKEN + "\n")
+
+    def run_serve(self, *extra, **kw):
+        return _Running(self, "--issuer-jwks", str(self.jwks), *extra, **kw)
+
+    def read(self):
+        import json
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
+    def answer(self, run, state, **respond):
+        """A wallet's answer to the request `state`, posted: (status, body)."""
+        status, jar = run.jar(state)
+        self.assertEqual(status, 200, "no such outstanding request")
+        return run.respond(self.wallet.respond(jar, **respond))
+
+
+class ControlEndpointMdocTests(_RunningCase):
+    """`serve --format mso_mdoc ... --control-token-file FILE`: an mso_mdoc verifier asks for the
+    docType and elements it was built with, so a control body that names claims or credential types
+    is refused, 400 invalid_request, and makes no request; an empty body starts one."""
+
+    def test_claims_or_types_in_the_body_are_refused_and_an_empty_body_starts_a_request(self):
+        from cryptography.hazmat.primitives import serialization
+        root = self.tmp / "iaca.pem"
+        root.write_bytes(md.IACA.public_bytes(serialization.Encoding.PEM))
+        with _Running(self, "--format", "mso_mdoc", "--experimental", "--doctype", md.MDL,
+                      "--iaca-root", str(root), "--claim", MDL_AGE,
+                      "--control-token-file", str(self.token_file)) as run:
+            self.assertEqual(run.verifier.credential_format, "mso_mdoc")
+            before = run.verifier.outstanding()
+            for spec in ({"claims": ["family_name"]}, {"vct": ["urn:eudi:pid:1"]},
+                         {"claims": ["family_name"], "vct": ["urn:eudi:pid:1"]}):
+                with self.subTest(body=sorted(spec)):
+                    status, answer = run.control(spec)
+                    self.assertEqual(status, 400, answer)
+                    self.assertEqual(answer["error"], "invalid_request")
+                    self.assertIn("mso_mdoc", answer["error_description"])
+                    self.assertEqual(run.verifier.outstanding(), before)
+            status, answer = run.control({})
+            self.assertEqual(status, 201, answer)
+            self.assertEqual(run.verifier.outstanding(), before + 1)
+
+
+class RearmTests(_RunningCase):
+    """`serve --once --rearm`: when the request closes or expires, the next one starts with the same
+    specification and its parameters print exactly as --once prints them."""
+
+    def serve_rearm(self, *extra, **kw):
+        return self.run_serve("--once", "--rearm", "--result", str(self.path), *extra, **kw)
+
+    def test_an_accepted_answer_closes_the_request_and_the_next_one_is_printed_before_the_wallet_hears(self):
+        with self.serve_rearm() as run:
+            (first,) = run.blocks()
+            state1 = _state_of(first)
+            self.assertEqual(self.read()["request"], 1)
+            self.assertNotIn("previous", self.read())
+            status, _ = self.answer(run, state1)
+            self.assertEqual(status, 200)
+            blocks = run.blocks()
+            self.assertEqual(len(blocks), 2, "no successor by the time the wallet had its answer")
+            state2 = _state_of(blocks[1])
+            self.assertNotEqual(state1, state2)
+            # Exactly as --once prints it: the same lines, the new request's state in place of the old.
+            self.assertEqual(blocks[1].replace(state2, state1), blocks[0])
+            self.assertEqual(sorted(_launch_of(blocks[1])), ["eu-eaap", "haip-vp", "openid4vp"])
+            doc = self.read()
+            self.assertEqual((doc["request"], doc["state"], doc["outcome"], doc["responses"]),
+                             (2, state2, "nothing_received", 0))
+            self.assertEqual(doc["request_object"], {"served": 0, "refused": 0})
+            # The request that closed is no longer outstanding; the next is.
+            self.assertEqual(run.jar(state1)[0], 404)
+            self.assertEqual(run.jar(state2)[0], 200)
+            self.assertIn("  <- 200 authentic", run.out.getvalue())
+
+    def test_the_closed_requests_outcome_is_kept_beside_the_next_in_the_same_write(self):
+        with self.serve_rearm() as run:
+            state1 = _state_of(run.blocks()[0])
+            self.assertEqual(self.answer(run, state1)[0], 200)
+            doc = self.read()
+            previous = doc["previous"]
+            self.assertEqual((previous["request"], previous["state"], previous["outcome"]),
+                             (1, state1, "accepted"))
+            self.assertEqual(previous["response"], {"status_code": 200})
+            self.assertIn("given_name", previous["claims"])
+            self.assertEqual((previous["responses"], previous["request_object"]),
+                             (1, {"served": 1, "refused": 0}))
+            self.assertNotIn("previous", previous, "the history is one request deep")
+            # The answer of the third request replaces it with the second's.
+            state2 = doc["state"]
+            self.assertEqual(self.answer(run, state2, nonce="wrong")[0], 400)
+            doc = self.read()
+            self.assertEqual((doc["request"], doc["previous"]["request"], doc["previous"]["outcome"],
+                              doc["previous"]["check"]), (3, 2, "refused", "nonce"))
+
+    def test_a_refusal_closes_the_request_under_rearm_and_starts_the_next(self):
+        with self.serve_rearm() as run:
+            state1 = _state_of(run.blocks()[0])
+            status, _ = self.answer(run, state1, nonce="wrong")
+            self.assertEqual(status, 400)
+            blocks = run.blocks()
+            self.assertEqual(len(blocks), 2)
+            doc = self.read()
+            self.assertEqual((doc["request"], doc["state"]), (2, _state_of(blocks[1])))
+            self.assertNotEqual(doc["state"], state1)
+            self.assertEqual((doc["previous"]["outcome"], doc["previous"]["check"]), ("refused", "nonce"))
+            self.assertEqual(run.jar(state1)[0], 404)
+            self.assertIn("  <- 400 refused: nonce", run.out.getvalue())
+
+    def test_a_wallets_error_response_closes_the_request_under_rearm_too(self):
+        with self.serve_rearm() as run:
+            state1 = _state_of(run.blocks()[0])
+            status, jar = run.jar(state1)
+            self.assertEqual(run.respond(self.wallet.respond_error(jar))[0], 200)
+            self.assertEqual(len(run.blocks()), 2)
+            doc = self.read()
+            self.assertEqual((doc["request"], doc["previous"]["outcome"]), (2, "wallet_error"))
+
+    def test_without_rearm_a_refusal_and_a_wallet_error_leave_the_request_open_as_before(self):
+        with self.run_serve("--once", "--result", str(self.path)) as run:
+            state1 = _state_of(run.blocks()[0])
+            self.assertEqual(self.answer(run, state1, nonce="wrong")[0], 400)
+            status, jar = run.jar(state1)
+            self.assertEqual(status, 200, "a refusal closed the request without --rearm")
+            self.assertEqual(run.respond(self.wallet.respond_error(jar))[0], 200)
+            self.assertEqual(run.jar(state1)[0], 200)
+            self.assertEqual(len(run.blocks()), 1)
+            self.assertNotIn("request", self.read())
+            self.assertNotIn("previous", self.read())
+
+    def test_an_answer_about_no_request_closes_nothing(self):
+        with self.serve_rearm() as run:
+            state1 = _state_of(run.blocks()[0])
+            for form in ({"response": ["not.a.compact.jwe.token"]}, {}, {"error": ["access_denied"],
+                                                                         "state": ["nonsense"]}):
+                self.assertEqual(run.respond(form)[0], 400)
+            self.assertEqual(len(run.blocks()), 1)
+            self.assertEqual(run.jar(state1)[0], 200)
+            doc = self.read()
+            self.assertEqual((doc["request"], doc["state"], doc["responses"]), (1, state1, 0))
+
+    def test_a_request_that_expires_is_replaced_with_no_wallet_asking(self):
+        with self.serve_rearm(ttl=0.4) as run:
+            state1 = _state_of(run.blocks()[0])
+            _until(self, lambda: len(run.blocks()) >= 2, "the request that expired to be replaced")
+            blocks = run.blocks()
+            state2 = _state_of(blocks[1])
+            self.assertNotEqual(state1, state2)
+            self.assertEqual(blocks[1].replace(state2, state1), blocks[0])
+            # An idle server keeps starting one each time one expires.
+            _until(self, lambda: len(run.blocks()) >= 3, "the next to expire to be replaced")
+            doc = self.read()
+            self.assertGreaterEqual(doc["request"], 3)
+            self.assertEqual(doc["previous"]["request"], doc["request"] - 1)
+            self.assertEqual(doc["previous"]["outcome"], "nothing_received")
+            self.assertEqual(run.jar(state1)[0], 404)
+
+    def test_each_expiry_starts_one_successor_and_never_two_outstanding(self):
+        seen = []
+        with self.serve_rearm(ttl=0.3) as run:
+            def settled():
+                seen.append(run.verifier.outstanding())
+                return len(run.blocks()) >= 4
+            _until(self, settled, "four requests")
+        self.assertEqual(max(seen), 1, "two requests were outstanding at once")
+        states = [_state_of(b) for b in _blocks(run.out.getvalue())]
+        self.assertEqual(len(states), len(set(states)))
+
+    def test_a_late_answer_for_the_closed_request_touches_nothing_of_the_current_one(self):
+        with self.serve_rearm() as run:
+            state1 = _state_of(run.blocks()[0])
+            status, jar1 = run.jar(state1)
+            late = self.wallet.respond(jar1)
+            wrong = self.wallet.respond(jar1, nonce="wrong")
+            self.assertEqual(run.respond(late)[0], 200)
+            state2 = self.read()["state"]
+            before = self.path.read_text(encoding="utf-8")
+            for form in (late, wrong, self.wallet.respond_error(jar1)):
+                self.assertEqual(run.respond(form)[0], 400, form)
+            self.assertEqual(run.jar(state1)[0], 404)
+            self.assertEqual(self.path.read_text(encoding="utf-8"), before,
+                             "a late answer changed the current request's result")
+            doc = self.read()
+            self.assertEqual((doc["state"], doc["outcome"], doc["responses"]), (state2, "nothing_received", 0))
+            self.assertEqual(doc["previous"]["responses"], 1)
+            self.assertEqual(len(run.blocks()), 2, "a late answer started another request")
+            # The current request is still answerable.
+            self.assertEqual(self.answer(run, state2)[0], 200)
+            self.assertEqual(self.read()["request"], 3)
+
+    def test_a_fetch_of_the_current_request_refused_for_its_wallet_nonce_is_counted_for_it(self):
+        # request_uri_method=post: a wallet_nonce out of bounds is answered 400 before the
+        # request object is made, which is a refused fetch of the request the URI names.
+        import urllib.request
+        with self.serve_rearm() as run:
+            state = _state_of(run.blocks()[0])
+            fetch = urllib.request.Request("%s/request.jwt?state=%s" % (run.base, state),
+                                           data=b"wallet_nonce=" + b"n" * 1025, method="POST")
+            self.assertEqual(run._call(fetch)[0], 400)
+            self.assertEqual(self.read()["request_object"], {"served": 0, "refused": 1})
+            self.assertEqual(run.jar(state)[0], 200)
+            self.assertEqual(self.read()["request_object"], {"served": 1, "refused": 1})
+
+    def test_only_the_current_requests_fetches_are_counted_for_it(self):
+        with self.serve_rearm() as run:
+            state1 = _state_of(run.blocks()[0])
+            self.assertEqual(run.jar(state1)[0], 200)
+            self.assertEqual(self.read()["request_object"], {"served": 1, "refused": 0})
+            self.assertEqual(self.answer(run, state1)[0], 200)
+            state2 = self.read()["state"]
+            self.assertEqual(run.jar(state1)[0], 404)
+            self.assertEqual(self.read()["request_object"], {"served": 0, "refused": 0})
+            self.assertEqual(run.jar(state2)[0], 200)
+            self.assertEqual(self.read()["request_object"], {"served": 1, "refused": 0})
+
+    def test_the_specification_is_the_same_each_time(self):
+        import json
+        info = {"type": "urn:eudi:sca:payment:1", "credential_ids": ["pay"],
+                "payload": {"transaction_id": "polaris-test-0001",
+                            "payee": {"name": "Example Shop", "id": "DE00EXAMPLE0001"},
+                            "currency": "EUR", "amount": 49.99}}
+        data = self.tmp / "transaction-data.json"
+        data.write_text(json.dumps([info]))
+        with self.serve_rearm("--claim", "family_name", "--vct", "urn:example:own:1",
+                              "--credential-query-id", "pay", "--transaction-data", str(data)) as run:
+            state1 = _state_of(run.blocks()[0])
+            status, jar1 = run.jar(state1)
+            self.assertEqual(status, 200)
+            # Closed by a refusal; the answer's own merits do not matter here.
+            self.assertEqual(run.respond(self.wallet.respond(jar1, nonce="wrong"))[0], 400)
+            state2 = _state_of(run.blocks()[1])
+            status, jar2 = run.jar(state2)
+            self.assertEqual(status, 200)
+            first, second = Wallet.read_request(jar1)[1], Wallet.read_request(jar2)[1]
+            query = second["dcql_query"]["credentials"][0]
+            self.assertEqual((query["id"], query["claims"], query["meta"]["vct_values"]),
+                             ("pay", [{"path": ["family_name"]}], ["urn:example:own:1"]))
+            self.assertEqual(second["dcql_query"], first["dcql_query"])
+            self.assertEqual(len(second["transaction_data"]), 1)
+            self.assertEqual(second["transaction_data"], first["transaction_data"])
+            self.assertEqual(run.out.getvalue().count("the request object carries 1 transaction_data"), 2)
+
+    def test_the_race_between_a_closing_answer_and_the_expiry_starts_one_successor(self):
+        """Real threads, released together at the one request: eight take the closing answer's path
+        and eight the timer's. Whichever is first starts the next; the rest find the request they
+        were about already closed."""
+        import threading
+        from polaris_oid4vp import cli
+        verifier = verifier_from(self.tmp, "verifier.test", 0)
+        announced = []
+        requests = cli._Requests(verifier, None, None, rearm=True, announce=announced.append)
+        try:
+            requests.start()
+            for round_ in range(25):
+                state = requests.current_state()
+                gate = threading.Barrier(16)
+                errors = []
+
+                def close():
+                    try:
+                        gate.wait(10)
+                        requests.close(state)
+                    except BaseException as exc:  # noqa: BLE001
+                        errors.append(exc)
+
+                def expire():
+                    try:
+                        gate.wait(10)
+                        requests.expired(state)
+                    except BaseException as exc:  # noqa: BLE001
+                        errors.append(exc)
+
+                threads = [threading.Thread(target=close if n % 2 else expire) for n in range(16)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(30)
+                self.assertEqual(errors, [])
+                self.assertEqual(len(announced), round_ + 1, "round %d: not one successor" % round_)
+                self.assertEqual(verifier.outstanding(), 1)
+                self.assertNotEqual(requests.current_state(), state)
+        finally:
+            requests.stop()
+
+    def test_a_timer_for_a_request_that_closed_starts_nothing(self):
+        from polaris_oid4vp import cli
+        verifier = verifier_from(self.tmp, "verifier.test", 0)
+        announced = []
+        requests = cli._Requests(verifier, None, None, rearm=True, announce=announced.append)
+        try:
+            first = requests.start()
+            requests.close(first.session.state)
+            self.assertEqual(len(announced), 1)
+            requests.expired(first.session.state)
+            requests.close(first.session.state)
+            self.assertEqual(len(announced), 1)
+            self.assertEqual(verifier.outstanding(), 1)
+        finally:
+            requests.stop()
+
+    def test_stopping_the_command_stops_the_timer(self):
+        import threading
+        before = threading.active_count()
+        with self.serve_rearm(ttl=60) as run:
+            self.assertEqual(len(run.blocks()), 1)
+        self.assertEqual(run.rc, 0)
+        _until(self, lambda: threading.active_count() <= before, "the timer thread to end")
+
+
+class RearmRefusalTests(_RunningCase):
+
+    _serve = ServeCommandHeldOutTests._serve
+
+    def refused(self, *extra, says):
+        rc, seen, _, err = self._serve("--issuer-jwks", str(self.jwks), *extra)
+        self.assertEqual(rc, 2, err)
+        self.assertNotIn("kwargs", seen, "it listened")
+        for text in says:
+            self.assertIn(text, err)
+        return err
+
+    def test_rearm_without_once_is_refused(self):
+        self.refused("--rearm", says=["--rearm", "--once"])
+        self.refused("--rearm", "--result", str(self.path), says=["--rearm", "--once"])
+
+    def test_rearm_beside_a_control_token_file_is_refused(self):
+        err = self.refused("--once", "--rearm", "--control-token-file", str(self.token_file),
+                           says=["--rearm", "--control-token-file"])
+        self.assertNotIn(CONTROL_TOKEN, err)
+
+    def test_rearm_with_once_starts(self):
+        rc, seen, out, _ = self._serve("--issuer-jwks", str(self.jwks), "--once", "--rearm")
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(_blocks(out)), 1)
+        self.assertEqual(len(seen["verifier"]._sessions), 1)
+
+    def test_the_help_says_what_rearm_and_the_control_file_do_and_that_they_do_not_combine(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            main(["serve", "--help"])
+        # argparse wraps at a hyphen, so an option name can break across two lines.
+        text = " ".join(out.getvalue().split()).replace("- ", "-")
+        for phrase in ("--rearm", "--control-token-file",
+                       "an idle server starts and prints a new request each time one expires",
+                       "with neither --rearm nor --control-token-file a refusal leaves the request open",
+                       "ends at an answer",
+                       "refused with --control-token-file", "refused with --rearm",
+                       "POST /control/request", "at most 64"):
+            self.assertIn(phrase, text)
+
+
+class ControlEndpointCommandTests(_RunningCase):
+    """`serve --control-token-file FILE`: POST /control/request starts a request and answers with
+    its launch parameters."""
+
+    def serve_control(self, *extra, **kw):
+        return self.run_serve("--control-token-file", str(self.token_file), *extra, **kw)
+
+    def test_a_request_is_started_and_answered_with_what_once_prints(self):
+        with self.run_serve("--once", "--control-token-file", str(self.token_file)) as run:
+            (printed,) = run.blocks()
+            state1 = _state_of(printed)
+            status, answer = run.control({})
+            self.assertEqual(status, 201)
+            self.assertEqual(sorted(answer), ["client_id", "launch", "request", "request_uri", "state"])
+            self.assertEqual(answer["request"], 2, "the --once request is request 1")
+            state2 = answer["state"]
+            self.assertNotEqual(state1, state2)
+            # The same values, from the same function: what --once prints for request 1, with request
+            # 2's state in place of request 1's, is what the answer carries.
+            expected = {scheme: link.replace(state1, state2) for scheme, link in _launch_of(printed).items()}
+            self.assertEqual(answer["launch"], expected)
+            # And each link is what a wallet is launched with: the three parameters of that request.
+            import urllib.parse
+            for scheme, link in answer["launch"].items():
+                self.assertEqual(urllib.parse.parse_qs(link.split("://?", 1)[1], strict_parsing=True),
+                                 {"client_id": [answer["client_id"]],
+                                  "request_uri": [answer["request_uri"]],
+                                  "request_uri_method": ["post"]}, scheme)
+            self.assertEqual(answer["client_id"], run.verifier.client_id)
+            self.assertEqual(answer["request_uri"], "%s?state=%s" % (run.verifier.request_uri, state2))
+            for line in printed.splitlines():
+                parts = line.split()
+                if parts and parts[0] in ("client_id", "request_uri"):
+                    self.assertEqual(parts[1].replace(state1, state2), answer[parts[0]])
+            # Nothing of it is printed for the harness's request: the answer is where it goes.
+            self.assertEqual(len(run.blocks()), 1)
+            self.assertEqual(run.jar(state2)[0], 200)
+
+    def test_with_no_body_the_request_has_this_commands_own_specification(self):
+        with self.serve_control("--claim", "family_name", "--claim", "age_equal_or_over.18=true",
+                                "--vct", "urn:example:own:1") as run:
+            for body, kwargs in ((None, {}), ({}, {}), (None, {"raw": b"   "})):
+                status, answer = run.control(body, **kwargs)
+                self.assertEqual(status, 201)
+                _, claims = Wallet.read_request(run.jar(answer["state"])[1])
+                query = claims["dcql_query"]["credentials"][0]
+                self.assertEqual(query["claims"], [{"path": ["family_name"]},
+                                                   {"path": ["age_equal_or_over", "18"],
+                                                    "values": [True]}])
+                self.assertEqual(query["meta"]["vct_values"], ["urn:example:own:1"])
+
+    def test_claims_and_types_in_the_body_reach_the_request_object(self):
+        with self.serve_control("--claim", "family_name") as run:
+            status, answer = run.control({"claims": ["birthdate", "age_equal_or_over.21=true",
+                                                     '["address","locality"]'],
+                                          "vct": ["urn:example:other:1", "urn:example:other:2"]})
+            self.assertEqual(status, 201, answer)
+            _, claims = Wallet.read_request(run.jar(answer["state"])[1])
+            query = claims["dcql_query"]["credentials"][0]
+            self.assertEqual(query["claims"], [{"path": ["birthdate"]},
+                                               {"path": ["age_equal_or_over", "21"], "values": [True]},
+                                               {"path": ["address", "locality"]}])
+            self.assertEqual(query["meta"]["vct_values"], ["urn:example:other:1", "urn:example:other:2"])
+            # Only that request: the next one with no body is the command's own again.
+            _, plain = Wallet.read_request(run.jar(run.control({})[1]["state"])[1])
+            self.assertEqual(plain["dcql_query"]["credentials"][0]["claims"], [{"path": ["family_name"]}])
+            self.assertEqual(plain["dcql_query"]["credentials"][0]["meta"]["vct_values"],
+                             ["urn:eudi:pid:1"])
+
+    def test_each_claim_is_validated_by_the_function_that_validates_dash_dash_claim(self):
+        bad = ["[unclosed", '["a",1]', "a..b", "a.", '[]', "=5", '["a"]x']
+        for text in bad:
+            with self.assertRaises(ValueError, msg=text):
+                parse_claim(text)
+        with self.serve_control() as run:
+            for text in bad:
+                with self.subTest(claim=text):
+                    try:
+                        parse_claim(text)
+                    except ValueError as exc:
+                        reason = str(exc)
+                    status, answer = run.control({"claims": ["given_name", text]})
+                    self.assertEqual(status, 400, answer)
+                    self.assertEqual(answer["error"], "invalid_request")
+                    self.assertIn(reason, answer["error_description"])
+            self.assertEqual(run.verifier.outstanding(), 0, "a refused request was started")
+
+    def test_a_body_that_is_not_what_a_request_is_made_of_is_400_and_starts_nothing(self):
+        with self.serve_control() as run:
+            cases = [({"flavour": 1}, "flavour"), ({"claims": ["a"], "colour": 1}, "colour"),
+                     ({"claims": "given_name"}, "claims"), ({"claims": []}, "claims"),
+                     ({"claims": {"path": ["given_name"]}}, "claims"),
+                     ({"claims": [7]}, "claims"), ({"claims": [["given_name"]]}, "claims"),
+                     ({"claims": [{"path": ["a"]}]}, "claims"), ({"claims": [None]}, "claims"),
+                     ({"vct": "urn:example:x"}, "vct"), ({"vct": []}, "vct"),
+                     ({"vct": [1]}, "vct"), ({"vct": [None]}, "vct")]
+            for body, names in cases:
+                with self.subTest(body=body):
+                    status, answer = run.control(body)
+                    self.assertEqual(status, 400, answer)
+                    self.assertIn(names, answer["error_description"])
+            self.assertEqual(run.control(raw=b"[]")[0], 400)
+            self.assertEqual(run.verifier.outstanding(), 0)
+
+    def test_a_request_is_judged_by_its_own_claims_for_its_whole_life(self):
+        with self.serve_control() as run:
+            narrow = [run.control({"claims": ["given_name"]})[1] for _ in range(2)]
+            plain = [run.control({})[1] for _ in range(2)]
+            # Satisfies the command's own two names; the narrow request selected one: refused.
+            status, _ = self.answer(run, narrow[0]["state"])
+            self.assertEqual(status, 400)
+            self.assertIn("  <- 400 refused: claims: ", run.out.getvalue())
+            self.assertIn("family_name", run.out.getvalue())
+            # Satisfies the narrow request and not the command's own: accepted by the one, refused by the other.
+            status, _ = self.answer(run, narrow[1]["state"], withhold=("family_name",))
+            self.assertEqual(status, 200)
+            self.assertEqual(self.answer(run, plain[0]["state"], withhold=("family_name",))[0], 400)
+            self.assertEqual(self.answer(run, plain[1]["state"])[0], 200)
+
+    def test_a_request_asking_beyond_the_registration_certificate_is_refused_as_startup_would(self):
+        import json
+        info = dict(verifier_info_vectors())["accept-control.json"]["verifier_info"]
+        path = self.tmp / "verifier-info.json"
+        path.write_text(json.dumps(info))
+        with self.serve_control("--verifier-info-profile", "etsi-119472-2",
+                                "--verifier-info", str(path)) as run:
+            self.assertIn("the request asks for no more than its registration certificate registers",
+                          run.out.getvalue())
+            status, answer = run.control({"claims": ["given_name", "birthdate"]})
+            self.assertEqual(status, 400, answer)
+            self.assertIn("the over-asking check refuses this request", answer["error_description"])
+            self.assertIn("birthdate", answer["error_description"])
+            self.assertEqual(run.verifier.outstanding(), 0)
+            self.assertEqual(run.control({"claims": ["given_name"]})[0], 201)
+
+    def test_the_65th_outstanding_request_is_429_until_one_ends(self):
+        with self.serve_control() as run:
+            states = []
+            for n in range(64):
+                status, answer = run.control({})
+                self.assertEqual(status, 201, "request %d: %s" % (n + 1, answer))
+                states.append(answer["state"])
+            status, answer = run.control({})
+            self.assertEqual(status, 429, answer)
+            self.assertEqual(answer["error"], "too_many_requests")
+            self.assertEqual(run.verifier.outstanding(), 64)
+            # One expires: a new one is made. One closes: so is another.
+            run.verifier._sessions[states[0]].created -= run.verifier.request_ttl_seconds + 1
+            self.assertEqual(run.control({})[0], 201)
+            self.assertEqual(run.control({})[0], 429)
+            self.assertEqual(self.answer(run, states[1])[0], 200)
+            self.assertEqual(run.control({})[0], 201)
+            self.assertEqual(run.control({})[0], 429)
+
+    def test_the_request_made_at_startup_counts_toward_the_64(self):
+        with self.run_serve("--once", "--control-token-file", str(self.token_file)) as run:
+            statuses = [run.control({})[0] for _ in range(64)]
+            self.assertEqual(statuses, [201] * 63 + [429])
+
+    def test_control_requests_made_while_the_command_starts_count_the_once_request(self):
+        # 2026-11-18: the listener accepts from the moment serve() returns, and the request
+        # --once starts is made later, where it is announced. So 64 control requests in that
+        # moment and then the command's own were 65 outstanding. A place is held for it now.
+        statuses = []
+
+        def at_listening(kwargs):
+            statuses.extend(kwargs["on_control"]({})[0] for _ in range(64))
+
+        with self.run_serve("--once", "--control-token-file", str(self.token_file),
+                            listening=at_listening) as run:
+            self.assertEqual(statuses, [201] * 63 + [429])
+            self.assertEqual(run.verifier.outstanding(), 64)
+
+    def test_sixty_five_at_once_make_exactly_sixty_four(self):
+        import threading
+        with self.serve_control() as run:
+            # Making a request takes a moment here, as it does with a slow key store, so a count
+            # taken apart from the making would let every caller through before any had been made.
+            make = run.verifier.new_request
+
+            def slow(*args, **kwargs):
+                threading.Event().wait(0.01)
+                return make(*args, **kwargs)
+
+            run.verifier.new_request = slow
+            gate, statuses = threading.Barrier(65), []
+
+            # Each caller goes straight to the function the listener hands a control request to,
+            # the one that counts and makes under one lock: 65 connections opened in the same
+            # instant would wait on the listener's accept queue, not on that lock.
+            control = run.kwargs["on_control"]
+
+            def post():
+                gate.wait(30)
+                statuses.append(control({})[0])
+
+            threads = [threading.Thread(target=post) for _ in range(65)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(60)
+            self.assertEqual(sorted(statuses), [201] * 64 + [429])
+            self.assertEqual(run.verifier.outstanding(), 64)
+
+    def test_it_needs_no_once_and_the_option_off_starts_no_endpoint(self):
+        with self.serve_control() as run:
+            self.assertEqual(run.verifier.outstanding(), 0)
+            self.assertEqual(run.control({})[1]["request"], 1)
+            self.assertEqual(run.control({})[1]["request"], 2)
+        with self.run_serve() as run:
+            self.assertIsNone(run.kwargs["control_token"])
+            self.assertIsNone(run.kwargs["on_control"])
+            status, answer = run.control({})
+            self.assertEqual((status, answer), (404, {"error": "not_found"}))
+
+    def test_a_wrong_token_starts_nothing_and_the_token_is_never_printed(self):
+        with self.serve_control("--verbose") as run:
+            for token in (None, "x" * len(CONTROL_TOKEN), CONTROL_TOKEN[:-1] + "x"):
+                self.assertEqual(run.control({"claims": ["do-not-log-this-claim"]}, token=token)[0], 401)
+            self.assertEqual(run.control({"claims": ["do-not-log-this-claim"]})[0], 201)
+            self.assertEqual(run.verifier.outstanding(), 1)
+        for text in (run.out.getvalue(), run.err.getvalue()):
+            self.assertNotIn(CONTROL_TOKEN, text)
+            self.assertNotIn("do-not-log-this-claim", text)
+            self.assertNotIn("Bearer", text)
+
+    def test_no_cors_header_on_the_control_path_under_cors_origin_star(self):
+        import urllib.error
+        import urllib.request
+        with self.serve_control("--cors-origin", "*") as run:
+            request = urllib.request.Request(run.base + "/control/request", data=b"{}", method="POST")
+            request.add_header("Authorization", "Bearer " + CONTROL_TOKEN)
+            request.add_header("Origin", "https://wallet.example")
+            with urllib.request.urlopen(request, timeout=20) as answer:
+                self.assertEqual(answer.status, 201)
+                names = [name.lower() for name, _ in answer.headers.items()]
+            self.assertEqual([n for n in names if n.startswith("access-control-") or n == "vary"], [])
+            # The twin: the request URI of the same listener carries them.
+            request = urllib.request.Request(run.base + "/request.jwt?state=x")
+            request.add_header("Origin", "https://wallet.example")
+            try:
+                urllib.request.urlopen(request, timeout=20)
+            except urllib.error.HTTPError as err:
+                self.assertEqual(err.headers.get("Access-Control-Allow-Origin"), "*")
+
+
+class ControlAnswerEndsTheRequestTests(_RunningCase):
+    """A request the control endpoint started ends at an answer at the response URI, accepted,
+    refused or a wallet's error response: the rule `--rearm` has for the current request. A refusal
+    then frees its place among the 64, and a second presentation to it is refused as one to a request
+    that has closed. The plain single request keeps its rule: a refusal leaves it open."""
+
+    def serve_control(self, *extra, **kw):
+        return self.run_serve("--control-token-file", str(self.token_file), *extra, **kw)
+
+    def test_seventy_refused_requests_in_one_lifetime_never_see_429(self):
+        with self.serve_control() as run:
+            for n in range(70):
+                status, answer = run.control({})
+                self.assertEqual(status, 201, "request %d: %s" % (n + 1, answer))
+                self.assertEqual(self.answer(run, answer["state"], nonce="wrong")[0], 400)
+            self.assertEqual(run.verifier.outstanding(), 0)
+
+    def test_a_second_presentation_is_refused_as_closed_whatever_the_first_answer_was(self):
+        with self.serve_control() as run:
+            for first in ("accepted", "refused", "wallet error"):
+                with self.subTest(first=first):
+                    state = run.control({})[1]["state"]
+                    status, jar = run.jar(state)
+                    self.assertEqual(status, 200)
+                    forms = {"accepted": self.wallet.respond(jar),
+                             "refused": self.wallet.respond(jar, nonce="wrong"),
+                             "wallet error": self.wallet.respond_error(jar)}
+                    again = self.wallet.respond(jar)
+                    self.assertEqual(run.respond(forms[first])[0], 200 if first != "refused" else 400)
+                    before = run.out.getvalue()
+                    self.assertEqual(run.respond(again)[0], 400)
+                    self.assertEqual(run.jar(state)[0], 404)
+                    # The refusal --rearm gives for the answer to a request that has closed.
+                    line = run.out.getvalue()[len(before):]
+                    self.assertTrue(line.startswith("  <- 400 refused: invalid_request: "), line)
+                    self.assertIn("answers a request that has expired", line)
+
+    def test_an_answer_about_no_request_ends_no_control_request(self):
+        with self.serve_control() as run:
+            state = run.control({})[1]["state"]
+            for form in ({"response": ["not.a.compact.jwe.token"]}, {},
+                         {"error": ["access_denied"], "state": ["nonsense"]}):
+                self.assertEqual(run.respond(form)[0], 400)
+            self.assertEqual(run.jar(state)[0], 200)
+            self.assertEqual(run.verifier.outstanding(), 1)
+
+    def test_an_answer_ends_the_request_it_was_about_and_not_the_newest(self):
+        with self.serve_control() as run:
+            first, second = (run.control({})[1]["state"] for _ in range(2))
+            self.assertEqual(self.answer(run, first, nonce="wrong")[0], 400)
+            self.assertEqual((run.jar(first)[0], run.jar(second)[0]), (404, 200))
+
+    def test_the_plain_request_keeps_its_rule_a_refusal_leaves_it_open(self):
+        for control in (False, True):
+            with self.subTest(control=control):
+                args = ["--once"] + (["--control-token-file", str(self.token_file)] if control else [])
+                with self.run_serve(*args) as run:
+                    state = _state_of(run.blocks()[0])
+                    self.assertEqual(self.answer(run, state, nonce="wrong")[0], 400)
+                    self.assertEqual(self.answer(run, state, nonce="wrong")[0], 400)
+                    status, jar = run.jar(state)
+                    self.assertEqual(status, 200, "a refusal ended the request --once started")
+                    self.assertEqual(run.respond(self.wallet.respond(jar))[0], 200)
+                    self.assertEqual(run.verifier.outstanding(), 0)
+
+    def test_what_is_kept_of_the_requests_it_started_holds_only_the_outstanding(self):
+        with self.serve_control() as run:
+            for state in [run.control({})[1]["state"] for _ in range(3)]:
+                run.verifier._sessions[state].created -= run.verifier.request_ttl_seconds + 1
+            run.control({})
+            started = run.kwargs["on_control"].__self__
+            self.assertEqual(len(started._ends_on_answer), 1)
+
+    def test_the_bound_still_holds_for_requests_nobody_has_answered(self):
+        with self.serve_control() as run:
+            statuses = [run.control({})[0] for _ in range(65)]
+            self.assertEqual(statuses, [201] * 64 + [429])
+
+
+class AnAnswerLineNamesItsRequestTests(_RunningCase):
+    """With `--rearm` or `--control-token-file` more than one request can be open, so each line
+    `serve` prints for an answer at the response URI ends with the request it was about; the
+    newest is not assumed."""
+
+    def lines(self, run):
+        return [x for x in run.out.getvalue().splitlines() if x.startswith("  <- ")]
+
+    def test_with_two_open_the_line_names_the_request_answered_and_not_the_newest(self):
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            a = run.control({"claims": ["given_name"]})[1]
+            b = run.control({"claims": ["family_name"]})[1]
+            self.assertNotEqual(a["state"], b["state"])
+            status, _ = self.answer(run, a["state"], withhold=("family_name",))
+            self.assertEqual(status, 200)
+            (line,) = self.lines(run)
+            self.assertTrue(line.startswith("  <- 200 authentic, claims "), line)
+            self.assertTrue(line.endswith(" (request %s)" % a["state"]), line)
+            self.assertNotIn(b["state"], line)
+
+    def test_a_refusal_names_its_request_and_an_answer_about_none_says_so(self):
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            a = run.control({})[1]
+            run.control({})
+            self.assertEqual(self.answer(run, a["state"], nonce="wrong")[0], 400)
+            self.assertEqual(run.respond({"response": "not-a-response"})[0], 400)
+            first, second = self.lines(run)
+            self.assertTrue(first.startswith("  <- 400 refused: nonce: "), first)
+            self.assertTrue(first.endswith(" (request %s)" % a["state"]), first)
+            self.assertTrue(second.startswith("  <- 400 refused: "), second)
+            self.assertTrue(second.endswith(" (request not known)"), second)
+
+    def test_with_two_open_the_stderr_refusal_names_the_request_refused_and_not_the_newest(self):
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            a = run.control({})[1]
+            b = run.control({})[1]
+            self.assertEqual(self.answer(run, a["state"], nonce="wrong")[0], 400)
+            (line,) = [x for x in run.err.getvalue().splitlines() if x.startswith("polaris-oid4vp: refused: ")]
+            self.assertTrue(line.startswith("polaris-oid4vp: refused: nonce: "), line)
+            self.assertTrue(line.endswith(" (request %s)" % a["state"]), line)
+            self.assertNotIn(b["state"], line)
+
+    def test_with_two_open_the_stderr_wallet_error_names_the_request_it_answered(self):
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            a = run.control({})[1]
+            b = run.control({})[1]
+            status, jar = run.jar(a["state"])
+            self.assertEqual(status, 200)
+            self.assertEqual(run.respond(self.wallet.respond_error(jar))[0], 200)
+            (line,) = [x for x in run.err.getvalue().splitlines() if x.startswith("polaris-oid4vp: wallet error: ")]
+            self.assertTrue(line.endswith(" (request %s)" % a["state"]), line)
+            self.assertNotIn(b["state"], line)
+
+    def test_with_one_request_the_stderr_refusal_names_none(self):
+        with self.run_serve("--once") as run:
+            state = _state_of(run.blocks()[0])
+            self.assertEqual(self.answer(run, state, nonce="wrong")[0], 400)
+            (line,) = [x for x in run.err.getvalue().splitlines() if x.startswith("polaris-oid4vp: refused: ")]
+            self.assertTrue(line.startswith("polaris-oid4vp: refused: nonce: "), line)
+            self.assertNotIn(" (request", line)
+
+    def test_under_rearm_a_line_names_the_request_it_answered(self):
+        with self.run_serve("--once", "--rearm", "--result", str(self.path)) as run:
+            state1 = _state_of(run.blocks()[0])
+            self.assertEqual(self.answer(run, state1)[0], 200)
+            (line,) = self.lines(run)
+            self.assertTrue(line.endswith(" (request %s)" % state1), line)
+
+
+class TheOnceRequestIsMadeWhereItIsAnnounced(_RunningCase):
+    """2026-11-18: the control path holds a place among the 64 for the request --once starts
+    from before the listener accepts anything. The request itself is made where it is announced,
+    so its lifetime, its signed request object, its --result entry and its --rearm timer start
+    there, however long the command takes to get there."""
+
+    def refused_at_listen(self, *extra, made=None):
+        import contextlib
+        import io
+        import json
+        import socket
+        from unittest import mock
+        from polaris_oid4vp import cli
+        real = cli._Requests
+
+        def recording(*args, **kwargs):
+            requests = real(*args, **kwargs)
+            if made is not None:
+                made.append(requests)
+            return requests
+
+        taken = socket.socket()
+        self.addCleanup(taken.close)
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        out = io.StringIO()
+        with mock.patch.object(cli.time, "sleep", side_effect=AssertionError("it listened")), \
+                mock.patch.object(cli, "_Requests", recording), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(OSError):
+                main(["serve", "--pki", str(self.tmp), "--host", "verifier.test",
+                      "--bind", "127.0.0.1", "--port", str(taken.getsockname()[1]),
+                      "--no-local-tls", "--issuer-jwks", str(self.jwks), "--once",
+                      "--result", str(self.path), *extra])
+        return json.loads(self.path.read_text(encoding="utf-8")), out.getvalue()
+
+    def test_a_port_that_is_taken_leaves_the_result_file_naming_no_request(self):
+        doc, out = self.refused_at_listen()
+        self.assertIsNone(doc["state"])
+        self.assertEqual(doc["outcome"], "nothing_received")
+        self.assertNotIn("://?", out)
+
+    def test_so_it_does_with_the_control_endpoint(self):
+        doc, out = self.refused_at_listen("--control-token-file", str(self.token_file))
+        self.assertIsNone(doc["state"])
+        self.assertEqual(doc["request"], 0)
+        self.assertNotIn("://?", out)
+
+    def test_a_port_that_is_taken_gives_back_the_place_held_for_the_request(self):
+        made = []
+        self.refused_at_listen("--control-token-file", str(self.token_file), made=made)
+        (requests,) = made
+        self.assertEqual(requests.verifier.outstanding(), 0)
+        # All 64 places are open again: none is held for a request that will not be made.
+        self.assertEqual([requests.control({})[0] for _ in range(65)], [201] * 64 + [429])
+
+    def test_a_port_that_is_taken_under_rearm_leaves_nothing_running(self):
+        import contextlib
+        import io
+        import json
+        import socket
+        import threading
+        from unittest import mock
+        from polaris_oid4vp import cli
+        real = cli.verifier_from
+
+        def short(*a, **k):
+            v = real(*a, **k)
+            v.request_ttl_seconds = 0.2
+            return v
+
+        taken = socket.socket()
+        self.addCleanup(taken.close)
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        out = io.StringIO()
+        with mock.patch.object(cli, "verifier_from", short), \
+                mock.patch.object(cli.time, "sleep", side_effect=AssertionError("it listened")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(OSError):
+                main(["serve", "--pki", str(self.tmp), "--host", "verifier.test",
+                      "--bind", "127.0.0.1", "--port", str(taken.getsockname()[1]),
+                      "--no-local-tls", "--issuer-jwks", str(self.jwks), "--once", "--rearm",
+                      "--result", str(self.path)])
+            threading.Event().wait(0.8)
+        doc = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertIsNone(doc["state"], doc)
+        self.assertNotIn("://?", out.getvalue())
+
+    def test_the_place_is_given_back_in_the_step_that_makes_the_request(self):
+        # Given back first and made after, a control request between the two takes the 64th
+        # place and the request then makes 65. Threads switch every microsecond here, so that gap
+        # is reached in a few rounds of the 600: each fills the endpoint, holds the place, and
+        # makes the request while eight threads ask for one until it is made.
+        import sys
+        import threading
+        from unittest import mock
+        from polaris_oid4vp import cli
+        made, real = [], cli._Requests
+
+        def recording(*args, **kwargs):
+            made.append(real(*args, **kwargs))
+            return made[-1]
+
+        with mock.patch.object(cli, "_Requests", recording), \
+                self.run_serve("--once", "--control-token-file", str(self.token_file)) as run:
+            (requests,) = made
+            self.assertEqual([requests.control({})[0] for _ in range(62)], [201] * 62)
+            counts, interval = [], sys.getswitchinterval()
+            sys.setswitchinterval(1e-6)
+            try:
+                for _ in range(600):
+                    requests.reserve()
+                    gate, extra, done = threading.Barrier(9), [], threading.Event()
+
+                    def knock():
+                        gate.wait(10)
+                        while not done.is_set():
+                            status, answer = requests.control({})
+                            if status == 201:
+                                extra.append(answer["state"])
+
+                    threads = [threading.Thread(target=knock) for _ in range(8)]
+                    for thread in threads:
+                        thread.start()
+                    gate.wait(10)
+                    started = requests.start(reserved=True)
+                    done.set()
+                    for thread in threads:
+                        thread.join(10)
+                    counts.append(run.verifier.outstanding())
+                    for state in [started.session.state, *extra]:
+                        run.verifier.close_request(state)
+            finally:
+                sys.setswitchinterval(interval)
+            over = sum(count > 64 for count in counts)
+            self.assertEqual((over, max(counts)), (0, 64), "%d of 600 rounds over 64" % over)
+
+    # A start held up at its first printed line (stdout a pipe nobody reads yet) for longer than
+    # a request's lifetime. The test's clock (_Clock) stands in for the wait: the hold moves it
+    # past the lifetime, which runs every timer that came due, then makes a call that sweeps
+    # ended requests (every fetch and control call makes one). What the wallet is served is read
+    # from the request object itself: its iat and exp.
+
+    def assert_served_from(self, run, state, clock):
+        status, text = run.jar(state)
+        self.assertEqual(status, 200, text)
+        now = int(clock.now)
+        self.assertEqual(_object_times(text), (now, now + run.verifier.request_ttl_seconds))
+
+    def test_a_start_held_up_past_the_lifetime_serves_a_request_from_its_announce(self):
+        clock, running = _Clock(self), []
+
+        def held():
+            clock.advance(running[0].verifier.request_ttl_seconds + 1)
+            running[0].verifier.outstanding()
+
+        running.append(self.run_serve("--once", held_at=("serving on", held)))
+        with running[0] as run:
+            state = _state_of(run.blocks()[-1])
+            self.assert_served_from(run, state, clock)
+            # One lifetime after the announce, the request has ended.
+            clock.advance(run.verifier.request_ttl_seconds + 1)
+            self.assertFalse(run.verifier.is_outstanding(state))
+
+    def test_so_it_does_with_a_control_call_while_it_is_held_up(self):
+        clock, running, made = _Clock(self), [], []
+
+        def held():
+            clock.advance(running[0].verifier.request_ttl_seconds + 1)
+            made.append(running[0].kwargs["on_control"]({}))
+
+        running.append(self.run_serve("--once", "--result", str(self.path), "--control-token-file",
+                                      str(self.token_file), held_at=("serving on", held)))
+        with running[0] as run:
+            self.assertEqual(made[0][0], 201, made)
+            state = _state_of(run.blocks()[-1])
+            self.assert_served_from(run, state, clock)
+            # The --once request is the newer of the two, and the file names it.
+            self.assertEqual((self.read()["request"], self.read()["state"]), (2, state))
+            self.assertEqual(run.verifier.outstanding(), 2)
+
+    def test_under_rearm_the_log_ends_on_the_request_served_from_its_announce(self):
+        import re
+        clock, running = _Clock(self), []
+
+        def held():
+            clock.advance(running[0].verifier.request_ttl_seconds + 1)
+            running[0].verifier.outstanding()
+
+        def last_state(run):
+            # What the lab walks read: the last `state=` the command printed.
+            return re.findall(r"state=([A-Za-z0-9_-]+)", run.out.getvalue())[-1]
+
+        running.append(self.run_serve("--once", "--rearm", "--result", str(self.path),
+                                      held_at=("serving on", held)))
+        with running[0] as run:
+            states = [_state_of(block) for block in run.blocks()]
+            self.assertEqual(len(states), 1, "a request ended before one was announced")
+            self.assertEqual((last_state(run), self.read()["state"]), (states[0], states[0]))
+            self.assert_served_from(run, states[0], clock)
+            # Its timer runs from the announce: past the lifetime, the next request is announced,
+            # and the log and the file end on that one, served from its own announce.
+            clock.advance(run.verifier.request_ttl_seconds + 1)
+            states = [_state_of(block) for block in run.blocks()]
+            self.assertEqual(len(states), 2)
+            self.assertEqual((last_state(run), self.read()["state"]), (states[1], states[1]))
+            self.assert_served_from(run, states[1], clock)
+
+
+class ControlResultFileTests(_RunningCase):
+    """`--result` beside the control endpoint describes the newest request started."""
+
+    def test_the_file_describes_the_newest_request_and_not_an_older_one(self):
+        with self.run_serve("--once", "--result", str(self.path), "--control-token-file",
+                            str(self.token_file)) as run:
+            state1 = _state_of(run.blocks()[0])
+            self.assertEqual((self.read()["request"], self.read()["state"]), (1, state1))
+            status, answer = run.control({})
+            doc = self.read()
+            self.assertEqual((doc["request"], doc["state"], doc["outcome"], doc["responses"]),
+                             (2, answer["state"], "nothing_received", 0))
+            self.assertNotIn("previous", doc, "only --rearm keeps the previous request")
+            # An answer to the older request is judged and the file is not touched by it.
+            before = self.path.read_text(encoding="utf-8")
+            self.assertEqual(self.answer(run, state1, nonce="wrong")[0], 400)
+            self.assertEqual(run.jar(state1)[0], 200)
+            self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+            # An answer to the newest is.
+            self.assertEqual(self.answer(run, answer["state"], nonce="wrong")[0], 400)
+            doc = self.read()
+            self.assertEqual((doc["outcome"], doc["check"], doc["responses"]), ("refused", "nonce", 1))
+            # A refusal ends a request started here, as it does under --rearm: it is not served
+            # again and the file, which names it until the next request starts, keeps what became of it.
+            self.assertEqual(run.jar(answer["state"])[0], 404)
+            self.assertEqual((self.read()["state"], self.read()["outcome"]),
+                             (answer["state"], "refused"))
+
+    def test_with_no_once_the_file_says_no_request_has_started_until_one_does(self):
+        with self.run_serve("--result", str(self.path), "--control-token-file",
+                            str(self.token_file)) as run:
+            self.assertEqual(self.read(), {"outcome": "nothing_received", "state": None, "request": 0,
+                                           "request_object": {"served": 0, "refused": 0},
+                                           "responses": 0})
+            status, answer = run.control({})
+            doc = self.read()
+            self.assertEqual((doc["request"], doc["state"]), (1, answer["state"]))
+
+    def test_without_the_control_file_or_once_a_result_file_is_still_refused(self):
+        rc, seen, _, err = ServeCommandHeldOutTests._serve(self, "--result", str(self.path))
+        self.assertEqual(rc, 2)
+        self.assertIn("add --once", err)
+
+    def test_the_fetches_of_the_newest_request_are_counted_and_a_fetch_of_none_is_not(self):
+        with self.run_serve("--result", str(self.path), "--control-token-file",
+                            str(self.token_file)) as run:
+            status, answer = run.control({})
+            self.assertEqual(run.jar(answer["state"])[0], 200)
+            self.assertEqual(run.jar("nonsense")[0], 404)
+            self.assertEqual(self.read()["request_object"], {"served": 1, "refused": 0})
+
+
+class ControlTokenFileTests(_RunningCase):
+    """The token is read from a file, at least 32 bytes after stripping, or the command stops."""
+
+    _serve = ServeCommandHeldOutTests._serve
+
+    def serve_with(self, content):
+        if content is not None:
+            self.token_file.write_bytes(content if isinstance(content, bytes) else content.encode())
+        else:
+            self.token_file.unlink()
+        return self._serve("--issuer-jwks", str(self.jwks), "--control-token-file",
+                           str(self.token_file))
+
+    def test_a_token_that_is_empty_or_short_or_missing_stops_it_before_it_listens(self):
+        for label, content in (("empty", ""), ("only whitespace", " \n\t \n"), ("one byte", "x"),
+                               ("31 bytes", "x" * 31), ("31 bytes and a newline", "x" * 31 + "\n"),
+                               ("31 bytes among whitespace", "  " + "x" * 31 + "  \n"),
+                               ("missing", None)):
+            with self.subTest(token=label):
+                rc, seen, out, err = self.serve_with(content)
+                self.assertEqual(rc, 2, err)
+                self.assertNotIn("kwargs", seen, "it listened")
+                self.assertIn("--control-token-file", err)
+                self.assertNotIn("x" * 31, out + err, "the token was printed")
+
+    def test_a_token_that_cannot_be_a_bearer_value_stops_it_too(self):
+        for label, content in (("an inner space", "x" * 20 + " " + "y" * 20),
+                               ("an inner newline", "x" * 20 + "\n" + "y" * 20),
+                               ("not ASCII", "x" * 31 + "é"),
+                               ("not text", b"\xff" * 40)):
+            with self.subTest(token=label):
+                rc, seen, _, err = self.serve_with(content)
+                self.assertEqual(rc, 2, err)
+                self.assertNotIn("kwargs", seen)
+                self.assertIn("--control-token-file", err)
+
+    def test_32_bytes_after_stripping_starts_it_and_the_listener_is_given_the_stripped_token(self):
+        for content in ("x" * 32, "x" * 32 + "\n", "\n  " + "x" * 32 + " \r\n"):
+            with self.subTest(content=repr(content[:6])):
+                rc, seen, out, err = self.serve_with(content)
+                self.assertEqual(rc, 0, err)
+                self.assertEqual(seen["kwargs"]["control_token"], "x" * 32)
+                self.assertTrue(callable(seen["kwargs"]["on_control"]))
+                self.assertNotIn("x" * 32, out + err)
+        rc, seen, out, _ = self._serve()
+        self.assertEqual((rc, seen["kwargs"]["control_token"], seen["kwargs"]["on_control"]),
+                         (0, None, None))
+
+    def test_the_startup_says_the_endpoint_is_on_and_never_the_token(self):
+        rc, seen, out, err = self.serve_with(CONTROL_TOKEN)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("POST /control/request", out)
+        self.assertNotIn(CONTROL_TOKEN, out + err)
+        self.assertNotIn("/control/request", self._serve()[2])
+
+
+class AWalletErrorSaysWhatBecameOfTheRequestTests(_RunningCase):
+    """2026-11-18. Under --rearm, and for a request the control endpoint started, a wallet's error
+    response ends the request, and the `<-` line and --result said the verifier's "so it does not
+    close the request", true of the Verifier and of the plain rule only. They say what happened;
+    the stderr line, which cannot know, names the error and the request; a line that names its
+    request names it once. Under the plain rule the sentence and the open request stay."""
+
+    PLAIN = ("access_denied for request %s, which anyone who saw the request could send, so it "
+             "does not close the request")
+    BY_REARM = ("access_denied, which anyone who saw the request could send, and it ended the "
+                "request: under --rearm any answer about the current request ends it")
+    BY_CONTROL = ("access_denied, which anyone who saw the request could send, and it ended the "
+                  "request: a request the control endpoint started ends at any answer about it")
+
+    def send_error(self, run, state):
+        status, jar = run.jar(state)
+        self.assertEqual(status, 200, "no such outstanding request")
+        self.assertEqual(run.respond(self.wallet.respond_error(jar))[0], 200)
+        out = [x for x in run.out.getvalue().splitlines() if x.startswith("  <- 200 wallet error: ")]
+        err = [x for x in run.err.getvalue().splitlines() if x.startswith("polaris-oid4vp: wallet error: ")]
+        self.assertEqual((len(out), len(err)), (1, 1), run.out.getvalue() + run.err.getvalue())
+        return out[0], err[0]
+
+    def test_under_rearm_the_line_and_the_file_say_the_error_ended_the_request(self):
+        with self.run_serve("--once", "--rearm", "--result", str(self.path)) as run:
+            state = _state_of(run.blocks()[0])
+            out, err = self.send_error(run, state)
+            self.assertEqual(len(run.blocks()), 2, "the next request started")
+            previous = self.read().get("previous")
+        self.assertIsNotNone(previous, "the request that ended is kept as previous")
+        self.assertEqual(out, "  <- 200 wallet error: %s (request %s)" % (self.BY_REARM, state))
+        self.assertEqual(err, "polaris-oid4vp: wallet error: access_denied (request %s)" % state)
+        self.assertEqual((previous["state"], previous["outcome"]), (state, "wallet_error"))
+        self.assertEqual(previous["reason"], self.BY_REARM.replace(
+            "access_denied,", "access_denied for request %s," % state, 1))
+
+    def test_a_request_the_control_endpoint_started_says_so_too(self):
+        with self.run_serve("--control-token-file", str(self.token_file),
+                            "--result", str(self.path)) as run:
+            state = run.control({})[1]["state"]
+            out, err = self.send_error(run, state)
+            doc = self.read()
+            self.assertEqual(run.jar(state)[0], 404, "the error ended the request")
+        self.assertEqual(out, "  <- 200 wallet error: %s (request %s)" % (self.BY_CONTROL, state))
+        self.assertEqual(err, "polaris-oid4vp: wallet error: access_denied (request %s)" % state)
+        self.assertEqual((doc["state"], doc["outcome"]), (state, "wallet_error"))
+        self.assertEqual(doc["reason"], self.BY_CONTROL.replace(
+            "access_denied,", "access_denied for request %s," % state, 1))
+
+    def test_under_the_plain_rule_the_request_stays_open_and_the_sentence_says_so(self):
+        with self.run_serve("--once", "--result", str(self.path)) as run:
+            state = _state_of(run.blocks()[0])
+            out, err = self.send_error(run, state)
+            doc = self.read()
+            self.assertEqual(run.jar(state)[0], 200, "the request is still open")
+        self.assertEqual(out, "  <- 200 wallet error: " + self.PLAIN % state)
+        self.assertEqual(err, "polaris-oid4vp: wallet error: " + self.PLAIN % state)
+        self.assertEqual((doc["outcome"], doc["reason"]), ("wallet_error", self.PLAIN % state))
+
+    def test_beside_the_control_endpoint_the_once_request_keeps_the_plain_rule_named_once(self):
+        with self.run_serve("--once", "--control-token-file", str(self.token_file)) as run:
+            state = _state_of(run.blocks()[0])
+            out, err = self.send_error(run, state)
+            self.assertEqual(run.jar(state)[0], 200, "the request is still open")
+        self.assertEqual(out, "  <- 200 wallet error: access_denied, which anyone who saw the "
+                              "request could send, so it does not close the request (request %s)"
+                              % state)
+        self.assertEqual(err, "polaris-oid4vp: wallet error: access_denied (request %s)" % state)
 
 
 if __name__ == "__main__":

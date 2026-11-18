@@ -36,6 +36,7 @@ decodes to, and the captured response still decrypts under it, so there is reaso
 re-run would hold. Reason to expect is not a run.
 """
 import base64
+import collections
 import json
 import struct
 
@@ -203,6 +204,19 @@ def decrypt_compact(token, private_key):
     """
     if not _HAVE_CRYPTO:
         raise JweError("the cryptography package is not installed")
+    return _open_compact(_read_compact(token), private_key)
+
+
+#: A compact JWE as `_read_compact` leaves it: every segment checked and decoded and the
+#: ephemeral key parsed, and nothing yet that depends on the recipient's key.
+_Compact = collections.namedtuple("_Compact", "protected_b64 enc epk apu apv iv ciphertext tag")
+
+
+def _read_compact(token):
+    """The half of `decrypt_compact` that does not depend on the recipient's key, so that a
+    caller trying one token against several keys decodes it once. Raises `JweError` for every
+    refusal of `decrypt_compact` but the tag's, with the same reasons in the same order; the
+    caller has checked the backend."""
     check_compact_length(token)
     parts = token.strip().split(".")
     if len(parts) != 5:
@@ -255,13 +269,12 @@ def decrypt_compact(token, private_key):
         if value is not None and not isinstance(value, str):
             raise JweError("the protected header's %r is not a string" % field)
 
-    shared = private_key.exchange(ec.ECDH(), _public_key_from_jwk(epk))
+    epk_key = _public_key_from_jwk(epk)
     try:
         apu = b64u_decode(header["apu"]) if header.get("apu") else b""
         apv = b64u_decode(header["apv"]) if header.get("apv") else b""
     except (ValueError, UnicodeEncodeError) as exc:
         raise JweError("the protected header's apu/apv do not decode: %s" % exc) from exc
-    key = _concat_kdf(shared, enc, ACCEPTED_ENC[enc], apu, apv)
 
     try:
         iv = b64u_decode(iv_b64)
@@ -277,11 +290,20 @@ def decrypt_compact(token, private_key):
         # one plaintext had many accepted tokens.
         raise JweError("AES-GCM takes a 128-bit tag, this one is %d bits" % (len(tag) * 8))
 
+    return _Compact(protected_b64, enc, epk_key, apu, apv, iv, ciphertext, tag)
+
+
+def _open_compact(compact, private_key):
+    """The half of `decrypt_compact` that does depend on the recipient's key: the key agreement,
+    the key derivation and the AES-GCM tag, for a token `_read_compact` has read."""
+    shared = private_key.exchange(ec.ECDH(), compact.epk)
+    key = _concat_kdf(shared, compact.enc, ACCEPTED_ENC[compact.enc], compact.apu, compact.apv)
     try:
         # The AAD is the ASCII of the protected header AS RECEIVED. Re-serializing the parsed
         # header would change the bytes and fail authentication for correct input, which
         # reads as the wallet being wrong.
-        return AESGCM(key).decrypt(iv, ciphertext + tag, protected_b64.encode("ascii"))
+        return AESGCM(key).decrypt(compact.iv, compact.ciphertext + compact.tag,
+                                   compact.protected_b64.encode("ascii"))
     except InvalidTag as exc:
         raise JweError("the AES-GCM tag does not authenticate: the response was altered, or "
                        "it was not encrypted to this verifier's key") from exc
@@ -289,7 +311,15 @@ def decrypt_compact(token, private_key):
 
 def decrypt_response(token, private_key):
     """The same, decoded as the JSON authorization response OpenID4VP section 8 defines."""
-    plaintext = decrypt_compact(token, private_key)
+    return _response_body(decrypt_compact(token, private_key))
+
+
+def _open_response(compact, private_key):
+    """`decrypt_response` for a token `_read_compact` has read."""
+    return _response_body(_open_compact(compact, private_key))
+
+
+def _response_body(plaintext):
     try:
         body = _loads_depth_bounded(plaintext, "decrypted response", limit=MAX_RESPONSE_BYTES,
                                     finite=True)

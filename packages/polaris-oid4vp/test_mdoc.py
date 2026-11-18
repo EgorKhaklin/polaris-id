@@ -14,12 +14,14 @@ only; tag 24 over a byte string only, in its preferred encoding; no float; no si
 true, false and null; nesting at most 32 deep.
 """
 import base64
+import contextlib
 import datetime
 import hashlib
 import json
 import os
 import pathlib
 import sys
+import types
 import unittest
 import warnings
 from unittest import mock
@@ -37,7 +39,7 @@ from polaris_oid4vp import cbor  # noqa: E402
 from polaris_oid4vp.cbor import CborError, Tag24, Tagged  # noqa: E402
 from polaris_oid4vp import cose, mdoc  # noqa: E402
 from polaris_oid4vp.cose import CoseError  # noqa: E402
-from polaris_oid4vp.mdoc import IacaRoot, verify_device_response  # noqa: E402
+from polaris_oid4vp.mdoc import IacaRoot  # noqa: E402
 
 #: The package's own copies of the captures (testdata/README.md): the suite reads nothing outside the package.
 TESTDATA = pathlib.Path(__file__).resolve().parent / "testdata" / "mdoc"
@@ -81,7 +83,61 @@ def h(text):
     return bytes.fromhex(text.replace(" ", ""))
 
 
-class CborTests(unittest.TestCase):
+class RefusalCase(unittest.TestCase):
+    """A refusal test names the refusal it expects. `assertRefuses(E)` is assertRaises held to E:
+    the call raising any other exception is an assertion failure that names both, where
+    unittest's own assertRaises lets it out as an error. The mutation drill counts a run red only
+    by ERROR as not caught, and a refusal removed so that a later line raises is that run."""
+
+    @contextlib.contextmanager
+    def assertRefuses(self, expected):
+        caught = types.SimpleNamespace(exception=None)
+        names = " or ".join(e.__name__ for e in (expected if isinstance(expected, tuple) else (expected,)))
+        try:
+            yield caught
+        except expected as exc:
+            caught.exception = exc
+            return
+        except self.failureException:
+            raise
+        except Exception as exc:
+            raise self.failureException("raised %s (%s), not the refusal %s"
+                                        % (type(exc).__name__, exc, names)) from exc
+        raise self.failureException("%s not raised" % names)
+
+
+class RefusalCaseTests(RefusalCase):
+    """The two helpers a refusal test leans on: the named refusal passes, and any other exception,
+    or none, is an assertion failure that says which, never an error."""
+
+    def test_the_named_refusal_passes_and_anything_else_fails_by_assertion(self):
+        with self.assertRefuses(CborError) as caught:
+            raise CborError("named")
+        self.assertEqual(str(caught.exception), "named")
+        with self.assertRefuses((ValueError, KeyError)):
+            raise KeyError("k")
+
+        def later():
+            raise TypeError("later")
+
+        for body, words in ((later, "raised TypeError (later), not the refusal CborError"),
+                            (lambda: None, "CborError not raised")):
+            with self.subTest(words=words):
+                with self.assertRaises(self.failureException) as failed:
+                    with self.assertRefuses(CborError):
+                        body()
+                self.assertIn(words, str(failed.exception))
+
+    def test_a_raise_from_the_verifier_is_reported_as_the_broken_promise(self):
+        with mock.patch.object(mdoc, "verify_device_response", side_effect=TypeError("late")):
+            for call in (lambda: judge(b""),
+                         lambda: verify_device_response(b"", session_transcript=TRANSCRIPT, iaca_roots=ROOTS)):
+                with self.assertRaises(AssertionError) as failed:
+                    call()
+                self.assertIn("raised TypeError (late); it returns a Verdict and never raises", str(failed.exception))
+
+
+class CborTests(RefusalCase):
     """The positive half: what the decoder returns, held to cbor2 and to the bytes it was given."""
 
     def assertSameAsCbor2(self, data):
@@ -172,9 +228,9 @@ class CborTests(unittest.TestCase):
                       object(), Tagged(2, b"\x01"), Tagged(1003, 1), Tagged(24, b"\x00"), Tagged(False, "x"),
                       Tagged(0.0, "x"), "\ud800", too_deep):
             with self.subTest(value=repr(value)[:40]):
-                with self.assertRaises(CborError):
+                with self.assertRefuses(CborError):
                     cbor.encode(value)
-        with self.assertRaises(CborError):
+        with self.assertRefuses(CborError):
             cbor.tag24("text")
         # The controls: the widest integers, and 32 levels, are written.
         self.assertEqual(cbor.decode(cbor.encode([(1 << 64) - 1, -(1 << 64)])), [(1 << 64) - 1, -(1 << 64)])
@@ -183,7 +239,7 @@ class CborTests(unittest.TestCase):
     def test_only_bytes_are_decoded(self):
         for value in ("a0", None, 1, [0xa0]):
             with self.subTest(value=value):
-                with self.assertRaises(CborError):
+                with self.assertRefuses(CborError):
                     cbor.decode(value)
         self.assertEqual(cbor.decode(bytearray(b"\xa0")), {})
         self.assertEqual(cbor.decode(memoryview(b"\xa0")), {})
@@ -212,7 +268,7 @@ class CborTests(unittest.TestCase):
         self.assertGreater(refused, 700)
 
 
-class CborLimitsTests(unittest.TestCase):
+class CborLimitsTests(RefusalCase):
     """The refusals, each with the input that needs it and the reason the decoder gives. The
     reason is asserted because a malformed input is usually refused by a later rule too: a test
     that saw only "refused" would pass with its own rule removed. `malformed` is what the
@@ -222,8 +278,9 @@ class CborLimitsTests(unittest.TestCase):
         self.assertTrue(texts, "a refusal test with no input measures nothing")
         for text in texts:
             with self.subTest(hex=text[:60]):
-                with self.assertRaises(CborError) as caught:
-                    cbor.decode(h(text))
+                data = h(text)
+                with self.assertRefuses(CborError) as caught:
+                    cbor.decode(data)
                 self.assertIn(reason, str(caught.exception))
 
     def test_an_indefinite_length_is_refused(self):
@@ -572,7 +629,20 @@ def mint(*, doctype=MDL, items=DEFAULT_ITEMS, ds=None, ds_key=None, x5chain=None
     return cbor2.dumps(response)
 
 
+def verify_device_response(response, **kw):
+    """mdoc.verify_device_response, held to its docstring: it returns a Verdict and never raises on
+    bad input, so an exception from it is that promise broken, and fails the calling test by
+    assertion rather than as a test error. Only the call sits in the try: the caller builds the
+    arguments, so a fixture's own exception is still an error."""
+    try:
+        return mdoc.verify_device_response(response, **kw)
+    except Exception as exc:
+        raise AssertionError("verify_device_response raised %s (%s); it returns a Verdict and never raises"
+                             % (type(exc).__name__, exc)) from exc
+
+
 def judge(response, *, roots=None, transcript=None, **kw):
+    """verify_device_response with this file's transcript and roots."""
     return verify_device_response(response, session_transcript=TRANSCRIPT if transcript is None else transcript,
                                   iaca_roots=ROOTS if roots is None else roots, **kw)
 
@@ -594,7 +664,7 @@ def capture_transcript(inputs, **changes):
     return mdoc.redirect_session_transcript(**values)
 
 
-class MdocCase(unittest.TestCase):
+class MdocCase(RefusalCase):
     """A refusal is asserted with its code and with words of its own reason, because most broken
     inputs are refused by a later rule too: a test that saw only "refused" would pass with its
     own rule removed."""
@@ -714,8 +784,9 @@ class CoseTests(MdocCase):
                 ("the payload is neither a byte string nor null", [good[0], good[1], "payload", good[3]]),
                 ("the signature is not a byte string", good[:3] + [None])):
             with self.subTest(bad=repr(bad)[:50]):
-                with self.assertRaises(CoseError) as caught:
-                    cose.parse_sign1(self.decoded(bad))
+                data = self.decoded(bad)
+                with self.assertRefuses(CoseError) as caught:
+                    cose.parse_sign1(data)
                 self.assertIn(words, str(caught.exception))
 
     def test_a_detached_payload_is_supplied_by_the_caller_and_only_then(self):
@@ -723,23 +794,26 @@ class CoseTests(MdocCase):
         self.assertIsNone(detached.payload)
         self.assertEqual(cose.verify_sign1(detached, DS.public_key(), b"payload"), "ES256")
         for payload, words in ((None, "no payload"), (b"other", "signature does not verify")):
-            with self.assertRaises(CoseError) as caught:
+            with self.assertRefuses(CoseError) as caught:
                 cose.verify_sign1(detached, DS.public_key(), payload)
             self.assertIn(words, str(caught.exception))
         # A COSE_Sign1 that carries its payload is verified over that one, and a second is refused.
         attached = cose.parse_sign1(self.decoded(sign1(DS_KEY, {1: -7}, {}, b"payload")))
-        with self.assertRaises(CoseError) as caught:
+        with self.assertRefuses(CoseError) as caught:
             cose.verify_sign1(attached, DS.public_key(), b"payload")
         self.assertIn("carries its own payload", str(caught.exception))
         # A key that is no elliptic-curve key at all.
-        with self.assertRaises(CoseError) as caught:
+        with self.assertRefuses(CoseError) as caught:
             cose.verify_sign1(detached, ed25519.Ed25519PrivateKey.generate().public_key(), b"payload")
         self.assertIn("ES256 needs a key on secp256r1", str(caught.exception))
 
     def test_the_x5chain_is_one_certificate_or_an_array_of_them(self):
+        def parsed_of(value, protected=None):
+            return cose.parse_sign1(self.decoded(
+                sign1(DS_KEY, protected or {1: -7}, {} if value is None else {33: value}, b"p")))
+
         def chain_of(value, protected=None):
-            return cose.x5chain(cose.parse_sign1(self.decoded(
-                sign1(DS_KEY, protected or {1: -7}, {} if value is None else {33: value}, b"p"))))
+            return cose.x5chain(parsed_of(value, protected))
 
         self.assertEqual(chain_of(b"one"), [b"one"])
         self.assertEqual(chain_of([b"one", b"two"]), [b"one", b"two"])
@@ -750,8 +824,9 @@ class CoseTests(MdocCase):
                            ("neither a certificate nor an array of certificates", {1: b"one"}),
                            ("neither a certificate nor an array of certificates", b"")):
             with self.subTest(bad=bad):
-                with self.assertRaises(CoseError) as caught:
-                    chain_of(bad)
+                parsed = parsed_of(bad)
+                with self.assertRefuses(CoseError) as caught:
+                    cose.x5chain(parsed)
                 self.assertIn(words, str(caught.exception))
 
     def test_the_device_signature_is_held_to_the_same_headers(self):
@@ -778,12 +853,12 @@ class NoBackendTests(MdocCase):
         with mock.patch.object(mdoc.sdjwt, "_HAVE_CRYPTO", False):
             v = self.refused("no_backend", "the cryptography package is not installed", response)
             self.assertIn("rather than reading this as a refusal of the credential", v.reason)
-            with self.assertRaises(ValueError) as caught:
+            with self.assertRefuses(ValueError) as caught:
                 IacaRoot(IACA, [MDL])
             self.assertIn("the cryptography package is not installed", str(caught.exception))
         signed = cose.parse_sign1(cbor.decode(cbor2.dumps(sign1(DS_KEY, {1: -7}, {}, b"payload"))))
         with mock.patch.object(cose, "_HAVE_CRYPTO", False):
-            with self.assertRaises(CoseError) as caught:
+            with self.assertRefuses(CoseError) as caught:
                 cose.verify_sign1(signed, DS.public_key())
             self.assertIn("the cryptography package is not installed", str(caught.exception))
         # The controls: the same three with the flags as they were.
@@ -792,7 +867,7 @@ class NoBackendTests(MdocCase):
         self.assertEqual(cose.verify_sign1(signed, DS.public_key()), "ES256")
 
 
-class TranscriptTests(unittest.TestCase):
+class TranscriptTests(RefusalCase):
     """The SessionTranscript of a redirect request, OpenID4VP 1.0 B.2.6.1."""
 
     SPEC = {"client_id": "x509_san_dns:example.com", "nonce": "exc7gBkxjx1rdc9udRrveKvSsJIq80avlXeLHhGwqtA",
@@ -819,7 +894,7 @@ class TranscriptTests(unittest.TestCase):
                     {k: bare[k] for k in ("kty", "crv", "x")}, {**bare, "crv": None},
                     {**bare, "x": bare["x"] + '","y":"'}):
             with self.subTest(jwk=bad):
-                with self.assertRaises(ValueError):
+                with self.assertRefuses(ValueError):
                     mdoc.jwk_thumbprint(bad)
 
     def test_the_transcript_equals_the_wallets_own_bytes(self):
@@ -844,12 +919,12 @@ class TranscriptTests(unittest.TestCase):
                           ("jwk_thumbprint", None), ("jwk_thumbprint", bytes(31)), ("jwk_thumbprint", bytes(33)),
                           ("jwk_thumbprint", "a" * 32), ("jwk_thumbprint", b"")):
             with self.subTest(name=name, bad=bad):
-                with self.assertRaises(ValueError) as caught:
+                with self.assertRefuses(ValueError) as caught:
                     mdoc.redirect_session_transcript(**{**good, name: bad})
                 self.assertIn(name, str(caught.exception))
 
 
-class IacaRootTests(unittest.TestCase):
+class IacaRootTests(RefusalCase):
     """A root is a certificate bound to the docTypes it may sign, and is refused when it is made,
     not when the first wallet answers."""
 
@@ -865,30 +940,30 @@ class IacaRootTests(unittest.TestCase):
     def test_a_root_without_doctypes_is_refused(self):
         for bad in ((), [], None, MDL, [""], [MDL, 5], [b"org.iso.18013.5.1.mDL"], 7):
             with self.subTest(doctypes=bad):
-                with self.assertRaises(ValueError) as caught:
+                with self.assertRefuses(ValueError) as caught:
                     IacaRoot(IACA, bad)
                 self.assertIn("docType", str(caught.exception))
 
     def test_a_certificate_that_is_not_a_ca_or_does_not_parse_is_refused(self):
-        with self.assertRaises(ValueError) as caught:
+        with self.assertRefuses(ValueError) as caught:
             IacaRoot(DS, [MDL])
         self.assertIn("not a CA certificate", str(caught.exception))
         # A self-signed certificate that states no basicConstraints is not a CA either.
         bare_key = ec.generate_private_key(P256)
         bare = make_cert("Bare", bare_key.public_key(), "Bare", bare_key)
-        with self.assertRaises(ValueError) as caught:
+        with self.assertRefuses(ValueError) as caught:
             IacaRoot(bare, [MDL])
         self.assertIn("not a CA certificate", str(caught.exception))
         # Each refusal by its own words: one falls through to the next when it is taken away.
         for junk in (b"", b"not a certificate", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
                      "caf\u00e9", bytearray(b"\x30\x03\x02\x01\x01")):
             with self.subTest(junk=junk):
-                with self.assertRaises(ValueError) as caught:
+                with self.assertRefuses(ValueError) as caught:
                     IacaRoot(junk, [MDL])
                 self.assertIn("the IACA root certificate does not parse", str(caught.exception))
         for junk in (5, None, [IACA]):
             with self.subTest(junk=junk):
-                with self.assertRaises(ValueError) as caught:
+                with self.assertRefuses(ValueError) as caught:
                     IacaRoot(junk, [MDL])
                 self.assertIn("PEM or DER, not a %s" % type(junk).__name__, str(caught.exception))
 
@@ -983,7 +1058,7 @@ class DeviceResponseTests(MdocCase):
             ds.extensions
         self.refused("issuer_key", "an extension that does not parse", mint(ds=ds, ds_key=key))
         _, iaca = make_root(cn="Nested IACA", extra=((nested_issuer_alt_name(), False),))
-        with self.assertRaises(ValueError) as caught:
+        with self.assertRefuses(ValueError) as caught:
             IacaRoot(iaca, [MDL])
         self.assertIn("an extension that does not parse", str(caught.exception))
         self.assertIn("issuer_alternative_name", str(caught.exception).lower().replace(" ", "_"))

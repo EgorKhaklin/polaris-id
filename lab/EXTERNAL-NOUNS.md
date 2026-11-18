@@ -12,8 +12,8 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
-| External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11. |
-| Use | 4 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-13, 25 are in openwallet-foundation-labs/identity-common-ts's CI, against its `@sd-jwt/sd-jwt-vc` verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier; on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
+| External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11; four national wallet sandboxes, 2026-11-02 to 2026-11-12 (below). |
+| Use | 5 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-13, 25 are in openwallet-foundation-labs/identity-common-ts's CI, against its `@sd-jwt/sd-jwt-vc` verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier; since 2026-11-17, Iya CyberSecurity Solutions' id-proto-debugger runs polaris-oid4vp v1.1.0's published image, copied into their own registry mirror, as the verifier in its scheduled test workflow; on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
 | Findings from outside | 3, all fixed |
 
 ## External nouns
@@ -198,18 +198,30 @@ Listed by outside parties: eudi-dev's maintainer merged `polaris-oid4vp` into it
 comparison of EUDI developer tools (eudi-dev/eudi-dev#22, 2026-10-04), and the IETF OAuth
 working group's SD-JWT repository merged it into its implementations list
 (oauth-wg/oauth-selective-disclosure-jwt#584, 2026-10-04), and best-of-digital-identity merged it
-into its ranked list (jruizaranguren/best-of-digital-identity#219, 2026-10-05). Proposed: the Token
-Status List implementation list, three curated lists, Multipaz's adopters list and the FIDES
-organization and relying-party catalogs. A listing is not use either.
+into its ranked list (jruizaranguren/best-of-digital-identity#219, 2026-10-05), and FIDES merged
+Khaklin Technologies into its organization catalog and `polaris-oid4vp` into its relying-party
+catalog (FIDEScommunity/fides-organization-catalog#21 and FIDEScommunity/fides-rp-catalog#15,
+2026-10-06). Proposed: the Token Status List implementation list, three curated lists and
+Multipaz's adopters list. A listing is not use either.
 
 ### External relying party / operator
 
 Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since
 2026-10-11 (see Use).
 
+National wallet sandboxes. Each row is the authority's own act toward Polaris, in its written
+message to the project.
+
+| Date | Authority | Act | Evidence |
+|---|---|---|---|
+| 2026-11-02 | Germany's EUDI wallet sandbox | accepted Polaris's use case | |
+| 2026-11-05 | Norway's Digdir | registered Polaris as a relying party in its national wallet sandbox and issued its access certificate | the access certificate it issued, subject CN=Polaris verifier |
+| 2026-11-06 | Taiwan's Ministry of Digital Affairs | opened issuer and verifier accounts for Polaris in its digital wallet sandbox | |
+| 2026-11-12 | Denmark's Agency for Digital Government | opened AltID test environment access for Polaris | [the run on its test app, 2026-11-13](interop/altid/README.md) |
+
 ### Use
 
-    Outside projects running it:   4 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28; openwallet-foundation-labs/identity-common-ts's CI, since 2026-11-13; openeudi/openid4vp's CI, since 2026-11-15)
+    Outside projects running it:   5 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28; openwallet-foundation-labs/identity-common-ts's CI, since 2026-11-13; openeudi/openid4vp's CI, since 2026-11-15; rcbj/id-proto-debugger's CI, since 2026-11-17)
 
 1. 2026-10-11: IDFoundry/OID4VCgo (maintainer osanderson) added
    [polaris-interop.yml](https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml):
@@ -265,6 +277,14 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
    twin accepted, since [PR 82](https://github.com/openeudi/openid4vp/pull/82), opened from here
    and merged by the maintainer on 2026-11-15 (36d66bf5). The first run on main with them
    ([43737527166](https://github.com/openeudi/openid4vp/actions/runs/43737527166)) passed on both.
+7. 2026-11-17: Iya CyberSecurity Solutions'
+   [id-proto-debugger](https://github.com/rcbj/id-proto-debugger) runs polaris-oid4vp v1.1.0's
+   published image, copied into their own registry mirror, as the verifier in their scheduled test
+   workflow (daily and on every push to develop), with their debugger as the wallet, since
+   [PR 432](https://github.com/rcbj/id-proto-debugger/pull/432), merged 2026-11-17. Their run of
+   2026-11-18 ([44210317909](https://github.com/rcbj/id-proto-debugger/actions/runs/44210317909))
+   passed: a complete HAIP SD-JWT VC presentation accepted, one withholding a requested claim
+   refused on claims, and one through their api route accepted.
 
 ### Findings from outside
 

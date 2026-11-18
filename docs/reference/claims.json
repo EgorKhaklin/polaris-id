@@ -430,17 +430,17 @@
       ]
     },
     {
-     "id": "site-outside-projects",
-     "kind": "statement",
-     "claim": "16 outside projects",
-     "surfaces": [
-      "site/index.html"
-     ],
-     "evidence": [
-      "file:docs/reference/INTEROP.md",
-      "file:lab/EXTERNAL-NOUNS.md"
-     ],
-     "reproduce": "Count the sixteen projects in the Evidence list (act II) of site/index.html; each has a dated row in docs/reference/INTEROP.md."
+      "id": "site-outside-projects",
+      "kind": "statement",
+      "claim": "16 outside projects",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/reference/INTEROP.md",
+        "file:lab/EXTERNAL-NOUNS.md"
+      ],
+      "reproduce": "The tally beside the Tested with list of site/index.html reads 16 outside projects: count the sixteen projects in that list; each has a dated row in docs/reference/INTEROP.md."
     },
     {
       "id": "site-six-wallets-description",
@@ -473,32 +473,6 @@
       "count_of": [
         "readme-six-wallets"
       ]
-    },
-    {
-      "id": "site-world-without-official-id",
-      "kind": "statement",
-      "claim": "More than 800 million people have no official ID.",
-      "surfaces": [
-        "site/index.html"
-      ],
-      "evidence": [
-        "url:https://blogs.worldbank.org/en/digital-development/global-progress-in-identification--3-findings-from-the-latest-da",
-        "url:https://id4d.worldbank.org/global-dataset"
-      ],
-      "reproduce": "Open the World Bank post 'Global progress in identification: 3 findings from the latest data' (the first url): ID4D's latest estimates indicate that more than 800 million people worldwide are still without official proof of their identity."
-    },
-    {
-      "id": "site-world-without-online-id",
-      "kind": "statement",
-      "claim": "2.8 billion have no digital ID they can use online.",
-      "surfaces": [
-        "site/index.html"
-      ],
-      "evidence": [
-        "url:https://blogs.worldbank.org/en/digital-development/global-progress-in-identification--3-findings-from-the-latest-da",
-        "url:https://id4d.worldbank.org/global-dataset"
-      ],
-      "reproduce": "The same post: in 2025, 2.8 billion people still lacked access to digital ID systems that facilitate online transactions."
     },
     {
       "id": "authors-took-no-part",
@@ -549,7 +523,6 @@
       "claim": "polaris-oid4vp 1.0.0rc7 is OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile",
       "surfaces": [
         "README.md",
-        "site/llms.txt",
         "docs/reference/SPEC-COMPLIANCE.md"
       ],
       "evidence": [
@@ -561,7 +534,7 @@
     {
       "id": "openid-certified-meta",
       "kind": "statement",
-      "claim": "OpenID Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile at polaris-oid4vp 1.0.0rc7, a self-certification",
+      "claim": "polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC",
       "surfaces": [
         "site/index.html#meta:description",
         "site/index.html#meta:og:description"
@@ -573,13 +546,24 @@
       "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt."
     },
     {
+      "id": "site-openid-certified-caption",
+      "kind": "statement",
+      "claim": "The OpenID Certified mark polaris-oid4vp 1.0.0rc7 OpenID4VP 1.0 + HAIP 1.0 Verifier · SD-JWT VC",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt: the mark on the page stands beside that package and version, the profile and the credential format, the mark's alt text running straight into its caption."
+    },
+    {
       "id": "openid-certified-3e",
       "kind": "statement",
       "claim": "a self-certification, not an endorsement or an independent verification.",
       "surfaces": [
         "README.md",
-        "site/index.html",
-        "site/llms.txt",
         "polaris_web/templates/landing.html",
         "TRADEMARKS.md",
         "LICENSES/LicenseRef-OpenID-Certified-Mark.txt",
@@ -649,6 +633,470 @@
         "url:https://openid.net/certification/certified-oid4vp-haip-final/"
       ],
       "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt: the certifier it names is the project's author, so the listing records a self-certification; lab/EXTERNAL-NOUNS.md cites Certification Terms 3(e)."
+    },
+    {
+      "id": "openid-certified-hero",
+      "kind": "statement",
+      "claim": "polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC.",
+      "surfaces": [
+        "TRADEMARKS.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt."
+    },
+    {
+      "id": "openid-certified-llms",
+      "kind": "statement",
+      "claim": "polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (sd_jwt_vc, direct_post.jwt",
+      "surfaces": [
+        "site/llms.txt"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "url:https://openid.net/certification/certified-oid4vp-haip-final/"
+      ],
+      "reproduce": "Open https://openid.net/certification/certified-oid4vp-haip-final/ and find Egor Khaklin, polaris-oid4vp 1.0.0rc7, 24-Sep-2026, under OID4VP-1.0+HAIP-1.0 Verifier, sd_jwt_vc, direct_post.jwt."
+    },
+    {
+      "id": "site-sandbox-germany",
+      "kind": "statement",
+      "claim": "Germany’s EUDI wallet sandbox accepted Polaris’s use case.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md"
+      ],
+      "reproduce": "The External relying party / operator section of lab/EXTERNAL-NOUNS.md, its national wallet sandboxes table: the row dated 2026-11-02."
+    },
+    {
+      "id": "site-sandbox-norway",
+      "kind": "statement",
+      "claim": "Norway’s Digdir registered Polaris as a relying party in its national wallet sandbox.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md"
+      ],
+      "reproduce": "The External relying party / operator section of lab/EXTERNAL-NOUNS.md, its national wallet sandboxes table: the row dated 2026-11-05, with the access certificate it issued."
+    },
+    {
+      "id": "site-sandbox-taiwan",
+      "kind": "statement",
+      "claim": "Taiwan’s Ministry of Digital Affairs opened issuer and verifier accounts for Polaris in its digital wallet sandbox.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md"
+      ],
+      "reproduce": "The External relying party / operator section of lab/EXTERNAL-NOUNS.md, its national wallet sandboxes table: the row dated 2026-11-06."
+    },
+    {
+      "id": "site-sandbox-denmark",
+      "kind": "statement",
+      "claim": "Denmark’s Agency for Digital Government opened AltID test access for Polaris.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:lab/interop/altid/README.md"
+      ],
+      "reproduce": "The External relying party / operator section of lab/EXTERNAL-NOUNS.md, its national wallet sandboxes table: the row dated 2026-11-12; lab/interop/altid/README.md records the run on its test app the next day."
+    },
+    {
+      "id": "site-oid4vcgo-began-running",
+      "kind": "statement",
+      "claim": "IDFoundry’s OID4VCgo began running Polaris’s verifier in its own CI, every day and on each of its releases.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml"
+      ],
+      "reproduce": "Item 1 of the Use section of lab/EXTERNAL-NOUNS.md: polaris-interop.yml, added 2026-10-11, daily and on each release."
+    },
+    {
+      "id": "site-oid4vcgo-merged",
+      "kind": "statement",
+      "claim": "OID4VCgo merged Polaris’s refusal tests into its CI.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/IDFoundry/OID4VCgo/pull/624"
+      ],
+      "reproduce": "Item 2 of the Use section of lab/EXTERNAL-NOUNS.md: vectors.json since PR 624, merged 2026-10-16."
+    },
+    {
+      "id": "site-vouchkit-merged",
+      "kind": "statement",
+      "claim": "vouchkit merged 20 of Polaris’s refusal tests into its CI.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/vouchkit/vouchkit/pull/17"
+      ],
+      "reproduce": "Item 3 of the Use section of lab/EXTERNAL-NOUNS.md: 20 SD-JWT VC negative vectors since PR 17, merged 2026-10-28."
+    },
+    {
+      "id": "site-identity-common-ts-merged",
+      "kind": "statement",
+      "claim": "OpenWallet Foundation Labs’ identity-common-ts merged 25.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/openwallet-foundation-labs/identity-common-ts/pull/455"
+      ],
+      "reproduce": "Item 5 of the Use section of lab/EXTERNAL-NOUNS.md: 25 negative vectors since PR 455, merged 2026-11-13."
+    },
+    {
+      "id": "site-openeudi-merged",
+      "kind": "statement",
+      "claim": "openeudi/openid4vp merged 54.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/openeudi/openid4vp/pull/82"
+      ],
+      "reproduce": "Item 6 of the Use section of lab/EXTERNAL-NOUNS.md: 54 negative vectors (24 SD-JWT VC, 30 mso_mdoc) since PR 82, merged 2026-11-15."
+    },
+    {
+      "id": "site-attesto-refused-all",
+      "kind": "statement",
+      "claim": "Neil Berkman of Xuku LLC, which makes Attesto, reported that Attesto 2.17.0 refused all 66 of Polaris’s refusal tests, as published in version 0.4.0 of the test set.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/XukuLLC/attesto/releases/tag/v2.17.0"
+      ],
+      "reproduce": "Item 4 of the Use section of lab/EXTERNAL-NOUNS.md quotes the report of 2026-11-13: at vectors 0.4.0, Attesto 2.17.0 refuses all 66 negatives."
+    },
+    {
+      "id": "site-liboqs-advisory",
+      "kind": "statement",
+      "claim": "liboqs-python’s maintainers fixed a vulnerability Egor Khaklin reported and published an advisory crediting him.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/open-quantum-safe/liboqs-python/security/advisories/GHSA-w696-4vrr-x6x3"
+      ],
+      "reproduce": "Open GHSA-w696-4vrr-x6x3 (the url): Open Quantum Safe's advisory for liboqs-python 0.16.0.1 and earlier credits Egor Khaklin as reporter; 0.16.0.2 is patched (lab/EXTERNAL-NOUNS.md, Findings from outside)."
+    },
+    {
+      "id": "site-sd-jwt-advisory",
+      "kind": "statement",
+      "claim": "OpenWallet Foundation Labs’ identity-common-ts published an advisory crediting Egor Khaklin; the fixed SD-JWT packages (0.24.1, 30 October) carry his commit.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/openwallet-foundation-labs/identity-common-ts/security/advisories/GHSA-7xf4-9r27-vcr5",
+        "url:https://github.com/openwallet-foundation-labs/identity-common-ts/commit/260114a597a9d585f42fc6609c8fbe4b0253dbbd"
+      ],
+      "reproduce": "Open GHSA-7xf4-9r27-vcr5 (the url): it credits EgorKhaklin as reporter; 0.24.1 of @sd-jwt/core and @sd-jwt/sd-jwt-vc is patched, and the fix is commit 260114a5, whose author line reads Egor Khaklin (lab/EXTERNAL-NOUNS.md, Findings from outside)."
+    },
+    {
+      "id": "site-changed-after-a-report",
+      "kind": "statement",
+      "claim": "OID4VCgo (v0.22.0, the day of the report) and eudi-dev (v2.5.0) changed after reports from Polaris.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/IDFoundry/OID4VCgo/issues/312",
+        "url:https://github.com/eudi-dev/eudi-dev/issues/21"
+      ],
+      "reproduce": "lab/EXTERNAL-NOUNS.md, Findings from outside: OID4VCgo shipped v0.22.0 on 2026-09-30, the day of issue 312; eudi-dev fixed issue 21 (2026-10-02) in v2.5.0."
+    },
+    {
+      "id": "site-fides-rp-catalog",
+      "kind": "statement",
+      "claim": "FIDES listed Polaris’s verifier in its relying-party catalog.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/FIDEScommunity/fides-rp-catalog/pull/15"
+      ],
+      "reproduce": "lab/EXTERNAL-NOUNS.md, Public distribution: FIDES merged polaris-oid4vp into its relying-party catalog (FIDEScommunity/fides-rp-catalog#15, 2026-10-06)."
+    },
+    {
+      "id": "site-tests-ran-here",
+      "kind": "statement",
+      "claim": "Polaris ran each of these tests itself; the public record gives each version, date and result.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "file:docs/reference/INTEROP.md"
+      ],
+      "reproduce": "Each project in the Tested with list has a dated row in docs/reference/INTEROP.md giving the version tested and the result."
+    },
+    {
+      "id": "site-offline-check",
+      "kind": "statement",
+      "claim": "offline, against published keys, with no server and no network",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:packages/polaris-verify/README.md",
+        "file:docs/STRANGER-PATH.md"
+      ],
+      "reproduce": "Follow docs/STRANGER-PATH.md: polaris-verify checks a credential against the published keys with no network and no Polaris server."
+    },
+    {
+      "id": "site-two-signers-agree",
+      "kind": "statement",
+      "claim": "Two independent ML-DSA implementations must agree, or issuance stops.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "check:pqc_second_witness",
+        "file:docs/ASSURANCE-CASE.md"
+      ],
+      "reproduce": "docs/ASSURANCE-CASE.md: issuance fails if two independent ML-DSA implementations disagree; check_pqc_second_witness holds it."
+    },
+    {
+      "id": "site-zk-hold",
+      "kind": "statement",
+      "claim": "In zero-knowledge mode, a check is issuer-unlinkable and stores no credential identifier.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "check:c2_zk_token_null",
+        "file:MISSION.md"
+      ],
+      "reproduce": "MISSION.md, C2: a zero-knowledge verification stores no token identifier, refused by the CHECK chk_disclosure_token_consistency; check_c2_zk_token_null holds it."
+    },
+    {
+      "id": "site-status-assertion",
+      "kind": "statement",
+      "claim": "Whether it counts right now is answered online, or by a short-lived signed status assertion.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/offline-verification.md",
+        "file:docs/reference/API.md"
+      ],
+      "reproduce": "docs/design/offline-verification.md: the relying-party API answers online; the short-lived signed status assertion answers offline."
+    },
+    {
+      "id": "site-rules-in-the-schema",
+      "kind": "statement",
+      "claim": "The first three are refusals written into the schema. The fourth is an absence: no monetary table or column exists. All four are checked on every build.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "check:aor_append_only_triggers",
+        "check:c2_zk_token_null",
+        "check:one_active_token_index",
+        "check:c10_no_money_tables"
+      ],
+      "reproduce": "MISSION.md's constraint table names the trigger, the CHECK and the unique index behind C1, C2 and C3, and the absence behind C10; the four checks run on every build."
+    },
+    {
+      "id": "site-law-c1-stamp",
+      "kind": "statement",
+      "claim": "Enforced by a trigger and the grants",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "check:aor_append_only_triggers",
+        "check:aor_privilege_boundary"
+      ],
+      "reproduce": "MISSION.md's constraint table: C1 rests on reject_audit_modification() in polaris_sql/06_triggers.sql and the privilege boundary in polaris_sql/09_grants.sql; both checks run on every build."
+    },
+    {
+      "id": "site-law-c2-stamp",
+      "kind": "statement",
+      "claim": "Enforced by a check constraint",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "check:c2_zk_token_null"
+      ],
+      "reproduce": "MISSION.md's constraint table: C2 is the CHECK chk_disclosure_token_consistency on VerificationEvent."
+    },
+    {
+      "id": "site-law-c3-stamp",
+      "kind": "statement",
+      "claim": "Enforced by a unique index",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "check:one_active_token_index"
+      ],
+      "reproduce": "MISSION.md's constraint table: C3 is the partial unique index uq_one_active_per_person in polaris_sql/02_indexes.sql."
+    },
+    {
+      "id": "site-law-c10-stamp",
+      "kind": "statement",
+      "claim": "Held by absence",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "check:c10_no_money_tables"
+      ],
+      "reproduce": "MISSION.md's constraint table: C10 is a structural absence; check_c10_no_money_tables reads every table and column name in the schema and the migrations."
+    },
+    {
+      "id": "site-recovery-ceremony",
+      "kind": "statement",
+      "claim": "A person who loses every device comes back through a ceremony that needs all three: a biometric check, a sworn statement and a witness from a second authority.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md: recovery requires a biometric check, a sworn statement and a witnessing agency."
+    },
+    {
+      "id": "site-recovery-biometric",
+      "kind": "statement",
+      "claim": "Attested by an operator other than the one who opened the request.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md, Recording them: the biometric check is recorded by an active operator or admin who is not the requester."
+    },
+    {
+      "id": "site-recovery-sworn",
+      "kind": "statement",
+      "claim": "Recorded as its SHA-256 fingerprint, never as text.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md, Recording them: the statement is recorded as its SHA-256, never its text."
+    },
+    {
+      "id": "site-recovery-witness",
+      "kind": "statement",
+      "claim": "An operator from another authority signs as witness, in their own name.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md, Recording them: the witness co-signs as themselves, bound to an authority other than the requesting one."
+    },
+    {
+      "id": "site-recovery-approval",
+      "kind": "statement",
+      "claim": "After a 48-hour wait, an admin who neither opened the request nor witnessed it approves. The lost credentials are revoked and a new one is issued.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/design/recovery-ceremony.md"
+      ],
+      "reproduce": "docs/design/recovery-ceremony.md, Completing, by an admin: the cool-down, the approver who is neither requester nor witness, the LOST marks with revocation rows, and the replacement."
+    },
+    {
+      "id": "site-migration-two-signatures",
+      "kind": "statement",
+      "claim": "During a move between algorithms a credential carries two signatures, and the database never leaves it without an active one.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "check:crypto_algorithm_is_data",
+        "check:algorithm_agility"
+      ],
+      "reproduce": "check_crypto_algorithm_is_data and check_algorithm_agility hold the algorithm as data and the migration path's two signatures."
+    },
+    {
+      "id": "site-refusal-test-counts",
+      "kind": "statement",
+      "claim": "34 SD-JWT VC presentations and 32 mdoc device responses that must be refused",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/interop/negative-vectors/vectors.json",
+        "file:lab/interop/negative-vectors/mdoc-vectors.json",
+        "file:lab/interop/negative-vectors/README.md"
+      ],
+      "reproduce": "jq '[.vectors[] | select(.expected == \"reject\")] | length' on vectors.json prints 34 and on mdoc-vectors.json 32; each refusal carries the clauses it rests on (README.md)."
+    },
+    {
+      "id": "site-review-packet-public",
+      "kind": "statement",
+      "claim": "The review packet and the red-team scope are public; report what you find privately.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:docs/REVIEW-PACKET.md",
+        "file:docs/RED-TEAM-SCOPE.md",
+        "file:SECURITY.md"
+      ],
+      "reproduce": "Open docs/REVIEW-PACKET.md and docs/RED-TEAM-SCOPE.md; SECURITY.md says how to report privately."
+    },
+    {
+      "id": "site-founder",
+      "kind": "statement",
+      "claim": "liboqs-python’s maintainers fixed a security issue he reported, and OpenWallet Foundation Labs’ identity-common-ts released his fix for another; both published advisories crediting him.",
+      "surfaces": [
+        "site/index.html"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/open-quantum-safe/liboqs-python/security/advisories/GHSA-w696-4vrr-x6x3",
+        "url:https://github.com/openwallet-foundation-labs/identity-common-ts/security/advisories/GHSA-7xf4-9r27-vcr5"
+      ],
+      "reproduce": "lab/EXTERNAL-NOUNS.md, Findings from outside: both advisories credit Egor Khaklin, and identity-common-ts's fix is commit 260114a5, whose author line reads Egor Khaklin."
+    },
+    {
+      "id": "llms-outside-ci",
+      "kind": "statement",
+      "claim": "Since 2026-10-11, OID4VCgo runs the verifier in its own CI, every day and on each of its releases, and four outside projects have merged Polaris's refusal tests into their own CI.",
+      "surfaces": [
+        "site/llms.txt"
+      ],
+      "evidence": [
+        "file:lab/EXTERNAL-NOUNS.md",
+        "url:https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml"
+      ],
+      "reproduce": "The Use section of lab/EXTERNAL-NOUNS.md: item 1 dates polaris-interop.yml (daily and on each release) 2026-10-11, and its count line names the four projects whose CI runs the negative vectors, each since a merged pull request."
     }
   ]
 }

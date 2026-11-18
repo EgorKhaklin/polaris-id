@@ -12468,20 +12468,32 @@ class _TagReader(HTMLParser):
     reads HTML again (a <foreignObject>, a <desc> or <title>, MathML text, or after a tag that ends
     the drawing). Inside a drawing a <title>, <style> or <script> holds markup, not the raw text
     the same tag holds in HTML. A <title> in a <template> or a <noscript> is kept: a crawler or a
-    reader without scripting may take it."""
+    reader without scripting may take it. The text of every HTML <h1> is kept too, the tags inside
+    it stripped, in `h1s`, and its aria-label (None where it has none) in `h1_labels`; each <h2>'s
+    the same way, in `h2s` and `h2_labels`."""
 
     def __init__(self, text: str) -> None:
         super().__init__(convert_charrefs=True)
         self.tags: list[tuple[str, list[tuple[str, str]]]] = []
         self.titles: list[str] = []
+        self.h1s: list[str] = []
+        self.h1_labels: list[str | None] = []
+        self.h2s: list[str] = []
+        self.h2_labels: list[str | None] = []
         # the elements open inside a drawing, each with whether its children are read as HTML
         self._foreign: list[tuple[str, bool]] = []
         self._title: list[str] | None = None
+        self._heads: dict[str, list[str] | None] = {"h1": None, "h2": None}  # the text of the heading open, by tag
+        self._head_texts = {"h1": self.h1s, "h2": self.h2s}
+        self._head_labels = {"h1": self.h1_labels, "h2": self.h2_labels}
         self._raw_text = True  # whether the tag just read may switch the parser to raw text
         self.feed(text)
         self.close()
         if self._title is not None:  # a <title> left open runs to the end of the page
             self.titles.append("".join(self._title))
+        for tag, parts in self._heads.items():  # and so does a heading
+            if parts is not None:
+                self._head_texts[tag].append("".join(parts))
 
     @property
     def title(self) -> str | None:
@@ -12504,6 +12516,9 @@ class _TagReader(HTMLParser):
         self._raw_text = html
         if tag == "title" and html and self._title is None:
             self._title = []
+        if tag in self._heads and html and self._heads[tag] is None:
+            self._heads[tag] = []
+            self._head_labels[tag].append(next((v or "" for k, v in attrs if k == "aria-label"), None))
         if tag in ("svg", "math") or not html:
             self._foreign.append((tag, tag in _FOREIGN_HTML_POINTS))
         elif self._foreign and tag not in _VOID_TAGS:
@@ -12518,6 +12533,9 @@ class _TagReader(HTMLParser):
         if tag == "title" and self._title is not None:
             self.titles.append("".join(self._title))
             self._title = None
+        if tag in self._heads and self._heads[tag] is not None:
+            self._head_texts[tag].append("".join(self._heads[tag] or []))
+            self._heads[tag] = None
         if tag in ("br", "p") and not self._html_here():
             self._break_out()
         names = [name for name, _ in self._foreign]
@@ -12527,6 +12545,9 @@ class _TagReader(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._title is not None:
             self._title.append(data)
+        for parts in self._heads.values():
+            if parts is not None:
+                parts.append(data)
 
     def metas(self, key: str) -> list[str]:
         """The content of every <meta> whose property or name is `key`, compared in any case."""
@@ -16576,8 +16597,9 @@ _CARD_OVERCLAIMS = ((r"\bdeployed\b", "deployed"), (r"\bpiloted\b", "piloted"),
 def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     """The site title and social card must not overstate Polaris in a browser
     tab or a shared link: each name field (every page <title>, og:title, and any og:site_name
-    or twitter:title) is the bare name (owner, 2026-10-23) or says "pre-pilot", and
-    never "certified"; no field of the card, descriptions and image text included,
+    or twitter:title) is the bare name (owner, 2026-10-23) or says "pre-pilot", or, og:site_name
+    excepted, is exactly "Polaris ID: " and the page's one h1 (owner, 2026-11-17), and is
+    never "certified"; an h1 named by an aria-label is named by exactly its own text; no field of the card, descriptions and image text included,
     calls Polaris national, deployed, piloted or production-ready, or unlinkable
     without its issuer qualifier (each occurrence), in any tag of that field, however it is quoted or
     cased; the README must not carry the retired overclaims; a README comparison with a
@@ -16589,7 +16611,11 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     word in each kind of field, in a second tag, in single quotes, unquoted and in upper
     case, a longer name without "pre-pilot", a missing or empty name field, a bare
     'unlinkable' beside a qualified one, an overclaiming <title> beside an innocent one
-    in a drawing, a template or a noscript, or after it, and an overclaim phrase."""
+    in a drawing, a template or a noscript, or after it, and an overclaim phrase; and beside a
+    title and og:title that are "Polaris ID: " and the h1, which pass, one word, the period or the
+    case off it, another tagline, the shorter name, the h1 alone, og:site_name in that form, two
+    h1s, none, the text in a drawing, and a refused word in the h1 itself; and an h1 or an h2 whose
+    aria-label is another sentence, an empty one, or one carrying a refused word its letters do not."""
     readme = _read(root, "README.md")
     site = _read(root, "site/index.html")
     if not readme or not site:
@@ -16605,13 +16631,29 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     names += [(k, v) for k in ("og:site_name", "twitter:title") for v in page.metas(k)]
     texts = [(k, v) for k in ("description", "og:description", "og:image:alt", "twitter:description",
                               "twitter:image:alt") for v in page.metas(k)]
+    # Or the name and the page's own headline (owner, 2026-11-17): exactly "Polaris ID: " and the text
+    # of its one h1, whitespace normalised, so the tab says what the page says first and nothing more.
+    # og:site_name names the site and stays the bare name. With no h1, or more than one, there is no
+    # headline to hold the field to. The field is still read by every rule below.
+    h1s = [" ".join(h.split()) for h in page.h1s]
+    headline = "Polaris ID: " + h1s[0] if len(h1s) == 1 and h1s[0] else None
+    # An h1 or h2 named by an aria-label (a typed headline: its letters are spans hidden from assistive technology) is
+    # named by exactly its own text, so a reader who hears the heading hears the one the page shows.
+    for kind, heads, head_labels in (("h1", h1s, page.h1_labels),
+                                     ("h2", [" ".join(h.split()) for h in page.h2s], page.h2_labels)):
+        for text, label in zip(heads, head_labels):
+            if label is not None and " ".join(label.split()) != text:
+                return _fail("public_claims", f"the site {kind}'s aria-label ({label!r}) is not its own text ({text!r}); "
+                                              "a reader who hears the heading would hear another one than the page shows")
     for label, value in names:
         if value is None or not value.strip():
             return _fail("public_claims", f"the site {label} is missing or empty")
-        if value.strip() not in _BARE_NAMES and "pre-pilot" not in value.lower():
+        as_headline = label != "og:site_name" and headline is not None and " ".join(value.split()) == headline
+        if value.strip() not in _BARE_NAMES and "pre-pilot" not in value.lower() and not as_headline:
             return _fail("public_claims",
-                         f"the site {label} ({value.strip()!r}) is neither the bare name nor qualified as "
-                         "pre-pilot; a name field that says more than the name must say what Polaris is not yet")
+                         f"the site {label} ({value.strip()!r}) is neither the bare name, nor qualified as "
+                         "pre-pilot, nor \"Polaris ID: \" and exactly the page's one h1; a name field that says "
+                         "more than the name must say what Polaris is not yet, or only what the page's headline says")
         if re.search(r"\bcertified\b", value, re.I):
             return _fail("public_claims",
                          f"the site {label} says 'certified'; only polaris-oid4vp 1.0.0rc7 is, to one profile, "
@@ -27222,6 +27264,10 @@ _MDOC_CLAIM_SHARED_WORDS = re.compile(r"(?i:mdocs?|mso_mdoc|DeviceResponses?|180
 _MDOC_CLAIM_OTHER_SUBJECTS = (
     # the corpus other verifiers test themselves against, which holds mdoc device responses
     re.compile(r"negative[- ]vectors"),
+    # the same corpus, as the site's doors name it
+    re.compile(r"refusal tests"),
+    # the CI job that mutates the lab's mdoc verifier (lab/interop/mdoc/verify_mdoc.py)
+    re.compile(r"mdoc (?:verifier )?(?:mutation )?drill"),
     # polaris-verify reading this project's own credential in its mdoc form
     re.compile(r"verify_mdoc"),
     # a certificate's profile: the key usage an issuer's certificate carries
@@ -31775,7 +31821,8 @@ def check_product_suite_parts_share_setup(root: pathlib.Path) -> list[Finding]:
 
 
 #: The outputs the changes job writes, each "true" or "false" (scripts/polaris-ci-changes.py).
-_CHANGES_OUTPUTS = ("full", "oid4vp", "sdk")
+#: beyond_site since 2026-11-17: the jobs only a change wholly under site/ skips.
+_CHANGES_OUTPUTS = ("full", "oid4vp", "sdk", "beyond_site")
 
 #: What moved out of a required job on 2026-10-15, as each must still run.
 _MOVED_DRILLS = (
@@ -31932,7 +31979,10 @@ def check_ci_changes_allowlist_measured(root: pathlib.Path) -> list[Finding]:
     the change that makes a test open a document is not the change that touches the document.
     This runs the script's own audit (`--audit`): no skippable code names an allowlisted path,
     every entry matches a file, no drill input is on the list, and every script declared as run
-    only by always-run jobs is named by no skippable one.
+    only by always-run jobs is named by no skippable one. Since 2026-11-17 the same audit measures
+    the site-only class: no code a site-skipped job may run names a site-only path, and the
+    invariant checks job, which a site-only change still runs, runs the checks, their detection
+    tests and the link check.
     """
     name = "ci_changes_allowlist_measured"
     path = root / "scripts" / "polaris-ci-changes.py"
@@ -31961,7 +32011,9 @@ def check_ci_changes_allowlist_measured(root: pathlib.Path) -> list[Finding]:
 # badge and the claims manifest's lists must name the same implementations, split the same way: the wallets that ran
 # unmodified, and the rest. 2026-11-14: the site too. Its "tested against N outside projects" sentences, its tally and
 # the items of its Evidence list must each equal the page's rows (a commit raised the count everywhere else and left
-# the site at the old one, and nothing here read it).
+# the site at the old one, and nothing here read it). 2026-11-17: the owner took the sentence off the page and the
+# tally carries the count alone; every "outside projects" a reader sees there is one of those two forms, so a count
+# said any other way is not left unread.
 _INTEROP_PAGE = "docs/reference/INTEROP.md"
 
 
@@ -32032,12 +32084,17 @@ def check_interop_page_matches_the_count(root: pathlib.Path) -> list[Finding]:
     if not site:
         return _fail(name, "site/index.html is missing")
     told = [int(n) for n in re.findall(r"tested against (\d+) outside projects", site)]
-    if not told or any(n != len(rows) for n in told):
-        return _fail(name, f"the site says it was tested against {told or 'no number of'} outside projects; "
+    if any(n != len(rows) for n in told):
+        return _fail(name, f"the site says it was tested against {told} outside projects; "
                            f"{_INTEROP_PAGE} has {len(rows)} rows")
     tally = [int(n) for n in re.findall(r'<p class="tally"[^>]*><b>(\d+)</b><span>outside projects</span>', site)]
     if tally != [len(rows)]:
         return _fail(name, f"the site's outside-projects tally reads {tally}; {_INTEROP_PAGE} has {len(rows)} rows")
+    seen = _claim_text(site).count("outside projects")
+    if seen != len(told) + len(tally):
+        return _fail(name, f"the site says \"outside projects\" {seen} times, and {len(told) + len(tally)} of them are "
+                           "read (a \"tested against N outside projects\" sentence, or the tally); say the count in one "
+                           "of those forms")
     ledgers = re.findall(r'<ol class="ledger">(.*?)</ol>', site, re.S)
     listed = [len(re.findall(r"<li\b", body)) for body in ledgers]
     if listed != [len(rows)]:
