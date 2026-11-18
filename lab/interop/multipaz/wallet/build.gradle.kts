@@ -21,9 +21,9 @@ dependencies {
     // scripts/polaris-osv-gradle.sh accepts.
     constraints {
         implementation("com.google.guava:guava:33.8.0-jre")
-        implementation("org.bouncycastle:bcprov-jdk18on:1.86")
-        implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
-        implementation("org.bouncycastle:bcutil-jdk18on:1.86")
+        implementation("org.bouncycastle:bcprov-jdk18on:1.87")
+        implementation("org.bouncycastle:bcpkix-jdk18on:1.87")
+        implementation("org.bouncycastle:bcutil-jdk18on:1.87")
     }
 }
 
