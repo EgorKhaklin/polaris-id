@@ -28,6 +28,12 @@ _spec.loader.exec_module(drill)
 
 SHARD_COUNTS = (1, 2, 3, 5)        # 3 is what CI runs
 
+#: What every scratch directory this file makes is named with. CI's coverage step measures the
+#: child interpreters these tests start, and combines its shards on another runner, where the
+#: directory never existed: code run from it is a "No source for code" error in `coverage json`,
+#: and the floor gate cannot read its numbers (PR 579, 2026-11-18). .coveragerc omits this name.
+SCRATCH_PREFIX = "polaris-runner-test-"
+
 # What unittest prints for a run, as the drill reads it: green; red with a failure; red by ERROR only.
 PASSED = subprocess.CompletedProcess([], 0, "", "Ran 3 tests in 0.1s\n\nOK\n")
 FAILED_ONE = subprocess.CompletedProcess([], 1, "", "Ran 3 tests in 0.1s\n\nFAILED (failures=1)\n")
@@ -197,7 +203,7 @@ class TheVerdictReadsWhatTheSuiteSaid(unittest.TestCase):
 
     def run_module(self, body):
         import tempfile
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as d:
             text = "import unittest\n\n\nclass T(unittest.TestCase):\n    " + body if body else "import nowhere_at_all\n"
             pathlib.Path(d, "test_m.py").write_text(text, encoding="utf-8")
             return subprocess.run([sys.executable, "-m", "unittest", "test_m"], cwd=d,
@@ -216,7 +222,7 @@ class TheVerdictReadsWhatTheSuiteSaid(unittest.TestCase):
         # 2026-11-18: same mtime, same size, and the second ran the first one's .pyc.
         import os
         import tempfile
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as d:
             work = pathlib.Path(d)
             (work / "test_m.py").write_text(
                 "import unittest\nimport m\n\n\nclass T(unittest.TestCase):\n"
@@ -283,7 +289,7 @@ class AReadRefusalInvertedIsAForgedPlaintext(unittest.TestCase):
                  "except Exception as exc:\n"
                  "    print(type(exc).__name__)\n")
         seen, verdicts = {}, {}
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(prefix=SCRATCH_PREFIX) as d:
             pkg = pathlib.Path(d) / "pkg"
             shutil.copytree(drill.PKG, pkg, ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", "build"))
             for passthrough in (True, False):
@@ -299,6 +305,35 @@ class AReadRefusalInvertedIsAForgedPlaintext(unittest.TestCase):
                         verdicts[passthrough] = drill.verdict(drill._run_suite(pkg))
         self.assertEqual(seen, {True: "b'{}'", False: "AttributeError"})
         self.assertEqual(verdicts, {True: "caught"})
+
+
+class ItsScratchDirectoriesAreOnesTheCoverageMeasureLeavesOut(unittest.TestCase):
+    """2026-11-18: two tests here ran code from a plain TemporaryDirectory, and CI's coverage step
+    failed on it (SCRATCH_PREFIX's comment says how). Every scratch directory this file makes is
+    found by reading the file, so one added later without the prefix fails here, not in CI."""
+
+    def test_every_scratch_directory_here_is_named_with_the_prefix(self):
+        import ast
+        names = ("TemporaryDirectory", "mkdtemp", "mkstemp", "NamedTemporaryFile")
+        tree = ast.parse((HERE / "test_oid4vp_drill.py").read_text(encoding="utf-8"))
+        # tempfile.TemporaryDirectory(...), and TemporaryDirectory(...) imported from tempfile.
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and ((isinstance(node.func, ast.Attribute) and node.func.attr in names)
+                      or (isinstance(node.func, ast.Name) and node.func.id in names))]
+        self.assertGreaterEqual(len(calls), 3, "the three scratch directories were not found")
+        for call in calls:
+            with self.subTest(line=call.lineno):
+                prefix = [k.value for k in call.keywords if k.arg == "prefix"]
+                self.assertEqual(len(prefix), 1, "a scratch directory without a prefix")
+                self.assertIsInstance(prefix[0], ast.Name)
+                self.assertEqual(prefix[0].id, "SCRATCH_PREFIX")
+
+    def test_the_prefix_is_one_the_coverage_measure_leaves_out(self):
+        import configparser
+        config = configparser.ConfigParser(interpolation=None)
+        config.read_string((HERE.parent / ".coveragerc").read_text(encoding="utf-8"))
+        omitted = [line.strip() for line in config.get("run", "omit").splitlines()]
+        self.assertIn("*/%s*/*" % SCRATCH_PREFIX, omitted)
 
 
 if __name__ == "__main__":
