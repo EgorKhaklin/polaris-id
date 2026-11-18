@@ -20,7 +20,7 @@ Verifier profile**: it passed all eleven modules of the Foundation's hosted HAIP
 independent verification. OpenID® and OpenID® Certified™
 are trademarks of the OpenID Foundation, used under its [certification terms](https://openid.net/certification/mark/).
 
-**Status:** This release, 1.1.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
+**Status:** This release, 1.2.0, builds on 1.0.0rc7, the certified version, with the fixes and additions made since.
 The newest release runs against the OpenID Foundation's conformance suite every week in CI. It is re-run weekly against the outside implementations in the table
 below. One outside project, IDFoundry/OID4VCgo, runs it in its CI, daily and on each of its
 releases, since 2026-10-11.
@@ -502,7 +502,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status
 ```
 
-- 823 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 833 tests in seven files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 179 refusals accept and requires a

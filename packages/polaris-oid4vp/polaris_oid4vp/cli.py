@@ -544,16 +544,35 @@ class _Requests:
         # The states of the outstanding requests the control endpoint started: each ends at an
         # answer. Pruned of the expired at each start, so it holds at most the 64 bound.
         self._ends_on_answer = set()
+        # Places among the 64 held for a request not made yet: the one `--once` starts, from
+        # before the listener accepts anything until it is made (`reserve`, `start`, `release`).
+        self._reserved = 0
 
     def current_state(self):
         with self._lock:
             return self._current
 
-    def start(self, claims=None, vct_values=None):
+    def start(self, claims=None, vct_values=None, reserved=False):
         """Make a request, with this command's own specification or the claims and credential
-        types given, and return it. Raises ValueError, making none, for one a wallet would refuse."""
+        types given, and return it. Raises ValueError, making none, for one a wallet would refuse.
+        `reserved`: the request takes the place `reserve` held for it, given back in the same
+        critical section that makes it, whether or not the making succeeds."""
         with self._lock:
-            return self._start_locked(claims, vct_values)
+            try:
+                return self._start_locked(claims, vct_values)
+            finally:
+                if reserved:
+                    self._reserved -= 1
+
+    def reserve(self):
+        """Hold a place among the 64 for a request `start(reserved=True)` will make."""
+        with self._lock:
+            self._reserved += 1
+
+    def release(self):
+        """Give back a place `reserve` held, for a request that will not be made."""
+        with self._lock:
+            self._reserved -= 1
 
     def _start_locked(self, claims=None, vct_values=None, ends_on_answer=False):
         verifier = self.verifier
@@ -644,15 +663,15 @@ class _Requests:
 
     def control(self, spec):
         """POST /control/request: (status, document). 201 with the launch parameters; 400 for a
-        body or a specification refused; 429 at CONTROL_OUTSTANDING_LIMIT outstanding requests.
-        The count and the request are made under one lock, so no number of callers at once makes
-        more than the limit."""
+        body or a specification refused; 429 at CONTROL_OUTSTANDING_LIMIT outstanding requests,
+        a place held for the request `--once` starts counting as one. The count and the request
+        are made under one lock, so no number of callers at once makes more than the limit."""
         try:
             claims, vct = _control_specification(spec)
         except ValueError as exc:
             return 400, {"error": "invalid_request", "error_description": str(exc)}
         with self._lock:
-            if self.verifier.outstanding() >= CONTROL_OUTSTANDING_LIMIT:
+            if self.verifier.outstanding() + self._reserved >= CONTROL_OUTSTANDING_LIMIT:
                 return 429, {"error": "too_many_requests",
                              "error_description": "%d requests are outstanding; one must be "
                                                   "answered or expire first"
@@ -830,14 +849,25 @@ def _cmd_serve(args) -> int:
     on_request_object = None
     if result is not None:
         on_request_object = requests.fetched if several else result.request_object
-    httpd = serve(verifier, host=args.bind, port=args.port,
-                  certfile=None if args.no_local_tls else str(pki / FILES["tls_cert"]),
-                  keyfile=None if args.no_local_tls else str(pki / FILES["tls_key"]),
-                  verbose=args.verbose, on_verdict=on_verdict,
-                  on_request_object=on_request_object,
-                  cors_origins=cors_origins, control_token=control_token,
-                  on_control=requests.control if control_token else None,
-                  name_requests=several)
+    # The listener accepts from the moment serve() returns, and the request --once starts is
+    # made where it is announced, below, so its lifetime, its signed request object, its --result
+    # entry and its --rearm timer start there. Until it is made, the control endpoint counts a
+    # place held for it, so at most 64 requests are outstanding at once with it among them.
+    if args.once:
+        requests.reserve()
+    try:
+        httpd = serve(verifier, host=args.bind, port=args.port,
+                      certfile=None if args.no_local_tls else str(pki / FILES["tls_cert"]),
+                      keyfile=None if args.no_local_tls else str(pki / FILES["tls_key"]),
+                      verbose=args.verbose, on_verdict=on_verdict,
+                      on_request_object=on_request_object,
+                      cors_origins=cors_origins, control_token=control_token,
+                      on_control=requests.control if control_token else None,
+                      name_requests=several)
+    except BaseException:
+        if args.once:
+            requests.release()
+        raise
     print("polaris-oid4vp serving on %s (listening on %s:%d)"
           % (verifier.request_uri[:-len(REQUEST_PATH)], args.bind, args.port))
     if args.no_local_tls:
@@ -861,7 +891,7 @@ def _cmd_serve(args) -> int:
                         "no registration certificate carried; the over-asking check did not run"))
     print("\nStart a request with --once to print the parameters a wallet is launched with.")
     if args.once:
-        _announce(requests.start())
+        _announce(requests.start(reserved=True))
     # Read while it serves, and stdout is often not a terminal (a pipe, a file, a container log
     # without -t), where Python holds what was printed until the buffer fills or the process
     # exits. So the lines above go out now, and each verdict line as it is printed (2026-10-15).
