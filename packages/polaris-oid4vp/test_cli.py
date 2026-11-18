@@ -1663,6 +1663,19 @@ class RearmTests(_RunningCase):
             self.assertEqual(self.answer(run, state2)[0], 200)
             self.assertEqual(self.read()["request"], 3)
 
+    def test_a_fetch_of_the_current_request_refused_for_its_wallet_nonce_is_counted_for_it(self):
+        # request_uri_method=post: a wallet_nonce out of bounds is answered 400 before the
+        # request object is made, which is a refused fetch of the request the URI names.
+        import urllib.request
+        with self.serve_rearm() as run:
+            state = _state_of(run.blocks()[0])
+            fetch = urllib.request.Request("%s/request.jwt?state=%s" % (run.base, state),
+                                           data=b"wallet_nonce=" + b"n" * 1025, method="POST")
+            self.assertEqual(run._call(fetch)[0], 400)
+            self.assertEqual(self.read()["request_object"], {"served": 0, "refused": 1})
+            self.assertEqual(run.jar(state)[0], 200)
+            self.assertEqual(self.read()["request_object"], {"served": 1, "refused": 1})
+
     def test_only_the_current_requests_fetches_are_counted_for_it(self):
         with self.serve_rearm() as run:
             state1 = _state_of(run.blocks()[0])

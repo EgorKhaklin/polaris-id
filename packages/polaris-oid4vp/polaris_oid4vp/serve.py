@@ -306,6 +306,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             posted = urllib.parse.parse_qs(raw)
             wallet_nonce = (posted.get("wallet_nonce") or [None])[0]
             if wallet_nonce is not None and not wallet_nonce_acceptable(wallet_nonce):
+                # Asked of the verifier all the same: it refuses the nonce (None, nothing signed)
+                # and so ties the fetch to the request the URI names, which is how a caller that
+                # counts answers per request (serve --rearm --result) counts this refused fetch.
+                self.verifier.request_object((urllib.parse.parse_qs(query).get("state") or [""])[0],
+                                             wallet_nonce=wallet_nonce)
                 self._request_object_answered(400)
                 return self._send(400, {"error": "invalid_request",
                                         "error_description": "wallet_nonce is not 1 to 1024 "
