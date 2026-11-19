@@ -110,6 +110,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `GET /api/v1/federation-manifest/<agency_id>` publishes each signed attestation with `attesting_agency_id` and `algorithm`, two of its signed fields (WIRE-SPEC 3.14), so polaris-verify, polaris-sdk-python and polaris-sdk-ts verify the edge; without them every signed edge the route published was refused. The long-term-validation evidence a signed document carries includes the same manifest.
 - lab/EXTERNAL-NOUNS.md listed the FIDES organization and relying-party catalogs as proposed; both merged Polaris's entries on 2026-10-06 (FIDEScommunity/fides-organization-catalog#21, FIDEScommunity/fides-rp-catalog#15).
 - polaris-oid4vp `Verifier` raises `ValueError` for an empty `claims` or `vct_values`, a `vct_values` entry that is not a non-empty string, and either one given as a bare string, instead of signing a DCQL query built from them (OpenID4VP 1.0 section 6.1).
+- `polaris-ship.py triage` names four flakes it called unknown: a runner whose apt-get update lists no Ubuntu archive; a 429 from raw.githubusercontent.com, which the eudi-issuer walk now names with its URL; and a Pages deploy that finds its artifact not yet listed, or listed twice after a re-run, for which it prints a fresh run in place of a re-run.
 
 ### Added
 
