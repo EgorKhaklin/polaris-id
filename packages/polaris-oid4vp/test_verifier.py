@@ -2957,6 +2957,93 @@ class _TwoCredentials:
                                issuer_jwks=self.issuer_jwks, now=self.at)
 
 
+def cut_once(test, text, full, limit=512):
+    """`text` is at most `limit` characters and carries one note, at its end, naming `full`, the
+    length the text has when nothing cuts it."""
+    import re
+    test.assertLessEqual(len(text), limit)
+    found = re.findall(r"\.\.\. \(cut at (\d+) of (\d+) characters\)", text)
+    test.assertEqual(len(found), 1, text[-120:])
+    test.assertTrue(text.endswith(" characters)"), text[-120:])
+    kept, length = (int(n) for n in found[0])
+    test.assertEqual(length, full)
+    test.assertEqual(len(text), kept + len("... (cut at %d of %d characters)" % (kept, length)))
+
+
+def uncut_by(module):
+    """A patch that makes `module`'s bounded_reason return its text whole, to measure the length
+    a cut reason names."""
+    from unittest import mock
+    return mock.patch.object(module, "bounded_reason", lambda text: text)
+
+
+class _LongQuery(_TwoCredentials):
+    """_TwoCredentials with a query id of 5000 characters, first, beside pid: a query id has no
+    length bound, and verify_response's problem and response refusals name query ids."""
+
+    LONG = "q" * 5000
+    QUERIES = (LONG, "pid")
+    SHARED = {"type": "example_type", "credential_ids": [LONG, "pid"]}
+
+
+class TheResultIsCutAtEachReturnTests(unittest.TestCase):
+    """What verify_response returns names what a sender or the request chose: the members of the
+    vp_token and query ids. Its problem and each response refusal are at most REASON_MAX
+    characters at each of its four returns, with one note saying the full length."""
+
+    def held(self, call, *fields, accepted=False):
+        result = call()
+        with uncut_by(verifier_module):
+            whole = call()
+        self.assertIs(result["accepted"], accepted)
+        for field in fields:
+            got = result
+            full = whole
+            for key in field:
+                got, full = got[key], full[key]
+            with self.subTest(field="/".join(field)):
+                self.assertGreater(len(full), 5000)
+                cut_once(self, got, len(full))
+        return result
+
+    def test_the_vp_token_does_not_answer_the_request(self):
+        v = TwoCredentialVectorTests
+        v.setUpClass()
+        token = v.v["responses"]["per_credential"]["vp_token"]
+        out = self.held(lambda: verify_response(
+            v.v["request"], dict(token, **{"m" * 5000: token["pay"]}),
+            issuer_jwks=v.v["issuer_jwks"], now=v.v["at"], transaction_data_scope="per_credential"),
+            ("problem",))
+        self.assertIn("vp_token does not answer", out["problem"])
+
+    def test_the_vp_token_holds_no_single_presentation(self):
+        c = _LongQuery([_LongQuery.SHARED])
+        out = self.held(lambda: verify_response(c.request, {_LongQuery.LONG: 5, "pid": ["x"]},
+                                                issuer_jwks=c.issuer_jwks, now=c.at),
+                        ("problem",))
+        self.assertIn("holds no single presentation", out["problem"])
+
+    def test_the_two_readings_differ_and_none_is_named(self):
+        c = _LongQuery([_LongQuery.SHARED])
+        both = {_LongQuery.LONG: [0], "pid": [0]}
+        out = self.held(lambda: c.judge(both, scope=None),
+                        ("response_refusals", "per_credential"), accepted=None)
+        self.assertIn("name the transaction_data scope", out["problem"])
+        self.assertTrue(out["response_refusals"]["per_credential"].startswith(
+            "transaction_data_extra"))
+
+    def test_the_named_reading_refuses_the_response(self):
+        c = _LongQuery([_LongQuery.SHARED])
+        both = {_LongQuery.LONG: [0], "pid": [0]}
+        out = self.held(lambda: c.judge(both), ("problem",), ("response_refusals", "per_credential"))
+        self.assertTrue(out["problem"].startswith("transaction_data_extra"))
+
+    def test_the_named_reading_refuses_a_presentation(self):
+        c = _LongQuery([_LongQuery.SHARED])
+        out = self.held(lambda: c.judge({}, "all_entries"), ("problem",))
+        self.assertTrue(out["problem"].startswith(_LongQuery.LONG[:100]))
+
+
 class AnEntryNamingTwoPresentedCredentialsTests(unittest.TestCase):
     """OpenID4VP 1.0 section 5.1: "If there is more than one element in the array, the Wallet
     MUST use only one of the referenced Credentials for transaction authorization." Under

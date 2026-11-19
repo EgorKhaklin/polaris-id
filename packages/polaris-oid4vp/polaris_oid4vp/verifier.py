@@ -53,7 +53,8 @@ from .jwe import (ACCEPTED_ALG, ACCEPTED_ENC, MAX_RESPONSE_BYTES, JweError, _loa
                   check_compact_length, encrypt_compact)
 from .sdjwt import (ALL_ENTRIES, PER_CREDENTIAL, TRANSACTION_DATA_HASH_ALGS,
                     TRANSACTION_DATA_SCOPES, JtiMemory, TransactionDataBinding,
-                    TransactionDataEntry, Verdict, verify_presentation)
+                    TransactionDataEntry, Verdict, REASON_MAX, bounded_reason,
+                    verify_presentation)
 from . import cose, mdoc
 
 #: How long an outstanding request stays answerable. A nonce that is accepted forever is not
@@ -920,7 +921,7 @@ def operator_text(text):
 #: line printed or logged, in the --result file and in a control read. A reason can quote what a
 #: sender sent, a header value for one, so without a bound each refused post writes as much of
 #: its own bytes as the verifier read, to streams that accumulate (2026-11-19).
-WRITTEN_REASON_MAX = 512
+WRITTEN_REASON_MAX = REASON_MAX
 
 
 def cut_to(text, limit):
@@ -1736,6 +1737,16 @@ class Verifier:
             self._results.pop(key, None)
 
 
+def _bounded_result(out):
+    """`out` with its problem and each reading's response refusal at most REASON_MAX characters,
+    as a verdict's reason is: a problem names a query id, which has no length bound, or the
+    members of the vp_token, which the sender chose (2026-11-19)."""
+    out["problem"] = bounded_reason(out["problem"])
+    out["response_refusals"] = {scope: bounded_reason(why)
+                                for scope, why in out["response_refusals"].items()}
+    return out
+
+
 def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jwks=None,
                     trust_anchors=None, now=None, iaca_roots=None):
     """A verdict over a captured response: every presentation in `vp_token`, each held to the
@@ -1866,7 +1877,7 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
                           "dcql_query asks for %s"
                           % (sorted(vp_token) if isinstance(vp_token, dict) else "no object",
                              sorted(asked)))
-        return out
+        return _bounded_result(out)
     presented = {}
     for qid in asked:
         value = vp_token[qid]
@@ -1874,7 +1885,7 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
             value = value[0]
         if not isinstance(value, str) or not value:
             out["problem"] = "the vp_token holds no single presentation for %r" % qid
-            return out
+            return _bounded_result(out)
         presented[qid] = value
 
     def judge_mdoc(qid):
@@ -1926,7 +1937,7 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
             out["problem"] = ("the two readings expect different entries of these credentials "
                               "(see expected); name the transaction_data scope, %s, to decide"
                               % " or ".join(TRANSACTION_DATA_SCOPES))
-            return out
+            return _bounded_result(out)
         out["scope"] = transaction_data_scope
         out["verdicts"] = out["readings"][transaction_data_scope or PER_CREDENTIAL]
     refused = [(qid, v) for qid, v in out["verdicts"].items() if not v.authentic]
@@ -1937,7 +1948,7 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
         out["problem"] = "%s: %s: %s" % (qid, verdict.code, verdict.reason)
     elif response_refusal is not None:
         out["problem"] = response_refusal
-    return out
+    return _bounded_result(out)
 
 
 def _sha256(raw):

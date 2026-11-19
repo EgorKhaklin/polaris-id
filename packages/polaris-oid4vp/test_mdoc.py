@@ -1288,6 +1288,28 @@ class DeviceResponseTests(MdocCase):
         self.assertEqual((v.issuer_subject, v.issuer_anchor), ("CN=ISSUANCE", "CN=ISSUANCE ROOT"))
         self.assertEqual(v.revocation["state"], "no_status_claim")
 
+    def test_a_long_reason_judged_at_a_supplied_instant_is_cut_once_with_its_full_length(self):
+        """The instant a refusal was judged at joins its reason before the Verdict cuts it, so the
+        note counts the reason and the instant together, and says so once."""
+        import re
+        from polaris_oid4vp import sdjwt
+        response, inputs, at, root = capture_case("capture-pid")
+
+        def judged():
+            with mock.patch.object(mdoc, "_judge",
+                                   side_effect=mdoc._Refused("digest", "D" * 1000)):
+                return verify_device_response(response, session_transcript=capture_transcript(inputs),
+                                              iaca_roots=[IacaRoot(root, [PID])], doctype=PID, now=at)
+        v = judged()
+        with mock.patch.object(sdjwt, "bounded_reason", lambda text: text):
+            whole = judged().reason
+        self.assertEqual(v.code, "digest")
+        self.assertIn("judged at the supplied instant", whole)
+        self.assertLessEqual(len(v.reason), sdjwt.REASON_MAX)
+        found = re.findall(r"\.\.\. \(cut at (\d+) of (\d+) characters\)", v.reason)
+        self.assertEqual(len(found), 1, v.reason[-120:])
+        self.assertEqual(int(found[0][1]), len(whole))
+
     def capture_refused(self, code, words, *, roots=None, response=None, now=None, **changes):
         captured, inputs, at, root = capture_case("capture-pid")
         v = verify_device_response(captured if response is None else response,
