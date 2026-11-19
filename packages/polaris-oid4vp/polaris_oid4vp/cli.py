@@ -30,6 +30,7 @@ whatever authority its ecosystem trusts, not from a subcommand.
 """
 import argparse
 import datetime
+import ipaddress
 import json
 import os
 import pathlib
@@ -92,6 +93,84 @@ def _now():
     return datetime.datetime.now(datetime.timezone.utc)
 
 
+#: The name `keygen` and `serve` use when `--host` names none: the address the listener binds by
+#: default. The name localhost, the default before, is one a client may resolve to ::1 first,
+#: where the listener does not listen (2026-11-19).
+DEFAULT_HOST = "127.0.0.1"
+IPV6_HOST = "polaris-oid4vp: --host %s is an IPv6 address; use a name or an IPv4 address such as 127.0.0.1"
+#: serve's, which also names the way through a front: --public-base-url makes the origin instead.
+IPV6_HOST_SERVE = IPV6_HOST + "; or, behind a proxy or tunnel, give --public-base-url"
+
+
+def _ipv6_host(host):
+    """Whether `host` is an IPv6 address, bracketed or not. serve's listener is IPv4 (binding
+    ::1 fails), so nothing of ours answers on an IPv6 address: an origin made from one reaches
+    serve only through a front, and --public-base-url names a front's origin. Unbracketed,
+    https://::1:PORT has no host at all."""
+    try:
+        return ipaddress.ip_address(host.strip("[]")).version == 6
+    except ValueError:
+        return False
+
+
+def _subject_alt_name(host):
+    """`host` as a certificate names it: an IP address as an iPAddress, any other name as a
+    dNSName (RFC 5280, 4.2.1.6). Python's ssl module, checking the name of an address it
+    connects to, matches it against iPAddress entries only, so an address written as a dNSName
+    names nothing it accepts (test_cli.KeygenHeldOutTests)."""
+    try:
+        return x509.IPAddress(ipaddress.ip_address(host))
+    except ValueError:
+        return x509.DNSName(host)
+
+
+def _dns_form(name):
+    """A DNS name as it is compared: lower case, a U-label as its A-label (RFC 6125, 6.4.2). A
+    final dot stays, as Python's ssl keeps it: verifier.example. and verifier.example differ."""
+    try:
+        return name.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return name.lower()
+
+
+def certificate_names(certificate, host):
+    """Whether the subjectAltName of `certificate` names `host`, compared as Python's ssl compares
+    them with check_hostname on and the common-name fallback off: an IP address with the
+    iPAddress entries, as an address; any other name with the dNSName entries without regard to
+    case, where a `*` that is the whole leftmost label of an entry with at least two more labels
+    stands for exactly one label (RFC 6125, 6.4.1 and 6.4.3). The subject's common name is not
+    read; keygen writes a subjectAltName."""
+    try:
+        names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        return address in names.get_values_for_type(x509.IPAddress)
+    host = _dns_form(host)
+    for entry in names.get_values_for_type(x509.DNSName):
+        entry = _dns_form(entry)
+        if entry == host:
+            return True
+        first, _, rest = host.partition(".")
+        if entry.startswith("*.") and "." in entry[2:] and first and rest == entry[2:]:
+            return True
+    return False
+
+
+def _named_hosts(certificate):
+    """What a certificate's subjectAltName names, for a message: its addresses and DNS names."""
+    try:
+        names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return []
+    return ([str(a) for a in names.get_values_for_type(x509.IPAddress)]
+            + names.get_values_for_type(x509.DNSName))
+
+
 def keygen(out: pathlib.Path, host: str) -> dict:
     """A CA, a leaf it signs, and a self-signed certificate for the listener."""
     if not _HAVE_CRYPTO:
@@ -124,7 +203,7 @@ def keygen(out: pathlib.Path, host: str) -> dict:
             .not_valid_before(now - datetime.timedelta(days=1))
             .not_valid_after(now + datetime.timedelta(days=90))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+            .add_extension(x509.SubjectAlternativeName([_subject_alt_name(host)]), critical=False)
             .add_extension(x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()),
                            critical=False)
             .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
@@ -150,7 +229,7 @@ def keygen(out: pathlib.Path, host: str) -> dict:
            .public_key(tls_key.public_key()).serial_number(x509.random_serial_number())
            .not_valid_before(now - datetime.timedelta(days=1))
            .not_valid_after(now + datetime.timedelta(days=90))
-           .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+           .add_extension(x509.SubjectAlternativeName([_subject_alt_name(host)]), critical=False)
            # serverAuth, because Apple's TLS policy refuses a server certificate without it, even
            # one the client trusts explicitly: the EU iOS OpenID4VP library's wallet could fetch
            # the request object only by pinning this certificate around the policy
@@ -325,6 +404,9 @@ def _verifies_es256(jwk):
 
 
 def _cmd_keygen(args) -> int:
+    if _ipv6_host(args.host):
+        print(IPV6_HOST % args.host, file=sys.stderr)
+        return 2
     out = pathlib.Path(args.out)
     keygen(out, args.host)
     verifier = verifier_from(out, args.host, args.port)
@@ -898,6 +980,10 @@ def _cmd_serve(args) -> int:
               "address: 127.0.0.1 for this machine only, 0.0.0.0 for every interface",
               file=sys.stderr)
         return 2
+    # --host makes the origin serve prints and signs only without --public-base-url.
+    if not args.public_base_url and _ipv6_host(args.host):
+        print(IPV6_HOST_SERVE % args.host, file=sys.stderr)
+        return 2
     try:
         cors_origins = cors_origins_of(args.cors_origin)
     except ValueError as exc:
@@ -1028,6 +1114,29 @@ def _cmd_serve(args) -> int:
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
+    # Under TLS a wallet that checks the listener's name refuses a certificate that does not name
+    # the host it was sent to, and the first sign of it would be that wallet's refusal: a pki an
+    # earlier keygen made with no --host names localhost, the default then (2026-11-19). With
+    # --public-base-url a wallet meets the proxy's or the tunnel's certificate, not this one, so
+    # the check holds only the origin serve makes from --host and --port, and holds --host as
+    # given, the host that origin is made from.
+    if not args.no_local_tls and not args.public_base_url:
+        origin = verifier.request_uri[:-len(REQUEST_PATH)]
+        host = args.host
+        tls_cert = pki / FILES["tls_cert"]
+        try:
+            listener = x509.load_pem_x509_certificate(tls_cert.read_bytes())
+        except (OSError, ValueError) as exc:
+            print("polaris-oid4vp: %s is not a PEM certificate: %s" % (tls_cert, exc), file=sys.stderr)
+            return 2
+        if not certificate_names(listener, host):
+            named = _named_hosts(listener)
+            print("polaris-oid4vp: %s names %s in its subjectAltName, not %s, the host of %s. Run "
+                  "`polaris-oid4vp keygen --out %s --host %s`, or give serve the --host that keygen "
+                  "was given."
+                  % (tls_cert, " and ".join(named) if named else "no host", host, origin, pki, host),
+                  file=sys.stderr)
+            return 2
     if as_mdoc and not iaca_roots:
         print("polaris-oid4vp: no --iaca-root given, so no document can be verified: every "
               "presentation will be refused with `issuer_key`. That is the correct answer to an "
@@ -1270,13 +1379,17 @@ and one that judges a response already captured:
 
     g = sub.add_parser("keygen", help="make the certificates the HAIP profile requires")
     g.add_argument("--out", default="./pki")
-    g.add_argument("--host", default="localhost")
+    g.add_argument("--host", default=DEFAULT_HOST,
+                   help="the name a wallet reaches the verifier by, written into both certificates: "
+                        "a name or an IPv4 address, 127.0.0.1 by default; an address is written as one")
     g.add_argument("--port", type=int, default=9443)
     g.set_defaults(func=_cmd_keygen)
 
     s = sub.add_parser("serve", help="run a verifier")
     s.add_argument("--pki", default="./pki")
-    s.add_argument("--host", default="localhost", help="the name a wallet reaches this by")
+    s.add_argument("--host", default=DEFAULT_HOST,
+                   help="the name a wallet reaches this by, a name or an IPv4 address: 127.0.0.1 by "
+                        "default, the address --bind listens on by default; give the name keygen was given")
     s.add_argument("--bind", default="127.0.0.1",
                    help="the address to listen on: 127.0.0.1, this machine only, by default; "
                         "0.0.0.0 for every interface, as a wallet or suite elsewhere needs; "

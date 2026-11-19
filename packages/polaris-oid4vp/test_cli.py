@@ -17,6 +17,7 @@ import io
 import os
 import pathlib
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -26,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cryptography import x509  # noqa: E402
 
-from polaris_oid4vp.cli import FILES, keygen, main, parse_claim, verifier_from  # noqa: E402
+from polaris_oid4vp.cli import DEFAULT_HOST, FILES, keygen, main, parse_claim, verifier_from  # noqa: E402
 from test_verifier import MdocWallet, TYP_AS_FORMAT, Wallet, verifier_info_vectors  # noqa: E402
 import test_mdoc as md  # noqa: E402
 
@@ -363,6 +364,71 @@ class KeygenHeldOutTests(unittest.TestCase):
         san = self.leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
         self.assertEqual(san.get_values_for_type(x509.DNSName), ["verifier.test"])
 
+    def test_an_ipv6_host_is_refused_before_any_file_is_written(self):
+        """keygen writes --host into both certificates for the origin serve prints, and an IPv6
+        address makes none a wallet reaches; it exits 2, writes nothing and says what to give."""
+        import contextlib
+        for host in ("::1", "[::1]", "2001:db8::1"):
+            with self.subTest(host=host):
+                pki = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-ipv6-")) / "pki"
+                self.addCleanup(shutil.rmtree, pki.parent, ignore_errors=True)
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    self.assertEqual(main(["keygen", "--out", str(pki), "--host", host]), 2)
+                self.assertFalse(pki.exists(), "keygen may write nothing for an IPv6 --host")
+                self.assertIn("--host %s is an IPv6 address; use a name or an IPv4 address such as 127.0.0.1"
+                              % host, err.getvalue())
+                self.assertNotIn("--public-base-url", err.getvalue(), "keygen takes no --public-base-url")
+
+    def test_with_no_host_it_names_127_0_0_1_as_an_address_and_a_name_checking_client_connects(self):
+        """2026-11-19. With no --host, keygen names 127.0.0.1, the address serve listens on and
+        prints by default. Python's ssl module matches an address it connects to against
+        iPAddress entries only, so both certificates name the address as one, and a client
+        that checks the name completes the handshake with the listener's certificate; the same
+        address written as a dNSName fails it with "IP address mismatch". A name stays a
+        dNSName: test_the_leaf_names_the_host."""
+        import contextlib
+        import ipaddress
+        import socket
+        import ssl
+        import threading
+        pki = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-address-"))
+        self.addCleanup(shutil.rmtree, pki, ignore_errors=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["keygen", "--out", str(pki)]), 0)
+        for name in ("client_cert", "tls_cert"):
+            cert = x509.load_pem_x509_certificate((pki / FILES[name]).read_bytes())
+            san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+            self.assertEqual(san.get_values_for_type(x509.IPAddress),
+                             [ipaddress.ip_address("127.0.0.1")], name)
+            self.assertEqual(san.get_values_for_type(x509.DNSName), [], name)
+
+        server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_ctx.load_cert_chain(str(pki / FILES["tls_cert"]), str(pki / FILES["tls_key"]))
+        listener = socket.socket()
+        self.addCleanup(listener.close)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(10)
+
+        def answer_one():
+            try:
+                conn, _ = listener.accept()
+                with server_ctx.wrap_socket(conn, server_side=True):
+                    pass
+            except (OSError, ssl.SSLError):
+                pass
+
+        thread = threading.Thread(target=answer_one, daemon=True)
+        thread.start()
+        client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        client_ctx.load_verify_locations(str(pki / FILES["tls_cert"]))
+        self.assertTrue(client_ctx.check_hostname)
+        with socket.create_connection(listener.getsockname(), timeout=10) as raw:
+            with client_ctx.wrap_socket(raw, server_hostname="127.0.0.1") as tls:
+                self.assertTrue(tls.version().startswith("TLSv"), tls.version())
+        thread.join(10)
+
     def test_the_leaf_is_valid_for_a_counterparty_whose_clock_runs_behind(self):
         import datetime
         skewed = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
@@ -376,7 +442,7 @@ class ServeCommandHeldOutTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-serve-"))
-        keygen(self.tmp, "verifier.test")
+        keygen(self.tmp, DEFAULT_HOST)
         from cryptography.hazmat.primitives.asymmetric import ec
         from polaris_oid4vp.jwe import b64u_encode
         n = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
@@ -507,7 +573,7 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         self.assertIsNotNone(seen2["kwargs"]["certfile"], "by default the listener still serves TLS")
 
     def test_the_listener_binds_this_machine_only_by_default(self):
-        """The README says the listener binds --bind, localhost by default: 127.0.0.1, with or
+        """The README says the listener binds --bind, 127.0.0.1 by default, this machine only, with or
         without TLS. Every interface is the caller's choice."""
         for extra in ((), ("--no-local-tls",)):
             with self.subTest(extra=extra):
@@ -515,6 +581,178 @@ class ServeCommandHeldOutTests(unittest.TestCase):
                 self.assertEqual(seen["kwargs"]["host"], "127.0.0.1")
         _, seen, _, _ = self._serve("--bind", "0.0.0.0")
         self.assertEqual(seen["kwargs"]["host"], "0.0.0.0")
+
+    def test_with_no_host_it_prints_and_signs_the_address_it_listens_on(self):
+        """2026-11-19. With no --host and no --public-base-url, the origin serve prints and
+        puts in the request it signs is https://127.0.0.1:PORT, the address --bind listens on
+        by default, with or without TLS. It was https://localhost:PORT, a name a client may
+        resolve to ::1 first, where this listener does not listen."""
+        import json
+        from polaris_oid4vp.jwe import b64u_decode
+        from polaris_oid4vp.serve import REQUEST_PATH, RESPONSE_PATH
+        origin = "https://127.0.0.1:9443"
+        for extra in ((), ("--no-local-tls",)):
+            with self.subTest(extra=extra):
+                rc, seen, out, _ = self._serve("--port", "9443", *extra)
+                self.assertEqual(rc, 0)
+                self.assertIn("polaris-oid4vp serving on %s (listening on 127.0.0.1:9443)" % origin,
+                              out)
+                self.assertNotIn("localhost", out)
+                verifier = seen["verifier"]
+                session, jar = verifier.new_request()
+                signed = json.loads(b64u_decode(jar.split(".")[1]))
+                self.assertEqual(signed["response_uri"], origin + RESPONSE_PATH)
+                self.assertEqual(verifier.authorization_request_params(session)["request_uri"],
+                                 "%s%s?state=%s" % (origin, REQUEST_PATH, session.state))
+
+    def test_under_tls_a_certificate_that_does_not_name_its_host_is_refused_before_the_listener(self):
+        """2026-11-19. A pki an earlier keygen made with no --host names localhost; serve, which
+        now names 127.0.0.1, would print an origin its own certificate does not name, and the
+        first sign would be a wallet refusing the TLS name. Under TLS it refuses to start and
+        says how to make one that does; given the host the certificate names, it starts."""
+        keygen(self.tmp, "localhost")
+        rc, seen, _, err = self._serve("--port", "9443")
+        self.assertEqual(rc, 2)
+        self.assertNotIn("kwargs", seen, "no listener may start on a certificate that names another host")
+        self.assertIn("names localhost in its subjectAltName, not 127.0.0.1, the host of "
+                      "https://127.0.0.1:9443", err)
+        self.assertIn("polaris-oid4vp keygen --out %s --host 127.0.0.1" % self.tmp, err)
+        for extra in (("--host", "localhost"), ("--host", "LOCALHOST"), ("--no-local-tls",)):
+            with self.subTest(extra=extra):
+                rc, seen, _, err = self._serve("--port", "9443", *extra)
+                self.assertEqual(rc, 0, err)
+                self.assertIn("kwargs", seen)
+
+    def test_under_tls_behind_a_public_base_url_the_listener_certificate_is_not_held(self):
+        """With --public-base-url a wallet reaches the verifier through a proxy or a tunnel and
+        meets that certificate, not tls.pem, and a proxy that verifies its upstream checks the
+        address it dials. 1.3.0 started on this configuration, and serve still does, whatever
+        host tls.pem names."""
+        for host in (None, "localhost"):
+            with self.subTest(tls_pem_names=host or "127.0.0.1"):
+                if host:
+                    keygen(self.tmp, host)
+                rc, seen, _, err = self._serve("--public-base-url", "https://verifier.example")
+                self.assertEqual(rc, 0, err)
+                self.assertIn("kwargs", seen)
+
+    def test_an_ipv6_host_is_refused_where_it_would_make_the_printed_origin(self):
+        """The listener is IPv4 (binding ::1 fails), so nothing serve starts answers on an IPv6
+        address, and a wallet reaches the origin serve would print from one only through a front.
+        Without --public-base-url serve refuses an IPv6 --host before any listener, under TLS or
+        not, and names both ways: a name or an IPv4 address, or a front's origin as
+        --public-base-url. With --public-base-url, --host makes nothing serve prints or signs, and
+        serve starts, as 1.3.0 did."""
+        for host in ("::1", "[::1]", "fe80::1"):
+            for extra in ((), ("--no-local-tls",)):
+                with self.subTest(host=host, extra=extra):
+                    rc, seen, _, err = self._serve("--host", host, *extra)
+                    self.assertEqual(rc, 2)
+                    self.assertNotIn("kwargs", seen, "no listener may start on an IPv6 --host")
+                    self.assertIn("--host %s is an IPv6 address; use a name or an IPv4 address such as "
+                                  "127.0.0.1; or, behind a proxy or tunnel, give --public-base-url" % host, err)
+        rc, seen, _, err = self._serve("--host", "::1", "--public-base-url", "https://verifier.example")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("kwargs", seen)
+
+    @staticmethod
+    def _self_signed(common_name, *names):
+        import datetime
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+        now = datetime.datetime.now(datetime.timezone.utc)
+        builder = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                   .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(now - datetime.timedelta(hours=1))
+                   .not_valid_after(now + datetime.timedelta(days=1)))
+        if names:
+            builder = builder.add_extension(x509.SubjectAlternativeName(list(names)), critical=False)
+        return builder.sign(key, hashes.SHA256()), key
+
+    @staticmethod
+    def _name_rows():
+        """(the subject's common name, the subjectAltName entries, the host, whether it is named)."""
+        import ipaddress
+        ip = x509.IPAddress(ipaddress.ip_address("127.0.0.1"))
+        dns = x509.DNSName
+        return (
+            ("127.0.0.1", (ip,), "127.0.0.1", True),
+            ("127.0.0.1", (dns("127.0.0.1"),), "127.0.0.1", False),
+            ("127.0.0.1", (ip,), "localhost", False),
+            ("127.0.0.1", (), "127.0.0.1", False),
+            ("127.0.0.1", (dns("localhost"),), "LocalHost", True),
+            ("127.0.0.1", (dns("verifier.example."),), "verifier.example", False),
+            ("127.0.0.1", (dns("verifier.example"),), "verifier.example.", False),
+            ("127.0.0.1", (dns("*.verifier.example"),), "a.verifier.example", True),
+            ("127.0.0.1", (dns("*.Verifier.Example"),), "A.verifier.example", True),
+            ("127.0.0.1", (dns("*.verifier.example"),), "verifier.example", False),
+            ("127.0.0.1", (dns("*.verifier.example"),), "a.b.verifier.example", False),
+            ("127.0.0.1", (dns("*.example"),), "verifier.example", False),
+            ("127.0.0.1", (dns("f*.example"),), "foo.example", False),
+            ("127.0.0.1", (dns("xn--bcher-kva.example"),), "b\u00fccher.example", True),
+            ("127.0.0.1", (dns("*.xn--bcher-kva.example"),), "a.b\u00fccher.example", True),
+            ("127.0.0.1", (dns("other.example"), ip), "127.0.0.1", True),
+            ("127.0.0.1", (x509.IPAddress(ipaddress.ip_address("::1")),), "::1", True),
+            ("verifier.example", (ip,), "verifier.example", False),
+            ("verifier.example", (), "verifier.example", False))
+
+    def test_the_name_check_reads_the_subject_alt_name_as_the_table_says(self):
+        """An address only against iPAddress entries; a name against dNSName entries without
+        case, its final dot kept; a wildcard for exactly one leftmost label of a name with two
+        more; the subject's common name never. The next test holds the table to Python's ssl."""
+        from polaris_oid4vp.cli import certificate_names
+        for common_name, names, host, named in self._name_rows():
+            with self.subTest(common_name=common_name, names=[str(n.value) for n in names], host=host):
+                certificate, _ = self._self_signed(common_name, *names)
+                self.assertIs(certificate_names(certificate, host), named)
+
+    @unittest.skipUnless(getattr(ssl, "HAS_NEVER_CHECK_COMMON_NAME", False),
+                         "this ssl cannot turn the common-name fallback off")
+    def test_each_row_of_the_name_table_is_what_pythons_ssl_decides_in_a_handshake(self):
+        """Each row, as a TLS handshake through memory BIOs: Python's ssl as the client, with
+        check_hostname on, the common-name fallback off and the certificate as its only trust
+        anchor, against a server that presents it. A refusal counts only as a name mismatch
+        (verify codes 62 and 64), so a certificate the client does not trust cannot pass for one."""
+        from cryptography.hazmat.primitives import serialization
+        for common_name, names, host, named in self._name_rows():
+            with self.subTest(common_name=common_name, names=[str(n.value) for n in names], host=host):
+                certificate, key = self._self_signed(common_name, *names)
+                pem = certificate.public_bytes(serialization.Encoding.PEM)
+                key_pem = self.tmp / "name-row.key"
+                cert_pem = self.tmp / "name-row.pem"
+                key_pem.write_bytes(key.private_bytes(serialization.Encoding.PEM,
+                                                      serialization.PrivateFormat.PKCS8,
+                                                      serialization.NoEncryption()))
+                cert_pem.write_bytes(pem)
+                server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                server.load_cert_chain(str(cert_pem), str(key_pem))
+                client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                client.hostname_checks_common_name = False
+                client.load_verify_locations(cadata=pem.decode("ascii"))
+                self.assertTrue(client.check_hostname)
+                to_server, to_client = ssl.MemoryBIO(), ssl.MemoryBIO()
+                ours = client.wrap_bio(to_client, to_server, server_hostname=host)
+                theirs = server.wrap_bio(to_server, to_client, server_side=True)
+                accepted = None
+                for _ in range(8):
+                    try:
+                        ours.do_handshake()
+                        accepted = True
+                        break
+                    except ssl.SSLWantReadError:
+                        pass
+                    except ssl.SSLCertVerificationError as refusal:
+                        self.assertIn(refusal.verify_code, (62, 64), refusal.verify_message)
+                        accepted = False
+                        break
+                    try:
+                        theirs.do_handshake()
+                    except ssl.SSLWantReadError:
+                        pass
+                self.assertIs(accepted, named)
 
     def test_an_empty_bind_address_is_refused_before_the_listener(self):
         """An empty --bind would listen on every interface; every interface is named, never
@@ -822,7 +1060,7 @@ class ServeResultFileTests(unittest.TestCase):
         import json
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-result-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        keygen(self.tmp, "verifier.test")
+        keygen(self.tmp, DEFAULT_HOST)
         self.wallet = Wallet()
         self.jwks = self.tmp / "issuers.json"
         self.jwks.write_text(json.dumps([self.wallet.issuer_jwk]))
@@ -1051,7 +1289,7 @@ class TransactionDataServeTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-td-"))
-        keygen(self.tmp, "verifier.test")
+        keygen(self.tmp, DEFAULT_HOST)
 
     def _file(self, content):
         import json
@@ -1121,7 +1359,7 @@ class VerifierInfoProfileServeTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-vinfo-"))
-        keygen(self.tmp, "verifier.test")
+        keygen(self.tmp, DEFAULT_HOST)
         self.vectors = dict(verifier_info_vectors())
 
     def _file(self, content):
@@ -1952,7 +2190,7 @@ class _RunningCase(unittest.TestCase):
         import json
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-rearm-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        keygen(self.tmp, "verifier.test")
+        keygen(self.tmp, DEFAULT_HOST)
         self.wallet = Wallet()
         self.jwks = self.tmp / "issuers.json"
         self.jwks.write_text(json.dumps([self.wallet.issuer_jwk]))
