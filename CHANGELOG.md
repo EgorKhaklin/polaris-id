@@ -56,8 +56,8 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-verify's `oqs` extra requires liboqs-python 0.16.0.2 or later, and the server's lock (`polaris_web/requirements-pqc.txt`) pins 0.16.0.2: the release that fixes GHSA-w696-4vrr-x6x3.
 - polaris-oid4vp `serve` writes its operator log lines as printable ASCII: the characters of a request line or a refusal, control characters among them, no longer reach the log as they came.
 - polaris-oid4vp `serve`: under TLS, one connection that has sent nothing no longer keeps `serve` from answering every other caller (GHSA-rmmj-pwmh-jm5j).
-- polaris-oid4vp `serve` and `verdict` write at most 512 characters of a refusal reason, and its full length when it is cut, on the lines they print and in the `--result` file (GHSA-hfvc-qh8w-chp8).
-- polaris-oid4vp (`--experimental`): mdoc decoding refuses as `malformed` a DeviceResponse over 512 KiB, arrays, maps and tags nested more than 32 deep, an array or map whose head states more than 1024 entries, and a decode of more than 4096 data items. polaris-verify: mdoc decoding is hardened.
+- polaris-oid4vp `serve` and `verdict` write at most 512 characters of the reason for refusing a presentation, and its full length when it is cut, on the lines they print and in `serve`'s `--result` file (GHSA-hfvc-qh8w-chp8).
+- polaris-oid4vp (`--experimental`): mdoc decoding refuses as `malformed` a DeviceResponse over 512 KiB, and each CBOR decode refuses arrays, maps and tags nested more than 32 deep, an array or map whose head states more than 1024 entries, and more than 4096 data items, under the check of the part it reads: `malformed` for the DeviceResponse itself. polaris-verify: mdoc decoding is hardened.
 - polaris-oid4vp `serve --control-token-file`, on Linux and macOS, refuses a token file with any permission for others (0600, or 0640 for its group), and the README's recipe makes the file private (GHSA-v4q3-vxp6-5jj4).
 
 ### Fixed
