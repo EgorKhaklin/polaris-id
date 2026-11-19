@@ -102,6 +102,69 @@ class KeygenTests(unittest.TestCase):
             mode = (self.tmp / FILES[name]).stat().st_mode & 0o777
             self.assertEqual(mode, 0o600, "%s is %o" % (name, mode))
 
+    _KEYS = ("client_key", "tls_key")
+    _PUBLIC = ("anchor", "client_cert", "tls_cert")
+
+    def test_each_private_key_is_private_from_its_first_byte(self):
+        """Not written and then narrowed (2026-11-18): with no umask, and no chmod or fchmod left
+        to change it, the mode each file is created with is the mode it has."""
+        from unittest import mock
+        out = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-keymode-"))
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+        old = os.umask(0)
+        try:
+            with mock.patch.object(pathlib.Path, "chmod", lambda self, mode, **kw: None), \
+                    mock.patch.object(os, "fchmod", lambda fd, mode: None):
+                keygen(out, "verifier.test")
+        finally:
+            os.umask(old)
+        for names, want in ((self._KEYS, 0o600), (self._PUBLIC, 0o644)):
+            for name in names:
+                mode = (out / FILES[name]).stat().st_mode & 0o777
+                self.assertEqual(mode, want, "%s was created %o" % (name, mode))
+
+    def test_each_file_has_its_mode_whatever_the_umask(self):
+        """A umask that takes more than 022 does not make the certificates private, nor one
+        that takes nothing the keys readable: each file ends with exactly its mode."""
+        for umask in (0o077, 0o000):
+            out = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-umask-"))
+            self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+            old = os.umask(umask)
+            try:
+                keygen(out, "verifier.test")
+            finally:
+                os.umask(old)
+            for names, want in ((self._KEYS, 0o600), (self._PUBLIC, 0o644)):
+                for name in names:
+                    mode = (out / FILES[name]).stat().st_mode & 0o777
+                    self.assertEqual(mode, want, "umask %03o: %s is %o" % (umask, name, mode))
+
+    def test_a_second_keygen_replaces_each_key_and_follows_no_link_left_at_its_path(self):
+        """A re-run into the same directory still makes new keys, and a link at a file's path,
+        a key's or a certificate's, is replaced by the file, never written through to what it
+        names."""
+        out = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-rekey-"))
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+        keygen(out, "verifier.test")
+        first = {name: (out / FILES[name]).read_bytes() for name in self._KEYS + self._PUBLIC}
+        targets = {}
+        for name in ("tls_key", "tls_cert"):
+            target = out / ("elsewhere-" + name)
+            target.write_bytes(b"not a file of keygen's\n")
+            (out / FILES[name]).unlink()
+            (out / FILES[name]).symlink_to(target)
+            targets[name] = target
+        keygen(out, "verifier.test")
+        for name, target in targets.items():
+            self.assertEqual(target.read_bytes(), b"not a file of keygen's\n",
+                             "keygen wrote through the link at %s" % name)
+        for names, want in ((self._KEYS, 0o600), (self._PUBLIC, 0o644)):
+            for name in names:
+                path = out / FILES[name]
+                self.assertFalse(path.is_symlink(), "%s is still a link" % name)
+                self.assertNotEqual(path.read_bytes(), first[name], "%s was not replaced" % name)
+                self.assertEqual(path.stat().st_mode & 0o777, want, name)
+
     def test_the_tls_certificate_may_be_self_signed(self):
         """It is the listener's, not the request object's. The suite fetched one happily."""
         tls = x509.load_pem_x509_certificate((self.tmp / FILES["tls_cert"]).read_bytes())
@@ -1844,6 +1907,7 @@ class _RunningCase(unittest.TestCase):
         self.path = self.tmp / "result.json"
         self.token_file = self.tmp / "control-token"
         self.token_file.write_text(CONTROL_TOKEN + "\n")
+        self.token_file.chmod(0o600)
 
     def run_serve(self, *extra, **kw):
         return _Running(self, "--issuer-jwks", str(self.jwks), *extra, **kw)
@@ -3173,6 +3237,8 @@ class ControlReadCommandTests(_RunningCase):
                       "in one read only, the first after the acceptance, and not after the request "
                       "lifetime from the answer.",
                       text)
+        self.assertIn("on Linux and macOS a FILE with any permission for others is refused (0600, "
+                      "or 0640 for its group).", text)
 
 
 
@@ -3230,6 +3296,103 @@ class ControlTokenFileTests(_RunningCase):
         self.assertIn("POST /control/request", out)
         self.assertNotIn(CONTROL_TOKEN, out + err)
         self.assertNotIn("/control/request", self._serve()[2])
+
+    def serve_on(self, path):
+        return self._serve("--issuer-jwks", str(self.jwks), "--control-token-file", str(path))
+
+    def test_a_token_file_others_have_access_to_stops_it_before_it_listens(self):
+        """2026-11-18: under umask 022 the README's line made the file 0644, and a second local
+        account read the token from it. Any permission for others refuses the file before anything
+        listens; the message names the mode and what to do, never what the file holds."""
+        if os.name != "posix":
+            self.skipTest("POSIX file modes")
+        for mode in (0o644, 0o604, 0o602, 0o606, 0o666, 0o601):
+            with self.subTest(mode="%04o" % mode):
+                self.token_file.chmod(0o600)
+                self.token_file.write_text(CONTROL_TOKEN + "\n")
+                self.token_file.chmod(mode)
+                rc, seen, out, err = self.serve_on(self.token_file)
+                self.assertEqual(rc, 2, err)
+                self.assertNotIn("kwargs", seen, "it listened")
+                self.assertIn("--control-token-file", err)
+                self.assertIn("%04o" % mode, err)
+                self.assertIn("chmod 600", err)
+                self.assertNotIn(CONTROL_TOKEN, out + err, "the token was printed")
+
+    def test_a_token_file_only_its_owner_or_group_can_read_starts_it(self):
+        """The group is the operator's route into the image (its group_add), so it may read."""
+        if os.name != "posix":
+            self.skipTest("POSIX file modes")
+        for mode in (0o600, 0o400, 0o640, 0o440):
+            with self.subTest(mode="%04o" % mode):
+                self.token_file.chmod(mode)
+                rc, seen, out, err = self.serve_on(self.token_file)
+                self.assertEqual(rc, 0, err)
+                self.assertEqual(seen["kwargs"]["control_token"], CONTROL_TOKEN)
+        self.token_file.chmod(0o600)
+
+    def test_the_mode_judged_is_the_mode_of_the_file_read(self):
+        """Check and read are one file. A file others can read, replaced at its path by a private
+        one once it is open, is still refused: the bytes read are the readable file's."""
+        if os.name != "posix":
+            self.skipTest("POSIX file modes")
+        import builtins
+        from unittest import mock
+        self.token_file.chmod(0o644)
+        private = self.tmp / "private-token"
+        private.write_text(CONTROL_TOKEN + "\n")
+        private.chmod(0o600)
+        real_open, swapped = builtins.open, []
+
+        def opening(file, *args, **kwargs):
+            handle = real_open(file, *args, **kwargs)
+            if str(file) == str(self.token_file) and not swapped:
+                os.replace(private, self.token_file)
+                swapped.append(True)
+            return handle
+
+        with mock.patch("builtins.open", opening):
+            rc, seen, out, err = self.serve_on(self.token_file)
+        self.assertEqual(swapped, [True], "the token file was not opened with open()")
+        self.assertEqual(rc, 2, err)
+        self.assertNotIn("kwargs", seen, "it listened on a token others could read")
+        self.assertIn("0644", err)
+
+
+class ReadmeControlTokenTests(unittest.TestCase):
+    """What the README has an operator run with the control token (2026-11-18): the file made
+    private, the token never on a command line, and a call from this machine to 127.0.0.1."""
+
+    @classmethod
+    def setUpClass(cls):
+        import re
+        text = pathlib.Path(__file__).with_name("README.md").read_text(encoding="utf-8")
+        cls.text = " ".join(text.split())
+        cls.commands = []
+        for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)```", text, re.S):
+            for line in block.replace("\\\n", " ").splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    cls.commands.append(" ".join(line.split()))
+
+    def test_the_line_that_makes_the_token_file_makes_it_private(self):
+        import re
+        made = [c for c in self.commands if re.search(r">\s*control-token(\s|\)|$)", c)]
+        self.assertTrue(made, "the README has no command that makes the token file")
+        for command in made:
+            self.assertRegex(command, r"\bumask 0[0-7]7\b", command)
+
+    def test_no_control_call_carries_the_token_on_its_command_line(self):
+        calls = [c for c in self.commands if "curl" in c and "/control/" in c]
+        self.assertTrue(calls, "the README has no control call")
+        for call in calls:
+            self.assertNotIn("Bearer", call, "the token is on curl's command line: " + call)
+            self.assertIn("-H @", call, call)
+
+    def test_a_call_from_this_machine_names_127_0_0_1(self):
+        self.assertIn("A call from this machine names 127.0.0.1, not localhost", self.text)
+        for command in self.commands:
+            if "localhost" in command:
+                self.assertIn("--resolve localhost:", command, command)
 
 
 class AWalletErrorSaysWhatBecameOfTheRequestTests(_RunningCase):

@@ -158,9 +158,20 @@ def keygen(out: pathlib.Path, host: str) -> dict:
            .sign(tls_key, hashes.SHA256()))
 
     def write(name, data, mode=0o644):
+        # Each file is created with its mode (2026-11-18), a key 0600 from its first byte, never
+        # written and then narrowed. Whatever is at the path goes first, so a re-run replaces the
+        # file and a link left there is removed rather than written through (O_EXCL refuses to
+        # follow one). fchmod then sets the mode exactly, whatever the umask took from it.
         path = out / FILES[name]
-        path.write_bytes(data)
-        path.chmod(mode)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        with os.fdopen(fd, "wb") as fh:
+            if os.name == "posix":
+                os.fchmod(fh.fileno(), mode)
+            fh.write(data)
         return path
 
     write("anchor", ca.public_bytes(serialization.Encoding.PEM))
@@ -839,11 +850,26 @@ class _Requests:
 
 def _read_control_token(path):
     """The token in `--control-token-file`, stripped. ValueError says why it cannot be used, and
-    never what it held."""
+    never what it held.
+
+    On POSIX systems a file with any permission for others is refused. Its owner and its group may
+    have access, the group being how the image's user reaches the operator's file. The mode judged
+    is the open file's (fstat on the descriptor read), not whatever the path names later."""
     try:
-        raw = pathlib.Path(path).read_bytes()
+        fh = open(path, "rb")
     except OSError as exc:
         raise ValueError("--control-token-file %s: %s" % (path, exc.strerror or "unreadable"))
+    with fh:
+        if os.name == "posix":
+            mode = os.fstat(fh.fileno()).st_mode & 0o7777
+            if mode & 0o007:
+                raise ValueError(
+                    "--control-token-file %s: mode %04o gives others permission; make it "
+                    "private: chmod 600 %s, or chmod 640 for its group" % (path, mode, path))
+        try:
+            raw = fh.read()
+        except OSError as exc:
+            raise ValueError("--control-token-file %s: %s" % (path, exc.strerror or "unreadable"))
     try:
         token = raw.decode("ascii").strip()
     except ValueError:
@@ -1319,7 +1345,9 @@ and one that judges a response already captured:
     s.add_argument("--control-token-file", default=None, metavar="FILE",
                    help="turn on POST /control/request on this listener, same TLS mode: FILE "
                         "holds the bearer token (read at startup, never from the command line; "
-                        "at least 32 printable ASCII characters). A call with "
+                        "at least 32 printable ASCII characters); on Linux and macOS a FILE "
+                        "with any permission for others is refused (0600, or 0640 for its "
+                        "group). A call with "
                         "`Authorization: Bearer TOKEN` starts a request and is answered 201 "
                         "with its request number, state, launch links, request_uri and "
                         "client_id; an optional JSON body names claims (each as --claim takes "

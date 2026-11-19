@@ -350,6 +350,39 @@ NAMED_MUTANTS = (
     ("cli:control-clock-bound-at-start", "polaris_oid4vp/cli.py",
      "        self._clock = lambda: time.time()\n",
      "        self._clock = time.time  # MUTANT\n"),
+    # 2026-11-18, the listener and the files an operator keeps: the TLS handshake back in the
+    # accept loop, and in the worker without the timeout; the token file's mode unchecked, read
+    # from its path rather than from the file read, and the group refused with the others; a key
+    # created readable and then narrowed, a file written through whatever its path names, and a
+    # file's mode left to the umask.
+    ("serve:tls-handshake-in-the-accept-loop", "polaris_oid4vp/serve.py",
+     "        httpd.tls_context = context\n",
+     "        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)  # MUTANT\n"),
+    ("serve:tls-handshake-without-the-timeout", "polaris_oid4vp/serve.py",
+     "        request.settimeout(self.RequestHandlerClass.timeout)\n",
+     "        pass  # MUTANT\n"),
+    ("cli:control-token-file-mode-unchecked", "polaris_oid4vp/cli.py",
+     "            if mode & 0o007:\n",
+     "            if False:  # MUTANT\n"),
+    ("cli:control-token-file-mode-from-its-path", "polaris_oid4vp/cli.py",
+     "            mode = os.fstat(fh.fileno()).st_mode & 0o7777\n",
+     "            mode = os.stat(path).st_mode & 0o7777  # MUTANT\n"),
+    ("cli:control-token-file-group-refused", "polaris_oid4vp/cli.py",
+     "            if mode & 0o007:\n",
+     "            if mode & 0o077:  # MUTANT\n"),
+    ("cli:keygen-key-created-readable", "polaris_oid4vp/cli.py",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)\n",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)  # MUTANT\n"),
+    ("cli:keygen-key-written-through-its-path", "polaris_oid4vp/cli.py",
+     "        try:\n"
+     "            path.unlink()\n"
+     "        except FileNotFoundError:\n"
+     "            pass\n"
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)\n",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)  # MUTANT\n"),
+    ("cli:keygen-mode-left-to-the-umask", "polaris_oid4vp/cli.py",
+     "                os.fchmod(fh.fileno(), mode)\n",
+     "                pass  # MUTANT\n"),
 )
 
 

@@ -12,9 +12,10 @@ Found by measuring rather than by thinking: `serve.py` was at 0% line coverage. 
 drill exercises it, and the conformance drill needs Docker and a running suite, so nothing in
 CI touched the file that turns a verdict into a status code.
 
-TLS is off here. The profile requires HTTPS of a real deployment and the suite enforces it;
-what this file tests is routing, form parsing, content types and status codes, and wrapping
-the socket changes none of them.
+TLS is off here but for TransportTests and TlsHandshakeTests. The profile requires HTTPS of a
+real deployment and the suite enforces it; what the rest of this file tests is routing, form
+parsing, content types and status codes, and wrapping the socket changes none of them. The
+handshake itself is a read a silent client can stall, which is what TlsHandshakeTests holds.
 """
 import json
 import os
@@ -623,7 +624,7 @@ class TransportTests(unittest.TestCase):
                 httpd = serve(verifier, host="127.0.0.1", port=0,
                               certfile=cert_path, keyfile=key_path)
             try:
-                self.assertEqual(httpd.socket.context.minimum_version, ssl.TLSVersion.TLSv1_2,
+                self.assertEqual(httpd.tls_context.minimum_version, ssl.TLSVersion.TLSv1_2,
                                  "the floor must be set by serve, not left to the platform")
                 port = httpd.server_address[1]
                 with socket.create_connection(("127.0.0.1", port), timeout=10) as raw, \
@@ -696,6 +697,76 @@ class TransportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TlsHandshakeTests(unittest.TestCase):
+    """A listener WITH a certificate (2026-11-18). The TLS handshake is a read like any other:
+    a client that opens a connection and sends no byte must not stop anybody else being answered,
+    and must be hung up on within the handler's timeout. The two tests further down that hold this
+    for a stalled request start their listeners with no certificate, so they say nothing about the
+    handshake; these do."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="polaris-oid4vp-tls-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        cert_path, key_path = _self_signed_tls(tmp)
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="https://127.0.0.1:0/request.jwt",
+                            response_uri="https://127.0.0.1:0/response")
+        self.httpd = serve(verifier, host="127.0.0.1", port=0, certfile=cert_path,
+                           keyfile=key_path)
+        self.silent = []
+        self.addCleanup(self._stop)
+
+    def _stop(self):
+        # The silent connections close first: a listener that does its handshakes in its accept
+        # loop is stuck in one of them, and its shutdown would wait on it for ever.
+        for s in self.silent:
+            s.close()
+        _stop_now(self.httpd)
+        self.httpd.server_close()
+
+    def _silent_connection(self, timeout):
+        import socket
+        s = socket.create_connection(self.httpd.server_address[:2], timeout=timeout)
+        self.silent.append(s)
+        return s
+
+    def test_one_silent_connection_does_not_stop_three_callers_being_answered(self):
+        import ssl
+        self._silent_connection(timeout=30)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        url = "https://127.0.0.1:%d/request.jwt?state=no-such-request" % self.httpd.server_address[1]
+        answered = []
+        for _ in range(3):
+            try:
+                with urllib.request.urlopen(url, context=ctx, timeout=5) as r:
+                    answered.append(r.status)
+            except urllib.error.HTTPError as e:
+                answered.append(e.code)
+            except OSError as e:
+                answered.append(type(e).__name__)
+        self.assertEqual(answered, [404, 404, 404],
+                         "a connection that sent no byte stopped the TLS listener answering")
+
+    def test_a_silent_connection_is_hung_up_on_within_the_handler_timeout(self):
+        import socket
+        import time
+        self.httpd.RequestHandlerClass.timeout = 1
+        s = self._silent_connection(timeout=8)
+        start = time.monotonic()
+        try:
+            while s.recv(4096):
+                pass
+        except (OSError, socket.timeout):
+            pass
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 5, "a connection that sent no byte was held past the timeout")
 
 
 class BodyFramingTests(ServeTestCase):

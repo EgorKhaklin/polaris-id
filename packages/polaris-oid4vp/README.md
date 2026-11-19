@@ -125,7 +125,10 @@ holds this package from PyPI, installed by hash.
   says it is not for ES256 signatures; list one issuer's keys per verifier.
 - `--bind` is the address the listener binds: 127.0.0.1 by default, this machine only. A wallet on
   another device needs `--bind 0.0.0.0` (every interface), or a reverse proxy or tunnel on this
-  machine (`--public-base-url`, below). An empty `--bind` is refused (exit 2).
+  machine (`--public-base-url`, below). An empty `--bind` is refused (exit 2). A call from this
+  machine names 127.0.0.1, not localhost, which a client may try as ::1 first: under TLS,
+  `curl --resolve localhost:9443:127.0.0.1 https://localhost:9443/...`, as the certificate names
+  localhost.
 - `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
   verifier by when it runs behind a reverse proxy or a tunnel, where the public URL differs
   from the local `--bind`/`--port`. It is used for the `request_uri` and `response_uri`;
@@ -133,6 +136,7 @@ holds this package from PyPI, installed by hash.
 - `--no-local-tls` serves the local listener over plain HTTP, for when that proxy or tunnel
   terminates TLS and provides the public HTTPS. The listener still binds `--bind` (127.0.0.1, this
   machine only, by default); pair it with `--public-base-url`, which is then the HTTPS `request_uri` a wallet uses.
+  Point the proxy or tunnel at `http://127.0.0.1:PORT`, not at localhost.
 - Browser wallets: `--cors-origin https://wallet.example` answers a wallet that runs in a browser
   page at that origin (repeatable; `*` alone answers every origin). Its requests to `/request.jwt`
   (`GET, POST`) and `/response` (`POST`) are answered with `Access-Control-Allow-Origin` and
@@ -223,8 +227,9 @@ as it is without `--rearm` (404, or the refusal) and does not touch the file.
 
 `serve --control-token-file FILE` adds `POST /control/request` to the listener, in the same TLS
 mode. FILE holds a bearer token of at least 32 printable ASCII characters, read at startup (it is
-never taken from the command line, where `ps` and `docker inspect` would show it). A call with
-`Authorization: Bearer TOKEN` starts a request and is answered `201` with JSON:
+never taken from the command line, where `ps` and `docker inspect` would show it). On Linux and
+macOS a FILE with any permission for others is refused (exit 2): mode 0600, or 0640 for its group.
+A call with `Authorization: Bearer TOKEN` starts a request and is answered `201` with JSON:
 
 ```json
 {"request": 2, "state": "...", "request_uri": "https://verifier:9443/request.jwt?state=...",
@@ -271,7 +276,17 @@ served on the same listener as the wallet's paths, so it is reachable wherever t
 numbers are not secret: the token is the only gate. It is for a conformance harness on the operator's
 own machine.
 
-The shape a test harness uses, with the token in a mounted file:
+The shape a test harness uses, with the token in a mounted file. The image runs as uid 10001, and
+reads the operator's file through the operator's group (`group_add`), which every `docker compose`
+command in the shell then names:
+
+```bash
+(umask 027; python3 -c "import secrets; print(secrets.token_urlsafe(32))" > control-token)
+chgrp "$(id -g)" control-token
+export OPERATOR_GID=$(id -g)
+docker compose run --rm verifier keygen --out /data/pki --host verifier --port 9443
+docker compose up -d
+```
 
 ```yaml
 services:
@@ -280,6 +295,8 @@ services:
     command: >
       serve --pki /data/pki --host verifier --bind 0.0.0.0 --port 9443
       --issuer-jwks /issuers.json --control-token-file /run/secrets/control-token
+    group_add:
+      - "${OPERATOR_GID:?the group of ./control-token}"
     volumes:
       - verifier-data:/data
       - ./issuers.json:/issuers.json:ro
@@ -287,13 +304,19 @@ services:
       - control-token
 secrets:
   control-token:
-    file: ./control-token         # python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+    file: ./control-token         # mode 0640, the operator's group
 volumes:
   verifier-data:
 ```
 
+A file owned by uid 10001 with mode 0400 is the other way in. Run on this machine without the
+image, the token is the operator's alone: `(umask 077; python3 -c ... > control-token)`.
+
+The call reads its header from a private file, so the token is on no command line:
+
 ```bash
-curl --cacert pki/tls.pem -H "Authorization: Bearer $(cat control-token)" \
+(umask 077; printf 'Authorization: Bearer %s\n' "$(cat control-token)" > control-header)
+curl --cacert pki/tls.pem -H @control-header \
      -d '{"claims": ["age_equal_or_over.18=true"]}' https://verifier:9443/control/request
 ```
 
@@ -554,18 +577,20 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1031 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1042 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 330 refusals accept and requires a
   test to fail: 326 are caught, and the 4 survivors are declared with their reasons. It also makes
-  41 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  49 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under
   its lock and not after their lifetime, the records it keeps and the answer each keeps, the
   values kept out of the result file and the printed lines, and the values of an experimental
-  `mso_mdoc` presentation never held), each of which a test must catch (all 41 are; measured
-  2026-11-18; CI runs it on every push).
+  `mso_mdoc` presentation never held; the TLS handshake in each connection's own thread and
+  within its timeout, the token file's mode judged on the file read, and each file `keygen` writes
+  created with its mode, never through a link at its path), each of which a test must catch (all
+  49 are; measured 2026-11-18; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

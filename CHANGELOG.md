@@ -55,9 +55,12 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-sdk-python and polaris-sdk-ts: a fix to the generic signed-artifact check.
 - polaris-verify's `oqs` extra requires liboqs-python 0.16.0.2 or later, and the server's lock (`polaris_web/requirements-pqc.txt`) pins 0.16.0.2: the release that fixes GHSA-w696-4vrr-x6x3.
 - polaris-oid4vp `serve`: the operator log lines it prints are hardened.
+- polaris-oid4vp `serve`: the TLS listener's accept path is hardened.
+- polaris-oid4vp `serve --control-token-file`, on Linux and macOS, refuses a token file with any permission for others (0600, or 0640 for its group), and the README's recipe makes the file private.
 
 ### Fixed
 
+- polaris-oid4vp `keygen` creates each private key with mode 0600 from its first byte, and a second run replaces a key rather than writing through a link at its path.
 - On Safari the site's gold headline word no longer shows before it is typed.
 - Certificate chain handling in the OpenID4VP verifier (polaris-oid4vp).
 - Negative vectors 0.4.1 (lab/interop/negative-vectors): the intermediate of `x5c-intermediate-not-ca` carries its siblings' key usage (keyCertSign, cRLSign), so cA FALSE is its one defect; in 0.4.0 it also had no keyCertSign, and a verifier that checks key usage first refused it for that. Reported by an outside verifier's run of the set. Its id and verdict are unchanged, and the other 36 vectors are byte for byte those of 0.4.0. A test now holds each `x5c` vector's chain to the property it names, against its control's, certificate by certificate. Lab only; no product change.
@@ -124,6 +127,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- polaris-oid4vp's README: the control call reads its header from a private file (`curl -H @FILE`), the image reaches the operator's token file through the operator's group (`group_add`), and a call from this machine names 127.0.0.1.
 - The site's recovery figure gives each line its own colour and number, with a key under it that says how each one works.
 - On phones the site's scroll animations now play: the rules, the three cases, the night sky and the closing words.
 - polaris-oid4vp moves to 1.1.0: the package as this block lists it, among them the `response_code` redirect with `Verifier.redeem`, the x5c critical-extension and name-constraint checks, ASCII-only DNS names and `serve` on 127.0.0.1 by default. `Verifier.redeem` and `serve --result` are new, so the version is a minor one.

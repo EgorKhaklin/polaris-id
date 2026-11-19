@@ -612,6 +612,29 @@ class _CorsHandler(_Handler):
         self.end_headers()
 
 
+class _Server(http.server.ThreadingHTTPServer):
+    """The listener. Its socket stays plain. With TLS (`tls_context`), each accepted connection is
+    wrapped in that connection's own thread, so the handshake is a read like any other: bounded by
+    the handler's timeout and holding that thread alone, never the one that accepts."""
+
+    daemon_threads = True
+    tls_context = None
+
+    def finish_request(self, request, client_address):
+        # ThreadingMixIn calls this in the connection's own thread.
+        if self.tls_context is None:
+            return super().finish_request(request, client_address)
+        request.settimeout(self.RequestHandlerClass.timeout)
+        try:
+            tls = self.tls_context.wrap_socket(request, server_side=True)
+        except OSError:  # ssl.SSLError, the timeout, a reset: that client alone is let go
+            return None
+        try:
+            return super().finish_request(tls, client_address)
+        finally:
+            self.shutdown_request(tls)
+
+
 def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
           on_verdict=None, background=True, verbose=False, on_request_object=None,
           cors_origins=None, control_token=None, on_control=None, name_requests=False,
@@ -680,14 +703,14 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         if on_control_read is not None:
             members["on_control_read"] = staticmethod(on_control_read)
     handler = type("_BoundHandler", mixins + (base,), members)
-    # ThreadingHTTPServer, not HTTPServer, and a read timeout on every connection. Both are
-    # about one thing: a client that opens a socket and then goes quiet must not take the
-    # listener off the air for every wallet. With a single accept loop it did, and it cost
-    # the attacker one TCP connection. The timeout closes the slow client; the thread pool
-    # means even a client that keeps its timeout alive occupies one thread rather than all
-    # of the service.
-    httpd = http.server.ThreadingHTTPServer((host, port), handler)
-    httpd.daemon_threads = True
+    # A thread per connection, and a read timeout on every connection, the TLS handshake
+    # included (_Server). Both are about one thing: a client that opens a socket and then goes
+    # quiet must not take the listener off the air for every wallet. With a single accept loop
+    # it did, and it cost the attacker one TCP connection. The timeout closes the slow client;
+    # the thread means even a client that keeps its timeout alive occupies one thread rather
+    # than all of the service. Held by test_serve's TlsHandshakeTests, on a listener with a
+    # certificate, and by its two stalled-request tests, on one without.
+    httpd = _Server((host, port), handler)
     if certfile:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         # TLS 1.0 and 1.1 are deprecated (RFC 8996). Python 3.10 and later refuse them by
@@ -696,7 +719,7 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         # floor is set, not inherited.
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certfile, keyfile)
-        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        httpd.tls_context = context
     if background:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
     else:  # pragma: no cover - the blocking path is for a real deployment
