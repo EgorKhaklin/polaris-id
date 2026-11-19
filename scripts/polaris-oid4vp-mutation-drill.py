@@ -291,6 +291,58 @@ NAMED_MUTANTS = (
      "            why = (\"--format %s is experimental and off by default; add --experimental to turn it \"\n",
      "        if False:  # MUTANT\n"
      "            why = (\"--format %s is experimental and off by default; add --experimental to turn it \"\n"),
+    # 2026-11-19: what serve and verdict write from a sender's input is cut where it is written:
+    # a reason at WRITTEN_REASON_MAX characters in every writer, every line serve writes to
+    # stderr and its <- line on stdout at LINE_MAX, a logged exception at EXCEPTION_LOG_MAX, each
+    # with its full length when it is cut. The first takes every cut away; each of the others
+    # writes whole at one writer or one sink, which the tests that enumerate them must see.
+    ("verifier:nothing-cut", "polaris_oid4vp/verifier.py",
+     "    if len(text) <= limit:\n        return text\n",
+     "    if True:  # MUTANT\n        return text\n"),
+    ("serve:a-logged-line-uncut", "polaris_oid4vp/serve.py",
+     "        sys.stderr.write(\"polaris-oid4vp: \" + logged_line(format % args if args else format) + \"\\n\")\n",
+     "        sys.stderr.write(\"polaris-oid4vp: \" + operator_text(format % args if args else format) + \"\\n\")  # MUTANT\n"),
+    ("serve:an-exception-logged-whole", "polaris_oid4vp/serve.py",
+     "            sys.stderr.write(exception_text(sys.exc_info()[1]))\n",
+     "            __import__(\"traceback\").print_exc()  # MUTANT\n"),
+    ("serve:a-verbose-line-uncut", "polaris_oid4vp/serve.py",
+     "            sys.stderr.write(logged_line(\"%s %s\" % (self.command, self.path)) + \"\\n\")\n",
+     "            sys.stderr.write(\"%s %s\\n\" % (operator_text(self.command), operator_text(self.path)))  # MUTANT\n"),
+    ("serve:a-wallet-error-logged-whole", "polaris_oid4vp/serve.py",
+     "                self.log_error(\"wallet error: %s%s\", written_reason(_wallet_error_named(verdict)\n"
+     "                               if self.name_requests else verdict.reason), self._about())\n",
+     "                self.log_error(\"wallet error: %s%s\", _wallet_error_named(verdict)  # MUTANT\n"
+     "                               if self.name_requests else verdict.reason, self._about())\n"),
+    ("verifier:cut-at-the-bound", "polaris_oid4vp/verifier.py",
+     "    if len(text) <= limit:\n        return text\n    return \"%s... (cut at %d of %d characters)\"",
+     "    if len(text) < limit:  # MUTANT\n        return text\n    return \"%s... (cut at %d of %d characters)\""),
+    ("serve:exception-lines-uncut", "polaris_oid4vp/serve.py",
+     "    text = \"\\n\".join(logged_line(line) for line in \"\\n\".join(blocks).split(\"\\n\"))\n",
+     "    text = \"\\n\".join(blocks)  # MUTANT\n"),
+    ("serve:the-inherited-handle-error", "polaris_oid4vp/serve.py",
+     "    def handle_error(self, request, client_address):\n",
+     "    def _handle_error_unused(self, request, client_address):  # MUTANT\n"),
+    ("cli:a-verdict-error-uncut", "polaris_oid4vp/cli.py",
+     "        print(\"polaris-oid4vp: \" + logged_line(str(exc)), file=sys.stderr)\n",
+     "        print(\"polaris-oid4vp: \" + str(exc), file=sys.stderr)  # MUTANT\n"),
+    ("cli:an-answer-line-uncut", "polaris_oid4vp/cli.py",
+     "        print(\"  <- %d %s\" % (status, logged_line(line)), flush=True)\n",
+     "        print(\"  <- %d %s\" % (status, line), flush=True)  # MUTANT\n"),
+    ("serve:a-refused-reason-logged-whole", "polaris_oid4vp/serve.py",
+     "                self.log_error(\"refused: %s: %s%s\", verdict.code, written_reason(verdict.reason),\n",
+     "                self.log_error(\"refused: %s: %s%s\", verdict.code, verdict.reason,  # MUTANT\n"),
+    ("cli:a-refused-line-reason-whole", "polaris_oid4vp/cli.py",
+     "    return \"refused: %s: %s\" % (operator_text(verdict.code), written_reason(verdict.reason))\n",
+     "    return \"refused: %s: %s\" % (operator_text(verdict.code), operator_text(verdict.reason))  # MUTANT\n"),
+    ("cli:a-result-reason-whole", "polaris_oid4vp/cli.py",
+     "        out.update(outcome=\"refused\", check=verdict.code, reason=written_reason(verdict.reason))\n",
+     "        out.update(outcome=\"refused\", check=verdict.code, reason=verdict.reason)  # MUTANT\n"),
+    ("cli:a-verdict-reason-whole", "polaris_oid4vp/cli.py",
+     "           \"reason\": written_reason(verdict.reason),\n",
+     "           \"reason\": verdict.reason,  # MUTANT\n"),
+    ("cli:a-verdict-problem-whole", "polaris_oid4vp/cli.py",
+     "    problem = written_reason(result[\"problem\"])\n",
+     "    problem = result[\"problem\"]  # MUTANT\n"),
     # serve --cors-origin: an answer names only a listed origin, only on the two paths, and says
     # that it varies by Origin, so no cache hands one origin's answer to another.
     ("serve:cors-allows-any-origin", "polaris_oid4vp/serve.py",

@@ -916,6 +916,42 @@ def operator_text(text):
     return "".join(ch if " " <= ch <= "~" and ch != "<" else "?" for ch in str(text))
 
 
+#: The most characters of a refusal's reason that `serve` and the `verdict` command write: on a
+#: line printed or logged, in the --result file and in a control read. A reason can quote what a
+#: sender sent, a header value for one, so without a bound each refused post writes as much of
+#: its own bytes as the verifier read, to streams that accumulate (2026-11-19).
+WRITTEN_REASON_MAX = 512
+
+
+def cut_to(text, limit):
+    """`text`, or at most `limit` characters of it and its full length when it is longer."""
+    if len(text) <= limit:
+        return text
+    return "%s... (cut at %d of %d characters)" % (text[:limit], limit, len(text))
+
+
+def written_reason(text, limit=WRITTEN_REASON_MAX):
+    """A reason as it is written: quoted as `operator_text` quotes it, one character for one,
+    then at most `limit` characters of it, and when it is cut, its full length. None, the
+    `problem` of a response that was accepted, stays None. `serve`'s verbose log writes a
+    request's path the same way."""
+    if text is None:
+        return None
+    return cut_to(operator_text(text), limit)
+
+
+#: The most characters of one line `serve` writes, to stderr or to stdout: room for a reason at
+#: its own bound, its cut note and the name of its request (2026-11-19).
+LINE_MAX = 2 * WRITTEN_REASON_MAX
+
+
+def logged_line(text):
+    """One line as `serve` writes it, whoever composed it (this code, or the standard library's
+    server for a request line it refuses): quoted as `operator_text` quotes it, and at most
+    LINE_MAX characters, with its full length when it is cut."""
+    return cut_to(operator_text(text), LINE_MAX)
+
+
 class Verifier:
     """Builds requests and judges responses. Holds no socket: see `serve()` for that.
 

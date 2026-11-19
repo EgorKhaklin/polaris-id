@@ -56,7 +56,8 @@ from .serve import (CONTROL_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
                     control_token_problem, cors_origins_of, serve)
 from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_INFO_PROFILES,
                        Verifier, claim_query, mdoc_claim_query, operator_text,
-                       transaction_data_entries, verifier_info_entries, verify_response)
+                       logged_line, transaction_data_entries, verifier_info_entries,
+                       verify_response, written_reason)
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -383,8 +384,8 @@ def _operator_line(verdict, ended_by=None, named=False, *, credential_format=SD_
     if verdict.authentic:
         return "authentic, claims %s" % _claim_names(verdict, credential_format)
     if getattr(verdict, "wallet_error", None) is not None:
-        return "wallet error: %s" % operator_text(_wallet_error_reason(verdict, ended_by, named))
-    return "refused: %s: %s" % (operator_text(verdict.code), operator_text(verdict.reason))
+        return "wallet error: %s" % written_reason(_wallet_error_reason(verdict, ended_by, named))
+    return "refused: %s: %s" % (operator_text(verdict.code), written_reason(verdict.reason))
 
 
 def _result_of(status, verdict, ended_by=None, *, credential_format=SD_JWT_FORMAT):
@@ -401,9 +402,9 @@ def _result_of(status, verdict, ended_by=None, *, credential_format=SD_JWT_FORMA
         out.update(outcome="accepted", claims=_claim_names(verdict, credential_format))
     elif getattr(verdict, "wallet_error", None) is not None:
         out.update(outcome="wallet_error", check=verdict.code,
-                   reason=_wallet_error_reason(verdict, ended_by))
+                   reason=written_reason(_wallet_error_reason(verdict, ended_by)))
     else:
-        out.update(outcome="refused", check=verdict.code, reason=verdict.reason)
+        out.update(outcome="refused", check=verdict.code, reason=written_reason(verdict.reason))
     return out
 
 
@@ -1058,7 +1059,7 @@ def _cmd_serve(args) -> int:
             # More than one request can be open, so the line names the one this answer was about,
             # by the state its launch parameters carry; --result follows the newest.
             line += about_request(verifier)
-        print("  <- %d %s" % (status, line), flush=True)
+        print("  <- %d %s" % (status, logged_line(line)), flush=True)
         # Under --rearm any answer about the current request ends it, accepted, refused or a
         # wallet's error response, and the next starts before the wallet has its answer; a request
         # the control endpoint started ends at an answer the same way. With neither, a
@@ -1145,7 +1146,8 @@ def _read_request(path):
 
 
 def _verdict_json(verdict, credential_format=SD_JWT_FORMAT):
-    out = {"authentic": verdict.authentic, "code": verdict.code, "reason": verdict.reason,
+    out = {"authentic": verdict.authentic, "code": verdict.code,
+           "reason": written_reason(verdict.reason),
            "claims": _claim_names(verdict, credential_format)}
     if verdict.transaction_data is not None:
         out["transaction_data"] = verdict.transaction_data
@@ -1207,10 +1209,11 @@ def _cmd_verdict(args) -> int:
         print(exc, file=sys.stderr)
         return 2
     except (OSError, ValueError) as exc:
-        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        print("polaris-oid4vp: " + logged_line(str(exc)), file=sys.stderr)
         return 2
+    problem = written_reason(result["problem"])
     print(json.dumps({
-        "accepted": result["accepted"], "scope": result["scope"], "problem": result["problem"],
+        "accepted": result["accepted"], "scope": result["scope"], "problem": problem,
         "expected": result["expected"], "either": result["either"],
         "verdicts": {qid: _verdict_json(v, formats.get(qid))
                      for qid, v in result["verdicts"].items()},
@@ -1219,7 +1222,7 @@ def _cmd_verdict(args) -> int:
         "response_refusals": result["response_refusals"],
     }, indent=2))
     if result["accepted"] is None:
-        print("polaris-oid4vp: %s" % result["problem"], file=sys.stderr)
+        print("polaris-oid4vp: %s" % problem, file=sys.stderr)
         return 2
     return 0 if result["accepted"] else 1
 

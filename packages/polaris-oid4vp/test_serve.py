@@ -75,6 +75,189 @@ class ServeTestCase(unittest.TestCase):
         cls.httpd.server_close()
 
 
+class WrittenReasonLogTests(ServeTestCase):
+    """The listener's log is a writer of reasons too: a refusal's and a wallet error's, each
+    written through `written_reason`, at most 512 characters of it and its full length when it
+    is cut (test_cli's WrittenReasonTests holds the CLI's writers and enumerates them all)."""
+
+    def test_a_long_reason_is_logged_cut_and_says_its_length(self):
+        import contextlib
+        import io
+        from unittest import mock
+        from polaris_oid4vp.sdjwt import Verdict
+        long = "<" + "x" * 99_994 + "MARKER"
+        answers = {
+            "a refusal": (400, dict(Verifier.REFUSAL_BODY), Verdict(False, "malformed", long)),
+            "a wallet error": (200, {}, Verdict(False, "wallet_error", long, wallet_error={
+                "error": "access_denied", "error_description": long, "state": "s1"})),
+        }
+        for name, answer in answers.items():
+            with self.subTest(name), \
+                    mock.patch.object(self.verifier, "handle_direct_post", return_value=answer):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    status, _, _ = _post(self.base + "/response", {"response": "x"})
+                self.assertEqual(status, answer[0])
+                text = err.getvalue()
+                assert_every_line_bounded(self, text)
+                self.assertNotIn("MARKER", text)
+                self.assertLess(len(text), 512 + 300, text[:120])
+                self.assertEqual(len(re.findall(r"\.\.\. \(cut at 512 of 100001 characters\)", text)),
+                                 1, text[-200:])
+
+    def test_an_exception_is_logged_with_its_frames_and_its_own_text_cut(self):
+        """The traceback the listener logs when handle_direct_post raises keeps its frames, and
+        each exception's own text, the cause's and the one it caused, is cut as a reason is."""
+        import contextlib
+        import io
+        from unittest import mock
+        tail = "Polaris" + "Tail"
+        cause_text, own_text = "<" + "k" * 99_994 + tail, "<" + "x" * 99_994 + tail
+
+        def raises(form):
+            try:
+                raise KeyError(cause_text)
+            except KeyError as cause:
+                raise ValueError(own_text) from cause
+
+        err = io.StringIO()
+        with mock.patch.object(self.verifier, "handle_direct_post", side_effect=raises), \
+                contextlib.redirect_stderr(err):
+            status, _, _ = _post(self.base + "/response", {"response": "x"})
+        self.assertEqual(status, 400)
+        text = err.getvalue()
+        assert_every_line_bounded(self, text)
+        self.assertTrue(text.startswith("polaris-oid4vp: handle_direct_post raised\n"), text[:200])
+        self.assertEqual(text.count("Traceback (most recent call last):"), 2, text[:400])
+        self.assertIn("The above exception was the direct cause of the following exception:", text)
+        self.assertIn("in raises", text)
+        self.assertRegex(text, r'File "[^"]*serve\.py", line \d+, in do_POST')
+        self.assertNotIn(tail, text)
+        # A KeyError's own text is its key's repr, so it opens with a quote.
+        self.assertEqual(len(re.findall(r"Error: '?\?[kx]{400}.*\.\.\. \(cut at 512 of \d+ characters\)$",
+                                        text, re.M)), 2, text[-600:])
+        self.assertLess(len(text), EXCEPTION_BOUND)
+
+    def test_an_exception_chain_is_logged_at_most_the_cap(self):
+        from polaris_oid4vp.serve import exception_text
+        exc = None
+        for _ in range(30):
+            try:
+                raise ValueError("c" * 2000) from exc
+            except ValueError as raised:
+                exc = raised
+        text = exception_text(exc)
+        self.assertEqual(len(re.findall(r"\.\.\. \(cut at 8192 of (\d+) characters\)\n\Z", text)), 1,
+                         text[-200:])
+        self.assertLessEqual(len(text), EXCEPTION_BOUND + 60)
+
+
+class AConnectionThatFailsIsLoggedThroughTheSinkTests(ServeTestCase):
+    """socketserver's own handle_error prints a banner and the traceback whole, as when a
+    connection is reset mid-request; the listener's writes one logged_line naming the client and
+    the exception_text of what was raised (2026-11-19)."""
+
+    def test_a_post_reset_before_its_body_is_logged_through_the_sink(self):
+        import contextlib
+        import io
+        import socket
+        import struct
+        import time
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            client = socket.create_connection(self.httpd.server_address[:2], timeout=10)
+            client.sendall(b"POST /response HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                           b"Content-Type: application/x-www-form-urlencoded\r\n"
+                           b"Content-Length: 500000\r\n\r\nresponse=x")
+            time.sleep(0.3)
+            # A reset, not a close: SO_LINGER with a zero timeout.
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            client.close()
+            deadline = time.monotonic() + 10
+            while "Traceback" not in err.getvalue() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            # One write each for the line and the traceback, so the traceback is whole by now.
+            text = err.getvalue()
+        assert_every_line_bounded(self, text)
+        self.assertRegex(text, r"^polaris-oid4vp: an exception occurred handling a request from "
+                               r"\('127\.0\.0\.1', \d+\)\nTraceback \(most recent call last\):\n")
+        self.assertRegex(text, r"\n(ConnectionResetError|ConnectionAbortedError|BrokenPipeError|"
+                               r"TimeoutError): ")
+        self.assertNotIn("-" * 40, text)
+        self.assertLess(len(text), EXCEPTION_BOUND + LINE_BOUND + 100)
+
+
+class EveryStderrLineIsBoundedTests(unittest.TestCase):
+    """Every write serve.py makes to stderr is a `logged_line` (quoted, at most LINE_MAX) or an
+    `exception_text` (capped), so a line added later that writes something else fails here; and
+    neither serve.py nor cli.py prints a traceback any other way."""
+
+    def test_the_bounds_are_pinned(self):
+        from polaris_oid4vp import serve as module
+        from polaris_oid4vp import verifier
+        self.assertEqual((getattr(verifier, "LINE_MAX", None),
+                          getattr(module, "EXCEPTION_LOG_MAX", None)), (LINE_BOUND, EXCEPTION_BOUND))
+
+    def test_every_line_of_a_logged_exception_is_a_logged_line(self):
+        """A frame line carries a file name and a function name, which can be long and can hold
+        a `<` or a character outside printable ASCII; each is written as a logged line."""
+        from polaris_oid4vp.serve import exception_text
+        name = "<é" + "f" * 3000 + ".py"
+        scope = {}
+        exec(compile("def boom():\n    raise ValueError('boom')\n", name, "exec"), scope)
+        try:
+            scope["boom"]()
+        except ValueError as exc:
+            text = exception_text(exc)
+        self.assertIn("ValueError: boom", text)
+        self.assertIn("... (cut at %d of " % LINE_BOUND, text)
+        assert_every_line_bounded(self, text)
+        self.assertEqual([c for c in text if c != "\n" and not " " <= c <= "~"], [])
+        self.assertNotIn("<", text)
+
+    def test_the_whole_stream_check_finds_a_long_line(self):
+        assert_every_line_bounded(self, "")
+        assert_every_line_bounded(self, "short\n" + "y" * (LINE_BOUND + 50))
+        with self.assertRaises(AssertionError):
+            assert_every_line_bounded(self, "short\n" + "y" * (LINE_BOUND + 100))
+
+    def test_every_stderr_write_is_bounded(self):
+        import ast
+        import pathlib
+        from polaris_oid4vp import cli
+        from polaris_oid4vp import serve as module
+
+        def bounded(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return True
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+                return bounded(node.left) and bounded(node.right)
+            return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in ("logged_line", "exception_text"))
+
+        tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
+        writes = [n for n in ast.walk(tree)
+                  if isinstance(n, ast.Call) and ast.unparse(n.func) == "sys.stderr.write"]
+        # log_error's line and its traceback, the two verbose request lines, and handle_error's
+        # line and traceback.
+        self.assertEqual(len(writes), 6)
+        # The standard library's own writers to stderr, each overridden here.
+        import http.server
+        import socketserver
+        self.assertIsNot(module._Server.handle_error, socketserver.BaseServer.handle_error)
+        for name in ("log_error", "log_message"):
+            self.assertIsNot(getattr(module._Handler, name),
+                             getattr(http.server.BaseHTTPRequestHandler, name), name)
+        self.assertEqual([n.lineno for n in writes if not (len(n.args) == 1 and bounded(n.args[0]))],
+                         [])
+        printers = {"print_exc", "print_exception", "print_tb", "print_stack", "format_exc",
+                    "format_exception", "format_tb"}
+        for source in (cli, module):
+            calls = [ast.unparse(n.func) for n in ast.walk(ast.parse(
+                pathlib.Path(source.__file__).read_text(encoding="utf-8"))) if isinstance(n, ast.Call)]
+            self.assertEqual([c for c in calls if c.rsplit(".", 1)[-1] in printers], [], source.__name__)
+
+
 class RequestUriTests(ServeTestCase):
 
     def test_the_request_object_is_served_with_the_content_type_the_profile_names(self):
@@ -1187,6 +1370,22 @@ CORS_MUST_NOT_MATCH = (
 )
 
 
+#: The most characters of a line the listener writes, as verifier.LINE_MAX pins it, and of an
+#: exception it logs, as serve.EXCEPTION_LOG_MAX pins it.
+LINE_BOUND = 1024
+EXCEPTION_BOUND = 8192
+
+
+def assert_every_line_bounded(test, text):
+    """The sink claim as an effect, read off a whole stream the listener wrote: every line in
+    it, whoever composed it, is at most a logged_line's length after the longest prefix written
+    before one (2026-11-19)."""
+    limit = len("polaris-oid4vp: ") + LINE_BOUND + len("... (cut at %d of %d characters)"
+                                                      % (LINE_BOUND, 10 ** 9))
+    test.assertEqual([(n, len(line)) for n, line in enumerate(text.splitlines(), 1)
+                      if len(line) > limit], [], "lines over %d characters" % limit)
+
+
 def _send_raw(httpd, raw, timeout=10):
     """`raw` on a bare socket, and everything the listener sends back until it closes."""
     import socket
@@ -1955,10 +2154,27 @@ class ControlLoggingTests(ControlEndpointTestCase):
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
                 _exchange(httpd, method, path, headers, body)
+            assert_every_line_bounded(self, err.getvalue())
             return err.getvalue()
         finally:
             _stop_now(httpd)
             httpd.server_close()
+
+    def test_a_long_path_is_logged_cut_and_says_its_length(self):
+        """Both verbose writers, the listener's and the control handler's, write the line as a
+        logged_line: at most 1024 characters, with its full length when it is cut."""
+        on = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {})}
+        tail = "Polaris" + "Tail"
+        long = "y" * 60_000 + tail
+        for kwargs, path in (({}, "/request.jwt?q=" + long), (on, "/nope/" + long),
+                             (on, "/control/other/" + long)):
+            with self.subTest(path=path[:16], control=bool(kwargs)):
+                err = self.logged(kwargs, "GET", path)
+                self.assertNotIn(tail, err)
+                lines = [x for x in err.splitlines() if x.startswith("GET ")]
+                self.assertEqual(len(lines), 1, err[:200])
+                self.assertTrue(lines[0].endswith("... (cut at 1024 of %d characters)"
+                                                  % len("GET " + path)), lines[0][-80:])
 
     def test_a_path_other_than_the_control_path_is_logged_as_without_the_option(self):
         on = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {})}
@@ -2154,6 +2370,7 @@ class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
                 answer = _send_raw(httpd, raw)
+            assert_every_line_bounded(self, err.getvalue())
             return answer, err.getvalue().splitlines()
         finally:
             _stop_now(httpd)
@@ -2164,6 +2381,45 @@ class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
         for line in lines:
             self.assertNotIn("<", line)
             self.assertTrue(all(" " <= ch <= "~" for ch in line), repr(line))
+
+    def test_a_long_request_line_the_server_refuses_is_logged_cut(self):
+        """The standard library's own refusals of a request line (a bad version, an unsupported
+        method, a bad syntax) log the line through log_error, and under --verbose the method too:
+        each line at most LINE_MAX characters after its prefix, with its full length, and the
+        line's end left out."""
+        tail = "Polaris" + "Tail"
+        long = "y" * 60_000 + tail
+        # A bad version leaves the server no version to answer in, so it answers as HTTP/0.9
+        # does: the error page with no status line (None here).
+        for name, raw, status in (("a bad version", "GET / HTTP/" + long, None),
+                                  ("an unsupported method", "Z" + long + " / HTTP/1.1", 501),
+                                  ("a bad syntax", "GET / " + long + " HTTP/1.1", 400)):
+            for verbose in (False, True):
+                with self.subTest(name, verbose=verbose):
+                    answer, lines = self.sent((raw + "\r\n\r\n").encode("ascii"), verbose)
+                    if status is None:
+                        self.assertTrue(answer.lstrip().startswith(b"<!DOCTYPE HTML>"), answer[:80])
+                    else:
+                        self.assertEqual(_parse(answer)[0], status)
+                    self.assertNotIn(tail, "\n".join(lines))
+                    for line in lines:
+                        self.assertLessEqual(len(line), len("polaris-oid4vp: ") + LINE_BOUND + 40,
+                                             line[:120])
+                    cut = [x for x in lines
+                           if re.search(r"\.\.\. \(cut at 1024 of \d+ characters\)$", x)]
+                    self.assertEqual(len(cut), 2 if verbose and status == 501 else 1, lines)
+                    self.assert_held(lines)
+
+    def test_a_short_or_too_long_request_line_is_logged_as_before(self):
+        """The controls: a short refused line is logged whole, a line over the standard library's
+        65,536 bytes is answered 414 without it, and a plain GET logs nothing without --verbose."""
+        _, lines = self.sent(b"a b c d\r\n\r\n", False)
+        self.assertEqual(lines, ["polaris-oid4vp: code 400, message Bad request version ('d')"])
+        answer, lines = self.sent(b"GET /" + b"y" * 70_000 + b" HTTP/1.1\r\n\r\n", False)
+        self.assertEqual(_parse(answer)[0], 414)
+        self.assertFalse([x for x in lines if "yyyy" in x or "cut at" in x], lines)
+        answer, lines = self.sent(b"GET /nope HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", False)
+        self.assertEqual((_parse(answer)[0], lines), (404, []))
 
     def test_a_refused_request_line_is_logged_without_the_text_it_carried(self):
         raw = "x  <- 200 authentic, claims ['given_name'] \x1b[0m \u00e9 HTTP/1.1\r\n\r\n".encode("latin-1")

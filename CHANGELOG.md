@@ -56,6 +56,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-verify's `oqs` extra requires liboqs-python 0.16.0.2 or later, and the server's lock (`polaris_web/requirements-pqc.txt`) pins 0.16.0.2: the release that fixes GHSA-w696-4vrr-x6x3.
 - polaris-oid4vp `serve`: the operator log lines it prints are hardened.
 - polaris-oid4vp `serve`: the TLS listener's accept path is hardened.
+- polaris-oid4vp `serve` and `verdict`: refusal reasons, and the lines `serve` logs, are bounded where they are written.
 - polaris-oid4vp `serve --control-token-file`, on Linux and macOS, refuses a token file with any permission for others (0600, or 0640 for its group), and the README's recipe makes the file private.
 
 ### Fixed
@@ -127,6 +128,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- polaris-oid4vp `serve`: a refusal's `reason` in the `--result` file and the control read is the text its `<-` line prints, quoted the same way, as the README says.
 - polaris-oid4vp's README: the control call reads its header from a private file (`curl -H @FILE`), the image reaches the operator's token file through the operator's group (`group_add`), and a call from this machine names 127.0.0.1.
 - The site's recovery figure gives each line its own colour and number, with a key under it that says how each one works.
 - On phones the site's scroll animations now play: the rules, the three cases, the night sky and the closing words.

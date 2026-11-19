@@ -1876,6 +1876,14 @@ class _Running:
         self.stop.set()
         self.thread.join(15)
         self.stack.close()
+        if exc[0] is None:
+            # The streams read whole: every line on stderr and every <- line on stdout, held to
+            # a logged_line's length. The announce block's lines are the operator's own
+            # parameters and launch links, whose length is the operator's URL.
+            from test_serve import assert_every_line_bounded
+            assert_every_line_bounded(self.test, self.err.getvalue())
+            assert_every_line_bounded(self.test, "\n".join(
+                line for line in self.out.getvalue().splitlines() if line.startswith("  <- ")))
         return False
 
     @property
@@ -3504,6 +3512,207 @@ class AWalletErrorSaysWhatBecameOfTheRequestTests(_RunningCase):
                               "request could send, so it does not close the request (request %s)"
                               % state)
         self.assertEqual(err, "polaris-oid4vp: wallet error: access_denied (request %s)" % state)
+
+
+#: The most characters of a reason a writer writes, as verifier.WRITTEN_REASON_MAX pins it.
+REASON_BOUND = 512
+
+#: A reason far over the bound, as a refusal that quotes what a sender sent can be: a `<` that
+#: quoting turns to `?`, and a marker at its end that a cut leaves out.
+LONG_REASON = "<" + "x" * 99_994 + "MARKER"
+
+
+class WrittenReasonTests(unittest.TestCase):
+    """A refusal's reason can quote what a sender sent, so each refused post would write as much
+    of its own bytes as the verifier read. Every place `serve` and the `verdict` command write a
+    reason (the lines printed, the --result file and the control read, the verdict's JSON, the
+    listener's log) writes it through `written_reason`: quoted, at most REASON_BOUND characters
+    of it, and its full length when it is cut. test_serve holds the listener's log the same
+    way."""
+
+    CUT = r"\.\.\. \(cut at %d of (\d+) characters\)" % REASON_BOUND
+
+    def held(self, text, at_least=len(LONG_REASON)):
+        import re
+        self.assertNotIn("MARKER", text)
+        self.assertNotIn("<x", text)
+        self.assertLess(len(text), REASON_BOUND + 300, text[:120])
+        found = re.findall(self.CUT, text)
+        self.assertEqual(len(found), 1, text[-200:])
+        self.assertGreaterEqual(int(found[0]), at_least)
+
+    def test_the_bound_is_pinned(self):
+        from polaris_oid4vp import verifier
+        self.assertEqual(getattr(verifier, "WRITTEN_REASON_MAX", None), REASON_BOUND)
+        # An accepted response's `problem` is None, and `verdict` writes it as null.
+        self.assertIsNone(verifier.written_reason(None))
+
+    def test_a_text_at_the_bound_is_written_whole_and_one_over_is_cut(self):
+        """The note says a text was cut only when it was: at the bound it is written unchanged."""
+        from polaris_oid4vp import verifier
+        from test_serve import LINE_BOUND
+        for name, bound in (("written_reason", REASON_BOUND), ("logged_line", LINE_BOUND)):
+            write = getattr(verifier, name)
+            with self.subTest(name):
+                self.assertEqual(write("x" * bound), "x" * bound)
+                self.assertEqual(write("x" * (bound + 1)), "x" * bound
+                                 + "... (cut at %d of %d characters)" % (bound, bound + 1))
+
+    def test_each_writer_writes_a_long_reason_cut_and_says_its_length(self):
+        import json
+        from polaris_oid4vp.cli import _operator_line, _result_of, _verdict_json
+        from polaris_oid4vp.sdjwt import Verdict
+        refused = Verdict(False, "malformed", LONG_REASON)
+        wallet = Verdict(False, "wallet_error", LONG_REASON, wallet_error={
+            "error": "access_denied", "error_description": LONG_REASON, "state": "s1"})
+        written = {
+            "the refused line": _operator_line(refused),
+            "the wallet error line": _operator_line(wallet),
+            "the wallet error line, ended by a rule": _operator_line(wallet, "rearm"),
+            "the wallet error line, its request named": _operator_line(wallet, named=True),
+            "the result document, refused": json.dumps(_result_of(400, refused)),
+            "the result document, a wallet error": json.dumps(_result_of(200, wallet)),
+            "the result document, a wallet error ended": json.dumps(_result_of(200, wallet, "control")),
+            "the verdict command": json.dumps(_verdict_json(refused)),
+        }
+        for name, text in written.items():
+            with self.subTest(name):
+                self.held(text)
+
+    def test_the_verdict_command_writes_its_problem_and_reasons_cut(self):
+        """`verdict` repeats a refused verdict's reason in `problem`, on stdout and on stderr."""
+        import contextlib
+        import io
+        import json
+        from unittest import mock
+        from polaris_oid4vp import cli
+        from polaris_oid4vp.sdjwt import Verdict
+        here = pathlib.Path(__file__).resolve().parent
+        v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
+                       .read_text(encoding="utf-8"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-written-"))
+        (tmp / "request.json").write_text(json.dumps(v["request"]))
+        (tmp / "vp_token.json").write_text(json.dumps(v["responses"]["per_credential"]["vp_token"]))
+        result = {"accepted": None, "scope": None, "problem": LONG_REASON, "expected": {},
+                  "either": {}, "verdicts": {"pid": Verdict(False, "malformed", LONG_REASON)},
+                  "readings": {}, "response_refusals": {}}
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "verify_response", return_value=result) as judged, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(["verdict", "--request", str(tmp / "request.json"),
+                           "--vp-token", str(tmp / "vp_token.json")])
+        self.assertEqual((rc, judged.call_count), (2, 1))
+        written = json.loads(out.getvalue())
+        for name, text in (("problem", written["problem"]),
+                           ("the verdict's reason", written["verdicts"]["pid"]["reason"]),
+                           ("stderr", err.getvalue())):
+            with self.subTest(name):
+                self.held(text)
+
+    def test_the_verdict_command_writes_a_raised_error_cut(self):
+        """What `verdict` raised while reading the files and judging them is one line on stderr,
+        cut at a logged line's bound and saying its length."""
+        import contextlib
+        import io
+        import json
+        from unittest import mock
+        from polaris_oid4vp import cli
+        from test_serve import LINE_BOUND
+        here = pathlib.Path(__file__).resolve().parent
+        v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
+                       .read_text(encoding="utf-8"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-written-"))
+        (tmp / "request.json").write_text(json.dumps(v["request"]))
+        (tmp / "vp_token.json").write_text(json.dumps(v["responses"]["per_credential"]["vp_token"]))
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "verify_response", side_effect=ValueError(LONG_REASON)), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(["verdict", "--request", str(tmp / "request.json"),
+                           "--vp-token", str(tmp / "vp_token.json")])
+        self.assertEqual((rc, out.getvalue()), (2, ""))
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines[:3])
+        self.assertRegex(lines[0], r"^polaris-oid4vp: \?x{400}")
+        self.assertTrue(lines[0].endswith("... (cut at %d of %d characters)"
+                                          % (LINE_BOUND, len(LONG_REASON))), lines[0][-80:])
+        self.assertNotIn("MARKER", lines[0])
+
+    def test_a_reason_under_the_bound_is_written_as_quoting_leaves_it(self):
+        import json
+        from polaris_oid4vp.cli import _operator_line, _result_of, _verdict_json
+        from polaris_oid4vp.sdjwt import Verdict
+        head = "the nonce is not this request's <"
+        reason = head + "y" * (REASON_BOUND - 6 - len(head))
+        quoted = reason.replace("<", "?")
+        self.assertEqual(len(quoted), REASON_BOUND - 6)
+        verdict = Verdict(False, "nonce", reason)
+        self.assertEqual(_operator_line(verdict), "refused: nonce: " + quoted)
+        self.assertEqual(_result_of(400, verdict)["reason"], quoted)
+        self.assertEqual(_verdict_json(verdict)["reason"], quoted)
+        self.assertNotIn("cut at", json.dumps(_result_of(400, verdict)))
+
+    def test_every_writer_of_a_reason_is_enumerated(self):
+        """Every read of a verdict's `reason` and of a `verify_response` result's `problem` in
+        cli.py and serve.py, and every call of the two functions that build a wallet error's
+        reason from one, sits inside a `written_reason(...)` call; the two builders' own bodies
+        are the only exception. A writer added later is held the moment it is written."""
+        import ast
+        from polaris_oid4vp import cli, serve
+        builders = {"_wallet_error_reason", "_wallet_error_named"}
+        sites, unbounded = [], []
+        for module in (cli, serve):
+            tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
+            parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+            for node in ast.walk(tree):
+                read = (isinstance(node, ast.Attribute) and node.attr == "reason"
+                        and isinstance(node.ctx, ast.Load)) or (
+                    isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
+                    and isinstance(node.slice, ast.Constant) and node.slice.value == "problem")
+                built = (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                         and node.func.id in builders)
+                if not (read or built):
+                    continue
+                up, function, held = node, None, False
+                while up in parents:
+                    up = parents[up]
+                    if isinstance(up, ast.Call) and getattr(up.func, "id", None) == "written_reason":
+                        held = True
+                    if function is None and isinstance(up, ast.FunctionDef):
+                        function = up.name
+                site = "%s.%s:%d" % (module.__name__.rsplit(".", 1)[1], function, node.lineno)
+                sites.append(site)
+                if not held and function not in builders:
+                    unbounded.append(site)
+        self.assertEqual(unbounded, [])
+        # The writers, by the function each sits in: a site that moves or goes changes this.
+        self.assertEqual(sorted({s.split(":")[0] for s in sites}),
+                         ["cli._cmd_verdict", "cli._operator_line", "cli._result_of",
+                          "cli._verdict_json", "cli._wallet_error_reason", "serve.do_POST"])
+
+
+class TheAnswerLineIsBoundedTests(_RunningCase):
+    """The `<-` line `serve` prints on stdout for each answer is a logged_line: at most LINE_MAX
+    characters, with its full length when it is cut, whoever composed what it carries."""
+
+    def test_a_long_answer_line_is_printed_cut(self):
+        from unittest import mock
+        from polaris_oid4vp.sdjwt import Verdict
+        from polaris_oid4vp.verifier import Verifier
+        from test_serve import LINE_BOUND
+        tail = "Polaris" + "Tail"
+        refused = Verdict(False, "c" * 60_000 + tail, "r")
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            status, answer = run.control({})
+            self.assertEqual(status, 201, answer)
+            with mock.patch.object(run.verifier, "handle_direct_post",
+                                   return_value=(400, dict(Verifier.REFUSAL_BODY), refused)):
+                self.assertEqual(run.respond({"response": "x"})[0], 400)
+            out = run.out.getvalue()
+            lines = [x for x in out.splitlines() if x.startswith("  <- 400 ")]
+            self.assertEqual(len(lines), 1, out[-300:])
+            self.assertNotIn(tail, out + run.err.getvalue())
+            self.assertLessEqual(len(lines[0]), len("  <- 400 ") + LINE_BOUND + 40)
+            self.assertRegex(lines[0], r"\.\.\. \(cut at 1024 of \d+ characters\)$")
 
 
 if __name__ == "__main__":

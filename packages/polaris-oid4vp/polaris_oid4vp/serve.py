@@ -25,7 +25,8 @@ import threading
 import urllib.parse
 
 from .jwe import _loads_depth_bounded
-from .verifier import Verifier, operator_text, wallet_nonce_acceptable  # noqa: F401  Verifier re-exported for callers of serve()
+from .verifier import (  # noqa: F401  Verifier re-exported for callers of serve()
+    Verifier, cut_to, logged_line, operator_text, wallet_nonce_acceptable, written_reason)
 
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
@@ -238,6 +239,38 @@ def _content_length(headers):
         return None
 
 
+#: The most characters the listener writes for one exception it logs (2026-11-19).
+EXCEPTION_LOG_MAX = 8192
+
+
+def exception_text(exc, limit=EXCEPTION_LOG_MAX):
+    """An exception's traceback as the listener logs it. The frames are kept as Python formats
+    them, this code's files and lines, which an operator and a report of a crash need. Each
+    exception's own text, its cause's and its context's, can quote the input that raised it,
+    so it is written as `written_reason` writes a reason; every line is a `logged_line`; and
+    the whole is at most `limit` characters, with its full length when it is cut."""
+    import traceback
+    chain, links, te = [], [], traceback.TracebackException.from_exception(exc)
+    while te is not None:
+        chain.append(te)
+        if te.__cause__ is not None:
+            te = te.__cause__
+            links.append("The above exception was the direct cause of the following exception:")
+        elif te.__context__ is not None and not te.__suppress_context__:
+            te = te.__context__
+            links.append("During handling of the above exception, another exception occurred:")
+        else:
+            te = None
+    blocks = []
+    for te, link in zip(reversed(chain), [None] + list(reversed(links))):
+        if link is not None:
+            blocks.append("\n%s\n" % link)
+        own = written_reason("".join(te.format_exception_only()).rstrip("\n"))
+        blocks.append("Traceback (most recent call last):\n%s%s" % ("".join(te.stack.format()), own))
+    text = "\n".join(logged_line(line) for line in "\n".join(blocks).split("\n"))
+    return cut_to(text, limit) + "\n"
+
+
 def _wallet_error_named(verdict):
     """A wallet error on a line that names its request: the error code and the sender's
     description as verifier.py's _printable left it, and nothing of what became of the request,
@@ -338,15 +371,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # The operator's side of the split. Everything the wallet is NOT told goes here,
             # where the person running the verifier can read it and an attacker cannot.
             if status != 200 and verdict is not None:
-                self.log_error("refused: %s: %s%s", verdict.code, verdict.reason, self._about())
+                self.log_error("refused: %s: %s%s", verdict.code, written_reason(verdict.reason),
+                               self._about())
             elif getattr(verdict, "wallet_error", None) is not None:
                 # A wallet's error response, answered 200 and accepted as nothing. Its reason
                 # carries the sender's text only as verifier.py's _printable left it. A caller
                 # that names requests ends them by a rule of its own (`serve --rearm`, the control
                 # endpoint), so the verifier's "it does not close the request" is not this line's
                 # to say, and the request is named once, by `_about`.
-                self.log_error("wallet error: %s%s", _wallet_error_named(verdict)
-                               if self.name_requests else verdict.reason, self._about())
+                self.log_error("wallet error: %s%s", written_reason(_wallet_error_named(verdict)
+                               if self.name_requests else verdict.reason), self._about())
         except Exception:  # noqa: BLE001
             # The wallet must never see a 5xx for a response it sent: a 5xx says "retry",
             # and nothing it can retry will help. An unexpected exception here is this
@@ -410,12 +444,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         return about_request(self.verifier) if self.name_requests else ""
 
     def log_error(self, format, *args, **kwargs):  # noqa: A002
-        import traceback
-        # The whole line as operator_text leaves it. Any line here can carry a sender's text, the
-        # base class's own included: it logs a refused request line with the line in it.
-        sys.stderr.write("polaris-oid4vp: " + operator_text(format % args if args else format) + "\n")
+        # The whole line as logged_line leaves it, quoted and cut. Any line here can carry a
+        # sender's text, the base class's own included: it logs a request line it refuses (a bad
+        # version, an unsupported method, a bad syntax) with the line in it.
+        sys.stderr.write("polaris-oid4vp: " + logged_line(format % args if args else format) + "\n")
         if kwargs.get("exc_info"):
-            traceback.print_exc()
+            sys.stderr.write(exception_text(sys.exc_info()[1]))
 
     def log_message(self, format, *args):  # noqa: A002  the base class names it this
         # Silent by default. A library that writes to a caller's stderr uninvited is a
@@ -423,7 +457,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # that. `serve(verbose=True)` opts in.
         # A request line refused before it was read has no path, and its refusal is log_error's.
         if self.verbose and getattr(self, "path", None) is not None:
-            sys.stderr.write("%s %s\n" % (operator_text(self.command), operator_text(self.path)))
+            sys.stderr.write(logged_line("%s %s" % (self.command, self.path)) + "\n")
 
 
 class _ControlHandler:
@@ -548,7 +582,7 @@ class _ControlHandler:
         if not path.startswith(_CONTROL_LOGGED):
             return super().log_message(format, *args)
         if self.verbose:
-            sys.stderr.write("%s %s\n" % (operator_text(self.command), operator_text(path)))
+            sys.stderr.write(logged_line("%s %s" % (self.command, path)) + "\n")
         return None
 
 
@@ -619,6 +653,14 @@ class _Server(http.server.ThreadingHTTPServer):
 
     daemon_threads = True
     tls_context = None
+
+    def handle_error(self, request, client_address):
+        # socketserver's own prints a banner and the traceback whole (traceback.print_exc), as
+        # when a connection is reset mid-request. This writes them through the same sink as
+        # every other line the listener writes (2026-11-19).
+        sys.stderr.write("polaris-oid4vp: " + logged_line(
+            "an exception occurred handling a request from %s" % (client_address,)) + "\n")
+        sys.stderr.write(exception_text(sys.exc_info()[1]))
 
     def finish_request(self, request, client_address):
         # ThreadingMixIn calls this in the connection's own thread.
