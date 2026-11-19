@@ -252,7 +252,11 @@ def judge_device_response(device_response, *, session_transcript, iaca_roots, do
                 datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
         verdict, elements = _judge(device_response, transcript, roots, doctype, at, max_skew_seconds)
     except _Refused as refusal:
-        verdict, elements = Verdict(False, refusal.code, refusal.reason), {}
+        reason = refusal.reason
+        if stated:
+            # Joined before the Verdict is made, so the cut of a long reason counts all of it.
+            reason = "%s (%s)" % (reason, stated) if reason else stated
+        return Verdict(False, refusal.code, reason), {}
     if stated:
         verdict.reason = "%s (%s)" % (verdict.reason, stated) if verdict.reason else stated
     return verdict, elements

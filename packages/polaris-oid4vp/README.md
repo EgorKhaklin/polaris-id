@@ -338,6 +338,8 @@ verdict.authentic, verdict.code, verdict.reason, verdict.claims
 
 `expected_nonce` and `expected_audience` are required: reading them from the presentation would
 make every presentation replayable. `sdjwt.py` touches no socket and reads no configuration.
+`verdict.reason` holds at most `sdjwt.REASON_MAX` (512) characters: a longer reason keeps its start
+and ends with a note giving its full length.
 
 For an issuer that signs with its certificate in `x5c`, the verdict also says who signed:
 `issuer_subject` is the leaf's subject and `issuer_anchor` the subject of the configured anchor
@@ -578,7 +580,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1069 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1084 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 333 refusals accept and requires a
