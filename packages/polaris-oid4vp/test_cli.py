@@ -3565,9 +3565,10 @@ class WrittenReasonTests(unittest.TestCase):
         import json
         from polaris_oid4vp.cli import _operator_line, _result_of, _verdict_json
         from polaris_oid4vp.sdjwt import Verdict
-        refused = Verdict(False, "malformed", LONG_REASON)
-        wallet = Verdict(False, "wallet_error", LONG_REASON, wallet_error={
-            "error": "access_denied", "error_description": LONG_REASON, "state": "s1"})
+        from test_serve import uncut
+        refused = uncut(Verdict(False, "malformed"), LONG_REASON)
+        wallet = uncut(Verdict(False, "wallet_error", wallet_error={
+            "error": "access_denied", "error_description": LONG_REASON, "state": "s1"}), LONG_REASON)
         written = {
             "the refused line": _operator_line(refused),
             "the wallet error line": _operator_line(wallet),
@@ -3596,8 +3597,9 @@ class WrittenReasonTests(unittest.TestCase):
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-written-"))
         (tmp / "request.json").write_text(json.dumps(v["request"]))
         (tmp / "vp_token.json").write_text(json.dumps(v["responses"]["per_credential"]["vp_token"]))
+        from test_serve import uncut
         result = {"accepted": None, "scope": None, "problem": LONG_REASON, "expected": {},
-                  "either": {}, "verdicts": {"pid": Verdict(False, "malformed", LONG_REASON)},
+                  "either": {}, "verdicts": {"pid": uncut(Verdict(False, "malformed"), LONG_REASON)},
                   "readings": {}, "response_refusals": {}}
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(cli, "verify_response", return_value=result) as judged, \

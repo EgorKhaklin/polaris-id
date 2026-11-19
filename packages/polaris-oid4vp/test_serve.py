@@ -75,6 +75,13 @@ class ServeTestCase(unittest.TestCase):
         cls.httpd.server_close()
 
 
+def uncut(verdict, reason):
+    """`verdict` holding `reason` whole, set past the cut Verdict makes where a reason is set: a
+    writer is handed any verdict-shaped object, so its own cut must hold without that one."""
+    verdict._reason = reason
+    return verdict
+
+
 class WrittenReasonLogTests(ServeTestCase):
     """The listener's log is a writer of reasons too: a refusal's and a wallet error's, each
     written through `written_reason`, at most 512 characters of it and its full length when it
@@ -87,9 +94,10 @@ class WrittenReasonLogTests(ServeTestCase):
         from polaris_oid4vp.sdjwt import Verdict
         long = "<" + "x" * 99_994 + "MARKER"
         answers = {
-            "a refusal": (400, dict(Verifier.REFUSAL_BODY), Verdict(False, "malformed", long)),
-            "a wallet error": (200, {}, Verdict(False, "wallet_error", long, wallet_error={
-                "error": "access_denied", "error_description": long, "state": "s1"})),
+            "a refusal": (400, dict(Verifier.REFUSAL_BODY),
+                          uncut(Verdict(False, "malformed"), long)),
+            "a wallet error": (200, {}, uncut(Verdict(False, "wallet_error", wallet_error={
+                "error": "access_denied", "error_description": long, "state": "s1"}), long)),
         }
         for name, answer in answers.items():
             with self.subTest(name), \

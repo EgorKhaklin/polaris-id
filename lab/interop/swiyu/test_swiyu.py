@@ -1272,8 +1272,10 @@ class PinTests(unittest.TestCase):
         self.assertEqual(names(status.decide_by_fetching),
                          ["index", "expected_uri", "authority", "fetch", "now", "credential_issuer",
                           "issuer_key_verify", "max_age_seconds"])
-        # the resolver contract the parent calls (sdjwt._revocation_state): uri, idx, issuer
-        self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)', inspect.getsource(sdjwt._revocation_state))
+        # the resolver contract the parent calls: uri, idx, issuer, in sdjwt._revocation_answer, which
+        # sdjwt._revocation_state calls
+        self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)', inspect.getsource(sdjwt._revocation_answer))
+        self.assertIn("_revocation_answer(payload, resolver, issuer)", inspect.getsource(sdjwt._revocation_state))
         # the response path the lab sits in front of: it decrypts, then asks _single_presentation
         source = inspect.getsource(Verifier.handle_direct_post)
         for fragment in ("_open_response(compact, candidate.enc_key)", "self._single_presentation(self._read_vp_token(body.get(\"vp_token\")))",
