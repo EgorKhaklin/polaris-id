@@ -4993,8 +4993,37 @@ _MDOC_FORBIDDEN = frozenset({"token_value", "token_id", "individual_id", "legal_
 #: a segmentation fault is not an exception anybody can catch. 64 is deeper than any mdoc.
 _CBOR_MAX_DEPTH = 64
 
+#: How many elements one CBOR array, or pairs one map, may state, refused as the head that
+#: states the count is read; and how many data items one decode may read, an item counting
+#: once as its head is read (the outermost item, each element, each key and each value, and a
+#: tag's content as an item of its own). The numbers polaris-oid4vp's decoder holds, written
+#: here because this module imports nothing from that package. With them, one decode's work
+#: stays in proportion to its input.
+_CBOR_MAX_ENTRIES = 1024
+_CBOR_MAX_ITEMS = 4096
 
-def _cbor_load(buf, i=0, depth=0):
+#: A document larger than this is refused before it is decoded: polaris-oid4vp's
+#: MAX_DEVICE_RESPONSE_BYTES, the bound that package sets on a wallet's DeviceResponse.
+_MDOC_MAX_BYTES = 512 * 1024
+
+
+def _cbor_kind(value):
+    """What a decoded CBOR map key is, in words, and never what it holds: a refusal's
+    reason names a key this way, because a text key can be as long as the input."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, int):
+        return "an integer"
+    if isinstance(value, (bytes, bytearray)):
+        return "a byte string"
+    if isinstance(value, str):
+        return "a text string"
+    return type(value).__name__
+
+
+def _cbor_load(buf, i=0, depth=0, count=None):
     """Decode one CBOR item at offset i. Returns (value, next_offset).
 
     Handles the subset an mdoc uses: unsigned and negative integers, byte and text strings,
@@ -5010,7 +5039,15 @@ def _cbor_load(buf, i=0, depth=0):
     `depth` is the nesting counter. It raises ValueError like every other refusal here, so
     the existing handlers catch it without being widened to RecursionError, which fires at a
     point that depends on how much stack the caller had already spent.
+
+    `count` is the decode's item count, a one-element list every item read adds to; a call
+    without one starts a decode of its own.
     """
+    if count is None:
+        count = [0]
+    count[0] += 1
+    if count[0] > _CBOR_MAX_ITEMS:
+        raise ValueError("CBOR holds more than %d data items" % _CBOR_MAX_ITEMS)
     if depth > _CBOR_MAX_DEPTH:
         raise ValueError("CBOR nests deeper than %d levels" % _CBOR_MAX_DEPTH)
     if i >= len(buf):
@@ -5043,16 +5080,20 @@ def _cbor_load(buf, i=0, depth=0):
         raw = buf[i:end]
         return (raw if major == 2 else raw.decode("utf-8")), end
     if major == 4:
+        if val > _CBOR_MAX_ENTRIES:
+            raise ValueError("a CBOR array states %d elements, over the %d entry limit" % (val, _CBOR_MAX_ENTRIES))
         out = []
         for _ in range(val):
-            item, i = _cbor_load(buf, i, depth + 1)
+            item, i = _cbor_load(buf, i, depth + 1, count)
             out.append(item)
         return out, i
     if major == 5:
+        if val > _CBOR_MAX_ENTRIES:
+            raise ValueError("a CBOR map states %d pairs, over the %d entry limit" % (val, _CBOR_MAX_ENTRIES))
         out = {}
         for _ in range(val):
-            k, i = _cbor_load(buf, i, depth + 1)
-            v, i = _cbor_load(buf, i, depth + 1)
+            k, i = _cbor_load(buf, i, depth + 1, count)
+            v, i = _cbor_load(buf, i, depth + 1, count)
             # A CBOR map with a list or map as its key raised `TypeError: unhashable type`
             # here, which the mdoc handler does not catch. A non-scalar key is not a key.
             if isinstance(k, (list, dict, tuple)):
@@ -5063,7 +5104,7 @@ def _cbor_load(buf, i=0, depth=0):
             # second value. Keys compare as decoded: 1 and true, 0 and false, or null and
             # undefined, which this decoder cannot tell apart, are a repeat too.
             if k in out:
-                raise ValueError("a CBOR map repeats the key %r" % (k,))
+                raise ValueError("a CBOR map repeats the key (%s)" % _cbor_kind(k))
             out[k] = v
         return out, i
     if major == 6:
@@ -5071,7 +5112,7 @@ def _cbor_load(buf, i=0, depth=0):
         # says is refused.
         if val != 24:
             raise ValueError("CBOR tag %d is outside the mdoc subset (tag 24 only)" % val)
-        inner, i = _cbor_load(buf, i, depth + 1)
+        inner, i = _cbor_load(buf, i, depth + 1, count)
         # RFC 8949 s3.4.5.1: tag 24 wraps a byte string holding the encoded item. Until
         # 2026-10-28 it wrapped anything, and the MSO path read a map under it as if it were
         # bytes, which raised KeyError out of verify_mdoc instead of returning a verdict.
@@ -5125,6 +5166,10 @@ def verify_mdoc(document_bytes, anchor_keys=None, now=None):
             return v
     if not isinstance(document_bytes, (bytes, bytearray)):
         v["note"] = "the document is not bytes"
+        return v
+    if len(document_bytes) > _MDOC_MAX_BYTES:
+        # Before any decoding, as polaris-oid4vp bounds a DeviceResponse.
+        v["note"] = "the document is %d bytes, over the %d byte limit" % (len(document_bytes), _MDOC_MAX_BYTES)
         return v
     try:
         doc = _cbor_decode(bytes(document_bytes))

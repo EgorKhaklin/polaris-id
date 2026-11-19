@@ -340,6 +340,29 @@ NAMED_MUTANTS = (
     ("cli:a-verdict-reason-whole", "polaris_oid4vp/cli.py",
      "           \"reason\": written_reason(verdict.reason),\n",
      "           \"reason\": verdict.reason,  # MUTANT\n"),
+    # 2026-11-19: the CBOR decoder's two limits, beside the drill's own inversion of each of its
+    # three refusals (which takes the entry check away, so a head alone reads as input that ran
+    # out). A count kept per container never reaches the total, nor one that leaves a map's values
+    # out; either limit one higher lets its one-over input through; and an accepted mdoc's line
+    # without what was checked.
+    ("cbor:the-item-count-per-container", "polaris_oid4vp/cbor.py",
+     "        raise CborError(\"nesting deeper than %d\" % MAX_DEPTH)\n    # An array or a map that states",
+     "        raise CborError(\"nesting deeper than %d\" % MAX_DEPTH)\n    count = [0]  # MUTANT\n"
+     "    # An array or a map that states"),
+    ("cbor:the-entry-limit-one-higher", "polaris_oid4vp/cbor.py",
+     "        if arg > MAX_ENTRIES:\n            raise CborError(\"an array",
+     "        if arg > MAX_ENTRIES + 1:  # MUTANT\n            raise CborError(\"an array"),
+    ("cbor:the-item-limit-one-higher", "polaris_oid4vp/cbor.py",
+     "    if count[0] > MAX_ITEMS:\n",
+     "    if count[0] > MAX_ITEMS + 1:  # MUTANT\n"),
+    ("cbor:a-map-value-uncounted", "polaris_oid4vp/cbor.py",
+     "                raise CborError(\"a map key that repeats\")\n"
+     "            value, i = _item(buf, i, depth + 1, count)\n",
+     "                raise CborError(\"a map key that repeats\")\n"
+     "            value, i = _item(buf, i, depth + 1, [0])  # MUTANT\n"),
+    ("cli:an-accepted-mdoc-line-without-its-checks", "polaris_oid4vp/cli.py",
+     "    if verdict.authentic and credential_format == MDOC_FORMAT:\n",
+     "    if False:  # MUTANT\n"),
     ("cli:a-verdict-problem-whole", "polaris_oid4vp/cli.py",
      "    problem = written_reason(result[\"problem\"])\n",
      "    problem = result[\"problem\"]  # MUTANT\n"),

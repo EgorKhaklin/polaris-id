@@ -374,13 +374,21 @@ def _wallet_error_reason(verdict, ended_by=None, named=False):
     return text
 
 
+#: What an accepted mso_mdoc was checked for, as the `<-` line names it (mdoc.py, WHAT
+#: AUTHENTIC MEANS HERE).
+_MDOC_CHECKED = "issuer signature chained to a configured root, element digests, validity window, device signature"
+
+
 def _operator_line(verdict, ended_by=None, named=False, *, credential_format=SD_JWT_FORMAT):
     """What `serve` prints after `<- STATUS` for one answer at the response URI. Only an
     authentic presentation reads `authentic`: the lab walks grep `<- 200 authentic` for an
     acceptance, and a wallet's error response is answered 200 too (OpenID4VP 1.0 section 8.2).
-    A wallet's error response is said as _wallet_error_reason says it."""
+    An accepted mso_mdoc's line lists what was checked after `authentic`. A wallet's error
+    response is said as _wallet_error_reason says it."""
     if verdict is None:
         return "refused"
+    if verdict.authentic and credential_format == MDOC_FORMAT:
+        return "authentic (%s), claims %s" % (_MDOC_CHECKED, _claim_names(verdict, credential_format))
     if verdict.authentic:
         return "authentic, claims %s" % _claim_names(verdict, credential_format)
     if getattr(verdict, "wallet_error", None) is not None:

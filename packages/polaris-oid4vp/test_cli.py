@@ -1349,8 +1349,9 @@ class MdocServeCommandTests(_MdocServeCase):
         self.assertEqual((status, verdict.authentic), (200, True), verdict.reason)
 
     def test_the_line_and_the_result_file_name_the_elements_accepted(self):
-        """The `<-` line serve prints and the --result file, for an accepted mdoc: each element
-        under its namespace, as --claim names it."""
+        """The `<-` line serve prints and the --result file, for an accepted mdoc: what was
+        checked, on the line only, and each element under its namespace, as --claim names it.
+        The file's outcome is `accepted`, as for an SD-JWT VC."""
         import contextlib
         import io
         import json
@@ -1365,7 +1366,9 @@ class MdocServeCommandTests(_MdocServeCase):
         with contextlib.redirect_stdout(line):
             seen["kwargs"]["on_verdict"](status, body, verdict)
         self.assertEqual(line.getvalue(),
-                         "  <- 200 authentic, claims [['org.iso.18013.5.1', 'age_over_21']]\n")
+                         "  <- 200 authentic (issuer signature chained to a configured root, element "
+                         "digests, validity window, device signature), claims "
+                         "[['org.iso.18013.5.1', 'age_over_21']]\n")
         doc = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual((doc["outcome"], doc["claims"]),
                          ("accepted", [["org.iso.18013.5.1", "age_over_21"]]))
