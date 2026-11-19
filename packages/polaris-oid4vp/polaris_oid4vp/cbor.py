@@ -18,6 +18,8 @@ WHAT IT REFUSES, each with a test in `test_mdoc.py` (`CborLimitsTests`):
     a float
     a simple value other than true, false and null
     nesting deeper than 32
+    an array or a map that states more than 1024 entries, refused as its head is read
+    more than 4096 data items in one decode
 
 WHY TAG 24 KEEPS ITS BYTES. An mdoc's digests and signatures are computed over the bytes of
 tag-24 items exactly as the issuer or the device wrote them. A decoder that hands back only
@@ -40,6 +42,22 @@ so no value this package signs over or hashes can hold a float, a bignum or an u
 #: IssuerSignedItemBytes, whose content is decoded on its own; 32 leaves room and keeps the
 #: recursion far from the interpreter's limit.
 MAX_DEPTH = 32
+
+#: How many elements one array, or pairs one map, may state. A head that states more is
+#: refused as it is read, before any entry is (as fxamacker/cbor's MaxArrayElements and
+#: MaxMapPairs are checked). The largest container in M1's captures, decoded down through
+#: their tag-24 items, holds 26 entries; an mdoc's namespaces and the digests its MSO signs
+#: grow with its elements, and 1024 leaves room for an mDL's.
+MAX_ENTRIES = 1024
+
+#: How many data items one decode may read. An item counts once, as its head is read: the
+#: outermost item, each element of an array, each key and each value of a map, and a tag's
+#: content as an item of its own, so a tag-24 item is two (the tag and the byte string it
+#: wraps). What that byte string holds is decoded, if at all, by a call of its own with a
+#: count of its own. Counted this way, the largest of the eight decodes an mDL capture takes
+#: reads 86 items, and the eight 158 together. With MAX_ENTRIES, this keeps one decode's work
+#: in proportion to its input.
+MAX_ITEMS = 4096
 
 #: The tags an mdoc and its COSE structures carry: 0 (a date and time as text), 18
 #: (COSE_Sign1), 24 (an embedded CBOR data item) and 1004 (a full date as text).
@@ -116,8 +134,17 @@ def _head(buf, i):
     raise CborError("a reserved head (additional information %d)" % info)
 
 
-def _item(buf, i, depth):
-    """(value, index after it) of the data item at buf[i]."""
+def _counted(count):
+    """Counts one more data item for this decode, and refuses the one past MAX_ITEMS."""
+    count[0] += 1
+    if count[0] > MAX_ITEMS:
+        raise CborError("more than %d data items in one decode" % MAX_ITEMS)
+
+
+def _item(buf, i, depth, count):
+    """(value, index after it) of the data item at buf[i]. `count` is this decode's item
+    count, a one-element list that every item read adds to."""
+    _counted(count)
     start = i
     major, arg, i = _head(buf, i)
     if major == 0:
@@ -147,34 +174,40 @@ def _item(buf, i, depth):
     if depth >= MAX_DEPTH:
         raise CborError("nesting deeper than %d" % MAX_DEPTH)
     # An array or a map that states more items than follow ends at the first missing one: every
-    # item takes at least a byte, so the loops below run no further than the input is long.
+    # item takes at least a byte, so the loops below run no further than the input is long. One
+    # that states more than MAX_ENTRIES is refused here, before its first entry is read.
     if major == 4:
+        if arg > MAX_ENTRIES:
+            raise CborError("an array that states %d elements, over the %d entry limit" % (arg, MAX_ENTRIES))
         out = []
         for _ in range(arg):
-            value, i = _item(buf, i, depth + 1)
+            value, i = _item(buf, i, depth + 1, count)
             out.append(value)
         return out, i
     if major == 5:
+        if arg > MAX_ENTRIES:
+            raise CborError("a map that states %d pairs, over the %d entry limit" % (arg, MAX_ENTRIES))
         out = {}
         for _ in range(arg):
-            key, i = _item(buf, i, depth + 1)
+            key, i = _item(buf, i, depth + 1, count)
             # bool is an int to Python, and True == 1: the type is held exactly, so that no two
             # keys this decoder accepts compare equal without being the same key.
             if type(key) is not int and type(key) is not str:
                 raise CborError("a map key that is not an integer or a text string")
             if key in out:
                 raise CborError("a map key that repeats")
-            value, i = _item(buf, i, depth + 1)
+            value, i = _item(buf, i, depth + 1, count)
             out[key] = value
         return out, i
     # major 6: a tag
     if arg not in ALLOWED_TAGS:
         raise CborError("tag %d, which this verifier does not read" % arg)
     if arg != TAG_EMBEDDED:
-        value, end = _item(buf, i, depth + 1)
+        value, end = _item(buf, i, depth + 1, count)
         return Tagged(arg, value), end
     if buf[start] != 0xd8:
         raise CborError("tag 24 in a longer head than needed")
+    _counted(count)  # the byte string it wraps, read here rather than by _item
     inner_major, length, body = _head(buf, i)
     if inner_major != 2:
         raise CborError("tag 24 over something that is not a byte string")
@@ -192,7 +225,7 @@ def decode(data):
     if not isinstance(data, (bytes, bytearray, memoryview)):
         raise CborError("not bytes")
     buf = bytes(data)
-    value, end = _item(buf, 0, 0)
+    value, end = _item(buf, 0, 0, [0])
     if end != len(buf):
         raise CborError("%d trailing bytes after the data item" % (len(buf) - end))
     return value

@@ -56,7 +56,8 @@ from .serve import (CONTROL_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
                     control_token_problem, cors_origins_of, serve)
 from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_INFO_PROFILES,
                        Verifier, claim_query, mdoc_claim_query, operator_text,
-                       transaction_data_entries, verifier_info_entries, verify_response)
+                       logged_line, transaction_data_entries, verifier_info_entries,
+                       verify_response, written_reason)
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -158,9 +159,20 @@ def keygen(out: pathlib.Path, host: str) -> dict:
            .sign(tls_key, hashes.SHA256()))
 
     def write(name, data, mode=0o644):
+        # Each file is created with its mode (2026-11-18), a key 0600 from its first byte, never
+        # written and then narrowed. Whatever is at the path goes first, so a re-run replaces the
+        # file and a link left there is removed rather than written through (O_EXCL refuses to
+        # follow one). fchmod then sets the mode exactly, whatever the umask took from it.
         path = out / FILES[name]
-        path.write_bytes(data)
-        path.chmod(mode)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        with os.fdopen(fd, "wb") as fh:
+            if os.name == "posix":
+                os.fchmod(fh.fileno(), mode)
+            fh.write(data)
         return path
 
     write("anchor", ca.public_bytes(serialization.Encoding.PEM))
@@ -362,18 +374,26 @@ def _wallet_error_reason(verdict, ended_by=None, named=False):
     return text
 
 
+#: What an accepted mso_mdoc was checked for, as the `<-` line names it (mdoc.py, WHAT
+#: AUTHENTIC MEANS HERE).
+_MDOC_CHECKED = "issuer signature chained to a configured root, element digests, validity window, device signature"
+
+
 def _operator_line(verdict, ended_by=None, named=False, *, credential_format=SD_JWT_FORMAT):
     """What `serve` prints after `<- STATUS` for one answer at the response URI. Only an
     authentic presentation reads `authentic`: the lab walks grep `<- 200 authentic` for an
     acceptance, and a wallet's error response is answered 200 too (OpenID4VP 1.0 section 8.2).
-    A wallet's error response is said as _wallet_error_reason says it."""
+    An accepted mso_mdoc's line lists what was checked after `authentic`. A wallet's error
+    response is said as _wallet_error_reason says it."""
     if verdict is None:
         return "refused"
+    if verdict.authentic and credential_format == MDOC_FORMAT:
+        return "authentic (%s), claims %s" % (_MDOC_CHECKED, _claim_names(verdict, credential_format))
     if verdict.authentic:
         return "authentic, claims %s" % _claim_names(verdict, credential_format)
     if getattr(verdict, "wallet_error", None) is not None:
-        return "wallet error: %s" % operator_text(_wallet_error_reason(verdict, ended_by, named))
-    return "refused: %s: %s" % (operator_text(verdict.code), operator_text(verdict.reason))
+        return "wallet error: %s" % written_reason(_wallet_error_reason(verdict, ended_by, named))
+    return "refused: %s: %s" % (operator_text(verdict.code), written_reason(verdict.reason))
 
 
 def _result_of(status, verdict, ended_by=None, *, credential_format=SD_JWT_FORMAT):
@@ -390,9 +410,9 @@ def _result_of(status, verdict, ended_by=None, *, credential_format=SD_JWT_FORMA
         out.update(outcome="accepted", claims=_claim_names(verdict, credential_format))
     elif getattr(verdict, "wallet_error", None) is not None:
         out.update(outcome="wallet_error", check=verdict.code,
-                   reason=_wallet_error_reason(verdict, ended_by))
+                   reason=written_reason(_wallet_error_reason(verdict, ended_by)))
     else:
-        out.update(outcome="refused", check=verdict.code, reason=verdict.reason)
+        out.update(outcome="refused", check=verdict.code, reason=written_reason(verdict.reason))
     return out
 
 
@@ -839,11 +859,26 @@ class _Requests:
 
 def _read_control_token(path):
     """The token in `--control-token-file`, stripped. ValueError says why it cannot be used, and
-    never what it held."""
+    never what it held.
+
+    On POSIX systems a file with any permission for others is refused. Its owner and its group may
+    have access, the group being how the image's user reaches the operator's file. The mode judged
+    is the open file's (fstat on the descriptor read), not whatever the path names later."""
     try:
-        raw = pathlib.Path(path).read_bytes()
+        fh = open(path, "rb")
     except OSError as exc:
         raise ValueError("--control-token-file %s: %s" % (path, exc.strerror or "unreadable"))
+    with fh:
+        if os.name == "posix":
+            mode = os.fstat(fh.fileno()).st_mode & 0o7777
+            if mode & 0o007:
+                raise ValueError(
+                    "--control-token-file %s: mode %04o gives others permission; make it "
+                    "private: chmod 600 %s, or chmod 640 for its group" % (path, mode, path))
+        try:
+            raw = fh.read()
+        except OSError as exc:
+            raise ValueError("--control-token-file %s: %s" % (path, exc.strerror or "unreadable"))
     try:
         token = raw.decode("ascii").strip()
     except ValueError:
@@ -1032,7 +1067,7 @@ def _cmd_serve(args) -> int:
             # More than one request can be open, so the line names the one this answer was about,
             # by the state its launch parameters carry; --result follows the newest.
             line += about_request(verifier)
-        print("  <- %d %s" % (status, line), flush=True)
+        print("  <- %d %s" % (status, logged_line(line)), flush=True)
         # Under --rearm any answer about the current request ends it, accepted, refused or a
         # wallet's error response, and the next starts before the wallet has its answer; a request
         # the control endpoint started ends at an answer the same way. With neither, a
@@ -1119,7 +1154,8 @@ def _read_request(path):
 
 
 def _verdict_json(verdict, credential_format=SD_JWT_FORMAT):
-    out = {"authentic": verdict.authentic, "code": verdict.code, "reason": verdict.reason,
+    out = {"authentic": verdict.authentic, "code": verdict.code,
+           "reason": written_reason(verdict.reason),
            "claims": _claim_names(verdict, credential_format)}
     if verdict.transaction_data is not None:
         out["transaction_data"] = verdict.transaction_data
@@ -1181,10 +1217,11 @@ def _cmd_verdict(args) -> int:
         print(exc, file=sys.stderr)
         return 2
     except (OSError, ValueError) as exc:
-        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        print("polaris-oid4vp: " + logged_line(str(exc)), file=sys.stderr)
         return 2
+    problem = written_reason(result["problem"])
     print(json.dumps({
-        "accepted": result["accepted"], "scope": result["scope"], "problem": result["problem"],
+        "accepted": result["accepted"], "scope": result["scope"], "problem": problem,
         "expected": result["expected"], "either": result["either"],
         "verdicts": {qid: _verdict_json(v, formats.get(qid))
                      for qid, v in result["verdicts"].items()},
@@ -1193,7 +1230,7 @@ def _cmd_verdict(args) -> int:
         "response_refusals": result["response_refusals"],
     }, indent=2))
     if result["accepted"] is None:
-        print("polaris-oid4vp: %s" % result["problem"], file=sys.stderr)
+        print("polaris-oid4vp: %s" % problem, file=sys.stderr)
         return 2
     return 0 if result["accepted"] else 1
 
@@ -1319,7 +1356,9 @@ and one that judges a response already captured:
     s.add_argument("--control-token-file", default=None, metavar="FILE",
                    help="turn on POST /control/request on this listener, same TLS mode: FILE "
                         "holds the bearer token (read at startup, never from the command line; "
-                        "at least 32 printable ASCII characters). A call with "
+                        "at least 32 printable ASCII characters); on Linux and macOS a FILE "
+                        "with any permission for others is refused (0600, or 0640 for its "
+                        "group). A call with "
                         "`Authorization: Bearer TOKEN` starts a request and is answered 201 "
                         "with its request number, state, launch links, request_uri and "
                         "client_id; an optional JSON body names claims (each as --claim takes "

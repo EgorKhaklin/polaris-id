@@ -377,6 +377,23 @@ def _refuse(code, reason):
     return Verdict(False, code, reason)
 
 
+def _json_kind(value):
+    """The kind of JSON value `value` is, and an array's length: never its content, which a
+    refusal's reason would carry to every place the reason is written (2026-11-19: a
+    disclosure sent as an object was printed whole)."""
+    if isinstance(value, list):
+        return "an array of %d element%s" % (len(value), "" if len(value) == 1 else "s")
+    if isinstance(value, dict):
+        return "a JSON object"
+    if isinstance(value, str):
+        return "a JSON string"
+    if isinstance(value, bool):
+        return "a JSON boolean"
+    if isinstance(value, (int, float)):
+        return "a JSON number"
+    return "JSON null"
+
+
 # --------------------------------------------------------------------------- encoding
 
 def b64u_decode(value):
@@ -1799,8 +1816,8 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         except (ValueError, json.JSONDecodeError) as exc:
             return _refuse("disclosure", "a disclosure does not decode: %s" % exc)
         if not isinstance(parsed, list) or len(parsed) not in (2, 3):
-            return _refuse("disclosure", "a disclosure must be a 2- or 3-element array, got %r"
-                                         % (parsed if not isinstance(parsed, list) else len(parsed)))
+            return _refuse("disclosure", "a disclosure must be a 2- or 3-element array, got %s"
+                                         % _json_kind(parsed))
         digest = _digest(encoded)
         if digest in by_digest:
             return _refuse("disclosure", "the same disclosure was presented twice")
