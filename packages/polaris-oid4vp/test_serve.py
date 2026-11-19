@@ -2398,7 +2398,8 @@ class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
                 with self.subTest(name, verbose=verbose):
                     answer, lines = self.sent((raw + "\r\n\r\n").encode("ascii"), verbose)
                     if status is None:
-                        self.assertTrue(answer.lstrip().startswith(b"<!DOCTYPE HTML>"), answer[:80])
+                        self.assertFalse(answer.startswith(b"HTTP/"), answer[:80])
+                        self.assertIn(b"Error code: 400", answer[:2000])
                     else:
                         self.assertEqual(_parse(answer)[0], status)
                     self.assertNotIn(tail, "\n".join(lines))
