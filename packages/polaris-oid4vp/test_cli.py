@@ -1285,6 +1285,47 @@ class PublicationRuleTests(_MdocServeCase):
         rc, seen, _, _ = self._serve("--experimental")
         self.assertEqual((rc, seen["verifier"].credential_format), (0, "dc+sd-jwt"))
 
+    def test_without_the_flag_a_posted_mdoc_reaches_no_mdoc_or_cbor_code(self):
+        """The verifier a serve without --experimental builds is the one its listener hands every
+        POST to. An mdoc DeviceResponse posted to it, as the listener parses the form, is refused on
+        the SD-JWT VC path, and neither mdoc's judge nor the CBOR decoder is called. The control is
+        the same form, byte for byte, to the same verifier with only its credential format changed:
+        the request stays open after a refusal, and the DeviceResponse then reaches the judge and
+        the decoder, so the refusal came from the format the verifier was built with and not from
+        an earlier layer, and each zero is a count that can be more."""
+        import urllib.parse
+        from unittest import mock
+        from polaris_oid4vp import cbor, mdoc
+        from polaris_oid4vp.jwe import b64u_decode
+        from polaris_oid4vp.verifier import Verifier
+        rc, seen, _, err = self._serve()
+        self.assertEqual(rc, 0, err)
+        verifier = seen["verifier"]
+        self.assertEqual(verifier.credential_format, "dc+sd-jwt")
+        _, jar = verifier.new_request()
+        query_id = Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["id"]
+        sent = []
+
+        def vp_token(value):
+            sent.append(value)
+            return {query_id: [value]}
+
+        form = urllib.parse.parse_qs(urllib.parse.urlencode(
+            MdocWallet().respond(jar, vp_token=vp_token), doseq=True))
+        with mock.patch.object(mdoc, "judge_device_response", wraps=mdoc.judge_device_response) as judge, \
+                mock.patch.object(cbor, "decode", wraps=cbor.decode) as decode:
+            status, body, verdict = verifier.handle_direct_post(form)
+            self.assertEqual((status, body, verdict.authentic, verdict.code),
+                             (400, Verifier.REFUSAL_BODY, False, "malformed"), verdict.reason)
+            self.assertIn("the issuer-signed JWT does not parse", verdict.reason)
+            self.assertEqual((judge.call_count, decode.call_count), (0, 0))
+            # The control.
+            verifier.credential_format = "mso_mdoc"
+            verifier.handle_direct_post(form)
+            self.assertEqual(judge.call_count, 1)
+            self.assertEqual(judge.call_args.args[0], b64u_decode(sent[0]))
+            self.assertIn(b64u_decode(sent[0]), [call.args[0] for call in decode.call_args_list])
+
 
 class MdocServeCommandTests(_MdocServeCase):
     """`serve --format mso_mdoc --doctype D --iaca-root PEM --claim '[NS,EL]' --experimental`:

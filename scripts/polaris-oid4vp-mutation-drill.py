@@ -277,6 +277,20 @@ NAMED_MUTANTS = (
     ("verifier:a-refused-presentation-closes-the-request", "polaris_oid4vp/verifier.py",
      "            # gets the same constant refusal every other cause gets. The request stays open.\n",
      "            self._sessions.pop(session.state, None)\n"),
+    # 2026-11-19: a serve without --experimental keeps a wallet's mdoc away from mdoc.py and the
+    # CBOR decoder in two places, the flag cli.py will not build an mso_mdoc verifier without, and
+    # the credential format the response handler dispatches on. The first mutant also judges as
+    # an mdoc any presentation with no "~", which an SD-JWT VC always has.
+    ("verifier:a-default-verifier-judges-an-mdoc", "polaris_oid4vp/verifier.py",
+     "        if self.credential_format == MDOC_FORMAT:\n"
+     "            verdict = self._judge_mdoc(session, presentation)\n",
+     "        if self.credential_format == MDOC_FORMAT or \"~\" not in (presentation or \"~\"):  # MUTANT\n"
+     "            verdict = self._judge_mdoc(session, presentation)\n"),
+    ("cli:mdoc-without-the-experimental-flag", "polaris_oid4vp/cli.py",
+     "        if not args.experimental:\n"
+     "            why = (\"--format %s is experimental and off by default; add --experimental to turn it \"\n",
+     "        if False:  # MUTANT\n"
+     "            why = (\"--format %s is experimental and off by default; add --experimental to turn it \"\n"),
     # serve --cors-origin: an answer names only a listed origin, only on the two paths, and says
     # that it varies by Origin, so no cache hands one origin's answer to another.
     ("serve:cors-allows-any-origin", "polaris_oid4vp/serve.py",

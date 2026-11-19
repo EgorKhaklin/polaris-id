@@ -577,12 +577,12 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1042 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1043 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 330 refusals accept and requires a
   test to fail: 326 are caught, and the 4 survivors are declared with their reasons. It also makes
-  49 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+  51 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under
@@ -590,7 +590,8 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
   values kept out of the result file and the printed lines, and the values of an experimental
   `mso_mdoc` presentation never held; the TLS handshake in each connection's own thread and
   within its timeout, the token file's mode judged on the file read, and each file `keygen` writes
-  created with its mode, never through a link at its path), each of which a test must catch (all
-  49 are; measured 2026-11-18; CI runs it on every push).
+  created with its mode, never through a link at its path; and, without `--experimental`, an mdoc
+  kept from the mdoc and CBOR code, at the flag and at the format the verifier was built with),
+  each of which a test must catch (all 51 are; measured 2026-11-19; CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.
