@@ -404,6 +404,7 @@ class KeygenHeldOutTests(unittest.TestCase):
             self.assertEqual(san.get_values_for_type(x509.DNSName), [], name)
 
         server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_ctx.minimum_version = ssl.TLSVersion.TLSv1_2   # serve's floor (RFC 8996), not the library's default
         server_ctx.load_cert_chain(str(pki / FILES["tls_cert"]), str(pki / FILES["tls_key"]))
         listener = socket.socket()
         self.addCleanup(listener.close)
@@ -422,6 +423,7 @@ class KeygenHeldOutTests(unittest.TestCase):
         thread = threading.Thread(target=answer_one, daemon=True)
         thread.start()
         client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        client_ctx.minimum_version = ssl.TLSVersion.TLSv1_2   # serve's floor (RFC 8996), not the library's default
         client_ctx.load_verify_locations(str(pki / FILES["tls_cert"]))
         self.assertTrue(client_ctx.check_hostname)
         with socket.create_connection(listener.getsockname(), timeout=10) as raw:
@@ -728,8 +730,10 @@ class ServeCommandHeldOutTests(unittest.TestCase):
                                                       serialization.NoEncryption()))
                 cert_pem.write_bytes(pem)
                 server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                server.minimum_version = ssl.TLSVersion.TLSv1_2   # serve's floor (RFC 8996)
                 server.load_cert_chain(str(cert_pem), str(key_pem))
                 client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                client.minimum_version = ssl.TLSVersion.TLSv1_2   # serve's floor (RFC 8996)
                 client.hostname_checks_common_name = False
                 client.load_verify_locations(cadata=pem.decode("ascii"))
                 self.assertTrue(client.check_hostname)
