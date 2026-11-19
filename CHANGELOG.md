@@ -58,6 +58,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- mdoc negative vectors 0.2.0 (lab/interop/negative-vectors/mdoc-vectors.json): the controls' document signer certificate is valid for 394 days, inside the 457 days ISO/IEC 18013-5:2021 Annex B Table B.3 allows; in 0.1.0 it was valid for 1461 days, so a verifier that holds the profile refused the controls. `make_mdoc_vectors.py --document-signer-days N` makes another validity, up to 457.
 - On Safari the site's gold headline word no longer shows before it is typed.
 - Certificate chain handling in the OpenID4VP verifier (polaris-oid4vp).
 - Negative vectors 0.4.1 (lab/interop/negative-vectors): the intermediate of `x5c-intermediate-not-ca` carries its siblings' key usage (keyCertSign, cRLSign), so cA FALSE is its one defect; in 0.4.0 it also had no keyCertSign, and a verifier that checks key usage first refused it for that. Reported by an outside verifier's run of the set. Its id and verdict are unchanged, and the other 36 vectors are byte for byte those of 0.4.0. A test now holds each `x5c` vector's chain to the property it names, against its control's, certificate by certificate. Lab only; no product change.

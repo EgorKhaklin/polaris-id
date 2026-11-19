@@ -1007,6 +1007,56 @@ class MdocVectors(unittest.TestCase):
         self.assertEqual(runs[0], runs[1])
         self.assertEqual(runs[0].decode(), self.text)
 
+    @staticmethod
+    def _document_signer(response):
+        """The document signer certificate in a response's IssuerAuth x5chain (unprotected label 33), read from the
+        published bytes."""
+        import cbor2
+        from cryptography import x509
+        raw = base64.urlsafe_b64decode(response + "=" * (-len(response) % 4))
+        der = cbor2.loads(raw)["documents"][0]["issuerSigned"]["issuerAuth"][1][33]
+        return x509.load_der_x509_certificate(der)
+
+    def test_every_certificate_is_inside_the_annex_b_validity(self):
+        # ISO/IEC 18013-5:2021 Annex B: Table B.3, the document signer at most 457 days after its Not before; Table
+        # B.1, the IACA at most 20 years. Read from every response and twin the file carries, and each holds the
+        # vector's instant and the MSO's signing time. 0.1.0's document signer had 1461 days.
+        from cryptography import x509
+        signed = datetime.datetime.fromisoformat(self.mm.MSO_SIGNED.replace("Z", "+00:00"))
+        seen = set()
+        for vector in self.doc["vectors"]:
+            at = datetime.datetime.fromisoformat(vector["at"].replace("Z", "+00:00"))
+            for response in (vector["response"], vector.get("repaired", {}).get("response")):
+                if response is None:
+                    continue
+                ds = self._document_signer(response)
+                seen.add(ds.fingerprint(ds.signature_hash_algorithm))
+                start, end = ds.not_valid_before_utc, ds.not_valid_after_utc
+                self.assertLessEqual(end - start, datetime.timedelta(days=457), vector["id"])
+                self.assertTrue(start <= signed <= end and start <= at <= end, vector["id"])
+            for pem in vector["trust_anchors_pem"]:
+                iaca = x509.load_pem_x509_certificate(pem.encode())
+                start, end = iaca.not_valid_before_utc, iaca.not_valid_after_utc
+                self.assertLessEqual(end, start.replace(year=start.year + 20), vector["id"])
+                self.assertTrue(start <= at <= end, vector["id"])
+        self.assertEqual(len(seen), 1, "every response carries the one document signer")
+
+    def test_the_document_signer_days_option(self):
+        script = os.path.join(HERE, "make_mdoc_vectors.py")
+        run = subprocess.run([sys.executable, script, "--document-signer-days", "457"], capture_output=True,
+                             check=True)
+        doc = json.loads(run.stdout)
+        ds = self._document_signer(doc["vectors"][0]["response"])
+        self.assertEqual(ds.not_valid_after_utc - ds.not_valid_before_utc, datetime.timedelta(days=457))
+        self.assertNotEqual(run.stdout.decode(), self.text)
+        vm = self._vm()
+        for control in doc["vectors"][:2]:
+            self.assertEqual(self._judge(vm, control), ("accept", ""), control["id"])
+        for days, says in (("458", b"Table B.3"), ("30", b"verification instant")):
+            bad = subprocess.run([sys.executable, script, "--document-signer-days", days], capture_output=True)
+            self.assertEqual((bad.returncode, bad.stdout), (2, b""), days)
+            self.assertIn(says, bad.stderr, days)
+
     def test_the_controls_come_first_and_cite_no_clause(self):
         ids = [v["id"] for v in self.doc["vectors"]]
         self.assertEqual(ids[:2], MDOC_CONTROLS)

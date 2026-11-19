@@ -239,8 +239,10 @@ accepts the document and checks the value itself reads it legitimately.
 
 The IACA and document signer certificates carry what outside mdoc verifiers check of the ISO/IEC 18013-5 Annex B
 profile: the same countryName in both subjects, key usages, the document signer's id-mdl-ds extended key usage, key
-identifiers, an issuer alternative name and a CRL distribution point (named, never served). The controls sign with
-ES256 (-7).
+identifiers, an issuer alternative name and a CRL distribution point (named, never served), and validities inside
+the profile's: the document signer 394 days (Table B.3 allows at most 457), the IACA four years (Table B.1, at most
+twenty). `make_mdoc_vectors.py --document-signer-days N` makes the set with another document signer validity, up to
+457. The controls sign with ES256 (-7).
 
 ```bash
 python3 make_mdoc_vectors.py > mdoc-vectors.json       # byte for byte, run to run; needs cbor2 and cryptography
