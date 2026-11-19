@@ -54,15 +54,15 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - Anonymity-set verification in polaris-verify and the holder wallet.
 - polaris-sdk-python and polaris-sdk-ts: a fix to the generic signed-artifact check.
 - polaris-verify's `oqs` extra requires liboqs-python 0.16.0.2 or later, and the server's lock (`polaris_web/requirements-pqc.txt`) pins 0.16.0.2: the release that fixes GHSA-w696-4vrr-x6x3.
-- polaris-oid4vp `serve`: the operator log lines it prints are hardened.
-- polaris-oid4vp `serve`: the TLS listener's accept path is hardened.
-- polaris-oid4vp `serve` and `verdict`: refusal reasons, and the lines `serve` logs, are bounded where they are written.
-- polaris-oid4vp (`--experimental`) and polaris-verify: mdoc decoding is hardened.
-- polaris-oid4vp `serve --control-token-file`, on Linux and macOS, refuses a token file with any permission for others (0600, or 0640 for its group), and the README's recipe makes the file private.
+- polaris-oid4vp `serve` writes its operator log lines as printable ASCII: the characters of a request line or a refusal, control characters among them, no longer reach the log as they came.
+- polaris-oid4vp `serve`: under TLS, one connection that has sent nothing no longer keeps `serve` from answering every other caller (GHSA-rmmj-pwmh-jm5j).
+- polaris-oid4vp `serve` and `verdict` write at most 512 characters of a refusal reason, and its full length when it is cut, on the lines they print and in the `--result` file (GHSA-hfvc-qh8w-chp8).
+- polaris-oid4vp (`--experimental`): mdoc decoding refuses as `malformed` a DeviceResponse over 512 KiB, arrays, maps and tags nested more than 32 deep, an array or map whose head states more than 1024 entries, and a decode of more than 4096 data items. polaris-verify: mdoc decoding is hardened.
+- polaris-oid4vp `serve --control-token-file`, on Linux and macOS, refuses a token file with any permission for others (0600, or 0640 for its group), and the README's recipe makes the file private (GHSA-v4q3-vxp6-5jj4).
 
 ### Fixed
 
-- polaris-oid4vp: the reason given for a malformed disclosure is hardened.
+- polaris-oid4vp: the refusal reason for a disclosure that is not an array names its JSON kind and no longer prints its value (GHSA-hfvc-qh8w-chp8).
 - polaris-oid4vp `keygen` creates each private key with mode 0600 from its first byte, and a second run replaces a key rather than writing through a link at its path.
 - On Safari the site's gold headline word no longer shows before it is typed.
 - Certificate chain handling in the OpenID4VP verifier (polaris-oid4vp).

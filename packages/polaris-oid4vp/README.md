@@ -547,7 +547,9 @@ polaris-oid4vp serve --pki ./pki --port 9443 --experimental --format mso_mdoc \
   transcript, which the verifier builds from its own request (OpenID4VP 1.0, B.2.6.1).
 - A refusal names the one check that made it: `malformed`, `doctype`, `issuer_signature`,
   `issuer_key`, `mso`, `credential_validity`, `digest`, `device_auth`, `device_key`,
-  `device_namespaces` or `device_signature`.
+  `device_namespaces` or `device_signature`. `malformed` includes a DeviceResponse over 512 KiB,
+  arrays, maps and tags nested more than 32 deep, an array or map whose head states more than 1024
+  entries, and more than 4096 data items in one decode.
 - `verdict --experimental --iaca-root iaca.pem` judges a captured response to a request that
   asked for `mso_mdoc`; `--now SECONDS` judges it as of that time.
 - In the API: `Verifier(credential_format="mso_mdoc", doctype_value="org.iso.18013.5.1.mDL",
