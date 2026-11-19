@@ -161,6 +161,42 @@ class ShardedRunTests(unittest.TestCase):
         self.assertIn("received no refusal", text)
 
 
+class CopyTests(unittest.TestCase):
+    """The copy holds what the suites read (2026-11-19): CapturePin in test_verify_mdoc reads
+    lab/interop/eudi-issuer/run.sh, and with the run.sh absent from the copy both shards of the
+    drill were VOID, the baseline red before anything was switched off."""
+
+    def capture_pin(self, copied=None):
+        import subprocess
+        import sys
+        import tempfile
+        # The prefix is on .coveragerc's omit list, as in RunnerTests.
+        with tempfile.TemporaryDirectory(prefix="polaris-runner-test-") as d:
+            drill.make_copy(pathlib.Path(d), copied)
+            return subprocess.run([sys.executable, "-B", "-c", drill._RUNNER, "test_verify_mdoc.CapturePin"],
+                                  cwd=str(pathlib.Path(d, "lab/interop/mdoc")), capture_output=True, text=True,
+                                  timeout=300)
+
+    def test_the_capture_pin_passes_in_the_copy_and_fails_without_run_sh(self):
+        done = self.capture_pin()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("Ran 1 test", done.stderr)
+        without = tuple(p for p in drill.COPIED if p != "lab/interop/eudi-issuer/run.sh")
+        self.assertEqual(len(without), len(drill.COPIED) - 1)
+        self.assertNotEqual(self.capture_pin(without).returncode, 0)
+
+    def test_a_file_is_copied_alone_to_its_path_and_a_directory_whole(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="polaris-runner-test-") as d:
+            drill.make_copy(pathlib.Path(d), ("lab/interop/eudi-issuer/run.sh", "lab/interop/mdoc"))
+            run_sh = pathlib.Path(d, "lab/interop/eudi-issuer/run.sh")
+            self.assertEqual(run_sh.read_bytes(), (drill.ROOT / "lab/interop/eudi-issuer/run.sh").read_bytes())
+            self.assertEqual(sorted(p.name for p in run_sh.parent.iterdir()), ["run.sh"])
+            for name in ("capture.sh", "test_verify_mdoc.py", "verify_mdoc.py"):
+                with self.subTest(name=name):
+                    self.assertTrue(pathlib.Path(d, "lab/interop/mdoc", name).is_file())
+
+
 class RunnerTests(unittest.TestCase):
     """The suites run without STRUCTURAL, and the runner leaves out only the tests it is given."""
 
