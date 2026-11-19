@@ -154,8 +154,8 @@ class Vectors(unittest.TestCase):
         self.assertEqual(by_id["accept-status-list"]["layer"], "status-list")
         # Every negative is judged under a trust mode that has its control.
         self.assertEqual({v["trust"] for v in self.doc["vectors"]}, {"x5c", "jwks"})
-        self.assertEqual(len(ids), 37)
-        self.assertEqual(len(set(ids)), 37)
+        self.assertEqual(len(ids), 38)
+        self.assertEqual(len(set(ids)), 38)
 
     def test_a_trust_mode_judged_without_its_own_control_fails(self):
         # disclosed-iss is the one jwks negative: without accept-jwks it would be judged with no jwks control.
@@ -747,7 +747,7 @@ class RepairedTwins(unittest.TestCase):
     # 1. every negative carries a twin or a reason, never both; the controls neither
     def test_every_negative_carries_a_twin_or_a_reason_never_both(self):
         self.assertEqual(twin_problems(self.doc, NO_TWIN), [])
-        self.assertEqual(sum("repaired" in v for v in self.doc["vectors"]), 33)
+        self.assertEqual(sum("repaired" in v for v in self.doc["vectors"]), 34)
         for vid in SDJWT_CONTROLS + ["accept-status-list"]:
             self.assertFalse({"repaired", "no_twin"} & set(self.by_id[vid]), vid)
         self.assertEqual([v["id"] for v in self.doc["vectors"] if "no_twin" in v], sorted(NO_TWIN))
@@ -796,7 +796,7 @@ class RepairedTwins(unittest.TestCase):
             if "repaired" in vector:
                 twins += 1
                 self.assertNotEqual(served(twin_row(vector)), served(vector), vector["id"])
-        self.assertEqual(twins, 33)
+        self.assertEqual(twins, 34)
 
     def test_a_twin_keeps_its_vectors_knobs(self):
         by_id, control = self.by_id, self.by_id["accept-x5c"]
@@ -859,7 +859,7 @@ class RepairedTwins(unittest.TestCase):
         code, out, err = self._run(self.doc)
         self.assertEqual(code, 0, out + err)
         self.assertTrue(out.endswith("done\n"))
-        self.assertEqual(out.count("+repaired"), 33)
+        self.assertEqual(out.count("+repaired"), 34)
 
     def test_the_run_fails_when_a_repaired_twin_is_refused(self):
         for vid in ("kb-nonce-missing", "status-list-expired", "x5c-leaf-names-other-host"):
@@ -903,11 +903,11 @@ class RepairedTwins(unittest.TestCase):
             if "repaired" in vector:
                 rows.append(vector["id"] + "+repaired")
         self.assertEqual([v["id"] for v in handed[0]["vectors"]], rows)
-        self.assertEqual(sum(r.endswith("+repaired") for r in rows), 33)
+        self.assertEqual(sum(r.endswith("+repaired") for r in rows), 34)
         self.assertEqual(handed[0]["settings"], self.doc["settings"])
         twin = next(v for v in handed[0]["vectors"] if v["id"] == "kb-crit+repaired")
         self.assertEqual(twin["presentation"], self.by_id["kb-crit"]["repaired"]["presentation"])
-        self.assertEqual(out.getvalue().count("+repaired"), 33)
+        self.assertEqual(out.getvalue().count("+repaired"), 34)
         # a second run in the same process judges afresh: the first run's verdicts are not reused
         refuse.add("accept-x5c")
         code, out = run()
@@ -1435,6 +1435,10 @@ REFUSAL_REASONS = {
         "disclosure: the credential commits to the digest T5zzGTVq4ky-... more than once, which RFC 9901 "
         "(7.1) requires a verifier to reject"
     ),
+    "digest-twice-decoy": (
+        "disclosure: the credential commits to the digest tpwbUbeOct8p... more than once, which RFC 9901 "
+        "(7.1) requires a verifier to reject"
+    ),
     "claim-overwrite": (
         "disclosure: a disclosure is named 'given_name', which the credential already carries in clear text. "
         "A disclosure that overwrites an existing claim is refused rather than applied"
@@ -1612,7 +1616,7 @@ class RefusalReasons(unittest.TestCase):
                     cls.seen[vector["id"]] = adapter(vector, doc["settings"])
 
     def test_each_negative_is_refused_with_its_pinned_reason(self):
-        self.assertEqual(len(self.seen), 66)
+        self.assertEqual(len(self.seen), 67)
         self.assertEqual(reason_problems(self.seen, REFUSAL_REASONS), [])
 
     def test_each_pin_carries_the_code_the_runner_compares(self):
@@ -1660,6 +1664,9 @@ ONE_CHANGE = {
     "kb-aud-array": ("+repaired", ["/kb/payload/aud"], ["/kb/sig"]),
     "kb-aud-no-prefix": ("+repaired", ["/kb/payload/aud"], ["/kb/sig"]),
     "digest-twice": ("+repaired", ["/issuer/payload/_sd[+1 -0]"], ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    # the same one added _sd element, a decoy no Disclosure matches (0.6.0); the twin carries the decoy once
+    "digest-twice-decoy": ("+repaired", ["/issuer/payload/_sd[+1 -0]"],
+        ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
     "claim-overwrite": ("+repaired",
         ["/issuer/payload/given_name(+)"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
@@ -1837,7 +1844,7 @@ class OneChange(unittest.TestCase):
                 cls.docs[filename] = json.load(fh)
 
     def test_each_negative_differs_from_its_reference_by_its_pinned_paths_only(self):
-        self.assertEqual(len(ONE_CHANGE), 66)
+        self.assertEqual(len(ONE_CHANGE), 67)
         self.assertEqual(one_change_problems(self.oc, self.docs.values(), ONE_CHANGE), [])
 
     def test_the_pinned_reference_is_the_nearest_control_of_the_trust_mode_or_the_twin(self):
@@ -1942,20 +1949,23 @@ class OneChange(unittest.TestCase):
 
 
 # What each negative's x5c chain may differ in from its control's, certificate by certificate: the property the
-# vector names, and for a certificate on a key of its own, that key and the subject it is issued to. Anything else
-# is a second defect: a verifier that checks it first refuses for it, and the named property is never isolated
+# vector names, and for a certificate on a key of its own, that key and the subject it is issued to (and, since
+# 0.6.0, the key identifiers that follow from them: a SubjectKeyIdentifier follows from a key of its own, an
+# AuthorityKeyIdentifier from the key that issued the certificate). Anything else is a second defect: a verifier that checks it first refuses for it, and the named property is never isolated
 # (0.4.1, reported by an outside verifier's run of the set: the not-a-CA intermediate also had no keyCertSign).
 # Written from each vector's description, not from a measurement, so a regenerated pin cannot carry a second
 # defect in with it.
 _CHAIN = "/issuer/header/x5c"
 _BC, _SAN = "/#cert.extensions/2.5.29.19/value", "/#cert.extensions/2.5.29.17/value"
-_OWN_LEAF = [_CHAIN + "[0]" + p for p in (_SAN, "/#cert.spki", "/#cert.subject")]
+_SKI, _AKI = "/#cert.extensions/2.5.29.14/value", "/#cert.extensions/2.5.29.35/value"
+_OWN_LEAF = [_CHAIN + "[0]" + p for p in (_SAN, "/#cert.spki", "/#cert.subject", _SKI)]
 X5C_PROPERTY = {
-    "x5c-self-signed": [_CHAIN + "[0]/#cert.issuer", _CHAIN + "[1](-)"],
+    "x5c-self-signed": [_CHAIN + "[0]/#cert.issuer", _CHAIN + "[0]" + _AKI, _CHAIN + "[1](-)"],
     "x5c-includes-anchor": [_CHAIN + "[2](+)"],
-    "x5c-unknown-root": [_CHAIN + "[0]/#cert.issuer", _CHAIN + "[1](-)"],
+    "x5c-unknown-root": [_CHAIN + "[0]/#cert.issuer", _CHAIN + "[0]" + _AKI, _CHAIN + "[1](-)"],
     "x5c-leaf-expired": [_CHAIN + "[0]/#cert.notAfter"],
-    "x5c-intermediate-not-ca": [_CHAIN + "[1]" + _BC, _CHAIN + "[1]/#cert.spki"],
+    "x5c-intermediate-not-ca": [_CHAIN + "[1]" + _BC, _CHAIN + "[1]/#cert.spki", _CHAIN + "[1]" + _SKI,
+                                _CHAIN + "[0]" + _AKI],
     "x5c-leaf-names-other-issuer": _OWN_LEAF,
     "x5c-leaf-names-other-host": _OWN_LEAF,
     "x5c-leaf-uri-beats-host": _OWN_LEAF,
@@ -2054,6 +2064,112 @@ class X5CChainDiffersOnlyInItsProperty(unittest.TestCase):
                          ["no x5c negative was measured"])
 
 
+def _x5c_chains(doc):
+    """(where, [certificate, ...]) for every x5c in vectors.json: the Issuer-signed JWT of each presentation and of
+    each twin, and the Status List Token each status-list vector and twin answers with."""
+    from cryptography import x509
+
+    def chain(jwt):
+        head = jwt.split(".")[0]
+        try:
+            header = json.loads(base64.urlsafe_b64decode(head + "=" * (-len(head) % 4)))
+        except ValueError:  # an answer that is not a token (an HTML page) holds no chain
+            return []
+        return [x509.load_der_x509_certificate(base64.b64decode(c)) for c in header.get("x5c", [])]
+
+    out = []
+    for v in doc["vectors"]:
+        places = [(v["id"], v["presentation"].split("~")[0])]
+        if "repaired" in v:
+            places.append((v["id"] + "+repaired", v["repaired"]["presentation"].split("~")[0]))
+        for where, holder in ((v["id"], v), (v["id"] + "+repaired", v.get("repaired") or {})):
+            response = (holder.get("status_list") or {}).get("response")
+            if response:
+                places.append((where + " status list", response))
+        out += [(where, chain(jwt)) for where, jwt in places if chain(jwt)]
+    return out
+
+
+def key_identifier_problems(doc, extra_roots=()):
+    """Every certificate in every x5c, and the trust anchors: a SubjectKeyIdentifier and an AuthorityKeyIdentifier,
+    both non-critical (RFC 5280 4.2.1.1, 4.2.1.2), the AKI's key identifier the SKI of the certificate that issued
+    it: the next certificate in the chain, or for the last one the root it names (its own, when self-signed)."""
+    from cryptography import x509
+    problems, roots = [], [x509.load_pem_x509_certificate(p.encode()) for p in doc["settings"]["trust_anchors_pem"]]
+    roots += list(extra_roots)
+
+    def ext(cert, cls):
+        try:
+            return cert.extensions.get_extension_for_class(cls)
+        except x509.ExtensionNotFound:
+            return None
+
+    def check(where, cert, issuer):
+        who = cert.subject.rfc4514_string()
+        ski, aki = ext(cert, x509.SubjectKeyIdentifier), ext(cert, x509.AuthorityKeyIdentifier)
+        for name, found in (("SubjectKeyIdentifier", ski), ("AuthorityKeyIdentifier", aki)):
+            if found is None:
+                problems.append("%s: %s has no %s" % (where, who, name))
+            elif found.critical:
+                problems.append("%s: %s has a critical %s" % (where, who, name))
+        if ski is not None and aki is not None and issuer is not None:
+            above = ext(issuer, x509.SubjectKeyIdentifier)
+            if above is None or aki.value.key_identifier != above.value.digest:
+                problems.append("%s: the AuthorityKeyIdentifier of %s is not the SubjectKeyIdentifier above it"
+                                % (where, who))
+
+    for where, certs in _x5c_chains(doc):
+        for i, cert in enumerate(certs):
+            if i + 1 < len(certs):
+                issuer = certs[i + 1]
+            elif cert.issuer == cert.subject:
+                issuer = cert
+            else:
+                issuer = next((r for r in roots if r.subject == cert.issuer), None)
+            check(where, cert, issuer)
+    for root in roots:
+        check("trust anchor", root, root)
+    return problems
+
+
+class CertificateKeyIdentifiers(unittest.TestCase):
+    """0.6.0: every test certificate names its own key and its issuer's, so a strict validator takes the controls."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mv = _load("make_vectors_kid", "make_vectors.py")
+        with open(os.path.join(HERE, "vectors.json")) as fh:
+            cls.doc = json.load(fh)
+
+    def test_every_certificate_in_every_x5c_names_its_key_and_its_issuers(self):
+        chains = _x5c_chains(self.doc)
+        self.assertGreater(len(chains), 60)
+        # The longest chain holds the anchor too, so a root is judged beside the intermediates.
+        self.assertEqual(max(len(c) for _, c in chains), 3)
+        self.assertEqual(key_identifier_problems(self.doc, [self.mv.ROGUE_ROOT]), [])
+
+    def test_a_certificate_without_them_is_a_problem(self):
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        mv = self.mv
+        bare = (x509.CertificateBuilder().subject_name(mv._name("Negative Vectors Test Issuer"))
+                .issuer_name(mv._name("Negative Vectors Test Intermediate")).public_key(mv.ISS_K.public_key())
+                .serial_number(3).not_valid_before(mv.T0).not_valid_after(mv.T1)
+                .sign(mv.INT_K, hashes.SHA256()))
+        doc = copy.deepcopy(self.doc)
+        control = next(v for v in doc["vectors"] if v["id"] == "accept-x5c")
+        jwt, rest = control["presentation"].split("~", 1)
+        head, body, sig = jwt.split(".")
+        header = json.loads(base64.urlsafe_b64decode(head + "=" * (-len(head) % 4)))
+        header["x5c"][0] = base64.b64encode(bare.public_bytes(serialization.Encoding.DER)).decode()
+        head = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+        control["presentation"] = ".".join((head, body, sig)) + "~" + rest
+        problems = key_identifier_problems(doc, [mv.ROGUE_ROOT])
+        self.assertEqual(sorted(p.split(" has ")[1] for p in problems if " has no " in p),
+                         ["no AuthorityKeyIdentifier", "no SubjectKeyIdentifier"])
+        self.assertTrue(all(p.startswith("accept-x5c:") for p in problems), problems)
+
+
 def _without(path, module_name, name, code, package=None):
     """The module at path with every `return name(code, ...)` and `raise name(code, ...)` removed, and the count
     removed: the verifier as it would be without that check. Nothing else in it changes."""
@@ -2137,6 +2253,7 @@ SDJWT_KNOCKOUTS = {
     }),
     "disclosure": (13, {
         "digest-twice": "accept",
+        "digest-twice-decoy": "accept",
         "claim-overwrite": "accept",
         "disclosed-exp": "accept",
         "disclosed-iss": "accept",
@@ -2393,6 +2510,7 @@ CLAUSE_BINDS = [
     ("RFC 9901 s7.3 step 5.b", "The \"none\" algorithm MUST NOT be accepted", "verifier"),
     ("RFC 9901 s7.3 step 5.d", "Check that the typ of the Key Binding JWT is kb+jwt", "verifier"),
     ("RFC 9901 s7.3 step 5.f", "Determine that the Key Binding JWT is bound to the current transaction", "verifier"),
+    ("RFC 9901 s7.3 step 5.h", "Check that the Key Binding JWT is a valid JWT in all other respects", "verifier"),
     ("SD-JWT VC draft-19 s2.2.2.3", "The following registered JWT claims", "issuer"),
     ("SD-JWT VC draft-19 s2.5", "If a recipient cannot validate that the public verification key", "verifier"),
     ("SD-JWT VC draft-19 s2.5", "In this case, the Issuer of the Verifiable Digital Credential is the subject",
@@ -2516,6 +2634,10 @@ class ClassGuard(unittest.TestCase):
         kb["class"] = "spec-impled"
         self.assertEqual(class_problems(doc)[0], ["kb-exp-string: class 'spec-impled' is not a declared class word"])
         kb["class"] = "spec"
+        problems, unbound = class_problems(doc)
+        self.assertEqual(problems, [])
+        self.assertNotIn("kb-exp-string", unbound)  # s7.3 step 5.h binds the verifier
+        kb["clauses"] = [c for c in kb["clauses"] if c["ref"] == "RFC 7519 s4.1.4"]  # the definition alone
         problems, unbound = class_problems(doc)
         self.assertEqual(problems, [])
         self.assertIn("kb-exp-string", unbound)
