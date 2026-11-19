@@ -3715,5 +3715,69 @@ class TheAnswerLineIsBoundedTests(_RunningCase):
             self.assertRegex(lines[0], r"\.\.\. \(cut at 1024 of \d+ characters\)$")
 
 
+#: What a disclosure sent as a JSON object carries, sought in every place `serve` and `verdict`
+#: write: never written there.
+DISCLOSED_MARKER = "Polaris-Marker-5f1e"
+
+
+class AMalformedDisclosureReachesNoSinkTests(_RunningCase):
+    """README: "The values reach no file `serve` writes and no line it prints." A disclosure is a
+    2- or 3-element JSON array; one sent as a JSON object was printed whole in the refusal's
+    reason (2026-11-19), and so reached the line `serve` prints, its log, the --result file and
+    the control read. The refusal names the kind of JSON value it got, never its content."""
+
+    @staticmethod
+    def junk():
+        import json
+        from polaris_oid4vp.jwe import b64u_encode
+        return b64u_encode(json.dumps({"given_name": DISCLOSED_MARKER,
+                                       DISCLOSED_MARKER: DISCLOSED_MARKER}).encode())
+
+    def test_serve_writes_it_in_no_line_log_file_or_read(self):
+        with self.run_serve("--result", str(self.path), "--control-token-file",
+                            str(self.token_file)) as run:
+            status, answer = run.control({})
+            self.assertEqual(status, 201, answer)
+            self.assertEqual(self.answer(run, answer["state"], extra_disclosure=self.junk())[0], 400)
+            doc = self.read()
+            status, read, raw = run.read(answer["request"])
+            self.assertEqual(status, 200)
+            sinks = {"the line printed": run.out.getvalue(), "the log": run.err.getvalue(),
+                     "the --result file": self.path.read_text(encoding="utf-8"),
+                     "the control read": raw.decode("utf-8")}
+            # The control: each sink holds this refusal, so each is a place the marker could be.
+            self.assertEqual((doc["outcome"], doc["check"], read["outcome"], read["check"]),
+                             ("refused", "disclosure", "refused", "disclosure"))
+            for name, text in sinks.items():
+                with self.subTest(name):
+                    self.assertIn("got a JSON object", text)
+                    self.assertNotIn(DISCLOSED_MARKER, text)
+
+    def test_verdict_writes_it_nowhere(self):
+        import contextlib
+        import io
+        import json
+        here = pathlib.Path(__file__).resolve().parent
+        v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
+                       .read_text(encoding="utf-8"))
+        token = v["responses"]["per_credential"]["vp_token"]
+        head, rest = token["pid"][0].split("~", 1)
+        token["pid"] = [head + "~" + self.junk() + "~" + rest]
+        (self.tmp / "request.json").write_text(json.dumps(v["request"]))
+        (self.tmp / "vp_token.json").write_text(json.dumps(token))
+        (self.tmp / "issuers.json").write_text(json.dumps({"keys": v["issuer_jwks"]}))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = main(["verdict", "--request", str(self.tmp / "request.json"),
+                       "--vp-token", str(self.tmp / "vp_token.json"),
+                       "--issuer-jwks", str(self.tmp / "issuers.json"), "--now", str(v["at"]),
+                       "--transaction-data-scope", "per_credential"])
+        self.assertEqual(rc, 1, err.getvalue())
+        written = json.loads(out.getvalue())
+        self.assertEqual(written["verdicts"]["pid"]["code"], "disclosure")
+        self.assertIn("got a JSON object", written["problem"])
+        self.assertNotIn(DISCLOSED_MARKER, out.getvalue() + err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

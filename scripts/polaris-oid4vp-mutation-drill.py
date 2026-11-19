@@ -343,6 +343,11 @@ NAMED_MUTANTS = (
     ("cli:a-verdict-problem-whole", "polaris_oid4vp/cli.py",
      "    problem = written_reason(result[\"problem\"])\n",
      "    problem = result[\"problem\"]  # MUTANT\n"),
+    # 2026-11-19: a disclosure of the wrong shape is named by its JSON kind, never its content,
+    # which the reason would carry to every writer. This puts the content back in the reason.
+    ("sdjwt:a-malformed-disclosure-printed-whole", "polaris_oid4vp/sdjwt.py",
+     "                                         % _json_kind(parsed))\n",
+     "                                         % (repr(parsed),))  # MUTANT\n"),
     # serve --cors-origin: an answer names only a listed origin, only on the two paths, and says
     # that it varies by Origin, so no cache hands one origin's answer to another.
     ("serve:cors-allows-any-origin", "polaris_oid4vp/serve.py",

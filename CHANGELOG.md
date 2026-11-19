@@ -61,6 +61,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- polaris-oid4vp: the reason given for a malformed disclosure is hardened.
 - polaris-oid4vp `keygen` creates each private key with mode 0600 from its first byte, and a second run replaces a key rather than writing through a link at its path.
 - On Safari the site's gold headline word no longer shows before it is typed.
 - Certificate chain handling in the OpenID4VP verifier (polaris-oid4vp).

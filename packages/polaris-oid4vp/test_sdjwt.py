@@ -1259,6 +1259,25 @@ class RefusalsCoverageFoundTests(unittest.TestCase):
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "disclosure")
 
+    def test_a_disclosure_of_the_wrong_shape_is_named_by_its_kind_never_its_content(self):
+        """The reason goes wherever a refusal is written, so it names the kind of JSON value the
+        disclosure is, and an array's length, and nothing the disclosure carried (2026-11-19: an
+        object was printed whole)."""
+        marker = "Polaris-Marker-5f1e"
+        w = Wallet()
+        for value, kind in (({"given_name": marker, marker: 1}, "a JSON object"),
+                            (marker, "a JSON string"), (7, "a JSON number"),
+                            (1.5, "a JSON number"), (True, "a JSON boolean"),
+                            (None, "JSON null"), ([marker], "an array of 1 element"),
+                            (["s", marker, marker, marker], "an array of 4 elements")):
+            with self.subTest(kind=kind, value=value):
+                junk = b64u_encode(json.dumps(value).encode())
+                v = w.verify(w.present(extra_disclosure=junk))
+                self.assertEqual((v.authentic, v.code), (False, "disclosure"))
+                self.assertEqual(v.reason, "a disclosure must be a 2- or 3-element array, got %s"
+                                 % kind)
+                self.assertNotIn(marker, v.reason)
+
     def test_a_disclosure_that_does_not_decode_is_refused(self):
         w = Wallet()
         v = w.verify(w.present(extra_disclosure="!!!not-base64!!!"))
