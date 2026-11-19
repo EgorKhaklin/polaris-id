@@ -1503,7 +1503,7 @@ REFUSAL_REASONS = {
         "disclosures with every claim inside it: the issuer signs it in clear text or leaves it out, and a "
         "holder-supplied one is not handed on"
     ),
-    "disclosure-four-elements": "disclosure: a disclosure must be a 2- or 3-element array, got 4",
+    "disclosure-four-elements": "disclosure: a disclosure must be a 2- or 3-element array, got an array of 4 elements",
     "disclosure-named-sd": (
         "disclosure: a disclosure is named '_sd', which SD-JWT reserves for its own structure (RFC 9901, "
         "sections 4.1.1 and 7.1)"

@@ -102,6 +102,69 @@ class KeygenTests(unittest.TestCase):
             mode = (self.tmp / FILES[name]).stat().st_mode & 0o777
             self.assertEqual(mode, 0o600, "%s is %o" % (name, mode))
 
+    _KEYS = ("client_key", "tls_key")
+    _PUBLIC = ("anchor", "client_cert", "tls_cert")
+
+    def test_each_private_key_is_private_from_its_first_byte(self):
+        """Not written and then narrowed (2026-11-18): with no umask, and no chmod or fchmod left
+        to change it, the mode each file is created with is the mode it has."""
+        from unittest import mock
+        out = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-keymode-"))
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+        old = os.umask(0)
+        try:
+            with mock.patch.object(pathlib.Path, "chmod", lambda self, mode, **kw: None), \
+                    mock.patch.object(os, "fchmod", lambda fd, mode: None):
+                keygen(out, "verifier.test")
+        finally:
+            os.umask(old)
+        for names, want in ((self._KEYS, 0o600), (self._PUBLIC, 0o644)):
+            for name in names:
+                mode = (out / FILES[name]).stat().st_mode & 0o777
+                self.assertEqual(mode, want, "%s was created %o" % (name, mode))
+
+    def test_each_file_has_its_mode_whatever_the_umask(self):
+        """A umask that takes more than 022 does not make the certificates private, nor one
+        that takes nothing the keys readable: each file ends with exactly its mode."""
+        for umask in (0o077, 0o000):
+            out = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-umask-"))
+            self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+            old = os.umask(umask)
+            try:
+                keygen(out, "verifier.test")
+            finally:
+                os.umask(old)
+            for names, want in ((self._KEYS, 0o600), (self._PUBLIC, 0o644)):
+                for name in names:
+                    mode = (out / FILES[name]).stat().st_mode & 0o777
+                    self.assertEqual(mode, want, "umask %03o: %s is %o" % (umask, name, mode))
+
+    def test_a_second_keygen_replaces_each_key_and_follows_no_link_left_at_its_path(self):
+        """A re-run into the same directory still makes new keys, and a link at a file's path,
+        a key's or a certificate's, is replaced by the file, never written through to what it
+        names."""
+        out = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-rekey-"))
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+        keygen(out, "verifier.test")
+        first = {name: (out / FILES[name]).read_bytes() for name in self._KEYS + self._PUBLIC}
+        targets = {}
+        for name in ("tls_key", "tls_cert"):
+            target = out / ("elsewhere-" + name)
+            target.write_bytes(b"not a file of keygen's\n")
+            (out / FILES[name]).unlink()
+            (out / FILES[name]).symlink_to(target)
+            targets[name] = target
+        keygen(out, "verifier.test")
+        for name, target in targets.items():
+            self.assertEqual(target.read_bytes(), b"not a file of keygen's\n",
+                             "keygen wrote through the link at %s" % name)
+        for names, want in ((self._KEYS, 0o600), (self._PUBLIC, 0o644)):
+            for name in names:
+                path = out / FILES[name]
+                self.assertFalse(path.is_symlink(), "%s is still a link" % name)
+                self.assertNotEqual(path.read_bytes(), first[name], "%s was not replaced" % name)
+                self.assertEqual(path.stat().st_mode & 0o777, want, name)
+
     def test_the_tls_certificate_may_be_self_signed(self):
         """It is the listener's, not the request object's. The suite fetched one happily."""
         tls = x509.load_pem_x509_certificate((self.tmp / FILES["tls_cert"]).read_bytes())
@@ -1222,6 +1285,47 @@ class PublicationRuleTests(_MdocServeCase):
         rc, seen, _, _ = self._serve("--experimental")
         self.assertEqual((rc, seen["verifier"].credential_format), (0, "dc+sd-jwt"))
 
+    def test_without_the_flag_a_posted_mdoc_reaches_no_mdoc_or_cbor_code(self):
+        """The verifier a serve without --experimental builds is the one its listener hands every
+        POST to. An mdoc DeviceResponse posted to it, as the listener parses the form, is refused on
+        the SD-JWT VC path, and neither mdoc's judge nor the CBOR decoder is called. The control is
+        the same form, byte for byte, to the same verifier with only its credential format changed:
+        the request stays open after a refusal, and the DeviceResponse then reaches the judge and
+        the decoder, so the refusal came from the format the verifier was built with and not from
+        an earlier layer, and each zero is a count that can be more."""
+        import urllib.parse
+        from unittest import mock
+        from polaris_oid4vp import cbor, mdoc
+        from polaris_oid4vp.jwe import b64u_decode
+        from polaris_oid4vp.verifier import Verifier
+        rc, seen, _, err = self._serve()
+        self.assertEqual(rc, 0, err)
+        verifier = seen["verifier"]
+        self.assertEqual(verifier.credential_format, "dc+sd-jwt")
+        _, jar = verifier.new_request()
+        query_id = Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["id"]
+        sent = []
+
+        def vp_token(value):
+            sent.append(value)
+            return {query_id: [value]}
+
+        form = urllib.parse.parse_qs(urllib.parse.urlencode(
+            MdocWallet().respond(jar, vp_token=vp_token), doseq=True))
+        with mock.patch.object(mdoc, "judge_device_response", wraps=mdoc.judge_device_response) as judge, \
+                mock.patch.object(cbor, "decode", wraps=cbor.decode) as decode:
+            status, body, verdict = verifier.handle_direct_post(form)
+            self.assertEqual((status, body, verdict.authentic, verdict.code),
+                             (400, Verifier.REFUSAL_BODY, False, "malformed"), verdict.reason)
+            self.assertIn("the issuer-signed JWT does not parse", verdict.reason)
+            self.assertEqual((judge.call_count, decode.call_count), (0, 0))
+            # The control.
+            verifier.credential_format = "mso_mdoc"
+            verifier.handle_direct_post(form)
+            self.assertEqual(judge.call_count, 1)
+            self.assertEqual(judge.call_args.args[0], b64u_decode(sent[0]))
+            self.assertIn(b64u_decode(sent[0]), [call.args[0] for call in decode.call_args_list])
+
 
 class MdocServeCommandTests(_MdocServeCase):
     """`serve --format mso_mdoc --doctype D --iaca-root PEM --claim '[NS,EL]' --experimental`:
@@ -1245,8 +1349,9 @@ class MdocServeCommandTests(_MdocServeCase):
         self.assertEqual((status, verdict.authentic), (200, True), verdict.reason)
 
     def test_the_line_and_the_result_file_name_the_elements_accepted(self):
-        """The `<-` line serve prints and the --result file, for an accepted mdoc: each element
-        under its namespace, as --claim names it."""
+        """The `<-` line serve prints and the --result file, for an accepted mdoc: what was
+        checked, on the line only, and each element under its namespace, as --claim names it.
+        The file's outcome is `accepted`, as for an SD-JWT VC."""
         import contextlib
         import io
         import json
@@ -1261,7 +1366,9 @@ class MdocServeCommandTests(_MdocServeCase):
         with contextlib.redirect_stdout(line):
             seen["kwargs"]["on_verdict"](status, body, verdict)
         self.assertEqual(line.getvalue(),
-                         "  <- 200 authentic, claims [['org.iso.18013.5.1', 'age_over_21']]\n")
+                         "  <- 200 authentic (issuer signature chained to a configured root, element "
+                         "digests, validity window, device signature), claims "
+                         "[['org.iso.18013.5.1', 'age_over_21']]\n")
         doc = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual((doc["outcome"], doc["claims"]),
                          ("accepted", [["org.iso.18013.5.1", "age_over_21"]]))
@@ -1772,6 +1879,14 @@ class _Running:
         self.stop.set()
         self.thread.join(15)
         self.stack.close()
+        if exc[0] is None:
+            # The streams read whole: every line on stderr and every <- line on stdout, held to
+            # a logged_line's length. The announce block's lines are the operator's own
+            # parameters and launch links, whose length is the operator's URL.
+            from test_serve import assert_every_line_bounded
+            assert_every_line_bounded(self.test, self.err.getvalue())
+            assert_every_line_bounded(self.test, "\n".join(
+                line for line in self.out.getvalue().splitlines() if line.startswith("  <- ")))
         return False
 
     @property
@@ -1844,6 +1959,7 @@ class _RunningCase(unittest.TestCase):
         self.path = self.tmp / "result.json"
         self.token_file = self.tmp / "control-token"
         self.token_file.write_text(CONTROL_TOKEN + "\n")
+        self.token_file.chmod(0o600)
 
     def run_serve(self, *extra, **kw):
         return _Running(self, "--issuer-jwks", str(self.jwks), *extra, **kw)
@@ -3173,6 +3289,8 @@ class ControlReadCommandTests(_RunningCase):
                       "in one read only, the first after the acceptance, and not after the request "
                       "lifetime from the answer.",
                       text)
+        self.assertIn("on Linux and macOS a FILE with any permission for others is refused (0600, "
+                      "or 0640 for its group).", text)
 
 
 
@@ -3230,6 +3348,103 @@ class ControlTokenFileTests(_RunningCase):
         self.assertIn("POST /control/request", out)
         self.assertNotIn(CONTROL_TOKEN, out + err)
         self.assertNotIn("/control/request", self._serve()[2])
+
+    def serve_on(self, path):
+        return self._serve("--issuer-jwks", str(self.jwks), "--control-token-file", str(path))
+
+    def test_a_token_file_others_have_access_to_stops_it_before_it_listens(self):
+        """2026-11-18: under umask 022 the README's line made the file 0644, and a second local
+        account read the token from it. Any permission for others refuses the file before anything
+        listens; the message names the mode and what to do, never what the file holds."""
+        if os.name != "posix":
+            self.skipTest("POSIX file modes")
+        for mode in (0o644, 0o604, 0o602, 0o606, 0o666, 0o601):
+            with self.subTest(mode="%04o" % mode):
+                self.token_file.chmod(0o600)
+                self.token_file.write_text(CONTROL_TOKEN + "\n")
+                self.token_file.chmod(mode)
+                rc, seen, out, err = self.serve_on(self.token_file)
+                self.assertEqual(rc, 2, err)
+                self.assertNotIn("kwargs", seen, "it listened")
+                self.assertIn("--control-token-file", err)
+                self.assertIn("%04o" % mode, err)
+                self.assertIn("chmod 600", err)
+                self.assertNotIn(CONTROL_TOKEN, out + err, "the token was printed")
+
+    def test_a_token_file_only_its_owner_or_group_can_read_starts_it(self):
+        """The group is the operator's route into the image (its group_add), so it may read."""
+        if os.name != "posix":
+            self.skipTest("POSIX file modes")
+        for mode in (0o600, 0o400, 0o640, 0o440):
+            with self.subTest(mode="%04o" % mode):
+                self.token_file.chmod(mode)
+                rc, seen, out, err = self.serve_on(self.token_file)
+                self.assertEqual(rc, 0, err)
+                self.assertEqual(seen["kwargs"]["control_token"], CONTROL_TOKEN)
+        self.token_file.chmod(0o600)
+
+    def test_the_mode_judged_is_the_mode_of_the_file_read(self):
+        """Check and read are one file. A file others can read, replaced at its path by a private
+        one once it is open, is still refused: the bytes read are the readable file's."""
+        if os.name != "posix":
+            self.skipTest("POSIX file modes")
+        import builtins
+        from unittest import mock
+        self.token_file.chmod(0o644)
+        private = self.tmp / "private-token"
+        private.write_text(CONTROL_TOKEN + "\n")
+        private.chmod(0o600)
+        real_open, swapped = builtins.open, []
+
+        def opening(file, *args, **kwargs):
+            handle = real_open(file, *args, **kwargs)
+            if str(file) == str(self.token_file) and not swapped:
+                os.replace(private, self.token_file)
+                swapped.append(True)
+            return handle
+
+        with mock.patch("builtins.open", opening):
+            rc, seen, out, err = self.serve_on(self.token_file)
+        self.assertEqual(swapped, [True], "the token file was not opened with open()")
+        self.assertEqual(rc, 2, err)
+        self.assertNotIn("kwargs", seen, "it listened on a token others could read")
+        self.assertIn("0644", err)
+
+
+class ReadmeControlTokenTests(unittest.TestCase):
+    """What the README has an operator run with the control token (2026-11-18): the file made
+    private, the token never on a command line, and a call from this machine to 127.0.0.1."""
+
+    @classmethod
+    def setUpClass(cls):
+        import re
+        text = pathlib.Path(__file__).with_name("README.md").read_text(encoding="utf-8")
+        cls.text = " ".join(text.split())
+        cls.commands = []
+        for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)```", text, re.S):
+            for line in block.replace("\\\n", " ").splitlines():
+                if line.strip() and not line.lstrip().startswith("#"):
+                    cls.commands.append(" ".join(line.split()))
+
+    def test_the_line_that_makes_the_token_file_makes_it_private(self):
+        import re
+        made = [c for c in self.commands if re.search(r">\s*control-token(\s|\)|$)", c)]
+        self.assertTrue(made, "the README has no command that makes the token file")
+        for command in made:
+            self.assertRegex(command, r"\bumask 0[0-7]7\b", command)
+
+    def test_no_control_call_carries_the_token_on_its_command_line(self):
+        calls = [c for c in self.commands if "curl" in c and "/control/" in c]
+        self.assertTrue(calls, "the README has no control call")
+        for call in calls:
+            self.assertNotIn("Bearer", call, "the token is on curl's command line: " + call)
+            self.assertIn("-H @", call, call)
+
+    def test_a_call_from_this_machine_names_127_0_0_1(self):
+        self.assertIn("A call from this machine names 127.0.0.1, not localhost", self.text)
+        for command in self.commands:
+            if "localhost" in command:
+                self.assertIn("--resolve localhost:", command, command)
 
 
 class AWalletErrorSaysWhatBecameOfTheRequestTests(_RunningCase):
@@ -3300,6 +3515,271 @@ class AWalletErrorSaysWhatBecameOfTheRequestTests(_RunningCase):
                               "request could send, so it does not close the request (request %s)"
                               % state)
         self.assertEqual(err, "polaris-oid4vp: wallet error: access_denied (request %s)" % state)
+
+
+#: The most characters of a reason a writer writes, as verifier.WRITTEN_REASON_MAX pins it.
+REASON_BOUND = 512
+
+#: A reason far over the bound, as a refusal that quotes what a sender sent can be: a `<` that
+#: quoting turns to `?`, and a marker at its end that a cut leaves out.
+LONG_REASON = "<" + "x" * 99_994 + "MARKER"
+
+
+class WrittenReasonTests(unittest.TestCase):
+    """A refusal's reason can quote what a sender sent, so each refused post would write as much
+    of its own bytes as the verifier read. Every place `serve` and the `verdict` command write a
+    reason (the lines printed, the --result file and the control read, the verdict's JSON, the
+    listener's log) writes it through `written_reason`: quoted, at most REASON_BOUND characters
+    of it, and its full length when it is cut. test_serve holds the listener's log the same
+    way."""
+
+    CUT = r"\.\.\. \(cut at %d of (\d+) characters\)" % REASON_BOUND
+
+    def held(self, text, at_least=len(LONG_REASON)):
+        import re
+        self.assertNotIn("MARKER", text)
+        self.assertNotIn("<x", text)
+        self.assertLess(len(text), REASON_BOUND + 300, text[:120])
+        found = re.findall(self.CUT, text)
+        self.assertEqual(len(found), 1, text[-200:])
+        self.assertGreaterEqual(int(found[0]), at_least)
+
+    def test_the_bound_is_pinned(self):
+        from polaris_oid4vp import verifier
+        self.assertEqual(getattr(verifier, "WRITTEN_REASON_MAX", None), REASON_BOUND)
+        # An accepted response's `problem` is None, and `verdict` writes it as null.
+        self.assertIsNone(verifier.written_reason(None))
+
+    def test_a_text_at_the_bound_is_written_whole_and_one_over_is_cut(self):
+        """The note says a text was cut only when it was: at the bound it is written unchanged."""
+        from polaris_oid4vp import verifier
+        from test_serve import LINE_BOUND
+        for name, bound in (("written_reason", REASON_BOUND), ("logged_line", LINE_BOUND)):
+            write = getattr(verifier, name)
+            with self.subTest(name):
+                self.assertEqual(write("x" * bound), "x" * bound)
+                self.assertEqual(write("x" * (bound + 1)), "x" * bound
+                                 + "... (cut at %d of %d characters)" % (bound, bound + 1))
+
+    def test_each_writer_writes_a_long_reason_cut_and_says_its_length(self):
+        import json
+        from polaris_oid4vp.cli import _operator_line, _result_of, _verdict_json
+        from polaris_oid4vp.sdjwt import Verdict
+        refused = Verdict(False, "malformed", LONG_REASON)
+        wallet = Verdict(False, "wallet_error", LONG_REASON, wallet_error={
+            "error": "access_denied", "error_description": LONG_REASON, "state": "s1"})
+        written = {
+            "the refused line": _operator_line(refused),
+            "the wallet error line": _operator_line(wallet),
+            "the wallet error line, ended by a rule": _operator_line(wallet, "rearm"),
+            "the wallet error line, its request named": _operator_line(wallet, named=True),
+            "the result document, refused": json.dumps(_result_of(400, refused)),
+            "the result document, a wallet error": json.dumps(_result_of(200, wallet)),
+            "the result document, a wallet error ended": json.dumps(_result_of(200, wallet, "control")),
+            "the verdict command": json.dumps(_verdict_json(refused)),
+        }
+        for name, text in written.items():
+            with self.subTest(name):
+                self.held(text)
+
+    def test_the_verdict_command_writes_its_problem_and_reasons_cut(self):
+        """`verdict` repeats a refused verdict's reason in `problem`, on stdout and on stderr."""
+        import contextlib
+        import io
+        import json
+        from unittest import mock
+        from polaris_oid4vp import cli
+        from polaris_oid4vp.sdjwt import Verdict
+        here = pathlib.Path(__file__).resolve().parent
+        v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
+                       .read_text(encoding="utf-8"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-written-"))
+        (tmp / "request.json").write_text(json.dumps(v["request"]))
+        (tmp / "vp_token.json").write_text(json.dumps(v["responses"]["per_credential"]["vp_token"]))
+        result = {"accepted": None, "scope": None, "problem": LONG_REASON, "expected": {},
+                  "either": {}, "verdicts": {"pid": Verdict(False, "malformed", LONG_REASON)},
+                  "readings": {}, "response_refusals": {}}
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "verify_response", return_value=result) as judged, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(["verdict", "--request", str(tmp / "request.json"),
+                           "--vp-token", str(tmp / "vp_token.json")])
+        self.assertEqual((rc, judged.call_count), (2, 1))
+        written = json.loads(out.getvalue())
+        for name, text in (("problem", written["problem"]),
+                           ("the verdict's reason", written["verdicts"]["pid"]["reason"]),
+                           ("stderr", err.getvalue())):
+            with self.subTest(name):
+                self.held(text)
+
+    def test_the_verdict_command_writes_a_raised_error_cut(self):
+        """What `verdict` raised while reading the files and judging them is one line on stderr,
+        cut at a logged line's bound and saying its length."""
+        import contextlib
+        import io
+        import json
+        from unittest import mock
+        from polaris_oid4vp import cli
+        from test_serve import LINE_BOUND
+        here = pathlib.Path(__file__).resolve().parent
+        v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
+                       .read_text(encoding="utf-8"))
+        tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-written-"))
+        (tmp / "request.json").write_text(json.dumps(v["request"]))
+        (tmp / "vp_token.json").write_text(json.dumps(v["responses"]["per_credential"]["vp_token"]))
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "verify_response", side_effect=ValueError(LONG_REASON)), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(["verdict", "--request", str(tmp / "request.json"),
+                           "--vp-token", str(tmp / "vp_token.json")])
+        self.assertEqual((rc, out.getvalue()), (2, ""))
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines[:3])
+        self.assertRegex(lines[0], r"^polaris-oid4vp: \?x{400}")
+        self.assertTrue(lines[0].endswith("... (cut at %d of %d characters)"
+                                          % (LINE_BOUND, len(LONG_REASON))), lines[0][-80:])
+        self.assertNotIn("MARKER", lines[0])
+
+    def test_a_reason_under_the_bound_is_written_as_quoting_leaves_it(self):
+        import json
+        from polaris_oid4vp.cli import _operator_line, _result_of, _verdict_json
+        from polaris_oid4vp.sdjwt import Verdict
+        head = "the nonce is not this request's <"
+        reason = head + "y" * (REASON_BOUND - 6 - len(head))
+        quoted = reason.replace("<", "?")
+        self.assertEqual(len(quoted), REASON_BOUND - 6)
+        verdict = Verdict(False, "nonce", reason)
+        self.assertEqual(_operator_line(verdict), "refused: nonce: " + quoted)
+        self.assertEqual(_result_of(400, verdict)["reason"], quoted)
+        self.assertEqual(_verdict_json(verdict)["reason"], quoted)
+        self.assertNotIn("cut at", json.dumps(_result_of(400, verdict)))
+
+    def test_every_writer_of_a_reason_is_enumerated(self):
+        """Every read of a verdict's `reason` and of a `verify_response` result's `problem` in
+        cli.py and serve.py, and every call of the two functions that build a wallet error's
+        reason from one, sits inside a `written_reason(...)` call; the two builders' own bodies
+        are the only exception. A writer added later is held the moment it is written."""
+        import ast
+        from polaris_oid4vp import cli, serve
+        builders = {"_wallet_error_reason", "_wallet_error_named"}
+        sites, unbounded = [], []
+        for module in (cli, serve):
+            tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
+            parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+            for node in ast.walk(tree):
+                read = (isinstance(node, ast.Attribute) and node.attr == "reason"
+                        and isinstance(node.ctx, ast.Load)) or (
+                    isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
+                    and isinstance(node.slice, ast.Constant) and node.slice.value == "problem")
+                built = (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                         and node.func.id in builders)
+                if not (read or built):
+                    continue
+                up, function, held = node, None, False
+                while up in parents:
+                    up = parents[up]
+                    if isinstance(up, ast.Call) and getattr(up.func, "id", None) == "written_reason":
+                        held = True
+                    if function is None and isinstance(up, ast.FunctionDef):
+                        function = up.name
+                site = "%s.%s:%d" % (module.__name__.rsplit(".", 1)[1], function, node.lineno)
+                sites.append(site)
+                if not held and function not in builders:
+                    unbounded.append(site)
+        self.assertEqual(unbounded, [])
+        # The writers, by the function each sits in: a site that moves or goes changes this.
+        self.assertEqual(sorted({s.split(":")[0] for s in sites}),
+                         ["cli._cmd_verdict", "cli._operator_line", "cli._result_of",
+                          "cli._verdict_json", "cli._wallet_error_reason", "serve.do_POST"])
+
+
+class TheAnswerLineIsBoundedTests(_RunningCase):
+    """The `<-` line `serve` prints on stdout for each answer is a logged_line: at most LINE_MAX
+    characters, with its full length when it is cut, whoever composed what it carries."""
+
+    def test_a_long_answer_line_is_printed_cut(self):
+        from unittest import mock
+        from polaris_oid4vp.sdjwt import Verdict
+        from polaris_oid4vp.verifier import Verifier
+        from test_serve import LINE_BOUND
+        tail = "Polaris" + "Tail"
+        refused = Verdict(False, "c" * 60_000 + tail, "r")
+        with self.run_serve("--control-token-file", str(self.token_file)) as run:
+            status, answer = run.control({})
+            self.assertEqual(status, 201, answer)
+            with mock.patch.object(run.verifier, "handle_direct_post",
+                                   return_value=(400, dict(Verifier.REFUSAL_BODY), refused)):
+                self.assertEqual(run.respond({"response": "x"})[0], 400)
+            out = run.out.getvalue()
+            lines = [x for x in out.splitlines() if x.startswith("  <- 400 ")]
+            self.assertEqual(len(lines), 1, out[-300:])
+            self.assertNotIn(tail, out + run.err.getvalue())
+            self.assertLessEqual(len(lines[0]), len("  <- 400 ") + LINE_BOUND + 40)
+            self.assertRegex(lines[0], r"\.\.\. \(cut at 1024 of \d+ characters\)$")
+
+
+#: What a disclosure sent as a JSON object carries, sought in every place `serve` and `verdict`
+#: write: never written there.
+DISCLOSED_MARKER = "Polaris-Marker-5f1e"
+
+
+class AMalformedDisclosureReachesNoSinkTests(_RunningCase):
+    """README: "The values reach no file `serve` writes and no line it prints." A disclosure is a
+    2- or 3-element JSON array; one sent as a JSON object was printed whole in the refusal's
+    reason (2026-11-19), and so reached the line `serve` prints, its log, the --result file and
+    the control read. The refusal names the kind of JSON value it got, never its content."""
+
+    @staticmethod
+    def junk():
+        import json
+        from polaris_oid4vp.jwe import b64u_encode
+        return b64u_encode(json.dumps({"given_name": DISCLOSED_MARKER,
+                                       DISCLOSED_MARKER: DISCLOSED_MARKER}).encode())
+
+    def test_serve_writes_it_in_no_line_log_file_or_read(self):
+        with self.run_serve("--result", str(self.path), "--control-token-file",
+                            str(self.token_file)) as run:
+            status, answer = run.control({})
+            self.assertEqual(status, 201, answer)
+            self.assertEqual(self.answer(run, answer["state"], extra_disclosure=self.junk())[0], 400)
+            doc = self.read()
+            status, read, raw = run.read(answer["request"])
+            self.assertEqual(status, 200)
+            sinks = {"the line printed": run.out.getvalue(), "the log": run.err.getvalue(),
+                     "the --result file": self.path.read_text(encoding="utf-8"),
+                     "the control read": raw.decode("utf-8")}
+            # The control: each sink holds this refusal, so each is a place the marker could be.
+            self.assertEqual((doc["outcome"], doc["check"], read["outcome"], read["check"]),
+                             ("refused", "disclosure", "refused", "disclosure"))
+            for name, text in sinks.items():
+                with self.subTest(name):
+                    self.assertIn("got a JSON object", text)
+                    self.assertNotIn(DISCLOSED_MARKER, text)
+
+    def test_verdict_writes_it_nowhere(self):
+        import contextlib
+        import io
+        import json
+        here = pathlib.Path(__file__).resolve().parent
+        v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
+                       .read_text(encoding="utf-8"))
+        token = v["responses"]["per_credential"]["vp_token"]
+        head, rest = token["pid"][0].split("~", 1)
+        token["pid"] = [head + "~" + self.junk() + "~" + rest]
+        (self.tmp / "request.json").write_text(json.dumps(v["request"]))
+        (self.tmp / "vp_token.json").write_text(json.dumps(token))
+        (self.tmp / "issuers.json").write_text(json.dumps({"keys": v["issuer_jwks"]}))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = main(["verdict", "--request", str(self.tmp / "request.json"),
+                       "--vp-token", str(self.tmp / "vp_token.json"),
+                       "--issuer-jwks", str(self.tmp / "issuers.json"), "--now", str(v["at"]),
+                       "--transaction-data-scope", "per_credential"])
+        self.assertEqual(rc, 1, err.getvalue())
+        written = json.loads(out.getvalue())
+        self.assertEqual(written["verdicts"]["pid"]["code"], "disclosure")
+        self.assertIn("got a JSON object", written["problem"])
+        self.assertNotIn(DISCLOSED_MARKER, out.getvalue() + err.getvalue())
 
 
 if __name__ == "__main__":
