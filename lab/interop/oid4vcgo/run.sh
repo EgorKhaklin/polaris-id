@@ -115,6 +115,11 @@ venv/bin/polaris-oid4vp serve --help | grep -- --issuer-trust-anchor >/dev/null 
   echo "this polaris-oid4vp has no --issuer-trust-anchor; set POLARIS_OID4VP to one that does" >&2
   exit 2
 }
+RESULT_HELP="$(venv/bin/polaris-oid4vp serve --help 2>&1)" || { echo "polaris-oid4vp serve --help failed: $RESULT_HELP" >&2; exit 2; }
+case "$RESULT_HELP" in  # captured: grep -q at the end of a pipe can trip pipefail
+  *--result*) ;;
+  *) echo "this walk reads the verifier's verdict from serve --result, which polaris-oid4vp 1.1.0 and later have; set POLARIS_OID4VP to such a release" >&2; exit 2 ;;
+esac
 
 # The wallet, built at exactly $VERSION for the container's own architecture inside the official
 # Go image. `go install pkg@version` pins the module version with no go.mod of our own.
@@ -168,10 +173,11 @@ trap 'exit_rc=$?; stop_all; exit_trap "$exit_rc"' EXIT
 
 start_verifier() {  # $1 issuer trust anchor, $2 log file
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host host.docker.internal \
-    --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once > "$2" 2>&1 &
+    --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once \
+    --result "${2%.log}.result.json" > "$2" 2> "${2%.log}.err" &
   VERIFIER_PID=$!
   for _ in $(seq 1 40); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start; see $WORK/$2" >&2
+  echo "verifier did not start; see $WORK/$2 and $WORK/${2%.log}.err" >&2
   exit 2
 }
 
@@ -198,6 +204,17 @@ EOF
 }
 
 fail=0
+verdict() {  # $1 label, $2 the --result file, $3 a Python expression over doc that must be True
+  if venv/bin/python - "$2" "$3" <<'EOF'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as e:
+    sys.exit("cannot read %s: %s" % (sys.argv[1], e))
+sys.exit(0 if eval(sys.argv[2], {}, {"doc": doc}) is True else "doc is %s" % json.dumps(doc, sort_keys=True))
+EOF
+  then echo "  ok    $1"; else echo "  FAIL  $1 ($2: see above)"; fail=1; fi
+}
 expect() {  # $1 label, $2 file, $3 pattern
   if grep -qE "$3" "$2"; then echo "  ok    $1"; else echo "  FAIL  $1 (no /$3/ in $2)"; fail=1; fi
 }
@@ -206,7 +223,7 @@ echo "== genuine presentation"
 start_verifier issuer-ca.pem verifier.log
 authorize verifier.log "" wallet.html >/dev/null
 expect "the wallet reports it presented" wallet.html 'Presented'
-expect "the verifier accepted it" verifier.log '<- 200 authentic'
+verdict "the verifier accepted it" verifier.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200'
 grep -E '<- 200 authentic' verifier.log | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
@@ -222,7 +239,7 @@ expect "the wallet refused the request" mismatch.html 'does not match'
 echo "== control (a): the verifier trusts an unrelated CA"
 authorize verifier-other.log "" other.html >/dev/null
 expect "the wallet was told only that it was not accepted" other.html 'not accepted'
-expect "the verifier refused the issuer's chain" verifier-other.log '<- 400 refused: issuer_key'
+verdict "the verifier refused the issuer's chain" verifier-other.result.json 'doc["outcome"] == "refused" and doc["check"] == "issuer_key" and doc["response"]["status_code"] == 400'
 
 if [ "$CHECKS_VERIFIER" = 1 ]; then
   echo "== control (d): the wallet trusts an unrelated CA for the verifier"
@@ -232,8 +249,7 @@ if [ "$CHECKS_VERIFIER" = 1 ]; then
   start_verifier issuer-ca.pem verifier-untrusted.log
   authorize verifier-untrusted.log "" untrusted.html >/dev/null
   echo "        wallet answered: $(head -c 300 untrusted.html | tr -s '\n' ' ')"
-  if grep -q '<- 200 authentic' verifier-untrusted.log; then echo "  FAIL  the verifier received a presentation"; fail=1
-  else echo "  ok    the wallet presented nothing to a verifier outside its anchors"; fi
+  verdict "the wallet presented nothing to a verifier outside its anchors" verifier-untrusted.result.json 'doc["outcome"] == "nothing_received" and doc["responses"] == 0'
 fi
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and every control refused" || echo "RESULT: FAILED"

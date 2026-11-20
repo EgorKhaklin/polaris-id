@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -421,6 +422,8 @@ UNSHARDED_SUITES = {
     "lab/interop/eudi-dev/capture": ["test_capture"],
     "lab/interop/eudi-dev": ["test_walk"],
     "lab/interop/negative-vectors": ["test_vectors"],
+    # Needs node and npm; packs and installs offline into a temporary project.
+    "packages/polaris-negative-vectors": ["test_package"],
     "lab/interop/swiyu": ["test_swiyu"],
     "lab/interop/status-list/revoked": ["test_fixture"],
     "lab/interop/fixtures/ed25519-holder": ["test_fixture"],
@@ -463,6 +466,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/eudi-dev/capture": ("unittest", None),
     "lab/interop/eudi-dev":     ("unittest", None),
     "lab/interop/negative-vectors": ("unittest", None),
+    "packages/polaris-negative-vectors": ("unittest", None),
     "lab/interop/swiyu":        ("unittest", None),
     "lab/interop/status-list/revoked": ("unittest", None),
     "lab/interop/fixtures/ed25519-holder": ("unittest", None),
@@ -1333,6 +1337,49 @@ FLAKE_SIGNATURES.append(
     ("runner-not-acquired", r"was not started because it repeatedly failed to be acquired",
      "GitHub could not give the job a runner, so it never started and left no log; rerun the "
      "failed jobs"))
+# 2026-11-19, job 135639532621 (procedure drill shard 3 of 6, PR #596): the runner's apt-get
+# update fetched packages.microsoft.com and no Ubuntu archive, so `apt-get install ... age` found
+# no package and exited 100; the rerun, on another runner, passed. The match is the whole block:
+# every index line of the update names packages.microsoft.com (the line before the first is not an
+# index line), then Fetched, then Unable to locate package. A package missing on a runner whose
+# update lists an Ubuntu archive is a real failure and does not match.
+FLAKE_SIGNATURES.append(
+    ("apt-no-ubuntu-sources",
+     r"(?m)^(?![^\n]*\b(?:Get|Hit|Ign|Err):\d+ )[^\n]*\n"
+     r"(?:[^\n]*\b(?:Get|Hit|Ign):\d+ https?://packages\.microsoft\.com/[^\n]*\n)+"
+     r"[^\n]*\bFetched [^\n]*\n(?:[^\n]*\n){0,8}?[^\n]*E: Unable to locate package ",
+     "the runner's apt-get update listed no Ubuntu archive (only packages.microsoft.com), so no "
+     "Ubuntu package could be found; rerun the failed jobs"))
+# 2026-11-19, run 44565122170 (the wallet canary's eudi-issuer job on PR #597): a fetch from
+# raw.githubusercontent.com was answered 429 Too Many Requests, a limit on the runner's address;
+# the rerun passed. Keyed on the host, which the lab fetch names in its message: a 429 from any
+# other host, the verifier under test among them, is not this.
+FLAKE_SIGNATURES.append(
+    ("github-raw-rate-limit",
+     r"could not fetch https://raw\.githubusercontent\.com/\S+: HTTP Error 429",
+     "raw.githubusercontent.com answered 429 Too Many Requests, a rate limit on the runner's "
+     "address; rerun the failed jobs"))
+# 2026-11-19, run 44569876571 (Pages on main at 4439a5eb): deploy-pages, which runs only after its
+# job's upload-pages-artifact passed, found no github-pages artifact 1 s after the upload made it;
+# a fresh dispatch, 44575082485, passed. A re-run of that run (attempt 2) failed at the same step
+# for another reason: the run then held attempt 1's artifact and its own, and deploy-pages refuses
+# two of one name. So the remedy for both is a fresh run, which the triage verdict prints.
+FLAKE_SIGNATURES.append(
+    ("pages-artifact-not-listed",
+     r"Found 0 artifact\(s\)\n[^\n]*##\[error\]Fetching artifact metadata failed\.[^\n]*\n"
+     r"[^\n]*##\[error\]Error: No artifacts named \"github-pages\" were found",
+     "deploy-pages found no github-pages artifact just after its job's upload made one, so the "
+     "artifact API had not listed it yet; start a fresh run, not a re-run, which would hold two"))
+FLAKE_SIGNATURES.append(
+    ("pages-artifact-twice",
+     r"##\[error\]Error: Multiple artifacts named \"github-pages\" were unexpectedly found for "
+     r"this workflow run",
+     "a re-run of a Pages run keeps its first attempt's github-pages artifact beside its own, "
+     "and deploy-pages refuses two of one name; start a fresh run"))
+
+#: Known flakes whose remedy is a fresh run of the workflow, which triage prints in place of the
+#: re-run of the failed jobs.
+FRESH_RUN_FLAKES = frozenset({"pages-artifact-not-listed", "pages-artifact-twice"})
 
 
 UPSTREAM_SIGNATURES = [
@@ -1406,7 +1453,7 @@ def triage(run_id=None, out=None):
             print("triage: no failed run on main", file=out)
             return 0
         run_id = str(latest[0]["databaseId"])
-    jobs = json.loads(_gh("run", "view", str(run_id), "--json", "jobs,conclusion"))
+    jobs = json.loads(_gh("run", "view", str(run_id), "--json", "jobs,conclusion,headBranch,workflowName"))
     failed = [j["name"] for j in jobs.get("jobs", []) if j.get("conclusion") == "failure"]
     log = subprocess.run(["gh", "run", "view", str(run_id), "--log-failed"], capture_output=True, text=True, cwd=ROOT).stdout
     print("run %s: %s; failed jobs: %s" % (run_id, jobs.get("conclusion"), ", ".join(failed) or "none"), file=out)
@@ -1430,7 +1477,14 @@ def triage(run_id=None, out=None):
     verdict, name, advice = classify_failure_log(log)
     if verdict == "flake":
         print("  verdict: known flake [%s]: %s" % (name, advice), file=out)
-        print("  gh run rerun %s --failed" % run_id, file=out)
+        if name in FRESH_RUN_FLAKES:
+            if jobs.get("workflowName") and jobs.get("headBranch"):
+                print("  gh workflow run %s --ref %s"
+                      % (shlex.quote(jobs["workflowName"]), shlex.quote(jobs["headBranch"])), file=out)
+            else:
+                print("  start a fresh run of the run's workflow on its branch; do NOT rerun", file=out)
+        else:
+            print("  gh run rerun %s --failed" % run_id, file=out)
         return 0
     if verdict == "upstream":
         print("  verdict: upstream change [%s]: %s" % (name, advice), file=out)

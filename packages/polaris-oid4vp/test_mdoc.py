@@ -306,9 +306,11 @@ class CborLimitsTests(RefusalCase):
         # A string that states more bytes than follow, alone, nested and under tag 24.
         self.refused("a string of", "58 20 01 02 03", "5a ff ff ff ff 00", "7b ff ff ff ff ff ff ff ff", "62 61",
                      "82 01 43 01 02", "d8 18 43 01", "a1 00 d8 18 58 ff 00")
-        # An array or a map that states more items than follow.
-        self.refused("the input ends where a data item should start", "9a 00 01 00 00 01",
-                     "bb 00 00 00 00 00 01 00 00 01 02", "82 01", "a1 01", "", "d8 18",
+        # An array or a map that states more items than follow, up to the entry limit.
+        self.refused("the input ends where a data item should start", "82 01", "a1 01", "", "d8 18",
+                     "99 04 00 01", "b9 04 00 01 02")
+        # Past it, the same kind of head is refused by the limit, before any item is looked for.
+        self.refused("over the 1024 entry limit", "9a 00 01 00 00 01", "bb 00 00 00 00 00 01 00 00 01 02",
                      "9b ff ff ff ff ff ff ff ff", "bb ff ff ff ff ff ff ff ff")
         # A head whose own argument is cut short.
         self.refused("the input ends inside a head", "18", "19 01", "1a 00 00 00", "1b 00 00 00 00 00 00 00",
@@ -377,6 +379,81 @@ class CborLimitsTests(RefusalCase):
         # A tag-24 item's content is not nested CBOR to this decoder: it is a byte string, and
         # whoever decodes it starts again at depth 0.
         self.assertIsInstance(cbor.decode(h("81" * 31 + "d8 18 43 81 81 01")), list)
+
+    def test_an_array_or_a_map_over_the_entry_limit_is_refused_as_its_head_is_read(self):
+        """A head states how many entries follow. One that states more than MAX_ENTRIES is
+        refused as it is read: given nothing after it, the reason is the limit's, not that the
+        input ran out, which a check made anywhere after the head would give instead."""
+        n = cbor.MAX_ENTRIES
+        self.assertEqual(n, 1024)
+        pairs = b"".join(cbor.encode(k) + b"\x00" for k in range(n + 1))
+        for what, head, body, at_limit in (
+                ("an array", cbor._head_bytes(4, n + 1), b"\x00" * (n + 1), [0] * n),
+                ("a map", cbor._head_bytes(5, n + 1), pairs, {k: 0 for k in range(n)})):
+            with self.subTest(what):
+                # The head alone, and the head with every entry it states present.
+                for data in (head, head + body):
+                    with self.assertRefuses(CborError) as caught:
+                        cbor.decode(data)
+                    self.assertIn("states %d " % (n + 1), str(caught.exception))
+                    self.assertIn("over the %d entry limit" % n, str(caught.exception))
+                # The twin at the limit decodes, value for value.
+                self.assertEqual(cbor.decode(cbor.encode(at_limit)), at_limit)
+
+    def test_one_decode_reads_at_most_max_items_data_items(self):
+        """One decode reads at most MAX_ITEMS data items, however its containers share them. An
+        item counts once, as its head is read: the outermost item, each element, each key and
+        each value, and a tag's content as an item of its own, so a tag-24 item is two. 63
+        arrays of 64 integers in one array are 1 + 63 + 63 * 64 = 4096 items, with no container
+        near the entry limit."""
+        self.assertEqual(cbor.MAX_ITEMS, 4096)
+
+        def rows(last_row):
+            row = cbor._head_bytes(4, 64) + b"\x00" * 64
+            return cbor._head_bytes(4, 63) + row * 62 + last_row
+
+        at_limit = rows(cbor._head_bytes(4, 64) + b"\x00" * 64)
+        self.assertEqual(cbor.decode(at_limit), [[0] * 64 for _ in range(63)])
+        # Each of these is one item over: an integer more in the last array, or its last
+        # integer made a tag over a text string, or a tag-24 item, each two items for one.
+        for what, last_row in (
+                ("an integer more", cbor._head_bytes(4, 65) + b"\x00" * 65),
+                ("a tag 0 over a text string", cbor._head_bytes(4, 64) + b"\x00" * 63 + h("c0 61 61")),
+                ("a tag-24 item", cbor._head_bytes(4, 64) + b"\x00" * 63 + h("d8 18 40"))):
+            with self.subTest(what):
+                with self.assertRefuses(CborError) as caught:
+                    cbor.decode(rows(last_row))
+                self.assertIn("more than 4096 data items in one decode", str(caught.exception))
+        # The count is one decode's: the same bytes decoded twice, or inside a tag-24 item that
+        # another decode reads, start again from nothing.
+        self.assertEqual(cbor.decode(at_limit), cbor.decode(at_limit))
+        wrapped = cbor.decode(cbor.encode(cbor.tag24(at_limit)))
+        self.assertEqual(cbor.decode(wrapped.inner), [[0] * 64 for _ in range(63)])
+
+    def test_each_key_and_each_value_of_a_map_counts_toward_max_items(self):
+        """A map's keys and values count toward MAX_ITEMS as an array's elements do. Two maps of
+        1024 pairs in one array are 1 + 2 + 2 * 2048 = 4099 items, with no container over the
+        entry limit, and are refused; a map of 1024 pairs, one of 1022 and an integer, in an array
+        of three, are 1 + 3 + 2 * 2046 = 4096 items and decode, value for value."""
+        def a_map(pairs):
+            return {k: 0 for k in range(pairs)}
+
+        with self.assertRefuses(CborError) as caught:
+            cbor.decode(cbor.encode([a_map(1024)] * 2))
+        self.assertIn("more than 4096 data items in one decode", str(caught.exception))
+        at_limit = [a_map(1024), a_map(1022), 0]
+        self.assertEqual(cbor.decode(cbor.encode(at_limit)), at_limit)
+
+    def test_a_response_over_either_limit_is_refused_as_malformed(self):
+        """Through the verdict: a DeviceResponse that is one map head over the entry limit, or
+        more items than one decode reads, is refused as malformed, and nothing raises."""
+        over_items = cbor._head_bytes(4, 17) + (cbor._head_bytes(4, 1024) + b"\x00" * 1024) * 17
+        for data, why in ((cbor._head_bytes(5, cbor.MAX_ENTRIES + 1), "over the 1024 entry limit"),
+                          (over_items, "more than 4096 data items")):
+            with self.subTest(why):
+                v = judge(data)
+                self.assertEqual((v.authentic, v.code), (False, "malformed"))
+                self.assertIn(why, v.reason)
 
     def test_an_oversized_response_is_refused_before_parsing(self):
         self.assertEqual(mdoc.MAX_DEVICE_RESPONSE_BYTES, 512 * 1024)
@@ -1210,6 +1287,28 @@ class DeviceResponseTests(MdocCase):
         self.assertEqual(v.disclosed, frozenset(((PID, "family_name"), (PID, "given_name"))))
         self.assertEqual((v.issuer_subject, v.issuer_anchor), ("CN=ISSUANCE", "CN=ISSUANCE ROOT"))
         self.assertEqual(v.revocation["state"], "no_status_claim")
+
+    def test_a_long_reason_judged_at_a_supplied_instant_is_cut_once_with_its_full_length(self):
+        """The instant a refusal was judged at joins its reason before the Verdict cuts it, so the
+        note counts the reason and the instant together, and says so once."""
+        import re
+        from polaris_oid4vp import sdjwt
+        response, inputs, at, root = capture_case("capture-pid")
+
+        def judged():
+            with mock.patch.object(mdoc, "_judge",
+                                   side_effect=mdoc._Refused("digest", "D" * 1000)):
+                return verify_device_response(response, session_transcript=capture_transcript(inputs),
+                                              iaca_roots=[IacaRoot(root, [PID])], doctype=PID, now=at)
+        v = judged()
+        with mock.patch.object(sdjwt, "bounded_reason", lambda text: text):
+            whole = judged().reason
+        self.assertEqual(v.code, "digest")
+        self.assertIn("judged at the supplied instant", whole)
+        self.assertLessEqual(len(v.reason), sdjwt.REASON_MAX)
+        found = re.findall(r"\.\.\. \(cut at (\d+) of (\d+) characters\)", v.reason)
+        self.assertEqual(len(found), 1, v.reason[-120:])
+        self.assertEqual(int(found[0][1]), len(whole))
 
     def capture_refused(self, code, words, *, roots=None, response=None, now=None, **changes):
         captured, inputs, at, root = capture_case("capture-pid")

@@ -173,6 +173,10 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
                 _kind, label, source, old, new = u
                 text = originals.get(source) or (drill.PKG / source).read_text(encoding="utf-8")
                 self.by_text[text.replace(old, new)] = label
+        # The files a mutation can be in: SOURCES, and any other module a named mutant changes
+        # (cli.py, 2026-11-18), which the drill reads from the package it copied.
+        self.mutable = list(drill.SOURCES) + sorted(
+            {u[2] for u in self.units if u[0] == "named"} - set(drill.SOURCES))
 
     #: What the stand-in prints for a failing run, in the form unittest gives a failing test.
     FAILED = "FAIL: test_stand_in (suite.T.test_stand_in)\nAssertionError\n\nFAILED (failures=1)\n"
@@ -188,7 +192,7 @@ class TheShardsAgreeWithOneRun(unittest.TestCase):
         made = []
 
         def suite(work, failfast=True):
-            for source in drill.SOURCES:
+            for source in self.mutable:
                 label = self.by_text.get((work / source).read_text(encoding="utf-8"))
                 if label is not None:
                     made.append(label)

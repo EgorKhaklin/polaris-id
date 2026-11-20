@@ -30,6 +30,7 @@ whatever authority its ecosystem trusts, not from a subcommand.
 """
 import argparse
 import datetime
+import ipaddress
 import json
 import os
 import pathlib
@@ -56,7 +57,8 @@ from .serve import (CONTROL_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
                     control_token_problem, cors_origins_of, serve)
 from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_INFO_PROFILES,
                        Verifier, claim_query, mdoc_claim_query, operator_text,
-                       transaction_data_entries, verifier_info_entries, verify_response)
+                       logged_line, transaction_data_entries, verifier_info_entries,
+                       verify_response, written_reason)
 
 #: What `keygen` writes and `serve` reads. Four files, named for what they are rather than
 #: for the order somebody happened to generate them in.
@@ -80,9 +82,93 @@ LAUNCH_SCHEMES = ("openid4vp", "haip-vp", "eu-eaap")
 #: the verifier hold more.
 CONTROL_OUTSTANDING_LIMIT = 64
 
+#: How many finished requests (answered, or no longer outstanding without an answer) the control
+#: endpoint started `GET /control/request/{n}` keeps a record of (2026-11-18): at each start the
+#: oldest beyond these are dropped, and a read of one is then 404. The record of an outstanding
+#: request is never dropped, and at most CONTROL_OUTSTANDING_LIMIT are outstanding.
+CONTROL_FINISHED_KEPT = CONTROL_OUTSTANDING_LIMIT
+
 
 def _now():
     return datetime.datetime.now(datetime.timezone.utc)
+
+
+#: The name `keygen` and `serve` use when `--host` names none: the address the listener binds by
+#: default. The name localhost, the default before, is one a client may resolve to ::1 first,
+#: where the listener does not listen (2026-11-19).
+DEFAULT_HOST = "127.0.0.1"
+IPV6_HOST = "polaris-oid4vp: --host %s is an IPv6 address; use a name or an IPv4 address such as 127.0.0.1"
+#: serve's, which also names the way through a front: --public-base-url makes the origin instead.
+IPV6_HOST_SERVE = IPV6_HOST + "; or, behind a proxy or tunnel, give --public-base-url"
+
+
+def _ipv6_host(host):
+    """Whether `host` is an IPv6 address, bracketed or not. serve's listener is IPv4 (binding
+    ::1 fails), so nothing of ours answers on an IPv6 address: an origin made from one reaches
+    serve only through a front, and --public-base-url names a front's origin. Unbracketed,
+    https://::1:PORT has no host at all."""
+    try:
+        return ipaddress.ip_address(host.strip("[]")).version == 6
+    except ValueError:
+        return False
+
+
+def _subject_alt_name(host):
+    """`host` as a certificate names it: an IP address as an iPAddress, any other name as a
+    dNSName (RFC 5280, 4.2.1.6). Python's ssl module, checking the name of an address it
+    connects to, matches it against iPAddress entries only, so an address written as a dNSName
+    names nothing it accepts (test_cli.KeygenHeldOutTests)."""
+    try:
+        return x509.IPAddress(ipaddress.ip_address(host))
+    except ValueError:
+        return x509.DNSName(host)
+
+
+def _dns_form(name):
+    """A DNS name as it is compared: lower case, a U-label as its A-label (RFC 6125, 6.4.2). A
+    final dot stays, as Python's ssl keeps it: verifier.example. and verifier.example differ."""
+    try:
+        return name.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return name.lower()
+
+
+def certificate_names(certificate, host):
+    """Whether the subjectAltName of `certificate` names `host`, compared as Python's ssl compares
+    them with check_hostname on and the common-name fallback off: an IP address with the
+    iPAddress entries, as an address; any other name with the dNSName entries without regard to
+    case, where a `*` that is the whole leftmost label of an entry with at least two more labels
+    stands for exactly one label (RFC 6125, 6.4.1 and 6.4.3). The subject's common name is not
+    read; keygen writes a subjectAltName."""
+    try:
+        names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        return address in names.get_values_for_type(x509.IPAddress)
+    host = _dns_form(host)
+    for entry in names.get_values_for_type(x509.DNSName):
+        entry = _dns_form(entry)
+        if entry == host:
+            return True
+        first, _, rest = host.partition(".")
+        if entry.startswith("*.") and "." in entry[2:] and first and rest == entry[2:]:
+            return True
+    return False
+
+
+def _named_hosts(certificate):
+    """What a certificate's subjectAltName names, for a message: its addresses and DNS names."""
+    try:
+        names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return []
+    return ([str(a) for a in names.get_values_for_type(x509.IPAddress)]
+            + names.get_values_for_type(x509.DNSName))
 
 
 def keygen(out: pathlib.Path, host: str) -> dict:
@@ -117,7 +203,7 @@ def keygen(out: pathlib.Path, host: str) -> dict:
             .not_valid_before(now - datetime.timedelta(days=1))
             .not_valid_after(now + datetime.timedelta(days=90))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+            .add_extension(x509.SubjectAlternativeName([_subject_alt_name(host)]), critical=False)
             .add_extension(x509.SubjectKeyIdentifier.from_public_key(leaf_key.public_key()),
                            critical=False)
             .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
@@ -143,7 +229,7 @@ def keygen(out: pathlib.Path, host: str) -> dict:
            .public_key(tls_key.public_key()).serial_number(x509.random_serial_number())
            .not_valid_before(now - datetime.timedelta(days=1))
            .not_valid_after(now + datetime.timedelta(days=90))
-           .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+           .add_extension(x509.SubjectAlternativeName([_subject_alt_name(host)]), critical=False)
            # serverAuth, because Apple's TLS policy refuses a server certificate without it, even
            # one the client trusts explicitly: the EU iOS OpenID4VP library's wallet could fetch
            # the request object only by pinning this certificate around the policy
@@ -152,9 +238,20 @@ def keygen(out: pathlib.Path, host: str) -> dict:
            .sign(tls_key, hashes.SHA256()))
 
     def write(name, data, mode=0o644):
+        # Each file is created with its mode (2026-11-18), a key 0600 from its first byte, never
+        # written and then narrowed. Whatever is at the path goes first, so a re-run replaces the
+        # file and a link left there is removed rather than written through (O_EXCL refuses to
+        # follow one). fchmod then sets the mode exactly, whatever the umask took from it.
         path = out / FILES[name]
-        path.write_bytes(data)
-        path.chmod(mode)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        with os.fdopen(fd, "wb") as fh:
+            if os.name == "posix":
+                os.fchmod(fh.fileno(), mode)
+            fh.write(data)
         return path
 
     write("anchor", ca.public_bytes(serialization.Encoding.PEM))
@@ -307,6 +404,9 @@ def _verifies_es256(jwk):
 
 
 def _cmd_keygen(args) -> int:
+    if _ipv6_host(args.host):
+        print(IPV6_HOST % args.host, file=sys.stderr)
+        return 2
     out = pathlib.Path(args.out)
     keygen(out, args.host)
     verifier = verifier_from(out, args.host, args.port)
@@ -356,18 +456,26 @@ def _wallet_error_reason(verdict, ended_by=None, named=False):
     return text
 
 
+#: What an accepted mso_mdoc was checked for, as the `<-` line names it (mdoc.py, WHAT
+#: AUTHENTIC MEANS HERE).
+_MDOC_CHECKED = "issuer signature chained to a configured root, element digests, validity window, device signature"
+
+
 def _operator_line(verdict, ended_by=None, named=False, *, credential_format=SD_JWT_FORMAT):
     """What `serve` prints after `<- STATUS` for one answer at the response URI. Only an
     authentic presentation reads `authentic`: the lab walks grep `<- 200 authentic` for an
     acceptance, and a wallet's error response is answered 200 too (OpenID4VP 1.0 section 8.2).
-    A wallet's error response is said as _wallet_error_reason says it."""
+    An accepted mso_mdoc's line lists what was checked after `authentic`. A wallet's error
+    response is said as _wallet_error_reason says it."""
     if verdict is None:
         return "refused"
+    if verdict.authentic and credential_format == MDOC_FORMAT:
+        return "authentic (%s), claims %s" % (_MDOC_CHECKED, _claim_names(verdict, credential_format))
     if verdict.authentic:
         return "authentic, claims %s" % _claim_names(verdict, credential_format)
     if getattr(verdict, "wallet_error", None) is not None:
-        return "wallet error: %s" % operator_text(_wallet_error_reason(verdict, ended_by, named))
-    return "refused: %s: %s" % (operator_text(verdict.code), operator_text(verdict.reason))
+        return "wallet error: %s" % written_reason(_wallet_error_reason(verdict, ended_by, named))
+    return "refused: %s: %s" % (operator_text(verdict.code), written_reason(verdict.reason))
 
 
 def _result_of(status, verdict, ended_by=None, *, credential_format=SD_JWT_FORMAT):
@@ -384,9 +492,9 @@ def _result_of(status, verdict, ended_by=None, *, credential_format=SD_JWT_FORMA
         out.update(outcome="accepted", claims=_claim_names(verdict, credential_format))
     elif getattr(verdict, "wallet_error", None) is not None:
         out.update(outcome="wallet_error", check=verdict.code,
-                   reason=_wallet_error_reason(verdict, ended_by))
+                   reason=written_reason(_wallet_error_reason(verdict, ended_by)))
     else:
-        out.update(outcome="refused", check=verdict.code, reason=verdict.reason)
+        out.update(outcome="refused", check=verdict.code, reason=written_reason(verdict.reason))
     return out
 
 
@@ -494,6 +602,20 @@ class _ResultFile:
             raise
 
 
+class _ControlRecord:
+    """What `GET /control/request/{n}` answers for one request the control endpoint started:
+    `document`, _result_of's members for the answer `--result` keeps (None until one arrives,
+    then the latest until an acceptance, which stays), and `released`, the claims an accepted
+    SD-JWT VC presentation disclosed, held for the one read that returns them. `withheld` says
+    why `released` is gone once it is: `returned` or `expired`."""
+
+    __slots__ = ("state", "document", "released", "answered_at", "withheld")
+
+    def __init__(self, state):
+        self.state = state
+        self.document = self.released = self.answered_at = self.withheld = None
+
+
 class _Started:
     """One request `_Requests.start` made: its number, its session and the launch parameters."""
 
@@ -597,6 +719,14 @@ class _Requests:
         # Places among the 64 held for a request not made yet: the one `--once` starts, from
         # before the listener accepts anything until it is made (`reserve`, `start`, `release`).
         self._reserved = 0
+        # What `GET /control/request/{n}` reads (2026-11-18): a record for each request the control
+        # endpoint started, by number in start order, and the number of each by its state. Never
+        # the outstanding window: an accepted request leaves it at its answer, before any read.
+        self._records = {}
+        self._record_numbers = {}
+        # The clock a record's lifetime is measured on: the wall clock, looked up at each call as
+        # the verifier looks it up, so a test that moves time.time moves both; a test may set its own.
+        self._clock = lambda: time.time()
 
     def current_state(self):
         with self._lock:
@@ -702,7 +832,24 @@ class _Requests:
                         else "rearm" if current and self.rearm else None)
             if current and self.result is not None:
                 self.result.verdict(status, verdict, ended_by)
+            number = self._record_numbers.get(state)
+            if number is not None:
+                self._record_answer_locked(self._records[number], status, verdict, ended_by)
             return None if ended_by is None else (state, ended_by)
+
+    def _record_answer_locked(self, record, status, verdict, ended_by):
+        # The answer --result keeps (_ResultFile.verdict): the latest until an acceptance, which
+        # stays, so the read and the file say the same of one request. A second answer reaches
+        # here only when two race on one outstanding request: the control endpoint ends the
+        # request at the first, and no later answer is about it.
+        if record.document is not None and record.document["outcome"] == "accepted":
+            return
+        record.document = _result_of(status, verdict, ended_by,
+                                     credential_format=self.verifier.credential_format)
+        record.answered_at = self._clock()
+        if (record.document["outcome"] == "accepted"
+                and self.verifier.credential_format == SD_JWT_FORMAT):
+            record.released = verdict.claims
 
     def fetched(self, status):
         """An answer at the request URI, counted for the current request only."""
@@ -730,18 +877,90 @@ class _Requests:
                 started = self._start_locked(claims, vct, ends_on_answer=True)
             except ValueError as exc:
                 return 400, {"error": "invalid_request", "error_description": str(exc)}
+            self._keep_record_locked(started)
         return 201, {"request": started.number, "state": started.session.state,
                      "launch": started.launch, "request_uri": started.params["request_uri"],
                      "client_id": started.params["client_id"]}
 
+    def _keep_record_locked(self, started):
+        # Under self._lock, and is_outstanding takes the verifier's inside it: the order
+        # _start_locked takes them in. Nothing takes them the other way (`answered` asks the
+        # verifier which request an answer was about before it takes self._lock).
+        state = started.session.state
+        self._records[started.number] = _ControlRecord(state)
+        self._record_numbers[state] = started.number
+        now = self._clock()
+        # In start order, so the oldest finished are first.
+        finished = [number for number, record in self._records.items()
+                    if record.document is not None or not self.verifier.is_outstanding(record.state)]
+        for number in finished[:max(0, len(finished) - CONTROL_FINISHED_KEPT)]:
+            del self._record_numbers[self._records.pop(number).state]
+        for record in self._records.values():
+            self._expire_released_locked(record, now)
+
+    def _expire_released_locked(self, record, now):
+        # The claims are held for the request lifetime, measured from the answer that carried them.
+        if (record.released is not None
+                and now - record.answered_at > self.verifier.request_ttl_seconds):
+            record.released, record.withheld = None, "expired"
+
+    def control_read(self, number):
+        """GET /control/request/{number}: (status, document). 404 for a number the control
+        endpoint did not start or no longer keeps (CONTROL_FINISHED_KEPT); the request `--once`
+        starts is not one. Else 200 with `request`, `state` and, until an answer about it arrives,
+        `outcome` nothing_received; after it, what `--result` records for an answer
+        (_result_of's members, kept as `--result` keeps them). For an accepted SD-JWT VC
+        presentation `released` is the claims it disclosed, with their values, in one read only,
+        the first after the acceptance, and not after the request lifetime from the answer;
+        after that `released` is null and `released_withheld` says which
+        (`returned`, `expired`). Nothing else carries `released`. The read that returns the claims
+        and the one that finds them gone are decided under the lock the answer is recorded under,
+        so of two reads at once exactly one returns them."""
+        with self._lock:
+            record = self._records.get(number)
+            if record is None:
+                return 404, {"error": "not_found",
+                             "error_description": "no request the control endpoint started has "
+                                                  "that number, or its record is no longer kept"}
+            document = {"request": number, "state": record.state}
+            if record.document is None:
+                document["outcome"] = "nothing_received"
+                return 200, document
+            document.update(record.document)
+            if (document["outcome"] == "accepted"
+                    and self.verifier.credential_format == SD_JWT_FORMAT):
+                self._expire_released_locked(record, self._clock())
+                if record.released is not None:
+                    document["released"] = record.released
+                    record.released, record.withheld = None, "returned"
+                else:
+                    document["released"] = None
+                    document["released_withheld"] = record.withheld
+            return 200, document
+
 
 def _read_control_token(path):
     """The token in `--control-token-file`, stripped. ValueError says why it cannot be used, and
-    never what it held."""
+    never what it held.
+
+    On POSIX systems a file with any permission for others is refused. Its owner and its group may
+    have access, the group being how the image's user reaches the operator's file. The mode judged
+    is the open file's (fstat on the descriptor read), not whatever the path names later."""
     try:
-        raw = pathlib.Path(path).read_bytes()
+        fh = open(path, "rb")
     except OSError as exc:
         raise ValueError("--control-token-file %s: %s" % (path, exc.strerror or "unreadable"))
+    with fh:
+        if os.name == "posix":
+            mode = os.fstat(fh.fileno()).st_mode & 0o7777
+            if mode & 0o007:
+                raise ValueError(
+                    "--control-token-file %s: mode %04o gives others permission; make it "
+                    "private: chmod 600 %s, or chmod 640 for its group" % (path, mode, path))
+        try:
+            raw = fh.read()
+        except OSError as exc:
+            raise ValueError("--control-token-file %s: %s" % (path, exc.strerror or "unreadable"))
     try:
         token = raw.decode("ascii").strip()
     except ValueError:
@@ -760,6 +979,10 @@ def _cmd_serve(args) -> int:
         print("polaris-oid4vp: --bind is empty, which would listen on every interface; name the "
               "address: 127.0.0.1 for this machine only, 0.0.0.0 for every interface",
               file=sys.stderr)
+        return 2
+    # --host makes the origin serve prints and signs only without --public-base-url.
+    if not args.public_base_url and _ipv6_host(args.host):
+        print(IPV6_HOST_SERVE % args.host, file=sys.stderr)
         return 2
     try:
         cors_origins = cors_origins_of(args.cors_origin)
@@ -891,6 +1114,29 @@ def _cmd_serve(args) -> int:
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
+    # Under TLS a wallet that checks the listener's name refuses a certificate that does not name
+    # the host it was sent to, and the first sign of it would be that wallet's refusal: a pki an
+    # earlier keygen made with no --host names localhost, the default then (2026-11-19). With
+    # --public-base-url a wallet meets the proxy's or the tunnel's certificate, not this one, so
+    # the check holds only the origin serve makes from --host and --port, and holds --host as
+    # given, the host that origin is made from.
+    if not args.no_local_tls and not args.public_base_url:
+        origin = verifier.request_uri[:-len(REQUEST_PATH)]
+        host = args.host
+        tls_cert = pki / FILES["tls_cert"]
+        try:
+            listener = x509.load_pem_x509_certificate(tls_cert.read_bytes())
+        except (OSError, ValueError) as exc:
+            print("polaris-oid4vp: %s is not a PEM certificate: %s" % (tls_cert, exc), file=sys.stderr)
+            return 2
+        if not certificate_names(listener, host):
+            named = _named_hosts(listener)
+            print("polaris-oid4vp: %s names %s in its subjectAltName, not %s, the host of %s. Run "
+                  "`polaris-oid4vp keygen --out %s --host %s`, or give serve the --host that keygen "
+                  "was given."
+                  % (tls_cert, " and ".join(named) if named else "no host", host, origin, pki, host),
+                  file=sys.stderr)
+            return 2
     if as_mdoc and not iaca_roots:
         print("polaris-oid4vp: no --iaca-root given, so no document can be verified: every "
               "presentation will be refused with `issuer_key`. That is the correct answer to an "
@@ -930,7 +1176,7 @@ def _cmd_serve(args) -> int:
             # More than one request can be open, so the line names the one this answer was about,
             # by the state its launch parameters carry; --result follows the newest.
             line += about_request(verifier)
-        print("  <- %d %s" % (status, line), flush=True)
+        print("  <- %d %s" % (status, logged_line(line)), flush=True)
         # Under --rearm any answer about the current request ends it, accepted, refused or a
         # wallet's error response, and the next starts before the wallet has its answer; a request
         # the control endpoint started ends at an answer the same way. With neither, a
@@ -955,6 +1201,7 @@ def _cmd_serve(args) -> int:
                       on_request_object=on_request_object,
                       cors_origins=cors_origins, control_token=control_token,
                       on_control=requests.control if control_token else None,
+                      on_control_read=requests.control_read if control_token else None,
                       name_requests=several)
     except BaseException:
         if args.once:
@@ -1016,7 +1263,8 @@ def _read_request(path):
 
 
 def _verdict_json(verdict, credential_format=SD_JWT_FORMAT):
-    out = {"authentic": verdict.authentic, "code": verdict.code, "reason": verdict.reason,
+    out = {"authentic": verdict.authentic, "code": verdict.code,
+           "reason": written_reason(verdict.reason),
            "claims": _claim_names(verdict, credential_format)}
     if verdict.transaction_data is not None:
         out["transaction_data"] = verdict.transaction_data
@@ -1078,10 +1326,11 @@ def _cmd_verdict(args) -> int:
         print(exc, file=sys.stderr)
         return 2
     except (OSError, ValueError) as exc:
-        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        print("polaris-oid4vp: " + logged_line(str(exc)), file=sys.stderr)
         return 2
+    problem = written_reason(result["problem"])
     print(json.dumps({
-        "accepted": result["accepted"], "scope": result["scope"], "problem": result["problem"],
+        "accepted": result["accepted"], "scope": result["scope"], "problem": problem,
         "expected": result["expected"], "either": result["either"],
         "verdicts": {qid: _verdict_json(v, formats.get(qid))
                      for qid, v in result["verdicts"].items()},
@@ -1090,7 +1339,7 @@ def _cmd_verdict(args) -> int:
         "response_refusals": result["response_refusals"],
     }, indent=2))
     if result["accepted"] is None:
-        print("polaris-oid4vp: %s" % result["problem"], file=sys.stderr)
+        print("polaris-oid4vp: %s" % problem, file=sys.stderr)
         return 2
     return 0 if result["accepted"] else 1
 
@@ -1130,13 +1379,17 @@ and one that judges a response already captured:
 
     g = sub.add_parser("keygen", help="make the certificates the HAIP profile requires")
     g.add_argument("--out", default="./pki")
-    g.add_argument("--host", default="localhost")
+    g.add_argument("--host", default=DEFAULT_HOST,
+                   help="the name a wallet reaches the verifier by, written into both certificates: "
+                        "a name or an IPv4 address, 127.0.0.1 by default; an address is written as one")
     g.add_argument("--port", type=int, default=9443)
     g.set_defaults(func=_cmd_keygen)
 
     s = sub.add_parser("serve", help="run a verifier")
     s.add_argument("--pki", default="./pki")
-    s.add_argument("--host", default="localhost", help="the name a wallet reaches this by")
+    s.add_argument("--host", default=DEFAULT_HOST,
+                   help="the name a wallet reaches this by, a name or an IPv4 address: 127.0.0.1 by "
+                        "default, the address --bind listens on by default; give the name keygen was given")
     s.add_argument("--bind", default="127.0.0.1",
                    help="the address to listen on: 127.0.0.1, this machine only, by default; "
                         "0.0.0.0 for every interface, as a wallet or suite elsewhere needs; "
@@ -1216,7 +1469,9 @@ and one that judges a response already captured:
     s.add_argument("--control-token-file", default=None, metavar="FILE",
                    help="turn on POST /control/request on this listener, same TLS mode: FILE "
                         "holds the bearer token (read at startup, never from the command line; "
-                        "at least 32 printable ASCII characters). A call with "
+                        "at least 32 printable ASCII characters); on Linux and macOS a FILE "
+                        "with any permission for others is refused (0600, or 0640 for its "
+                        "group). A call with "
                         "`Authorization: Bearer TOKEN` starts a request and is answered 201 "
                         "with its request number, state, launch links, request_uri and "
                         "client_id; an optional JSON body names claims (each as --claim takes "
@@ -1224,8 +1479,13 @@ and one that judges a response already captured:
                         "answer, accepted, refused or a wallet's error response, as under "
                         "--rearm, or when it expires. Without the header, or with a "
                         "wrong token, 401 and nothing else; at most 64 requests outstanding "
-                        "(429 beyond). The path never carries CORS headers. --result follows "
-                        "the newest request; refused with --rearm")
+                        "(429 beyond). The path never carries CORS headers. "
+                        "GET /control/request/N with the same token answers what became of "
+                        "request N, and for an accepted SD-JWT VC presentation the claims it "
+                        "disclosed, returned in one read only, the first after the acceptance, "
+                        "and not after the request lifetime from the answer. --result follows "
+                        "the newest request; "
+                        "refused with --rearm")
     s.add_argument("--result", default=None, metavar="FILE",
                    help="with --once (or --control-token-file): keep FILE a JSON object saying "
                         "what became of that request, rewritten whole at startup and before "

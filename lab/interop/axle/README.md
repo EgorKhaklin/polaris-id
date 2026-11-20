@@ -63,7 +63,7 @@ machine itself. The harness then runs in the same image: it makes the holder key
 its public half, which [`../waltid/issue_sdjwt_vc.py`](../waltid/issue_sdjwt_vc.py) `--x5c` binds
 the credential to, under an issuer CA made for the run that the verifier trusts
 (`--issuer-trust-anchor`). The script hands the harness one job per presentation and judges what
-both sides printed. It exits 0 only if the genuine presentation is accepted and every control is
+the wallet printed and the verifier's `--result` record. It exits 0 only if the genuine presentation is accepted and every control is
 refused where it should be, and its last line is `done` on every exit path. Port 9491 by default
 (`PORT`). A named volume (`polaris-axle-gradle-cache`) keeps Gradle's downloads for the next run.
 

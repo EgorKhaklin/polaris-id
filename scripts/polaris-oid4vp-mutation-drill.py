@@ -277,6 +277,100 @@ NAMED_MUTANTS = (
     ("verifier:a-refused-presentation-closes-the-request", "polaris_oid4vp/verifier.py",
      "            # gets the same constant refusal every other cause gets. The request stays open.\n",
      "            self._sessions.pop(session.state, None)\n"),
+    # 2026-11-19: a serve without --experimental keeps a wallet's mdoc away from mdoc.py and the
+    # CBOR decoder in two places, the flag cli.py will not build an mso_mdoc verifier without, and
+    # the credential format the response handler dispatches on. The first mutant also judges as
+    # an mdoc any presentation with no "~", which an SD-JWT VC always has.
+    ("verifier:a-default-verifier-judges-an-mdoc", "polaris_oid4vp/verifier.py",
+     "        if self.credential_format == MDOC_FORMAT:\n"
+     "            verdict = self._judge_mdoc(session, presentation)\n",
+     "        if self.credential_format == MDOC_FORMAT or \"~\" not in (presentation or \"~\"):  # MUTANT\n"
+     "            verdict = self._judge_mdoc(session, presentation)\n"),
+    ("cli:mdoc-without-the-experimental-flag", "polaris_oid4vp/cli.py",
+     "        if not args.experimental:\n"
+     "            why = (\"--format %s is experimental and off by default; add --experimental to turn it \"\n",
+     "        if False:  # MUTANT\n"
+     "            why = (\"--format %s is experimental and off by default; add --experimental to turn it \"\n"),
+    # 2026-11-19: what serve and verdict write from a sender's input is cut where it is written:
+    # a reason at WRITTEN_REASON_MAX characters in every writer, every line serve writes to
+    # stderr and its <- line on stdout at LINE_MAX, a logged exception at EXCEPTION_LOG_MAX, each
+    # with its full length when it is cut. The first takes every cut away; each of the others
+    # writes whole at one writer or one sink, which the tests that enumerate them must see.
+    ("verifier:nothing-cut", "polaris_oid4vp/verifier.py",
+     "    if len(text) <= limit:\n        return text\n",
+     "    if True:  # MUTANT\n        return text\n"),
+    ("serve:a-logged-line-uncut", "polaris_oid4vp/serve.py",
+     "        sys.stderr.write(\"polaris-oid4vp: \" + logged_line(format % args if args else format) + \"\\n\")\n",
+     "        sys.stderr.write(\"polaris-oid4vp: \" + operator_text(format % args if args else format) + \"\\n\")  # MUTANT\n"),
+    ("serve:an-exception-logged-whole", "polaris_oid4vp/serve.py",
+     "            sys.stderr.write(exception_text(sys.exc_info()[1]))\n",
+     "            __import__(\"traceback\").print_exc()  # MUTANT\n"),
+    ("serve:a-verbose-line-uncut", "polaris_oid4vp/serve.py",
+     "            sys.stderr.write(logged_line(\"%s %s\" % (self.command, self.path)) + \"\\n\")\n",
+     "            sys.stderr.write(\"%s %s\\n\" % (operator_text(self.command), operator_text(self.path)))  # MUTANT\n"),
+    ("serve:a-wallet-error-logged-whole", "polaris_oid4vp/serve.py",
+     "                self.log_error(\"wallet error: %s%s\", written_reason(_wallet_error_named(verdict)\n"
+     "                               if self.name_requests else verdict.reason), self._about())\n",
+     "                self.log_error(\"wallet error: %s%s\", _wallet_error_named(verdict)  # MUTANT\n"
+     "                               if self.name_requests else verdict.reason, self._about())\n"),
+    ("verifier:cut-at-the-bound", "polaris_oid4vp/verifier.py",
+     "    if len(text) <= limit:\n        return text\n    return \"%s... (cut at %d of %d characters)\"",
+     "    if len(text) < limit:  # MUTANT\n        return text\n    return \"%s... (cut at %d of %d characters)\""),
+    ("serve:exception-lines-uncut", "polaris_oid4vp/serve.py",
+     "    text = \"\\n\".join(logged_line(line) for line in \"\\n\".join(blocks).split(\"\\n\"))\n",
+     "    text = \"\\n\".join(blocks)  # MUTANT\n"),
+    ("serve:the-inherited-handle-error", "polaris_oid4vp/serve.py",
+     "    def handle_error(self, request, client_address):\n",
+     "    def _handle_error_unused(self, request, client_address):  # MUTANT\n"),
+    ("cli:a-verdict-error-uncut", "polaris_oid4vp/cli.py",
+     "        print(\"polaris-oid4vp: \" + logged_line(str(exc)), file=sys.stderr)\n",
+     "        print(\"polaris-oid4vp: \" + str(exc), file=sys.stderr)  # MUTANT\n"),
+    ("cli:an-answer-line-uncut", "polaris_oid4vp/cli.py",
+     "        print(\"  <- %d %s\" % (status, logged_line(line)), flush=True)\n",
+     "        print(\"  <- %d %s\" % (status, line), flush=True)  # MUTANT\n"),
+    ("serve:a-refused-reason-logged-whole", "polaris_oid4vp/serve.py",
+     "                self.log_error(\"refused: %s: %s%s\", verdict.code, written_reason(verdict.reason),\n",
+     "                self.log_error(\"refused: %s: %s%s\", verdict.code, verdict.reason,  # MUTANT\n"),
+    ("cli:a-refused-line-reason-whole", "polaris_oid4vp/cli.py",
+     "    return \"refused: %s: %s\" % (operator_text(verdict.code), written_reason(verdict.reason))\n",
+     "    return \"refused: %s: %s\" % (operator_text(verdict.code), operator_text(verdict.reason))  # MUTANT\n"),
+    ("cli:a-result-reason-whole", "polaris_oid4vp/cli.py",
+     "        out.update(outcome=\"refused\", check=verdict.code, reason=written_reason(verdict.reason))\n",
+     "        out.update(outcome=\"refused\", check=verdict.code, reason=verdict.reason)  # MUTANT\n"),
+    ("cli:a-verdict-reason-whole", "polaris_oid4vp/cli.py",
+     "           \"reason\": written_reason(verdict.reason),\n",
+     "           \"reason\": verdict.reason,  # MUTANT\n"),
+    # 2026-11-19: the CBOR decoder's two limits, beside the drill's own inversion of each of its
+    # three refusals (which takes the entry check away, so a head alone reads as input that ran
+    # out). A count kept per container never reaches the total, nor one that leaves a map's values
+    # out; either limit one higher lets its one-over input through; and an accepted mdoc's line
+    # without what was checked.
+    ("cbor:the-item-count-per-container", "polaris_oid4vp/cbor.py",
+     "        raise CborError(\"nesting deeper than %d\" % MAX_DEPTH)\n    # An array or a map that states",
+     "        raise CborError(\"nesting deeper than %d\" % MAX_DEPTH)\n    count = [0]  # MUTANT\n"
+     "    # An array or a map that states"),
+    ("cbor:the-entry-limit-one-higher", "polaris_oid4vp/cbor.py",
+     "        if arg > MAX_ENTRIES:\n            raise CborError(\"an array",
+     "        if arg > MAX_ENTRIES + 1:  # MUTANT\n            raise CborError(\"an array"),
+    ("cbor:the-item-limit-one-higher", "polaris_oid4vp/cbor.py",
+     "    if count[0] > MAX_ITEMS:\n",
+     "    if count[0] > MAX_ITEMS + 1:  # MUTANT\n"),
+    ("cbor:a-map-value-uncounted", "polaris_oid4vp/cbor.py",
+     "                raise CborError(\"a map key that repeats\")\n"
+     "            value, i = _item(buf, i, depth + 1, count)\n",
+     "                raise CborError(\"a map key that repeats\")\n"
+     "            value, i = _item(buf, i, depth + 1, [0])  # MUTANT\n"),
+    ("cli:an-accepted-mdoc-line-without-its-checks", "polaris_oid4vp/cli.py",
+     "    if verdict.authentic and credential_format == MDOC_FORMAT:\n",
+     "    if False:  # MUTANT\n"),
+    ("cli:a-verdict-problem-whole", "polaris_oid4vp/cli.py",
+     "    problem = written_reason(result[\"problem\"])\n",
+     "    problem = result[\"problem\"]  # MUTANT\n"),
+    # 2026-11-19: a disclosure of the wrong shape is named by its JSON kind, never its content,
+    # which the reason would carry to every writer. This puts the content back in the reason.
+    ("sdjwt:a-malformed-disclosure-printed-whole", "polaris_oid4vp/sdjwt.py",
+     "                                         % _json_kind(parsed))\n",
+     "                                         % (repr(parsed),))  # MUTANT\n"),
     # serve --cors-origin: an answer names only a listed origin, only on the two paths, and says
     # that it varies by Origin, so no cache hands one origin's answer to another.
     ("serve:cors-allows-any-origin", "polaris_oid4vp/serve.py",
@@ -288,6 +382,101 @@ NAMED_MUTANTS = (
     ("serve:cors-without-vary", "polaris_oid4vp/serve.py",
      "            self.send_header(\"Vary\", \"Origin\")\n",
      ""),
+    # 2026-11-18, GET /control/request/{n}: what became of a request the control endpoint started,
+    # with the claims an accepted SD-JWT VC presentation disclosed. Each takes away one part of
+    # the read: the token, the no-store answer, the logging of a path under /control/ without its
+    # query, the one read that returns the claims, their lifetime from the answer, the bound on
+    # the records kept and the rule that an outstanding one is never dropped. The last two put the
+    # values where they never go: on disk in the --result file, and in the line serve prints.
+    ("serve:control-read-without-the-token", "polaris_oid4vp/serve.py",
+     "        if not authorized:\n",
+     "        if False:  # MUTANT\n"),
+    ("serve:control-read-cached", "polaris_oid4vp/serve.py",
+     "        self.send_header(\"Cache-Control\", \"no-store\")\n"
+     "        self.send_header(\"Pragma\", \"no-cache\")\n"
+     "        self.end_headers()\n"
+     "        self.wfile.write(raw)\n"
+     "        return None\n",
+     "        self.end_headers()  # MUTANT\n"
+     "        self.wfile.write(raw)\n"
+     "        return None\n"),
+    ("serve:control-logged-with-its-query-off-the-exact-path", "polaris_oid4vp/serve.py",
+     "        if not path.startswith(_CONTROL_LOGGED):\n",
+     "        if path != CONTROL_PATH:  # MUTANT\n"),
+    ("cli:control-read-returns-the-claims-twice", "polaris_oid4vp/cli.py",
+     "                    record.released, record.withheld = None, \"returned\"\n",
+     "                    pass  # MUTANT\n"),
+    ("cli:control-read-after-the-lifetime", "polaris_oid4vp/cli.py",
+     "                and now - record.answered_at > self.verifier.request_ttl_seconds):\n",
+     "                and False):  # MUTANT\n"),
+    ("cli:control-records-unbounded", "polaris_oid4vp/cli.py",
+     "        for number in finished[:max(0, len(finished) - CONTROL_FINISHED_KEPT)]:\n",
+     "        for number in []:  # MUTANT\n"),
+    ("cli:control-drops-an-outstanding-record", "polaris_oid4vp/cli.py",
+     "                    if record.document is not None or not self.verifier.is_outstanding(record.state)]\n",
+     "                    if True]  # MUTANT\n"),
+    ("cli:claims-on-disk-in-the-result-file", "polaris_oid4vp/cli.py",
+     "        out.update(outcome=\"accepted\", claims=_claim_names(verdict, credential_format))\n",
+     "        out.update(outcome=\"accepted\", claims=_claim_names(verdict, credential_format),  # MUTANT\n"
+     "                   released=verdict.claims)\n"),
+    ("cli:claims-in-the-answer-line", "polaris_oid4vp/cli.py",
+     "        return \"authentic, claims %s\" % _claim_names(verdict, credential_format)\n",
+     "        return \"authentic, claims %s\" % (verdict.claims,)  # MUTANT\n"),
+    ("cli:control-read-without-the-lock", "polaris_oid4vp/cli.py",
+     "        with self._lock:\n            record = self._records.get(number)\n",
+     "        with threading.Lock():  # MUTANT\n            record = self._records.get(number)\n"),
+    ("cli:control-read-refused-at-the-lifetime", "polaris_oid4vp/cli.py",
+     "                and now - record.answered_at > self.verifier.request_ttl_seconds):\n",
+     "                and now - record.answered_at >= self.verifier.request_ttl_seconds):  # MUTANT\n"),
+    ("cli:control-record-replaces-an-acceptance", "polaris_oid4vp/cli.py",
+     "        if record.document is not None and record.document[\"outcome\"] == \"accepted\":\n",
+     "        if False:  # MUTANT\n"),
+    ("cli:control-record-keeps-the-first-answer", "polaris_oid4vp/cli.py",
+     "        if record.document is not None and record.document[\"outcome\"] == \"accepted\":\n",
+     "        if record.document is not None:  # MUTANT\n"),
+    ("cli:mdoc-values-held-for-a-read", "polaris_oid4vp/cli.py",
+     "        if (record.document[\"outcome\"] == \"accepted\"\n"
+     "                and self.verifier.credential_format == SD_JWT_FORMAT):\n",
+     "        if (record.document[\"outcome\"] == \"accepted\"):  # MUTANT\n"),
+    ("cli:control-lifetime-from-the-first-answer", "polaris_oid4vp/cli.py",
+     "        record.answered_at = self._clock()\n",
+     "        record.answered_at = record.answered_at or self._clock()  # MUTANT\n"),
+    ("cli:control-clock-bound-at-start", "polaris_oid4vp/cli.py",
+     "        self._clock = lambda: time.time()\n",
+     "        self._clock = time.time  # MUTANT\n"),
+    # 2026-11-18, the listener and the files an operator keeps: the TLS handshake back in the
+    # accept loop, and in the worker without the timeout; the token file's mode unchecked, read
+    # from its path rather than from the file read, and the group refused with the others; a key
+    # created readable and then narrowed, a file written through whatever its path names, and a
+    # file's mode left to the umask.
+    ("serve:tls-handshake-in-the-accept-loop", "polaris_oid4vp/serve.py",
+     "        httpd.tls_context = context\n",
+     "        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)  # MUTANT\n"),
+    ("serve:tls-handshake-without-the-timeout", "polaris_oid4vp/serve.py",
+     "        request.settimeout(self.RequestHandlerClass.timeout)\n",
+     "        pass  # MUTANT\n"),
+    ("cli:control-token-file-mode-unchecked", "polaris_oid4vp/cli.py",
+     "            if mode & 0o007:\n",
+     "            if False:  # MUTANT\n"),
+    ("cli:control-token-file-mode-from-its-path", "polaris_oid4vp/cli.py",
+     "            mode = os.fstat(fh.fileno()).st_mode & 0o7777\n",
+     "            mode = os.stat(path).st_mode & 0o7777  # MUTANT\n"),
+    ("cli:control-token-file-group-refused", "polaris_oid4vp/cli.py",
+     "            if mode & 0o007:\n",
+     "            if mode & 0o077:  # MUTANT\n"),
+    ("cli:keygen-key-created-readable", "polaris_oid4vp/cli.py",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)\n",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)  # MUTANT\n"),
+    ("cli:keygen-key-written-through-its-path", "polaris_oid4vp/cli.py",
+     "        try:\n"
+     "            path.unlink()\n"
+     "        except FileNotFoundError:\n"
+     "            pass\n"
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)\n",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)  # MUTANT\n"),
+    ("cli:keygen-mode-left-to-the-umask", "polaris_oid4vp/cli.py",
+     "                os.fchmod(fh.fileno(), mode)\n",
+     "                pass  # MUTANT\n"),
 )
 
 

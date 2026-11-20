@@ -13,7 +13,7 @@
 # under an issuer CA the verifier trusts (--issuer-trust-anchor).
 #
 #   lab/interop/multipaz/run.sh                                     # the newest polaris-oid4vp
-#   POLARIS_OID4VP=polaris-oid4vp==1.0.0rc15 lab/interop/multipaz/run.sh
+#   POLARIS_OID4VP=polaris-oid4vp==1.2.0 lab/interop/multipaz/run.sh
 #
 # Exits 0 only if the presentation is accepted AND every control is refused where it should be.
 set -euo pipefail
@@ -60,6 +60,11 @@ fi
 venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
+RESULT_HELP="$(venv/bin/polaris-oid4vp serve --help 2>&1)" || { echo "polaris-oid4vp serve --help failed: $RESULT_HELP" >&2; exit 2; }
+case "$RESULT_HELP" in  # captured: grep -q at the end of a pipe can trip pipefail
+  *--result*) ;;
+  *) echo "this walk reads the verifier's verdict from serve --result, which polaris-oid4vp 1.1.0 and later have; set POLARIS_OID4VP to such a release" >&2; exit 2 ;;
+esac
 
 # The wallet, built once into a copy of wallet/ so the tree stays clean; Gradle's own cache is a
 # named volume so a second run does not download again.
@@ -155,10 +160,11 @@ trap 'exit_rc=$?; stop_verifier; exit_trap "$exit_rc"' EXIT
 start_verifier() {  # $1 the issuer CA the verifier trusts, $2 log
   # --verbose logs each request's method and path, which shows how the wallet fetched the request.
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host host.docker.internal \
-    --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once --verbose > "$2" 2>&1 &
+    --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once --verbose \
+    --result "${2%.log}.result.json" > "$2" 2> "${2%.log}.err" &
   VERIFIER_PID=$!
   for _ in $(seq 1 240); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start within 60 s; see $WORK/$2" >&2
+  echo "verifier did not start within 60 s; see $WORK/$2 and $WORK/${2%.log}.err" >&2
   exit 2
 }
 
@@ -185,6 +191,17 @@ present() {  # $1 launch URI, $2 wallet log, $3 the anchor the wallet trusts for
 }
 
 fail=0
+verdict() {  # $1 label, $2 the --result file, $3 a Python expression over doc that must be True
+  if venv/bin/python - "$2" "$3" <<'EOF'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as e:
+    sys.exit("cannot read %s: %s" % (sys.argv[1], e))
+sys.exit(0 if eval(sys.argv[2], {}, {"doc": doc}) is True else "doc is %s" % json.dumps(doc, sort_keys=True))
+EOF
+  then echo "  ok    $1"; else echo "  FAIL  $1 ($2: see above)"; fail=1; fi
+}
 expect() {  # $1 label, $2 file, $3 pattern that must appear
   if grep -qE "$3" "$2"; then echo "  ok    $1"; else echo "  FAIL  $1 (no /$3/ in $2)"; fail=1; fi
 }
@@ -194,9 +211,9 @@ start_verifier issuer-ca.pem verifier.log
 URI=$(launch_uri verifier.log)
 present "$URI" wallet.log pki/anchor.pem
 expect "the wallet trusted the verifier" wallet.log '^TRUST trusted'
-expect "the wallet fetched the request by POST" verifier.log '^POST /request\.jwt'
+expect "the wallet fetched the request by POST" verifier.err '^POST /request\.jwt'
 expect "the wallet dispatched and the verifier answered 200" wallet.log '^DISPATCHED'
-expect "the verifier accepted it" verifier.log '<- 200 authentic'
+verdict "the verifier accepted it" verifier.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200'
 { grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
@@ -213,7 +230,7 @@ expect "the wallet refused the request" wallet-c.log '^REQUEST REFUSED the verif
 echo "== control (a): the verifier trusts a different issuer CA under the same name"
 present "$(launch_uri verifier-other.log)" wallet-a.log pki/anchor.pem
 expect "the wallet was not accepted" wallet-a.log '^DISPATCH FAILED'
-expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: issuer_key'
+verdict "the verifier refused the issuer" verifier-other.result.json 'doc["outcome"] == "refused" and doc["check"] == "issuer_key" and doc["response"]["status_code"] == 400'
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and all three controls refused" || echo "RESULT: FAILED"

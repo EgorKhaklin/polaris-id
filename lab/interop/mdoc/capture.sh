@@ -7,7 +7,7 @@
 # The EU reference PID issuer issues one of its mso_mdoc credentials (CONFIG: its mDL,
 # org.iso.18013.5.1.mDL, by default, or its PID, eu.europa.ec.eudi.pid_mso_mdoc) to the
 # ../eudi-issuer wallet, exactly as ../eudi-issuer/run.sh runs it: this script runs that run.sh's
-# first 218 lines (the issuer stack, the wallet build, the issuance), pinned by SHA-256, against a
+# first 239 lines (the issuer stack, the wallet build, the issuance), pinned by SHA-256, against a
 # copy of ../eudi-issuer whose wallet asks for that configuration and presents with
 # wallet/src/main/kotlin/Present.kt. The wallet resolves a request from the published
 # polaris-oid4vp, builds the DeviceResponse, writes it and the OpenID4VP inputs to OUT, then sends
@@ -23,8 +23,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ISSUER="$HERE/../eudi-issuer"
-HEAD_LINES=218
-HEAD_SHA256=8c403ba7cf7c8a72db0afb7f0efb1a0549981bf54ea7e5339f4cace457dae3cb
+HEAD_LINES=239
+HEAD_SHA256=7ca0d79ecfe464e9a1e42133d213287c4ee8d27c9610ea590e99d19f80148cd3
 CONFIG="${CONFIG:-org.iso.18013.5.1.mDL}"
 case "$CONFIG" in
   org.iso.18013.5.1.mDL) MDOC_DOCTYPE=org.iso.18013.5.1.mDL; MDOC_NS=org.iso.18013.5.1 ;;
