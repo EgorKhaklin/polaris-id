@@ -1662,6 +1662,43 @@ class OnlyTheHolderClosesTheRequestTests(VerifierTestCase):
                 self.verifier._expire_locked()
         self.assertEqual(self._racing(expire), [400, 400])
 
+    def test_a_request_whose_ttl_passes_while_it_is_judged_is_not_answered_though_no_call_swept(self):
+        """`DEFAULT_REQUEST_TTL_SECONDS` is "How long an outstanding request stays answerable",
+        and "a request that expired while this one was being judged is not answered either"
+        (`_close_and_answer`). Nothing sweeps the table between the judgement and the close here,
+        so the close must read the clock itself. The operator is told the lifetime refused it,
+        not a replay."""
+        from polaris_oid4vp import verifier as module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        original = module.verify_presentation
+
+        def aging(*args, **kwargs):
+            verdict = original(*args, **kwargs)
+            session.created -= self.verifier.request_ttl_seconds + 1
+            return verdict
+        with mock.patch.object(module, "verify_presentation", aging):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertFalse(session.answered)
+        self.assertIn("lifetime ended while this response was judged", verdict.reason)
+        self.assertNotIn("replay", verdict.reason)
+
+    def test_a_request_exactly_at_its_lifetime_is_still_answered(self):
+        """The close's comparison is `_expire_locked`'s, boundary included: a request whose age is
+        exactly request_ttl_seconds is live for both, so the sweep keeps it and the close accepts
+        its presentation. Either comparison made inclusive refuses it."""
+        import time as time_module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        now = float(int(time_module.time()))
+        session.created = now - self.verifier.request_ttl_seconds
+        with mock.patch.object(time_module, "time", lambda: now):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertTrue(verdict.authentic)
+        self.assertTrue(session.answered)
+
 
 class TheLastTwoRefusalsTests(VerifierTestCase):
     """Both found by coverage, and one of them only exists under concurrency."""
@@ -2304,6 +2341,39 @@ class AWalletsErrorResponseTests(VerifierTestCase):
         self.assertIn("anyone who saw the request could send, so it does not close the request",
                       verdict.reason)
         self.assertIs(self.verifier._sessions.get(session.state), session)
+
+    def test_an_encrypted_error_to_a_request_whose_ttl_passes_while_it_is_decrypted_is_refused(self):
+        """An error in the clear to an expired request names no outstanding request and is
+        refused. The encrypted one is decrypted outside the lock, after the sweep, so its answer
+        reads the clock itself: a request whose lifetime ends during the decryption is not
+        answered."""
+        from polaris_oid4vp import verifier as module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond_error(jar)
+        original = module._open_response
+
+        def aging(*args, **kwargs):
+            opened = original(*args, **kwargs)
+            session.created -= self.verifier.request_ttl_seconds + 1
+            return opened
+        with mock.patch.object(module, "_open_response", aging):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertFalse(verdict.authentic)
+        self.assertIsNone(verdict.wallet_error)
+        self.assertIn("lifetime ended while this response was decrypted", verdict.reason)
+
+    def test_an_encrypted_error_to_a_request_exactly_at_its_lifetime_is_answered(self):
+        """The age is tested as the closes and the sweep test it, boundary included: at exactly
+        request_ttl_seconds the request is live, and its error is answered 200 as any other."""
+        import time as time_module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond_error(jar)
+        now = float(int(time_module.time()))
+        session.created = now - self.verifier.request_ttl_seconds
+        with mock.patch.object(time_module, "time", lambda: now):
+            verdict = self._record(form)
+        self.assertEqual(verdict.wallet_error["state"], session.state)
 
     def test_an_error_in_the_clear_is_answered_200_and_accepts_nothing(self):
         session, jar = self.verifier.new_request()

@@ -2244,6 +2244,47 @@ class ControlEndpointMdocTests(_RunningCase):
             self.assertEqual(run.verifier.outstanding(), before + 1)
 
 
+class ALateAcceptanceTests(_RunningCase):
+    """`_ResultFile.verdict`: "An acceptance is never judged after the close (the verifier refuses
+    it), so one is recorded even when the lifetime ends before this line runs." A response judged
+    across the end of its request's lifetime is refused, so `--result` keeps the outcome it had
+    and `/done` has no result to show."""
+
+    def test_a_response_judged_across_the_end_of_the_lifetime_changes_neither_result_nor_done(self):
+        import json
+        import urllib.request
+        from unittest import mock
+        from polaris_oid4vp import verifier as module
+        clock, running = _Clock(self), []
+        original = module.verify_presentation
+
+        def aging(*args, **kwargs):
+            verdict = original(*args, **kwargs)
+            clock.advance(running[0].verifier.request_ttl_seconds + 1)
+            return verdict
+
+        running.append(self.run_serve("--once", "--result", str(self.path)))
+        with running[0] as run:
+            state = _state_of(run.blocks()[0])
+            self.assertEqual(self.answer(run, state, nonce="wrong")[0], 400)
+            earlier = self.read()
+            self.assertEqual((earlier["outcome"], earlier["check"]), ("refused", "nonce"))
+            status, jar = run.jar(state)
+            self.assertEqual(status, 200, "the refusal closed the request")
+            form = self.wallet.respond(jar)
+            # The code a close would issue, fixed, so /done can be asked for it.
+            with mock.patch.object(module, "verify_presentation", aging), \
+                    mock.patch.object(module.secrets, "token_urlsafe", lambda *_: "a-fixed-code"):
+                status, body = run.respond(form)
+            doc = self.read()
+            done, _ = run._call(urllib.request.Request(run.base + "/done?response_code=a-fixed-code"))
+            self.assertEqual({key: doc.get(key) for key in ("outcome", "check", "reason")},
+                             {key: earlier[key] for key in ("outcome", "check", "reason")})
+            self.assertEqual(doc["responses"], 2)
+            self.assertEqual(done, 404)
+            self.assertEqual((status, json.loads(body)), (400, run.verifier.REFUSAL_BODY))
+
+
 class RearmTests(_RunningCase):
     """`serve --once --rearm`: when the request closes or expires, the next one starts with the same
     specification and its parameters print exactly as --once prints them."""
