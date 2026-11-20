@@ -243,10 +243,14 @@ class Verdict:
                            underscores, the shape of every code RFC 6749 and OpenID4VP define
         error_description  its `error_description` as printable ASCII without `<`, cut to 200
                            characters, or None
-        state              the outstanding request it names
+        state              the outstanding request it names; None for one posted over the
+                           Digital Credentials API (`Verifier.dc_api_response`), whose requests
+                           have no state
         encrypted          True: it arrived encrypted to that request's key; False: in the
                            clear (section 8.3.1). Neither says who sent it, since the key and
-                           the state are both in the request, and neither closes the request
+                           the state are both in the request, and neither closes a redirect
+                           request. Over the Digital Credentials API, one encrypted to a
+                           request's key closes that request; one in the clear names none
     """
 
     __slots__ = ("authentic", "code", "_reason", "claims", "revocation", "disclosed",

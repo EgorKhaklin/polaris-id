@@ -40,8 +40,7 @@ Polaris's standalone verifier `polaris-oid4vp` implements the OpenID for Verifia
 1.0 Verifier role (certified, above). The Wallet role is not Polaris's; outside wallets present to
 the verifier, and which ones have is recorded in [EXTERNAL-NOUNS.md](../../lab/EXTERNAL-NOUNS.md).
 It verifies SD-JWT VC (`dc+sd-jwt`). mdoc (ISO/IEC 18013-5, `mso_mdoc`) over
-`direct_post.jwt` is experimental and off by default. It does not support the browser's
-Digital Credentials API. Its request carries one DCQL
+`direct_post.jwt` is experimental and off by default. Its request carries one DCQL
 credential query. A claim is a name or a path of object keys, with
 optional `values` the disclosed value must match in type and value (`age_equal_or_over`, `18`,
 `true`: one statement of an EUDI PID, not all of them); array indices and the null wildcard are not

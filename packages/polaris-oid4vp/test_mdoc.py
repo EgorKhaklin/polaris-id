@@ -582,6 +582,13 @@ def witness_transcript(client_id, nonce, thumbprint, response_uri):
     return [None, None, ["OpenID4VPHandover", hashlib.sha256(info).digest()]]
 
 
+def witness_dc_api_transcript(origin, nonce, thumbprint):
+    """OpenID4VP 1.0 B.2.6.2 as a wallet builds it for a request over the Digital Credentials API,
+    here on cbor2: the structure, as `witness_transcript` gives B.2.6.1's."""
+    info = cbor2.dumps([origin, nonce, thumbprint])
+    return [None, None, ["OpenID4VPDCAPIHandover", hashlib.sha256(info).digest()]]
+
+
 IACA_KEY, IACA = make_root()
 DS_KEY, DS = make_ds()
 DEVICE_KEY = ec.generate_private_key(P256)
@@ -998,6 +1005,101 @@ class TranscriptTests(RefusalCase):
             with self.subTest(name=name, bad=bad):
                 with self.assertRefuses(ValueError) as caught:
                     mdoc.redirect_session_transcript(**{**good, name: bad})
+                self.assertIn(name, str(caught.exception))
+
+
+class DcApiTranscriptTests(RefusalCase):
+    """The SessionTranscript of a request over the Digital Credentials API, OpenID4VP 1.0 B.2.6.2,
+    for Response Mode dc_api.jwt."""
+
+    #: B.2.6.2's non-normative example: its origin, the nonce and key B.2.6.1's example uses, and
+    #: the hex the page gives for the OpenID4VPDCAPIHandoverInfo, the OpenID4VPDCAPIHandover and the
+    #: SessionTranscript, copied from it.
+    ORIGIN = "https://example.com"
+    NONCE = TranscriptTests.SPEC["nonce"]
+    SPEC_HANDOVER_INFO = ("837368747470733a2f2f6578616d706c652e636f6d782b6578633767426b786a7831"
+                          "726463397564527276654b7653734a4971383061766c58654c486847777174415820"
+                          "4283ec927ae0f208daaa2d026a814f2b22dca52cf85ffa8f3f8626c6bd669047")
+    SPEC_HANDOVER = ("82764f70656e4944345650444341504948616e646f7665725820fbece366f4212f97"
+                     "62c74cfdbf83b8c69e371d5d68cea09cb4c48ca6daab761a")
+    SPEC_TRANSCRIPT = ("83f6f682764f70656e4944345650444341504948616e646f7665725820fbece366f4"
+                       "212f9762c74cfdbf83b8c69e371d5d68cea09cb4c48ca6daab761a")
+
+    def spec(self, **changes):
+        values = {"origin": self.ORIGIN, "nonce": self.NONCE,
+                  "jwk_thumbprint": mdoc.jwk_thumbprint(TranscriptTests.SPEC_JWK)}
+        values.update(changes)
+        return mdoc.dc_api_session_transcript(**values)
+
+    def test_the_dc_api_transcript_reproduces_b262(self):
+        thumbprint = mdoc.jwk_thumbprint(TranscriptTests.SPEC_JWK)
+        self.assertEqual(thumbprint.hex(), TranscriptTests.SPEC_THUMBPRINT)
+        # The page's HandoverInfo is the origin, the nonce and the thumbprint as one CBOR array.
+        self.assertEqual(cbor.encode([self.ORIGIN, self.NONCE, thumbprint]).hex(), self.SPEC_HANDOVER_INFO)
+        got = self.spec()
+        self.assertIsInstance(got, bytes)
+        self.assertEqual(got.hex(), self.SPEC_TRANSCRIPT)
+        handover = cbor2.loads(got)[2]
+        self.assertEqual(cbor2.dumps(handover).hex(), self.SPEC_HANDOVER)
+        self.assertEqual(handover[1], hashlib.sha256(bytes.fromhex(self.SPEC_HANDOVER_INFO)).digest())
+
+    def test_the_dc_api_transcript_equals_the_witness_encoding(self):
+        """The bytes a wallet's own CBOR encoder gives B.2.6.2's structure, for this file's key and
+        nonce, and not the redirect's transcript for the same nonce and key."""
+        origin = "https://verifier.example"
+        got = mdoc.dc_api_session_transcript(origin=origin, nonce=REQUEST["nonce"],
+                                             jwk_thumbprint=mdoc.jwk_thumbprint(ENC_JWK))
+        self.assertEqual(got, cbor2.dumps(witness_dc_api_transcript(origin, REQUEST["nonce"],
+                                                                    witness_thumbprint(ENC_JWK))))
+        self.assertNotEqual(got, TRANSCRIPT)
+
+    def test_the_origin_is_read_as_a_browser_writes_it(self):
+        """The parser serve --cors-origin reads an origin with: the same origin written another way
+        gives the same transcript."""
+        for written in ("HTTPS://Example.COM", "https://example.com:443", "https://EXAMPLE.com:0443"):
+            with self.subTest(origin=written):
+                self.assertEqual(self.spec(origin=written).hex(), self.SPEC_TRANSCRIPT)
+                self.assertEqual(mdoc.dc_api_origin(written), self.ORIGIN)
+        self.assertEqual(mdoc.dc_api_origin("HTTP://LocalHost:8443"), "http://localhost:8443")
+
+    def test_an_origin_prefixed_with_origin_is_refused(self):
+        """B.2.6.2: "It MUST NOT be prefixed with origin:." Refused by that rule, however the prefix
+        is cased."""
+        for written in ("origin:https://example.com", "ORIGIN:https://example.com", "Origin:https://example.com"):
+            with self.subTest(origin=written):
+                with self.assertRefuses(ValueError) as caught:
+                    self.spec(origin=written)
+                self.assertIn("MUST NOT be prefixed with origin:", str(caught.exception))
+                self.assertIn(repr(written), str(caught.exception))
+
+    def test_what_is_not_one_web_origin_is_refused(self):
+        """A path, a query, a fragment, user information, no scheme or another one, two origins, `*`
+        and what is not a string: each a ValueError, as redirect_session_transcript raises for a
+        bad argument, naming what is wrong."""
+        for written, words in (("https://example.com/", "a path"), ("https://example.com/verify", "a path"),
+                               ("https://example.com?x=1", "a query"), ("https://example.com#top", "a fragment"),
+                               ("https://user@example.com", "user information"),
+                               ("example.com", "is not an origin"), ("//example.com", "is not an origin"),
+                               ("wss://example.com", "is not an origin"), ("null", "is not an origin"),
+                               ("", "is not an origin"), ("https://a.example,https://b.example", "is not one origin"),
+                               ("*", "is not one origin"), (None, "is not an origin"),
+                               (b"https://example.com", "is not an origin")):
+            with self.subTest(origin=written):
+                with self.assertRefuses(ValueError) as caught:
+                    self.spec(origin=written)
+                self.assertIn(words, str(caught.exception))
+
+    def test_every_input_is_required(self):
+        """No transcript from a missing value, and none without the response key's thumbprint:
+        this verifier asks for dc_api.jwt only, and B.2.6.2's null third element is dc_api's."""
+        good = {"origin": self.ORIGIN, "nonce": self.NONCE, "jwk_thumbprint": bytes(32)}
+        self.assertIsInstance(mdoc.dc_api_session_transcript(**good), bytes)
+        for name, bad in (("nonce", ""), ("nonce", None), ("nonce", 5), ("jwk_thumbprint", None),
+                          ("jwk_thumbprint", bytes(31)), ("jwk_thumbprint", bytes(33)),
+                          ("jwk_thumbprint", "a" * 32), ("jwk_thumbprint", b""), ("origin", None)):
+            with self.subTest(name=name, bad=bad):
+                with self.assertRefuses(ValueError) as caught:
+                    mdoc.dc_api_session_transcript(**{**good, name: bad})
                 self.assertIn(name, str(caught.exception))
 
 

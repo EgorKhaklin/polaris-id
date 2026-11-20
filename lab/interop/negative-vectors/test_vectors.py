@@ -2849,6 +2849,27 @@ class MdocVectorsUnderThePackage(unittest.TestCase):
                     twins += 1
         self.assertEqual(twins, len(self.CODES) - len(self.REFUSED_TWINS))
 
+    def test_the_packages_dc_api_transcript_is_the_one_the_corpus_was_made_over(self):
+        """polaris-oid4vp's OpenID4VP 1.0 B.2.6.2 SessionTranscript (mdoc.dc_api_session_transcript) is,
+        byte for byte, the one make_mdoc_vectors.py made this corpus's Digital Credentials API vectors
+        over, for the DC API control's inputs, and the one verify_mdoc.py holds the specification's
+        example to: the package and the corpus cannot drift apart."""
+        import cbor2
+        from polaris_oid4vp import mdoc
+        mm = _load("make_mdoc_vectors_for_the_package", "make_mdoc_vectors.py")
+        vm = _load_path("verify_mdoc_for_the_package", os.path.join(MDOC, "verify_mdoc.py"))
+        with open(os.path.join(HERE, "mdoc-vectors.json")) as fh:
+            control = {v["id"]: v for v in json.load(fh)["vectors"]}["md-accept-dcapi-oid4vp"]
+        for name, inputs in (("the control", control["inputs"]), ("the specification's example", vm.SPEC_DCAPI_INPUTS)):
+            with self.subTest(inputs=name):
+                self.assertEqual(inputs["response_mode"], "dc_api.jwt")
+                got = mdoc.dc_api_session_transcript(origin=inputs["origin"], nonce=inputs["nonce"],
+                                                     jwk_thumbprint=mdoc.jwk_thumbprint(inputs["encryption_jwk"]))
+                lab = cbor2.dumps(mm.dcapi_transcript(inputs["origin"], inputs["nonce"],
+                                                      mm.thumbprint(inputs["encryption_jwk"])))
+                self.assertEqual(got, lab)
+        self.assertEqual(got.hex(), vm.SPEC_DCAPI_TRANSCRIPT)
+
 
 if __name__ == "__main__":
     unittest.main()
