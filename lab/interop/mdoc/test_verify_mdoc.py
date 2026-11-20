@@ -13,11 +13,15 @@ A document is the vectors' valid mDL (make_mdoc_vectors.mint) with one field cha
 change is inside the MSO, the issuer signature is made again with the vectors' document signer,
 so the check under test is the first one the document fails.
 
+CapturePin holds capture.sh's pin on ../eudi-issuer/run.sh's head to that file.
+
     python3 -m unittest test_verify_mdoc      (from lab/interop/mdoc)
 """
 import copy
+import hashlib
 import importlib.util
 import os
+import re
 import unittest
 from unittest import mock
 
@@ -248,6 +252,36 @@ class Refusals(unittest.TestCase):
                      {"claims": [{"path": path, "values": []}]}, elements, lambda c, d: None)
         self.refused("requested claims", "claim_sets is not an array of options naming claims ids", vm.requested_claims,
                      {"claims": [{"id": "a", "path": path}], "claim_sets": [["b"]]}, elements, lambda c, d: None)
+
+
+class CapturePin(unittest.TestCase):
+    """capture.sh, which makes the captures this verifier reads, runs ../eudi-issuer/run.sh's head (the issuer stack,
+    the wallet build, the issuance) up to and including its credential.txt check, and exits 2 when those lines'
+    SHA-256 is not its HEAD_SHA256. Nothing in CI runs capture.sh, so an edit to run.sh above that check made it
+    refuse with no job to say so (from e5178ca7). This recomputes the cut and its hash from run.sh."""
+
+    CUT = b'[ -s credential.txt ] || { echo "RESULT: FAILED (no credential; see $WORK/issue.log)"; exit 1; }\n'
+
+    def setUp(self):
+        with open(os.path.join(HERE, "capture.sh"), encoding="utf-8") as f:
+            self.capture = f.read()
+        with open(os.path.join(HERE, "..", "eudi-issuer", "run.sh"), "rb") as f:
+            self.lines = f.read().splitlines(keepends=True)
+
+    def pinned(self, name):
+        found = re.findall(r"^%s=(\S+)$" % name, self.capture, re.M)
+        self.assertEqual(len(found), 1, "capture.sh sets %s once" % name)
+        return found[0]
+
+    def test_the_pinned_head_ends_at_run_shs_credential_check_and_hashes_as_pinned(self):
+        cuts = [i + 1 for i, line in enumerate(self.lines) if line == self.CUT]
+        self.assertEqual(len(cuts), 1, "run.sh's credential.txt check, exactly once")
+        n = int(self.pinned("HEAD_LINES"))
+        self.assertEqual(n, cuts[0], "HEAD_LINES is the line of run.sh's credential.txt check")
+        # what `sed -n "1,${HEAD_LINES}p" run.sh | shasum -a 256` reads: whole lines, each with its newline
+        self.assertEqual(self.pinned("HEAD_SHA256"), hashlib.sha256(b"".join(self.lines[:n])).hexdigest())
+        self.assertIn("run.sh's first %d lines" % n, " ".join(self.capture.replace("\n#", " ").split()),
+                      "the header comment names the pinned count")
 
 
 if __name__ == "__main__":

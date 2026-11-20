@@ -31,7 +31,7 @@ from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.sdjwt import (  # noqa: E402
     DEFAULT_MAX_SKEW_SECONDS, MAX_DISCLOSURES, MAX_PRESENTATION_BYTES, MAX_RESOLVE_DEPTH,
-    MAX_X5C_CERTS, Verdict, b64u_encode, verify_presentation)
+    MAX_X5C_CERTS, REASON_MAX, Verdict, b64u_encode, verify_presentation)
 from polaris_oid4vp.sdjwt import (  # noqa: E402
     ALL_ENTRIES, PER_CREDENTIAL, JtiMemory, TransactionDataBinding, TransactionDataEntry,
     transaction_data_hash)
@@ -846,6 +846,111 @@ class StructuralRefusalsTests(unittest.TestCase):
             self.assertFalse(v.authentic, "%r was accepted" % junk)
 
 
+def cut_once(test, text, full, limit=512):
+    """`text` is at most `limit` characters and carries one note, at its end, naming `full`, the
+    length the text has when nothing cuts it."""
+    import re
+    test.assertLessEqual(len(text), limit)
+    found = re.findall(r"\.\.\. \(cut at (\d+) of (\d+) characters\)", text)
+    test.assertEqual(len(found), 1, text[-120:])
+    test.assertTrue(text.endswith(" characters)"), text[-120:])
+    kept, length = (int(n) for n in found[0])
+    test.assertEqual(length, full)
+    test.assertEqual(len(text), kept + len("... (cut at %d of %d characters)" % (kept, length)))
+
+
+def uncut_by(module):
+    """A patch that makes `module`'s bounded_reason return its text whole, to measure the length
+    a cut reason names."""
+    from unittest import mock
+    return mock.patch.object(module, "bounded_reason", lambda text: text)
+
+
+class ReasonIsCutWhereItIsSetTests(unittest.TestCase):
+    """A refusal's reason can quote what a sender sent, so a verdict holds at most REASON_MAX
+    characters of it, with one note saying how much was kept and its full length, wherever it
+    is set: a caller of the library gets no more than `serve` and `verdict` would write."""
+
+    def test_a_reason_is_cut_at_construction_and_at_assignment(self):
+        long = "<" + "x" * 99_994 + "MARKER"
+        built = Verdict(False, "malformed", long)
+        cut_once(self, built.reason, len(long))
+        self.assertNotIn("MARKER", built.reason)
+        later = Verdict(False, "malformed", "short")
+        later.reason = long
+        cut_once(self, later.reason, len(long))
+        self.assertEqual(Verdict(False, "malformed", "x" * REASON_MAX).reason, "x" * REASON_MAX)
+        cut_once(self, Verdict(False, "malformed", "x" * (REASON_MAX + 1)).reason, REASON_MAX + 1)
+        self.assertEqual(Verdict(True).reason, "")
+
+    def test_the_cut_never_returns_more_than_its_limit(self):
+        from polaris_oid4vp.sdjwt import bounded_reason
+        for limit in range(1, 80):
+            for length in (limit, limit + 1, 100, 10_000):
+                with self.subTest(limit=limit, length=length):
+                    text = bounded_reason("x" * length, limit)
+                    self.assertLessEqual(len(text), limit)
+                    if length <= limit:
+                        self.assertEqual(text, "x" * length)
+        self.assertEqual(bounded_reason("x" * 100, 10), "x" * 10)
+        cut_once(self, bounded_reason("x" * 100, 40), 100, limit=40)
+        self.assertIsNone(bounded_reason(None))
+
+    def test_a_refusal_that_quotes_a_header_the_sender_wrote_is_cut(self):
+        from polaris_oid4vp import sdjwt
+        w = Wallet()
+        presentation = w.present(issuer_typ="T" * 5000)
+        v = w.verify(presentation)
+        self.assertEqual(v.code, "issuer_typ")
+        with uncut_by(sdjwt):
+            whole = w.verify(presentation).reason
+        self.assertIn("T" * 5000, whole)
+        cut_once(self, v.reason, len(whole))
+
+    def test_a_revocation_reason_is_cut_where_its_record_is_returned(self):
+        """Each return of the record that can quote outside text: the status URI the credential
+        names (no resolver, the default), what the resolver raised, and the record a resolver
+        returns, passed through. The record's uri is data, and stays whole."""
+        from polaris_oid4vp import sdjwt
+        uri = "https://issuer.example/" + "a" * 5000
+        names = {"status": {"status_list": {"uri": uri, "idx": 3}}}
+
+        def raises(**_):
+            raise RuntimeError("E" * 5000)
+
+        def answers(**_):
+            return {"checked": False, "code": "signature", "reason": "R" * 5000}
+
+        for label, resolver in (("no resolver", None), ("a resolver that raises", raises),
+                                ("a resolver's own record", answers)):
+            with self.subTest(label):
+                state = sdjwt._revocation_state(names, resolver)
+                with uncut_by(sdjwt):
+                    whole = sdjwt._revocation_state(names, resolver)
+                self.assertGreaterEqual(len(whole["reason"]), 5000)
+                cut_once(self, state["reason"], len(whole["reason"]))
+                self.assertEqual(state["uri"], uri)
+
+    def test_a_revocation_reason_that_names_a_type_holds_the_bound(self):
+        """A status claim that is not an object, and a resolver's answer that is not a record,
+        are named by their type, not quoted: these pass before the cut and after it, and hold
+        that a long value still gives a short reason."""
+        from polaris_oid4vp import sdjwt
+        long = "s" * 20_000
+        claim = sdjwt._revocation_state({"status": long})
+        self.assertEqual(claim["state"], sdjwt.UNSUPPORTED_STATUS)
+        answer = sdjwt._revocation_state(
+            {"status": {"status_list": {"uri": "https://i.example/s", "idx": 3}}},
+            lambda **_: long)
+        self.assertEqual(answer["state"], sdjwt.UNREACHABLE)
+        for label, state in (("the claim", claim), ("the answer", answer)):
+            with self.subTest(label):
+                self.assertIn("str", state["reason"])
+                self.assertNotIn("sss", state["reason"])
+                self.assertLessEqual(len(state["reason"]), REASON_MAX)
+                self.assertNotIn("(cut at", state["reason"])
+
+
 class X5CTests(unittest.TestCase):
     """The other way an issuer key is established, which is the one the suite uses."""
 
@@ -1258,6 +1363,25 @@ class RefusalsCoverageFoundTests(unittest.TestCase):
         v = w.verify(w.present(extra_disclosure=junk))
         self.assertFalse(v.authentic)
         self.assertEqual(v.code, "disclosure")
+
+    def test_a_disclosure_of_the_wrong_shape_is_named_by_its_kind_never_its_content(self):
+        """The reason goes wherever a refusal is written, so it names the kind of JSON value the
+        disclosure is, and an array's length, and nothing the disclosure carried (2026-11-19: an
+        object was printed whole)."""
+        marker = "Polaris-Marker-5f1e"
+        w = Wallet()
+        for value, kind in (({"given_name": marker, marker: 1}, "a JSON object"),
+                            (marker, "a JSON string"), (7, "a JSON number"),
+                            (1.5, "a JSON number"), (True, "a JSON boolean"),
+                            (None, "JSON null"), ([marker], "an array of 1 element"),
+                            (["s", marker, marker, marker], "an array of 4 elements")):
+            with self.subTest(kind=kind, value=value):
+                junk = b64u_encode(json.dumps(value).encode())
+                v = w.verify(w.present(extra_disclosure=junk))
+                self.assertEqual((v.authentic, v.code), (False, "disclosure"))
+                self.assertEqual(v.reason, "a disclosure must be a 2- or 3-element array, got %s"
+                                 % kind)
+                self.assertNotIn(marker, v.reason)
 
     def test_a_disclosure_that_does_not_decode_is_refused(self):
         w = Wallet()

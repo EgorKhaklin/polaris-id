@@ -83,7 +83,7 @@ esac
 # The issuer's own files, from the release's commit, each checked against the SHA-256 it had when
 # this walk was written. A changed file stops the run rather than being used.
 venv/bin/python - "$UPSTREAM" "$ABCA" <<'EOF'
-import hashlib, os, sys, urllib.request
+import hashlib, os, sys, urllib.error, urllib.request
 upstream, abca = sys.argv[1:3]
 files = {
     "docker-compose/docker-compose.yaml": "893dcf4cdf16dde6ee05ab4e6a573bc217a2906a4e73f3c5c10ecdd85cb8d6f2",
@@ -101,8 +101,13 @@ sources = {path: upstream + "/" + path for path in files}
 files["abca-keycloak-ext-0.2.0.jar"] = "4b10222577445f936ead647980b22e672ee9e38e0c1e5b8ac8dab60dd5ea8a86"
 sources["abca-keycloak-ext-0.2.0.jar"] = abca
 for path, digest in files.items():
-    with urllib.request.urlopen(sources[path], timeout=60) as response:
-        body = response.read()
+    # The URL in the message, which a traceback from stdin does not carry, so that triage can
+    # tell a host's rate limit from a file that moved (2026-11-19, run 44565122170).
+    try:
+        with urllib.request.urlopen(sources[path], timeout=60) as response:
+            body = response.read()
+    except urllib.error.HTTPError as e:
+        sys.exit("could not fetch %s: HTTP Error %d: %s" % (sources[path], e.code, e.reason))
     if hashlib.sha256(body).hexdigest() != digest:
         sys.exit("upstream %s changed (sha256 %s); refusing to run it" % (path, hashlib.sha256(body).hexdigest()))
     os.makedirs(os.path.dirname(os.path.join("upstream", path)) or ".", exist_ok=True)

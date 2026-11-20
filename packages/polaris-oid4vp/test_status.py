@@ -415,6 +415,59 @@ class FetchTests(unittest.TestCase):
 
 
 
+def cut_once(test, text, full, limit=512):
+    """`text` is at most `limit` characters and carries one note, at its end, naming `full`, the
+    length the text has when nothing cuts it."""
+    import re
+    test.assertLessEqual(len(text), limit)
+    found = re.findall(r"\.\.\. \(cut at (\d+) of (\d+) characters\)", text)
+    test.assertEqual(len(found), 1, text[-120:])
+    test.assertTrue(text.endswith(" characters)"), text[-120:])
+    kept, length = (int(n) for n in found[0])
+    test.assertEqual(length, full)
+    test.assertEqual(len(text), kept + len("... (cut at %d of %d characters)" % (kept, length)))
+
+
+def uncut_by(module):
+    """A patch that makes `module`'s bounded_reason return its text whole, to measure the length
+    a cut reason names."""
+    from unittest import mock
+    return mock.patch.object(module, "bounded_reason", lambda text: text)
+
+
+class ReasonIsCutTests(unittest.TestCase):
+    """A status verdict's reason quotes the list token's own fields, the status URI and what a
+    fetch raised, so it holds at most sdjwt.REASON_MAX characters of them, with one note saying
+    its full length, as a presentation verdict's reason does."""
+
+    def check(self, call, code):
+        v = call()
+        with uncut_by(S):
+            whole = call()["reason"]
+        self.assertEqual(v["code"], code)
+        self.assertGreater(len(whole), 5000)
+        cut_once(self, v["reason"], len(whole))
+
+    def test_a_field_of_the_list_token_is_cut(self):
+        self.check(lambda: decide(token(payload(), typ="T" * 5000)), "typ")
+
+    def test_the_status_uri_is_cut(self):
+        self.check(lambda: decide(token(payload()), uri=URI + "/" + "u" * 5000), "sub_mismatch")
+
+    def test_what_a_fetch_raised_is_cut(self):
+        def dead(uri):
+            raise ConnectionError("R" * 5000)
+        self.check(lambda: S.decide_by_fetching(
+            index=1, expected_uri=URI, authority=AUTHORITY, credential_issuer=ISSUER,
+            issuer_key_verify=accept, fetch=dead, now=NOW), S.UNREACHABLE)
+
+    def test_a_short_reason_is_unchanged(self):
+        v = decide(token(payload()))
+        self.assertTrue(v["checked"])
+        with uncut_by(S):
+            self.assertEqual(decide(token(payload()))["reason"], v["reason"])
+
+
 class PrimitiveRefusalsTests(unittest.TestCase):
     """Each primitive refusal driven directly (2026-09-23). Inverting any of these left the
     whole package suite green, because every caller also refuses the malformed list for some

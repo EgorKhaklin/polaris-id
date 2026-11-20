@@ -46,6 +46,8 @@ import json
 import time
 import zlib
 
+from .sdjwt import bounded_reason
+
 #: How far ahead of this verifier's clock a status list token's `iat` may be. Zero until
 #: 2026-09-28: an issuer that signs its list when it is fetched (the Polaris issuer does), fetched
 #: across a second boundary, was refused as dated in the future, and so was any list from a
@@ -149,7 +151,14 @@ def _json_bounded(raw, what, limit=MAX_JSON_BYTES):
 
 
 class Verdict(dict):
-    """A dict, so callers can treat it as data, with the two questions kept apart."""
+    """A dict, so callers can treat it as data, with the two questions kept apart. Its reason is
+    at most sdjwt.REASON_MAX characters, cut as a presentation verdict's is: it can quote the
+    list token's own fields, the status URI and what a resolver or a fetch raised."""
+
+    def __init__(self, *args, **fields):
+        super().__init__(*args, **fields)
+        if "reason" in self:
+            self["reason"] = bounded_reason(self["reason"])
 
     @property
     def checked(self):

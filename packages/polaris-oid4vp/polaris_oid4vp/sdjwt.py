@@ -165,6 +165,27 @@ def _utcnow():
     return datetime.datetime.now(datetime.timezone.utc)
 
 
+#: The most characters of a refusal's reason this package returns, its cut note included, and the
+#: bound `serve` and the `verdict` command write a reason to (verifier.WRITTEN_REASON_MAX). A
+#: reason can quote what a sender sent, so an integrator who writes `verdict.reason` itself writes
+#: no more than they do, and a reason they write is not cut a second time (2026-11-19).
+REASON_MAX = 512
+
+
+def bounded_reason(text, limit=REASON_MAX):
+    """`text` when it has at most `limit` characters; else as many of its first characters as
+    leave room for the note that says it was cut and its full length, at most `limit` characters
+    in all, and its first `limit` characters alone when the note does not fit in them. Anything
+    that is not a string (None, the reason of an accepted verdict) is returned as is."""
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    note = "... (cut at %d of %d characters)"
+    kept = limit - len(note % (limit, len(text)))
+    if kept <= 0:
+        return text[:limit]
+    return text[:kept] + note % (kept, len(text))
+
+
 class Verdict:
     """Authentic or not, and if not, exactly which check said so.
 
@@ -228,7 +249,7 @@ class Verdict:
                            the state are both in the request, and neither closes the request
     """
 
-    __slots__ = ("authentic", "code", "reason", "claims", "revocation", "disclosed",
+    __slots__ = ("authentic", "code", "_reason", "claims", "revocation", "disclosed",
                  "issuer_subject", "issuer_anchor", "iss_bound", "unbound_iss", "transaction_data",
                  "wallet_error", "response_code", "vp_token_from_string")
 
@@ -262,6 +283,16 @@ class Verdict:
         # section 8.2), redeemable once with `Verifier.redeem`. None on every other verdict, and
         # never in `as_dict`, so it does not end up in a log.
         self.response_code = None
+
+    @property
+    def reason(self):
+        """Why the verdict is a refusal: at most REASON_MAX characters, its cut note included,
+        however it was set."""
+        return self._reason
+
+    @reason.setter
+    def reason(self, text):
+        self._reason = bounded_reason(text)
 
     def __repr__(self):
         if self.authentic:
@@ -302,7 +333,7 @@ LIST_REFUSED = "list_refused"              # a list was obtained and is not usab
 #: publishes none.
 
 
-def _revocation_state(payload, resolver=None, issuer=None):
+def _revocation_answer(payload, resolver=None, issuer=None):
     """What this verifier can say about revocation.
 
     `issuer` is what the resolver is told the issuer is: the credential's `iss` when something
@@ -373,8 +404,34 @@ def _revocation_state(payload, resolver=None, issuer=None):
                       "recognise, so its revocation state is unknown"}
 
 
+def _revocation_state(payload, resolver=None, issuer=None):
+    """_revocation_answer, its reason at most REASON_MAX characters: it can quote the status URI
+    the credential names, a resolver's answer and what the resolver raised."""
+    state = _revocation_answer(payload, resolver, issuer)
+    if "reason" in state:
+        state["reason"] = bounded_reason(state["reason"])
+    return state
+
+
 def _refuse(code, reason):
     return Verdict(False, code, reason)
+
+
+def _json_kind(value):
+    """The kind of JSON value `value` is, and an array's length: never its content, which a
+    refusal's reason would carry to every place the reason is written (2026-11-19: a
+    disclosure sent as an object was printed whole)."""
+    if isinstance(value, list):
+        return "an array of %d element%s" % (len(value), "" if len(value) == 1 else "s")
+    if isinstance(value, dict):
+        return "a JSON object"
+    if isinstance(value, str):
+        return "a JSON string"
+    if isinstance(value, bool):
+        return "a JSON boolean"
+    if isinstance(value, (int, float)):
+        return "a JSON number"
+    return "JSON null"
 
 
 # --------------------------------------------------------------------------- encoding
@@ -1799,8 +1856,8 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         except (ValueError, json.JSONDecodeError) as exc:
             return _refuse("disclosure", "a disclosure does not decode: %s" % exc)
         if not isinstance(parsed, list) or len(parsed) not in (2, 3):
-            return _refuse("disclosure", "a disclosure must be a 2- or 3-element array, got %r"
-                                         % (parsed if not isinstance(parsed, list) else len(parsed)))
+            return _refuse("disclosure", "a disclosure must be a 2- or 3-element array, got %s"
+                                         % _json_kind(parsed))
         digest = _digest(encoded)
         if digest in by_digest:
             return _refuse("disclosure", "the same disclosure was presented twice")
