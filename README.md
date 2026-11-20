@@ -113,7 +113,7 @@ The vocation above them: **no person can be compelled to renounce, transfer or s
 
 Zero knowledge here means two specific things: a verification that stores no token identifier (C2), and a Merkle-membership proof.
 
-The hard problems, and the mechanism for each: **coercion** (a second code, built for a coercer who does not know it exists, yields a normal-looking verification and records a duress event in the append-only audit trail: [assessment](lab/duress/README.md)), **total loss** (a witnessed, three-channel [recovery](docs/design/recovery-ceremony.md)), and **algorithm migration** (the algorithm is a row; credentials carry old and new signatures through an audited [migration](docs/design/multi-sig-migration.md)).
+The hard problems, and the mechanism for each: **duress** (a second code, built for a coercer who does not know it exists, yields a normal-looking verification and records a duress event in the append-only audit trail: [assessment](lab/duress/README.md)), **total loss** (a witnessed, three-channel [recovery](docs/design/recovery-ceremony.md)), and **algorithm migration** (the algorithm is a row; credentials carry old and new signatures through an audited [migration](docs/design/multi-sig-migration.md)).
 
 <img src="docs/assets/rule.svg" width="100%" alt="">
 
