@@ -383,9 +383,9 @@ one constant body, which names no check:
 
 The response JWE (`jwe.py`) accepts only ECDH-ES over P-256 with A128GCM or A256GCM, with a
 fresh encryption key per request. The listener (`verifier.py`, `serve.py`) is standard library
-only. A request closes only on a presentation it accepts; a response it refuses, for any reason,
-leaves the request open until it expires. A second presentation for an answered request is refused
-as a replay.
+only. A request `Verifier.new_request` makes closes only on a presentation it accepts; a response
+it refuses, for any reason, leaves the request open until it expires. A second presentation for
+an answered request is refused as a replay.
 
 ## Who sees the result
 
@@ -586,12 +586,12 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1092 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1134 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 333 refusals accept and requires a
-  test to fail: 329 are caught, and the 4 survivors are declared with their reasons. It also makes
-  72 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 351 refusals accept and requires a
+  test to fail: 347 are caught, and the 4 survivors are declared with their reasons. It also makes
+  79 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under
@@ -605,7 +605,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
   reason, each line on stderr, the `<-` line and a logged exception; a malformed disclosure named
   by its kind; and the CBOR decoder's item count kept for the whole decode and over each key and
   value, each of its two limits at its number, and, under `--experimental`, an accepted mdoc's
-  line naming what was checked), each of which a test must catch (all 72 are; measured 2026-11-19;
+  line naming what was checked), each of which a test must catch (all 79 are; measured 2026-11-20;
   CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

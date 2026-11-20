@@ -31,6 +31,12 @@ rather than read off the specification (see `lab/interop/`):
 A FRESH ENCRYPTION KEY PER REQUEST. The suite checks that the key in `client_metadata.jwks`
 is not reused between tests, and it is right to: one long-lived response-encryption key makes
 every presentation ever sent to this verifier readable by anybody who later obtains it.
+
+OVER THE DIGITAL CREDENTIALS API (OpenID4VP 1.0 Appendix A), for an mso_mdoc:
+`dc_api_request(origin)` builds the signed request a page passes to `navigator.credentials.get`,
+and `dc_api_response(data, origin=...)` judges the DigitalCredential's `data` the page posts
+back. The response comes encrypted (dc_api.jwt), and the document's SessionTranscript binds it
+to the origin, the nonce and the response key (B.2.6.2).
 """
 import base64
 import functools
@@ -71,6 +77,13 @@ WALLET_AUDIENCE = "https://self-issued.me/v2"
 #: The response mode HAIP pins and every request here names. TS12 section 3.6 has the key
 #: binding JWT of an SCA presentation repeat it.
 RESPONSE_MODE = "direct_post.jwt"
+
+#: A request over the Digital Credentials API (`Verifier.dc_api_request`): the exchange protocol
+#: of a signed one, OpenID4VP 1.0 A.1, "Signed requests (JWS Compact Serialization):
+#: openid4vp-v1-signed", and the response mode HAIP 1.0 section 5.2 pins: "The Verifier MUST use
+#: the Response Mode dc_api.jwt."
+DC_API_PROTOCOL = "openid4vp-v1-signed"
+DC_API_RESPONSE_MODE = "dc_api.jwt"
 
 #: The credential formats a request can ask for, one per verifier: an SD-JWT VC unless named.
 #: `mso_mdoc` asks for an ISO/IEC 18013-5 mdoc, which `mdoc.py` judges.
@@ -408,6 +421,34 @@ class Session:
         self.claims = claims
         self.vct_values = vct_values
 
+
+class DcApiSession:
+    """One outstanding request made over the Digital Credentials API (`Verifier.dc_api_request`),
+    and the secrets that make it answerable once. It is kept under its nonce: the DC API defines
+    no state (OpenID4VP 1.0 A.2, "since the state parameter is not defined for the DC API, the
+    Verifier cannot expect it to be included in the response")."""
+
+    __slots__ = ("nonce", "kid", "enc_key", "origin", "created", "answered")
+
+    def __init__(self, enc_key, origin):
+        # 256 bits, as a redirect request's (Session).
+        self.nonce = secrets.token_urlsafe(32)
+        # The response key's `kid`, which the JWE header repeats (OpenID4VP 1.0 section 8.3). It
+        # names the key in the request and the response; nothing is looked up by it.
+        self.kid = "enc-" + secrets.token_urlsafe(16)
+        self.enc_key = enc_key
+        # The origin the request was made for, as `mdoc.dc_api_origin` writes it.
+        self.origin = origin
+        self.created = time.time()
+        self.answered = False
+
+
+def _encryption_jwk(enc_key, kid):
+    """The public JWK of a request's response key, as its request object carries it."""
+    numbers = enc_key.public_key().public_numbers()
+    return {"kty": "EC", "crv": "P-256", "use": "enc", "alg": "ECDH-ES", "kid": kid,
+            "x": b64u_encode(numbers.x.to_bytes(32, "big")),
+            "y": b64u_encode(numbers.y.to_bytes(32, "big"))}
 
 
 def _says_how_the_vp_token_came(handler):
@@ -1086,6 +1127,11 @@ class Verifier:
                               else verifier_info_entries(verifier_info, (self.query_id,)))
         self._sessions = {}
         self._by_request = {}
+        # Outstanding requests made over the Digital Credentials API (`dc_api_request`), keyed by
+        # their nonce: under the same lock, lifetime and once-only rule as `_sessions`, and in a
+        # table of their own, so that no redirect path finds one and `dc_api_response` finds no
+        # redirect request.
+        self._dc_api = {}
         # Accepted responses waiting to be fetched with their response_code (`redeem`), keyed by
         # the code's SHA-256 so the lookup compares no secret: digest -> (when, state, verdict).
         self._results = {}
@@ -1185,14 +1231,15 @@ class Verifier:
             return state in self._sessions
 
     def attributed_request(self):
-        """The `state` of the request the last `request_object` or `handle_direct_post` call on
-        THIS thread was about, or None. A response is about a request when it decrypted under that
-        request's key and carried its state (an error response in the clear, when its state names
-        one outstanding); a fetch, when the state it asked for is outstanding. A response that
-        decrypted under no outstanding request's key, which is also what an answer to a request
-        that has closed looks like, is about none. Read by a caller that holds hooks run on the
-        thread that answered, to tell an answer about the request it follows from one about
-        another."""
+        """The `state` of the request the last `request_object`, `handle_direct_post` or
+        `dc_api_response` call on THIS thread was about, or None. A response is about a request
+        when it decrypted under that request's key and carried its state (an error response in
+        the clear, when its state names one outstanding); a fetch, when the state it asked for is
+        outstanding. A response that decrypted under no outstanding request's key, which is also
+        what an answer to a request that has closed looks like, is about none, and so is every
+        `dc_api_response` call: the requests it answers have no state. Read by a caller that
+        holds hooks run on the thread that answered, to tell an answer about the request it
+        follows from one about another."""
         return getattr(self._attributed, "state", None)
 
     def request_object(self, state, wallet_nonce=None, wallet_metadata=None):
@@ -1240,11 +1287,7 @@ class Verifier:
     def _response_jwk(session):
         """The key a request asks its response to be encrypted to, as its request object carries
         it. An mdoc's SessionTranscript hashes this key's RFC 7638 thumbprint."""
-        numbers = session.enc_key.public_key().public_numbers()
-        return {"kty": "EC", "crv": "P-256", "use": "enc", "alg": "ECDH-ES",
-                "kid": "enc-" + session.state,
-                "x": b64u_encode(numbers.x.to_bytes(32, "big")),
-                "y": b64u_encode(numbers.y.to_bytes(32, "big"))}
+        return _encryption_jwk(session.enc_key, "enc-" + session.state)
 
     def _vp_formats(self):
         """`client_metadata.vp_formats_supported` for the one format this verifier asks for. For
@@ -1269,13 +1312,7 @@ class Verifier:
             "state": session.state,
             "iat": now,
             "exp": now + self.request_ttl_seconds,
-            # Exactly three keys. The suite warns on a fourth and fails on the older
-            # authorization_encrypted_response_alg/_enc names, which an earlier draft used.
-            "client_metadata": {
-                "jwks": {"keys": [enc_jwk]},
-                "vp_formats_supported": self._vp_formats(),
-                "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
-            },
+            "client_metadata": self._client_metadata(enc_jwk),
             "dcql_query": self._dcql_query(session.claims, session.vct_values),
         }
         if session.transaction_data:
@@ -1285,6 +1322,21 @@ class Verifier:
             claims["wallet_nonce"] = wallet_nonce
         if self.verifier_info:
             claims["verifier_info"] = self.verifier_info
+        return self._signed(claims)
+
+    def _client_metadata(self, enc_jwk):
+        """`client_metadata` for a request whose response is encrypted to `enc_jwk`."""
+        # Exactly three keys. The suite warns on a fourth and fails on the older
+        # authorization_encrypted_response_alg/_enc names, which an earlier draft used.
+        return {
+            "jwks": {"keys": [enc_jwk]},
+            "vp_formats_supported": self._vp_formats(),
+            "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
+        }
+
+    def _signed(self, claims):
+        """`claims` as a signed request object: a JWS under this verifier's key, carrying its
+        leaf certificate alone in `x5c`."""
         header = {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.x5c}
         return _sign_es256(self.key, header, claims)
 
@@ -1540,6 +1592,18 @@ class Verifier:
         (`mdoc_query_refusal`); the docType the query named is `mdoc.py`'s to hold, and so is
         the size limit: the response around the value is bounded before it is decrypted.
         """
+        return self._judge_device_response(presentation, lambda: mdoc.redirect_session_transcript(
+            client_id=self.client_id, nonce=session.nonce, response_uri=self.response_uri,
+            jwk_thumbprint=mdoc.jwk_thumbprint(self._response_jwk(session))))
+
+    def _judge_device_response(self, presentation, make_transcript):
+        """The verdict on one `vp_token` value, a base64url DeviceResponse, or None, against the
+        encoded SessionTranscript that `make_transcript()` builds for the caller's own request:
+        judged at this verifier's clock and, when authentic, held to the query
+        (`mdoc_query_refusal`). The transcript is built only once the value has decoded, where
+        `_judge_mdoc` built it before the Digital Credentials API path shared this code, so a
+        value that is not one base64url DeviceResponse is refused as malformed before the
+        transcript is built."""
         if presentation is None:
             return Verdict(False, "malformed", "the vp_token is not one DeviceResponse for the one "
                                                "credential the DCQL query asked for")
@@ -1548,9 +1612,7 @@ class Verifier:
         except ValueError:
             return Verdict(False, "malformed", "the vp_token value is not a base64url "
                                                "DeviceResponse (OpenID4VP 1.0 B.2.5)")
-        transcript = mdoc.redirect_session_transcript(
-            client_id=self.client_id, nonce=session.nonce, response_uri=self.response_uri,
-            jwk_thumbprint=mdoc.jwk_thumbprint(self._response_jwk(session)))
+        transcript = make_transcript()
         verdict, elements = mdoc.judge_device_response(
             device_response, session_transcript=transcript, iaca_roots=self.iaca_roots,
             doctype=self.doctype_value)
@@ -1704,6 +1766,216 @@ class Verifier:
             "error": error, "error_description": shown, "state": session.state,
             "encrypted": encrypted})
 
+    # ------------------------------------------------- the Digital Credentials API (Appendix A)
+
+    def dc_api_request(self, origin):
+        """Start one presentation request over the W3C Digital Credentials API, for a page served
+        from `origin`. Returns the member a page passes to `navigator.credentials.get`, in its
+        `digital.requests`:
+
+            {"protocol": "openid4vp-v1-signed", "data": {"request": JWS}}
+
+        OpenID4VP 1.0 A.3.2.1: "All request parameters are encoded in a request object as defined
+        in Section 5 and the JWS object is used as the value of the request claim in the data
+        element of the API call." The request object is signed as a redirect request object is,
+        with the same key and header, and carries `aud` (OpenID4VP 1.0 s5.8: "the aud claim
+        MUST be "https://self-issued.me/v2", when Static Discovery metadata is used"; no wallet's
+        metadata is fetched here, so its other case, "when Dynamic Discovery is performed", does
+        not arise), `client_id` (this verifier's x509_hash),
+        `expected_origins` (`[origin]`), `response_type` vp_token, `response_mode` dc_api.jwt,
+        a fresh `nonce`, `client_metadata` (a response key of its own, and the encryption values
+        and `vp_formats_supported` a redirect request object carries), the mso_mdoc
+        `dcql_query`, and `verifier_info` when the verifier carries one. No `response_uri` and no
+        `state`: the page receives the response, and A.2 says "since the state parameter is not
+        defined for the DC API, the Verifier cannot expect it to be included in the response."
+
+        `origin` is read as `mdoc.dc_api_origin` reads it, and the request carries it as a
+        browser writes it. Raises ValueError, and no request is made, for an origin that
+        `mdoc.dc_api_origin` refuses and for a verifier not built for `mso_mdoc`. The request is
+        answerable once, through `dc_api_response`, for `request_ttl_seconds`.
+        """
+        if self.credential_format != MDOC_FORMAT:
+            raise ValueError("a request over the Digital Credentials API asks for an %s; this verifier "
+                             "asks for %s" % (MDOC_FORMAT, self.credential_format))
+        written = mdoc.dc_api_origin(origin)
+        session = DcApiSession(ec.generate_private_key(ec.SECP256R1()), written)
+        claims = {
+            "aud": WALLET_AUDIENCE,
+            "client_id": self.client_id,
+            "expected_origins": [written],
+            "response_type": "vp_token",
+            "response_mode": DC_API_RESPONSE_MODE,
+            "nonce": session.nonce,
+            "client_metadata": self._client_metadata(_encryption_jwk(session.enc_key, session.kid)),
+            "dcql_query": self._dcql_query(),
+        }
+        if self.verifier_info:
+            claims["verifier_info"] = self.verifier_info
+        request = self._signed(claims)
+        with self._lock:
+            self._expire_locked()
+            self._dc_api[session.nonce] = session
+        return {"protocol": DC_API_PROTOCOL, "data": {"request": request}}
+
+    def dc_api_response(self, data, *, origin):
+        """Judge what a page posts after `navigator.credentials.get` answers a `dc_api_request`:
+        the DigitalCredential's `data`, parsed (OpenID4VP 1.0 A.4: "the OpenID4VP Response
+        parameters as defined for the Response Type are represented as an object within the data
+        property"). `origin` is the origin the page was served from, as the caller is configured
+        with it; nothing in `data` is read for it. Returns (http_status, body_dict, verdict), as
+        `handle_direct_post` does: 200 and `{}` with an authentic verdict for an accepted
+        presentation, 200 and `{}` with a `wallet_error` verdict for a wallet's error, and 400
+        and REFUSAL_BODY for anything else, the reason in the verdict. Nothing it is given makes
+        it raise.
+
+        `{"response": JWE}` is decrypted under the key of the outstanding request it was
+        encrypted to, found by trying each, as `handle_direct_post` finds one. That request must
+        have been made for `origin` (A.4: "The security properties that are normally provided by
+        the Client Identifier are achieved by binding the response to the Origin it was received
+        from."). Its `vp_token`, one base64url DeviceResponse under the query's id, is judged
+        against B.2.6.2's SessionTranscript built from the request's own origin, nonce and
+        response key (`mdoc.dc_api_session_transcript`), at this verifier's clock, and held to
+        the query. An accepted presentation closes its request, so the same response posted
+        again is refused; a refused one leaves it open until it expires. An `error` inside the
+        JWE is the wallet's error for that request, and closes it.
+
+        `{"error": CODE}` is A.4's error response: "Protocol error responses are returned as an
+        object within the data property. This object has a single property with the name error
+        and a value containing the error response code as defined in Section 8.5." Its verdict
+        names the code. It names no request, so none is closed.
+
+        A `vp_token` in the clear, what Response Mode dc_api sends, is refused: the request asked
+        for dc_api.jwt, as HAIP 1.0 section 5.2 has a Verifier do ("The Verifier MUST use the
+        Response Mode dc_api.jwt.").
+        """
+        # The requests made here have no state: no line about this answer is to name the one
+        # the last redirect call on this thread was about.
+        self._attributed.state = None
+        try:
+            posted_at = mdoc.dc_api_origin(origin)
+        except ValueError as exc:
+            return self._error("misconfigured", "the origin this response was posted from is not "
+                                                "one: %s" % exc)
+        if not isinstance(data, dict):
+            return self._error("invalid_request", "the DigitalCredential's data is not an object "
+                                                  "(OpenID4VP 1.0 A.4)")
+        if data.get("error") is not None:
+            if data.get("response") is not None or data.get("vp_token") is not None:
+                return self._error("invalid_request", "the data carries both an error and a "
+                                                      "response")
+            return self._dc_api_wallet_error(None, data["error"], data.get("error_description"))
+        if data.get("vp_token") is not None:
+            return self._error("invalid_request",
+                               "the vp_token was posted in the clear, as Response Mode dc_api "
+                               "sends it, and the request asked for dc_api.jwt (HAIP 1.0 section "
+                               "5.2: \"The Verifier MUST use the Response Mode dc_api.jwt.\")")
+        token = data.get("response")
+        if not token:
+            return self._error("invalid_request", "the data carries no response")
+        try:
+            check_compact_length(token)
+        except JweError as exc:
+            return self._error("invalid_request", str(exc))
+        # The response names no request: the key it decrypts under does. Each outstanding one is
+        # tried, the token read once, as handle_direct_post does for direct_post.jwt.
+        with self._lock:
+            self._expire_locked()
+            candidates = list(self._dc_api.values())
+        session, body, compact = None, None, None
+        if candidates:
+            try:
+                compact = _read_compact(token)
+            except JweError:
+                candidates = []
+        for candidate in candidates:
+            try:
+                body = _open_response(compact, candidate.enc_key)
+            except JweError:
+                continue
+            session = candidate
+            break
+        if session is None:
+            return self._error("invalid_request",
+                               "the response did not decrypt under any outstanding Digital "
+                               "Credentials API request's key: it was encrypted to somebody "
+                               "else, altered, or it answers a request that has closed or expired")
+        if session.origin != posted_at:
+            return self._error("origin", "the response was posted from %s and answers a request "
+                                         "made for %s" % (posted_at, session.origin))
+        # An error encrypted to the request's key ends the request, where a redirect request's
+        # stays open (`_error_in_the_clear`). A redirect request object is served to whoever names
+        # its state, the QR code a person scans; this one was handed only to the caller of
+        # `dc_api_request`, the page that asked for it, and through the browser to the wallet, and
+        # is served to nobody again. So the error comes from one of the two.
+        if body.get("error") is not None:
+            if body.get("vp_token") is not None:
+                return self._error("invalid_request", "the response carries both an error and "
+                                                      "a vp_token")
+            return self._dc_api_wallet_error(session, body["error"], body.get("error_description"))
+        verdict = self._judge_dc_api(session, self._single_presentation(body.get("vp_token")))
+        if not verdict.authentic:
+            return self._error(verdict.code, verdict.reason)
+        return self._close_dc_api(session, verdict)
+
+    def _judge_dc_api(self, session, presentation):
+        """The verdict on an answer to `session`'s request over the Digital Credentials API, as
+        `_judge_mdoc` gives one, against B.2.6.2's SessionTranscript: the origin the request was
+        made for, its nonce and the thumbprint of its response key, none of it read from the
+        response."""
+        return self._judge_device_response(presentation, lambda: mdoc.dc_api_session_transcript(
+            origin=session.origin, nonce=session.nonce,
+            jwk_thumbprint=mdoc.jwk_thumbprint(_encryption_jwk(session.enc_key, session.kid))))
+
+    def _dc_api_wallet_error(self, session, error, description):
+        """Answer a wallet's error response over the Digital Credentials API: 200, `{}`, and a
+        verdict that is never authentic, coded `wallet_error`, with `wallet_error` holding what
+        it said, as `_wallet_error` gives one. `session` is the request whose key it was
+        encrypted to, which it closes, or None for one in the clear, which names none. Refused
+        instead, the request left open, when its `error` is not a code of the shape
+        `_ERROR_CODE` holds or its `error_description` is not a string."""
+        if not isinstance(error, str) or not _ERROR_CODE.fullmatch(error):
+            return self._error("invalid_request", "the error response's error is not an error "
+                                                  "code: 1 to 64 letters, digits or underscores")
+        if description is not None and not isinstance(description, str):
+            return self._error("invalid_request", "the error response's error_description is "
+                                                  "not a string")
+        shown = _printable(description) if description else None
+        if session is None:
+            reason = ("%s, in the clear over the Digital Credentials API: an error object names "
+                      "no request (OpenID4VP 1.0 A.4), so none is closed" % error)
+        else:
+            reason = ("%s, encrypted to the key of a request over the Digital Credentials API, "
+                      "which it closes" % error)
+        if shown is not None:
+            reason += '; error_description "%s"' % shown
+        verdict = Verdict(False, "wallet_error", reason, wallet_error={
+            "error": error, "error_description": shown, "state": None,
+            "encrypted": session is not None})
+        if session is None:
+            return 200, {}, verdict
+        return self._close_dc_api(session, verdict)
+
+    def _close_dc_api(self, session, verdict):
+        """Close `session`'s request on the response that ends it, and answer: 200 and `{}`."""
+        # Under the lock, so that of two responses ending one request (a replay racing the
+        # original) exactly one closes it and the other is refused, as `_close_and_answer` does
+        # for a redirect; a request that expired while this one was judged is not answered,
+        # whether another call's sweep removed it or no call has swept since: the clock is read
+        # here, with the comparison `_expire_locked` makes.
+        # The age first: another call's sweep may have removed an expired request from the
+        # table, and its lifetime, not a replay, is what refused this response.
+        with self._lock:
+            if session.created < time.time() - self.request_ttl_seconds:
+                return self._error("invalid_request", "this request's lifetime ended while this "
+                                                      "response was judged")
+            if session.answered or self._dc_api.get(session.nonce) is not session:
+                return self._error("invalid_request",
+                                   "this request has already been answered; a second response "
+                                   "for the same nonce is a replay")
+            session.answered = True
+            self._dc_api.pop(session.nonce, None)
+        return 200, {}, verdict
+
     #: What every refused presentation gets back, whatever was wrong with it. One constant
     #: string, one status. Anything that varies with the CAUSE is an oracle: an attacker
     #: probes one check at a time and is told which one to work on next.
@@ -1733,6 +2005,8 @@ class Verifier:
         for state in [s for s, sess in self._sessions.items() if sess.created < cutoff]:
             self._sessions.pop(state, None)
             self._by_request.pop(state, None)
+        for nonce in [n for n, sess in self._dc_api.items() if sess.created < cutoff]:
+            self._dc_api.pop(nonce, None)
         for key in [k for k, (when, _, _) in self._results.items() if when < cutoff]:
             self._results.pop(key, None)
 

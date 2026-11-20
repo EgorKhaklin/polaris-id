@@ -477,6 +477,40 @@ NAMED_MUTANTS = (
     ("cli:keygen-mode-left-to-the-umask", "polaris_oid4vp/cli.py",
      "                os.fchmod(fh.fileno(), mode)\n",
      "                pass  # MUTANT\n"),
+    # 2026-11-19, OpenID4VP 1.0 Appendix A, an mso_mdoc over the Digital Credentials API: a response
+    # is held to the origin its request was made for (A.4), its SessionTranscript is B.2.6.2's,
+    # labelled OpenID4VPDCAPIHandover and hashing the response key's thumbprint, and the request
+    # names the origins it may be answered from (A.2, expected_origins). Each takes one away.
+    ("verifier:dc-api-origin-unchecked", "polaris_oid4vp/verifier.py",
+     "        if session.origin != posted_at:\n",
+     "        if False:  # MUTANT\n"),
+    ("mdoc:dc-api-handover-labelled-as-the-redirects", "polaris_oid4vp/mdoc.py",
+     "    return cbor.encode([None, None, [\"OpenID4VPDCAPIHandover\", hashlib.sha256(info).digest()]])\n",
+     "    return cbor.encode([None, None, [\"OpenID4VPHandover\", hashlib.sha256(info).digest()]])  # MUTANT\n"),
+    ("mdoc:dc-api-handover-without-the-thumbprint", "polaris_oid4vp/mdoc.py",
+     "    info = cbor.encode([written, nonce, jwk_thumbprint])\n",
+     "    info = cbor.encode([written, nonce])  # MUTANT\n"),
+    ("verifier:dc-api-request-without-expected-origins", "polaris_oid4vp/verifier.py",
+     "            \"expected_origins\": [written],\n",
+     ""),
+    # The request object's audience (OpenID4VP 1.0 s5.8, Static Discovery); a request that expires
+    # while its response is judged is not answered, though no call swept the table; and a value
+    # that is not one DeviceResponse is refused before the SessionTranscript is built.
+    ("verifier:dc-api-request-without-aud", "polaris_oid4vp/verifier.py",
+     "            \"aud\": WALLET_AUDIENCE,\n            \"client_id\": self.client_id,\n"
+     "            \"expected_origins\": [written],\n",
+     "            \"client_id\": self.client_id,\n            \"expected_origins\": [written],  # MUTANT\n"),
+    ("verifier:dc-api-close-without-the-clock", "polaris_oid4vp/verifier.py",
+     "            if session.created < time.time() - self.request_ttl_seconds:\n"
+     "                return self._error(\"invalid_request\", \"this request's lifetime ended while this \"\n"
+     "                                                      \"response was judged\")\n"
+     "            if session.answered or self._dc_api.get(session.nonce) is not session:\n",
+     "            if session.answered or self._dc_api.get(session.nonce) is not session:  # MUTANT\n"),
+    ("verifier:mdoc-transcript-built-before-the-decode", "polaris_oid4vp/verifier.py",
+     "        if presentation is None:\n"
+     "            return Verdict(False, \"malformed\", \"the vp_token is not one DeviceResponse for the one \"\n",
+     "        make_transcript()  # MUTANT\n        if presentation is None:\n"
+     "            return Verdict(False, \"malformed\", \"the vp_token is not one DeviceResponse for the one \"\n"),
 )
 
 
