@@ -60,6 +60,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp `serve` and `verdict` write at most 512 characters of the reason for refusing a presentation, and its full length when it is cut, on the lines they print and in `serve`'s `--result` file (GHSA-hfvc-qh8w-chp8).
 - polaris-oid4vp (`--experimental`): mdoc decoding refuses as `malformed` a DeviceResponse over 512 KiB, and each CBOR decode refuses arrays, maps and tags nested more than 32 deep, an array or map whose head states more than 1024 entries, and more than 4096 data items, under the check of the part it reads: `malformed` for the DeviceResponse itself. polaris-verify: mdoc decoding is hardened.
 - polaris-oid4vp `serve --control-token-file`, on Linux and macOS, refuses a token file with any permission for others (0600, or 0640 for its group), and the README's recipe makes the file private (GHSA-v4q3-vxp6-5jj4).
+- polaris-oid4vp `keygen` and `serve` name 127.0.0.1 when no `--host` is given, the address the listener binds by default, where they named localhost, and `keygen` writes an address into its certificates as an IP address. Under TLS and without `--public-base-url`, `serve` refuses to start (exit 2) on a listener certificate whose subjectAltName does not name the host of the origin it prints, such as one an earlier `keygen` made with no `--host`, and names the `keygen` command that makes one.
 
 ### Fixed
 
@@ -134,6 +135,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- polaris-oid4vp `keygen`, and `serve` without `--public-base-url`, refuse an IPv6 `--host` (exit 2) and name what to give: a name or an IPv4 address.
 - polaris-oid4vp `serve --experimental`: the `<-` line for an accepted mdoc names what was checked.
 - polaris-oid4vp `serve`: a refusal's `reason` in the `--result` file and the control read is the text its `<-` line prints, quoted the same way, as the README says.
 - polaris-oid4vp's README: the control call reads its header from a private file (`curl -H @FILE`), the image reaches the operator's token file through the operator's group (`group_add`), and a call from this machine names 127.0.0.1.

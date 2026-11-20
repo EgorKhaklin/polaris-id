@@ -127,9 +127,12 @@ holds this package from PyPI, installed by hash.
 - `--bind` is the address the listener binds: 127.0.0.1 by default, this machine only. A wallet on
   another device needs `--bind 0.0.0.0` (every interface), or a reverse proxy or tunnel on this
   machine (`--public-base-url`, below). An empty `--bind` is refused (exit 2). A call from this
-  machine names 127.0.0.1, not localhost, which a client may try as ::1 first: under TLS,
-  `curl --resolve localhost:9443:127.0.0.1 https://localhost:9443/...`, as keygen's certificate
-  names localhost unless `--host` names another.
+  machine names 127.0.0.1, not localhost, which a client may try as ::1 first. With no `--host`,
+  `keygen` and `serve` name 127.0.0.1: `serve` prints `https://127.0.0.1:9443`, and keygen's
+  certificates name that address as an IP address, so a client that checks the name accepts it
+  (`curl --cacert pki/tls.pem https://127.0.0.1:9443/...`). Under TLS and without
+  `--public-base-url`, `serve` refuses to start (exit 2) on a certificate whose subjectAltName does
+  not name the host it prints, and names the `keygen` command that makes one.
 - `--public-base-url https://verifier.example` sets the HTTPS origin a wallet reaches this
   verifier by when it runs behind a reverse proxy or a tunnel, where the public URL differs
   from the local `--bind`/`--port`. It is used for the `request_uri` and `response_uri`;
@@ -583,7 +586,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1084 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1092 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 333 refusals accept and requires a
