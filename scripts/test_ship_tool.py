@@ -636,6 +636,35 @@ class TriageHonestyTests(unittest.TestCase):
         self.assertIn("gh run rerun 123 --failed", text)
         self.assertEqual(rc, 0)
 
+    def test_a_job_whose_runner_was_lost_is_named_not_left_unknown(self):
+        # Run 44682384966, attempt 1, 2026-11-20 (PR #583): the HA failover drill had started, so
+        # it has steps; GitHub lost its runner, `--log-failed` printed nothing to stdout ("log not
+        # found: 136108679515" on stderr), and the reason was only the check run's annotation.
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "HA profile survives a leader crash", "conclusion": "failure",
+             "steps": [{"name": "Failover drill"}], "databaseId": 9}]}
+        note = [{"message": "The hosted runner lost communication with the server. Anything in "
+                            "your workflow that terminates the runner process, starves it for "
+                            "CPU/Memory, or blocks its network access can cause this error."}]
+        rc, text, calls = self._triage_with(jobs, "", note)
+        self.assertIn("known flake [runner-lost]", text)
+        self.assertIn("gh run rerun 123 --failed", text)
+        self.assertEqual(rc, 0)
+        self.assertIn(("api", "repos/{owner}/{repo}/check-runs/9/annotations"), calls)
+
+    def test_a_started_job_with_no_log_and_an_ordinary_reason_is_not_rerun(self):
+        # A job that failed in a step and left no log is annotated with its exit code. Reading
+        # that annotation must give "investigate", never a rerun and never "no log to read yet".
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "x", "conclusion": "failure", "steps": [{"name": "s"}], "databaseId": 9}]}
+        rc, text, _ = self._triage_with(jobs, "", [{"message": "Process completed with exit "
+                                                               "code 1."}])
+        self.assertIn("verdict: investigate", text)
+        self.assertIn("x: Process completed with exit code 1.", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertNotIn("UNKNOWN", text)
+        self.assertEqual(rc, 1)
+
     def test_a_pages_flake_is_answered_with_a_fresh_run_never_a_rerun(self):
         jobs = {"conclusion": "failure", "workflowName": "Pages", "headBranch": "main", "jobs": [
             {"name": "Redirect the old GitHub Pages address to the project site",

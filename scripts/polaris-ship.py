@@ -1332,11 +1332,21 @@ FLAKE_SIGNATURES = [
 # 2026-09-30: a job GitHub could not give a runner never starts: it has no steps and no log,
 # so `--log-failed` returns nothing for a run that has in fact finished, and triage used to say
 # "UNKNOWN, no log to read yet" about it (run 36712294233, "Full prod compose boots"). The reason
-# exists only in the job's check-run annotation, which triage now reads for exactly those jobs.
+# exists only in the job's check-run annotation, which triage reads (see _failed_job_reasons).
 FLAKE_SIGNATURES.append(
     ("runner-not-acquired", r"was not started because it repeatedly failed to be acquired",
      "GitHub could not give the job a runner, so it never started and left no log; rerun the "
      "failed jobs"))
+# 2026-11-20, job 136108679515 (the HA failover drill, PR #583, run 44682384966): GitHub lost the
+# job's runner mid-run. The job had started, so it has steps; `--log-failed` printed nothing ("log
+# not found" for the job, on stderr), and triage, which read annotations only for jobs with no
+# steps, said UNKNOWN about the finished run. The rerun, on another runner, passed. GitHub's text
+# adds that a job which starves or kills its runner causes the same error, so a job that loses its
+# runner again is the job's fault, not a flake.
+FLAKE_SIGNATURES.append(
+    ("runner-lost", r"The hosted runner lost communication with the server",
+     "GitHub lost the job's runner mid-run, so the job left no log; rerun the failed jobs (if "
+     "the same job loses its runner again, it is starving or killing the runner: investigate)"))
 # 2026-11-19, job 135639532621 (procedure drill shard 3 of 6, PR #596): the runner's apt-get
 # update fetched packages.microsoft.com and no Ubuntu archive, so `apt-get install ... age` found
 # no package and exited 100; the rerun, on another runner, passed. The match is the whole block:
@@ -1434,11 +1444,13 @@ def _gh(*args):
     return r.stdout
 
 
-def _never_started_reasons(jobs):
-    """The annotations on failed jobs that ran no step, one `job<TAB>message` line each."""
+def _failed_job_reasons(jobs):
+    """The annotations on the failed jobs, one `job<TAB>message` line each. A job that never got
+    a runner has no steps; a job whose runner was lost has steps. Neither leaves a log, so every
+    failed job is read, not only the ones that ran no step."""
     lines = []
     for job in jobs.get("jobs", []):
-        if job.get("conclusion") == "failure" and not job.get("steps") and job.get("databaseId"):
+        if job.get("conclusion") == "failure" and job.get("databaseId"):
             notes = json.loads(_gh("api", "repos/{owner}/{repo}/check-runs/%s/annotations"
                                    % job["databaseId"]) or "[]")
             lines += ["%s\t%s" % (job.get("name", "?"), n.get("message", "")) for n in notes]
@@ -1457,10 +1469,11 @@ def triage(run_id=None, out=None):
     failed = [j["name"] for j in jobs.get("jobs", []) if j.get("conclusion") == "failure"]
     log = subprocess.run(["gh", "run", "view", str(run_id), "--log-failed"], capture_output=True, text=True, cwd=ROOT).stdout
     print("run %s: %s; failed jobs: %s" % (run_id, jobs.get("conclusion"), ", ".join(failed) or "none"), file=out)
-    # A finished run with no failed-job log: a job that never started has no log to give, and
-    # GitHub records why only as an annotation on it. Read those, so the verdict rests on them.
+    # A finished run with no failed-job log: a job that never started, or one whose runner was
+    # lost, has no log to give, and GitHub records why only as an annotation on it. Read those, so
+    # the verdict rests on them.
     if jobs.get("conclusion") is not None and not log.strip():
-        log = _never_started_reasons(jobs)
+        log = _failed_job_reasons(jobs)
 
     # v9.377: "I could not look" is not "I looked and found nothing". gh refuses --log-failed
     # while ANY job in the run is still going, so triaging a run whose failure has already
