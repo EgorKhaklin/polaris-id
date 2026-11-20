@@ -1,0 +1,10 @@
+polaris-negative-vectors
+Copyright 2026 Egor Khaklin
+
+This package is licensed under the Apache License, Version 2.0 (see the
+LICENSE file in this package, or http://www.apache.org/licenses/LICENSE-2.0).
+
+It carries two data files from Polaris (https://github.com/EgorKhaklin/polaris-id),
+lab/interop/negative-vectors, byte for byte: vectors.json and mdoc-vectors.json.
+manifest.json names each file's version, size and SHA-256. The keys and
+certificates inside the files are test material derived from public seeds.

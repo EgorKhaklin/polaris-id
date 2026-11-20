@@ -422,6 +422,8 @@ UNSHARDED_SUITES = {
     "lab/interop/eudi-dev/capture": ["test_capture"],
     "lab/interop/eudi-dev": ["test_walk"],
     "lab/interop/negative-vectors": ["test_vectors"],
+    # Needs node and npm; packs and installs offline into a temporary project.
+    "packages/polaris-negative-vectors": ["test_package"],
     "lab/interop/swiyu": ["test_swiyu"],
     "lab/interop/status-list/revoked": ["test_fixture"],
     "lab/interop/fixtures/ed25519-holder": ["test_fixture"],
@@ -464,6 +466,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/eudi-dev/capture": ("unittest", None),
     "lab/interop/eudi-dev":     ("unittest", None),
     "lab/interop/negative-vectors": ("unittest", None),
+    "packages/polaris-negative-vectors": ("unittest", None),
     "lab/interop/swiyu":        ("unittest", None),
     "lab/interop/status-list/revoked": ("unittest", None),
     "lab/interop/fixtures/ed25519-holder": ("unittest", None),

@@ -243,6 +243,16 @@ package, held as a repository secret for that one run and revoked within the hou
 is gone and the workflow no longer reads one; 1.0.0-rc.1 went out through the trusted
 publisher on 2026-09-16, the first token-free npm publish, under the `next` dist-tag.
 
+`polaris-negative-vectors` (`packages/polaris-negative-vectors/`, the two files of
+`lab/interop/negative-vectors` as data) takes the same route for the same reason. Its first version
+is staged by a maintainer from their own npm login, with no token: `python3
+packages/polaris-negative-vectors/stage.py OUT` (it stages and checks, and prints `done`), then in
+OUT `npm stage publish --access public` and `npm stage approve <stage-id>` with a second factor. npm
+stages a name that does not exist yet behind a public placeholder version, `0.0.0-stage`
+(<https://docs.npmjs.com/staged-publishing>). Its trusted publisher is then created on its access
+page with the fields above, and every later version goes through the `polaris-negative-vectors
+(npm)` target of `publish.yml`, which stages it again from the commit and checks it before the upload.
+
 The npm job also learned three things the hard way that day, each recorded below: a
 prerelease is refused without a dist-tag; `setup-node` with a `registry-url` writes a
 placeholder token into the npm config, which the CLI then uses instead of the identity
