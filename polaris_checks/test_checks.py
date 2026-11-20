@@ -23437,7 +23437,8 @@ def test_published_readme_links_check_discriminates(tmp_path):
     GOOD = "# polaris\n\nSee [the spec](%s).\n" % SPEC
     RELATIVE = "# polaris\n\nSee [the spec](../../conformance/SPEC.md).\n"
     NAMES = ("packages/polaris-verify/README.md", "packages/polaris-oid4vp/README.md",
-             "sdk/python/README.md", "sdk/typescript/README.md")
+             "sdk/python/README.md", "sdk/typescript/README.md",
+             "packages/polaris-negative-vectors/README.md")
 
     def write(bad=None, body=RELATIVE, drop=None):
         root = tmp_path / ("case%d" % write.n)
@@ -23475,20 +23476,26 @@ def test_distribution_licence_check_discriminates(tmp_path):
     # have been permanent. The good fixture carries both everywhere and names both in the
     # npm allowlist; each perturbation removes exactly one of those.
     PKGS = ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python",
-            "sdk/typescript")
-    TEXT = "Apache License Version 2.0 " + ("x" * 1200)
+            "sdk/typescript", "packages/polaris-negative-vectors")
+    LINE = "Copyright 2026 Egor Khaklin"
+    TEXT = "Apache License Version 2.0 " + LINE + " " + ("x" * 1200)
     GOOD_JSON = '{"name": "polaris-sdk-ts", "files": ["dist", "README.md", "LICENSE", "NOTICE"]}'
+    DATA_JSON = '{"name": "v", "files": ["vectors.json", "NOTICE", "LICENSE"]}'
 
-    def write(drop=None, short=None, package_json=GOOD_JSON):
+    def write(drop=None, short=None, package_json=GOOD_JSON, data_json=DATA_JSON, notice=None):
         root = tmp_path / ("case%d" % write.n)
         write.n += 1
+        (root).mkdir(parents=True, exist_ok=True)
+        (root / "NOTICE").write_text("Polaris\n%s\n" % LINE)
         for pkg in PKGS:
             (root / pkg).mkdir(parents=True, exist_ok=True)
             for name in ("LICENSE", "NOTICE"):
                 if drop == (pkg, name):
                     continue
-                (root / pkg / name).write_text("short" if short == (pkg, name) else TEXT)
+                body = notice[1] if (notice and name == "NOTICE" and pkg == notice[0]) else TEXT
+                (root / pkg / name).write_text("short" if short == (pkg, name) else body)
         (root / "sdk/typescript/package.json").write_text(package_json)
+        (root / "packages/polaris-negative-vectors/package.json").write_text(data_json)
         for pkg in ("packages/polaris-verify", "packages/polaris-oid4vp", "sdk/python"):
             (root / pkg / "pyproject.toml").write_text(
                 '  "Development Status :: 3 - Alpha",\n'
@@ -23508,6 +23515,31 @@ def test_distribution_licence_check_discriminates(tmp_path):
     # A stub standing in for the licence is not the licence.
     stub = checks.check_distributions_carry_their_licence(write(short=(PKGS[0], "LICENSE")))
     assert any(f.level == "FAIL" for f in stub), stub
+    # A NOTICE is held to the floor as before (2026-11-20 ruling): a package that ships code or
+    # a dependency carries their notices, so one cut to its copyright line fails, in each of
+    # the four, while the data-only package's short NOTICE with the line passes.
+    short_own = "polaris-negative-vectors\n%s\n\nLicensed under the Apache License, Version 2.0.\n" % LINE
+    for pkg in PKGS[:-1]:
+        cut = checks.check_distributions_carry_their_licence(write(notice=(pkg, short_own)))
+        assert any(f.level == "FAIL" for f in cut) and "too short" in cut[0].message, (pkg, cut)
+        assert pkg in cut[0].message, cut
+    own = checks.check_distributions_carry_their_licence(write(notice=(PKGS[-1], short_own)))
+    assert all(f.level == "OK" for f in own), own
+    # Every package NOTICE carries the root's copyright line: a full-length one of another
+    # copyright fails in each of the five, and so does the data package's short one.
+    for pkg in PKGS:
+        other = checks.check_distributions_carry_their_licence(
+            write(notice=(pkg, "x\nCopyright 2026 Someone Else\n" + "y" * 1200)))
+        assert any(f.level == "FAIL" for f in other) and "does not carry" in other[0].message, (pkg, other)
+        assert pkg in other[0].message, other
+    other = checks.check_distributions_carry_their_licence(
+        write(notice=(PKGS[-1], "x\nCopyright 2026 Someone Else\n")))
+    assert any(f.level == "FAIL" for f in other) and "does not carry" in other[0].message, other
+    # With no root NOTICE there is nothing to hold a package NOTICE to.
+    root = write()
+    (root / "NOTICE").unlink()
+    gone = checks.check_distributions_carry_their_licence(root)
+    assert any(f.level == "FAIL" for f in gone) and "root NOTICE" in gone[0].message, gone
 
     # A project page with no maturity signal reads as more settled than a 0.1.0 is, and a
     # licence advertised by one mechanism while shipped by another is only half checked.
@@ -23531,6 +23563,11 @@ def test_distribution_licence_check_discriminates(tmp_path):
                   % ", ".join('"%s"' % f for f in allow)))
         assert any(f.level == "FAIL" for f in listed), missing
         assert "allowlist" in listed[0].message, listed[0].message
+        data = [f for f in ["vectors.json", "NOTICE", "LICENSE"] if f != missing]
+        listed = checks.check_distributions_carry_their_licence(
+            write(data_json='{"name": "v", "files": [%s]}' % ", ".join('"%s"' % f for f in data)))
+        assert any(f.level == "FAIL" for f in listed), missing
+        assert "packages/polaris-negative-vectors/package.json" in listed[0].message, listed[0].message
 
 
 def test_no_vacuous_checks_catches_a_check_that_passes_on_nothing(tmp_path, monkeypatch):
@@ -23959,7 +23996,12 @@ def test_published_dependency_names_check_discriminates(tmp_path):
     PUBLISH = ("jobs:\n  build:\n    steps:\n      - run: |\n"
                "          python -m build --no-isolation --outdir dist/polaris-verify packages/polaris-verify\n"
                "          python -m build --no-isolation --outdir dist/polaris-id-cli polaris_cli\n"
-               "      - run: cd sdk/typescript && npm pack --pack-destination \"$GITHUB_WORKSPACE/dist\"\n")
+               "      - run: cd sdk/typescript && npm pack --pack-destination \"$GITHUB_WORKSPACE/dist\"\n"
+               "      - run: |\n"
+               "          python packages/polaris-negative-vectors/stage.py \"$RUNNER_TEMP/negvec\"\n"
+               "          (cd \"$RUNNER_TEMP/negvec\" && npm pack --pack-destination dist/negvec)\n"
+               "          python packages/polaris-negative-vectors/stage.py --check \"$RUNNER_TEMP/negvec-x\"\n")
+    NEGVEC = '{"name": "v", "files": ["vectors.json"]}\n'
     VERIFY = ('[build-system]\nrequires = ["setuptools>=68"]\n\n[project]\nname = "x"\n'
               '# "oqs>=0.10" in a comment is not a dependency\ndependencies = []\n\n'
               '[project.optional-dependencies]\ncryptography = ["cryptography>=48"]\n'
@@ -23970,11 +24012,12 @@ def test_published_dependency_names_check_discriminates(tmp_path):
     TS = '{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1"}}\n'
     DOC = "pip install liboqs-python\npip install --pre 'polaris-verify[oqs]'\n"
 
-    def write(publish=PUBLISH, verify=VERIFY, cli=CLI, ts=TS, doc=DOC):
+    def write(publish=PUBLISH, verify=VERIFY, cli=CLI, ts=TS, doc=DOC, negvec=NEGVEC):
         for rel, body in ((".github/workflows/publish.yml", publish),
                           ("packages/polaris-verify/pyproject.toml", verify),
                           ("polaris_cli/pyproject.toml", cli),
                           ("sdk/typescript/package.json", ts),
+                          ("packages/polaris-negative-vectors/package.json", negvec),
                           ("docs/INSTALL.md", doc)):
             f = tmp_path / rel
             f.parent.mkdir(parents=True, exist_ok=True)
@@ -23988,8 +24031,39 @@ def test_published_dependency_names_check_discriminates(tmp_path):
 
     write()
     out = fn(tmp_path)
-    assert out[0].level == "OK" and "3 published manifests declare 6" in out[0].message, \
-        ("must PASS when every name is listed, normalized as PEP 503 does", out)
+    assert out[0].level == "OK" and "4 published manifests declare 6" in out[0].message, \
+        ("must PASS when every name is listed, normalized as PEP 503 does, and the data-only "
+         "manifest of a staged pack declares none", out)
+
+    # A pack in a directory staged at run time reads the manifest beside its stage.py...
+    # "no dependency at all": every key npm reads, each with a failing fixture (2026-11-20)...
+    for key, value in (("dependencies", '{"left-pad": "^1"}'), ("devDependencies", '{"left-pad": "^1"}'),
+                       ("peerDependencies", '{"left-pad": "^1"}'), ("optionalDependencies", '{"left-pad": "^1"}'),
+                       ("bundleDependencies", '["left-pad"]'), ("bundledDependencies", '["left-pad"]'),
+                       ("bundleDependencies", "true")):
+        write(negvec='{"name": "v", "%s": %s}\n' % (key, value))
+        fails("must FAIL when a data-only manifest declares a dependency under %s" % key,
+              "published as data only", "under %s" % key)
+    # ...an empty one declares nothing...
+    write(negvec='{"name": "v", "dependencies": {}, "bundleDependencies": []}\n')
+    assert fn(tmp_path)[0].level == "OK", fn(tmp_path)
+    # ...and the three-key reading of every other manifest is unchanged: a devDependency of the
+    # TypeScript SDK is no published dependency.
+    write(ts='{"name": "z", "dependencies": {"@noble/post-quantum": "^0.7.1"}, '
+             '"devDependencies": {"typescript": "^5"}}\n')
+    assert fn(tmp_path)[0].level == "OK", fn(tmp_path)
+    # ...and only when exactly one stage.py line writes that directory.
+    write(publish=PUBLISH.replace("stage.py \"$RUNNER_TEMP/negvec\"\n", "stage.py \"$RUNNER_TEMP/other\"\n"))
+    fails("must FAIL when no stage.py line writes the packed directory", "no `<dir>/stage.py")
+    write(publish=PUBLISH + "          python sdk/x/stage.py \"$RUNNER_TEMP/negvec\"\n")
+    fails("must FAIL when two stage.py lines write the packed directory", "more than one")
+    # A data-only entry publish.yml no longer builds is stale.
+    write(publish=PUBLISH.split("      - run: |\n          python packages/polaris-negative")[0])
+    fails("must FAIL on a stale data-only entry", "_DEPENDENCY_FREE_MANIFESTS", "remove the entry")
+    # A manifest off that list that declares nothing still fails as a parse that found nothing.
+    write(ts='{"name": "z"}\n')
+    fails("must FAIL when an npm manifest off the data-only list declares nothing", "sdk/typescript/package.json",
+          "declares no dependency")
 
     # THE defect: the extra names PyPI's unrelated `oqs`.
     write(verify=VERIFY.replace('"Liboqs_Python>=0.16"', '"oqs>=0.10"'))
