@@ -2,9 +2,9 @@
 
 Eight wallets and eight more outside implementations have presented to, or issued for,
 `polaris-oid4vp`. One row each: its version, the date, what ran, the result and the controls that
-had to be refused. Each row is its
-latest dated run and links the evidence in this tree. A row says what was measured on that date,
-with that version, and nothing larger. As of 2026-11-13.
+had to be refused. Each row in the table is a dated run and links the evidence in this tree;
+ProtocolSoup's later run, of its hosted wallet, is beneath the table. A row says what was measured on that date,
+with that version, and nothing larger. As of 2026-11-21.
 
 "Wallet" is software that ran unmodified, configuration only (trust anchors, TLS roots). Where a
 row names a library, a short wallet or harness written here drove it. Every run presented an SD-JWT
@@ -32,9 +32,15 @@ because a verifier that accepts everything prints the same success line.
 | SpruceID `openid4vp`, its wallet conformance adapter | library | `e5f29b85` (the adapter's test issuer key, certificate and `vct` replaced) | 2026-10-04 | PyPI 1.0.0rc15 | a presentation | accepted: `200 authentic` | 3: an unrelated issuer CA; the answered request again; a mismatched `client_id` (the library refused) | [spruceid](../../lab/interop/spruceid/README.md#result-2026-10-04) |
 | ERICA (the German EUDI Wallet programme's verifier test tool) | test tool | `2c27dc92` (its PID re-made under its own root for the run) | 2026-10-04 | this repository at `520456da` | its request checks; its negative modes; a presentation | accepted: `200 authentic`; ERICA's checks on the request: 31 of 31, and 17 of 18 parse-url checks (the access certificate is not from a German registrar) | 3: an unrelated issuer CA; the answered request again; a mismatched `client_id` (ERICA refused); and each of its negative modes that reached the verifier | [erica](../../lab/interop/erica/README.md#result-2026-10-04) |
 
+ProtocolSoup's hosted wallet, which its maintainer runs, presented at the maintainer's invitation:
+
+| Implementation | Kind | Version or commit | Date | Verifier | What ran | Result | Controls, each refused | Evidence |
+|---|---|---|---|---|---|---|---|---|
+| ProtocolSoup, its hosted wallet | wallet | `wallet.protocolsoup.com`, run by its maintainer | 2026-11-21 | this repository at main `cee2821b` (not a release) | a presentation of its issuer's `UniversityDegreeCredentialSDJWTHAIP`, the request signed under a publicly trusted chain | accepted: `200 authentic` | 1: an unrelated issuer CA | [protocolsoup](../../lab/interop/protocolsoup/README.md#the-hosted-wallet-2026-11-21) |
+
 ## Weekly canary
 
-[`wallet-canary.yml`](../../.github/workflows/wallet-canary.yml) runs the walk of every implementation above but Axle (for the Yivi app, the walk of irmago, the library under it),
+[`wallet-canary.yml`](../../.github/workflows/wallet-canary.yml) runs the walk of every implementation in the Measured table but Axle (for the Yivi app, the walk of irmago, the library under it),
 at the versions it pins (for some also at their newest release), against the newest
 `polaris-oid4vp` on PyPI, with the OpenID Foundation conformance suite.
 Each job installs the package from PyPI, presents, then runs that walk's controls. Its latest run,
