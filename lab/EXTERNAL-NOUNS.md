@@ -13,7 +13,7 @@ Anything the author ran against the author's own code belongs in the last sectio
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11; four national wallet sandboxes, 2026-11-02 to 2026-11-12 (below). |
-| Use | 6 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-13, 25 are in openwallet-foundation-labs/identity-common-ts's CI, against its `@sd-jwt/sd-jwt-vc` verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier; since 2026-11-17, Iya CyberSecurity Solutions' id-proto-debugger runs polaris-oid4vp v1.1.0's published image, copied into their own registry mirror, as the verifier in its scheduled test workflow; LimogiAI's VerySafe EUDI Verifier runs the negative vectors in its CI on every change, pinned to commit f1e25c39 (LimogiAI's written confirmation, 2026-11-21); on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
+| Use | 6 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-13, 25 are in openwallet-foundation-labs/identity-common-ts's CI, against its `@sd-jwt/sd-jwt-vc` verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier; since 2026-11-17, Iya CyberSecurity Solutions' id-proto-debugger runs polaris-oid4vp v1.1.0's published image, copied into their own registry mirror, as the verifier in its scheduled test workflow; LimogiAI's VerySafe EUDI Verifier runs the negative vectors in its CI on every change, pinned to commit afa39e9d (moved from f1e25c39 on 2026-11-21; LimogiAI's written confirmation, 2026-11-21); on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
 | Findings from outside | 3, all fixed |
 
 ## External nouns
@@ -287,8 +287,8 @@ message to the project.
    passed: a complete HAIP SD-JWT VC presentation accepted, one withholding a requested claim
    refused on claims, and one through their api route accepted.
 8. 2026-11-21: LimogiAI's [VerySafe EUDI Verifier](https://verysafe.id) runs the negative vectors in
-   its CI on every change, pinned to commit f1e25c39. Source: LimogiAI's written confirmation,
-   2026-11-21.
+   its CI on every change, pinned to commit afa39e9d (moved from f1e25c39 on 2026-11-21). Source:
+   LimogiAI's written confirmation, 2026-11-21.
 
 ### Findings from outside
 
