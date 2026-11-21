@@ -1,0 +1,58 @@
+# ============================================================================
+# mdoc-witness.yml - OID4VCgo, an mdoc verifier written outside this repository, judges every
+# mdoc negative vector.
+#
+# lab/interop/mdoc/witness-oid4vcgo/run.sh builds the witness against the OID4VCgo version its
+# go.mod pins and runs it over lab/interop/negative-vectors/mdoc-vectors.json with no network;
+# only its first phase, `go mod download`, reaches the Go module proxy. check.py then holds every
+# case to the vector's `expected` and every repaired twin to accepted, on the composed path and on
+# VerifyResponse, which must have run on every row whose inputs say dc_api.jwt (test_check.py, run
+# first, shows check.py failing each way it can break). A bump of the pinned version that changes
+# what OID4VCgo asks of its caller, or a vectors change that OID4VCgo reads otherwise, is red on its
+# own pull request.
+# ============================================================================
+name: mdoc witness (OID4VCgo judges the mdoc vectors)
+
+on:
+  pull_request:
+    paths:
+      - "lab/interop/mdoc/witness-oid4vcgo/**"
+      - "lab/interop/negative-vectors/mdoc-vectors.json"
+      - ".github/workflows/mdoc-witness.yml"
+  push:
+    branches: [main]
+    paths:
+      - "lab/interop/mdoc/witness-oid4vcgo/**"
+      - "lab/interop/negative-vectors/mdoc-vectors.json"
+      - ".github/workflows/mdoc-witness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  witness:
+    name: Every mdoc vector judged by OID4VCgo as the vector says
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: The row check fails each way it can break
+        run: python -I lab/interop/mdoc/witness-oid4vcgo/test_check.py
+
+      - name: Build and run the witness (the Go module proxy in phase 1 only)
+        env:
+          OUT: ${{ runner.temp }}/witness
+        run: lab/interop/mdoc/witness-oid4vcgo/run.sh
+
+      - name: Every row as its vector says
+        run: >-
+          python -I lab/interop/mdoc/witness-oid4vcgo/check.py
+          "$RUNNER_TEMP/witness/oid4vcgo.jsonl" lab/interop/negative-vectors/mdoc-vectors.json

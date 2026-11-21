@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cryptography import x509  # noqa: E402
 from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec, rsa, utils as asym_utils  # noqa: E402
 from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.jwe import b64u_decode, b64u_encode, decrypt_compact, encrypt_compact  # noqa: E402
@@ -1130,6 +1130,116 @@ class TheDefaultRequestIsUnchangedTests(VerifierTestCase):
         self.assert_as_before(v)
 
 
+class RequestSignerChainTests(unittest.TestCase):
+    """The request signer's file may hold its leaf and then its intermediates, and all of them go in
+    `x5c` in the file's order: a wallet that trusts only roots and fetches nothing (ProtocolSoup's
+    wallet harness) needs the path to its root in the request itself. The trust anchor stays out
+    (HAIP 1.0 section 5), each certificate is the issuer of the one before it (RFC 7515 section
+    4.1.6), and the key is the leaf's; a file that breaks one of these is refused when the verifier
+    is made. A file of one certificate is read as it always was."""
+
+    @staticmethod
+    def _issue(subject, subject_key, issuer, issuer_key, ca=True):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        builder = (x509.CertificateBuilder()
+                   .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject)]))
+                   .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer)]))
+                   .public_key(subject_key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(now - datetime.timedelta(days=1))
+                   .not_valid_after(now + datetime.timedelta(days=30)))
+        if ca:
+            builder = builder.add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        return builder.sign(issuer_key, hashes.SHA256())
+
+    @classmethod
+    def setUpClass(cls):
+        def p256():
+            return ec.generate_private_key(ec.SECP256R1())
+        # An RSA root, as a public chain may end at, outside every file below.
+        anchor_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.anchor = cls._issue("root", anchor_key, "root", anchor_key)
+        # Two certificates: the leaf and the one intermediate the root issued.
+        cls.int_key, cls.short_leaf_key = p256(), p256()
+        cls.intermediate = cls._issue("intermediate", cls.int_key, "root", anchor_key)
+        cls.short_leaf = cls._issue("verifier", cls.short_leaf_key, "intermediate", cls.int_key, ca=False)
+        # Four certificates, the shape of a publicly trusted chain that reaches an RSA root through a
+        # cross-signed certificate: i3 is signed by the RSA root, i2 by i3, i1 by i2's RSA key (so
+        # one link inside the file is an RSA signature), and the leaf by i1.
+        i3_key, i2_key, i1_key, cls.leaf_key = p256(), rsa.generate_private_key(65537, 2048), p256(), p256()
+        cls.i3 = cls._issue("i3", i3_key, "root", anchor_key)
+        cls.i2 = cls._issue("i2", i2_key, "i3", i3_key)
+        cls.i1 = cls._issue("i1", i1_key, "i2", i2_key)
+        cls.leaf = cls._issue("verifier", cls.leaf_key, "i1", i1_key, ca=False)
+        # Named i1 and issued by i2, but under another key: only the signature tells it apart.
+        cls.impostor = cls._issue("i1", p256(), "i2", i2_key)
+        # i1's own key and names, signed by an RSA key that is not i2's: a link whose issuer is RSA
+        # that only the signature tells apart.
+        cls.forged_i1 = cls._issue("i1", i1_key, "i2", rsa.generate_private_key(65537, 2048))
+
+    @staticmethod
+    def _pem(*certs):
+        return b"".join(c.public_bytes(serialization.Encoding.PEM) for c in certs)
+
+    @staticmethod
+    def _b64(cert):
+        return base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode("ascii")
+
+    def _verifier(self, certs, key):
+        return Verifier(client_cert_pem=self._pem(*certs),
+                        client_key_pem=key.private_bytes(serialization.Encoding.PEM,
+                                                         serialization.PrivateFormat.PKCS8,
+                                                         serialization.NoEncryption()),
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response")
+
+    def assert_sent(self, verifier, certs):
+        header, claims = Wallet.read_request(verifier.new_request()[1])
+        self.assertEqual(header["x5c"], [self._b64(c) for c in certs])
+        self.assertEqual(verifier.cert, certs[0])
+        digest = hashlib.sha256(certs[0].public_bytes(serialization.Encoding.DER)).digest()
+        self.assertEqual(claims["client_id"], "x509_hash:" + b64u_encode(digest))
+
+    def test_a_leaf_and_its_intermediate_go_in_x5c_in_that_order(self):
+        self.assert_sent(self._verifier([self.short_leaf, self.intermediate], self.short_leaf_key),
+                         [self.short_leaf, self.intermediate])
+
+    def test_four_certificates_with_an_rsa_link_go_in_x5c_in_that_order(self):
+        chain = [self.leaf, self.i1, self.i2, self.i3]
+        self.assert_sent(self._verifier(chain, self.leaf_key), chain)
+
+    def test_a_leaf_alone_is_sent_alone(self):
+        self.assert_sent(self._verifier([self.short_leaf], self.short_leaf_key), [self.short_leaf])
+
+    def test_the_root_in_the_file_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 3 of 3 .* is self-signed"):
+            self._verifier([self.short_leaf, self.intermediate, self.anchor], self.short_leaf_key)
+
+    def test_a_self_signed_leaf_alone_is_sent_as_before(self):
+        alone = self._issue("verifier", self.short_leaf_key, "verifier", self.short_leaf_key, ca=False)
+        self.assert_sent(self._verifier([alone], self.short_leaf_key), [alone])
+
+    def test_a_self_signed_leaf_before_an_intermediate_is_refused(self):
+        signed_itself = self._issue("verifier", self.short_leaf_key, "verifier", self.short_leaf_key, ca=False)
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 2 .* did not issue certificate 1"):
+            self._verifier([signed_itself, self.intermediate], self.short_leaf_key)
+
+    def test_intermediates_out_of_order_are_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 4 .* did not issue certificate 1"):
+            self._verifier([self.leaf, self.i2, self.i1, self.i3], self.leaf_key)
+
+    def test_an_intermediate_with_the_issuers_name_but_not_its_key_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 4 .* did not issue certificate 1"):
+            self._verifier([self.leaf, self.impostor, self.i2, self.i3], self.leaf_key)
+
+    def test_an_rsa_issuers_name_without_its_signature_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 3 of 4 .* did not issue certificate 2"):
+            self._verifier([self.leaf, self.forged_i1, self.i2, self.i3], self.leaf_key)
+
+    def test_a_key_that_is_not_the_leafs_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"key is not the key of the first certificate"):
+            self._verifier([self.short_leaf, self.intermediate], self.leaf_key)
+
+
 class TheRequestTests(VerifierTestCase):
     """Built from what the running conformance suite accepted, condition by condition."""
 
@@ -1420,6 +1530,89 @@ class RevocationReachesTheOperatorTests(unittest.TestCase):
         self.assertEqual(verdict.revocation["state"], sdjwt.NOT_EVALUATED)
 
 
+class RequireStatusTests(unittest.TestCase):
+    """`require_status`, off by default: the relying party's rule that only a status its resolver
+    checked, VALID and fresh, lets a presentation through (the German PID verifier guidelines,
+    V-20: "If the status cannot be determined, the PID is rejected")."""
+
+    STATUS = RevocationReachesTheOperatorTests.STATUS
+    FRESH = {"checked": True, "status": 0, "stale": False, "meaning": "VALID"}
+
+    def _verifier(self, **kw):
+        return RevocationReachesTheOperatorTests._verifier(self, **kw)
+
+    def _answer(self, verifier, jar=None, status=STATUS):
+        if jar is None:
+            _, jar = verifier.new_request()
+        code, _, verdict = verifier.handle_direct_post(self.wallet.respond(jar, status=status))
+        return code, verdict
+
+    def _unreachable(self, *, uri, idx, issuer):
+        raise OSError("the status host did not answer")
+
+    def test_only_a_checked_valid_fresh_status_is_accepted(self):
+        cases = (
+            ("checked, VALID, fresh", lambda **_: dict(self.FRESH), self.STATUS, 200, None),
+            ("checked, VALID, stale", lambda **_: dict(self.FRESH, stale=True), self.STATUS,
+             400, "but stale"),
+            ("checked, VALID, no freshness", lambda **_: {"checked": True, "status": 0},
+             self.STATUS, 400, "with no freshness stated"),
+            ("checked, status False", lambda **_: dict(self.FRESH, status=False), self.STATUS,
+             400, "status_required"),
+            ("unreachable", self._unreachable, self.STATUS, 400, sdjwt.UNREACHABLE),
+            ("no authority", lambda **_: {"checked": False, "code": "no_authority",
+                                          "reason": "no statement"}, self.STATUS,
+             400, sdjwt.NO_AUTHORITY),
+            ("a list refused", lambda **_: {"checked": False, "code": "sub",
+                                            "reason": "another list"}, self.STATUS,
+             400, "list_refused (sub)"),
+            ("no status claim", lambda **_: dict(self.FRESH), None, 400, sdjwt.NO_STATUS_CLAIM),
+            ("a status claim it cannot read", lambda **_: dict(self.FRESH), {"other": 1},
+             400, sdjwt.UNSUPPORTED_STATUS))
+        for label, resolver, claim, expected, text in cases:
+            with self.subTest(state=label, require_status=True):
+                code, verdict = self._answer(
+                    self._verifier(status_resolver=resolver, require_status=True), status=claim)
+                self.assertEqual(code, expected, getattr(verdict, "reason", verdict))
+                if text is not None:
+                    self.assertEqual(verdict.code, "status_required")
+                    self.assertIn("a checked, VALID, fresh status is required", verdict.reason)
+                    self.assertIn(text, "status_required " + verdict.reason)
+                    self.assertTrue(verdict.authentic is False and verdict.revocation)
+            # The positive control: without the rule each of these is answered, as before.
+            with self.subTest(state=label, require_status=False):
+                code, verdict = self._answer(self._verifier(status_resolver=resolver),
+                                             status=claim)
+                self.assertEqual(code, 200, getattr(verdict, "reason", verdict))
+
+    def test_a_revoked_credential_is_refused_as_revoked_under_the_rule_too(self):
+        code, verdict = self._answer(self._verifier(
+            status_resolver=lambda **_: dict(self.FRESH, status=1, meaning="INVALID"),
+            require_status=True))
+        self.assertEqual((code, verdict.code), (400, "revoked"))
+
+    def test_a_refusal_for_want_of_a_status_leaves_the_request_open(self):
+        v = self._verifier(status_resolver=lambda **_: dict(self.FRESH), require_status=True)
+        _, jar = v.new_request()
+        code, verdict = self._answer(v, jar, status=None)
+        self.assertEqual((code, verdict.code), (400, "status_required"))
+        code, verdict = self._answer(v, jar)
+        self.assertEqual(code, 200, getattr(verdict, "reason", verdict))
+
+    def test_the_rule_without_a_resolver_is_refused_when_built(self):
+        for require in (True, 1):
+            with self.subTest(require_status=require):
+                try:
+                    self._verifier(require_status=require)
+                except Exception as exc:  # noqa: BLE001  the type is asserted
+                    self.assertIsInstance(exc, ValueError)
+                    self.assertIn("require_status needs a status_resolver", str(exc))
+                else:
+                    self.fail("require_status without a status_resolver was built")
+        self.assertIs(self._verifier(require_status=False).require_status, False)
+        self.assertIs(self._verifier(status_resolver=self._unreachable).require_status, False)
+
+
 class TheRequestIsWhatIsAnsweredTests(unittest.TestCase):
     """The review of 2026-09-30: a presentation withholding a claim the DCQL query asked for was
     answered 200, and a request past its lifetime was still served, even re-signed with a new
@@ -1495,7 +1688,8 @@ class TheSevenRefusalsReachTheWireTests(VerifierTestCase):
 class TheTransportRefusalsTests(VerifierTestCase):
 
     def test_a_response_encrypted_to_another_verifier_is_4xx(self):
-        other = Verifier(client_cert_pem=_client_chain()[0], client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        other = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
                          request_uri="https://other.test/request.jwt",
                          response_uri="https://other.test/response",
                          issuer_jwks=[self.wallet.issuer_jwk])
@@ -1540,8 +1734,9 @@ class TheTransportRefusalsTests(VerifierTestCase):
             self.assertLess(status, 500, "%r produced %d" % (kw, status))
 
     def test_an_expired_request_cannot_be_answered(self):
-        verifier = Verifier(client_cert_pem=_client_chain()[0],
-                            client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem,
+                            client_key_pem=key_pem,
                             request_uri="https://verifier.test/request.jwt",
                             response_uri="https://verifier.test/response",
                             issuer_jwks=[self.wallet.issuer_jwk],
@@ -1962,8 +2157,9 @@ class HeldOutTransportTests(VerifierTestCase):
     def test_a_request_expires_at_its_lifetime_not_later(self):
         from unittest import mock
         from polaris_oid4vp import verifier as verifier_module
-        verifier = Verifier(client_cert_pem=_client_chain()[0],
-                            client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem,
+                            client_key_pem=key_pem,
                             request_uri="https://verifier.test/request.jwt",
                             response_uri="https://verifier.test/response",
                             issuer_jwks=[self.wallet.issuer_jwk], request_ttl_seconds=100)
@@ -3056,6 +3252,122 @@ class _LongQuery(_TwoCredentials):
     SHARED = {"type": "example_type", "credential_ids": [LONG, "pid"]}
 
 
+class _StatusCredentials(_TwoCredentials):
+    """_TwoCredentials whose credentials name entries of one Token Status List, pid index 3 and
+    pay index 4, judged by verify_response with a status resolver."""
+
+    URI = "https://issuer.example/sl/1"
+    SHARED = {"type": "example_type", "credential_ids": ["pid", "pay"]}
+
+    def __init__(self):
+        super().__init__([self.SHARED])
+
+    def _presentation(self, qid, kb_extra):
+        disclosure = b64u_encode(json.dumps(["salt-" + qid, "name", "Jean"],
+                                            separators=(",", ":")).encode())
+        payload = {"iss": "https://issuer.example", "vct": "urn:test:" + qid, "iat": self.at,
+                   "_sd": [b64u_encode(hashlib.sha256(disclosure.encode("ascii")).digest())],
+                   "cnf": {"jwk": _public_jwk(self.holders[qid])},
+                   "status": {"status_list": {"uri": self.URI,
+                                              "idx": self.QUERIES.index(qid) + 3}}}
+        presented = (_jws(self.issuer, {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"},
+                          payload) + "~" + disclosure + "~")
+        kb = dict({"iat": self.at, "aud": self.request["client_id"], "nonce": self.request["nonce"],
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())},
+                  **kb_extra)
+        return presented + _jws(self.holders[qid], {"alg": "ES256", "typ": "kb+jwt"}, kb)
+
+    def judged(self, resolver, require_status=False):
+        """The response with pay binding the one entry, under the per-credential reading."""
+        bound = {"transaction_data_hashes": [b64u_encode(hashlib.sha256(
+                     self.request["transaction_data"][0].encode("ascii")).digest())],
+                 "transaction_data_hashes_alg": "sha-256", "jti": b64u_encode(os.urandom(16)),
+                 "response_mode": "direct_post.jwt", "amr": self.TWO_FACTORS}
+        token = {"pid": [self._presentation("pid", {})],
+                 "pay": [self._presentation("pay", bound)]}
+        return verify_response(self.request, token, transaction_data_scope="per_credential",
+                               issuer_jwks=self.issuer_jwks, now=self.at,
+                               status_resolver=resolver, require_status=require_status)
+
+
+class VerifyResponseStatusTests(unittest.TestCase):
+    """verify_response's `status_resolver` and `require_status`: the resolver asked once per list
+    entry although both transaction_data readings are judged, a revoked credential refused, and
+    the rule holding every presentation to a checked, VALID, fresh status."""
+
+    FRESH = {"checked": True, "status": 0, "stale": False, "meaning": "VALID"}
+
+    def setUp(self):
+        self.creds = _StatusCredentials()
+        self.asked = []
+
+    def resolver(self, answers):
+        """A resolver that records each ask and answers `answers[idx]` (an exception is raised)."""
+        def resolve(*, uri, idx, issuer):
+            self.asked.append((uri, idx))
+            answer = answers[idx]
+            if isinstance(answer, Exception):
+                raise answer
+            return dict(answer)
+        return resolve
+
+    def test_each_list_entry_is_asked_once_for_both_readings(self):
+        """pay is judged under both readings and its entry is asked once; pid's is asked under
+        the per-credential reading (the all-entries one refuses pid for an unbound entry before
+        its status is read)."""
+        for label, answer in (("an answer", self.FRESH), ("a raise", OSError("no answer"))):
+            with self.subTest(resolver=label):
+                del self.asked[:]
+                result = self.creds.judged(self.resolver({3: answer, 4: answer}))
+                self.assertEqual(sorted(self.asked), [(_StatusCredentials.URI, 3),
+                                                      (_StatusCredentials.URI, 4)])
+                state = "checked" if answer is self.FRESH else sdjwt.UNREACHABLE
+                self.assertEqual(
+                    [result["readings"][scope]["pay"].revocation["state"]
+                     for scope in sdjwt.TRANSACTION_DATA_SCOPES], [state, state])
+
+    def test_a_revoked_credential_refuses_the_response(self):
+        result = self.creds.judged(self.resolver(
+            {3: self.FRESH, 4: dict(self.FRESH, status=1, meaning="INVALID")}))
+        self.assertIs(result["accepted"], False)
+        self.assertTrue(result["problem"].startswith("pay: revoked: "), result["problem"])
+
+    def test_the_rule_refuses_a_status_not_established_and_only_with_the_rule(self):
+        answers = {3: self.FRESH, 4: {"checked": False, "code": "no_authority",
+                                      "reason": "no statement"}}
+        result = self.creds.judged(self.resolver(answers), require_status=True)
+        self.assertIs(result["accepted"], False)
+        self.assertTrue(result["problem"].startswith("pay: status_required: "),
+                        result["problem"])
+        self.assertIn("the revocation state is no_authority", result["problem"])
+        control = self.creds.judged(self.resolver(answers))
+        self.assertIs(control["accepted"], True, control["problem"])
+        fresh = self.creds.judged(self.resolver({3: self.FRESH, 4: self.FRESH}),
+                                  require_status=True)
+        self.assertIs(fresh["accepted"], True, fresh["problem"])
+
+    def test_the_rule_is_refused_without_a_resolver_or_with_an_mdoc_query(self):
+        request = self.creds.request
+        mdoc_request = dict(request, dcql_query={"credentials": [
+            {"id": "mdl", "format": "mso_mdoc",
+             "meta": {"doctype_value": "org.iso.18013.5.1.mDL"}}]})
+        mdoc_request.pop("transaction_data")
+        for label, call, text in (
+                ("no resolver", lambda: verify_response(request, {}, require_status=True),
+                 "require_status needs a status_resolver"),
+                ("an mdoc query", lambda: verify_response(
+                    mdoc_request, {}, status_resolver=self.resolver({}), require_status=True),
+                 "the request asks for an mso_mdoc (mdl)")):
+            with self.subTest(case=label):
+                try:
+                    call()
+                except Exception as exc:  # noqa: BLE001  the type is asserted
+                    self.assertIsInstance(exc, ValueError)
+                    self.assertIn(text, str(exc))
+                else:
+                    self.fail("require_status was not refused: " + label)
+
+
 class TheResultIsCutAtEachReturnTests(unittest.TestCase):
     """What verify_response returns names what a sender or the request chose: the members of the
     vp_token and query ids. Its problem and each response refusal are at most REASON_MAX
@@ -3665,12 +3977,14 @@ class MdocResponseTests(MdocVerifierCase):
                        "issuer_jwks", "issuer_trust_anchors", "redirect_uri", "request_ttl_seconds",
                        "vct_values", "claims", "status_resolver", "verifier_info", "credential_query_id",
                        "verifier_info_profile", "redirect", "accept_vp_token_as_json_string",
-                       "credential_format", "doctype_value", "iaca_roots"],
+                       "credential_format", "doctype_value", "iaca_roots", "dc_api_client_metadata",
+                       "require_status"],
             Verifier.handle_direct_post: ["self", "form"],
+            Verifier.dc_api_response: ["self", "data", "origin"],
             serve_module.serve: ["verifier", "host", "port", "certfile", "keyfile", "on_verdict",
                                  "background", "verbose", "on_request_object", "cors_origins",
                                  "control_token", "on_control", "name_requests",
-                                 "on_control_read"],
+                                 "on_control_read", "dc_api_origin"],
         }
         for what, names in pinned.items():
             target = what.__init__ if what is Verifier else what
@@ -4084,6 +4398,21 @@ def _dc_api_key(member):
     return _dc_api_request(member)[1]["client_metadata"]["jwks"]["keys"][0]
 
 
+def _verifies_under(compact, public_key):
+    """Whether an ES256 compact JWS verifies under `public_key`: the one check the leaf signature
+    test and its negative controls both run, so the controls test the check the test uses."""
+    from cryptography.exceptions import InvalidSignature
+    signing_input, _, signature = compact.rpartition(".")
+    raw = b64u_decode(signature)
+    try:
+        public_key.verify(asym_utils.encode_dss_signature(int.from_bytes(raw[:32], "big"),
+                                                          int.from_bytes(raw[32:], "big")),
+                          signing_input.encode("ascii"), ec.ECDSA(hashes.SHA256()))
+    except InvalidSignature:
+        return False
+    return True
+
+
 class DcApiWallet:
     """A wallet answering over the Digital Credentials API, holding the mDL `test_mdoc.py` mints. It
     reads the signed request the page hands it and hashes, as OpenID4VP 1.0 B.2.6.2 has it, the
@@ -4203,7 +4532,6 @@ class DcApiRequestTests(DcApiVerifierCase):
         self.assertEqual(claims["aud"], redirect["aud"])
 
     def test_the_request_is_signed_by_the_leaf_its_client_id_is_the_hash_of(self):
-        from cryptography.exceptions import InvalidSignature
         member = self.verifier.dc_api_request(ORIGIN)
         header, claims = _dc_api_request(member)
         self.assertEqual(header, {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.verifier.x5c})
@@ -4212,14 +4540,35 @@ class DcApiRequestTests(DcApiVerifierCase):
         leaf_der = base64.b64decode(header["x5c"][0])
         self.assertEqual(claims.get("client_id"), "x509_hash:" + b64u_encode(hashlib.sha256(leaf_der).digest()))
         self.assertEqual(claims.get("client_id"), self.verifier.client_id)
-        signing_input, _, signature = member["data"]["request"].rpartition(".")
-        raw = b64u_decode(signature)
-        try:
-            x509.load_der_x509_certificate(leaf_der).public_key().verify(
-                asym_utils.encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big")),
-                signing_input.encode("ascii"), ec.ECDSA(hashes.SHA256()))
-        except InvalidSignature:
-            self.fail("the request object does not verify under its x5c leaf")
+        self.assertTrue(_verifies_under(member["data"]["request"], x509.load_der_x509_certificate(leaf_der).public_key()),
+                        "the request object does not verify under its x5c leaf")
+
+    def test_the_leaf_signature_check_has_its_negative_controls(self):
+        """The negative controls of test_the_request_is_signed_by_the_leaf_its_client_id_is_the_hash_of:
+        the same check, run as that test runs it, refuses the request object with one payload byte
+        changed and the request object signed again by another key under the same x5c. Without them
+        its positive result could come from a check that accepts anything. Both run `_verifies_under`."""
+        member = self.verifier.dc_api_request(ORIGIN)
+        jws = member["data"]["request"]
+        header, _ = _dc_api_request(member)
+        leaf = x509.load_der_x509_certificate(base64.b64decode(header["x5c"][0])).public_key()
+
+        def verifies(compact):
+            return _verifies_under(compact, leaf)
+
+        self.assertTrue(verifies(jws), "the control's own check refuses the request it was made for")
+        protected, payload, signature = jws.split(".")
+        at = len(payload) // 2
+        changed = payload[:at] + ("A" if payload[at] != "A" else "B") + payload[at + 1:]
+        self.assertNotEqual(b64u_decode(changed), b64u_decode(payload))
+        self.assertFalse(verifies(".".join((protected, changed, signature))),
+                         "a request object with one payload byte changed verifies under the leaf")
+        other = ec.generate_private_key(ec.SECP256R1())
+        r, s = asym_utils.decode_dss_signature(other.sign((protected + "." + payload).encode("ascii"),
+                                                          ec.ECDSA(hashes.SHA256())))
+        resigned = protected + "." + payload + "." + b64u_encode(r.to_bytes(32, "big") + s.to_bytes(32, "big"))
+        self.assertEqual(_dc_api_request({"data": {"request": resigned}})[0]["x5c"], header["x5c"])
+        self.assertFalse(verifies(resigned), "a request object signed by another key verifies under the leaf")
 
     def test_client_metadata_and_the_query_are_the_redirect_requests_around_a_key_of_its_own(self):
         _, claims = _dc_api_request(self.verifier.dc_api_request(ORIGIN))
@@ -4548,3 +4897,145 @@ class DcApiAndRedirectRequestsTests(DcApiVerifierCase):
         self.assertEqual(self.verifier.attributed_request(), session.state)
         self.accepted(self.judged(self.wallet.respond(self.verifier.dc_api_request(ORIGIN))))
         self.assertIsNone(self.verifier.attributed_request())
+
+
+class DcApiClientMetadataTests(DcApiVerifierCase):
+    """`Verifier(dc_api_client_metadata=...)`: members added to the `client_metadata` of every
+    request over the Digital Credentials API, never one the verifier writes itself (add, never
+    override). The member here is made up; no wallet's value enters this tree."""
+
+    EXTRA = {"x_polaris_test": {"note": "made up", "n": 1}}
+    WRITTEN = {"jwks", "vp_formats_supported", "encrypted_response_enc_values_supported"}
+
+    def test_extra_members_reach_every_dc_api_request_and_no_redirect_request(self):
+        given = json.loads(json.dumps(self.EXTRA))
+        self.verifier = self.make(dc_api_client_metadata=given)
+        # What the caller does with its own dict afterwards changes no request.
+        given["x_polaris_test"]["n"] = 2
+        given["jwks"] = {"keys": []}
+        members = [self.verifier.dc_api_request(ORIGIN) for _ in range(2)]
+        for member in members:
+            metadata = _dc_api_request(member)[1]["client_metadata"]
+            self.assertEqual(set(metadata), self.WRITTEN | {"x_polaris_test"})
+            self.assertEqual(metadata["x_polaris_test"], self.EXTRA["x_polaris_test"])
+        self.assertNotEqual(_dc_api_key(members[0]), _dc_api_key(members[1]),
+                            "each request is encrypted to a key of its own")
+        _, redirect = Wallet.read_request(self.verifier.new_request()[1])
+        self.assertEqual(set(redirect["client_metadata"]), self.WRITTEN)
+        # A response encrypted to the key the request carries is judged as without the member.
+        self.accepted(self.judged(self.wallet.respond(members[1])))
+
+    def test_a_member_the_verifier_sets_is_refused(self):
+        self.assertEqual(set(self.verifier._client_metadata({})), self.WRITTEN,
+                         "the members the verifier writes, read from the function that writes them")
+        for name in sorted(self.WRITTEN):
+            with self.subTest(member=name):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(dc_api_client_metadata={name: {"keys": []}, "x_polaris_test": 1})
+                self.assertIn(repr(name), str(caught.exception))
+                self.assertIn("writes", str(caught.exception))
+
+    def test_the_verifier_writes_its_members_last_whatever_the_attribute_became(self):
+        """The served jwks is always the request's own key. dc_api_client_metadata is a public
+        attribute, checked at construction; changed afterwards, in place or replaced, it still puts
+        no member in place of one the verifier writes, because the verifier's are written last."""
+        planted = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "x_polaris_planted", "x": "AA", "y": "AA"}]}
+        changes = (
+            ("changed in place", lambda v: v.dc_api_client_metadata.update(jwks=planted, x_polaris_late=2)),
+            ("replaced", lambda v: setattr(v, "dc_api_client_metadata",
+                                           dict({name: planted for name in self.WRITTEN}, x_polaris_late=2))),
+        )
+        for label, change in changes:
+            with self.subTest(label):
+                verifier = self.make(dc_api_client_metadata={"x_polaris_test": 1})
+                change(verifier)
+                _, claims = _dc_api_request(verifier.dc_api_request(ORIGIN))
+                session = verifier._dc_api[claims["nonce"]]
+                own = verifier._client_metadata(verifier_module._encryption_jwk(session.enc_key, session.kid))
+                served = claims["client_metadata"]
+                self.assertEqual({name: served[name] for name in self.WRITTEN}, own)
+                self.assertEqual(served["jwks"]["keys"][0]["kid"], session.kid)
+                self.assertEqual(served.get("x_polaris_late"), 2, "the attribute's other members are still added")
+
+    def test_metadata_that_is_not_an_object_or_too_large_is_refused(self):
+        limit = verifier_module.DC_API_CLIENT_METADATA_MAX_BYTES
+        # {"x":"..."} is 8 bytes around the string, written compactly.
+        self.assertEqual(len(json.dumps({"x": ""}, separators=(",", ":"))), 8)
+        for good in (None, {}, {"x": "a" * (limit - 8)}):
+            with self.subTest(good=None if good is None else len(json.dumps(good))):
+                self.make(dc_api_client_metadata=good)
+        for bad, words in (([], "JSON object"), ("x_polaris_test", "JSON object"),
+                           ({1: "x"}, "names"), ({"x": float("nan")}, "JSON"),
+                           ({"x": object()}, "JSON"), ({"x": {1, 2}}, "JSON"),
+                           ({"x": "a" * (limit - 7)}, "%d bytes" % limit)):
+            with self.subTest(bad=repr(bad)[:40]):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(dc_api_client_metadata=bad)
+                self.assertIn(words, str(caught.exception))
+        # Nested past what json.dumps recurses through (100000 levels: 3.12's C encoder writes a
+        # few thousand), it raises RecursionError; that is refused as a value that does not
+        # serialize, a ValueError like the rest, before any size is measured.
+        deep = inner = {}
+        for _ in range(100000):
+            inner["a"] = inner = {}
+        with self.assertRaises(ValueError) as caught:
+            self.make(dc_api_client_metadata={"x": deep})
+        self.assertIn("does not serialize as JSON", str(caught.exception))
+
+
+class DcApiCapTests(DcApiVerifierCase):
+    """At most DC_API_MAX_OUTSTANDING requests over the Digital Credentials API are outstanding:
+    serve answers them on a public route, and every response is tried against each one's key."""
+
+    def test_the_dc_api_requests_outstanding_are_capped(self):
+        cap = verifier_module.DC_API_MAX_OUTSTANDING
+        self.assertEqual(cap, 64)
+        members = [self.verifier.dc_api_request(ORIGIN) for _ in range(cap)]
+        self.assertEqual(len(self.outstanding_dc_api()), cap)
+        # At the cap no key is made and nothing is signed: the refusal comes before the work.
+        with mock.patch.object(verifier_module.ec, "generate_private_key",
+                               side_effect=AssertionError("a key was made at the cap")):
+            with self.assertRaises(verifier_module.DcApiRequestsFull) as caught:
+                self.verifier.dc_api_request(ORIGIN)
+        self.assertNotIsInstance(caught.exception, ValueError)
+        self.assertIn(str(cap), str(caught.exception))
+        self.assertEqual(len(self.outstanding_dc_api()), cap)
+        # An answered request frees its place, and only its place.
+        self.accepted(self.judged(self.wallet.respond(members[0])))
+        self.verifier.dc_api_request(ORIGIN)
+        with self.assertRaises(verifier_module.DcApiRequestsFull):
+            self.verifier.dc_api_request(ORIGIN)
+        # Expired requests free theirs.
+        for session in self.verifier._dc_api.values():
+            session.created -= self.verifier.request_ttl_seconds + 1
+        self.verifier.dc_api_request(ORIGIN)
+        self.assertEqual(len(self.outstanding_dc_api()), 1)
+
+    def test_the_cap_holds_when_requests_race(self):
+        """The count is taken again when the request is kept, under the lock: threads that all
+        pass the early test still keep no more than the cap."""
+        import threading
+        cap = verifier_module.DC_API_MAX_OUTSTANDING
+        for _ in range(cap - 1):
+            self.verifier.dc_api_request(ORIGIN)
+        barrier, original, outcomes = threading.Barrier(4, timeout=30), self.verifier._signed, []
+
+        def signing(claims):
+            barrier.wait()
+            return original(claims)
+
+        def ask():
+            try:
+                self.verifier.dc_api_request(ORIGIN)
+                outcomes.append("made")
+            except verifier_module.DcApiRequestsFull:
+                outcomes.append("full")
+
+        with mock.patch.object(self.verifier, "_signed", signing):
+            threads = [threading.Thread(target=ask) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+        self.assertEqual(sorted(outcomes), ["full", "full", "full", "made"])
+        self.assertEqual(len(self.outstanding_dc_api()), cap)

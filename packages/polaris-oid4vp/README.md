@@ -89,6 +89,10 @@ holds this package from PyPI, installed by hash.
   RFC 5280 asks for, which some wallets find a CA by. The listener certificate is marked for server
   authentication, which Apple's TLS policy requires even of a certificate a client trusts by
   name. Its keys are for testing.
+- `serve` sends all of `client.pem` in `x5c`: the leaf, then any intermediates the file holds after it, so a
+  request signer under a public authority carries the path to its root to a wallet that fetches nothing. A
+  self-signed certificate after the leaf, a certificate that did not issue the one before it, or a key that
+  is not the leaf's is refused when `serve` starts.
 - A wallet that fetches the request object by POST and asks for it encrypted (its
   `wallet_metadata` lists `ECDH-ES` in `request_object_encryption_alg_values_supported`, an
   `enc` this package produces, A128GCM or A256GCM, and a P-256 key in `jwks`) gets the signed
@@ -514,8 +518,12 @@ The approach follows EUDIPLO's `registration_cert` configuration and ERICA's req
 - **A checked status that is not VALID is refused:** with a resolver, `Verifier` answers a
   credential whose status list value is not 0 with the same 400 as any refusal (`revoked`).
   The other states are not facts about the credential and stay in the verdict for your policy.
-- **Opt-in:** pass `status_resolver=` to `Verifier(...)` or `verify_presentation`. Without one
-  nothing is fetched and the state is `not_evaluated`.
+- **Or require one:** with `require_status=True`, `Verifier` and `verify_response` refuse every
+  presentation whose state is not `checked` with the value 0 and `stale` false, as
+  `status_required`, the reason naming the state (the German PID verifier guidelines, V-20). It
+  needs a `status_resolver` and holds `dc+sd-jwt` credentials.
+- **Opt-in:** pass `status_resolver=` to `Verifier(...)`, `verify_response` or
+  `verify_presentation`. Without one nothing is fetched and the state is `not_evaluated`.
 - `status.py` decides a Token Status List (`draft-ietf-oauth-status-list`) without opening a
   socket; `decide_by_fetching` takes your `fetch` callable.
 - **Your `fetch` decides where a request may go.** When the list is to be signed by the
@@ -527,13 +535,38 @@ The approach follows EUDIPLO's `registration_cert` configuration and ERICA's req
   `decide` refuses above); and set connect and read timeouts. Whatever it raises becomes
   `unreachable`. Keep the time one response's status fetches take, together, under the request
   lifetime (`request_ttl_seconds`, 300 seconds by default): a response whose request's lifetime
-  ends while it is judged is refused.
+  ends while it is judged is refused. `status_fetch.fetch_status_list` is such a callable, over
+  TLS 1.2 or later, with a 10-second timeout for connecting and for each read, and it refuses a
+  list that has not fully arrived 30 seconds after the fetch began.
 - **Who may publish status for whom is stated, not inferred:** `StatedAuthority` records that a
   named key may publish for a named issuer at a named URI. Anything else is `no_authority`, and
   no request is sent to a URI an unvetted credential names.
-- **Unbound iss:** delegated status lists are not consulted; status is established only by a
-  list signed with the credential's own key. The resolver is given `issuer=None` for such a
-  credential, so a `StatedAuthority` entry for the name in its `iss` is never found.
+- **A list signed under a status anchor of its own:** some issuers sign their status lists under
+  a revocation-service CA beside the CA that signs their credentials, both named in one entry of
+  a trust list (the German PID verifier guidelines, V-19). `AnchoredAuthority().state(
+  credential_anchor=, status_uri_prefix=, status_anchor=, why=)` records that for a credential
+  whose `x5c` chain ended at `credential_anchor`, a list under `status_uri_prefix` may be signed
+  by a certificate whose `x5c` chains to `status_anchor`. The two anchors differ and neither
+  certifies the other. The signer's chain is held to the rules an issuer's is, its certificate
+  states the digitalSignature key usage, names the credential signer's organization, and neither
+  it nor any certificate sent with it carries the credential anchor's key or a signature made
+  with it. The status URI is https, on the prefix's host and port as written, under its path;
+  any other is `no_authority` and is not fetched. `make_resolver(authority, fetch)` hands the
+  authority the credential's anchor and signer.
+- **Unbound iss:** the resolver is given `issuer=None` for a credential whose `iss` nothing binds
+  to its signing key, so a `StatedAuthority` entry, keyed by issuer, is never found for it. An
+  `AnchoredAuthority` entry is keyed by the credential anchor and is.
+- **From the command line:** `serve --status-anchor FILE` and `verdict --status-anchor FILE`
+  decide status lists under the entries in FILE with `status_fetch.fetch_status_list`, and
+  `--require-status` adds the requirement above. FILE is a JSON array of entries with exactly
+  these members, each PEM file holding one certificate and named relative to FILE:
+
+  ```json
+  [{"credential_anchor": "pid-signer-ca.pem",
+    "status_uri_prefix": "https://status.pid-provider.example/lists/",
+    "status_anchor": "status-list-signer-ca.pem",
+    "why": "the PID provider's trust list entry names both CAs"}]
+  ```
 
 ## Experimental: mdoc (ISO/IEC 18013-5)
 
@@ -592,12 +625,12 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1140 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1231 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 353 refusals accept and requires a
-  test to fail: 349 are caught, and the 4 survivors are declared with their reasons. It also makes
-  79 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 383 refusals accept and requires a
+  test to fail: 379 are caught, and the 4 survivors are declared with their reasons. It also makes
+  131 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under
@@ -611,7 +644,15 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
   reason, each line on stderr, the `<-` line and a logged exception; a malformed disclosure named
   by its kind; and the CBOR decoder's item count kept for the whole decode and over each key and
   value, each of its two limits at its number, and, under `--experimental`, an accepted mdoc's
-  line naming what was checked), each of which a test must catch (all 79 are; measured 2026-11-20;
+  line naming what was checked; and a status list under a stated status anchor: the entry found
+  by the credential anchor, its host and path compared exactly, the basis reported, no signature
+  judged before the fetch and no same-key grant, the signer's key usage, organization and
+  distance from the credential anchor, the declaration read only as `True`, an anchor sent in
+  `x5c`, a status required and not established, one ask per list entry, and the fetch's address
+  rules (each named range, and a 6to4 address judged as the IPv4 address it carries), redirects,
+  its TLS floor and its one User-Agent, one connect timeout across resolving the name and every
+  address, the name resolved within the total too, and its total over the whole exchange),
+  each of which a test must catch (all 131 are; measured 2026-11-21;
   CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

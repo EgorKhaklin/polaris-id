@@ -49,7 +49,8 @@ import time
 try:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
-    from cryptography.x509 import load_pem_x509_certificate
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.x509 import load_pem_x509_certificates
     _HAVE_CRYPTO = True
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
@@ -84,6 +85,14 @@ RESPONSE_MODE = "direct_post.jwt"
 #: the Response Mode dc_api.jwt."
 DC_API_PROTOCOL = "openid4vp-v1-signed"
 DC_API_RESPONSE_MODE = "dc_api.jwt"
+#: The most requests over the Digital Credentials API outstanding at once. serve makes them on a
+#: public route: a browser's page posts to it only from the configured origin, but any client that
+#: sets the Origin header itself can post to it. `dc_api_response` tries each response against every
+#: outstanding request's key, so their number is capped: at the cap, `dc_api_request` raises
+#: DcApiRequestsFull and makes none until one is answered or expires.
+DC_API_MAX_OUTSTANDING = 64
+#: The largest `Verifier(dc_api_client_metadata=...)`, written as compact JSON.
+DC_API_CLIENT_METADATA_MAX_BYTES = 16384
 
 #: The credential formats a request can ask for, one per verifier: an SD-JWT VC unless named.
 #: `mso_mdoc` asks for an ISO/IEC 18013-5 mdoc, which `mdoc.py` judges.
@@ -536,6 +545,64 @@ _MISSING = object()
 class VerifierInfoError(ValueError):
     """verifier_info refused at construction, so no request carrying it is ever made. The
     message names the requirement it fails."""
+
+
+class DcApiRequestsFull(RuntimeError):
+    """`dc_api_request` at DC_API_MAX_OUTSTANDING outstanding requests: none is made. Not a
+    ValueError, which `dc_api_request` raises for a configuration it cannot serve; this passes
+    when a request is answered or expires (serve answers it 503)."""
+
+
+def _client_metadata_of(enc_jwk, vp_formats):
+    """`client_metadata` for a request whose response is encrypted to `enc_jwk`, for a verifier
+    that asks for `vp_formats` (`Verifier._vp_formats`)."""
+    # Exactly three keys. The suite warns on a fourth and fails on the older
+    # authorization_encrypted_response_alg/_enc names, which an earlier draft used.
+    return {
+        "jwks": {"keys": [enc_jwk]},
+        "vp_formats_supported": vp_formats,
+        "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
+    }
+
+
+def dc_api_client_metadata_of(extra):
+    """`Verifier(dc_api_client_metadata=...)` as every `dc_api_request` adds it to the
+    `client_metadata` it writes: members a wallet asks a relying party to send, added and never
+    put in place of one the verifier writes. None or `{}` adds nothing. Raises ValueError for what
+    is not a JSON object with string names, for a member `_client_metadata_of` writes (named; the
+    response key among them, so the `jwks` a request carries is always its own), for a value that
+    does not serialize as JSON, and for more than DC_API_CLIENT_METADATA_MAX_BYTES written as
+    compact JSON. Returns a copy: what the caller does with its own dict afterwards changes no
+    request. `serve --dc-api-client-metadata` holds its file to this before anything is read."""
+    if extra is None:
+        return {}
+    if not isinstance(extra, dict):
+        raise ValueError("dc_api_client_metadata is a JSON object of members to add to the "
+                         "client_metadata of each Digital Credentials API request, not a %s"
+                         % type(extra).__name__)
+    unnamed = [name for name in extra if not isinstance(name, str)]
+    if unnamed:
+        raise ValueError("dc_api_client_metadata names its members with strings, as a JSON object "
+                         "does, not %r" % (unnamed[0],))
+    written = sorted(set(extra) & set(_client_metadata_of({}, {})))
+    if written:
+        raise ValueError("dc_api_client_metadata sets %s, which this verifier writes itself: its "
+                         "members are added to client_metadata, never put in place of one"
+                         % ", ".join(repr(name) for name in written))
+    try:
+        text = json.dumps(extra, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("dc_api_client_metadata does not serialize as JSON: %s" % exc) from None
+    except RecursionError:
+        # json.dumps recurses once per level; an object nested past the interpreter's limit is
+        # refused as one that does not serialize, never with the interpreter's own error.
+        raise ValueError("dc_api_client_metadata does not serialize as JSON: it nests deeper than "
+                         "this interpreter writes") from None
+    size = len(text.encode("utf-8"))
+    if size > DC_API_CLIENT_METADATA_MAX_BYTES:
+        raise ValueError("dc_api_client_metadata is %d bytes as compact JSON; the most it may be is "
+                         "%d bytes" % (size, DC_API_CLIENT_METADATA_MAX_BYTES))
+    return json.loads(text)
 
 
 def _etsi_refusal(numbers, reason):
@@ -994,6 +1061,42 @@ def logged_line(text):
     return cut_to(operator_text(text), LINE_MAX)
 
 
+def _issued_by(cert, issuer):
+    """Whether `issuer`'s key signed `cert` under `issuer`'s subject name, RSA and ECDSA alike."""
+    try:
+        cert.verify_directly_issued_by(issuer)
+    except (ValueError, TypeError, InvalidSignature):
+        return False
+    return True
+
+
+def request_signer_chain(client_cert_pem, key):
+    """The certificates the request object's `x5c` carries, read from `client_cert_pem`: the leaf,
+    whose key is `key`, then any intermediates, each the issuer of the one before it (RFC 7515
+    section 4.1.6: the certificate with the signing key MUST be the first, and each subsequent one
+    is the one used to certify the previous one). A self-signed certificate after the leaf is a
+    trust anchor, which HAIP 1.0 section 5 says MUST NOT be in `x5c`. A file that breaks any of
+    these is refused here, when the verifier is made, rather than sent to a wallet that refuses it
+    later or cut to its first certificate without a word."""
+    certs = load_pem_x509_certificates(client_cert_pem)
+    for i, cert in enumerate(certs[1:], 2):
+        if _issued_by(cert, cert):
+            raise ValueError("certificate %d of %d in the request signer's file is self-signed, a "
+                             "trust anchor: the file holds the leaf and its intermediates, and the "
+                             "trust anchor stays out of x5c (HAIP 1.0 section 5)" % (i, len(certs)))
+    for i in range(1, len(certs)):
+        if not _issued_by(certs[i - 1], certs[i]):
+            raise ValueError("certificate %d of %d in the request signer's file did not issue "
+                             "certificate %d: the leaf comes first, then each intermediate after "
+                             "the certificate it issued (RFC 7515 section 4.1.6)"
+                             % (i + 1, len(certs), i))
+    spki = serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    if key.public_key().public_bytes(*spki) != certs[0].public_key().public_bytes(*spki):
+        raise ValueError("the request signer's key is not the key of the first certificate in its "
+                         "file, the leaf, which x5c puts first and whose hash is the client_id")
+    return certs
+
+
 class Verifier:
     """Builds requests and judges responses. Holds no socket: see `serve()` for that.
 
@@ -1007,7 +1110,8 @@ class Verifier:
                  vct_values=None, claims=("given_name", "family_name"),
                  status_resolver=None, verifier_info=None, credential_query_id=None,
                  verifier_info_profile=None, redirect=True, accept_vp_token_as_json_string=False,
-                 credential_format=SD_JWT_FORMAT, doctype_value=None, iaca_roots=None):
+                 credential_format=SD_JWT_FORMAT, doctype_value=None, iaca_roots=None,
+                 dc_api_client_metadata=None, require_status=False):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         # The format the one credential query asks for. A name this verifier does not build is
@@ -1026,13 +1130,17 @@ class Verifier:
         if not isinstance(self.query_id, str) or not _DCQL_ID.fullmatch(self.query_id):
             raise ValueError("a credential query id is a non-empty string of letters, digits, _ "
                              "and - (OpenID4VP 1.0 section 6.1), not %r" % (self.query_id,))
-        self.cert = load_pem_x509_certificate(client_cert_pem)
         self.key = serialization.load_pem_private_key(client_key_pem, password=None)
+        chain = request_signer_chain(client_cert_pem, self.key)
+        self.cert = chain[0]
         der = self.cert.public_bytes(serialization.Encoding.DER)
         # x509_hash: the client identifier IS the leaf's digest, so the wallet can tie the
         # request object's signing certificate to the identifier without a directory.
         self.client_id = "x509_hash:" + b64u_encode(_sha256(der))
-        self.x5c = [base64.b64encode(der).decode("ascii")]
+        # The leaf, then the intermediates in the file's order: a wallet that trusts only a root
+        # finds the path to it here, without fetching anything.
+        self.x5c = [base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode("ascii")
+                    for c in chain]
         self.request_uri = request_uri
         self.response_uri = response_uri
         self.redirect_uri = redirect_uri or (response_uri.rsplit("/", 1)[0] + "/done")
@@ -1078,6 +1186,7 @@ class Verifier:
             unread = [name for name, given in (("issuer_jwks", issuer_jwks),
                                                ("issuer_trust_anchors", issuer_trust_anchors),
                                                ("status_resolver", status_resolver),
+                                               ("require_status", require_status or None),
                                                ("vct_values", vct_values))
                       if given is not None]
             if unread:
@@ -1112,6 +1221,14 @@ class Verifier:
         # operator uses: the class that answers the wallet. A parameter reachable only from
         # the function underneath it is a capability the product does not have.
         self.status_resolver = status_resolver
+        # The relying party's own rule, off by default (2026-11-21): when on, only a status the
+        # resolver checked, VALID and fresh, lets a presentation through (`_status_refusal`).
+        # Without a resolver no status is ever established, so a verifier that would refuse every
+        # presentation is refused here instead.
+        if require_status and status_resolver is None:
+            raise ValueError("require_status needs a status_resolver: without one no status is "
+                             "established, and every presentation would be refused")
+        self.require_status = bool(require_status)
         # A profile the verifier_info is held to before any request carries it. An unknown name
         # is refused: one misspelt would otherwise check nothing and say nothing.
         if verifier_info_profile is not None and verifier_info_profile not in VERIFIER_INFO_PROFILES:
@@ -1145,6 +1262,7 @@ class Verifier:
         # about (`attributed_request`).
         self._attributed = threading.local()
         self._jti_memory = JtiMemory(retention_seconds=JTI_RETENTION_SECONDS)
+        self.dc_api_client_metadata = dc_api_client_metadata_of(dc_api_client_metadata)
 
     # ------------------------------------------------------------------ the request
 
@@ -1326,17 +1444,11 @@ class Verifier:
 
     def _client_metadata(self, enc_jwk):
         """`client_metadata` for a request whose response is encrypted to `enc_jwk`."""
-        # Exactly three keys. The suite warns on a fourth and fails on the older
-        # authorization_encrypted_response_alg/_enc names, which an earlier draft used.
-        return {
-            "jwks": {"keys": [enc_jwk]},
-            "vp_formats_supported": self._vp_formats(),
-            "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
-        }
+        return _client_metadata_of(enc_jwk, self._vp_formats())
 
     def _signed(self, claims):
         """`claims` as a signed request object: a JWS under this verifier's key, carrying its
-        leaf certificate alone in `x5c`."""
+        leaf certificate and any intermediates in `x5c`."""
         header = {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.x5c}
         return _sign_es256(self.key, header, claims)
 
@@ -1573,17 +1685,12 @@ class Verifier:
             return self._error("claims", "the presentation discloses %s, which the request did "
                                          "not select" % ", ".join(_shown(p) for p in extra[:5]))
 
-        # A status the operator's resolver CHECKED, whose value is not VALID (0): the issuer
-        # says this credential is revoked or suspended. That is a fact, not a policy question, so
-        # the wallet is refused; until 2026-10-01 it got 200. The states that are not a fact
-        # (unreachable, no_authority, list_refused, unsupported_status) stay in the verdict for
-        # the relying party's own policy, as the README's revocation section says.
-        rev = verdict.revocation if isinstance(verdict.revocation, dict) else {}
-        if rev.get("state") == "checked" and rev.get("status") != 0:
+        # The status: a checked one that is not VALID is refused, and with require_status so is
+        # every state but a checked, VALID, fresh one (`_status_refusal`).
+        refusal = _status_refusal(verdict.revocation, self.require_status)
+        if refusal is not None:
             # The refusal keeps the resolver's answer, so the operator sees why.
-            return 400, dict(self.REFUSAL_BODY), Verdict(
-                False, "revoked", "the issuer's status list gives this credential the value %r, "
-                                  "not VALID (0)" % (rev.get("status"),), revocation=rev)
+            return 400, dict(self.REFUSAL_BODY), refusal
         return self._close_and_answer(session, verdict)
 
     def _judge_mdoc(self, session, presentation):
@@ -1800,14 +1907,27 @@ class Verifier:
 
         `origin` is read as `mdoc.dc_api_origin` reads it, and the request carries it as a
         browser writes it. Raises ValueError, and no request is made, for an origin that
-        `mdoc.dc_api_origin` refuses and for a verifier not built for `mso_mdoc`. The request is
-        answerable once, through `dc_api_response`, for `request_ttl_seconds`.
+        `mdoc.dc_api_origin` refuses and for a verifier not built for `mso_mdoc`; raises
+        DcApiRequestsFull, and keeps no request, when DC_API_MAX_OUTSTANDING requests are
+        outstanding: counted before a key is made, and again under the lock that stores the
+        request, since others may have been kept while this one was signed. `client_metadata`
+        also carries the members of `dc_api_client_metadata`. The
+        request is answerable once, through `dc_api_response`, for `request_ttl_seconds`.
         """
         if self.credential_format != MDOC_FORMAT:
             raise ValueError("a request over the Digital Credentials API asks for an %s; this verifier "
                              "asks for %s" % (MDOC_FORMAT, self.credential_format))
         written = mdoc.dc_api_origin(origin)
+        # Before a key is made or anything signed, and again when the request is kept: threads
+        # that all pass this test still keep no more than the cap.
+        with self._lock:
+            self._expire_locked()
+            self._dc_api_room_locked()
         session = DcApiSession(ec.generate_private_key(ec.SECP256R1()), written)
+        # The added members first and the verifier's own last, so the served jwks is this request's
+        # key whatever dc_api_client_metadata, a public attribute, has become since construction.
+        client_metadata = json.loads(json.dumps(self.dc_api_client_metadata or {}))
+        client_metadata.update(self._client_metadata(_encryption_jwk(session.enc_key, session.kid)))
         claims = {
             "aud": WALLET_AUDIENCE,
             "client_id": self.client_id,
@@ -1815,7 +1935,7 @@ class Verifier:
             "response_type": "vp_token",
             "response_mode": DC_API_RESPONSE_MODE,
             "nonce": session.nonce,
-            "client_metadata": self._client_metadata(_encryption_jwk(session.enc_key, session.kid)),
+            "client_metadata": client_metadata,
             "dcql_query": self._dcql_query(),
         }
         if self.verifier_info:
@@ -1823,8 +1943,17 @@ class Verifier:
         request = self._signed(claims)
         with self._lock:
             self._expire_locked()
+            self._dc_api_room_locked()
             self._dc_api[session.nonce] = session
         return {"protocol": DC_API_PROTOCOL, "data": {"request": request}}
+
+    def _dc_api_room_locked(self):
+        """Raise DcApiRequestsFull when DC_API_MAX_OUTSTANDING requests over the Digital
+        Credentials API are outstanding. The caller holds the lock and has just swept."""
+        if len(self._dc_api) >= DC_API_MAX_OUTSTANDING:
+            raise DcApiRequestsFull("%d requests over the Digital Credentials API are outstanding, the "
+                                    "most this verifier keeps; one is made again when one is answered "
+                                    "or expires" % DC_API_MAX_OUTSTANDING)
 
     def dc_api_response(self, data, *, origin):
         """Judge what a page posts after `navigator.credentials.get` answers a `dc_api_request`:
@@ -2030,8 +2159,76 @@ def _bounded_result(out):
     return out
 
 
+def _asked_once(resolver):
+    """`resolver`, asked once per status list reference and the answer, or what it raised, given
+    again after: `verify_response` judges each presentation under both transaction_data readings,
+    and one status list is one fetch. It declares `takes_credential_anchor` as `resolver` does,
+    and the anchor and signer certificates it is handed are part of the reference, since an
+    anchored authority's answer depends on them."""
+    answers = {}
+
+    def ask(*, uri, idx, issuer, **certified):
+        key = (uri, idx, issuer) + tuple(
+            None if cert is None else cert.public_bytes(serialization.Encoding.DER)
+            for cert in (certified.get("credential_anchor"), certified.get("credential_leaf")))
+        if key not in answers:
+            try:
+                answers[key] = (True, resolver(uri=uri, idx=idx, issuer=issuer, **certified))
+            except Exception as exc:  # noqa: BLE001  given again, as raised, on the next ask
+                answers[key] = (False, exc)
+        answered, value = answers[key]
+        if not answered:
+            raise value
+        return value
+    if getattr(resolver, "takes_credential_anchor", False) is True:
+        ask.takes_credential_anchor = True
+    return ask
+
+
+def _status_established(revocation):
+    """True only for a status a resolver checked, VALID (0), and not past the bound its issuer or
+    the caller set."""
+    status = revocation.get("status")
+    return (revocation.get("state") == "checked" and isinstance(status, int)
+            and not isinstance(status, bool) and status == 0 and revocation.get("stale") is False)
+
+
+def _state_said(revocation):
+    """A revocation state as a refusal names it: the state, and the check that refused a list."""
+    state = str(revocation.get("state"))
+    if state == "checked":
+        return "checked, VALID, %s" % ("but stale: past the bound its issuer or the caller set"
+                                       if revocation.get("stale") is True
+                                       else "with no freshness stated")
+    code = revocation.get("code")
+    return state if not code or code == state else "%s (%s)" % (state, code)
+
+
+def _status_refusal(revocation, require_status):
+    """The refusing verdict a presentation's revocation state calls for, or None.
+
+    A status a resolver CHECKED whose value is not VALID (0) is refused: the issuer says the
+    credential is revoked or suspended, which is a fact, not a policy question (until 2026-10-01
+    it got 200). The states that are not a fact (unreachable, no_authority, list_refused,
+    unsupported_status, no_status_claim, not_evaluated) stay in the verdict for the relying
+    party's own policy, unless `require_status` is that policy: then every state but a checked,
+    VALID, fresh one is refused as `status_required`, its reason naming the state (the German
+    PID verifier guidelines, V-20: "If the status cannot be determined, the PID is rejected").
+    Each refusal keeps the resolver's answer in `revocation`, so the operator sees why."""
+    rev = revocation if isinstance(revocation, dict) else {}
+    if rev.get("state") == "checked" and rev.get("status") != 0:
+        return Verdict(False, "revoked", "the issuer's status list gives this credential the value "
+                                         "%r, not VALID (0)" % (rev.get("status"),), revocation=rev)
+    if require_status and not _status_established(rev):
+        return Verdict(False, "status_required", "a checked, VALID, fresh status is required, and "
+                                                 "the revocation state is %s" % _state_said(rev),
+                       revocation=rev)
+    return None
+
+
 def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jwks=None,
-                    trust_anchors=None, now=None, iaca_roots=None):
+                    trust_anchors=None, now=None, iaca_roots=None, status_resolver=None,
+                    require_status=False):
     """A verdict over a captured response: every presentation in `vp_token`, each held to the
     request it answers, and the request's transaction_data under both readings of which entries
     a key binding JWT binds.
@@ -2049,6 +2246,11 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
     sent: `client_id`, `nonce`, `response_uri` and the one key in `client_metadata.jwks`. With
     `now`, the verdict's reason says it was judged at the supplied instant. Transaction data is
     not read for an mdoc, so a request carrying both is refused.
+
+    `status_resolver` and `require_status` are `Verifier`'s, for the dc+sd-jwt presentations: a
+    checked status that is not VALID refuses one, and with `require_status` so does every state
+    but a checked, VALID, fresh one (`_status_refusal`). The resolver is asked at most once per
+    status list reference, and it reads the status as it is when asked, whatever `now` says.
 
     Each presentation is checked as `verify_presentation` checks it; the claims it discloses are
     returned, not judged against the query. With transaction_data every presentation is
@@ -2104,6 +2306,13 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
                              "dc+sd-jwt and mso_mdoc" % (qid, query.get("format")))
         vct = meta.get("vct_values")
         asked[qid] = vct if isinstance(vct, list) else None
+    if require_status and status_resolver is None:
+        raise ValueError("require_status needs a status_resolver: without one no status is "
+                         "established, and every presentation would be refused")
+    if require_status and mdocs:
+        raise ValueError("require_status holds a dc+sd-jwt credential's status list, and the "
+                         "request asks for an mso_mdoc (%s), whose status this verifier does not "
+                         "read" % ", ".join(sorted(mdocs)))
     transcript = None
     if mdocs:
         if request.get("transaction_data") is not None:
@@ -2180,15 +2389,22 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
         return mdoc.verify_device_response(device_response, session_transcript=transcript,
                                            iaca_roots=iaca_roots, doctype=mdocs[qid], now=now)
 
+    resolver = None if status_resolver is None else _asked_once(status_resolver)
+
+    def held_to_status(verdict):
+        refusal = _status_refusal(verdict.revocation, require_status) if (
+            resolver is not None and verdict.authentic) else None
+        return verdict if refusal is None else refusal
+
     def evaluate(scope):
         memory = JtiMemory()
-        return {qid: judge_mdoc(qid) if qid in mdocs else verify_presentation(
+        return {qid: judge_mdoc(qid) if qid in mdocs else held_to_status(verify_presentation(
             presentation, expected_nonce=nonce, expected_audience=audience,
             issuer_jwks=issuer_jwks, trust_anchors=trust_anchors, now=now,
-            expected_vct=asked[qid],
+            expected_vct=asked[qid], status_resolver=resolver,
             transaction_data=None if not entries else TransactionDataBinding(
                 entries, qid, scope=scope, response_mode=request.get("response_mode"),
-                jti_fresh=memory, presented=presented))
+                jti_fresh=memory, presented=presented)))
             for qid, presentation in presented.items()}
 
     def bound_once(verdicts):

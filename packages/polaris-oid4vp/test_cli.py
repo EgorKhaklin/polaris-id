@@ -1569,6 +1569,145 @@ class PublicationRuleTests(_MdocServeCase):
             self.assertIn(b64u_decode(sent[0]), [call.args[0] for call in decode.call_args_list])
 
 
+class DcApiServeCommandTests(_MdocServeCase):
+    """`serve ... --dc-api --dc-api-origin ORIGIN [--dc-api-client-metadata FILE]`: the page and
+    routes of the Digital Credentials API, behind --experimental and --format mso_mdoc."""
+
+    ORIGIN = "https://verifier.example"
+
+    def dc_api(self, *extra, without=()):
+        return self.mdoc("--dc-api", "--dc-api-origin", self.ORIGIN, *extra, without=without)
+
+    def before_the_pki(self, *args):
+        """`serve` with a PKI directory that does not exist: (rc, stderr)."""
+        import contextlib
+        import io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = main(["serve", "--pki", str(self.tmp / "absent"), *args])
+        return rc, err.getvalue()
+
+    def metadata_file(self, text):
+        path = self.tmp / ("metadata-%d.json" % len(list(self.tmp.iterdir())))
+        path.write_text(text)
+        return str(path)
+
+    def test_the_dc_api_path_is_off_by_default(self):
+        rc, seen, out, err = self.mdoc()
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(seen["kwargs"].get("dc_api_origin"))
+        self.assertNotIn("/dc-api/", out)
+        self.assertEqual(seen["verifier"].dc_api_client_metadata, {})
+        result = self.dc_api(without=("--experimental",))
+        self.stopped(result, "--dc-api is experimental and off by default; add --experimental to turn it on")
+
+    def test_dc_api_flags_are_refused_apart_and_before_the_pki_is_read(self):
+        mdoc = ("--format", "mso_mdoc", "--experimental")
+        good = ("--dc-api", "--dc-api-origin", self.ORIGIN) + mdoc
+        cases = (
+            (("--dc-api-origin", self.ORIGIN) + mdoc, "--dc-api-origin belongs to --dc-api, which this command was not given"),
+            (("--dc-api-client-metadata", self.metadata_file("{}")) + mdoc,
+             "--dc-api-client-metadata belongs to --dc-api, which this command was not given"),
+            (("--dc-api-origin", self.ORIGIN, "--dc-api-client-metadata", self.metadata_file("{}")) + mdoc,
+             "--dc-api-origin and --dc-api-client-metadata belong to --dc-api"),
+            (("--dc-api", "--dc-api-origin", self.ORIGIN, "--format", "mso_mdoc"),
+             "--dc-api is experimental and off by default; add --experimental to turn it on"),
+            (("--dc-api", "--dc-api-origin", self.ORIGIN, "--experimental"), "--dc-api asks for an mdoc; add --format mso_mdoc"),
+            (("--dc-api", "--dc-api-origin", self.ORIGIN, "--experimental", "--format", "dc+sd-jwt"),
+             "--dc-api asks for an mdoc; add --format mso_mdoc"),
+            (("--dc-api",) + mdoc, "--dc-api needs --dc-api-origin"),
+            (("--dc-api", "--dc-api-origin", "http://rp.example") + mdoc, "--dc-api-origin 'http://rp.example'"),
+            (("--dc-api", "--dc-api-origin", "*") + mdoc, "--dc-api-origin '*' is not one origin"),
+            (("--dc-api", "--dc-api-origin", self.ORIGIN + "/page") + mdoc, "it carries a path"),
+            (("--dc-api", "--dc-api-origin", "origin:" + self.ORIGIN) + mdoc, "--dc-api-origin"),
+            (good + ("--dc-api-client-metadata", str(self.tmp / "nothing.json")), "--dc-api-client-metadata"),
+            (good + ("--dc-api-client-metadata", self.metadata_file("{")), "--dc-api-client-metadata"),
+            (good + ("--dc-api-client-metadata", self.metadata_file("[]")), "is a JSON object of members"),
+            (good + ("--dc-api-client-metadata", self.metadata_file('{"jwks": {"keys": []}}')),
+             "sets 'jwks', which this verifier writes itself"),
+        )
+        for args, says in cases:
+            with self.subTest(args=args[:4], says=says):
+                rc, err = self.before_the_pki(*args)
+                self.assertEqual(rc, 2, err)
+                self.assertIn(says, err)
+                self.assertNotIn("is missing", err)
+        self.assertIn("secure context", self.before_the_pki("--dc-api", "--dc-api-origin", "http://rp.example", *mdoc)[1])
+        # The twin: the same flags, each one, and the command goes on to the missing PKI.
+        for args in (good, good + ("--dc-api-client-metadata", self.metadata_file('{"x_polaris_test": 1}')),
+                     ("--dc-api", "--dc-api-origin", "http://localhost:8080") + mdoc):
+            with self.subTest(twin=args):
+                rc, err = self.before_the_pki(*args)
+                self.assertEqual(rc, 2)
+                self.assertIn("is missing", err)
+
+    def test_dc_api_does_not_combine_with_the_counting_flags(self):
+        token = self.tmp / "token"
+        token.write_text("t" * 40)
+        token.chmod(0o600)
+        for flags, named in ((("--once",), "--once"), (("--once", "--rearm"), "--once and --rearm"),
+                             (("--result", str(self.tmp / "r.json")), "--result"),
+                             (("--control-token-file", str(token)), "--control-token-file")):
+            with self.subTest(flags=flags):
+                self.stopped(self.dc_api(*flags), "--dc-api is not combined with %s" % named)
+                rc, err = self.before_the_pki("--dc-api", "--dc-api-origin", self.ORIGIN, "--format", "mso_mdoc",
+                                              "--experimental", *flags)
+                self.assertEqual(rc, 2)
+                self.assertIn("--dc-api is not combined with", err)
+                self.assertNotIn("is missing", err)
+
+    def test_the_startup_line_names_the_page(self):
+        rc, seen, out, err = self.mdoc("--dc-api", "--dc-api-origin", "HTTPS://Verifier.Example:443")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(seen["kwargs"]["dc_api_origin"], self.ORIGIN)
+        self.assertIn("\n  dc api page   %s/dc-api/ (Digital Credentials API, experimental)\n" % self.ORIGIN, out)
+        rc, seen, out, err = self.mdoc("--dc-api", "--dc-api-origin", "http://127.0.0.1:8080")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(seen["kwargs"]["dc_api_origin"], "http://127.0.0.1:8080")
+        self.assertIn("  dc api page   http://127.0.0.1:8080/dc-api/ (Digital Credentials API, experimental)", out)
+        # --once is refused beside --dc-api, so the startup text does not point at it; without
+        # --dc-api it still does.
+        self.assertNotIn("--once", out)
+        self.assertIn("\nOpen the dc api page in a browser to start a request.\n", out)
+        rc, _, out, err = self.mdoc()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("\nStart a request with --once to print the parameters a wallet is launched with.\n", out)
+        self.assertNotIn("dc api page", out)
+
+    def test_the_metadata_file_reaches_the_request_and_is_refused_as_the_verifier_refuses(self):
+        import json
+        from polaris_oid4vp.verifier import dc_api_client_metadata_of
+        extra = {"x_polaris_test": {"note": "made up", "n": 1}}
+        rc, seen, _, err = self.dc_api("--dc-api-client-metadata", self.metadata_file(json.dumps(extra)))
+        self.assertEqual(rc, 0, err)
+        verifier = seen["verifier"]
+        self.assertEqual(verifier.dc_api_client_metadata, extra)
+        payload = verifier.dc_api_request(self.ORIGIN)["data"]["request"].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["client_metadata"]["x_polaris_test"], extra["x_polaris_test"])
+        _, jar = verifier.new_request()
+        payload = jar.split(".")[1]
+        redirect = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertNotIn("x_polaris_test", redirect["client_metadata"])
+        for document in ([], "x", {"jwks": {}}, {"vp_formats_supported": {}, "x": 1},
+                         {"x": "a" * 20000}):
+            with self.subTest(document=repr(document)[:30]):
+                with self.assertRaises(ValueError) as caught:
+                    dc_api_client_metadata_of(document)
+                path = self.metadata_file(json.dumps(document))
+                self.stopped(self.dc_api("--dc-api-client-metadata", path),
+                             "--dc-api-client-metadata %s: %s" % (path, caught.exception))
+        # A file nested past the interpreter's recursion limit is refused with this flag's message
+        # (the depth bound reads it), never ended by the parser's RecursionError; a NaN likewise.
+        depth = 100000
+        for text, words in (('{"x":' + '{"a":' * depth + '{}' + '}' * depth + '}', "nests deeper than"),
+                            ('{"x": NaN}', "non-JSON literal NaN")):
+            with self.subTest(text=text[:12]):
+                path = self.metadata_file(text)
+                self.stopped(self.dc_api("--dc-api-client-metadata", path),
+                             "--dc-api-client-metadata %s: the file" % path, words)
+
+
 class MdocServeCommandTests(_MdocServeCase):
     """`serve --format mso_mdoc --doctype D --iaca-root PEM --claim '[NS,EL]' --experimental`:
     what the flags hand the verifier, and what stops the command before it listens."""
@@ -3975,7 +4114,8 @@ class WrittenReasonTests(unittest.TestCase):
         # The writers, by the function each sits in: a site that moves or goes changes this.
         self.assertEqual(sorted({s.split(":")[0] for s in sites}),
                          ["cli._cmd_verdict", "cli._operator_line", "cli._result_of",
-                          "cli._verdict_json", "cli._wallet_error_reason", "serve.do_POST"])
+                          "cli._verdict_json", "cli._wallet_error_reason", "serve._dc_api_response",
+                          "serve.do_POST"])
 
 
 class TheAnswerLineIsBoundedTests(_RunningCase):
@@ -4065,6 +4205,158 @@ class AMalformedDisclosureReachesNoSinkTests(_RunningCase):
         self.assertEqual(written["verdicts"]["pid"]["code"], "disclosure")
         self.assertIn("got a JSON object", written["problem"])
         self.assertNotIn(DISCLOSED_MARKER, out.getvalue() + err.getvalue())
+
+
+# --------------------------------------------------------------------------- --status-anchor
+
+STATUS_PREFIX = "https://tsl.provider.example/tsl/"
+
+
+def _self_signed_ca(common_name):
+    import datetime
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key, now = ec.generate_private_key(ec.SECP256R1()), datetime.datetime.now(datetime.timezone.utc)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    return (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .sign(key, hashes.SHA256()))
+
+
+def _status_anchor_file(folder, *, entries=None, **change):
+    """A --status-anchor file in a folder of its own under `folder`, beside its two anchors,
+    which the entry names by bare file name: two self-signed CAs, neither certifying the other.
+    `change` replaces members of the one entry (None drops one); `entries` replaces the array.
+    (path, the credential anchor)."""
+    import json
+    from cryptography.hazmat.primitives import serialization
+    home = pathlib.Path(tempfile.mkdtemp(prefix="status-anchor-", dir=str(folder)))
+    credential_anchor = _self_signed_ca("PID-Signer Test CA")
+    for name, cert in (("a.pem", credential_anchor), ("b.pem", _self_signed_ca("Status Test CA"))):
+        (home / name).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (home / "two.pem").write_bytes((home / "a.pem").read_bytes() + (home / "b.pem").read_bytes())
+    entry = {"credential_anchor": "a.pem", "status_uri_prefix": STATUS_PREFIX,
+             "status_anchor": "b.pem", "why": "the trust list names both anchors"}
+    for member, value in change.items():
+        if value is None:
+            entry.pop(member)
+        else:
+            entry[member] = value
+    path = home / "status-anchors.json"
+    path.write_text(json.dumps([entry] if entries is None else entries))
+    return str(path), credential_anchor
+
+
+class StatusAnchorServeTests(unittest.TestCase):
+    """`serve --status-anchor FILE` and `--require-status`: the entries reach the verifier as a
+    resolver over the bounded fetch, and a file or a requirement it cannot use stops it starting."""
+
+    setUp = ServeCommandHeldOutTests.setUp
+    _serve = ServeCommandHeldOutTests._serve
+
+    def stopped(self, result, *says):
+        _MdocServeCase.stopped(self, result, *says)
+
+    def test_the_entries_reach_the_verifier_over_the_bounded_fetch(self):
+        from unittest import mock
+        from polaris_oid4vp import status_fetch
+        path, anchor = _status_anchor_file(self.tmp)
+        fetched = []
+
+        def fetch(uri):
+            fetched.append(uri)
+            raise OSError("not fetched in a test")
+        for flags, require, said in (
+                ((), False, "the revocation state is reported"),
+                (("--require-status",), True, "only a checked, VALID, fresh status is accepted")):
+            with self.subTest(flags=flags):
+                del fetched[:]
+                with mock.patch.object(status_fetch, "fetch_status_list", fetch):
+                    rc, seen, out, err = self._serve("--status-anchor", path, *flags)
+                self.assertEqual(rc, 0, err)
+                verifier = seen["verifier"]
+                self.assertIs(verifier.require_status, require)
+                self.assertIs(verifier.status_resolver.takes_credential_anchor, True)
+                self.assertIn("status lists  1 anchored entry from %s; %s" % (path, said), out)
+                answer = verifier.status_resolver(uri=STATUS_PREFIX + "1", idx=0, issuer=None,
+                                                  credential_anchor=anchor, credential_leaf=None)
+                self.assertEqual(fetched, [STATUS_PREFIX + "1"])
+                self.assertIs(answer["checked"], False)
+
+    def test_require_status_without_an_anchor_stops_it_starting(self):
+        self.stopped(self._serve("--require-status"), "--require-status needs --status-anchor")
+
+    def test_a_status_anchor_file_it_cannot_use_stops_it_starting(self):
+        good = {"credential_anchor": "a.pem", "status_uri_prefix": STATUS_PREFIX,
+                "status_anchor": "b.pem", "why": "a reason"}
+        cases = (
+            ("absent", None, "is not a readable JSON file"),
+            ("not JSON", "{", "is not a readable JSON file"),
+            ("not an array", dict(entries={}), "is not a non-empty JSON array of entries"),
+            ("an empty array", dict(entries=[]), "is not a non-empty JSON array of entries"),
+            ("a member missing", dict(why=None), "entry 1 is not an object of exactly"),
+            ("a member added", dict(note="x"), "entry 1 is not an object of exactly"),
+            ("a path that is not a name", dict(credential_anchor=5),
+             "entry 1: credential_anchor is not a file name"),
+            ("a file that is not there", dict(status_anchor="absent.pem"),
+             "entry 1: status_anchor absent.pem is not a readable PEM certificate file"),
+            ("two certificates", dict(status_anchor="two.pem"),
+             "entry 1: status_anchor two.pem holds 2 certificates, and an anchor is one"),
+            ("an http prefix", dict(status_uri_prefix="http://tsl.provider.example/tsl/"),
+             "entry 1: the status URI prefix"),
+            ("the second entry", dict(entries=[good, dict(good, status_anchor="a.pem")]),
+             "entry 2: "))
+        for label, change, said in cases:
+            with self.subTest(case=label):
+                if change is None:
+                    path = str(self.tmp / "absent.json")
+                elif isinstance(change, str):
+                    path = str(self.tmp / "not-json.json")
+                    pathlib.Path(path).write_text(change)
+                else:
+                    path, _ = _status_anchor_file(self.tmp, **change)
+                self.stopped(self._serve("--status-anchor", path), "--status-anchor", said)
+
+    def test_with_an_mdoc_query_each_flag_stops_it_starting(self):
+        path, _ = _status_anchor_file(self.tmp)
+        self.root = self.tmp / "iaca.pem"
+        from cryptography.hazmat.primitives import serialization
+        self.root.write_bytes(_self_signed_ca("IACA Test Root").public_bytes(
+            serialization.Encoding.PEM))
+        for flags in (("--status-anchor", path), ("--require-status",)):
+            with self.subTest(flag=flags[0]):
+                self.stopped(_MdocServeCase.mdoc(self, *flags), flags[0], "dc+sd-jwt")
+
+
+class StatusAnchorVerdictTests(unittest.TestCase):
+    """`verdict --status-anchor FILE` and `--require-status`, over the two-credential vector,
+    whose credentials name no status list."""
+
+    setUp = VerdictCommandTests.setUp
+    _write = VerdictCommandTests._write
+    _verdict = VerdictCommandTests._verdict
+
+    def test_a_credential_naming_no_list_is_refused_only_under_the_requirement(self):
+        path, _ = _status_anchor_file(self.tmp)
+        scope = ("--transaction-data-scope", "per_credential")
+        rc, result, err = self._verdict("per_credential", *scope, "--status-anchor", path)
+        self.assertEqual((rc, result["accepted"]), (0, True), err)
+        rc, result, err = self._verdict("per_credential", *scope, "--status-anchor", path,
+                                        "--require-status")
+        self.assertEqual((rc, result["accepted"]), (1, False), err)
+        self.assertEqual(result["verdicts"]["pid"]["code"], "status_required")
+        self.assertIn("the revocation state is no_status_claim", result["verdicts"]["pid"]["reason"])
+
+    def test_a_requirement_or_a_file_it_cannot_use_is_refused(self):
+        for flags, said in ((("--require-status",), "--require-status needs --status-anchor"),
+                            (("--status-anchor", self._write("bad.json", "{")), "--status-anchor")):
+            with self.subTest(flag=flags[0]):
+                rc, result, err = self._verdict("per_credential", *flags)
+                self.assertEqual((rc, result), (2, None))
+                self.assertIn(said, err)
 
 
 if __name__ == "__main__":

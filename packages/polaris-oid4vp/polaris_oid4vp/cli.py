@@ -17,7 +17,9 @@ that look perfectly reasonable:
 
 So the leaf needs an issuer, the issuer is registered out of band, and the chain carries the
 leaf alone. Each of those cost a failed conformance run to discover, and a command that
-produces the right shape is worth more than a paragraph saying what the right shape is.
+produces the right shape is worth more than a paragraph saying what the right shape is. A
+`client.pem` from a public authority may hold the leaf's intermediates after it: `serve` sends
+them in `x5c` in that order, for a wallet that trusts only the root.
 
     polaris-oid4vp keygen --out ./pki --host verifier.example
     polaris-oid4vp serve --pki ./pki --port 9443
@@ -50,13 +52,13 @@ except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
 from .jwe import _loads_depth_bounded
-from .mdoc import IacaRoot
+from .mdoc import IacaRoot, dc_api_origin
 from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
                     b64u_decode)
-from .serve import (CONTROL_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
+from .serve import (CONTROL_PATH, DC_API_PAGE_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
                     control_token_problem, cors_origins_of, serve)
 from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_INFO_PROFILES,
-                       Verifier, claim_query, mdoc_claim_query, operator_text,
+                       Verifier, claim_query, dc_api_client_metadata_of, mdoc_claim_query, operator_text,
                        logged_line, transaction_data_entries, verifier_info_entries,
                        verify_response, written_reason)
 
@@ -64,7 +66,7 @@ from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_
 #: for the order somebody happened to generate them in.
 FILES = {
     "anchor": "anchor.pem",          # register THIS with the conformance suite
-    "client_cert": "client.pem",     # the leaf, and the only thing that goes in x5c
+    "client_cert": "client.pem",     # the leaf, then any intermediates: all of it goes in x5c
     "client_key": "client-key.pem",
     "tls_cert": "tls.pem",           # the listener's certificate; may be self-signed
     "tls_key": "tls-key.pem",
@@ -306,7 +308,8 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
                   issuer_trust_anchors=None, public_base_url=None, claims=None,
                   vct_values=None, verifier_info=None, credential_query_id=None,
                   verifier_info_profile=None, credential_format=None, doctype_value=None,
-                  iaca_roots=None) -> Verifier:
+                  iaca_roots=None, dc_api_client_metadata=None, status_resolver=None,
+                  require_status=False) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
@@ -335,7 +338,11 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
         **({"verifier_info": verifier_info} if verifier_info is not None else {}),
         **({"credential_query_id": credential_query_id} if credential_query_id is not None else {}),
         **({"verifier_info_profile": verifier_info_profile}
-           if verifier_info_profile is not None else {}))
+           if verifier_info_profile is not None else {}),
+        **({"dc_api_client_metadata": dc_api_client_metadata}
+           if dc_api_client_metadata is not None else {}),
+        **({"status_resolver": status_resolver} if status_resolver is not None else {}),
+        **({"require_status": True} if require_status else {}))
 
 
 def _load_trust_anchors(paths):
@@ -354,6 +361,67 @@ def _load_trust_anchors(paths):
             raise SystemExit("polaris-oid4vp: --issuer-trust-anchor %s is not a readable PEM "
                              "certificate file: %s" % (path, exc))
     return anchors
+
+
+#: The members of one `--status-anchor` entry, every one required and no other read.
+STATUS_ANCHOR_MEMBERS = ("credential_anchor", "status_uri_prefix", "status_anchor", "why")
+
+
+def _load_status_anchors(path):
+    """`--status-anchor FILE`: a JSON array of entries, each {"credential_anchor": PEM path,
+    "status_uri_prefix": https URI ending in /, "status_anchor": PEM path, "why": text}, as a
+    `status.AnchoredAuthority`. A PEM path is read relative to FILE's directory and holds exactly
+    one certificate. ValueError says which entry and what is wrong with it."""
+    from cryptography.x509 import load_pem_x509_certificates
+    from .status import AnchoredAuthority
+    folder = pathlib.Path(path).parent
+    try:
+        entries = _loads_depth_bounded(pathlib.Path(path).read_text(encoding="utf-8"),
+                                       "file", finite=True)
+    except (OSError, ValueError) as exc:
+        raise ValueError("--status-anchor %s is not a readable JSON file: %s" % (path, exc)) from None
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("--status-anchor %s is not a non-empty JSON array of entries" % path)
+    authority = AnchoredAuthority()
+    for number, entry in enumerate(entries, start=1):
+        where = "--status-anchor %s entry %d" % (path, number)
+        if not isinstance(entry, dict) or set(entry) != set(STATUS_ANCHOR_MEMBERS):
+            raise ValueError("%s is not an object of exactly %s" % (where, ", ".join(STATUS_ANCHOR_MEMBERS)))
+        anchors = {}
+        for member in ("credential_anchor", "status_anchor"):
+            given = entry[member]
+            if not isinstance(given, str) or not given:
+                raise ValueError("%s: %s is not a file name" % (where, member))
+            try:
+                certificates = load_pem_x509_certificates((folder / given).read_bytes())
+            except (OSError, ValueError) as exc:
+                raise ValueError("%s: %s %s is not a readable PEM certificate file: %s"
+                                 % (where, member, given, exc)) from None
+            if len(certificates) != 1:
+                raise ValueError("%s: %s %s holds %d certificates, and an anchor is one"
+                                 % (where, member, given, len(certificates)))
+            anchors[member] = certificates[0]
+        try:
+            authority.state(credential_anchor=anchors["credential_anchor"],
+                            status_uri_prefix=entry["status_uri_prefix"],
+                            status_anchor=anchors["status_anchor"], why=entry["why"])
+        except ValueError as exc:
+            raise ValueError("%s: %s" % (where, exc)) from None
+    return authority, len(entries)
+
+
+def _status_options(args):
+    """(status_resolver, require_status, entries) for `--status-anchor` and `--require-status`:
+    (None, False, 0) without either. ValueError for a requirement nothing can meet."""
+    if args.require_status and not args.status_anchor:
+        raise ValueError("--require-status needs --status-anchor: without a stated status anchor "
+                         "no status list is read, and every presentation would be refused")
+    if not args.status_anchor:
+        return None, False, 0
+    from .status import make_resolver
+    from .status_fetch import fetch_status_list
+    authority, entries = _load_status_anchors(args.status_anchor)
+    return make_resolver(authority, fetch_status_list), bool(args.require_status), entries
 
 
 def _load_iaca_roots(paths, doctypes):
@@ -973,6 +1041,49 @@ def _read_control_token(path):
     return token
 
 
+def _dc_api_options(args):
+    """`(origin, client_metadata)` for `serve --dc-api`, or `(None, None)` without it, read before
+    the PKI is: the origin as `mdoc.dc_api_origin` writes it and the metadata file as
+    `dc_api_client_metadata_of` holds it. ValueError says what to change."""
+    unread = [flag for flag, given in (("--dc-api-origin", args.dc_api_origin is not None),
+                                       ("--dc-api-client-metadata", args.dc_api_client_metadata is not None))
+              if given]
+    if not args.dc_api:
+        if unread:
+            raise ValueError("%s belong%s to --dc-api, which this command was not given"
+                             % (" and ".join(unread), "s" if len(unread) == 1 else ""))
+        return None, None
+    if not args.experimental:
+        raise ValueError("--dc-api is experimental and off by default; add --experimental to turn it on")
+    if args.format != MDOC_FORMAT:
+        raise ValueError("--dc-api asks for an mdoc; add --format %s" % MDOC_FORMAT)
+    if args.dc_api_origin is None:
+        raise ValueError("--dc-api needs --dc-api-origin, the origin the page is opened at, such as "
+                         "https://verifier.example")
+    try:
+        origin = dc_api_origin(args.dc_api_origin)
+    except ValueError as exc:
+        raise ValueError("--dc-api-origin %s" % exc) from None
+    combined = [flag for flag, given in (("--once", args.once), ("--rearm", args.rearm),
+                                         ("--result", args.result),
+                                         ("--control-token-file", args.control_token_file)) if given]
+    if combined:
+        raise ValueError("--dc-api is not combined with %s: %s start%s or report%s on requests made at "
+                         "the request URI, and the page makes requests of its own"
+                         % (" and ".join(combined), "they" if len(combined) > 1 else "it",
+                            "" if len(combined) > 1 else "s", "" if len(combined) > 1 else "s"))
+    metadata = None
+    if args.dc_api_client_metadata is not None:
+        try:
+            # Depth-bounded, so a file nested past the interpreter's limit is refused here with
+            # this flag's message, never with the parser's RecursionError.
+            with open(args.dc_api_client_metadata, encoding="utf-8") as fh:
+                metadata = dc_api_client_metadata_of(_loads_depth_bounded(fh.read(), "file", finite=True))
+        except (OSError, ValueError) as exc:
+            raise ValueError("--dc-api-client-metadata %s: %s" % (args.dc_api_client_metadata, exc)) from None
+    return origin, metadata
+
+
 def _cmd_serve(args) -> int:
     # An empty address binds every interface, which only an address that names it may do.
     if not args.bind:
@@ -989,6 +1100,11 @@ def _cmd_serve(args) -> int:
     except ValueError as exc:
         print("polaris-oid4vp: --cors-origin %s" % exc, file=sys.stderr)
         return 2
+    try:
+        dc_api_page_origin, dc_api_client_metadata = _dc_api_options(args)
+    except ValueError as exc:
+        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        return 2
     pki = pathlib.Path(args.pki)
     missing = [name for name in FILES.values() if not (pki / name).is_file()]
     if missing:
@@ -1002,7 +1118,9 @@ def _cmd_serve(args) -> int:
         unread = [flag for flag, given in (("--issuer-jwks", args.issuer_jwks),
                                            ("--issuer-trust-anchor", args.issuer_trust_anchor),
                                            ("--vct", args.vct),
-                                           ("--transaction-data", args.transaction_data)) if given]
+                                           ("--transaction-data", args.transaction_data),
+                                           ("--status-anchor", args.status_anchor),
+                                           ("--require-status", args.require_status)) if given]
         why = None
         if not args.experimental:
             why = ("--format %s is experimental and off by default; add --experimental to turn it "
@@ -1037,6 +1155,7 @@ def _cmd_serve(args) -> int:
         return 2
     try:
         claims = [parse_claim(c, args.format) for c in args.claim]
+        status_resolver, require_status, status_entries = _status_options(args)
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
@@ -1110,7 +1229,10 @@ def _cmd_serve(args) -> int:
                                  credential_query_id=args.credential_query_id,
                                  verifier_info_profile=args.verifier_info_profile,
                                  **({"credential_format": MDOC_FORMAT, "doctype_value": args.doctype,
-                                     "iaca_roots": iaca_roots} if as_mdoc else {}))
+                                     "iaca_roots": iaca_roots} if as_mdoc else {}),
+                                 **({"dc_api_client_metadata": dc_api_client_metadata}
+                                    if dc_api_client_metadata is not None else {}),
+                                 status_resolver=status_resolver, require_status=require_status)
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
@@ -1202,7 +1324,7 @@ def _cmd_serve(args) -> int:
                       cors_origins=cors_origins, control_token=control_token,
                       on_control=requests.control if control_token else None,
                       on_control_read=requests.control_read if control_token else None,
-                      name_requests=several)
+                      name_requests=several, dc_api_origin=dc_api_page_origin)
     except BaseException:
         if args.once:
             requests.release()
@@ -1217,8 +1339,17 @@ def _cmd_serve(args) -> int:
     print("  anchor to register: %s" % (pki / FILES["anchor"]))
     if as_mdoc:
         print("  asks for      %s, docType %s (experimental)" % (MDOC_FORMAT, verifier.doctype_value))
+    if dc_api_page_origin:
+        print("  dc api page   %s%s (Digital Credentials API, experimental)"
+              % (dc_api_page_origin, DC_API_PAGE_PATH))
     if cors_origins:
         print("  cors origins  %s" % " ".join(cors_origins))
+    if status_resolver is not None:
+        print("  status lists  %d anchored entr%s from %s; %s"
+              % (status_entries, "y" if status_entries == 1 else "ies", args.status_anchor,
+                 "only a checked, VALID, fresh status is accepted" if require_status
+                 else "the revocation state is reported, and a checked status that is not VALID "
+                      "is refused"))
     if control_token:
         print("  control       POST %s, bearer token from %s, at most %d outstanding requests"
               % (CONTROL_PATH, args.control_token_file, CONTROL_OUTSTANDING_LIMIT))
@@ -1230,7 +1361,12 @@ def _cmd_serve(args) -> int:
         print("  %s" % ("the request asks for no more than its registration certificate registers"
                         if verifier.over_asking_checked else
                         "no registration certificate carried; the over-asking check did not run"))
-    print("\nStart a request with --once to print the parameters a wallet is launched with.")
+    if dc_api_page_origin:
+        # --once, --rearm and --control-token-file are refused beside --dc-api: the page is the
+        # only way a request is started.
+        print("\nOpen the dc api page in a browser to start a request.")
+    else:
+        print("\nStart a request with --once to print the parameters a wallet is launched with.")
     if args.once:
         _announce(requests.start(reserved=True))
     # Read while it serves, and stdout is often not a terminal (a pipe, a file, a container log
@@ -1305,7 +1441,9 @@ def _cmd_verdict(args) -> int:
             raise ValueError("--iaca-root belongs to an %s query, and the request has none"
                              % MDOC_FORMAT)
         unread = [flag for flag, given in (("--issuer-jwks", args.issuer_jwks),
-                                           ("--issuer-trust-anchor", args.issuer_trust_anchor))
+                                           ("--issuer-trust-anchor", args.issuer_trust_anchor),
+                                           ("--status-anchor", args.status_anchor),
+                                           ("--require-status", args.require_status))
                   if given]
         if unread and MDOC_FORMAT in asked and SD_JWT_FORMAT not in asked:
             raise ValueError("%s belong%s to a %s query, and the request has none; an mdoc's "
@@ -1319,9 +1457,11 @@ def _cmd_verdict(args) -> int:
         anchors = _load_trust_anchors(args.issuer_trust_anchor)
         # Each root is trusted for the docTypes the request's mso_mdoc queries name.
         iaca_roots = _load_iaca_roots(args.iaca_root, doctypes) if doctypes else None
+        status_resolver, require_status, _ = _status_options(args)
         result = verify_response(request, token, transaction_data_scope=args.transaction_data_scope,
                                  issuer_jwks=issuer_jwks, trust_anchors=anchors, now=args.now,
-                                 iaca_roots=iaca_roots)
+                                 iaca_roots=iaca_roots, status_resolver=status_resolver,
+                                 require_status=require_status)
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -1386,7 +1526,10 @@ and one that judges a response already captured:
     g.set_defaults(func=_cmd_keygen)
 
     s = sub.add_parser("serve", help="run a verifier")
-    s.add_argument("--pki", default="./pki")
+    s.add_argument("--pki", default="./pki",
+                   help="the directory keygen wrote: its client.pem holds the request signer's leaf and then any "
+                        "intermediates, all sent in x5c in that order; a self-signed certificate after the "
+                        "leaf is refused")
     s.add_argument("--host", default=DEFAULT_HOST,
                    help="the name a wallet reaches this by, a name or an IPv4 address: 127.0.0.1 by "
                         "default, the address --bind listens on by default; give the name keygen was given")
@@ -1413,6 +1556,15 @@ and one that judges a response already captured:
     s.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",
                    help="a PEM file of CA certificates an issuer's x5c leaf must chain to "
                         "(repeatable); the HAIP way to trust an issuer")
+    s.add_argument("--status-anchor", default=None, metavar="FILE",
+                   help="a JSON array of anchored status entries, each {credential_anchor: PEM "
+                        "file, status_uri_prefix: https URI ending in /, status_anchor: PEM file, "
+                        "why}: for a credential whose x5c chain ended at credential_anchor, a "
+                        "Token Status List under the prefix is fetched and believed when its "
+                        "signer's x5c chains to status_anchor. PEM files are read relative to FILE")
+    s.add_argument("--require-status", action="store_true",
+                   help="refuse every presentation whose status is not checked, VALID and fresh "
+                        "(needs --status-anchor; not for --format mso_mdoc)")
     s.add_argument("--claim", action="append", default=[], metavar="PATH[=VALUE]",
                    help="a claim to ask for (repeatable; default given_name and family_name): a "
                         "name, a dotted path of object keys such as age_equal_or_over.18, or a "
@@ -1431,7 +1583,7 @@ and one that judges a response already captured:
                    help="with --format mso_mdoc: a PEM file of IACA root certificates a "
                         "document's signer must chain to, each trusted for --doctype (repeatable)")
     s.add_argument("--experimental", action="store_true",
-                   help="turn on what is off by default: --format mso_mdoc")
+                   help="turn on what is off by default: --format mso_mdoc and --dc-api")
     s.add_argument("--verifier-info", default=None, metavar="FILE",
                    help="verifier attestations to put in the request object: a JSON array "
                         "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
@@ -1498,6 +1650,22 @@ and one that judges a response already captured:
                         "many arrived). With --rearm or --control-token-file it describes the "
                         "newest request and adds request (1, 2, 3 ... in start order, 0 before "
                         "the first), and under --rearm previous (the request that ended, whole)")
+    s.add_argument("--dc-api", action="store_true",
+                   help="with --experimental and --format mso_mdoc: serve a page at /dc-api/ that "
+                        "asks the browser for an mdoc over the Digital Credentials API (a signed "
+                        "request, response mode dc_api.jwt) and posts the answer back to this "
+                        "listener; needs --dc-api-origin; refused with --once, --rearm, --result "
+                        "and --control-token-file")
+    s.add_argument("--dc-api-origin", default=None, metavar="ORIGIN",
+                   help="with --dc-api: the origin the page is opened at, as the browser writes it "
+                        "(https://verifier.example, or http on localhost or 127.0.0.1); requests are "
+                        "made for it and only a post from it is answered")
+    s.add_argument("--dc-api-client-metadata", default=None, metavar="FILE",
+                   help="with --dc-api: a JSON object whose members are added to the "
+                        "client_metadata of each Digital Credentials API request, never in place "
+                        "of one the verifier writes (jwks, vp_formats_supported, "
+                        "encrypted_response_enc_values_supported); at most 16384 bytes written as "
+                        "compact JSON")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
 
@@ -1511,6 +1679,12 @@ and one that judges a response already captured:
                    help="a JSON file of issuer public JWKs to trust")
     d.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",
                    help="a PEM file of CA certificates an issuer's x5c leaf must chain to")
+    d.add_argument("--status-anchor", default=None, metavar="FILE",
+                   help="as for serve: anchored status entries; each status list is fetched and "
+                        "judged as it is now, whatever --now says")
+    d.add_argument("--require-status", action="store_true",
+                   help="refuse every presentation whose status is not checked, VALID and fresh "
+                        "(needs --status-anchor; not for a request that asks for mso_mdoc)")
     d.add_argument("--transaction-data-scope", choices=TRANSACTION_DATA_SCOPES, default=None,
                    help="which entries each key binding JWT must bind: per_credential, those "
                         "naming its credential query; all_entries, every one. Needed when the "

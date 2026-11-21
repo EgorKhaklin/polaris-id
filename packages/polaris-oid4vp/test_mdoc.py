@@ -1089,6 +1089,34 @@ class DcApiTranscriptTests(RefusalCase):
                     self.spec(origin=written)
                 self.assertIn(words, str(caught.exception))
 
+    def test_http_is_taken_only_where_a_browser_offers_the_api(self):
+        """A browser offers the API only in a secure context (Digital Credentials, section 7.7:
+        "[Exposed=Window, SecureContext] interface DigitalCredential"), and an http origin is one
+        only for the hosts W3C Secure Contexts section 3.1 names: 127.0.0.0/8, ::1, localhost and a
+        name ending in .localhost, either with a trailing dot. Any other http origin is one no
+        browser can answer from, so it is refused as a mistake."""
+        for written, read in (("http://localhost:8080", "http://localhost:8080"),
+                              ("HTTP://LocalHost", "http://localhost"),
+                              ("http://localhost.", "http://localhost."),
+                              ("http://wallet.localhost:8443", "http://wallet.localhost:8443"),
+                              ("http://a.b.localhost.", "http://a.b.localhost."),
+                              ("http://127.0.0.1:8080", "http://127.0.0.1:8080"),
+                              ("http://127.255.10.9", "http://127.255.10.9"),
+                              ("http://[::1]:8443", "http://[::1]:8443"),
+                              ("http://[0:0::1]", "http://[::1]"),
+                              ("https://rp.example", "https://rp.example")):
+            with self.subTest(origin=written):
+                self.assertEqual(mdoc.dc_api_origin(written), read)
+        for written in ("http://rp.example", "http://example.com:80", "http://10.0.0.1:8080",
+                        "http://128.0.0.1", "http://126.255.255.255", "http://[::2]", "http://[::]",
+                        "http://localhost.example", "http://notlocalhost", "http://localhostx",
+                        "http://localhost.localhost.example"):
+            with self.subTest(origin=written):
+                with self.assertRefuses(ValueError) as caught:
+                    mdoc.dc_api_origin(written)
+                self.assertIn("secure context", str(caught.exception))
+                self.assertIn(repr(written), str(caught.exception))
+
     def test_every_input_is_required(self):
         """No transcript from a missing value, and none without the response key's thumbprint:
         this verifier asks for dc_api.jwt only, and B.2.6.2's null third element is dc_api's."""

@@ -3,7 +3,9 @@
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 # OID4VCgo as an mdoc witness over ../../negative-vectors/mdoc-vectors.json (main.go says what it
 # calls). Writes OUT/oid4vcgo.jsonl (one line per case and per repaired twin: the verdicts, and the
-# diagnostic main.go names, which is never a verdict) and OUT/run.json.
+# diagnostic main.go names, which is never a verdict) and OUT/run.json. check.py holds those rows to
+# the verdicts the vectors expect; .github/workflows/mdoc-witness.yml runs both on every change to
+# this directory or to the vectors file.
 #
 #   OUT=/some/dir lab/interop/mdoc/witness-oid4vcgo/run.sh
 #   OUT=/some/dir VECTORS=/path/to/mdoc-vectors.json lab/interop/mdoc/witness-oid4vcgo/run.sh
