@@ -41,6 +41,8 @@ POLARIS_OID4VP_CODES = {
     "disclosed-exp": "disclosure",
     "disclosed-iss": "disclosure", "disclosure-four-elements": "disclosure", "disclosure-named-sd": "disclosure",
     "disclosure-unreferenced": "disclosure",
+    "disclosed-status-sub-claim": "disclosure", "status-sd-withheld": "disclosure",
+    "aka-vcts-element-withheld": "disclosure",
     "kb-typ-jwt": "kb_typ", "kb-alg-none": "kb_alg", "kb-alg-hs256": "kb_alg",
     "kb-iat-nan": "malformed", "kb-exp-string": "kb_freshness",
     "issuer-sig-der": "issuer_signature",
