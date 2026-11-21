@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cryptography import x509  # noqa: E402
 from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec, rsa, utils as asym_utils  # noqa: E402
 from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.jwe import b64u_decode, b64u_encode, decrypt_compact, encrypt_compact  # noqa: E402
@@ -1130,6 +1130,116 @@ class TheDefaultRequestIsUnchangedTests(VerifierTestCase):
         self.assert_as_before(v)
 
 
+class RequestSignerChainTests(unittest.TestCase):
+    """The request signer's file may hold its leaf and then its intermediates, and all of them go in
+    `x5c` in the file's order: a wallet that trusts only roots and fetches nothing (ProtocolSoup's
+    wallet harness) needs the path to its root in the request itself. The trust anchor stays out
+    (HAIP 1.0 section 5), each certificate is the issuer of the one before it (RFC 7515 section
+    4.1.6), and the key is the leaf's; a file that breaks one of these is refused when the verifier
+    is made. A file of one certificate is read as it always was."""
+
+    @staticmethod
+    def _issue(subject, subject_key, issuer, issuer_key, ca=True):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        builder = (x509.CertificateBuilder()
+                   .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject)]))
+                   .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer)]))
+                   .public_key(subject_key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(now - datetime.timedelta(days=1))
+                   .not_valid_after(now + datetime.timedelta(days=30)))
+        if ca:
+            builder = builder.add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        return builder.sign(issuer_key, hashes.SHA256())
+
+    @classmethod
+    def setUpClass(cls):
+        def p256():
+            return ec.generate_private_key(ec.SECP256R1())
+        # An RSA root, as a public chain may end at, outside every file below.
+        anchor_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.anchor = cls._issue("root", anchor_key, "root", anchor_key)
+        # Two certificates: the leaf and the one intermediate the root issued.
+        cls.int_key, cls.short_leaf_key = p256(), p256()
+        cls.intermediate = cls._issue("intermediate", cls.int_key, "root", anchor_key)
+        cls.short_leaf = cls._issue("verifier", cls.short_leaf_key, "intermediate", cls.int_key, ca=False)
+        # Four certificates, the shape of a publicly trusted chain that reaches an RSA root through a
+        # cross-signed certificate: i3 is signed by the RSA root, i2 by i3, i1 by i2's RSA key (so
+        # one link inside the file is an RSA signature), and the leaf by i1.
+        i3_key, i2_key, i1_key, cls.leaf_key = p256(), rsa.generate_private_key(65537, 2048), p256(), p256()
+        cls.i3 = cls._issue("i3", i3_key, "root", anchor_key)
+        cls.i2 = cls._issue("i2", i2_key, "i3", i3_key)
+        cls.i1 = cls._issue("i1", i1_key, "i2", i2_key)
+        cls.leaf = cls._issue("verifier", cls.leaf_key, "i1", i1_key, ca=False)
+        # Named i1 and issued by i2, but under another key: only the signature tells it apart.
+        cls.impostor = cls._issue("i1", p256(), "i2", i2_key)
+        # i1's own key and names, signed by an RSA key that is not i2's: a link whose issuer is RSA
+        # that only the signature tells apart.
+        cls.forged_i1 = cls._issue("i1", i1_key, "i2", rsa.generate_private_key(65537, 2048))
+
+    @staticmethod
+    def _pem(*certs):
+        return b"".join(c.public_bytes(serialization.Encoding.PEM) for c in certs)
+
+    @staticmethod
+    def _b64(cert):
+        return base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode("ascii")
+
+    def _verifier(self, certs, key):
+        return Verifier(client_cert_pem=self._pem(*certs),
+                        client_key_pem=key.private_bytes(serialization.Encoding.PEM,
+                                                         serialization.PrivateFormat.PKCS8,
+                                                         serialization.NoEncryption()),
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response")
+
+    def assert_sent(self, verifier, certs):
+        header, claims = Wallet.read_request(verifier.new_request()[1])
+        self.assertEqual(header["x5c"], [self._b64(c) for c in certs])
+        self.assertEqual(verifier.cert, certs[0])
+        digest = hashlib.sha256(certs[0].public_bytes(serialization.Encoding.DER)).digest()
+        self.assertEqual(claims["client_id"], "x509_hash:" + b64u_encode(digest))
+
+    def test_a_leaf_and_its_intermediate_go_in_x5c_in_that_order(self):
+        self.assert_sent(self._verifier([self.short_leaf, self.intermediate], self.short_leaf_key),
+                         [self.short_leaf, self.intermediate])
+
+    def test_four_certificates_with_an_rsa_link_go_in_x5c_in_that_order(self):
+        chain = [self.leaf, self.i1, self.i2, self.i3]
+        self.assert_sent(self._verifier(chain, self.leaf_key), chain)
+
+    def test_a_leaf_alone_is_sent_alone(self):
+        self.assert_sent(self._verifier([self.short_leaf], self.short_leaf_key), [self.short_leaf])
+
+    def test_the_root_in_the_file_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 3 of 3 .* is self-signed"):
+            self._verifier([self.short_leaf, self.intermediate, self.anchor], self.short_leaf_key)
+
+    def test_a_self_signed_leaf_alone_is_sent_as_before(self):
+        alone = self._issue("verifier", self.short_leaf_key, "verifier", self.short_leaf_key, ca=False)
+        self.assert_sent(self._verifier([alone], self.short_leaf_key), [alone])
+
+    def test_a_self_signed_leaf_before_an_intermediate_is_refused(self):
+        signed_itself = self._issue("verifier", self.short_leaf_key, "verifier", self.short_leaf_key, ca=False)
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 2 .* did not issue certificate 1"):
+            self._verifier([signed_itself, self.intermediate], self.short_leaf_key)
+
+    def test_intermediates_out_of_order_are_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 4 .* did not issue certificate 1"):
+            self._verifier([self.leaf, self.i2, self.i1, self.i3], self.leaf_key)
+
+    def test_an_intermediate_with_the_issuers_name_but_not_its_key_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 4 .* did not issue certificate 1"):
+            self._verifier([self.leaf, self.impostor, self.i2, self.i3], self.leaf_key)
+
+    def test_an_rsa_issuers_name_without_its_signature_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 3 of 4 .* did not issue certificate 2"):
+            self._verifier([self.leaf, self.forged_i1, self.i2, self.i3], self.leaf_key)
+
+    def test_a_key_that_is_not_the_leafs_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"key is not the key of the first certificate"):
+            self._verifier([self.short_leaf, self.intermediate], self.leaf_key)
+
+
 class TheRequestTests(VerifierTestCase):
     """Built from what the running conformance suite accepted, condition by condition."""
 
@@ -1495,7 +1605,8 @@ class TheSevenRefusalsReachTheWireTests(VerifierTestCase):
 class TheTransportRefusalsTests(VerifierTestCase):
 
     def test_a_response_encrypted_to_another_verifier_is_4xx(self):
-        other = Verifier(client_cert_pem=_client_chain()[0], client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        other = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
                          request_uri="https://other.test/request.jwt",
                          response_uri="https://other.test/response",
                          issuer_jwks=[self.wallet.issuer_jwk])
@@ -1540,8 +1651,9 @@ class TheTransportRefusalsTests(VerifierTestCase):
             self.assertLess(status, 500, "%r produced %d" % (kw, status))
 
     def test_an_expired_request_cannot_be_answered(self):
-        verifier = Verifier(client_cert_pem=_client_chain()[0],
-                            client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem,
+                            client_key_pem=key_pem,
                             request_uri="https://verifier.test/request.jwt",
                             response_uri="https://verifier.test/response",
                             issuer_jwks=[self.wallet.issuer_jwk],
@@ -1962,8 +2074,9 @@ class HeldOutTransportTests(VerifierTestCase):
     def test_a_request_expires_at_its_lifetime_not_later(self):
         from unittest import mock
         from polaris_oid4vp import verifier as verifier_module
-        verifier = Verifier(client_cert_pem=_client_chain()[0],
-                            client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem,
+                            client_key_pem=key_pem,
                             request_uri="https://verifier.test/request.jwt",
                             response_uri="https://verifier.test/response",
                             issuer_jwks=[self.wallet.issuer_jwk], request_ttl_seconds=100)

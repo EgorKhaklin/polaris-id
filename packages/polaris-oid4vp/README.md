@@ -89,6 +89,10 @@ holds this package from PyPI, installed by hash.
   RFC 5280 asks for, which some wallets find a CA by. The listener certificate is marked for server
   authentication, which Apple's TLS policy requires even of a certificate a client trusts by
   name. Its keys are for testing.
+- `serve` sends all of `client.pem` in `x5c`: the leaf, then any intermediates the file holds after it, so a
+  request signer under a public authority carries the path to its root to a wallet that fetches nothing. A
+  self-signed certificate after the leaf, a certificate that did not issue the one before it, or a key that
+  is not the leaf's is refused when `serve` starts.
 - A wallet that fetches the request object by POST and asks for it encrypted (its
   `wallet_metadata` lists `ECDH-ES` in `request_object_encryption_alg_values_supported`, an
   `enc` this package produces, A128GCM or A256GCM, and a P-256 key in `jwks`) gets the signed
@@ -592,7 +596,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1167 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1177 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 359 refusals accept and requires a
