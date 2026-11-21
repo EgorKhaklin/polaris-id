@@ -64,6 +64,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Fixed
 
+- polaris-oid4vp: a response whose request's lifetime ends while it is judged or decrypted is refused, an encrypted error response included, and the log names the lifetime rather than a replay; the answer compares the request's age with its lifetime, as the expiry sweep does.
 - mdoc negative vectors 0.2.0 (lab/interop/negative-vectors/mdoc-vectors.json): the controls' document signer certificate is valid for 394 days, inside the 457 days ISO/IEC 18013-5:2021 Annex B Table B.3 allows; in 0.1.0 it was valid for 1461 days, so a verifier that holds the profile refused the controls. `make_mdoc_vectors.py --document-signer-days N` makes another validity, up to 457.
 - polaris-oid4vp: the refusal reason for a disclosure that is not an array names its JSON kind and no longer prints its value (GHSA-hfvc-qh8w-chp8).
 - polaris-oid4vp `keygen` creates each private key with mode 0600 from its first byte, and a second run replaces a key rather than writing through a link at its path.

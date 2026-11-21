@@ -1185,6 +1185,33 @@ class HeldOutListenerTests(ServeTestCase):
         self.assertEqual(status, 400)
         self.assertIn("refused: nonce", err.getvalue())
 
+    def test_the_operator_log_names_a_lifetime_that_ended_during_the_judgement(self):
+        """A response whose request's lifetime ends while it is judged is refused, and the log
+        says the lifetime refused it, not a replay: the remedy differs. The wallet's body is the
+        constant one."""
+        import contextlib
+        import io
+        from unittest import mock
+        from polaris_oid4vp import verifier as module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        original = module.verify_presentation
+
+        def aging(*args, **kwargs):
+            verdict = original(*args, **kwargs)
+            session.created -= self.verifier.request_ttl_seconds + 1
+            return verdict
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                mock.patch.object(module, "verify_presentation", aging):
+            status, _, raw = _post(self.base + "/response", {"response": form["response"][0]})
+        self.assertEqual((status, json.loads(raw)), (400, self.verifier.REFUSAL_BODY))
+        logged = [line for line in err.getvalue().splitlines() if "refused: " in line]
+        self.assertEqual(len(logged), 1, err.getvalue())
+        self.assertIn("refused: invalid_request: this request's lifetime ended while this "
+                      "response was judged", logged[0])
+        self.assertNotIn("replay", logged[0])
+
     def test_the_verdict_callback_hears_about_a_verifier_that_raised(self):
         """The operator is told every answer, including the one with no verdict behind it."""
         import contextlib
