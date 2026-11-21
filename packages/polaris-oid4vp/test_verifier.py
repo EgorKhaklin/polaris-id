@@ -3665,12 +3665,13 @@ class MdocResponseTests(MdocVerifierCase):
                        "issuer_jwks", "issuer_trust_anchors", "redirect_uri", "request_ttl_seconds",
                        "vct_values", "claims", "status_resolver", "verifier_info", "credential_query_id",
                        "verifier_info_profile", "redirect", "accept_vp_token_as_json_string",
-                       "credential_format", "doctype_value", "iaca_roots"],
+                       "credential_format", "doctype_value", "iaca_roots", "dc_api_client_metadata"],
             Verifier.handle_direct_post: ["self", "form"],
+            Verifier.dc_api_response: ["self", "data", "origin"],
             serve_module.serve: ["verifier", "host", "port", "certfile", "keyfile", "on_verdict",
                                  "background", "verbose", "on_request_object", "cors_origins",
                                  "control_token", "on_control", "name_requests",
-                                 "on_control_read"],
+                                 "on_control_read", "dc_api_origin"],
         }
         for what, names in pinned.items():
             target = what.__init__ if what is Verifier else what
@@ -4084,6 +4085,21 @@ def _dc_api_key(member):
     return _dc_api_request(member)[1]["client_metadata"]["jwks"]["keys"][0]
 
 
+def _verifies_under(compact, public_key):
+    """Whether an ES256 compact JWS verifies under `public_key`: the one check the leaf signature
+    test and its negative controls both run, so the controls test the check the test uses."""
+    from cryptography.exceptions import InvalidSignature
+    signing_input, _, signature = compact.rpartition(".")
+    raw = b64u_decode(signature)
+    try:
+        public_key.verify(asym_utils.encode_dss_signature(int.from_bytes(raw[:32], "big"),
+                                                          int.from_bytes(raw[32:], "big")),
+                          signing_input.encode("ascii"), ec.ECDSA(hashes.SHA256()))
+    except InvalidSignature:
+        return False
+    return True
+
+
 class DcApiWallet:
     """A wallet answering over the Digital Credentials API, holding the mDL `test_mdoc.py` mints. It
     reads the signed request the page hands it and hashes, as OpenID4VP 1.0 B.2.6.2 has it, the
@@ -4203,7 +4219,6 @@ class DcApiRequestTests(DcApiVerifierCase):
         self.assertEqual(claims["aud"], redirect["aud"])
 
     def test_the_request_is_signed_by_the_leaf_its_client_id_is_the_hash_of(self):
-        from cryptography.exceptions import InvalidSignature
         member = self.verifier.dc_api_request(ORIGIN)
         header, claims = _dc_api_request(member)
         self.assertEqual(header, {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.verifier.x5c})
@@ -4212,14 +4227,35 @@ class DcApiRequestTests(DcApiVerifierCase):
         leaf_der = base64.b64decode(header["x5c"][0])
         self.assertEqual(claims.get("client_id"), "x509_hash:" + b64u_encode(hashlib.sha256(leaf_der).digest()))
         self.assertEqual(claims.get("client_id"), self.verifier.client_id)
-        signing_input, _, signature = member["data"]["request"].rpartition(".")
-        raw = b64u_decode(signature)
-        try:
-            x509.load_der_x509_certificate(leaf_der).public_key().verify(
-                asym_utils.encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big")),
-                signing_input.encode("ascii"), ec.ECDSA(hashes.SHA256()))
-        except InvalidSignature:
-            self.fail("the request object does not verify under its x5c leaf")
+        self.assertTrue(_verifies_under(member["data"]["request"], x509.load_der_x509_certificate(leaf_der).public_key()),
+                        "the request object does not verify under its x5c leaf")
+
+    def test_the_leaf_signature_check_has_its_negative_controls(self):
+        """The negative controls of test_the_request_is_signed_by_the_leaf_its_client_id_is_the_hash_of:
+        the same check, run as that test runs it, refuses the request object with one payload byte
+        changed and the request object signed again by another key under the same x5c. Without them
+        its positive result could come from a check that accepts anything. Both run `_verifies_under`."""
+        member = self.verifier.dc_api_request(ORIGIN)
+        jws = member["data"]["request"]
+        header, _ = _dc_api_request(member)
+        leaf = x509.load_der_x509_certificate(base64.b64decode(header["x5c"][0])).public_key()
+
+        def verifies(compact):
+            return _verifies_under(compact, leaf)
+
+        self.assertTrue(verifies(jws), "the control's own check refuses the request it was made for")
+        protected, payload, signature = jws.split(".")
+        at = len(payload) // 2
+        changed = payload[:at] + ("A" if payload[at] != "A" else "B") + payload[at + 1:]
+        self.assertNotEqual(b64u_decode(changed), b64u_decode(payload))
+        self.assertFalse(verifies(".".join((protected, changed, signature))),
+                         "a request object with one payload byte changed verifies under the leaf")
+        other = ec.generate_private_key(ec.SECP256R1())
+        r, s = asym_utils.decode_dss_signature(other.sign((protected + "." + payload).encode("ascii"),
+                                                          ec.ECDSA(hashes.SHA256())))
+        resigned = protected + "." + payload + "." + b64u_encode(r.to_bytes(32, "big") + s.to_bytes(32, "big"))
+        self.assertEqual(_dc_api_request({"data": {"request": resigned}})[0]["x5c"], header["x5c"])
+        self.assertFalse(verifies(resigned), "a request object signed by another key verifies under the leaf")
 
     def test_client_metadata_and_the_query_are_the_redirect_requests_around_a_key_of_its_own(self):
         _, claims = _dc_api_request(self.verifier.dc_api_request(ORIGIN))
@@ -4548,3 +4584,145 @@ class DcApiAndRedirectRequestsTests(DcApiVerifierCase):
         self.assertEqual(self.verifier.attributed_request(), session.state)
         self.accepted(self.judged(self.wallet.respond(self.verifier.dc_api_request(ORIGIN))))
         self.assertIsNone(self.verifier.attributed_request())
+
+
+class DcApiClientMetadataTests(DcApiVerifierCase):
+    """`Verifier(dc_api_client_metadata=...)`: members added to the `client_metadata` of every
+    request over the Digital Credentials API, never one the verifier writes itself (add, never
+    override). The member here is made up; no wallet's value enters this tree."""
+
+    EXTRA = {"x_polaris_test": {"note": "made up", "n": 1}}
+    WRITTEN = {"jwks", "vp_formats_supported", "encrypted_response_enc_values_supported"}
+
+    def test_extra_members_reach_every_dc_api_request_and_no_redirect_request(self):
+        given = json.loads(json.dumps(self.EXTRA))
+        self.verifier = self.make(dc_api_client_metadata=given)
+        # What the caller does with its own dict afterwards changes no request.
+        given["x_polaris_test"]["n"] = 2
+        given["jwks"] = {"keys": []}
+        members = [self.verifier.dc_api_request(ORIGIN) for _ in range(2)]
+        for member in members:
+            metadata = _dc_api_request(member)[1]["client_metadata"]
+            self.assertEqual(set(metadata), self.WRITTEN | {"x_polaris_test"})
+            self.assertEqual(metadata["x_polaris_test"], self.EXTRA["x_polaris_test"])
+        self.assertNotEqual(_dc_api_key(members[0]), _dc_api_key(members[1]),
+                            "each request is encrypted to a key of its own")
+        _, redirect = Wallet.read_request(self.verifier.new_request()[1])
+        self.assertEqual(set(redirect["client_metadata"]), self.WRITTEN)
+        # A response encrypted to the key the request carries is judged as without the member.
+        self.accepted(self.judged(self.wallet.respond(members[1])))
+
+    def test_a_member_the_verifier_sets_is_refused(self):
+        self.assertEqual(set(self.verifier._client_metadata({})), self.WRITTEN,
+                         "the members the verifier writes, read from the function that writes them")
+        for name in sorted(self.WRITTEN):
+            with self.subTest(member=name):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(dc_api_client_metadata={name: {"keys": []}, "x_polaris_test": 1})
+                self.assertIn(repr(name), str(caught.exception))
+                self.assertIn("writes", str(caught.exception))
+
+    def test_the_verifier_writes_its_members_last_whatever_the_attribute_became(self):
+        """The served jwks is always the request's own key. dc_api_client_metadata is a public
+        attribute, checked at construction; changed afterwards, in place or replaced, it still puts
+        no member in place of one the verifier writes, because the verifier's are written last."""
+        planted = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "x_polaris_planted", "x": "AA", "y": "AA"}]}
+        changes = (
+            ("changed in place", lambda v: v.dc_api_client_metadata.update(jwks=planted, x_polaris_late=2)),
+            ("replaced", lambda v: setattr(v, "dc_api_client_metadata",
+                                           dict({name: planted for name in self.WRITTEN}, x_polaris_late=2))),
+        )
+        for label, change in changes:
+            with self.subTest(label):
+                verifier = self.make(dc_api_client_metadata={"x_polaris_test": 1})
+                change(verifier)
+                _, claims = _dc_api_request(verifier.dc_api_request(ORIGIN))
+                session = verifier._dc_api[claims["nonce"]]
+                own = verifier._client_metadata(verifier_module._encryption_jwk(session.enc_key, session.kid))
+                served = claims["client_metadata"]
+                self.assertEqual({name: served[name] for name in self.WRITTEN}, own)
+                self.assertEqual(served["jwks"]["keys"][0]["kid"], session.kid)
+                self.assertEqual(served.get("x_polaris_late"), 2, "the attribute's other members are still added")
+
+    def test_metadata_that_is_not_an_object_or_too_large_is_refused(self):
+        limit = verifier_module.DC_API_CLIENT_METADATA_MAX_BYTES
+        # {"x":"..."} is 8 bytes around the string, written compactly.
+        self.assertEqual(len(json.dumps({"x": ""}, separators=(",", ":"))), 8)
+        for good in (None, {}, {"x": "a" * (limit - 8)}):
+            with self.subTest(good=None if good is None else len(json.dumps(good))):
+                self.make(dc_api_client_metadata=good)
+        for bad, words in (([], "JSON object"), ("x_polaris_test", "JSON object"),
+                           ({1: "x"}, "names"), ({"x": float("nan")}, "JSON"),
+                           ({"x": object()}, "JSON"), ({"x": {1, 2}}, "JSON"),
+                           ({"x": "a" * (limit - 7)}, "%d bytes" % limit)):
+            with self.subTest(bad=repr(bad)[:40]):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(dc_api_client_metadata=bad)
+                self.assertIn(words, str(caught.exception))
+        # Nested past what json.dumps recurses through (100000 levels: 3.12's C encoder writes a
+        # few thousand), it raises RecursionError; that is refused as a value that does not
+        # serialize, a ValueError like the rest, before any size is measured.
+        deep = inner = {}
+        for _ in range(100000):
+            inner["a"] = inner = {}
+        with self.assertRaises(ValueError) as caught:
+            self.make(dc_api_client_metadata={"x": deep})
+        self.assertIn("does not serialize as JSON", str(caught.exception))
+
+
+class DcApiCapTests(DcApiVerifierCase):
+    """At most DC_API_MAX_OUTSTANDING requests over the Digital Credentials API are outstanding:
+    serve answers them on a public route, and every response is tried against each one's key."""
+
+    def test_the_dc_api_requests_outstanding_are_capped(self):
+        cap = verifier_module.DC_API_MAX_OUTSTANDING
+        self.assertEqual(cap, 64)
+        members = [self.verifier.dc_api_request(ORIGIN) for _ in range(cap)]
+        self.assertEqual(len(self.outstanding_dc_api()), cap)
+        # At the cap no key is made and nothing is signed: the refusal comes before the work.
+        with mock.patch.object(verifier_module.ec, "generate_private_key",
+                               side_effect=AssertionError("a key was made at the cap")):
+            with self.assertRaises(verifier_module.DcApiRequestsFull) as caught:
+                self.verifier.dc_api_request(ORIGIN)
+        self.assertNotIsInstance(caught.exception, ValueError)
+        self.assertIn(str(cap), str(caught.exception))
+        self.assertEqual(len(self.outstanding_dc_api()), cap)
+        # An answered request frees its place, and only its place.
+        self.accepted(self.judged(self.wallet.respond(members[0])))
+        self.verifier.dc_api_request(ORIGIN)
+        with self.assertRaises(verifier_module.DcApiRequestsFull):
+            self.verifier.dc_api_request(ORIGIN)
+        # Expired requests free theirs.
+        for session in self.verifier._dc_api.values():
+            session.created -= self.verifier.request_ttl_seconds + 1
+        self.verifier.dc_api_request(ORIGIN)
+        self.assertEqual(len(self.outstanding_dc_api()), 1)
+
+    def test_the_cap_holds_when_requests_race(self):
+        """The count is taken again when the request is kept, under the lock: threads that all
+        pass the early test still keep no more than the cap."""
+        import threading
+        cap = verifier_module.DC_API_MAX_OUTSTANDING
+        for _ in range(cap - 1):
+            self.verifier.dc_api_request(ORIGIN)
+        barrier, original, outcomes = threading.Barrier(4, timeout=30), self.verifier._signed, []
+
+        def signing(claims):
+            barrier.wait()
+            return original(claims)
+
+        def ask():
+            try:
+                self.verifier.dc_api_request(ORIGIN)
+                outcomes.append("made")
+            except verifier_module.DcApiRequestsFull:
+                outcomes.append("full")
+
+        with mock.patch.object(self.verifier, "_signed", signing):
+            threads = [threading.Thread(target=ask) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+        self.assertEqual(sorted(outcomes), ["full", "full", "full", "made"])
+        self.assertEqual(len(self.outstanding_dc_api()), cap)

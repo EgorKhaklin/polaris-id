@@ -84,6 +84,14 @@ RESPONSE_MODE = "direct_post.jwt"
 #: the Response Mode dc_api.jwt."
 DC_API_PROTOCOL = "openid4vp-v1-signed"
 DC_API_RESPONSE_MODE = "dc_api.jwt"
+#: The most requests over the Digital Credentials API outstanding at once. serve makes them on a
+#: public route: a browser's page posts to it only from the configured origin, but any client that
+#: sets the Origin header itself can post to it. `dc_api_response` tries each response against every
+#: outstanding request's key, so their number is capped: at the cap, `dc_api_request` raises
+#: DcApiRequestsFull and makes none until one is answered or expires.
+DC_API_MAX_OUTSTANDING = 64
+#: The largest `Verifier(dc_api_client_metadata=...)`, written as compact JSON.
+DC_API_CLIENT_METADATA_MAX_BYTES = 16384
 
 #: The credential formats a request can ask for, one per verifier: an SD-JWT VC unless named.
 #: `mso_mdoc` asks for an ISO/IEC 18013-5 mdoc, which `mdoc.py` judges.
@@ -536,6 +544,64 @@ _MISSING = object()
 class VerifierInfoError(ValueError):
     """verifier_info refused at construction, so no request carrying it is ever made. The
     message names the requirement it fails."""
+
+
+class DcApiRequestsFull(RuntimeError):
+    """`dc_api_request` at DC_API_MAX_OUTSTANDING outstanding requests: none is made. Not a
+    ValueError, which `dc_api_request` raises for a configuration it cannot serve; this passes
+    when a request is answered or expires (serve answers it 503)."""
+
+
+def _client_metadata_of(enc_jwk, vp_formats):
+    """`client_metadata` for a request whose response is encrypted to `enc_jwk`, for a verifier
+    that asks for `vp_formats` (`Verifier._vp_formats`)."""
+    # Exactly three keys. The suite warns on a fourth and fails on the older
+    # authorization_encrypted_response_alg/_enc names, which an earlier draft used.
+    return {
+        "jwks": {"keys": [enc_jwk]},
+        "vp_formats_supported": vp_formats,
+        "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
+    }
+
+
+def dc_api_client_metadata_of(extra):
+    """`Verifier(dc_api_client_metadata=...)` as every `dc_api_request` adds it to the
+    `client_metadata` it writes: members a wallet asks a relying party to send, added and never
+    put in place of one the verifier writes. None or `{}` adds nothing. Raises ValueError for what
+    is not a JSON object with string names, for a member `_client_metadata_of` writes (named; the
+    response key among them, so the `jwks` a request carries is always its own), for a value that
+    does not serialize as JSON, and for more than DC_API_CLIENT_METADATA_MAX_BYTES written as
+    compact JSON. Returns a copy: what the caller does with its own dict afterwards changes no
+    request. `serve --dc-api-client-metadata` holds its file to this before anything is read."""
+    if extra is None:
+        return {}
+    if not isinstance(extra, dict):
+        raise ValueError("dc_api_client_metadata is a JSON object of members to add to the "
+                         "client_metadata of each Digital Credentials API request, not a %s"
+                         % type(extra).__name__)
+    unnamed = [name for name in extra if not isinstance(name, str)]
+    if unnamed:
+        raise ValueError("dc_api_client_metadata names its members with strings, as a JSON object "
+                         "does, not %r" % (unnamed[0],))
+    written = sorted(set(extra) & set(_client_metadata_of({}, {})))
+    if written:
+        raise ValueError("dc_api_client_metadata sets %s, which this verifier writes itself: its "
+                         "members are added to client_metadata, never put in place of one"
+                         % ", ".join(repr(name) for name in written))
+    try:
+        text = json.dumps(extra, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("dc_api_client_metadata does not serialize as JSON: %s" % exc) from None
+    except RecursionError:
+        # json.dumps recurses once per level; an object nested past the interpreter's limit is
+        # refused as one that does not serialize, never with the interpreter's own error.
+        raise ValueError("dc_api_client_metadata does not serialize as JSON: it nests deeper than "
+                         "this interpreter writes") from None
+    size = len(text.encode("utf-8"))
+    if size > DC_API_CLIENT_METADATA_MAX_BYTES:
+        raise ValueError("dc_api_client_metadata is %d bytes as compact JSON; the most it may be is "
+                         "%d bytes" % (size, DC_API_CLIENT_METADATA_MAX_BYTES))
+    return json.loads(text)
 
 
 def _etsi_refusal(numbers, reason):
@@ -1007,7 +1073,8 @@ class Verifier:
                  vct_values=None, claims=("given_name", "family_name"),
                  status_resolver=None, verifier_info=None, credential_query_id=None,
                  verifier_info_profile=None, redirect=True, accept_vp_token_as_json_string=False,
-                 credential_format=SD_JWT_FORMAT, doctype_value=None, iaca_roots=None):
+                 credential_format=SD_JWT_FORMAT, doctype_value=None, iaca_roots=None,
+                 dc_api_client_metadata=None):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         # The format the one credential query asks for. A name this verifier does not build is
@@ -1145,6 +1212,7 @@ class Verifier:
         # about (`attributed_request`).
         self._attributed = threading.local()
         self._jti_memory = JtiMemory(retention_seconds=JTI_RETENTION_SECONDS)
+        self.dc_api_client_metadata = dc_api_client_metadata_of(dc_api_client_metadata)
 
     # ------------------------------------------------------------------ the request
 
@@ -1326,13 +1394,7 @@ class Verifier:
 
     def _client_metadata(self, enc_jwk):
         """`client_metadata` for a request whose response is encrypted to `enc_jwk`."""
-        # Exactly three keys. The suite warns on a fourth and fails on the older
-        # authorization_encrypted_response_alg/_enc names, which an earlier draft used.
-        return {
-            "jwks": {"keys": [enc_jwk]},
-            "vp_formats_supported": self._vp_formats(),
-            "encrypted_response_enc_values_supported": ["A128GCM", "A256GCM"],
-        }
+        return _client_metadata_of(enc_jwk, self._vp_formats())
 
     def _signed(self, claims):
         """`claims` as a signed request object: a JWS under this verifier's key, carrying its
@@ -1800,14 +1862,27 @@ class Verifier:
 
         `origin` is read as `mdoc.dc_api_origin` reads it, and the request carries it as a
         browser writes it. Raises ValueError, and no request is made, for an origin that
-        `mdoc.dc_api_origin` refuses and for a verifier not built for `mso_mdoc`. The request is
-        answerable once, through `dc_api_response`, for `request_ttl_seconds`.
+        `mdoc.dc_api_origin` refuses and for a verifier not built for `mso_mdoc`; raises
+        DcApiRequestsFull, and keeps no request, when DC_API_MAX_OUTSTANDING requests are
+        outstanding: counted before a key is made, and again under the lock that stores the
+        request, since others may have been kept while this one was signed. `client_metadata`
+        also carries the members of `dc_api_client_metadata`. The
+        request is answerable once, through `dc_api_response`, for `request_ttl_seconds`.
         """
         if self.credential_format != MDOC_FORMAT:
             raise ValueError("a request over the Digital Credentials API asks for an %s; this verifier "
                              "asks for %s" % (MDOC_FORMAT, self.credential_format))
         written = mdoc.dc_api_origin(origin)
+        # Before a key is made or anything signed, and again when the request is kept: threads
+        # that all pass this test still keep no more than the cap.
+        with self._lock:
+            self._expire_locked()
+            self._dc_api_room_locked()
         session = DcApiSession(ec.generate_private_key(ec.SECP256R1()), written)
+        # The added members first and the verifier's own last, so the served jwks is this request's
+        # key whatever dc_api_client_metadata, a public attribute, has become since construction.
+        client_metadata = json.loads(json.dumps(self.dc_api_client_metadata or {}))
+        client_metadata.update(self._client_metadata(_encryption_jwk(session.enc_key, session.kid)))
         claims = {
             "aud": WALLET_AUDIENCE,
             "client_id": self.client_id,
@@ -1815,7 +1890,7 @@ class Verifier:
             "response_type": "vp_token",
             "response_mode": DC_API_RESPONSE_MODE,
             "nonce": session.nonce,
-            "client_metadata": self._client_metadata(_encryption_jwk(session.enc_key, session.kid)),
+            "client_metadata": client_metadata,
             "dcql_query": self._dcql_query(),
         }
         if self.verifier_info:
@@ -1823,8 +1898,17 @@ class Verifier:
         request = self._signed(claims)
         with self._lock:
             self._expire_locked()
+            self._dc_api_room_locked()
             self._dc_api[session.nonce] = session
         return {"protocol": DC_API_PROTOCOL, "data": {"request": request}}
+
+    def _dc_api_room_locked(self):
+        """Raise DcApiRequestsFull when DC_API_MAX_OUTSTANDING requests over the Digital
+        Credentials API are outstanding. The caller holds the lock and has just swept."""
+        if len(self._dc_api) >= DC_API_MAX_OUTSTANDING:
+            raise DcApiRequestsFull("%d requests over the Digital Credentials API are outstanding, the "
+                                    "most this verifier keeps; one is made again when one is answered "
+                                    "or expires" % DC_API_MAX_OUTSTANDING)
 
     def dc_api_response(self, data, *, origin):
         """Judge what a page posts after `navigator.credentials.get` answers a `dc_api_request`:

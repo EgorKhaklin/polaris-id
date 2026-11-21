@@ -50,13 +50,13 @@ except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
 from .jwe import _loads_depth_bounded
-from .mdoc import IacaRoot
+from .mdoc import IacaRoot, dc_api_origin
 from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
                     b64u_decode)
-from .serve import (CONTROL_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
+from .serve import (CONTROL_PATH, DC_API_PAGE_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
                     control_token_problem, cors_origins_of, serve)
 from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_INFO_PROFILES,
-                       Verifier, claim_query, mdoc_claim_query, operator_text,
+                       Verifier, claim_query, dc_api_client_metadata_of, mdoc_claim_query, operator_text,
                        logged_line, transaction_data_entries, verifier_info_entries,
                        verify_response, written_reason)
 
@@ -306,7 +306,7 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
                   issuer_trust_anchors=None, public_base_url=None, claims=None,
                   vct_values=None, verifier_info=None, credential_query_id=None,
                   verifier_info_profile=None, credential_format=None, doctype_value=None,
-                  iaca_roots=None) -> Verifier:
+                  iaca_roots=None, dc_api_client_metadata=None) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
@@ -335,7 +335,9 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
         **({"verifier_info": verifier_info} if verifier_info is not None else {}),
         **({"credential_query_id": credential_query_id} if credential_query_id is not None else {}),
         **({"verifier_info_profile": verifier_info_profile}
-           if verifier_info_profile is not None else {}))
+           if verifier_info_profile is not None else {}),
+        **({"dc_api_client_metadata": dc_api_client_metadata}
+           if dc_api_client_metadata is not None else {}))
 
 
 def _load_trust_anchors(paths):
@@ -973,6 +975,49 @@ def _read_control_token(path):
     return token
 
 
+def _dc_api_options(args):
+    """`(origin, client_metadata)` for `serve --dc-api`, or `(None, None)` without it, read before
+    the PKI is: the origin as `mdoc.dc_api_origin` writes it and the metadata file as
+    `dc_api_client_metadata_of` holds it. ValueError says what to change."""
+    unread = [flag for flag, given in (("--dc-api-origin", args.dc_api_origin is not None),
+                                       ("--dc-api-client-metadata", args.dc_api_client_metadata is not None))
+              if given]
+    if not args.dc_api:
+        if unread:
+            raise ValueError("%s belong%s to --dc-api, which this command was not given"
+                             % (" and ".join(unread), "s" if len(unread) == 1 else ""))
+        return None, None
+    if not args.experimental:
+        raise ValueError("--dc-api is experimental and off by default; add --experimental to turn it on")
+    if args.format != MDOC_FORMAT:
+        raise ValueError("--dc-api asks for an mdoc; add --format %s" % MDOC_FORMAT)
+    if args.dc_api_origin is None:
+        raise ValueError("--dc-api needs --dc-api-origin, the origin the page is opened at, such as "
+                         "https://verifier.example")
+    try:
+        origin = dc_api_origin(args.dc_api_origin)
+    except ValueError as exc:
+        raise ValueError("--dc-api-origin %s" % exc) from None
+    combined = [flag for flag, given in (("--once", args.once), ("--rearm", args.rearm),
+                                         ("--result", args.result),
+                                         ("--control-token-file", args.control_token_file)) if given]
+    if combined:
+        raise ValueError("--dc-api is not combined with %s: %s start%s or report%s on requests made at "
+                         "the request URI, and the page makes requests of its own"
+                         % (" and ".join(combined), "they" if len(combined) > 1 else "it",
+                            "" if len(combined) > 1 else "s", "" if len(combined) > 1 else "s"))
+    metadata = None
+    if args.dc_api_client_metadata is not None:
+        try:
+            # Depth-bounded, so a file nested past the interpreter's limit is refused here with
+            # this flag's message, never with the parser's RecursionError.
+            with open(args.dc_api_client_metadata, encoding="utf-8") as fh:
+                metadata = dc_api_client_metadata_of(_loads_depth_bounded(fh.read(), "file", finite=True))
+        except (OSError, ValueError) as exc:
+            raise ValueError("--dc-api-client-metadata %s: %s" % (args.dc_api_client_metadata, exc)) from None
+    return origin, metadata
+
+
 def _cmd_serve(args) -> int:
     # An empty address binds every interface, which only an address that names it may do.
     if not args.bind:
@@ -988,6 +1033,11 @@ def _cmd_serve(args) -> int:
         cors_origins = cors_origins_of(args.cors_origin)
     except ValueError as exc:
         print("polaris-oid4vp: --cors-origin %s" % exc, file=sys.stderr)
+        return 2
+    try:
+        dc_api_page_origin, dc_api_client_metadata = _dc_api_options(args)
+    except ValueError as exc:
+        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
     pki = pathlib.Path(args.pki)
     missing = [name for name in FILES.values() if not (pki / name).is_file()]
@@ -1110,7 +1160,9 @@ def _cmd_serve(args) -> int:
                                  credential_query_id=args.credential_query_id,
                                  verifier_info_profile=args.verifier_info_profile,
                                  **({"credential_format": MDOC_FORMAT, "doctype_value": args.doctype,
-                                     "iaca_roots": iaca_roots} if as_mdoc else {}))
+                                     "iaca_roots": iaca_roots} if as_mdoc else {}),
+                                 **({"dc_api_client_metadata": dc_api_client_metadata}
+                                    if dc_api_client_metadata is not None else {}))
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
@@ -1202,7 +1254,7 @@ def _cmd_serve(args) -> int:
                       cors_origins=cors_origins, control_token=control_token,
                       on_control=requests.control if control_token else None,
                       on_control_read=requests.control_read if control_token else None,
-                      name_requests=several)
+                      name_requests=several, dc_api_origin=dc_api_page_origin)
     except BaseException:
         if args.once:
             requests.release()
@@ -1217,6 +1269,9 @@ def _cmd_serve(args) -> int:
     print("  anchor to register: %s" % (pki / FILES["anchor"]))
     if as_mdoc:
         print("  asks for      %s, docType %s (experimental)" % (MDOC_FORMAT, verifier.doctype_value))
+    if dc_api_page_origin:
+        print("  dc api page   %s%s (Digital Credentials API, experimental)"
+              % (dc_api_page_origin, DC_API_PAGE_PATH))
     if cors_origins:
         print("  cors origins  %s" % " ".join(cors_origins))
     if control_token:
@@ -1230,7 +1285,12 @@ def _cmd_serve(args) -> int:
         print("  %s" % ("the request asks for no more than its registration certificate registers"
                         if verifier.over_asking_checked else
                         "no registration certificate carried; the over-asking check did not run"))
-    print("\nStart a request with --once to print the parameters a wallet is launched with.")
+    if dc_api_page_origin:
+        # --once, --rearm and --control-token-file are refused beside --dc-api: the page is the
+        # only way a request is started.
+        print("\nOpen the dc api page in a browser to start a request.")
+    else:
+        print("\nStart a request with --once to print the parameters a wallet is launched with.")
     if args.once:
         _announce(requests.start(reserved=True))
     # Read while it serves, and stdout is often not a terminal (a pipe, a file, a container log
@@ -1431,7 +1491,7 @@ and one that judges a response already captured:
                    help="with --format mso_mdoc: a PEM file of IACA root certificates a "
                         "document's signer must chain to, each trusted for --doctype (repeatable)")
     s.add_argument("--experimental", action="store_true",
-                   help="turn on what is off by default: --format mso_mdoc")
+                   help="turn on what is off by default: --format mso_mdoc and --dc-api")
     s.add_argument("--verifier-info", default=None, metavar="FILE",
                    help="verifier attestations to put in the request object: a JSON array "
                         "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "
@@ -1498,6 +1558,22 @@ and one that judges a response already captured:
                         "many arrived). With --rearm or --control-token-file it describes the "
                         "newest request and adds request (1, 2, 3 ... in start order, 0 before "
                         "the first), and under --rearm previous (the request that ended, whole)")
+    s.add_argument("--dc-api", action="store_true",
+                   help="with --experimental and --format mso_mdoc: serve a page at /dc-api/ that "
+                        "asks the browser for an mdoc over the Digital Credentials API (a signed "
+                        "request, response mode dc_api.jwt) and posts the answer back to this "
+                        "listener; needs --dc-api-origin; refused with --once, --rearm, --result "
+                        "and --control-token-file")
+    s.add_argument("--dc-api-origin", default=None, metavar="ORIGIN",
+                   help="with --dc-api: the origin the page is opened at, as the browser writes it "
+                        "(https://verifier.example, or http on localhost or 127.0.0.1); requests are "
+                        "made for it and only a post from it is answered")
+    s.add_argument("--dc-api-client-metadata", default=None, metavar="FILE",
+                   help="with --dc-api: a JSON object whose members are added to the "
+                        "client_metadata of each Digital Credentials API request, never in place "
+                        "of one the verifier writes (jwks, vp_formats_supported, "
+                        "encrypted_response_enc_values_supported); at most 16384 bytes written as "
+                        "compact JSON")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
 

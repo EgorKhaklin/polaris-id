@@ -80,6 +80,9 @@ NO_REFUSALS = {
     "polaris_oid4vp/__init__.py": "names what the package exports",
     "polaris_oid4vp/cli.py": "the command line: it hands flags and files to the verifier, and "
                              "test_cli holds its refusals of flags directly",
+    "polaris_oid4vp/dc_api_page.py": "the bytes of a page and its script: test_serve holds what the "
+                                     "listener sends, and scripts/polaris-oid4vp-dc-page-drill.py "
+                                     "what a browser does with them",
 }
 
 #: Every suite in the package. A new test file that is not listed here is invisible to this
@@ -511,6 +514,32 @@ NAMED_MUTANTS = (
      "            return Verdict(False, \"malformed\", \"the vp_token is not one DeviceResponse for the one \"\n",
      "        make_transcript()  # MUTANT\n        if presentation is None:\n"
      "            return Verdict(False, \"malformed\", \"the vp_token is not one DeviceResponse for the one \"\n"),
+    # 2026-11-21, the page and its routes (serve(dc_api_origin=...), experimental): a post from any
+    # origin answered; a response for another protocol judged; dc_api_client_metadata put in place
+    # of a member the verifier writes, at construction or by being written after the verifier's
+    # own; the requests outstanding not capped; and the routes served on a listener not given the
+    # option.
+    ("serve:dc-api-answers-any-origin", "polaris_oid4vp/serve.py",
+     "        if origins != [self.dc_api_origin]:\n",
+     "        if False:  # MUTANT\n"),
+    ("serve:dc-api-judges-another-protocol", "polaris_oid4vp/serve.py",
+     "        if protocol != DC_API_PROTOCOL:\n",
+     "        if False:  # MUTANT\n"),
+    ("verifier:dc-api-metadata-replaces-a-member", "polaris_oid4vp/verifier.py",
+     "    written = sorted(set(extra) & set(_client_metadata_of({}, {})))\n",
+     "    written = []  # MUTANT\n"),
+    ("verifier:dc-api-metadata-written-after-the-verifiers", "polaris_oid4vp/verifier.py",
+     "        client_metadata = json.loads(json.dumps(self.dc_api_client_metadata or {}))\n"
+     "        client_metadata.update(self._client_metadata(_encryption_jwk(session.enc_key, session.kid)))\n",
+     "        client_metadata = self._client_metadata(_encryption_jwk(session.enc_key, session.kid))  # MUTANT\n"
+     "        client_metadata.update(json.loads(json.dumps(self.dc_api_client_metadata or {})))\n"),
+    ("verifier:dc-api-requests-uncapped", "polaris_oid4vp/verifier.py",
+     "        if len(self._dc_api) >= DC_API_MAX_OUTSTANDING:\n",
+     "        if False:  # MUTANT\n"),
+    ("serve:dc-api-routes-without-the-option", "polaris_oid4vp/serve.py",
+     "    handler = type(\"_BoundHandler\", mixins + (base,), members)\n",
+     "    mixins = mixins + (() if _DcApiHandler in mixins else (_DcApiHandler,))  # MUTANT\n"
+     "    handler = type(\"_BoundHandler\", mixins + (base,), members)\n"),
 )
 
 

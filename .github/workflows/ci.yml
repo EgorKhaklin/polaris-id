@@ -1808,6 +1808,13 @@ jobs:
         # install is needed.
         run: POLARIS_UI_PYTHON=python POLARIS_TEST_PYTHON=python bash scripts/polaris-ui-drill.sh
 
+      # 2026-11-21: the page polaris-oid4vp serve --dc-api answers (experimental), in the same
+      # headless Chromium: its policy header, the browser feature test and one presentation through
+      # a stubbed navigator.credentials.get. serve() runs in the drill's own process on 127.0.0.1;
+      # the package reads only what requirements-dev.txt installed above (cryptography).
+      - name: The polaris-oid4vp Digital Credentials API page in a real browser
+        run: python scripts/polaris-oid4vp-dc-page-drill.py
+
       # v9.373 (P6.5) — every operator surface audited in this same browser, against a PINNED
       # and current axe-core at the WCAG 2.0/2.1/2.2 A and AA tags. An identity system a person
       # cannot operate excludes them from identity, which is the trusted-referee gap at another

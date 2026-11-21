@@ -24,9 +24,12 @@ import sys
 import threading
 import urllib.parse
 
+from . import dc_api_page
 from .jwe import _loads_depth_bounded
+from .mdoc import dc_api_origin as _dc_api_origin
 from .verifier import (  # noqa: F401  Verifier re-exported for callers of serve()
-    Verifier, cut_to, logged_line, operator_text, wallet_nonce_acceptable, written_reason)
+    DC_API_PROTOCOL, MDOC_FORMAT, DcApiRequestsFull, Verifier, cut_to, logged_line, operator_text,
+    wallet_nonce_acceptable, written_reason)
 
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
@@ -88,6 +91,20 @@ CONTROL_MAX_BODY_BYTES = 8192
 #: The shortest control token `serve` takes. Anything that can reach the listener can try a token,
 #: so it is one a person would not choose.
 CONTROL_TOKEN_MIN_LENGTH = 32
+
+#: The paths `serve(dc_api_origin=...)` answers (experimental, 2026-11-21): the page that asks a
+#: browser for an mdoc over the Digital Credentials API, its script, and the two routes the script
+#: posts to (`_DcApiHandler`). Any other path under DC_API_PREFIX is 404, and none carries a CORS
+#: header, whatever `cors_origins` says.
+DC_API_PREFIX = "/dc-api/"
+DC_API_PAGE_PATH = DC_API_PREFIX
+DC_API_SCRIPT_PATH = DC_API_PREFIX + "app.js"
+DC_API_REQUEST_PATH = DC_API_PREFIX + "request"
+DC_API_RESPONSE_PATH = DC_API_PREFIX + "response"
+#: The page's Content-Security-Policy: its own script and its own origin's routes, and nothing
+#: else: no inline script, no style, no frame around it, no form and no base URL.
+DC_API_PAGE_POLICY = ("default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; "
+                      "form-action 'none'; frame-ancestors 'none'")
 #: What follows `scheme://` in an origin, lowercased: a host (in brackets, what ipaddress then
 #: reads as IPv6, or else a name or IPv4 address with no colon or bracket), then, if any, `:` and
 #: a port of ASCII digits, of which at most five follow the leading zeros.
@@ -586,6 +603,138 @@ class _ControlHandler:
         return None
 
 
+class _DcApiHandler:
+    """The page at DC_API_PAGE_PATH and its routes, for a listener given `dc_api_origin`. serve()
+    puts this in front of the handler it builds only then; without it not one line here runs and
+    every /dc-api/ path is answered as any path the listener does not serve.
+
+    `GET /dc-api/` is `dc_api_page.PAGE` under DC_API_PAGE_POLICY, and `GET /dc-api/app.js` its
+    script, each `nosniff` and `no-store`. The two POST routes answer only a request whose one
+    Origin header is `dc_api_origin`, exactly as a browser writes it: any other, none, `null` or
+    two get 403, the connection closed with the body unread, and no verifier code runs. The origin
+    a request is made for and a response judged at is always the configured one, never one read
+    from the request. Then the body is read under MAX_BODY_BYTES as `/response` reads one.
+
+    `POST /dc-api/request` answers `Verifier.dc_api_request`'s member as JSON, `no-store`; 503
+    `temporarily_unavailable` when DC_API_MAX_OUTSTANDING requests are outstanding. Its body is
+    read and not used.
+
+    `POST /dc-api/response` takes one JSON object, `{"protocol": ..., "data": ...}`, as the page
+    builds it from the DigitalCredential. A body that is not one, and a protocol other than
+    DC_API_PROTOCOL, are refused with REFUSAL_BODY before anything is decrypted, the reason
+    logged. Otherwise `data` goes to `Verifier.dc_api_response`, whose answer is sent, heard by
+    `on_verdict`, and, for a refusal or a wallet's error, logged as one line with the refusal's
+    code and reason or the wallet's error. The line names no request (`name_requests` does not
+    reach this route)."""
+
+    dc_api_origin = None
+
+    def do_GET(self):
+        path = self.path.partition("?")[0]
+        if path == DC_API_PAGE_PATH:
+            return self._send_dc_api_file(dc_api_page.PAGE, "text/html; charset=utf-8", DC_API_PAGE_POLICY)
+        if path == DC_API_SCRIPT_PATH:
+            return self._send_dc_api_file(dc_api_page.SCRIPT, "text/javascript; charset=utf-8")
+        return super().do_GET()
+
+    def do_POST(self):
+        path = self.path.partition("?")[0]
+        if path not in (DC_API_REQUEST_PATH, DC_API_RESPONSE_PATH):
+            return super().do_POST()
+        origins = self.headers.get_all("Origin") or []
+        if origins != [self.dc_api_origin]:
+            # Before a byte of the body is read, so a refused caller costs nothing more.
+            self.close_connection = True
+            self.log_error("refused: a post to %s from %s; it answers only %s", path,
+                           written_reason(", ".join(origins) if origins else "no Origin header"),
+                           self.dc_api_origin)
+            return self._send(403, {"error": "access_denied",
+                                    "error_description": "this path answers only its own page"})
+        length = _content_length(self.headers)
+        if length is None:
+            self.close_connection = True
+            return self._send(400, {"error": "invalid_request",
+                                    "error_description": "Content-Length is not a decimal "
+                                                         "number of octets"})
+        if length > MAX_BODY_BYTES:
+            self.close_connection = True
+            return self._send(413, {"error": "invalid_request",
+                                    "error_description": "the request body exceeds %d bytes"
+                                                         % MAX_BODY_BYTES})
+        body = self.rfile.read(length)
+        if len(body) < length:
+            self.close_connection = True
+            return self._send(400, {"error": "invalid_request",
+                                    "error_description": "the body is shorter than "
+                                                         "Content-Length declared"})
+        if path == DC_API_REQUEST_PATH:
+            return self._dc_api_request()
+        return self._dc_api_response(body)
+
+    def _dc_api_request(self):
+        try:
+            member = self.verifier.dc_api_request(self.dc_api_origin)
+        except DcApiRequestsFull as exc:
+            self.log_error("refused: a request over the Digital Credentials API: %s", written_reason(str(exc)))
+            return self._send_no_store(503, {"error": "temporarily_unavailable",
+                                             "error_description": "too many requests are outstanding; "
+                                                                  "try again later"})
+        except Exception:  # noqa: BLE001
+            self.log_error("dc_api_request raised", exc_info=True)
+            return self._send_no_store(500, {"error": "server_error"})
+        return self._send_no_store(200, member)
+
+    def _dc_api_response(self, body):
+        try:
+            document = _loads_depth_bounded(body, "request body", finite=True)
+        except ValueError:
+            document = None
+        if not isinstance(document, dict):
+            return self._dc_api_refused("the body is not one JSON object")
+        protocol = document.get("protocol")
+        if protocol != DC_API_PROTOCOL:
+            return self._dc_api_refused("the response's protocol is %s, not %s; only a signed request is made"
+                                        % (json.dumps(protocol), DC_API_PROTOCOL))
+        try:
+            status, answer, verdict = self.verifier.dc_api_response(document.get("data"),
+                                                                    origin=self.dc_api_origin)
+            if status != 200 and verdict is not None:
+                self.log_error("refused: %s: %s", verdict.code, written_reason(verdict.reason))
+            elif getattr(verdict, "wallet_error", None) is not None:
+                self.log_error("wallet error: %s", written_reason(verdict.reason))
+        except Exception:  # noqa: BLE001
+            # As at /response: the wallet's page sees the constant refusal, the log the traceback.
+            self.log_error("dc_api_response raised", exc_info=True)
+            status, answer, verdict = 400, dict(Verifier.REFUSAL_BODY), None
+        if self.on_verdict:
+            self.on_verdict(status, answer, verdict)
+        return self._send(status, answer)
+
+    def _dc_api_refused(self, reason):
+        self.log_error("refused: invalid_request: %s", written_reason(reason))
+        return self._send(400, dict(Verifier.REFUSAL_BODY))
+
+    def _send_no_store(self, status, body):
+        raw = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _send_dc_api_file(self, raw, content_type, policy=None):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(raw)))
+        if policy:
+            self.send_header("Content-Security-Policy", policy)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
+
+
 class _CorsHandler(_Handler):
     """_Handler, answering CORS for a wallet that runs in a browser page. serve() builds its
     handler on this class only when it was given cors_origins, and sets `cors_origins` on it to
@@ -680,7 +829,7 @@ class _Server(http.server.ThreadingHTTPServer):
 def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
           on_verdict=None, background=True, verbose=False, on_request_object=None,
           cors_origins=None, control_token=None, on_control=None, name_requests=False,
-          on_control_read=None):
+          on_control_read=None, dc_api_origin=None):
     """Start the two endpoints. Returns the HTTPServer so a caller can shut it down.
 
     TLS is not optional in the profile: the suite refuses a `request_uri` that is not HTTPS
@@ -715,6 +864,12 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
     request it was about (`about_request`), and a wallet error's names the error and not what
     became of the request, which the caller's rule decides.
 
+    `dc_api_origin` (experimental), for a verifier built for mso_mdoc: the origin this listener's
+    page is opened at, as `mdoc.dc_api_origin` reads one. It adds the page at DC_API_PAGE_PATH and
+    its routes (`_DcApiHandler`), which make requests for that origin and judge responses at it.
+    A verifier built for another format, or an origin `mdoc.dc_api_origin` refuses, raises
+    ValueError before anything listens.
+
     Shut it down with `httpd.shutdown()` followed by `httpd.server_close()`: the first stops
     the loop and the second releases the socket, and skipping the second leaks a listening
     port for the life of the process.
@@ -744,6 +899,12 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         members["on_control"] = staticmethod(on_control)
         if on_control_read is not None:
             members["on_control_read"] = staticmethod(on_control_read)
+    if dc_api_origin is not None:
+        if getattr(verifier, "credential_format", None) != MDOC_FORMAT:
+            raise ValueError("dc_api_origin is for a verifier built for %s: a request over the Digital "
+                             "Credentials API asks for an mdoc" % MDOC_FORMAT)
+        members["dc_api_origin"] = _dc_api_origin(dc_api_origin)
+        mixins = mixins + (_DcApiHandler,)
     handler = type("_BoundHandler", mixins + (base,), members)
     # A thread per connection, and a read timeout on every connection, the TLS handshake
     # included (_Server). Both are about one thing: a client that opens a socket and then goes
