@@ -1808,6 +1808,13 @@ jobs:
         # install is needed.
         run: POLARIS_UI_PYTHON=python POLARIS_TEST_PYTHON=python bash scripts/polaris-ui-drill.sh
 
+      # 2026-11-21: the page polaris-oid4vp serve --dc-api answers (experimental), in the same
+      # headless Chromium: its policy header, the browser feature test and one presentation through
+      # a stubbed navigator.credentials.get. serve() runs in the drill's own process on 127.0.0.1;
+      # the package reads only what requirements-dev.txt installed above (cryptography).
+      - name: The polaris-oid4vp Digital Credentials API page in a real browser
+        run: python scripts/polaris-oid4vp-dc-page-drill.py
+
       # v9.373 (P6.5) — every operator surface audited in this same browser, against a PINNED
       # and current axe-core at the WCAG 2.0/2.1/2.2 A and AA tags. An identity system a person
       # cannot operate excludes them from identity, which is the trusted-referee gap at another
@@ -2383,13 +2390,13 @@ jobs:
           docker run -d --name pqedge --network pqnet --network-alias edge \
             -v /tmp/pqtest.Caddyfile:/etc/caddy/Caddyfile:ro polaris-caddy:ci >/dev/null
           # The client is alpine:3.24 at the Dockerfiles' pin, with curl and openssl installed at exact
-          # versions (pinned 2026-10-21; curl moved 2026-10-27). Alpine serves one build of each
-          # package per branch, so once either is replaced, apk refuses the next command and the step
-          # fails there with apk's error; the versions are then moved by hand, there and in the three
-          # client lines below.
+          # versions (pinned 2026-10-21; curl moved 2026-10-27, openssl 2026-11-19). Alpine serves
+          # one build of each package per branch, so once either is replaced, apk refuses the next
+          # command and the step fails there with apk's error; the versions are then moved by hand,
+          # there and in the three client lines below.
           docker run --rm alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
-            apk add --no-cache curl=8.23.0-r0 openssl=3.5.9-r0 >/dev/null \
-            || { echo "::error::apk could not install curl=8.23.0-r0 and openssl=3.5.9-r0 on alpine:3.24 (its error is above): move a version Alpine no longer serves by hand; a mirror error is a flake"; exit 1; }
+            apk add --no-cache curl=8.23.0-r0 openssl=3.5.9-r1 >/dev/null \
+            || { echo "::error::apk could not install curl=8.23.0-r0 and openssl=3.5.9-r1 on alpine:3.24 (its error is above): move a version Alpine no longer serves by hand; a mirror error is a flake"; exit 1; }
           # Wait for the edge to serve TLS.
           for i in $(seq 1 30); do
             docker run --rm --network pqnet alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c \
@@ -2399,13 +2406,13 @@ jobs:
           done
           probe() { # $1 = -groups args; echoes the negotiated TLS1.3 group
             docker run --rm --network pqnet alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c \
-              "apk add --no-cache openssl=3.5.9-r0 >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge $1 -tls1_3 2>/dev/null | grep -i 'Negotiated TLS1.3 group'"
+              "apk add --no-cache openssl=3.5.9-r1 >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge $1 -tls1_3 2>/dev/null | grep -i 'Negotiated TLS1.3 group'"
           }
           forced=$(probe "-groups X25519MLKEM768"); echo "forced ML-KEM:  $forced"
           deflt=$(probe "");                        echo "default groups: $deflt"
           # Classical client must still complete the handshake (fallback).
           classical=$(docker run --rm --network pqnet alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf sh -c \
-            'apk add --no-cache openssl=3.5.9-r0 >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge -groups X25519 -tls1_3 2>&1 | grep -c "New, TLSv1.3, Cipher is"')
+            'apk add --no-cache openssl=3.5.9-r1 >/dev/null 2>&1; echo | openssl s_client -connect edge:8443 -servername edge -groups X25519 -tls1_3 2>&1 | grep -c "New, TLSv1.3, Cipher is"')
           docker rm -f pqedge >/dev/null 2>&1 || true
           docker network rm pqnet >/dev/null 2>&1 || true
           echo "$forced" | grep -q 'X25519MLKEM768' \
@@ -3942,6 +3949,11 @@ jobs:
       # certificate defect shown to be the only one.
       - name: The negative vectors (lab/interop/negative-vectors), each verdict reached
         run: python -m unittest lab/interop/negative-vectors/test_vectors.py
+      # packages/polaris-negative-vectors: the two vector files as a data-only npm package. Staged byte
+      # for byte from the lab, packed, installed into an empty project and read through its exports;
+      # a staged copy with one byte changed, a file added or a script added is refused.
+      - name: The negative-vectors npm package (packages/polaris-negative-vectors), staged, packed and installed
+        run: python -m unittest packages/polaris-negative-vectors/test_package.py
       # lab/interop/status-list/revoked: a credential its Token Status List revokes, for testing another
       # verifier's revocation check; it stays what its generator makes and reads as revoked here.
       - name: The revoked-credential fixture (lab/interop/status-list/revoked), revoked at index 3
@@ -3985,6 +3997,10 @@ jobs:
       # come from polaris_web/requirements.txt, installed above.
       - name: The mdoc captures against their two witnesses (lab/interop/mdoc/witness-eudi), every stage classified
         run: python -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py
+      # lab/interop/mdoc/witness-oid4vcgo/check.py holds the OID4VCgo witness's rows to the
+      # vectors; mdoc-witness.yml runs the witness itself (in containers) and then check.py.
+      - name: The OID4VCgo mdoc witness's judge, each broken row set refused (lab/interop/mdoc/witness-oid4vcgo/test_check.py)
+        run: python -m unittest lab/interop/mdoc/witness-oid4vcgo/test_check.py
       # lab/interop/mdoc/verify_mdoc.py refuses each malformed input at the check that names it, with
       # that check's reason: the CBOR reader, the COSE_Sign1 shape, the verifier's own OpenID4VP
       # inputs, and the fields read before a signature decides. The vectors reach the rest.

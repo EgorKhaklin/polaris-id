@@ -14,7 +14,7 @@
 # --x5c binds the credential to it under an issuer CA made for this run, which the verifier
 # trusts (--issuer-trust-anchor).
 #
-#   lab/interop/axle/run.sh                                         # polaris-oid4vp 1.0.0rc16
+#   lab/interop/axle/run.sh                                         # polaris-oid4vp 1.2.0
 #   POLARIS_OID4VP=polaris-oid4vp lab/interop/axle/run.sh           # the newest release
 #   AXLE_SHA=<commit> lab/interop/axle/run.sh                       # another Axle commit
 #
@@ -48,7 +48,7 @@ trap 'exit_rc=$?; stop_all || true; report_line; echo "done"; exit_trap "$exit_r
 AXLE_REPO="https://github.com/openwallet-foundation-labs/axle"
 AXLE_SHA="${AXLE_SHA:-f7b8054171bb49f3c27589d0b19b03285ed1dcc1}"
 IMAGE="${GRADLE_IMAGE:-gradle:9.3.1-jdk17@sha256:5fb7d4ea7ddf10b24c317bc7d665a7da6aae9104042091625f3061f98661b487}"
-PKG="${POLARIS_OID4VP:-polaris-oid4vp==1.0.0rc16}"
+PKG="${POLARIS_OID4VP:-polaris-oid4vp==1.2.0}"
 PORT="${PORT:-9491}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${WORK:-$(mktemp -d)}"
@@ -85,6 +85,11 @@ fi
 venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
+RESULT_HELP="$(venv/bin/polaris-oid4vp serve --help 2>&1)" || { echo "polaris-oid4vp serve --help failed: $RESULT_HELP" >&2; exit 2; }
+case "$RESULT_HELP" in  # captured: grep -q at the end of a pipe can trip pipefail
+  *--result*) ;;
+  *) echo "this walk reads the verifier's verdict from serve --result, which polaris-oid4vp 1.1.0 and later have; set POLARIS_OID4VP to such a release" >&2; exit 2 ;;
+esac
 
 # Axle's source at exactly $AXLE_SHA, into a new empty directory. Nothing of it runs here: git only
 # writes the files, and the build below runs in the container.
@@ -167,10 +172,11 @@ EOF
 start_verifier() {  # $1 the issuer CA the verifier trusts, $2 log
   # --verbose logs each request's method and path, which shows how the wallet fetched the request.
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host host.docker.internal \
-    --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once --verbose > "$2" 2>&1 &
+    --bind 0.0.0.0 --port "$PORT" --issuer-trust-anchor "$1" --once --verbose \
+    --result "${2%.log}.result.json" > "$2" 2> "${2%.log}.err" &
   VERIFIER_PID=$!
   for _ in $(seq 1 240); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start within 60 s; see $WORK/$2" >&2
+  echo "verifier did not start within 60 s; see $WORK/$2 and $WORK/${2%.log}.err" >&2
   exit 2
 }
 
@@ -199,6 +205,17 @@ present() {  # $1 launch URI, $2 credential, $3 the CA the wallet trusts for the
 }
 
 fail=0
+verdict() {  # $1 label, $2 the --result file, $3 a Python expression over doc that must be True
+  if venv/bin/python - "$2" "$3" <<'EOF'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as e:
+    sys.exit("cannot read %s: %s" % (sys.argv[1], e))
+sys.exit(0 if eval(sys.argv[2], {}, {"doc": doc}) is True else "doc is %s" % json.dumps(doc, sort_keys=True))
+EOF
+  then echo "  ok    $1"; else echo "  FAIL  $1 ($2: see above)"; fail=1; fi
+}
 expect() {  # $1 label, $2 file, $3 pattern that must appear
   if grep -qE "$3" "$2"; then echo "  ok    $1"; else echo "  FAIL  $1 (no /$3/ in $2)"; fail=1; fi
 }
@@ -211,9 +228,9 @@ start_verifier issuer-ca.pem verifier.log
 URI=$(launch_uri verifier.log)
 present "$URI" credential.txt pki/anchor.pem wallet.log
 expect "Axle's request verifier trusted the verifier" wallet.log '^TRUST trusted'
-expect "Axle fetched the request by POST" verifier.log '^POST /request\.jwt'
+expect "Axle fetched the request by POST" verifier.err '^POST /request\.jwt'
 expect "Axle dispatched and the verifier answered 2xx" wallet.log '^DISPATCHED'
-expect "the verifier accepted it" verifier.log '<- 200 authentic'
+verdict "the verifier accepted it" verifier.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200'
 { grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
@@ -230,13 +247,12 @@ echo "== control (d): the wallet trusts an unrelated CA for the verifier"
 present "$(launch_uri verifier-other.log)" credential.txt other-pki/anchor.pem wallet-d.log
 expect "Axle reported the verifier not trusted" wallet-d.log '^TRUST not trusted'
 expect "the harness declined, so nothing was sent" wallet-d.log '^DECLINED'
-if grep -qE '<- [0-9]{3}' verifier-other.log; then echo "  FAIL  the verifier received a presentation"; fail=1
-else echo "  ok    the verifier received no presentation"; fi
+verdict "the verifier received no response" verifier-other.result.json 'doc["outcome"] == "nothing_received" and doc["responses"] == 0'
 
 echo "== control (a): the verifier trusts a different issuer CA under the same name"
 present "$(launch_uri verifier-other.log)" credential.txt pki/anchor.pem wallet-a.log
 expect "the wallet was not accepted" wallet-a.log '^DISPATCH FAILED'
-expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: issuer_key'
+verdict "the verifier refused the issuer" verifier-other.result.json 'doc["outcome"] == "refused" and doc["check"] == "issuer_key" and doc["response"]["status_code"] == 400'
 refused verifier-other.log
 stop_verifier
 
@@ -244,7 +260,7 @@ echo "== control (e): the issuer-signed payload altered after issuance"
 start_verifier issuer-ca.pem verifier-altered.log
 present "$(launch_uri verifier-altered.log)" credential-altered.txt pki/anchor.pem wallet-e.log
 expect "Axle presented it and was not accepted" wallet-e.log '^DISPATCH FAILED'
-expect "the verifier refused the issuer's signature" verifier-altered.log '<- 400 refused: issuer_signature'
+verdict "the verifier refused the issuer's signature" verifier-altered.result.json 'doc["outcome"] == "refused" and doc["check"] == "issuer_signature" and doc["response"]["status_code"] == 400'
 refused verifier-altered.log
 stop_verifier
 
@@ -252,7 +268,7 @@ echo "== control (f): a credential bound to a key the wallet does not hold"
 start_verifier issuer-ca-2.pem verifier-holder.log
 present "$(launch_uri verifier-holder.log)" credential-other-holder.txt pki/anchor.pem wallet-f.log
 expect "Axle presented it and was not accepted" wallet-f.log '^DISPATCH FAILED'
-expect "the verifier refused the key binding" verifier-holder.log '<- 400 refused: kb_signature'
+verdict "the verifier refused the key binding" verifier-holder.result.json 'doc["outcome"] == "refused" and doc["check"] == "kb_signature" and doc["response"]["status_code"] == 400'
 refused verifier-holder.log
 stop_verifier
 

@@ -779,6 +779,87 @@ class CborRefusals(unittest.TestCase):
             V._cbor_decode(b"\xc2\x41\x01")
 
 
+class CborLimits(unittest.TestCase):
+    """The decoder's two limits, each refused with its own reason: a head that states more
+    than _CBOR_MAX_ENTRIES entries, as it is read, and a decode of more than _CBOR_MAX_ITEMS
+    data items. verify_mdoc returns a verdict for each, and refuses a document over
+    _MDOC_MAX_BYTES before decoding it."""
+
+    def test_the_limits_are_pinned(self):
+        self.assertEqual((V._CBOR_MAX_ENTRIES, V._CBOR_MAX_ITEMS, V._MDOC_MAX_BYTES),
+                         (1024, 4096, 512 * 1024))
+
+    def test_an_array_or_a_map_over_the_entry_limit_is_refused_as_its_head_is_read(self):
+        # Given nothing after the head, the reason is the limit's, not "truncated CBOR", which
+        # a check made anywhere after the head would give instead.
+        n = 1024
+        pairs = b"".join(_cbor(k) + _cbor(0) for k in range(n + 1))
+        for what, head, body, at_limit in (("an array", _hdr(4, n + 1), _cbor(0) * (n + 1), [0] * n),
+                                           ("a map", _hdr(5, n + 1), pairs, {k: 0 for k in range(n)})):
+            with self.subTest(what):
+                for buf in (head, head + body):
+                    with self.assertRaisesRegex(ValueError, "states %d .*over the %d entry limit" % (n + 1, n)):
+                        V._cbor_decode(buf)
+                self.assertEqual(V._cbor_decode(_cbor(at_limit)), at_limit)
+
+    def test_one_decode_reads_at_most_4096_data_items(self):
+        # An item counts once, as its head is read: the outermost item, each element, each key
+        # and each value, and a tag's content as an item of its own, so a tag-24 item is two.
+        # 63 arrays of 64 integers in one array are 1 + 63 + 63 * 64 = 4096 items.
+        def rows(last_row):
+            return _hdr(4, 63) + (_hdr(4, 64) + _cbor(0) * 64) * 62 + last_row
+
+        self.assertEqual(V._cbor_decode(rows(_hdr(4, 64) + _cbor(0) * 64)), [[0] * 64] * 63)
+        for what, last_row in (("an integer more", _hdr(4, 65) + _cbor(0) * 65),
+                               ("a tag-24 item", _hdr(4, 64) + _cbor(0) * 63 + b"\xd8\x18\x40")):
+            with self.subTest(what), self.assertRaisesRegex(ValueError, "more than 4096 data items"):
+                V._cbor_decode(rows(last_row))
+
+    def test_each_key_and_each_value_of_a_map_counts_toward_the_item_limit(self):
+        # Two maps of 1024 pairs in one array: 1 + 2 + 2 * 2048 = 4099 items, with no container
+        # over the entry limit. One of 1024 pairs, one of 1022 and an integer, in an array of three:
+        # 1 + 3 + 2 * 2046 = 4096 items, which decode.
+        with self.assertRaisesRegex(ValueError, "more than 4096 data items"):
+            V._cbor_decode(_cbor([{k: 0 for k in range(1024)}] * 2))
+        at_limit = [{k: 0 for k in range(1024)}, {k: 0 for k in range(1022)}, 0]
+        self.assertEqual(V._cbor_decode(_cbor(at_limit)), at_limit)
+
+    def test_a_repeated_key_is_named_by_its_kind_never_by_what_it_holds(self):
+        key = "<" + "k" * 5000 + "REPEATED-KEY-MARKER"
+        for repeated, kind in ((key, "a text string"), (key.encode(), "a byte string"), (7, "an integer"),
+                               (True, "a boolean"), (None, "null")):
+            with self.subTest(kind), self.assertRaises(ValueError) as caught:
+                V._cbor_decode(_hdr(5, 2) + _cbor(repeated) + _cbor(1) + _cbor(repeated) + _cbor(2))
+            self.assertEqual(str(caught.exception), "a CBOR map repeats the key (%s)" % kind)
+
+    def test_verify_mdoc_returns_a_verdict_for_each(self):
+        over_items = _hdr(4, 17) + (_hdr(4, 1024) + _cbor(0) * 1024) * 17
+        for buf, why in ((_hdr(5, 1025), "over the 1024 entry limit"), (over_items, "more than 4096")):
+            with self.subTest(why):
+                v = V.verify_mdoc(buf)
+                self.assertEqual((v["structure_valid"], v["issuer_authentic"]), (False, False))
+                self.assertIn(why, v["note"])
+
+    def test_a_document_over_the_byte_limit_is_refused_before_it_is_decoded(self):
+        # A byte string of exactly the limit and of one byte more, each a well-formed CBOR item,
+        # so that the size is the only thing wrong with the second.
+        limit = 512 * 1024
+        at_limit = b"\x5a" + (limit - 5).to_bytes(4, "big") + bytes(limit - 5)
+        over = b"\x5a" + (limit - 4).to_bytes(4, "big") + bytes(limit - 4)
+        self.assertEqual((len(at_limit), len(over)), (limit, limit + 1))
+        from unittest import mock
+        for given in (over, over.hex()):
+            with self.subTest(type(given).__name__), \
+                    mock.patch.object(V, "_cbor_decode", wraps=V._cbor_decode) as decode:
+                v = V.verify_mdoc(given)
+                self.assertEqual(v["note"], "the document is %d bytes, over the %d byte limit" % (limit + 1, limit))
+                self.assertEqual(decode.call_count, 0)
+        with mock.patch.object(V, "_cbor_decode", wraps=V._cbor_decode) as decode:
+            v = V.verify_mdoc(at_limit)
+            self.assertNotIn("byte limit", v["note"] or "")
+            self.assertEqual(decode.call_count, 1)
+
+
 class MdocTag24Refusals(unittest.TestCase):
     """Both refusals sit before any signature is checked, so a hand-built document reaches
     them with no crypto library at all."""

@@ -16,8 +16,8 @@ vector's refusal measured nothing).
 The keys and certificates are TEST material derived from public seeds, signed with deterministic
 ECDSA (RFC 6979): anyone can regenerate every byte, and nobody may trust them.
 
-    python3 make_vectors.py > vectors.json        # needs cryptography 44 or later
-    python3 make_vectors.py --out .               # vectors.json and the views/ derived from it
+    python3 make_vectors.py > vectors.json        # needs cryptography 44 or later, nothing else
+    python3 make_vectors.py --out .               # vectors.json and the views/ derived from it (needs polaris-oid4vp)
 
 Every presentation's Key Binding JWT names one verifier (its aud and nonce) and one instant. Re-bind
 every vector, with the same defects, to another verifier:
@@ -137,6 +137,15 @@ def _cert(cn, key, issuer_cn, issuer_key, serial, *, ca, pathlen=None, leaf_san=
         b = b.add_extension(x509.SubjectAlternativeName(list(san)), critical=False)
     for extension, critical in extensions:  # (value, critical) pairs, for profiles the SD-JWT vectors do not use
         b = b.add_extension(extension, critical=critical)
+    # 0.6.0: every certificate, the root included, names its own key and its issuer's (RFC 5280 s4.2.1.1 and
+    # s4.2.1.2, both non-critical), so a strict path validator such as `openssl verify -x509_strict` accepts the
+    # controls. A profile that passes either one through `extensions` keeps its own; it is never added twice.
+    given = {type(extension) for extension, _ in extensions}
+    if x509.SubjectKeyIdentifier not in given:
+        b = b.add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+    if x509.AuthorityKeyIdentifier not in given:
+        b = b.add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+            x509.SubjectKeyIdentifier.from_public_key(issuer_key.public_key())), critical=False)
     return b.sign(issuer_key, hashes.SHA256(), ecdsa_deterministic=True)
 
 
@@ -276,6 +285,19 @@ def _dup_first_digest(body):
     body["_sd"] = body["_sd"] + [body["_sd"][0]]
 
 
+# 0.6.0: a decoy digest (RFC 9901 s4.2.5), a digest over a fixed seed string that no Disclosure matches. `_sd` stays
+# sorted, as present() keeps it.
+DECOY_DIGEST = b64u(hashlib.sha256((SEED + "decoy/digest-twice").encode()).digest())
+
+
+def _add_decoy_digest(body):
+    body["_sd"] = sorted(body["_sd"] + [DECOY_DIGEST])
+
+
+def _dup_decoy_digest(body):
+    body["_sd"] = sorted(body["_sd"] + [DECOY_DIGEST, DECOY_DIGEST])
+
+
 CRIT = {"crit": ["urn:example:never-understood"], "urn:example:never-understood": True}
 
 
@@ -366,6 +388,8 @@ RFC9901_KB_NONCE_REQUIRED = ("RFC 9901 s4.3", "The Key Binding JWT MUST be a JWT
                              "contain the following elements: ... \"nonce\": REQUIRED.")
 RFC9901_KB_BOUND = ("RFC 9901 s7.3 step 5.f", "Determine that the Key Binding JWT is bound to the current transaction "
                     "and was created for this Verifier (replay detection) by validating nonce and aud claims.")
+RFC9901_KB_VALID_JWT = ("RFC 9901 s7.3 step 5.h", "Check that the Key Binding JWT is a valid JWT in all other "
+                        "respects, per [RFC7519] and [RFC8725].")
 SDJWTVC_REGISTERED = ("SD-JWT VC draft-19 s2.2.2.3", "The following registered JWT claims, including any of their "
                       "sub-claims, when used in the SD-JWT component of an SD-JWT VC, MUST NOT be included in "
                       "Disclosures and therefore MUST NOT be selectively disclosed")
@@ -476,7 +500,8 @@ def _make_vectors():
         ("kb-iat-nan", "the Key Binding JWT's iat is NaN, which is not JSON", "spec", "sd-jwt", (RFC8259_NAN,),
          {"kb_text": lambda b: _json(dict(b, iat="__NAN__")).replace('"__NAN__"', "NaN")}, "reject",
          _undo("kb_text")),
-        ("kb-exp-string", "the Key Binding JWT's exp is a string", "spec-implied", "sd-jwt", (RFC7519_NUMERICDATE,),
+        ("kb-exp-string", "the Key Binding JWT's exp is a string", "spec-implied", "sd-jwt",
+         (RFC7519_NUMERICDATE, RFC9901_KB_VALID_JWT),
          {"kb_payload": lambda b: b.update(exp="never")}, "reject",
          {"kb_payload": lambda b: b.update(exp=NOW + 3600)}),
         ("issuer-sig-der", "the issuer JWT's ES256 signature is DER-encoded instead of R||S", "spec", "jose", (RFC7518_ES256,),
@@ -585,6 +610,13 @@ def _make_vectors():
          "payload commits to; the holder's Key Binding JWT signs over it", "spec", "sd-jwt", (RFC9901_UNREFERENCED,),
          {"unreferenced": ((_salt("nationality"), "nationality", "DE"),)}, "reject",
          dict(_undo("unreferenced"), extra=((_salt("nationality"), "nationality", "DE"),))),
+        # 0.6.0, last in the file so that no vector is renumbered: digest-twice repeats a digest a Disclosure
+        # matches, so a verifier that follows s7.1 in order refuses it at step 3.c.ii.3 (the claim already exists)
+        # before step 4. A decoy matches no Disclosure, so no rule of step 3 fires and only step 4 refuses this one.
+        ("digest-twice-decoy", "the issuer committed to one decoy digest (a digest no Disclosure matches) twice "
+         "in the top-level _sd array", "spec", "sd-jwt", (RFC9901_DIGEST_TWICE,),
+         {"payload": _dup_decoy_digest}, "reject",
+         {"payload": _add_decoy_digest}),
     )
 
 
@@ -615,7 +647,7 @@ def build():
         vectors.append(vector)
     return {
         "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them."
                    + "".join(" The %s key came from %s." % kv for kv in _SUPPLIED),
         "settings": {"now": NOW, "nonce": NONCE, "audience": AUDIENCE, "vct": VCT, "max_skew_seconds": 300,

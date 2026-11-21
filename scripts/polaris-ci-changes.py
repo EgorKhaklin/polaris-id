@@ -372,6 +372,8 @@ ALWAYS_RUN_ONLY = {
     "scripts/test_mdoc_drill.py": "the coverage shards",
     "packages/polaris-oid4vp/examples/yivi-checkin/app.py": "the product boundary job",
     "packages/polaris-oid4vp/examples/yivi-checkin/test_checkin.py": "the product boundary job",
+    "packages/polaris-negative-vectors/stage.py": "the product boundary job (always run), through test_package.py",
+    "packages/polaris-negative-vectors/test_package.py": "the product boundary job (always run)",
     "scripts/polaris-ci-changes.py": "the changes job and the invariant checks",
     "scripts/polaris-perf-baseline.sh": "the product suite's core part (the smoke re-run)",
     "scripts/polaris-release-notes.sh": "test_ship_tool under the coverage shards; the release workflow",

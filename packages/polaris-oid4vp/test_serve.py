@@ -12,9 +12,10 @@ Found by measuring rather than by thinking: `serve.py` was at 0% line coverage. 
 drill exercises it, and the conformance drill needs Docker and a running suite, so nothing in
 CI touched the file that turns a verdict into a status code.
 
-TLS is off here. The profile requires HTTPS of a real deployment and the suite enforces it;
-what this file tests is routing, form parsing, content types and status codes, and wrapping
-the socket changes none of them.
+TLS is off here but for TransportTests and TlsHandshakeTests. The profile requires HTTPS of a
+real deployment and the suite enforces it; what the rest of this file tests is routing, form
+parsing, content types and status codes, and wrapping the socket changes none of them. The
+handshake itself is a read a silent client can stall, which is what TlsHandshakeTests holds.
 """
 import json
 import os
@@ -72,6 +73,197 @@ class ServeTestCase(unittest.TestCase):
     def tearDownClass(cls):
         cls.httpd.shutdown()
         cls.httpd.server_close()
+
+
+def uncut(verdict, reason):
+    """`verdict` holding `reason` whole, set past the cut Verdict makes where a reason is set: a
+    writer is handed any verdict-shaped object, so its own cut must hold without that one."""
+    verdict._reason = reason
+    return verdict
+
+
+class WrittenReasonLogTests(ServeTestCase):
+    """The listener's log is a writer of reasons too: a refusal's and a wallet error's, each
+    written through `written_reason`, at most 512 characters of it and its full length when it
+    is cut (test_cli's WrittenReasonTests holds the CLI's writers and enumerates them all)."""
+
+    def test_a_long_reason_is_logged_cut_and_says_its_length(self):
+        import contextlib
+        import io
+        from unittest import mock
+        from polaris_oid4vp.sdjwt import Verdict
+        long = "<" + "x" * 99_994 + "MARKER"
+        answers = {
+            "a refusal": (400, dict(Verifier.REFUSAL_BODY),
+                          uncut(Verdict(False, "malformed"), long)),
+            "a wallet error": (200, {}, uncut(Verdict(False, "wallet_error", wallet_error={
+                "error": "access_denied", "error_description": long, "state": "s1"}), long)),
+        }
+        for name, answer in answers.items():
+            with self.subTest(name), \
+                    mock.patch.object(self.verifier, "handle_direct_post", return_value=answer):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    status, _, _ = _post(self.base + "/response", {"response": "x"})
+                self.assertEqual(status, answer[0])
+                text = err.getvalue()
+                assert_every_line_bounded(self, text)
+                self.assertNotIn("MARKER", text)
+                self.assertLess(len(text), 512 + 300, text[:120])
+                self.assertEqual(len(re.findall(r"\.\.\. \(cut at 512 of 100001 characters\)", text)),
+                                 1, text[-200:])
+
+    def test_an_exception_is_logged_with_its_frames_and_its_own_text_cut(self):
+        """The traceback the listener logs when handle_direct_post raises keeps its frames, and
+        each exception's own text, the cause's and the one it caused, is cut as a reason is."""
+        import contextlib
+        import io
+        from unittest import mock
+        tail = "Polaris" + "Tail"
+        cause_text, own_text = "<" + "k" * 99_994 + tail, "<" + "x" * 99_994 + tail
+
+        def raises(form):
+            try:
+                raise KeyError(cause_text)
+            except KeyError as cause:
+                raise ValueError(own_text) from cause
+
+        err = io.StringIO()
+        with mock.patch.object(self.verifier, "handle_direct_post", side_effect=raises), \
+                contextlib.redirect_stderr(err):
+            status, _, _ = _post(self.base + "/response", {"response": "x"})
+        self.assertEqual(status, 400)
+        text = err.getvalue()
+        assert_every_line_bounded(self, text)
+        self.assertTrue(text.startswith("polaris-oid4vp: handle_direct_post raised\n"), text[:200])
+        self.assertEqual(text.count("Traceback (most recent call last):"), 2, text[:400])
+        self.assertIn("The above exception was the direct cause of the following exception:", text)
+        self.assertIn("in raises", text)
+        self.assertRegex(text, r'File "[^"]*serve\.py", line \d+, in do_POST')
+        self.assertNotIn(tail, text)
+        # A KeyError's own text is its key's repr, so it opens with a quote.
+        self.assertEqual(len(re.findall(r"Error: '?\?[kx]{400}.*\.\.\. \(cut at 512 of \d+ characters\)$",
+                                        text, re.M)), 2, text[-600:])
+        self.assertLess(len(text), EXCEPTION_BOUND)
+
+    def test_an_exception_chain_is_logged_at_most_the_cap(self):
+        from polaris_oid4vp.serve import exception_text
+        exc = None
+        for _ in range(30):
+            try:
+                raise ValueError("c" * 2000) from exc
+            except ValueError as raised:
+                exc = raised
+        text = exception_text(exc)
+        self.assertEqual(len(re.findall(r"\.\.\. \(cut at 8192 of (\d+) characters\)\n\Z", text)), 1,
+                         text[-200:])
+        self.assertLessEqual(len(text), EXCEPTION_BOUND + 60)
+
+
+class AConnectionThatFailsIsLoggedThroughTheSinkTests(ServeTestCase):
+    """socketserver's own handle_error prints a banner and the traceback whole, as when a
+    connection is reset mid-request; the listener's writes one logged_line naming the client and
+    the exception_text of what was raised (2026-11-19)."""
+
+    def test_a_post_reset_before_its_body_is_logged_through_the_sink(self):
+        import contextlib
+        import io
+        import socket
+        import struct
+        import time
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            client = socket.create_connection(self.httpd.server_address[:2], timeout=10)
+            client.sendall(b"POST /response HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                           b"Content-Type: application/x-www-form-urlencoded\r\n"
+                           b"Content-Length: 500000\r\n\r\nresponse=x")
+            time.sleep(0.3)
+            # A reset, not a close: SO_LINGER with a zero timeout.
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            client.close()
+            deadline = time.monotonic() + 10
+            while "Traceback" not in err.getvalue() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            # One write each for the line and the traceback, so the traceback is whole by now.
+            text = err.getvalue()
+        assert_every_line_bounded(self, text)
+        self.assertRegex(text, r"^polaris-oid4vp: an exception occurred handling a request from "
+                               r"\('127\.0\.0\.1', \d+\)\nTraceback \(most recent call last\):\n")
+        self.assertRegex(text, r"\n(ConnectionResetError|ConnectionAbortedError|BrokenPipeError|"
+                               r"TimeoutError): ")
+        self.assertNotIn("-" * 40, text)
+        self.assertLess(len(text), EXCEPTION_BOUND + LINE_BOUND + 100)
+
+
+class EveryStderrLineIsBoundedTests(unittest.TestCase):
+    """Every write serve.py makes to stderr is a `logged_line` (quoted, at most LINE_MAX) or an
+    `exception_text` (capped), so a line added later that writes something else fails here; and
+    neither serve.py nor cli.py prints a traceback any other way."""
+
+    def test_the_bounds_are_pinned(self):
+        from polaris_oid4vp import serve as module
+        from polaris_oid4vp import verifier
+        self.assertEqual((getattr(verifier, "LINE_MAX", None),
+                          getattr(module, "EXCEPTION_LOG_MAX", None)), (LINE_BOUND, EXCEPTION_BOUND))
+
+    def test_every_line_of_a_logged_exception_is_a_logged_line(self):
+        """A frame line carries a file name and a function name, which can be long and can hold
+        a `<` or a character outside printable ASCII; each is written as a logged line."""
+        from polaris_oid4vp.serve import exception_text
+        name = "<é" + "f" * 3000 + ".py"
+        scope = {}
+        exec(compile("def boom():\n    raise ValueError('boom')\n", name, "exec"), scope)
+        try:
+            scope["boom"]()
+        except ValueError as exc:
+            text = exception_text(exc)
+        self.assertIn("ValueError: boom", text)
+        self.assertIn("... (cut at %d of " % LINE_BOUND, text)
+        assert_every_line_bounded(self, text)
+        self.assertEqual([c for c in text if c != "\n" and not " " <= c <= "~"], [])
+        self.assertNotIn("<", text)
+
+    def test_the_whole_stream_check_finds_a_long_line(self):
+        assert_every_line_bounded(self, "")
+        assert_every_line_bounded(self, "short\n" + "y" * (LINE_BOUND + 50))
+        with self.assertRaises(AssertionError):
+            assert_every_line_bounded(self, "short\n" + "y" * (LINE_BOUND + 100))
+
+    def test_every_stderr_write_is_bounded(self):
+        import ast
+        import pathlib
+        from polaris_oid4vp import cli
+        from polaris_oid4vp import serve as module
+
+        def bounded(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return True
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+                return bounded(node.left) and bounded(node.right)
+            return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in ("logged_line", "exception_text"))
+
+        tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
+        writes = [n for n in ast.walk(tree)
+                  if isinstance(n, ast.Call) and ast.unparse(n.func) == "sys.stderr.write"]
+        # log_error's line and its traceback, the two verbose request lines, and handle_error's
+        # line and traceback.
+        self.assertEqual(len(writes), 6)
+        # The standard library's own writers to stderr, each overridden here.
+        import http.server
+        import socketserver
+        self.assertIsNot(module._Server.handle_error, socketserver.BaseServer.handle_error)
+        for name in ("log_error", "log_message"):
+            self.assertIsNot(getattr(module._Handler, name),
+                             getattr(http.server.BaseHTTPRequestHandler, name), name)
+        self.assertEqual([n.lineno for n in writes if not (len(n.args) == 1 and bounded(n.args[0]))],
+                         [])
+        printers = {"print_exc", "print_exception", "print_tb", "print_stack", "format_exc",
+                    "format_exception", "format_tb"}
+        for source in (cli, module):
+            calls = [ast.unparse(n.func) for n in ast.walk(ast.parse(
+                pathlib.Path(source.__file__).read_text(encoding="utf-8"))) if isinstance(n, ast.Call)]
+            self.assertEqual([c for c in calls if c.rsplit(".", 1)[-1] in printers], [], source.__name__)
 
 
 class RequestUriTests(ServeTestCase):
@@ -623,7 +815,7 @@ class TransportTests(unittest.TestCase):
                 httpd = serve(verifier, host="127.0.0.1", port=0,
                               certfile=cert_path, keyfile=key_path)
             try:
-                self.assertEqual(httpd.socket.context.minimum_version, ssl.TLSVersion.TLSv1_2,
+                self.assertEqual(httpd.tls_context.minimum_version, ssl.TLSVersion.TLSv1_2,
                                  "the floor must be set by serve, not left to the platform")
                 port = httpd.server_address[1]
                 with socket.create_connection(("127.0.0.1", port), timeout=10) as raw, \
@@ -696,6 +888,76 @@ class TransportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TlsHandshakeTests(unittest.TestCase):
+    """A listener WITH a certificate (2026-11-18). The TLS handshake is a read like any other:
+    a client that opens a connection and sends no byte must not stop anybody else being answered,
+    and must be hung up on within the handler's timeout. The two tests further down that hold this
+    for a stalled request start their listeners with no certificate, so they say nothing about the
+    handshake; these do."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="polaris-oid4vp-tls-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        cert_path, key_path = _self_signed_tls(tmp)
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                            request_uri="https://127.0.0.1:0/request.jwt",
+                            response_uri="https://127.0.0.1:0/response")
+        self.httpd = serve(verifier, host="127.0.0.1", port=0, certfile=cert_path,
+                           keyfile=key_path)
+        self.silent = []
+        self.addCleanup(self._stop)
+
+    def _stop(self):
+        # The silent connections close first: a listener that does its handshakes in its accept
+        # loop is stuck in one of them, and its shutdown would wait on it for ever.
+        for s in self.silent:
+            s.close()
+        _stop_now(self.httpd)
+        self.httpd.server_close()
+
+    def _silent_connection(self, timeout):
+        import socket
+        s = socket.create_connection(self.httpd.server_address[:2], timeout=timeout)
+        self.silent.append(s)
+        return s
+
+    def test_one_silent_connection_does_not_stop_three_callers_being_answered(self):
+        import ssl
+        self._silent_connection(timeout=30)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        url = "https://127.0.0.1:%d/request.jwt?state=no-such-request" % self.httpd.server_address[1]
+        answered = []
+        for _ in range(3):
+            try:
+                with urllib.request.urlopen(url, context=ctx, timeout=5) as r:
+                    answered.append(r.status)
+            except urllib.error.HTTPError as e:
+                answered.append(e.code)
+            except OSError as e:
+                answered.append(type(e).__name__)
+        self.assertEqual(answered, [404, 404, 404],
+                         "a connection that sent no byte stopped the TLS listener answering")
+
+    def test_a_silent_connection_is_hung_up_on_within_the_handler_timeout(self):
+        import socket
+        import time
+        self.httpd.RequestHandlerClass.timeout = 1
+        s = self._silent_connection(timeout=8)
+        start = time.monotonic()
+        try:
+            while s.recv(4096):
+                pass
+        except (OSError, socket.timeout):
+            pass
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 5, "a connection that sent no byte was held past the timeout")
 
 
 class BodyFramingTests(ServeTestCase):
@@ -923,6 +1185,33 @@ class HeldOutListenerTests(ServeTestCase):
         self.assertEqual(status, 400)
         self.assertIn("refused: nonce", err.getvalue())
 
+    def test_the_operator_log_names_a_lifetime_that_ended_during_the_judgement(self):
+        """A response whose request's lifetime ends while it is judged is refused, and the log
+        says the lifetime refused it, not a replay: the remedy differs. The wallet's body is the
+        constant one."""
+        import contextlib
+        import io
+        from unittest import mock
+        from polaris_oid4vp import verifier as module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        original = module.verify_presentation
+
+        def aging(*args, **kwargs):
+            verdict = original(*args, **kwargs)
+            session.created -= self.verifier.request_ttl_seconds + 1
+            return verdict
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                mock.patch.object(module, "verify_presentation", aging):
+            status, _, raw = _post(self.base + "/response", {"response": form["response"][0]})
+        self.assertEqual((status, json.loads(raw)), (400, self.verifier.REFUSAL_BODY))
+        logged = [line for line in err.getvalue().splitlines() if "refused: " in line]
+        self.assertEqual(len(logged), 1, err.getvalue())
+        self.assertIn("refused: invalid_request: this request's lifetime ended while this "
+                      "response was judged", logged[0])
+        self.assertNotIn("replay", logged[0])
+
     def test_the_verdict_callback_hears_about_a_verifier_that_raised(self):
         """The operator is told every answer, including the one with no verdict behind it."""
         import contextlib
@@ -1114,6 +1403,22 @@ CORS_MUST_NOT_MATCH = (
     ("null", "the origin of an opaque page"),
     ("", "an empty Origin"),
 )
+
+
+#: The most characters of a line the listener writes, as verifier.LINE_MAX pins it, and of an
+#: exception it logs, as serve.EXCEPTION_LOG_MAX pins it.
+LINE_BOUND = 1024
+EXCEPTION_BOUND = 8192
+
+
+def assert_every_line_bounded(test, text):
+    """The sink claim as an effect, read off a whole stream the listener wrote: every line in
+    it, whoever composed it, is at most a logged_line's length after the longest prefix written
+    before one (2026-11-19)."""
+    limit = len("polaris-oid4vp: ") + LINE_BOUND + len("... (cut at %d of %d characters)"
+                                                      % (LINE_BOUND, 10 ** 9))
+    test.assertEqual([(n, len(line)) for n, line in enumerate(text.splitlines(), 1)
+                      if len(line) > limit], [], "lines over %d characters" % limit)
 
 
 def _send_raw(httpd, raw, timeout=10):
@@ -1884,10 +2189,27 @@ class ControlLoggingTests(ControlEndpointTestCase):
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
                 _exchange(httpd, method, path, headers, body)
+            assert_every_line_bounded(self, err.getvalue())
             return err.getvalue()
         finally:
             _stop_now(httpd)
             httpd.server_close()
+
+    def test_a_long_path_is_logged_cut_and_says_its_length(self):
+        """Both verbose writers, the listener's and the control handler's, write the line as a
+        logged_line: at most 1024 characters, with its full length when it is cut."""
+        on = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {})}
+        tail = "Polaris" + "Tail"
+        long = "y" * 60_000 + tail
+        for kwargs, path in (({}, "/request.jwt?q=" + long), (on, "/nope/" + long),
+                             (on, "/control/other/" + long)):
+            with self.subTest(path=path[:16], control=bool(kwargs)):
+                err = self.logged(kwargs, "GET", path)
+                self.assertNotIn(tail, err)
+                lines = [x for x in err.splitlines() if x.startswith("GET ")]
+                self.assertEqual(len(lines), 1, err[:200])
+                self.assertTrue(lines[0].endswith("... (cut at 1024 of %d characters)"
+                                                  % len("GET " + path)), lines[0][-80:])
 
     def test_a_path_other_than_the_control_path_is_logged_as_without_the_option(self):
         on = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {})}
@@ -1907,6 +2229,166 @@ class ControlLoggingTests(ControlEndpointTestCase):
             self.assertNotIn("?", text)
 
 
+class ControlReadTests(ControlEndpointTestCase):
+    """`GET /control/request/{n}`, when serve() is also given `on_control_read` (2026-11-18): behind
+    the same token, the number read strictly, the answer marked no-store and never with a
+    CORS header. `on_control_read` records the numbers it was handed; 404404 answers 404, 500500 raises
+    and 600600 returns a document that is not JSON."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.reads = []
+
+        def on_control_read(number):
+            cls.reads.append(number)
+            if number == 404404:
+                return 404, {"error": "not_found"}
+            if number == 500500:
+                raise RuntimeError("Dupont raised for %d" % number)
+            if number == 600600:
+                return 200, {"released": {"family_name": object()}}
+            return 200, {"request": number, "released": {"family_name": "Dupont"}}
+
+        cls.ON_READ = {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {}),
+                       "on_control_read": on_control_read}
+        cls.reader = serve(cls.verifier, host="127.0.0.1", port=0, **cls.ON_READ)
+        cls.reader_cors = serve(cls.verifier, host="127.0.0.1", port=0, cors_origins=["*"],
+                                **cls.ON_READ)
+
+    @classmethod
+    def tearDownClass(cls):
+        for httpd in (cls.reader, cls.reader_cors):
+            httpd.shutdown()
+            httpd.server_close()
+        super().tearDownClass()
+
+    def setUp(self):
+        super().setUp()
+        del self.reads[:]
+
+    def read(self, httpd, path, token=CONTROL_TOKEN, extra=()):
+        return self.ask(httpd, path=path, method="GET", token=token, extra=extra)
+
+    def logged(self, method, path, headers=(), **httpd_kwargs):
+        import contextlib
+        import io
+        httpd = serve(self.verifier, host="127.0.0.1", port=0, **httpd_kwargs)
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                answer = _exchange(httpd, method, path, headers)
+            return answer, err.getvalue()
+        finally:
+            _stop_now(httpd)
+            httpd.server_close()
+
+    def test_a_good_token_reads_the_number_and_the_answer_is_never_cached(self):
+        for path in ("/control/request/7", "/control/request/7?x=1", "/control/request/123456789"):
+            with self.subTest(path=path):
+                del self.reads[:]
+                status, headers, body = self.read(self.reader, path)
+                number = int(path.split("/")[3].partition("?")[0])
+                self.assertEqual(status, 200, body)
+                self.assertEqual(json.loads(body), {"request": number,
+                                                    "released": {"family_name": "Dupont"}})
+                self.assertEqual(self.reads, [number])
+                for header in (("Cache-Control", "no-store"), ("Pragma", "no-cache"),
+                               ("Content-Type", "application/json")):
+                    self.assertIn(header, headers)
+        # The callback's own status is the answer's.
+        status, _, body = self.read(self.reader, "/control/request/404404")
+        self.assertEqual((status, json.loads(body)), (404, {"error": "not_found"}))
+
+    def test_without_the_token_401_and_empty_and_the_same_for_any_number(self):
+        for token in (None, "x" * len(CONTROL_TOKEN), CONTROL_TOKEN[:-1] + "g", ""):
+            with self.subTest(token=token):
+                status, headers, body = self.read(self.reader, "/control/request/7", token=token)
+                self.assertEqual((status, body), (401, b""))
+                self.assertIn(("WWW-Authenticate", "Bearer"), headers)
+        self.assertEqual(self.reads, [], "the callback ran for an unauthenticated caller")
+        wrong = [("Authorization", "Bearer nope")]
+        answers = {_without_date(_exchange(self.reader, "GET", path, wrong))
+                   for path in ("/control/request/7", "/control/request/404404",
+                                "/control/request/x", "/control/request", "/control/request/")}
+        self.assertEqual(len(answers), 1, answers)
+        self.assertEqual(self.reads, [])
+
+    def test_a_number_is_read_strictly_and_anything_else_is_404(self):
+        for path in ("/control/request", "/control/request/", "/control/request/0",
+                     "/control/request/01", "/control/request/1/", "/control/request/x",
+                     "/control/request/1x", "/control/request/-1", "/control/request/+1",
+                     "/control/request/%31", "/control/request/1/2",
+                     "/control/request/1234567890", "/control/request//1"):
+            with self.subTest(path=path):
+                status, _, body = self.read(self.reader, path)
+                self.assertEqual((status, json.loads(body)), (404, {"error": "not_found"}))
+        self.assertEqual(self.reads, [])
+
+    def test_an_exception_or_a_document_that_is_not_json_is_500_and_only_its_type_is_logged(self):
+        for number, raised in ((500500, "RuntimeError"), (600600, "TypeError")):
+            with self.subTest(number=number):
+                answer, err = self.logged("GET", "/control/request/%d" % number,
+                                          [("Authorization", "Bearer " + CONTROL_TOKEN)],
+                                          **self.ON_READ)
+                status, _, body = _parse(answer)
+                self.assertEqual((status, json.loads(body)), (500, {"error": "server_error"}))
+                self.assertIn(raised, err)
+                self.assertNotIn("Dupont", err)
+                self.assertNotIn("family_name", err)
+
+    def test_no_cors_header_on_a_read_whatever_cors_origin_says(self):
+        origin = [("Origin", "https://wallet.example")]
+        for label, kwargs in (("good token", {}), ("no token", {"token": None}),
+                              ("not a number", {"path": "/control/request/x"})):
+            with self.subTest(case=label):
+                status, headers, _ = self.read(self.reader_cors, kwargs.pop("path", "/control/request/7"),
+                                               extra=origin, **kwargs)
+                self.assertIn(status, (200, 401, 404))
+                self.assertEqual(_cors(headers), [], headers)
+        # The twin: a path the option does serve carries them.
+        status, headers, _ = _parse(_exchange(self.reader_cors, "GET", "/request.jwt?state=x", origin))
+        self.assertEqual(_cors(headers), [("Access-Control-Allow-Origin", "*"), ("Vary", "Origin")])
+
+    def test_without_on_control_read_a_get_there_is_answered_as_without_the_option(self):
+        auth = [("Authorization", "Bearer " + CONTROL_TOKEN)]
+        for path in ("/control/request/1", "/control/request/1?x=1", "/control/request"):
+            with self.subTest(path=path):
+                control = _without_date(_exchange(self.control, "GET", path, auth))
+                off = _without_date(_exchange(self.httpd, "GET", path, auth))
+                self.assertEqual(control, off)
+                self.assertEqual(_parse(control)[:1], (404,))
+                self.assertEqual(json.loads(_parse(control)[2]), {"error": "not_found"})
+
+    def test_on_control_read_without_the_token_or_not_a_function_is_refused_before_listening(self):
+        def read(number):
+            return 200, {}
+
+        for kwargs in ({"on_control_read": read},
+                       {"on_control_read": read, "on_control": lambda spec: (201, {})},
+                       {"control_token": CONTROL_TOKEN, "on_control": lambda spec: (201, {}),
+                        "on_control_read": "read"}):
+            with self.subTest(kwargs=sorted(kwargs)):
+                with self.assertRaises(ValueError):
+                    serve(self.verifier, host="127.0.0.1", port=0, **kwargs)
+
+    def test_a_read_and_any_path_under_control_is_logged_without_its_query(self):
+        secret = "token=" + CONTROL_TOKEN + "&given_name=Jean"
+        for headers in ([("Authorization", "Bearer " + CONTROL_TOKEN)], []):
+            for path, logged in (("/control/request/7?" + secret, "GET /control/request/7\n"),
+                                 ("/control/other?" + secret, "GET /control/other\n")):
+                with self.subTest(path=path.partition("?")[0], token=bool(headers)):
+                    _, err = self.logged("GET", path, headers, verbose=True, **self.ON_READ)
+                    self.assertIn(logged, err)
+                    self.assertNotIn("token=", err)
+                    self.assertNotIn("Jean", err)
+                    self.assertNotIn("?", err)
+        # The positive control: without the option the same request line is logged whole, query
+        # and all, so the grep above can find what it looks for.
+        _, err = self.logged("GET", "/control/other?" + secret, verbose=True)
+        self.assertIn("GET /control/other?" + secret, err)
+
+
 class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
     """Any line the listener logs can carry a sender's text, the base class's own included (it logs a
     refused request line with the line in it), so each goes out as operator_text leaves it; and a
@@ -1923,6 +2405,7 @@ class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
                 answer = _send_raw(httpd, raw)
+            assert_every_line_bounded(self, err.getvalue())
             return answer, err.getvalue().splitlines()
         finally:
             _stop_now(httpd)
@@ -1933,6 +2416,46 @@ class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
         for line in lines:
             self.assertNotIn("<", line)
             self.assertTrue(all(" " <= ch <= "~" for ch in line), repr(line))
+
+    def test_a_long_request_line_the_server_refuses_is_logged_cut(self):
+        """The standard library's own refusals of a request line (a bad version, an unsupported
+        method, a bad syntax) log the line through log_error, and under --verbose the method too:
+        each line at most LINE_MAX characters after its prefix, with its full length, and the
+        line's end left out."""
+        tail = "Polaris" + "Tail"
+        long = "y" * 60_000 + tail
+        # A bad version leaves the server no version to answer in, so it answers as HTTP/0.9
+        # does: the error page with no status line (None here).
+        for name, raw, status in (("a bad version", "GET / HTTP/" + long, None),
+                                  ("an unsupported method", "Z" + long + " / HTTP/1.1", 501),
+                                  ("a bad syntax", "GET / " + long + " HTTP/1.1", 400)):
+            for verbose in (False, True):
+                with self.subTest(name, verbose=verbose):
+                    answer, lines = self.sent((raw + "\r\n\r\n").encode("ascii"), verbose)
+                    if status is None:
+                        self.assertFalse(answer.startswith(b"HTTP/"), answer[:80])
+                        self.assertIn(b"Error code: 400", answer[:2000])
+                    else:
+                        self.assertEqual(_parse(answer)[0], status)
+                    self.assertNotIn(tail, "\n".join(lines))
+                    for line in lines:
+                        self.assertLessEqual(len(line), len("polaris-oid4vp: ") + LINE_BOUND + 40,
+                                             line[:120])
+                    cut = [x for x in lines
+                           if re.search(r"\.\.\. \(cut at 1024 of \d+ characters\)$", x)]
+                    self.assertEqual(len(cut), 2 if verbose and status == 501 else 1, lines)
+                    self.assert_held(lines)
+
+    def test_a_short_or_too_long_request_line_is_logged_as_before(self):
+        """The controls: a short refused line is logged whole, a line over the standard library's
+        65,536 bytes is answered 414 without it, and a plain GET logs nothing without --verbose."""
+        _, lines = self.sent(b"a b c d\r\n\r\n", False)
+        self.assertEqual(lines, ["polaris-oid4vp: code 400, message Bad request version ('d')"])
+        answer, lines = self.sent(b"GET /" + b"y" * 70_000 + b" HTTP/1.1\r\n\r\n", False)
+        self.assertEqual(_parse(answer)[0], 414)
+        self.assertFalse([x for x in lines if "yyyy" in x or "cut at" in x], lines)
+        answer, lines = self.sent(b"GET /nope HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", False)
+        self.assertEqual((_parse(answer)[0], lines), (404, []))
 
     def test_a_refused_request_line_is_logged_without_the_text_it_carried(self):
         raw = "x  <- 200 authentic, claims ['given_name'] \x1b[0m \u00e9 HTTP/1.1\r\n\r\n".encode("latin-1")
@@ -1957,3 +2480,389 @@ class ALoggedLineHoldsWhatARequestLineCarriesTests(ControlEndpointTestCase):
         self.assertTrue(answer, "the connection was closed with no answer")
         self.assertEqual(_parse(answer)[0], 400)
         self.assertFalse([x for x in lines if "Traceback" in x or "Error" in x], lines)
+
+
+# ---------------------------------------------------------------------- the Digital Credentials API
+
+import contextlib  # noqa: E402
+import io  # noqa: E402
+from unittest import mock  # noqa: E402
+
+import test_mdoc as md  # noqa: E402
+from polaris_oid4vp.mdoc import IacaRoot  # noqa: E402
+from test_verifier import AGE_OVER_21, ORIGIN, DcApiWallet, _dc_api_request  # noqa: E402
+
+DC_API_PATHS = ("/dc-api/", "/dc-api/app.js", "/dc-api/request", "/dc-api/response")
+DC_API_CSP = ("default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; "
+              "form-action 'none'; frame-ancestors 'none'")
+EVIL = "https://evil.example"
+
+
+def _mdoc_verifier(chain):
+    return Verifier(client_cert_pem=chain[0], client_key_pem=chain[1],
+                    request_uri="https://verifier.test/request.jwt",
+                    response_uri="https://verifier.test/response", claims=[AGE_OVER_21],
+                    iaca_roots=[IacaRoot(md.IACA, [md.MDL])], doctype_value=md.MDL,
+                    credential_format="mso_mdoc")
+
+
+def _header(headers, name):
+    """Every value of the header `name` in an answer, in the order sent."""
+    return [value for key, value in headers if key.lower() == name.lower()]
+
+
+class DcApiOffTests(unittest.TestCase):
+    """serve() without dc_api_origin, an mso_mdoc verifier behind it: the listener as it was."""
+
+    def test_without_dc_api_origin_every_route_answers_as_today(self):
+        """A guard, green before the option existed. Every /dc-api/ path, by every method, gets the
+        answer a path the listener does not serve gets, the handler holds no DC API code, and no
+        request is made. Its bite is the mutation drill's mutant that routes /dc-api/ always."""
+        verifier = _mdoc_verifier(_client_chain())
+        for kwargs in ({}, {"cors_origins": ["*"]}):
+            httpd = serve(verifier, host="127.0.0.1", port=0, **kwargs)
+            try:
+                self.assertFalse([c for c in httpd.RequestHandlerClass.__mro__ if "DcApi" in c.__name__])
+                for path in DC_API_PATHS:
+                    for method, body in (("GET", b""), ("POST", b"{}"), ("POST", b""), ("OPTIONS", b"")):
+                        with self.subTest(kwargs=kwargs, path=path, method=method, body=body):
+                            headers = [("Origin", ORIGIN), ("Access-Control-Request-Method", "POST")]
+                            served = _without_date(_exchange(httpd, method, path, headers, body))
+                            unknown = _without_date(_exchange(httpd, method, "/nope", headers, body))
+                            self.assertEqual(served, unknown)
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+        self.assertEqual(verifier._dc_api, {})
+
+
+class DcApiServeTestCase(unittest.TestCase):
+    """An mso_mdoc verifier behind three listeners given dc_api_origin=ORIGIN: one alone, one
+    beside `--cors-origin *`, one beside a list naming ORIGIN. `on_verdict` records what it hears."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.verifier = _mdoc_verifier(_client_chain())
+        cls.heard = []
+
+        def on_verdict(status, body, verdict):
+            cls.heard.append((status, body, verdict))
+
+        cls.httpd = serve(cls.verifier, host="127.0.0.1", port=0, dc_api_origin=ORIGIN,
+                          on_verdict=on_verdict)
+        cls.star = serve(cls.verifier, host="127.0.0.1", port=0, dc_api_origin=ORIGIN,
+                         cors_origins=["*"])
+        cls.listed = serve(cls.verifier, host="127.0.0.1", port=0, dc_api_origin=ORIGIN,
+                           cors_origins=[ORIGIN, "https://wallet.example"])
+
+    @classmethod
+    def tearDownClass(cls):
+        for httpd in (cls.httpd, cls.star, cls.listed):
+            httpd.shutdown()
+            httpd.server_close()
+
+    def setUp(self):
+        self.wallet = DcApiWallet()
+        del self.heard[:]
+        with self.verifier._lock:
+            self.verifier._dc_api.clear()
+
+    def ask(self, method, path, body=b"", origin=ORIGIN, extra=(), declare=None, httpd=None, timeout=10):
+        headers = ([("Origin", origin)] if origin is not None else []) + list(extra)
+        return _parse(_exchange(httpd or self.httpd, method, path, headers, body, declare, timeout))
+
+    def member(self, **kwargs):
+        """A request made through the listener: the member its answer carries."""
+        status, headers, body = self.ask("POST", "/dc-api/request", **kwargs)
+        self.assertEqual(status, 200, body)
+        return json.loads(body)
+
+    @staticmethod
+    def posted(data, protocol="openid4vp-v1-signed", **extra):
+        document = {"protocol": protocol, "data": data}
+        document.update(extra)
+        return json.dumps(document).encode()
+
+    def counting(self, name):
+        """The verifier's `name`, wrapped so a test can count the calls the listener makes."""
+        return mock.patch.object(self.verifier, name, wraps=getattr(self.verifier, name))
+
+    def outstanding(self):
+        with self.verifier._lock:
+            self.verifier._expire_locked()
+            return len(self.verifier._dc_api)
+
+
+class DcApiServeTests(DcApiServeTestCase):
+
+    def test_the_page_and_its_script_run_under_script_src_self(self):
+        from polaris_oid4vp import dc_api_page
+        status, headers, body = self.ask("GET", "/dc-api/", origin=None)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, dc_api_page.PAGE)
+        self.assertEqual(_header(headers, "Content-Type"), ["text/html; charset=utf-8"])
+        self.assertEqual(_header(headers, "Content-Security-Policy"), [DC_API_CSP])
+        self.assertEqual(_header(headers, "X-Content-Type-Options"), ["nosniff"])
+        self.assertEqual(_header(headers, "Cache-Control"), ["no-store"])
+        page = body.decode("utf-8")
+        self.assertEqual(re.findall(r"<script\b[^>]*>", page, re.I), ['<script src="/dc-api/app.js" defer>'])
+        # Every script element's body is empty, whatever its end tag carries; the line above pins its one opening tag.
+        self.assertEqual(re.findall(r"(?i)<script\b[^>]*>([\s\S]*?)</script\b[^>]*>", page), [""])
+        self.assertFalse(re.findall(r"\son[a-z]+\s*=", page, re.I), "an event handler attribute is inline script")
+        self.assertFalse(re.findall(r"javascript:", page, re.I))
+        status, headers, body = self.ask("GET", "/dc-api/app.js", origin=None)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, dc_api_page.SCRIPT)
+        self.assertEqual(_header(headers, "Content-Type"), ["text/javascript; charset=utf-8"])
+        self.assertEqual(_header(headers, "X-Content-Type-Options"), ["nosniff"])
+        self.assertEqual(_header(headers, "Cache-Control"), ["no-store"])
+        # Nothing else under /dc-api/ is served, by any method.
+        for method, path in (("GET", "/dc-api/nope"), ("GET", "/dc-api/app.js/x"), ("GET", "/dc-api//"),
+                             ("GET", "/dc-api/request"), ("GET", "/dc-api/response"), ("POST", "/dc-api/"),
+                             ("POST", "/dc-api/app.js"), ("POST", "/dc-api/other")):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(self.ask(method, path)[0], 404)
+        self.assertEqual(self.outstanding(), 0)
+
+    def test_a_request_is_made_for_the_configured_origin(self):
+        status, headers, body = self.ask("POST", "/dc-api/request")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(_header(headers, "Content-Type"), ["application/json"])
+        self.assertEqual(_header(headers, "Cache-Control"), ["no-store"])
+        member = json.loads(body)
+        self.assertEqual(set(member), {"protocol", "data"})
+        self.assertEqual(member["protocol"], "openid4vp-v1-signed")
+        _, claims = _dc_api_request(member)
+        self.assertEqual(claims["expected_origins"], [ORIGIN])
+        self.assertEqual(claims["response_mode"], "dc_api.jwt")
+        self.assertEqual(set(self.verifier._dc_api), {claims["nonce"]})
+
+    def test_the_origin_is_never_taken_from_the_request(self):
+        claims = _dc_api_request(self.member(
+            body=json.dumps({"origin": EVIL, "expected_origins": [EVIL], "protocol": "x"}).encode(),
+            extra=[("Referer", EVIL + "/"), ("Forwarded", "host=evil.example;proto=https"),
+                   ("X-Forwarded-Host", "evil.example"), ("X-Forwarded-Proto", "http")]))[1]
+        self.assertEqual(claims["expected_origins"], [ORIGIN])
+        made = self.outstanding()
+        with self.counting("dc_api_request") as called:
+            for label, kwargs in (("another origin", {"origin": EVIL}),
+                                  ("no Origin", {"origin": None}),
+                                  ("an opaque origin", {"origin": "null"}),
+                                  ("the origin with a path", {"origin": ORIGIN + "/"}),
+                                  ("the origin over http", {"origin": "http://verifier.test"}),
+                                  ("the origin with a port", {"origin": ORIGIN + ":8443"}),
+                                  ("the origin and another", {"extra": [("Origin", EVIL)]}),
+                                  ("another and the origin", {"origin": EVIL, "extra": [("Origin", ORIGIN)]})):
+                with self.subTest(label):
+                    status, _, body = self.ask("POST", "/dc-api/request", **kwargs)
+                    self.assertEqual(status, 403, body)
+                    self.assertEqual(json.loads(body)["error"], "access_denied")
+        self.assertEqual(called.call_count, 0)
+        self.assertEqual(self.outstanding(), made)
+
+    def test_a_cross_origin_post_is_refused_before_decryption(self):
+        member = self.member()
+        body = self.posted(self.wallet.respond(member))
+        with self.counting("dc_api_response") as called:
+            for label, kwargs in (("another origin", {"origin": EVIL}), ("no Origin", {"origin": None}),
+                                  ("an opaque origin", {"origin": "null"}),
+                                  ("the origin and another", {"extra": [("Origin", EVIL)]})):
+                with self.subTest(label):
+                    status, _, answer = self.ask("POST", "/dc-api/response", body, **kwargs)
+                    self.assertEqual(status, 403, answer)
+            # Refused before a byte of the body is read: one declared and never sent is answered.
+            import socket
+            try:
+                status = self.ask("POST", "/dc-api/response", origin=EVIL, declare=4096, timeout=3)[0]
+            except socket.timeout:
+                self.fail("a cross-origin post waited for its body")
+            self.assertEqual(status, 403)
+            self.assertEqual(called.call_count, 0)
+            self.assertEqual(self.heard, [])
+            self.assertEqual(self.outstanding(), 1)
+            # The control: the same body from the configured origin reaches the verifier.
+            status, _, answer = self.ask("POST", "/dc-api/response", body)
+            self.assertEqual((status, json.loads(answer)), (200, {}))
+            self.assertEqual(called.call_count, 1)
+        self.assertEqual(self.outstanding(), 0)
+
+    def test_a_response_for_another_protocol_is_refused(self):
+        member = self.member()
+        data = self.wallet.respond(member)
+        with self.counting("dc_api_response") as called:
+            for label, body in (("org-iso-mdoc", self.posted(data, "org-iso-mdoc")),
+                                ("unsigned", self.posted(data, "openid4vp-v1-unsigned")),
+                                ("the name in capitals", self.posted(data, "OPENID4VP-V1-SIGNED")),
+                                ("a number", self.posted(data, 1)),
+                                ("null", self.posted(data, None)),
+                                ("none", json.dumps({"data": data}).encode())):
+                with self.subTest(label):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        status, _, answer = self.ask("POST", "/dc-api/response", body)
+                    self.assertEqual((status, json.loads(answer)), (400, Verifier.REFUSAL_BODY))
+                    self.assertIn("refused: invalid_request: ", err.getvalue())
+                    self.assertIn("openid4vp-v1-signed", err.getvalue())
+            self.assertEqual(called.call_count, 0)
+        self.assertEqual(self.outstanding(), 1)
+
+    def test_an_accepted_presentation_is_answered_and_reported(self):
+        member = self.member()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            status, headers, answer = self.ask("POST", "/dc-api/response", self.posted(self.wallet.respond(member)))
+        self.assertEqual((status, json.loads(answer)), (200, {}))
+        self.assertEqual(_header(headers, "Content-Type"), ["application/json"])
+        (heard,) = self.heard
+        self.assertEqual(heard[:2], (200, {}))
+        self.assertTrue(heard[2].authentic)
+        self.assertEqual(heard[2].claims, {md.MDL_NS: {"age_over_21": True}})
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(self.outstanding(), 0)
+
+    def test_a_refusal_gets_the_constant_body_and_the_operator_its_reason(self):
+        member = self.member()
+        from test_verifier import OTHER_ORIGIN
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            status, _, answer = self.ask("POST", "/dc-api/response",
+                                         self.posted(self.wallet.respond(member, origin=OTHER_ORIGIN)))
+        self.assertEqual((status, json.loads(answer)), (400, Verifier.REFUSAL_BODY))
+        (heard,) = self.heard
+        self.assertEqual(heard[:2], (400, Verifier.REFUSAL_BODY))
+        self.assertFalse(heard[2].authentic)
+        self.assertIn("refused: %s: " % heard[2].code, err.getvalue())
+        self.assertNotIn(OTHER_ORIGIN, answer.decode())
+        # A wallet's error is answered 200 and its code logged, as /response logs one.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            status, _, answer = self.ask("POST", "/dc-api/response", self.posted({"error": "access_denied"}))
+        self.assertEqual((status, json.loads(answer)), (200, {}))
+        self.assertIn("wallet error: access_denied", err.getvalue())
+
+    def test_no_cors_header_on_the_dc_api_paths_whatever_cors_origin_says(self):
+        preflight = [("Access-Control-Request-Method", "POST"),
+                     ("Access-Control-Request-Headers", "content-type")]
+        for name, httpd in (("*", self.star), ("a list naming the origin", self.listed)):
+            member = self.member(httpd=httpd)
+            for method, path, body, want in (
+                    ("GET", "/dc-api/", b"", 200), ("GET", "/dc-api/app.js", b"", 200),
+                    ("POST", "/dc-api/request", b"", 200),
+                    ("POST", "/dc-api/response", self.posted(self.wallet.respond(member)), 200),
+                    ("POST", "/dc-api/response", b"[]", 400),
+                    ("POST", "/dc-api/request", b"", 403),
+                    ("GET", "/dc-api/nope", b"", 404)):
+                with self.subTest(cors=name, method=method, path=path, status=want):
+                    origin = EVIL if want == 403 else ORIGIN
+                    status, headers, _ = self.ask(method, path, body, origin=origin, httpd=httpd)
+                    self.assertEqual(status, want)
+                    self.assertEqual(_cors(headers), [], headers)
+            for path in DC_API_PATHS:
+                with self.subTest(cors=name, preflight=path):
+                    served = _exchange(httpd, "OPTIONS", path, [("Origin", ORIGIN)] + preflight)
+                    unknown = _exchange(httpd, "OPTIONS", "/nope", [("Origin", ORIGIN)] + preflight)
+                    self.assertEqual(_without_date(served), _without_date(unknown))
+                    self.assertEqual((_parse(served)[0], _cors(_parse(served)[1])), (501, []))
+            # The twin: a path the option serves carries them on the same listener.
+            status, headers, _ = self.ask("GET", "/request.jwt?state=x", httpd=httpd)
+            self.assertIn(("Vary", "Origin"), _cors(headers))
+
+    def test_the_served_path_judges_at_the_verifier_clock(self):
+        """An MSO whose window closed ten days ago, posted with instants inside the window in every
+        place the posted document could carry one."""
+        window = dict(signed=md.BOOT - md.days(40), valid_from=md.BOOT - md.days(40),
+                      valid_until=md.BOOT - md.days(10))
+        inside = (md.BOOT - md.days(20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stamp = int((md.BOOT - md.days(20)).timestamp())
+        times = {"now": inside, "at": inside, "captured_at": inside, "iat": stamp, "instant": stamp}
+        member = self.member()
+        body = self.posted(self.wallet.respond(member, **window), **times)
+        status, _, answer = self.ask("POST", "/dc-api/response", body,
+                                     extra=[("Date", "Sun, 01 Jan 2023 00:00:00 GMT")])
+        self.assertEqual((status, json.loads(answer)), (400, Verifier.REFUSAL_BODY))
+        (heard,) = self.heard
+        self.assertEqual(heard[2].code, "credential_validity", heard[2].reason)
+        self.assertIn("validUntil", heard[2].reason)
+        # The control: the same post with a window open now.
+        status, _, answer = self.ask("POST", "/dc-api/response", self.posted(self.wallet.respond(member), **times))
+        self.assertEqual((status, json.loads(answer)), (200, {}))
+
+    def test_a_body_that_is_not_a_json_object_is_refused(self):
+        self.member()
+        with self.counting("dc_api_response") as called:
+            for body in (b"", b"[]", b"null", b'"x"', b"1", b"{", b"\xff\xfe", b"{}{}",
+                         b'{"protocol": NaN}', b'{"protocol": Infinity}', b"[" * 5000 + b"]" * 5000,
+                         b'{"a":' * 5000 + b"1" + b"}" * 5000,
+                         b"protocol=openid4vp-v1-signed&response=x"):
+                with self.subTest(body=body[:24]):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        status, _, answer = self.ask("POST", "/dc-api/response", body)
+                    self.assertEqual((status, json.loads(answer)), (400, Verifier.REFUSAL_BODY))
+                    self.assertIn("refused: invalid_request: ", err.getvalue())
+                    self.assertNotIn("Traceback", err.getvalue())
+        self.assertEqual(called.call_count, 0)
+        self.assertEqual(self.heard, [])
+        self.assertEqual(self.outstanding(), 1)
+
+    def test_an_oversized_declared_length_is_refused_unread(self):
+        import socket
+        for path in ("/dc-api/response", "/dc-api/request"):
+            with self.subTest(path=path):
+                try:
+                    status, _, answer = self.ask("POST", path, declare=MAX_BODY_BYTES + 1, timeout=3)
+                except socket.timeout:
+                    self.fail("a declared length over the bound was waited for")
+                self.assertEqual(status, 413, answer)
+                status, _, answer = _parse(_send_raw(
+                    self.httpd, ("POST %s HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: %s\r\nContent-Length: -1\r\n\r\n"
+                                 % (path, ORIGIN)).encode()))
+                self.assertEqual(status, 400, answer)
+                # A body shorter than it declared, the sender then done: refused as cut short.
+                s = socket.create_connection(self.httpd.server_address[:2], timeout=6)
+                try:
+                    s.sendall(("POST %s HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: %s\r\nContent-Length: 50\r\n\r\n{}"
+                               % (path, ORIGIN)).encode())
+                    s.shutdown(socket.SHUT_WR)
+                    data, chunk = b"", s.recv(4096)
+                    while chunk:
+                        data, chunk = data + chunk, s.recv(4096)
+                finally:
+                    s.close()
+                status, _, answer = _parse(data)
+                self.assertEqual(status, 400, answer)
+                self.assertIn(b"shorter than Content-Length", answer)
+        self.assertEqual(self.outstanding(), 0)
+        self.assertEqual(self.heard, [])
+
+    def test_at_the_cap_the_request_route_answers_503(self):
+        from polaris_oid4vp import verifier as verifier_module
+        for _ in range(verifier_module.DC_API_MAX_OUTSTANDING):
+            self.verifier.dc_api_request(ORIGIN)
+        status, headers, body = self.ask("POST", "/dc-api/request")
+        self.assertEqual(status, 503, body)
+        self.assertEqual(json.loads(body)["error"], "temporarily_unavailable")
+        self.assertEqual(_header(headers, "Cache-Control"), ["no-store"])
+        self.assertEqual(self.outstanding(), verifier_module.DC_API_MAX_OUTSTANDING)
+        # One answered frees a place, and the route makes a request again.
+        with self.verifier._lock:
+            self.verifier._dc_api.pop(next(iter(self.verifier._dc_api)))
+        self.member()
+        self.assertEqual(self.outstanding(), verifier_module.DC_API_MAX_OUTSTANDING)
+
+    def test_serve_refuses_a_dc_api_origin_it_cannot_serve_before_listening(self):
+        cert_pem, key_pem = _client_chain()
+        sd_jwt = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
+                          request_uri="https://verifier.test/request.jwt",
+                          response_uri="https://verifier.test/response")
+        for verifier, origin, words in ((sd_jwt, ORIGIN, "mso_mdoc"),
+                                        (self.verifier, "http://rp.example", "secure context"),
+                                        (self.verifier, "*", "one origin"),
+                                        (self.verifier, ORIGIN + "/page", "path"),
+                                        (self.verifier, "", "origin")):
+            with self.subTest(origin=origin):
+                with mock.patch("polaris_oid4vp.serve._Server") as server:
+                    with self.assertRaises(ValueError) as caught:
+                        serve(verifier, host="127.0.0.1", port=0, dc_api_origin=origin)
+                    self.assertEqual(server.call_count, 0)
+                self.assertIn(words, str(caught.exception))

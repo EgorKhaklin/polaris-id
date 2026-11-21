@@ -16,8 +16,9 @@ The keys and certificates are TEST material derived from public seeds, signed wi
 
     python3 make_mdoc_vectors.py > mdoc-vectors.json
     python3 make_mdoc_vectors.py --out .          # writes ./mdoc-vectors.json
+    python3 make_mdoc_vectors.py --document-signer-days 457   # another document signer validity, at most 457
 
-Needs cbor2 and cryptography 44 or later; the key helpers and the certificate validity are make_vectors.py's.
+Needs cbor2 and cryptography 44 or later; the key helpers and the IACA's validity are make_vectors.py's.
 """
 import argparse
 import datetime
@@ -47,14 +48,20 @@ def _load_make_vectors():
 mv = _load_make_vectors()
 b64u = mv.b64u
 
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 UTC = datetime.timezone.utc
-# The verification instant. The certificates (make_vectors.py's validity, centred on this instant) and the
-# MSO are valid at it.
+# The verification instant. The certificates and the MSO are valid at it.
 AT = datetime.datetime.fromtimestamp(mv.NOW, UTC)
 AT_TEXT = AT.strftime("%Y-%m-%dT%H:%M:%SZ")
 MSO_SIGNED = "2026-09-30T00:00:00Z"
 MSO_VALID_UNTIL = "2027-09-30T00:00:00Z"
+# The document signer's validity. ISO/IEC 18013-5:2021 Annex B, Table B.3 (document signer certificate), Validity:
+# "Maximum of 457 days after Not before date". It starts a month before the MSO is signed and ends when the MSO does,
+# 394 days, so it covers the signing, the verification instant and the MSO's whole validity. The IACA keeps
+# make_vectors.py's four years, inside Table B.1's twenty. In 0.1.0 the document signer had the IACA's four years.
+DS_MAX_DAYS = 457
+DS_NOT_BEFORE = datetime.datetime(2026, 9, 1, tzinfo=UTC)
+DS_DAYS = 394
 
 MDL = "org.iso.18013.5.1.mDL"
 MDL_NS = "org.iso.18013.5.1"
@@ -71,13 +78,21 @@ OTHER_CLIENT_ID = "x509_san_dns:other-verifier.example"
 OTHER_RESPONSE_URI = "https://verifier.example/other-response"
 OTHER_ORIGIN = "https://other-verifier.example"
 
-# --- keys and certificates: make_vectors.py's seeded keys and validity, deterministic ECDSA -------------------------
+# --- keys and certificates: make_vectors.py's seeded keys, deterministic ECDSA --------------------------------------
 IACA_K, DS_K = mv._key("mdoc-iaca"), mv._key("mdoc-document-signer")
 DEVICE_K, OTHER_DEVICE_K = mv._key("mdoc-device"), mv._key("mdoc-device-other")
 ENC_K, OTHER_ENC_K = mv._key("mdoc-response-encryption"), mv._key("mdoc-response-encryption-other")
 
 IACA_CN = "Mdoc Vectors Test IACA"
 DS_CN = "Mdoc Vectors Test Document Signer"
+# The serial numbers. ISO/IEC 18013-5:2021 Annex B, Tables B.1 (IACA root certificate) and B.3 (document signer
+# certificate), row "Serial number": "Non-sequential positive, non-zero integer, shall contain at least 63 bits of
+# output from a CSPRNG, should contain at least 71 bits of output from a CSPRNG, maximum 20 octets." Each was drawn
+# once, on 2026-11-21, as secrets.randbits(71) | 1 << 71 (71 bits of CSPRNG output under a set top bit: a 72-bit
+# positive integer, 10 octets in DER), and is fixed here so that every run still writes the same bytes. In 0.2.0 and
+# before they were 1 and 2.
+IACA_SERIAL = 0xA719D39665D6EA635D
+DS_SERIAL = 0xE6E9C529272E67DCD3
 COUNTRY = "ZZ"  # a user-assigned ISO 3166-1 code: no country's
 ISSUER_URI = "https://mdoc-vectors.example"  # the issuer alternative name
 CRL_URI = "https://mdoc-vectors.example/iaca.crl"  # named, never served
@@ -87,7 +102,7 @@ def _annex_b_name(cn):
     return x509.Name([x509.NameAttribute(NameOID.COUNTRY_NAME, COUNTRY), x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 
 
-def _annex_b_cert(cn, key, serial, *, iaca):
+def _annex_b_cert(cn, key, serial, *, iaca, not_before, not_after):
     """The IACA (self-signed, `iaca`) or the document signer under it, in the ISO/IEC 18013-5 Annex B profile the
     outside verifiers check: countryName and commonName in both subjects, the DS's countryName the IACA's; a
     SubjectKeyIdentifier (SHA-1 of the public key), an IssuerAlternativeName URI and a CRLDistributionPoints URI in
@@ -96,7 +111,7 @@ def _annex_b_cert(cn, key, serial, *, iaca):
     AuthorityKeyIdentifier that is the IACA's SubjectKeyIdentifier."""
     ski = x509.SubjectKeyIdentifier.from_public_key(key.public_key())
     b = (x509.CertificateBuilder().subject_name(_annex_b_name(cn)).issuer_name(_annex_b_name(IACA_CN))
-         .public_key(key.public_key()).serial_number(serial).not_valid_before(mv.T0).not_valid_after(mv.T1))
+         .public_key(key.public_key()).serial_number(serial).not_valid_before(not_before).not_valid_after(not_after))
     if iaca:
         b = b.add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         b = b.add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), critical=True)
@@ -112,8 +127,15 @@ def _annex_b_cert(cn, key, serial, *, iaca):
     return b.sign(IACA_K, hashes.SHA256(), ecdsa_deterministic=True)
 
 
-IACA = _annex_b_cert(IACA_CN, IACA_K, 1, iaca=True)
-DS = _annex_b_cert(DS_CN, DS_K, 2, iaca=False)
+def _make_certs(ds_days=DS_DAYS):
+    """The IACA, and the document signer valid `ds_days` days from DS_NOT_BEFORE."""
+    global IACA, DS
+    IACA = _annex_b_cert(IACA_CN, IACA_K, IACA_SERIAL, iaca=True, not_before=mv.T0, not_after=mv.T1)
+    DS = _annex_b_cert(DS_CN, DS_K, DS_SERIAL, iaca=False, not_before=DS_NOT_BEFORE,
+                       not_after=DS_NOT_BEFORE + datetime.timedelta(days=ds_days))
+
+
+_make_certs()
 
 
 def _enc_jwk(key, kid):
@@ -551,7 +573,13 @@ def _pem(cert):
 
 def build():
     """The vectors document: the two controls, then the vectors in the order of VECTORS, each with its twin."""
-    redirect, dcapi = dict(REDIRECT_INPUTS), dict(DCAPI_INPUTS)
+    # Every request asks, in its DCQL claims, for each element IssuerSigned discloses, so no row a verifier should
+    # accept sends an element its request did not select: OpenID4VP 1.0 6.4, "Wallets MUST NOT send selectively
+    # disclosable claims that have not been selected according to the rules below", and 6.4.1, "If claims is absent,
+    # the Verifier is requesting no claims that are selectively disclosable"; 8.6 has the Verifier check 6.4. A
+    # vector with a query of its own replaces these claims. In 0.2.0 and before the base inputs carried none.
+    requested = _query(tuple(name for _, name, _ in ELEMENTS))
+    redirect, dcapi = dict(REDIRECT_INPUTS, **requested), dict(DCAPI_INPUTS, **requested)
     base = {_REDIRECT: (redirect, _rt()), _DCAPI: (dcapi, _dt())}
     vectors = [
         _case("md-accept-redirect", "nothing: the control, an mDL over OpenID4VPHandover with a jwkThumbprint "
@@ -614,8 +642,23 @@ def write(doc, out_dir):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Make the mdoc negative vectors.")
     ap.add_argument("--out", help="write mdoc-vectors.json into this directory, instead of stdout")
+    ap.add_argument("--document-signer-days", type=int, default=DS_DAYS, metavar="N",
+                    help="the document signer certificate's validity in days from %s (default %d, to the MSO's "
+                         "validUntil); at most %d, ISO/IEC 18013-5:2021 Annex B Table B.3"
+                         % (DS_NOT_BEFORE.date(), DS_DAYS, DS_MAX_DAYS))
     args = ap.parse_args(argv)
-    doc = build()
+    days = args.document_signer_days
+    if days > DS_MAX_DAYS:
+        ap.error("--document-signer-days %d: ISO/IEC 18013-5:2021 Annex B Table B.3 allows a document signer at "
+                 "most %d days" % (days, DS_MAX_DAYS))
+    if DS_NOT_BEFORE + datetime.timedelta(days=days) <= AT:
+        ap.error("--document-signer-days %d: the document signer would end by the verification instant %s"
+                 % (days, AT_TEXT))
+    _make_certs(days)
+    try:
+        doc = build()
+    finally:
+        _make_certs()
     if args.out:
         print("wrote", write(doc, args.out), file=sys.stderr)
     else:

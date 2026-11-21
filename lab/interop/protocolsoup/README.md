@@ -111,3 +111,29 @@ on a shared machine.
 - Polaris answers an accepted presentation with a `redirect_uri`; the harness declined to follow
   one whose host is a `.internal` name.
 - The author drove a published wallet on one machine.
+
+## The hosted wallet, 2026-11-21
+
+ProtocolSoup's maintainer runs the wallet as a service at `wallet.protocolsoup.com`. At the
+maintainer's invitation on [ProtocolSoup issue 187](https://github.com/ParleSec/ProtocolSoup/issues/187),
+that wallet presented to `polaris-oid4vp` at this repository's main commit `cee2821b` (not a
+release; it sends the request signer's intermediates after the leaf in `x5c`), reached at a public
+HTTPS URL, on 2026-11-21 at 10:55 UTC. The author drove the wallet through its API.
+
+- ProtocolSoup's issuer issued the wallet its `UniversityDegreeCredentialSDJWTHAIP` (`dc+sd-jwt`).
+  The verifier trusted only ProtocolSoup's issuer root and asked for `given_name` and
+  `family_name`.
+- The request object was signed under a publicly trusted certificate chain, with an `x509_hash`
+  client_id: the hosted wallet trusts the system roots beside its configured anchors, so nothing
+  was added to its trust.
+- Three calls to the wallet: issue, resolve, present (`approve_external_trust`, the approval the
+  wallet requires before it presents to a verifier outside its configuration). The wallet reported
+  the request object verified and posted the response by `direct_post.jwt`.
+
+Result: accepted, `<- 200 authentic`; the wallet disclosed `family_name` and `given_name`. The
+control, the same wallet session and request shape with an unrelated issuer CA in place of
+ProtocolSoup's root, was refused (`issuer_key`: "the x5c leaf does not chain to any configured
+trust anchor"), and the wallet received the 400. The run is reported
+[on the issue](https://github.com/ParleSec/ProtocolSoup/issues/187#issuecomment-7061654051), and
+the maintainer [agreed](https://github.com/ParleSec/ProtocolSoup/issues/187#issuecomment-7061887365)
+to its appearing in this record.

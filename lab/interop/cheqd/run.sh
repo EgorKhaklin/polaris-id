@@ -11,7 +11,7 @@
 # status list from the localnet and hands the verifier the key (--issuer-jwks).
 #
 #   lab/interop/cheqd/run.sh                                     # the newest polaris-oid4vp
-#   POLARIS_OID4VP=polaris-oid4vp==1.0.0rc15 lab/interop/cheqd/run.sh
+#   POLARIS_OID4VP=polaris-oid4vp==1.2.0 lab/interop/cheqd/run.sh
 #
 # Exits 0 only if the presentation is accepted, the status list reads VALID, and every control is
 # refused where it should be.
@@ -59,6 +59,11 @@ fi
 venv/bin/pip wheel -q --pre --no-deps --no-build-isolation -w wheel "$PKG"
 venv/bin/pip install -q --no-deps wheel/*.whl
 echo "installed  polaris-oid4vp $(venv/bin/python -c 'import importlib.metadata as m; print(m.version("polaris-oid4vp"))')"
+RESULT_HELP="$(venv/bin/polaris-oid4vp serve --help 2>&1)" || { echo "polaris-oid4vp serve --help failed: $RESULT_HELP" >&2; exit 2; }
+case "$RESULT_HELP" in  # captured: grep -q at the end of a pipe can trip pipefail
+  *--result*) ;;
+  *) echo "this walk reads the verifier's verdict from serve --result, which polaris-oid4vp 1.1.0 and later have; set POLARIS_OID4VP to such a release" >&2; exit 2 ;;
+esac
 
 # Credo, exactly as package-lock.json pins it. No install script runs: nothing here needs one.
 (cd "$HERE" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error >/dev/null)
@@ -92,10 +97,11 @@ venv/bin/polaris-oid4vp keygen --out other-pki --host localhost --port "$PORT" >
 
 start_verifier() {  # $1 issuer JWKS, $2 log
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host localhost --bind 127.0.0.1 \
-    --port "$PORT" --issuer-jwks "$1" --once > "$2" 2>&1 &
+    --port "$PORT" --issuer-jwks "$1" --once \
+    --result "${2%.log}.result.json" > "$2" 2> "${2%.log}.err" &
   VERIFIER_PID=$!
   for _ in $(seq 1 240); do grep -q 'state=' "$2" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start; see $WORK/$2" >&2
+  echo "verifier did not start; see $WORK/$2 and $WORK/${2%.log}.err" >&2
   exit 2
 }
 
@@ -118,6 +124,17 @@ present() {  # $1 launch URI, $2 the holder's log, $3 the CA the holder trusts f
 }
 
 fail=0
+verdict() {  # $1 label, $2 the --result file, $3 a Python expression over doc that must be True
+  if venv/bin/python - "$2" "$3" <<'EOF'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as e:
+    sys.exit("cannot read %s: %s" % (sys.argv[1], e))
+sys.exit(0 if eval(sys.argv[2], {}, {"doc": doc}) is True else "doc is %s" % json.dumps(doc, sort_keys=True))
+EOF
+  then echo "  ok    $1"; else echo "  FAIL  $1 ($2: see above)"; fail=1; fi
+}
 expect() {  # $1 label, $2 file, $3 pattern that must appear
   if grep -qE "$3" "$2"; then echo "  ok    $1"; else echo "  FAIL  $1 (no /$3/ in $2)"; fail=1; fi
 }
@@ -127,7 +144,7 @@ start_verifier issuer-jwks.json verifier.log
 URI=$(launch_uri verifier.log)
 present "$URI" holder.log pki/anchor.pem
 expect "the holder dispatched" holder.log '^DISPATCHED: the verifier answered 200'
-expect "the verifier accepted it" verifier.log '<- 200 authentic'
+verdict "the verifier accepted it" verifier.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200'
 { grep -E '<- 200 authentic' verifier.log || true; } | sed 's/^/        /'
 
 echo "== control (b): the same request again, after it was answered"
@@ -143,7 +160,7 @@ expect "Credo refused the request" holder-c.log '^REQUEST REFUSED: .*No trusted 
 echo "== control (a): the verifier trusts a different key than the DID resolves to"
 present "$(launch_uri verifier-other.log)" holder-a.log pki/anchor.pem
 expect "the holder was not accepted" holder-a.log '^DISPATCH FAILED: the verifier answered 400'
-expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: issuer_(key|signature)'
+verdict "the verifier refused the issuer" verifier-other.result.json 'doc["outcome"] == "refused" and doc["check"] in ("issuer_key", "issuer_signature") and doc["response"]["status_code"] == 400'
 stop_verifier
 
 echo "== the status list on the ledger, decided by polaris_oid4vp.status"
