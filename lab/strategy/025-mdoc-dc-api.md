@@ -468,7 +468,9 @@ joins the experimental half.
   list and `fuzz/requirements.in` (cbor2 6.2.1, hash-pinned, as the oracle, in the strict mode the target's controls
   hold at every start), and like the other targets its README row records a guard removed and found: with the refusal
   of a repeated map key removed, the target failed within seconds (2026-11-16, emulated x86-64).
-- Dependencies unchanged: `cryptography>=42`. M2 needs no `cryptography` API newer than the package already uses.
+- Dependencies unchanged: `cryptography>=50.0.0`, the package's floor since 023636a9 (2026-10-15). M2 needs no
+  `cryptography` API newer than the package already uses. (Amended 2026-11-21: this line said `cryptography>=42`, a
+  floor the package had already left.)
 
 **Wire.** OpenID4VP 1.0 (S1): section 5 (request), 6.1 and B.2.3 to B.2.4 (DCQL), 7.2 (claims path pointer), B.2.2
 (`vp_formats_supported`), 8.1 and B.2.5 (`vp_token`), 8.3 and 8.3.1 (`direct_post.jwt`), B.2.6.1 (OpenID4VPHandover),
@@ -774,14 +776,16 @@ them carries an item.
     read).
   - `session_transcript(encryption_info_b64, origin)`: `[null, null, ["dcapi", SHA-256(cbor([encryption_info_b64,
     origin]))]]`.
-  - `open_response(response_b64, session)`: `EncryptedResponse = ["dcapi", {"enc": bstr, "cipherText": bstr}]`; HPKE as
-    in the common section; then `mdoc.verify_device_response` at the verifier's clock. It takes no instant.
-- HPKE without a new floor. The API needed is `cryptography.hazmat.primitives.hpke.Suite` with `KEM.P256`,
-  `KDF.HKDF_SHA256` and `AEAD.AES_128_GCM`, first released in `cryptography` 47.0.0. `annexc.py` imports it when an Annex
-  C response arrives, and without it refuses with `no_backend` and names the release it needs, as `sdjwt.py` does when
-  `cryptography` is missing. `pyproject.toml` keeps `cryptography>=42`, so no user who never sees Annex C is moved. If a
-  later decision raises the floor, its commit names that API as the reason, a CHANGELOG line under Changed records it,
-  and the stranger's path is walked again.
+  - `open_response(response, session, *, iaca_roots)`: `EncryptedResponse = ["dcapi", {"enc": bstr, "cipherText":
+    bstr}]`; HPKE as in the common section; then `mdoc.verify_device_response` under the session's transcript and
+    docType, against the caller's IACA roots, at the verifier's clock. It takes no instant. (Amended 2026-11-21: this
+    bullet named `open_response(response_b64, session)`; the roots are an argument as in M2, and the docType is the
+    session's, never the caller's.)
+- HPKE under the existing floor. The API needed is `cryptography.hazmat.primitives.hpke.Suite` with `KEM.P256`,
+  `KDF.HKDF_SHA256` and `AEAD.AES_128_GCM`, first released in `cryptography` 47.0.0. The package has required
+  `cryptography>=50.0.0` since 023636a9 (2026-10-15), so every install it allows has the API: `annexc.py` imports it at
+  the top and has no `no_backend` branch, and no floor moves. (Amended 2026-11-21: this bullet planned a lazy import
+  and a `no_backend` refusal under `cryptography>=42`, a floor the package had already left.)
 - `serve.py`: the page offers `org-iso-mdoc` when `DigitalCredential.userAgentAllowsProtocol("org-iso-mdoc")` is true,
   one protocol per request; WebKit names a known failure of mixed OpenID4VP and Annex C requests in cross-device flows
   (S5).
@@ -816,7 +820,29 @@ Annex C envelope; base mode's lack of sender authentication (covered by the devi
 | `AnnexCTests.test_a_response_after_the_request_expired_is_refused` | the clock advanced past `request_ttl_seconds`, then a genuine response posted | refused; the session is gone |
 | `AnnexCTests.test_the_served_path_judges_at_the_verifier_clock` | an mdoc valid at a past instant but expired now, the post carrying that instant; `open_response` searched for any time input | `credential_validity`; no time input exists |
 | `AnnexCTests.test_the_encrypted_response_shape_is_held` | another first label; a missing `enc` or `cipherText`; an extra member | `malformed`, each |
-| `AnnexCTests.test_without_hpke_annex_c_refuses_as_no_backend` | the Annex C path with `cryptography.hazmat.primitives.hpke` made unimportable | `no_backend`, naming `cryptography` 47.0.0 |
+
+**Amendment, 2026-11-21: part 1 built.** Part 1 is `annexc.py` and `test_annex_c.py`. The listener, the page and the
+request lifecycle are part 2; version 1.1 with `readerAuthAll`, and Apple's sample, part 3.
+- Part 1's `new_request(doc_requests, *, origin)` makes version 1.0 only, one document per request, as
+  `mdoc.verify_device_response` reads one. `version`, `reader_key` and `reader_chain` arrive with part 3.
+- Part 1 carries the table's rows 1, 2, 3, 4, 5, 7, 9, 10, 11 and 15 under their names. Row 5 also opens the
+  deterministic vector's response under a fresh key with that vector's transcript, so that only the key differs, and
+  asserts that `Session` refuses `ANNEXC-REAL-001`'s key when it is made, because that vector's EncryptionInfo carries
+  another. Row 14's offline half is `test_open_response_judges_at_the_verifier_clock`: an mDL valid sixty days ago and
+  expired two days ago is refused as `credential_validity`, and `open_response`'s parameters are exactly `response`,
+  `session` and `iaca_roots`. Its served half waits for part 2 with rows 12 and 13; rows 6 and 8 wait for part 3.
+- The table's last row, a refusal as `no_backend` when `hpke` cannot be imported, is dropped: it guarded a state the
+  package's floor rules out (the bullet "HPKE under the existing floor" above).
+- Added in part 1: the two vectors held to walt.id's bytes; the DeviceRequest's shape; a request, a transcript and a
+  session each refused when what it is given is not one; the response's size held before it is decoded; a response that
+  is not text; a session that is not one; a response sealed for another origin; a ValueError from HPKE refused as
+  `hpke`. 21 tests, all passing (2026-11-21).
+- Every refusal in `annexc.py` is a site of the OpenID4VP mutation drill (`annexc.py` in its sources and its raising
+  list, `test_annex_c` in its suites), and six named mutants hold what is not a refusal: the transcript hashed over
+  `[origin, EncryptionInfo]`; HPKE's `info` empty; the device signature judged under the B.2.6.2 transcript; a fixed
+  nonce; a fixed key; `open_response` taking an instant and passing it through. Measured 2026-11-21 against
+  `test_annex_c` alone, each turned it red by a failed assertion: the 14 refusal sites, the 6 named mutants, each of
+  the 39 operands of an `and` in the module made `True` one at a time, and `ValueError` dropped from the HPKE refusal.
 
 **External witnesses.**
 - Apple Wallet through Safari on iOS with a real ID in Apple Wallet, behind the reader certificate: the certificate and
@@ -827,6 +853,15 @@ Annex C envelope; base mode's lack of sender authentication (covered by the devi
   made. Neither WebKit post announces an OpenID4VP protocol (S5).
 - Witness runs: Credo's mdoc module, the Annex C fallback, since the EU reference verifier has no Annex C path; further
   verifiers, Multipaz among them, may be added later.
+- Second witness for part 1's three stages (the transcript, the HPKE open, the DeviceResponse with its device
+  signature), chosen 2026-11-21: OID4VCgo's `mdocdcapi` (MIT), read at v0.85.0. Its `VerifyResponse` builds the
+  transcript in its own code (`transcript.go`), opens the response with Go's standard-library `crypto/hpke`, and checks
+  the issuer and device signatures in its own `mdoc` package. Its commit 8df41e8d, made after it checked this project's
+  negative vectors, sets the instant `mdocdcapi.VerifyResponse` judges validity at from its caller's `Now`; the lab run
+  names that commit beside the vectors whose certificate verdict turns on the verification instant, and no others. The
+  run goes in
+  through `lab/interop/mdoc/witness-oid4vcgo`, its pin moved from v0.78.0 to v0.85.0, in a lab change after part 1.
+  @owf/mdoc 0.10.0 leaves HPKE to its caller, so it can witness the transcript and the DeviceResponse but not the open.
 
 ### M5: an over-18/21 page that keeps nothing
 

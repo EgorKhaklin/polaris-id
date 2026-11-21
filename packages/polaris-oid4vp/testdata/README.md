@@ -105,3 +105,25 @@ They are copies so that `test_mdoc.py` reads nothing outside the package.
 `check_oid4vp_mdoc_captures_match_the_lab` fails the build when a copy and its original differ.
 `test_mdoc.py` holds the package's CBOR decoder to cbor2 on each, and judges each at its captured
 instant.
+
+## annex-c/: walt.id's ISO/IEC 18013-7 Annex C vectors
+
+`annex-c/ANNEXC-DETERMINISTIC-001.json` and `annex-c/ANNEXC-REAL-001.json` are walt.id's, byte for
+byte, at commit `ed4bbfe2a5ef7d83e099737643e8216bdc0d9405`, from
+`waltid-libraries/protocols/waltid-18013-7-verifier/src/jvmTest/resources/annex-c/` (Apache-2.0;
+the lines of its NOTICE that pertain to them are in this package's NOTICE). Fetched 2026-11-21:
+
+| File | SHA-256 |
+|---|---|
+| `ANNEXC-DETERMINISTIC-001.json` | `1a12eca214afbeefc13b988a963e768422fd6c431d4e250c089c86b9833e74d1` |
+| `ANNEXC-REAL-001.json` | `18f86516f8fdd7ef2e7755860a9cda511e3458211bea34e99c3512eaf6e1d3b8` |
+
+Each holds an Annex C request's EncryptionInfo, the origin it was made for, an EncryptedResponse,
+a recipient private key and the SHA-256 of the SessionTranscript. `test_annex_c.py` checks each
+file's hash first, then rebuilds each transcript with this package's code.
+
+In the deterministic vector the key is the one the response was sealed to, made for the vector,
+and the file also gives the SHA-256 of the DeviceResponse inside. That DeviceResponse is
+`{"version": "1.0", "status": 0}`, with no document, so the package opens it and then refuses it
+as malformed. In `ANNEXC-REAL-001` the key is not the one its EncryptionInfo carries: the
+package refuses a session made with it, and the response, opened under it, as `hpke`.

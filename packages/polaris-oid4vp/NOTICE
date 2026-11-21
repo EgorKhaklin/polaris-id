@@ -72,6 +72,16 @@ publishes under the Apache License 2.0, used unmodified. Its NOTICE reads:
     EU Digital Identity Wallet
     Copyright (c) 2023 European Commission
 
+The test vectors in packages/polaris-oid4vp/testdata/annex-c/
+(ANNEXC-DETERMINISTIC-001.json and ANNEXC-REAL-001.json) are walt.id's, at commit
+ed4bbfe2a5ef7d83e099737643e8216bdc0d9405, published under the Apache License 2.0
+and used unmodified. The lines of walt.id's NOTICE that pertain to them read:
+
+    walt.id identity
+    Copyright 2026 walt.id
+
+    This product includes software developed by walt.id and third parties.
+
 The macOS launcher (Polaris.command + polaris_mac_launch.sh) is original
 to this work.
 
