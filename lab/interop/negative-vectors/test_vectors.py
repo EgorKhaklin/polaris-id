@@ -1041,6 +1041,29 @@ class MdocVectors(unittest.TestCase):
                 self.assertTrue(start <= at <= end, vector["id"])
         self.assertEqual(len(seen), 1, "every response carries the one document signer")
 
+    def test_every_certificate_serial_is_at_least_2_to_the_71_in_20_octets_and_distinct(self):
+        # ISO/IEC 18013-5:2021 Annex B, Tables B.1 (the IACA) and B.3 (the document signer), row "Serial number":
+        # "Non-sequential positive, non-zero integer, shall contain at least 63 bits of output from a CSPRNG, should
+        # contain at least 71 bits of output from a CSPRNG, maximum 20 octets." The generator drew each serial once as
+        # 71 CSPRNG bits under a set top bit (make_mdoc_vectors.py, IACA_SERIAL and DS_SERIAL); a test cannot see where
+        # a number came from, so this one holds what it can see. Read from every response, twin and trust anchor the
+        # file carries: each serial is at least 2**71, positive in at most 20 octets of DER, and the IACA's is not the
+        # document signer's. In 0.2.0 and before they were 1 and 2.
+        from cryptography import x509
+        signers, anchors = set(), set()
+        for vector in self.doc["vectors"]:
+            for response in (vector["response"], vector.get("repaired", {}).get("response")):
+                if response is not None:
+                    signers.add(self._document_signer(response).serial_number)
+            for pem in vector["trust_anchors_pem"]:
+                anchors.add(x509.load_pem_x509_certificate(pem.encode()).serial_number)
+        self.assertTrue(signers and anchors, "the file carries no certificate to read")
+        for serial in sorted(signers | anchors):
+            self.assertGreaterEqual(serial, 2 ** 71, "a serial under 72 bits: %d" % serial)
+            # DER writes a positive INTEGER in bit_length // 8 + 1 octets (a leading zero when the top bit is set).
+            self.assertLessEqual(serial.bit_length() // 8 + 1, 20, "a serial over 20 octets: %d" % serial)
+        self.assertTrue(signers.isdisjoint(anchors), "the IACA and the document signer share a serial")
+
     def test_the_document_signer_days_option(self):
         script = os.path.join(HERE, "make_mdoc_vectors.py")
         run = subprocess.run([sys.executable, script, "--document-signer-days", "457"], capture_output=True,

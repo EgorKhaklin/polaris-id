@@ -48,7 +48,7 @@ def _load_make_vectors():
 mv = _load_make_vectors()
 b64u = mv.b64u
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 UTC = datetime.timezone.utc
 # The verification instant. The certificates and the MSO are valid at it.
 AT = datetime.datetime.fromtimestamp(mv.NOW, UTC)
@@ -85,6 +85,14 @@ ENC_K, OTHER_ENC_K = mv._key("mdoc-response-encryption"), mv._key("mdoc-response
 
 IACA_CN = "Mdoc Vectors Test IACA"
 DS_CN = "Mdoc Vectors Test Document Signer"
+# The serial numbers. ISO/IEC 18013-5:2021 Annex B, Tables B.1 (IACA root certificate) and B.3 (document signer
+# certificate), row "Serial number": "Non-sequential positive, non-zero integer, shall contain at least 63 bits of
+# output from a CSPRNG, should contain at least 71 bits of output from a CSPRNG, maximum 20 octets." Each was drawn
+# once, on 2026-11-21, as secrets.randbits(71) | 1 << 71 (71 bits of CSPRNG output under a set top bit: a 72-bit
+# positive integer, 10 octets in DER), and is fixed here so that every run still writes the same bytes. In 0.2.0 and
+# before they were 1 and 2.
+IACA_SERIAL = 0xA719D39665D6EA635D
+DS_SERIAL = 0xE6E9C529272E67DCD3
 COUNTRY = "ZZ"  # a user-assigned ISO 3166-1 code: no country's
 ISSUER_URI = "https://mdoc-vectors.example"  # the issuer alternative name
 CRL_URI = "https://mdoc-vectors.example/iaca.crl"  # named, never served
@@ -122,8 +130,8 @@ def _annex_b_cert(cn, key, serial, *, iaca, not_before, not_after):
 def _make_certs(ds_days=DS_DAYS):
     """The IACA, and the document signer valid `ds_days` days from DS_NOT_BEFORE."""
     global IACA, DS
-    IACA = _annex_b_cert(IACA_CN, IACA_K, 1, iaca=True, not_before=mv.T0, not_after=mv.T1)
-    DS = _annex_b_cert(DS_CN, DS_K, 2, iaca=False, not_before=DS_NOT_BEFORE,
+    IACA = _annex_b_cert(IACA_CN, IACA_K, IACA_SERIAL, iaca=True, not_before=mv.T0, not_after=mv.T1)
+    DS = _annex_b_cert(DS_CN, DS_K, DS_SERIAL, iaca=False, not_before=DS_NOT_BEFORE,
                        not_after=DS_NOT_BEFORE + datetime.timedelta(days=ds_days))
 
 
