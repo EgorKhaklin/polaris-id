@@ -9,7 +9,7 @@
     "@noble/hashes": "2.4.0",
     "@owf/mdoc": "0.9.3",
     "@peculiar/x509": "3.1.0",
-    "jose": "6.2.16",
+    "jose": "6.2.17",
     "reflect-metadata": "0.2.2"
   }
 }
