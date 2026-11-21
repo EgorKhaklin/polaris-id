@@ -1,7 +1,7 @@
 # Negative test vectors for SD-JWT VC presentations
 
 **Reader:** anyone building or testing a verifier of SD-JWT VC presentations under OpenID4VP 1.0 and
-HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 38 presentations a
+HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 41 presentations a
 verifier must judge, each with the verdict a correct verifier reaches. Each of the 35 refusals carries the
 clauses it rests on and a `class` saying how directly they require the refusal.
 [Lab record 018](../../strategy/018-negative-vectors.md) explains why it exists and what would end it.
@@ -21,12 +21,12 @@ changed, re-signed wherever the change needs it, so the only reason to refuse it
 |---|---|
 | JOSE | `crit` in the issuer JWT and in the key binding JWT; an ES256 signature DER-encoded |
 | Key binding JWT | `aud` or `nonce` missing, `aud` as an array, `aud` without the Client Identifier prefix, `typ` JWT, `alg` none, HS256 keyed with the holder's public JWK, `iat` NaN, `exp` a string |
-| Disclosures | a digest committed twice (once a digest a Disclosure matches, once a decoy no Disclosure matches), a claim already in the clear, `exp` or `iss` disclosed, four elements, a claim named `_sd`, a Disclosure no digest commits to |
+| Disclosures | a digest committed twice (once a digest a Disclosure matches, once a decoy no Disclosure matches), a claim already in the clear, `exp` or `iss` disclosed, four elements, a claim named `_sd`, a Disclosure no digest commits to, the status claim's `idx` committed by digest inside `status` (its Disclosure presented, or withheld), an element digest inside `aka_vcts` |
 | `x5c` chain | a self-signed leaf, the anchor sent in the chain, an unknown root, an expired leaf, an intermediate that is not a CA |
 | The signer is not the named issuer | another issuer's valid leaf under the trusted root signs a credential whose `iss` is the trusted issuer: the leaf names that issuer's URL; names only a DNS host that is not `iss`'s; names that URL and also a host both share. Refused by a verifier that requires the leaf to name `iss` |
 | Status goes dark | the Token Status List the credential names gives no answer; answers with an HTML page; has a `lst` whose ZLIB stream never ends; is signed by another issuer's key under the same root; sits at a uri no key is stated for; has expired; does not reach the credential's index |
 
-**34 of the 35 negatives carry their repaired twin** (`repaired`): the same vector with that one defect put back,
+**37 of the 38 negatives carry their repaired twin** (`repaired`): the same vector with that one defect put back,
 which a correct verifier accepts. A twin that is refused means the vector's refusal measured nothing. A twin keeps every
 other knob of its vector (trust mode, extra Disclosures, signer, status claim), so it can equal a control byte for
 byte; where the defect is in what the status list's uri answers, the twin also carries the `status_list` it answers
@@ -107,7 +107,7 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 **The keys and certificates are test material: never trust them.**
 [`test_vectors.py`](test_vectors.py), run in CI:
 - the file has not drifted from its generator;
-- `polaris-oid4vp` reaches all 38 verdicts with the expected refusal codes, under the default binding, under
+- `polaris-oid4vp` reaches all 41 verdicts with the expected refusal codes, under the default binding, under
   another verifier's, and under the EU test harness's;
 - each leaf in the signer family signs an authentic credential when `iss` is the name it gives, so the name is
   the only defect; and a leaf that names nobody is accepted with `iss` unbound;
@@ -269,6 +269,13 @@ certificates are test material from public seeds, as above.
 
 ## Versions
 
+- Version 0.7.0: three vectors added, last in the file so that no vector is renumbered, each a digest inside a
+  claim SD-JWT VC draft-19 s2.2.2.3 keeps out of Disclosures. `disclosed-status-sub-claim` presents the
+  Disclosure of `status.status_list.idx`, committed inside `status_list` (class `spec-implied`, as
+  `disclosed-exp`). `status-sd-withheld` and `aka-vcts-element-withheld` carry the digest and present no
+  Disclosure for it; a verifier cannot tell that digest from a decoy (RFC 9901 s4.2.5) or a withheld
+  Disclosure, so refusing them is a verifier's choice, and their class is `policy`. Every id, class, verdict
+  and presentation of 0.6.0 is unchanged.
 - Version 0.6.0: every certificate, the root included, carries a SubjectKeyIdentifier and an AuthorityKeyIdentifier
   (RFC 5280 4.2.1.1 and 4.2.1.2), so the `accept-x5c` chain passes `openssl verify -x509_strict`; its certificates,
   and the signatures over them, are new, and the other bytes of every `x5c` vector follow from that. One vector

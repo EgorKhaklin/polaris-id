@@ -1362,6 +1362,38 @@ def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None, path=()
     return node
 
 
+def _digest_structure(payload):
+    """The shallowest digest structure inside a claim no disclosure may supply (_NEVER_DISCLOSED),
+    as (claim, path, kind), or None: an `_sd` key at any depth inside it, whatever it holds, or an
+    array element {"...": x}, the two places RFC 9901 puts a digest (sections 4.2.4.1 and
+    4.2.4.2).
+
+    Draft 19 keeps these claims and every claim inside them out of Disclosures. A digest no
+    presented disclosure matches is either a decoy or a disclosure the holder withheld, and a
+    verifier cannot tell which, so this verifier refuses the structure itself, matched or not.
+    Only the claims the issuer signed in clear text are walked: a claim hidden behind a top-level
+    digest is not here to judge. The walk is iterative and runs after _resolve, which has already
+    refused a payload nested past MAX_RESOLVE_DEPTH."""
+    found = []
+    stack = [(payload[name], (name,)) for name in _NEVER_DISCLOSED if name in payload]
+    while stack:
+        node, path = stack.pop()
+        if isinstance(node, dict):
+            if "_sd" in node:
+                found.append((path, "an _sd key"))
+            stack.extend((value, path + (key,)) for key, value in node.items() if key != "_sd")
+        elif isinstance(node, list):
+            for index, item in enumerate(node):
+                if isinstance(item, dict) and set(item) == {"..."}:
+                    found.append((path + (index,), "an array-element digest"))
+                else:
+                    stack.append((item, path + (index,)))
+    if not found:
+        return None
+    path, kind = min(found, key=lambda f: (len(f[0]), repr(f[0])))
+    return path[0], json.dumps(list(path)), kind
+
+
 # -------------------------------------------------------------------- transaction data
 
 #: The hash functions `transaction_data_hashes` may be computed with, by their names in the IANA
@@ -1928,6 +1960,13 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                        "keeps out of disclosures with every claim inside it: the issuer signs it "
                        "in clear text or leaves it out, and a holder-supplied one is not handed "
                        "on" % where)
+    structure = _digest_structure(payload)
+    if structure is not None:
+        return _refuse("disclosure",
+                       "the issuer-signed %r holds %s at %s; this verifier refuses digest "
+                       "structure anywhere inside a claim SD-JWT VC draft 19 (section 2.2.2.3) "
+                       "keeps out of Disclosures, whether or not a disclosure matches it"
+                       % (structure[0], structure[2], structure[1]))
     if collisions:
         # SD-JWT section 9.3. The clear-text claims go in first and the disclosed ones
         # second, so before this check a disclosure named `iss` simply replaced the issuer in

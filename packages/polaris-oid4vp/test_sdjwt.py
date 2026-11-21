@@ -1940,29 +1940,92 @@ class NeverDisclosedClaimsTests(unittest.TestCase):
 
     def test_a_status_disclosure_nothing_references_is_refused_by_the_commitment_rules(self):
         """A `status` sub-claim the issuer committed to nowhere is refused as uncommitted, before
-        any position exists to judge; one committed in a slot it cannot fill (an array element in
-        an object's `_sd`) resolves to nothing and is refused as an orphan."""
+        any position exists to judge. One committed in a slot it cannot fill (an array element in
+        an object's `_sd`) resolves to nothing: at the top level it is refused as an orphan, on
+        the key-binding path; inside `status` (until 2026-11-21 an orphan there too) the `_sd`
+        holding it is digest structure, refused before key binding is read."""
         idx = _disclosure("x", "idx", 7)
         element = self._element("y", 7)
-        for label, sd, disclosure, said in (
-                ("committed nowhere", [], idx, "never committed to"),
-                ("committed where it cannot resolve", [self._digest(element)], element,
-                 "resolve to nothing")):
-            with self.subTest(label):
-                v = self._verify({"iat": self.now, "status": {"status_list": {
-                    "uri": self.SL, "idx": 7, "_sd": sd}}}, [disclosure])
-                self.assertEqual((v.authentic, v.code), (False, "disclosure"))
-                self.assertIn(said, v.reason)
+        v = self._verify({"iat": self.now, "status": {"status_list": {
+            "uri": self.SL, "idx": 7, "_sd": []}}}, [idx])
+        self.assertEqual((v.authentic, v.code), (False, "disclosure"))
+        self.assertIn("never committed to", v.reason)
+        v = self._verify({"iat": self.now, "_sd": [self._digest(element)]}, [element])
+        self.assertEqual((v.authentic, v.code), (False, "disclosure"))
+        self.assertIn("resolve to nothing", v.reason)
+        v = self._verify({"iat": self.now, "status": {"status_list": {
+            "uri": self.SL, "idx": 7, "_sd": [self._digest(element)]}}}, [element])
+        self.assertDigestStructure(v, "status", '["status", "status_list"]', "an _sd key")
 
-    def test_a_decoy_digest_inside_status_is_not_a_disclosure(self):
-        """The rule is about disclosures, as draft 19's text is. A digest no disclosure matches is
-        a decoy (RFC 9901 4.2.5): it supplies nothing and is not refused, and the status claim
-        reads as the issuer signed it."""
+    def assertDigestStructure(self, v, top, where, kind):
+        """Refused for digest structure inside a never-disclosed claim, naming the claim, the
+        path and the kind: a different check refusing it does not pass."""
+        self.assertFalse(v.authentic, "accepted")
+        self.assertEqual(v.code, "disclosure")
+        self.assertEqual(v.reason, (
+            "the issuer-signed %r holds %s at %s; this verifier refuses digest structure anywhere "
+            "inside a claim SD-JWT VC draft 19 (section 2.2.2.3) keeps out of Disclosures, whether "
+            "or not a disclosure matches it" % (top, kind, where)))
+
+    def test_a_decoy_digest_inside_status_is_refused_as_digest_structure(self):
+        """Until 2026-11-21 this digest was accepted as a decoy (RFC 9901 4.2.5), because the rule
+        judged only where a presented disclosure lands. A verifier cannot tell a decoy from a
+        disclosure the holder withheld, and draft 19 keeps `status` and every claim inside it out
+        of Disclosures, so digest structure there is refused, matched or not."""
         decoy = self._digest(_disclosure("decoy", "idx", 0))
         v = self._verify({"iat": self.now, "status": {"status_list": {
             "uri": self.SL, "idx": 7, "_sd": [decoy]}}}, [])
-        self.assertAccepted(v)
-        self.assertEqual((v.revocation["state"], v.revocation["idx"]), ("not_evaluated", 7))
+        self.assertDigestStructure(v, "status", '["status", "status_list"]', "an _sd key")
+
+    def test_digest_structure_inside_a_never_disclosed_claim_is_refused_matched_or_not(self):
+        """Each shape with its disclosure withheld, and the empty and malformed `_sd` alike: an
+        `_sd` key, or an array element {"...": digest}, anywhere inside `status`, `cnf` or
+        `aka_vcts`. The shallowest is named first. A disclosure presented into the same place is
+        refused by the rule above it (test_anything_inside_a_never_disclosed_claim_is_refused),
+        whose words it keeps."""
+        idx = _disclosure("i", "idx", 7)
+        listed = _disclosure("l", "status_list", {"uri": self.SL, "idx": 7})
+        element = self._element("e", {"kind": "revocation"})
+        kid = _disclosure("k", "kid", "holder-key-1")
+        aka = self._element("a", "urn:y")
+        for label, top, value, where, kind in (
+                ("idx withheld", "status", {"status_list": {"uri": self.SL,
+                                                            "_sd": [self._digest(idx)]}},
+                 '["status", "status_list"]', "an _sd key"),
+                ("status_list withheld", "status", {"_sd": [self._digest(listed)]},
+                 '["status"]', "an _sd key"),
+                ("an array element withheld", "status", {"status_list": {
+                    "uri": self.SL, "idx": 7, "extra": [{"...": self._digest(element)}]}},
+                 '["status", "status_list", "extra", 0]', "an array-element digest"),
+                ("an empty _sd", "status", {"status_list": {"uri": self.SL, "idx": 7, "_sd": []}},
+                 '["status", "status_list"]', "an _sd key"),
+                ("an _sd that is not a list", "status", {"status_list": {
+                    "uri": self.SL, "idx": 7, "_sd": 5}}, '["status", "status_list"]',
+                 "an _sd key"),
+                ("the shallowest first", "status", {"_sd": [self._digest(listed)], "other": {
+                    "_sd": [self._digest(idx)]}}, '["status"]', "an _sd key"),
+                ("a member of cnf withheld", "cnf", {"jwk": _public_jwk(self.w.holder_key),
+                                                     "_sd": [self._digest(kid)]},
+                 '["cnf"]', "an _sd key"),
+                ("an element of aka_vcts withheld", "aka_vcts",
+                 ["urn:x", {"...": self._digest(aka)}], '["aka_vcts", 1]',
+                 "an array-element digest")):
+            with self.subTest(label):
+                v = self._verify({"iat": self.now, top: value}, [])
+                self.assertDigestStructure(v, top, where, kind)
+
+    def test_a_decoy_outside_the_never_disclosed_claims_is_accepted(self):
+        """The control: decoys anywhere else stay what RFC 9901 4.2.5 makes them, at the top level,
+        under a private claim, and under a private claim's own `status` member."""
+        decoy = self._digest(_disclosure("decoy", "x", 0))
+        for label, payload in (("top level", {"_sd": [decoy]}),
+                               ("under a private claim", {"degree": {"name": "BSc",
+                                                                     "_sd": [decoy]}}),
+                               ("an element of a private array", {"tags": ["a", {"...": decoy}]}),
+                               ("a private claim's status", {"record": {"status": {
+                                   "state": "open", "_sd": [decoy]}}})):
+            with self.subTest(label):
+                self.assertAccepted(self._verify(dict(payload, iat=self.now), []))
 
     def test_the_names_sd_jwt_reserves_are_refused_at_any_depth(self):
         """`_sd`, `...` and `_sd_alg` stay refused by name wherever they sit (RFC 9901 7.1 and

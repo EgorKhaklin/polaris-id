@@ -307,6 +307,15 @@ CRIT = {"crit": ["urn:example:never-understood"], "urn:example:never-understood"
 STATUSES = (0, 0, 0, 1) + (0,) * 12
 STATUS_INDEX, INDEX_PAST_END = 5, 16
 
+# 0.7.0: digest structure inside a claim SD-JWT VC draft-19 s2.2.2.3 keeps out of Disclosures. The idx of the
+# status claim committed by digest inside status.status_list, and an element of aka_vcts committed as an array
+# element; a Disclosure for each is built from these, and presented only by disclosed-status-sub-claim.
+STATUS_IDX_DISCLOSURE = (_salt("status-idx"), "idx", STATUS_INDEX)
+AKA_VCT, AKA_ELEMENT = "urn:eudi:pid:de:1", (_salt("aka-vct"), "urn:eudi:pid:at:1")
+STATUS_IDX_INSIDE = {"status_list": {"uri": STATUS_URI,
+                                     "_sd": [_digest(_disclosure(*STATUS_IDX_DISCLOSURE))]}}
+AKA_ELEMENT_INSIDE = [AKA_VCT, {"...": _digest(_disclosure(*AKA_ELEMENT))}]
+
 
 def _zlib_stored(raw):
     """A ZLIB stream (RFC 1950) holding `raw` in one stored DEFLATE block (RFC 1951 s3.2.4), written out
@@ -617,6 +626,21 @@ def _make_vectors():
          "in the top-level _sd array", "spec", "sd-jwt", (RFC9901_DIGEST_TWICE,),
          {"payload": _dup_decoy_digest}, "reject",
          {"payload": _add_decoy_digest}),
+        # 0.7.0, last in the file so that no vector is renumbered. The first presents the Disclosure s2.2.2.3 forbids,
+        # inside status. The other two carry a digest no presented Disclosure matches, which a verifier cannot tell
+        # from a decoy or a Disclosure the holder withheld; refusing them is a verifier's policy, so their class.
+        ("disclosed-status-sub-claim", "the status claim's idx travels in a Disclosure committed inside "
+         "status.status_list", "spec-implied", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
+         {"payload": _set(status=STATUS_IDX_INSIDE), "unreferenced": (STATUS_IDX_DISCLOSURE,)}, "reject",
+         dict(_undo("unreferenced"), payload=_status())),
+        ("status-sd-withheld", "status.status_list commits to its idx by digest, and no Disclosure for it is "
+         "presented", "policy", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
+         {"payload": _set(status=STATUS_IDX_INSIDE)}, "reject",
+         {"payload": _status()}),
+        ("aka-vcts-element-withheld", "an element of aka_vcts is an array-element digest, and no Disclosure for it "
+         "is presented", "policy", "sd-jwt-vc", (SDJWTVC_REGISTERED,),
+         {"payload": _set(aka_vcts=AKA_ELEMENT_INSIDE)}, "reject",
+         {"payload": _set(aka_vcts=[AKA_VCT])}),
     )
 
 
@@ -647,7 +671,7 @@ def build():
         vectors.append(vector)
     return {
         "name": "Negative test vectors for SD-JWT VC presentations under OpenID4VP 1.0 and HAIP 1.0",
-        "version": "0.6.0",
+        "version": "0.7.0",
         "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_vectors.py. Never trust them."
                    + "".join(" The %s key came from %s." % kv for kv in _SUPPLIED),
         "settings": {"now": NOW, "nonce": NONCE, "audience": AUDIENCE, "vct": VCT, "max_skew_seconds": 300,
