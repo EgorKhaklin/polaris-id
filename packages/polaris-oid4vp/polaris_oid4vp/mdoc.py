@@ -39,7 +39,9 @@ by the IACA and carries a SubjectKeyIdentifier and the id-mdl-ds extended key us
 
 THE TRANSCRIPT IS THE VERIFIER'S. `redirect_session_transcript` builds OpenID4VP 1.0 B.2.6.1
 from the request's own client_id, nonce, response_uri and the thumbprint of its response
-key. Nothing in it is read from the response.
+key; `dc_api_session_transcript` builds B.2.6.2, for a request over the Digital Credentials
+API, from the origin the request was made from, its nonce and the thumbprint of its response
+key. Nothing in either is read from the response.
 """
 import datetime
 import hashlib
@@ -215,6 +217,77 @@ def redirect_session_transcript(*, client_id, nonce, jwk_thumbprint, response_ur
     return cbor.encode([None, None, ["OpenID4VPHandover", hashlib.sha256(info).digest()]])
 
 
+def dc_api_origin(origin):
+    """`origin` as a request over the Digital Credentials API names it (OpenID4VP 1.0 Appendix A):
+    a web origin, `scheme://host[:port]`, read by the parser `serve --cors-origin` reads one with
+    (`serve.cors_origin`), so it comes back as a browser writes it: the scheme and the host
+    lowercased and a default port dropped (`HTTPS://Verifier.Example:443` is
+    `https://verifier.example`). Raises ValueError for a value written with the `origin:` prefix
+    (B.2.6.2: "It MUST NOT be prefixed with origin:."), for `*`, which names no one origin, for
+    every value `cors_origin` refuses (a path, a query, no scheme among them), and for an http
+    origin a browser does not count as a secure context: the API exists only in one (Digital
+    Credentials, section 7.7: "[Exposed=Window, SecureContext] interface DigitalCredential"), and
+    over http only 127.0.0.0/8, ::1, localhost and a name ending in .localhost are one (W3C Secure
+    Contexts, section 3.1)."""
+    if isinstance(origin, str) and origin[:7].lower() == "origin:":
+        raise ValueError("%r is written with the origin: prefix; the origin an OpenID4VPDCAPIHandoverInfo "
+                         "carries \"MUST NOT be prefixed with origin:\" (OpenID4VP 1.0 B.2.6.2)" % (origin,))
+    # serve.py's own parser. Imported when it is called: serve.py imports the verifier, which
+    # imports this module.
+    from .serve import cors_origin
+    written = cors_origin(origin)
+    if written == "*":
+        raise ValueError("'*' is not one origin: a request over the Digital Credentials API is made from "
+                         "one, scheme://host[:port]")
+    if written.startswith("http:") and not _secure_context_over_http(written[len("http://"):]):
+        raise ValueError("%r is not an origin a browser offers the Digital Credentials API at: it offers "
+                         "the API only in a secure context (Digital Credentials, section 7.7), and over "
+                         "http only 127.0.0.0/8, [::1], localhost and a name ending in .localhost are one "
+                         "(W3C Secure Contexts, section 3.1); serve the page over https" % (origin,))
+    return written
+
+
+def _secure_context_over_http(host_port):
+    """True for a `host[:port]`, as `serve.cors_origin` writes it, whose host W3C Secure Contexts
+    section 3.1 counts as potentially trustworthy under http: an IPv4 address in 127.0.0.0/8, the
+    IPv6 address ::1, and, either with one trailing dot, `localhost` or a name ending in
+    `.localhost` ("If origin's host matches one of the CIDR notations 127.0.0.0/8 or ::1/128
+    [RFC4632], return "Potentially Trustworthy"."; "origin's host is "localhost" or "localhost."
+    origin's host ends with ".localhost" or ".localhost."")."""
+    if host_port.startswith("["):
+        return host_port[:host_port.find("]") + 1] == "[::1]"
+    host = host_port.rsplit(":", 1)[0]
+    labels = host.split(".")
+    if len(labels) == 4 and all(label.isdigit() for label in labels):
+        return labels[0] == "127"
+    name = host[:-1] if host.endswith(".") else host
+    return name == "localhost" or name.endswith(".localhost")
+
+
+def dc_api_session_transcript(*, origin, nonce, jwk_thumbprint):
+    """The encoded SessionTranscript of a request over the Digital Credentials API (OpenID4VP
+    1.0 B.2.6.2), for Response Mode dc_api.jwt:
+
+        [null, null, ["OpenID4VPDCAPIHandover", SHA-256(CBOR([origin, nonce, jwkThumbprint]))]]
+
+    `origin` is the origin the request was made from, read as `dc_api_origin` reads it (B.2.6.2:
+    "The first element MUST be the string representing the Origin of the request as described in
+    Appendix A.2. It MUST NOT be prefixed with origin:."); `nonce` the request's nonce;
+    `jwk_thumbprint` the 32-byte thumbprint of the key the request asked the response to be
+    encrypted to ("For the Response Mode dc_api.jwt, the third element MUST be the JWK SHA-256
+    Thumbprint as defined in [RFC7638], encoded as a Byte String, of the Verifier's public key
+    used to encrypt the response."). Raises ValueError for an origin `dc_api_origin` refuses and
+    for a missing or ill-typed nonce or thumbprint.
+    """
+    written = dc_api_origin(origin)
+    if not isinstance(nonce, str) or not nonce:
+        raise ValueError("nonce is not a non-empty string")
+    if not isinstance(jwk_thumbprint, bytes) or len(jwk_thumbprint) != 32:
+        raise ValueError("jwk_thumbprint is not the 32-byte SHA-256 thumbprint of the response key")
+    info = cbor.encode([written, nonce, jwk_thumbprint])
+    return cbor.encode([None, None, ["OpenID4VPDCAPIHandover", hashlib.sha256(info).digest()]])
+
+
 # --------------------------------------------------------------------------- the verdict
 
 def verify_device_response(device_response, *, session_transcript, iaca_roots, doctype=None, now=None,
@@ -222,7 +295,8 @@ def verify_device_response(device_response, *, session_transcript, iaca_roots, d
     """Verify one DeviceResponse. Returns a Verdict and never raises on bad input.
 
     `session_transcript` is the encoded SessionTranscript the caller built for its own request
-    (`redirect_session_transcript`). `iaca_roots` is the configured `IacaRoot`s. `doctype`, when
+    (`redirect_session_transcript`, or `dc_api_session_transcript` for a request over the Digital
+    Credentials API). `iaca_roots` is the configured `IacaRoot`s. `doctype`, when
     given, is the docType the request asked for. `now` is POSIX seconds, for judging a captured
     response: left None the clock is read, and when it is supplied the verdict's reason says
     "judged at the supplied instant".
@@ -252,7 +326,11 @@ def judge_device_response(device_response, *, session_transcript, iaca_roots, do
                 datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
         verdict, elements = _judge(device_response, transcript, roots, doctype, at, max_skew_seconds)
     except _Refused as refusal:
-        verdict, elements = Verdict(False, refusal.code, refusal.reason), {}
+        reason = refusal.reason
+        if stated:
+            # Joined before the Verdict is made, so the cut of a long reason counts all of it.
+            reason = "%s (%s)" % (reason, stated) if reason else stated
+        return Verdict(False, refusal.code, reason), {}
     if stated:
         verdict.reason = "%s (%s)" % (verdict.reason, stated) if verdict.reason else stated
     return verdict, elements

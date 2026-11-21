@@ -43,9 +43,11 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE = "lab/interop/mdoc/verify_mdoc.py"
-#: What the suites read, copied for each run: the verifier, the vectors it judges, and the
-#: package the vector tests also import.
-COPIED = ("lab/interop/mdoc", "lab/interop/negative-vectors", "packages/polaris-oid4vp")
+#: What the suites read, copied for each run: the verifier, the vectors it judges, the package
+#: the vector tests also import, and the walk whose head lab/interop/mdoc/capture.sh pins
+#: (test_verify_mdoc's CapturePin reads it). A directory is copied whole, a file alone.
+COPIED = ("lab/interop/mdoc", "lab/interop/negative-vectors", "packages/polaris-oid4vp",
+          "lab/interop/eudi-issuer/run.sh")
 #: (working directory in the copy, test module). Every suite that reads verify_mdoc.py.
 SUITES = (("lab/interop/negative-vectors", "test_vectors"),
           ("lab/interop/mdoc", "test_verify_mdoc"),
@@ -152,6 +154,16 @@ def declarations_answered(full: list, mine: list, declared=None) -> set:
     return {k for k in declared if k in mine_keys or k not in full_keys}
 
 
+def make_copy(copy: pathlib.Path, copied=None) -> None:
+    """Each path of COPIED from the checkout into copy, at the same relative path."""
+    for rel in COPIED if copied is None else copied:
+        if (ROOT / rel).is_dir():
+            shutil.copytree(ROOT / rel, copy / rel, ignore=shutil.ignore_patterns("__pycache__"))
+        else:
+            (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / rel, copy / rel)
+
+
 def run_suites(copy: pathlib.Path) -> tuple:
     """(green, the first failing test or error line)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -185,8 +197,7 @@ def main(argv=None) -> int:
         return 1
     with tempfile.TemporaryDirectory(prefix="mdoc-drill.") as d:
         copy = pathlib.Path(d)
-        for rel in COPIED:
-            shutil.copytree(ROOT / rel, copy / rel, ignore=shutil.ignore_patterns("__pycache__"))
+        make_copy(copy)
         target = copy / SOURCE
         green, why = run_suites(copy)
         if not green:

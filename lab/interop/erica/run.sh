@@ -71,6 +71,10 @@ VCT_ARGS=()
 CLAIMS=no
 SERVE_HELP="$(venv/bin/polaris-oid4vp serve --help)"   # captured: grep -q in a pipe trips pipefail
 case "$SERVE_HELP" in
+  *--result*) ;;
+  *) echo "this walk reads the verifier's verdict from serve --result, which polaris-oid4vp 1.1.0 and later have; set POLARIS_OID4VP to such a release" >&2; exit 2 ;;
+esac
+case "$SERVE_HELP" in
   *--vct*) VCT_ARGS=(--vct "$VCT") ;;
   *) echo "           this polaris-oid4vp has no --vct: it asks for urn:eudi:pid:1, and ERICA's $VCT is refused" ;;
 esac
@@ -241,10 +245,11 @@ assert served == open("erica-root.pem").read().strip(), "the served trust anchor
 start_verifier() {  # $1 issuer trust anchor, $2 log, then extra serve arguments
   local anchor="$1" log="$2"; shift 2
   PYTHONUNBUFFERED=1 venv/bin/polaris-oid4vp serve --pki pki --host "$VHOST" --bind 0.0.0.0 \
-    --port "$PORT" --issuer-trust-anchor "$anchor" ${VCT_ARGS[@]+"${VCT_ARGS[@]}"} "$@" --once > "$log" 2>&1 &
+    --port "$PORT" --issuer-trust-anchor "$anchor" ${VCT_ARGS[@]+"${VCT_ARGS[@]}"} "$@" --once \
+    --result "${log%.log}.result.json" > "$log" 2> "${log%.log}.err" &
   VERIFIER_PID=$!
   for _ in $(seq 1 240); do grep -q 'state=' "$log" 2>/dev/null && return 0; sleep 0.25; done
-  echo "verifier did not start; see $WORK/$log" >&2
+  echo "verifier did not start; see $WORK/$log and $WORK/${log%.log}.err" >&2
   exit 2
 }
 
@@ -265,10 +270,21 @@ erica() {  # $1 ERICA, $2 launch URI, $3 mode, $4 PID template, $5 record, $6 lo
 }
 
 fail=0
+verdict() {  # $1 label, $2 the --result file, $3 a Python expression over doc that must be True
+  if venv/bin/python - "$2" "$3" <<'EOF'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except (OSError, ValueError) as e:
+    sys.exit("cannot read %s: %s" % (sys.argv[1], e))
+sys.exit(0 if eval(sys.argv[2], {}, {"doc": doc}) is True else "doc is %s" % json.dumps(doc, sort_keys=True))
+EOF
+  then echo "  ok    $1"; else echo "  FAIL  $1 ($2: see above)"; fail=1; fi
+}
 expect() {  # $1 label, $2 file, $3 pattern that must appear
   if grep -qE "$3" "$2"; then echo "  ok    $1"; else echo "  FAIL  $1 (no /$3/ in $2)"; fail=1; fi
 }
-verdict() { { grep -E '<- [0-9]{3} ' "$1" || true; } | sed 's/^/        /'; }
+show_verdict() { { grep -E '<- [0-9]{3} ' "$1" || true; } | sed 's/^/        /'; }
 
 echo "== ERICA's checks on the request (validation only, nothing posted)"
 start_verifier erica-root.pem verifier-validate.log ${VALIDATE_ARGS[@]+"${VALIDATE_ARGS[@]}"}
@@ -282,8 +298,8 @@ sed 's/^/        /' findings.txt
 echo "== ERICA's own issuer chain, as shipped"
 start_verifier erica-root.pem verifier-shipped.log
 erica "$SHIPPED" "$(launch_uri verifier-shipped.log)" VALID normal shipped.json erica-shipped.log
-expect "the verifier refused the chain" verifier-shipped.log '<- 400 refused: issuer_key: x5c certificate 1 is a trust anchor'
-verdict verifier-shipped.log
+verdict "the verifier refused the chain" verifier-shipped.result.json 'doc["outcome"] == "refused" and doc["check"] == "issuer_key" and doc["response"]["status_code"] == 400 and "x5c certificate 1 is a trust anchor" in doc["reason"]'
+show_verdict verifier-shipped.log
 stop_verifier
 
 echo "== genuine presentation (ERICA's PID under its root, the chain HAIP-shaped)"
@@ -291,8 +307,8 @@ start_verifier erica-root.pem verifier.log
 URI=$(launch_uri verifier.log)
 erica "$CHAIN" "$URI" VALID normal genuine.json erica.log
 expect "ERICA dispatched" erica.log '^DISPATCHED'
-expect "the verifier accepted it" verifier.log '<- 200 authentic'
-verdict verifier.log
+verdict "the verifier accepted it" verifier.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200'
+show_verdict verifier.log
 
 echo "== control (b): the same request again, after it was answered"
 erica "$CHAIN" "$URI" VALID normal replay.json erica-replay.log
@@ -316,16 +332,16 @@ SPECIAL=()
 [ "$CLAIMS" = yes ] && SPECIAL=(--claim "$(claim special-characters given_name)" --claim "$(claim special-characters family_name)")
 start_verifier erica-root.pem verifier-special.log ${SPECIAL[@]+"${SPECIAL[@]}"}
 erica "$CHAIN" "$(launch_uri verifier-special.log)" VALID special-characters special.json erica-special.log
-expect "the verifier accepted it" verifier-special.log '<- 200 authentic'
-verdict verifier-special.log
+verdict "the verifier accepted it" verifier-special.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200'
+show_verdict verifier-special.log
 stop_verifier
 if [ "$CLAIMS" = yes ]; then
   echo "== PID template incomplete-birthdate, the verifier asking for birthdate too"
   start_verifier erica-root.pem verifier-birthdate.log --claim given_name --claim family_name \
     --claim "$(claim incomplete-birthdate birthdate)"
   erica "$CHAIN" "$(launch_uri verifier-birthdate.log)" VALID incomplete-birthdate birthdate.json erica-birthdate.log
-  expect "the verifier accepted it" verifier-birthdate.log '<- 200 authentic.*birthdate'
-  verdict verifier-birthdate.log
+  verdict "the verifier accepted it" verifier-birthdate.result.json 'doc["outcome"] == "accepted" and doc["response"]["status_code"] == 200 and "birthdate" in doc["claims"]'
+  show_verdict verifier-birthdate.log
   stop_verifier
 fi
 
@@ -337,8 +353,8 @@ for mode in EXPIRED NOT_YET_VALID MISSING_SIGNATURE MISSING_CLAIMS WRONG_NONCE \
   echo "== mode $mode"
   start_verifier erica-root.pem "verifier-$mode.log"
   erica "$CHAIN" "$(launch_uri "verifier-$mode.log")" "$mode" normal "$mode.json" "erica-$mode.log"
-  expect "the verifier refused it" "verifier-$mode.log" '<- 400 refused: '
-  verdict "verifier-$mode.log"
+  verdict "the verifier refused it" "verifier-$mode.result.json" 'doc["outcome"] == "refused" and bool(doc["check"]) and doc["response"]["status_code"] == 400'
+  show_verdict "verifier-$mode.log"
   stop_verifier
 done
 
@@ -358,8 +374,8 @@ expect "ERICA refused the request" erica-c.log '^REQUEST REFUSED .*client_id mis
 echo "== control (a): the verifier trusts a different issuer CA"
 erica "$CHAIN" "$(launch_uri verifier-other.log)" VALID normal a.json erica-a.log
 expect "ERICA was not accepted" erica-a.log '^DISPATCH FAILED'
-expect "the verifier refused the issuer" verifier-other.log '<- 400 refused: issuer_key'
-verdict verifier-other.log
+verdict "the verifier refused the issuer" verifier-other.result.json 'doc["outcome"] == "refused" and doc["check"] == "issuer_key" and doc["response"]["status_code"] == 400'
+show_verdict verifier-other.log
 stop_verifier
 
 [ "$fail" -eq 0 ] && echo "RESULT: accepted, and every negative case refused" || echo "RESULT: FAILED"

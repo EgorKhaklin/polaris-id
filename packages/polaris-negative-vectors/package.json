@@ -1,0 +1,34 @@
+{
+  "name": "polaris-negative-vectors",
+  "version": "0.1.0",
+  "description": "Negative test vectors for OpenID4VP 1.0 verifiers, SD-JWT VC and mdoc, as JSON: each presentation with the verdict a correct verifier reaches.",
+  "license": "Apache-2.0",
+  "files": [
+    "vectors.json",
+    "mdoc-vectors.json",
+    "manifest.json",
+    "NOTICE",
+    "LICENSE"
+  ],
+  "exports": {
+    "./*.json": "./*.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EgorKhaklin/polaris-id.git",
+    "directory": "packages/polaris-negative-vectors"
+  },
+  "homepage": "https://github.com/EgorKhaklin/polaris-id/tree/main/lab/interop/negative-vectors",
+  "bugs": {
+    "url": "https://github.com/EgorKhaklin/polaris-id/issues"
+  },
+  "keywords": [
+    "openid4vp",
+    "sd-jwt",
+    "sd-jwt-vc",
+    "mdoc",
+    "haip",
+    "test-vectors",
+    "verifier"
+  ]
+}

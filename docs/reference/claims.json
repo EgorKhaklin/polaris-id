@@ -1046,7 +1046,7 @@
     {
       "id": "site-refusal-test-counts",
       "kind": "statement",
-      "claim": "34 SD-JWT VC presentations and 32 mdoc device responses that must be refused",
+      "claim": "35 SD-JWT VC presentations and 32 mdoc device responses that must be refused",
       "surfaces": [
         "site/index.html"
       ],
@@ -1055,7 +1055,7 @@
         "file:lab/interop/negative-vectors/mdoc-vectors.json",
         "file:lab/interop/negative-vectors/README.md"
       ],
-      "reproduce": "jq '[.vectors[] | select(.expected == \"reject\")] | length' on vectors.json prints 34 and on mdoc-vectors.json 32; each refusal carries the clauses it rests on (README.md)."
+      "reproduce": "jq '[.vectors[] | select(.expected == \"reject\")] | length' on vectors.json prints 35 and on mdoc-vectors.json 32; each refusal carries the clauses it rests on (README.md)."
     },
     {
       "id": "site-review-packet-public",

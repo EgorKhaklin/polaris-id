@@ -1,8 +1,8 @@
 # Negative test vectors for SD-JWT VC presentations
 
 **Reader:** anyone building or testing a verifier of SD-JWT VC presentations under OpenID4VP 1.0 and
-HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 37 presentations a
-verifier must judge, each with the verdict a correct verifier reaches. Each of the 34 refusals carries the
+HAIP 1.0, with or without Polaris. **What it is:** [`vectors.json`](vectors.json), 38 presentations a
+verifier must judge, each with the verdict a correct verifier reaches. Each of the 35 refusals carries the
 clauses it rests on and a `class` saying how directly they require the refusal.
 [Lab record 018](../../strategy/018-negative-vectors.md) explains why it exists and what would end it.
 
@@ -14,19 +14,19 @@ against the verification function sees the verdict directly.
 
 Two **controls** come first: valid presentations, one with the issuer key in an `x5c` chain, one given as
 a JWK. A verifier that refuses them refuses everything, and its refusals below mean nothing. A third,
-`accept-status-list`, opens the status-list family. Each of the other 34 is a control with exactly one thing
+`accept-status-list`, opens the status-list family. Each of the other 35 is a control with exactly one thing
 changed, re-signed wherever the change needs it, so the only reason to refuse it is the clause it cites:
 
 | Group | Vectors |
 |---|---|
 | JOSE | `crit` in the issuer JWT and in the key binding JWT; an ES256 signature DER-encoded |
 | Key binding JWT | `aud` or `nonce` missing, `aud` as an array, `aud` without the Client Identifier prefix, `typ` JWT, `alg` none, HS256 keyed with the holder's public JWK, `iat` NaN, `exp` a string |
-| Disclosures | a digest committed twice, a claim already in the clear, `exp` or `iss` disclosed, four elements, a claim named `_sd`, a Disclosure no digest commits to |
+| Disclosures | a digest committed twice (once a digest a Disclosure matches, once a decoy no Disclosure matches), a claim already in the clear, `exp` or `iss` disclosed, four elements, a claim named `_sd`, a Disclosure no digest commits to |
 | `x5c` chain | a self-signed leaf, the anchor sent in the chain, an unknown root, an expired leaf, an intermediate that is not a CA |
 | The signer is not the named issuer | another issuer's valid leaf under the trusted root signs a credential whose `iss` is the trusted issuer: the leaf names that issuer's URL; names only a DNS host that is not `iss`'s; names that URL and also a host both share. Refused by a verifier that requires the leaf to name `iss` |
 | Status goes dark | the Token Status List the credential names gives no answer; answers with an HTML page; has a `lst` whose ZLIB stream never ends; is signed by another issuer's key under the same root; sits at a uri no key is stated for; has expired; does not reach the credential's index |
 
-**33 of the 34 negatives carry their repaired twin** (`repaired`): the same vector with that one defect put back,
+**34 of the 35 negatives carry their repaired twin** (`repaired`): the same vector with that one defect put back,
 which a correct verifier accepts. A twin that is refused means the vector's refusal measured nothing. A twin keeps every
 other knob of its vector (trust mode, extra Disclosures, signer, status claim), so it can equal a control byte for
 byte; where the defect is in what the status list's uri answers, the twin also carries the `status_list` it answers
@@ -107,7 +107,7 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 **The keys and certificates are test material: never trust them.**
 [`test_vectors.py`](test_vectors.py), run in CI:
 - the file has not drifted from its generator;
-- `polaris-oid4vp` reaches all 37 verdicts with the expected refusal codes, under the default binding, under
+- `polaris-oid4vp` reaches all 38 verdicts with the expected refusal codes, under the default binding, under
   another verifier's, and under the EU test harness's;
 - each leaf in the signer family signs an authentic credential when `iss` is the name it gives, so the name is
   the only defect; and a leaf that names nobody is accepted with `iss` unbound;
@@ -116,7 +116,9 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
   checks no status;
 - a run with no vectors, no control or no judged negative fails;
 - the views equal the generator's output, and a view with no vectors or a missing pair file fails;
-- each certificate defect is the only one, because the same chain repaired is accepted.
+- each certificate defect is the only one, because the same chain repaired is accepted;
+- every certificate in every `x5c`, and the root, carries a SubjectKeyIdentifier and an AuthorityKeyIdentifier
+  (RFC 5280 4.2.1.1, 4.2.1.2), each AuthorityKeyIdentifier the SubjectKeyIdentifier of the certificate above it.
 - every negative carries `repaired` or `no_twin`, never both, a control neither, and the vectors with `no_twin` are
   the pinned one; `polaris-oid4vp` accepts every twin, under the default binding, another verifier's, a Digital
   Credentials API origin and the EU test harness's, and still refuses every negative with its pinned code; no twin
@@ -134,12 +136,16 @@ ECDSA (RFC 6979), so `python3 make_vectors.py > vectors.json` regenerates the fi
 ## Bind them to your verifier
 
 Every Key Binding JWT names one verifier (`aud`, `nonce`) and one instant, so the published file is refused by any
-verifier but the one in its `settings`, controls included. Regenerate it for yours; the generator needs the
-`cryptography` package (`pip install cryptography`):
+verifier but the one in its `settings`, controls included. Regenerate it for yours, from this folder alone; written
+to stdout, the file needs only the `cryptography` package (`pip install cryptography`):
 
 ```bash
-python3 make_vectors.py --audience 'x509_san_dns:verifier.test' --nonce 'your-test-nonce' --now 1830297600 --out DIR
+python3 make_vectors.py --audience 'x509_san_dns:verifier.test' --nonce 'your-test-nonce' --now 1830297600 > DIR/vectors.json
 ```
+
+`--out DIR` writes the same `vectors.json` and, beside it, the `views/` derived from it. The views record
+polaris-oid4vp's verdict on each vector, so that form also needs polaris-oid4vp (`pip install polaris-oid4vp`, or
+this repository's `packages/polaris-oid4vp`, which the generator finds by itself).
 
 Two flags are optional: `--issuer-key FILE` and `--holder-key FILE` replace the seeded issuer and holder keys.
 
@@ -212,8 +218,9 @@ measured nothing.
 
 Each case carries: `response` (the base64url DeviceResponse), `inputs` (the verifier's own request, from which it
 builds the SessionTranscript: `response_mode`, `client_id` and `response_uri`, or `origin`, with the `nonce`, the
-`encryption_jwk`, the DCQL `doctype_value` and, where the request asks for claims, the DCQL `claims` and
-`claim_sets`), `trust_anchors_pem` (the IACA root), `at` (the instant), `expected`, `layer`, and `class` with its
+`encryption_jwk`, the DCQL `doctype_value` and `claims`, with `claim_sets` where the request has them; in every
+control and twin the `claims` name each element the response discloses, as OpenID4VP 1.0 6.4 and 6.4.1 require
+of a wallet), `trust_anchors_pem` (the IACA root), `at` (the instant), `expected`, `layer`, and `class` with its
 `clauses`. `class` is `spec` where a normative sentence of OpenID4VP 1.0, RFC 9052 or RFC 9053 requires the refusal
 (quoted); `spec-implied` where a quoted sentence binds the issuer or the wallet, or a definition implies the refusal,
 or where the clause is ISO-only: the clause number is given and nothing is quoted; and
@@ -233,8 +240,12 @@ accepts the document and checks the value itself reads it legitimately.
 
 The IACA and document signer certificates carry what outside mdoc verifiers check of the ISO/IEC 18013-5 Annex B
 profile: the same countryName in both subjects, key usages, the document signer's id-mdl-ds extended key usage, key
-identifiers, an issuer alternative name and a CRL distribution point (named, never served). The controls sign with
-ES256 (-7).
+identifiers, an issuer alternative name and a CRL distribution point (named, never served), serial numbers of 71
+bits of CSPRNG output, each drawn once and fixed in the generator so the set stays reproducible (Tables B.1 and B.3:
+"shall contain at least 63 bits of output from a CSPRNG, should contain at least 71 bits"), and validities inside
+the profile's: the document signer 394 days (Table B.3 allows at most 457), the IACA four years (Table B.1, at most
+twenty). `make_mdoc_vectors.py --document-signer-days N` makes the set with another document signer validity, up to
+457. The controls sign with ES256 (-7).
 
 ```bash
 python3 make_mdoc_vectors.py > mdoc-vectors.json       # byte for byte, run to run; needs cbor2 and cryptography
@@ -258,6 +269,14 @@ certificates are test material from public seeds, as above.
 
 ## Versions
 
+- Version 0.6.0: every certificate, the root included, carries a SubjectKeyIdentifier and an AuthorityKeyIdentifier
+  (RFC 5280 4.2.1.1 and 4.2.1.2), so the `accept-x5c` chain passes `openssl verify -x509_strict`; its certificates,
+  and the signatures over them, are new, and the other bytes of every `x5c` vector follow from that. One vector
+  added, last in the file so that no vector is renumbered: `digest-twice-decoy`, a decoy digest (RFC 9901 s4.2.5)
+  committed twice in the top-level `_sd` array. `digest-twice` repeats a digest a Disclosure matches, which a
+  verifier reading s7.1 in order refuses at step 3.c.ii.3; no rule of step 3 fires on a decoy, so only step 4
+  refuses this one. Both changes follow Spomky's review in web-token/jwt-framework#749. Every id, class and
+  verdict of 0.5.0 is unchanged.
 - Version 0.5.0: each negative carries `repaired`, its twin, except `status-list-no-authority`, which carries
   `no_twin` and its reason (a new field moves the minor version). Every vector's id, class, verdict and presentation
   are byte for byte those of 0.4.1, and the views differ from 0.4.1's by their version stamp alone.

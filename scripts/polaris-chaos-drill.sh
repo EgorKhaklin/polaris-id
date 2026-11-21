@@ -79,7 +79,7 @@ WORK="$(mktemp -d)"
 [[ -n "$OUT" ]] || OUT="$WORK/chaos.json"
 OBS="$ROOT/deploy/observability"
 PROM_IMAGE="prom/prometheus@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06"
-AM_IMAGE="prom/alertmanager@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b"
+AM_IMAGE="prom/alertmanager@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c"
 PY_IMAGE="python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d"
 SINK=polaris-chaos-sink; AM=polaris-chaos-alertmanager; PROM=polaris-chaos-prometheus
 DATE="$(date -u +%Y-%m-%dT%H:%MZ)"

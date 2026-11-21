@@ -14,7 +14,7 @@ when something externally observable changes.
 | Artifact | Registry | Name | On the registry | Before it |
 |---|---|---|---|---|
 | `packages/polaris-verify/` | PyPI | `polaris-verify` | 1.0.0rc10, 2026-10-28 | 1.0.0rc9, 2026-10-28 |
-| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.2.0, 2026-11-18 | 1.1.0, 2026-10-30 |
+| `packages/polaris-oid4vp/` | PyPI | `polaris-oid4vp` | 1.3.0, 2026-11-19 | 1.2.0, 2026-11-18 |
 | `sdk/python/` | PyPI | `polaris-sdk-python` | 1.0.0rc10, 2026-10-28 | 1.0.0rc9, 2026-10-28 |
 | `polaris_cli/` | PyPI | `polaris-id-cli` | 1.0.0rc1, 2026-09-30 | none, the first |
 | `sdk/typescript/` | npm | `polaris-sdk-ts` | 1.0.0-rc.11, 2026-10-28 | 1.0.0-rc.10, 2026-10-28 |
@@ -243,6 +243,16 @@ package, held as a repository secret for that one run and revoked within the hou
 is gone and the workflow no longer reads one; 1.0.0-rc.1 went out through the trusted
 publisher on 2026-09-16, the first token-free npm publish, under the `next` dist-tag.
 
+`polaris-negative-vectors` (`packages/polaris-negative-vectors/`, the two files of
+`lab/interop/negative-vectors` as data) takes the same route for the same reason. Its first version
+is staged by a maintainer from their own npm login, with no token: `python3
+packages/polaris-negative-vectors/stage.py OUT` (it stages and checks, and prints `done`), then in
+OUT `npm stage publish --access public` and `npm stage approve <stage-id>` with a second factor. npm
+stages a name that does not exist yet behind a public placeholder version, `0.0.0-stage`
+(<https://docs.npmjs.com/staged-publishing>). Its trusted publisher is then created on its access
+page with the fields above, and every later version goes through the `polaris-negative-vectors
+(npm)` target of `publish.yml`, which stages it again from the commit and checks it before the upload.
+
 The npm job also learned three things the hard way that day, each recorded below: a
 prerelease is refused without a dist-tag; `setup-node` with a `registry-url` writes a
 placeholder token into the npm config, which the CLI then uses instead of the identity
@@ -380,6 +390,7 @@ worse state to be in than three runs.
 | (by hand) | 2026-10-28 | `polaris-sdk-ts` 1.0.0-rc.11 | approved by the maintainer with a second factor and read back from the live registry under `next`; shasum c28a0aac7ac87795fc00dbe5015af3f4a7b8cef3 |
 | 41136783592 | 2026-10-30 | `polaris-oid4vp` 1.1.0 | approved by the maintainer at the environment gate, published by trusted publishing from main (23a910bf); read back from the live registry and installed into a clean environment outside the tree |
 | 44274746749 | 2026-11-18 | `polaris-oid4vp` 1.2.0 | after dry run 44274473730 on the same commit; approved at the environment gate, published by trusted publishing from main (6afe4e03); read back from the live registry: a bare `pip install polaris-oid4vp` from an empty directory installs 1.2.0 (wheel sha256 4fd19a31ad7a414d06b9c1ade2f31b2ebc1b20272eb8c3ada647e995e4d1b715); 20 jobs of the wallet canary (run 44275363040) installed 1.2.0 and passed, ERICA's on a re-run of its job; the stranger's path, walked from empty directories outside the tree, installed 1.2.0 from PyPI, its one-minute script answered 200 and accepted with all three controls refused, with Docker and without, and its ten-minute half answered `200 authentic` |
+| 44557464033 | 2026-11-19 | `polaris-oid4vp` 1.3.0 | after dry run 44556946027 on the same commit; approved at the environment gate, published by trusted publishing from main (8bcdf0ea); read back from the live registry: a bare `pip install polaris-oid4vp` from an empty directory installs 1.3.0 under Python 3.9.6 and 3.12.13 (wheel sha256 9084517c7a8d85b8e881daafa7a0afc6932c49229d17d4251aea77cca134457f, the same file the build job attached to the run), and that copy judges a captured mdoc response with `verdict --experimental` and refuses it without the flag; the wallet canary (run 44562402623) passed all 22 jobs, and the 20 that print the version they installed print 1.3.0; the stranger's path, walked from empty directories outside the tree, installed 1.3.0 from PyPI, its one-minute script accepted with all three controls refused, with Docker and without, and its ten-minute half answered `200 authentic` |
 
 The first dry run was once cited as cover for all four artifacts, and it had not built one of
 them. A dry run that did not build the thing being published is a rehearsal of a different

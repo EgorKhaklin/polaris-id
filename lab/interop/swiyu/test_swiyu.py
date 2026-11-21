@@ -1269,11 +1269,19 @@ class PinTests(unittest.TestCase):
         self.assertEqual(names(sdjwt._es256_public_key), ["jwk"])
         self.assertEqual(names(status.StatedAuthority.state), ["self", "credential_issuer", "status_uri", "verify", "why"])
         self.assertIn("status_resolver", names(sdjwt.verify_presentation))
+        # the lab passes neither credential_anchor nor credential_leaf: its authority is the pinned key
         self.assertEqual(names(status.decide_by_fetching),
                          ["index", "expected_uri", "authority", "fetch", "now", "credential_issuer",
-                          "issuer_key_verify", "max_age_seconds"])
-        # the resolver contract the parent calls (sdjwt._revocation_state): uri, idx, issuer
-        self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)', inspect.getsource(sdjwt._revocation_state))
+                          "issuer_key_verify", "max_age_seconds", "credential_anchor", "credential_leaf"])
+        # the resolver contract the parent calls: uri, idx, issuer, in sdjwt._revocation_answer, which
+        # sdjwt._revocation_state calls; the anchor keywords go only to a resolver that declares
+        # takes_credential_anchor, which the lab's does not
+        answer_source = inspect.getsource(sdjwt._revocation_answer)
+        self.assertIn('resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer, **extra)', answer_source)
+        self.assertIn('if getattr(resolver, "takes_credential_anchor", False) is True else {})', answer_source)
+        self.assertIn("_revocation_answer(payload, resolver, issuer, certified)", inspect.getsource(sdjwt._revocation_state))
+        self.assertFalse(hasattr(sv.SwiyuVerifier._status_resolver, "takes_credential_anchor"))
+        self.assertEqual(names(sv.SwiyuVerifier._status_resolver), ["self", "uri", "idx", "issuer"])
         # the response path the lab sits in front of: it decrypts, then asks _single_presentation
         source = inspect.getsource(Verifier.handle_direct_post)
         for fragment in ("_open_response(compact, candidate.enc_key)", "self._single_presentation(self._read_vp_token(body.get(\"vp_token\")))",

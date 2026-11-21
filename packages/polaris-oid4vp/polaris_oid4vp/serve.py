@@ -24,8 +24,12 @@ import sys
 import threading
 import urllib.parse
 
+from . import dc_api_page
 from .jwe import _loads_depth_bounded
-from .verifier import Verifier, operator_text, wallet_nonce_acceptable  # noqa: F401  Verifier re-exported for callers of serve()
+from .mdoc import dc_api_origin as _dc_api_origin
+from .verifier import (  # noqa: F401  Verifier re-exported for callers of serve()
+    DC_API_PROTOCOL, MDOC_FORMAT, DcApiRequestsFull, Verifier, cut_to, logged_line, operator_text,
+    wallet_nonce_acceptable, written_reason)
 
 REQUEST_PATH = "/request.jwt"
 RESPONSE_PATH = "/response"
@@ -69,6 +73,17 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 #: this listener does not serve.
 CONTROL_PATH = "/control/request"
 
+#: `GET /control/request/{n}` (2026-11-18), on the same listener, behind the same token, when
+#: `serve(on_control_read=...)` is given: what became of request n. `n` is the request number POST
+#: answered with, written as a decimal number with no leading zero and at most nine digits; any other
+#: path under the control path is 404. Request numbers are not a secret: the token is the only gate.
+CONTROL_READ_PREFIX = CONTROL_PATH + "/"
+_CONTROL_READ_NUMBER = re.compile(r"[1-9][0-9]{0,8}\Z")
+
+#: The paths a control listener logs without their query: everything under `/control/`, so that a
+#: query on a path the listener does not serve there is not logged either.
+_CONTROL_LOGGED = "/control/"
+
 #: The largest body a control request may carry, judged on the length it declares. What a control
 #: request says is a few claim names and credential types.
 CONTROL_MAX_BODY_BYTES = 8192
@@ -76,6 +91,20 @@ CONTROL_MAX_BODY_BYTES = 8192
 #: The shortest control token `serve` takes. Anything that can reach the listener can try a token,
 #: so it is one a person would not choose.
 CONTROL_TOKEN_MIN_LENGTH = 32
+
+#: The paths `serve(dc_api_origin=...)` answers (experimental, 2026-11-21): the page that asks a
+#: browser for an mdoc over the Digital Credentials API, its script, and the two routes the script
+#: posts to (`_DcApiHandler`). Any other path under DC_API_PREFIX is 404, and none carries a CORS
+#: header, whatever `cors_origins` says.
+DC_API_PREFIX = "/dc-api/"
+DC_API_PAGE_PATH = DC_API_PREFIX
+DC_API_SCRIPT_PATH = DC_API_PREFIX + "app.js"
+DC_API_REQUEST_PATH = DC_API_PREFIX + "request"
+DC_API_RESPONSE_PATH = DC_API_PREFIX + "response"
+#: The page's Content-Security-Policy: its own script and its own origin's routes, and nothing
+#: else: no inline script, no style, no frame around it, no form and no base URL.
+DC_API_PAGE_POLICY = ("default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; "
+                      "form-action 'none'; frame-ancestors 'none'")
 #: What follows `scheme://` in an origin, lowercased: a host (in brackets, what ipaddress then
 #: reads as IPv6, or else a name or IPv4 address with no colon or bracket), then, if any, `:` and
 #: a port of ASCII digits, of which at most five follow the leading zeros.
@@ -227,6 +256,38 @@ def _content_length(headers):
         return None
 
 
+#: The most characters the listener writes for one exception it logs (2026-11-19).
+EXCEPTION_LOG_MAX = 8192
+
+
+def exception_text(exc, limit=EXCEPTION_LOG_MAX):
+    """An exception's traceback as the listener logs it. The frames are kept as Python formats
+    them, this code's files and lines, which an operator and a report of a crash need. Each
+    exception's own text, its cause's and its context's, can quote the input that raised it,
+    so it is written as `written_reason` writes a reason; every line is a `logged_line`; and
+    the whole is at most `limit` characters, with its full length when it is cut."""
+    import traceback
+    chain, links, te = [], [], traceback.TracebackException.from_exception(exc)
+    while te is not None:
+        chain.append(te)
+        if te.__cause__ is not None:
+            te = te.__cause__
+            links.append("The above exception was the direct cause of the following exception:")
+        elif te.__context__ is not None and not te.__suppress_context__:
+            te = te.__context__
+            links.append("During handling of the above exception, another exception occurred:")
+        else:
+            te = None
+    blocks = []
+    for te, link in zip(reversed(chain), [None] + list(reversed(links))):
+        if link is not None:
+            blocks.append("\n%s\n" % link)
+        own = written_reason("".join(te.format_exception_only()).rstrip("\n"))
+        blocks.append("Traceback (most recent call last):\n%s%s" % ("".join(te.stack.format()), own))
+    text = "\n".join(logged_line(line) for line in "\n".join(blocks).split("\n"))
+    return cut_to(text, limit) + "\n"
+
+
 def _wallet_error_named(verdict):
     """A wallet error on a line that names its request: the error code and the sender's
     description as verifier.py's _printable left it, and nothing of what became of the request,
@@ -327,15 +388,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # The operator's side of the split. Everything the wallet is NOT told goes here,
             # where the person running the verifier can read it and an attacker cannot.
             if status != 200 and verdict is not None:
-                self.log_error("refused: %s: %s%s", verdict.code, verdict.reason, self._about())
+                self.log_error("refused: %s: %s%s", verdict.code, written_reason(verdict.reason),
+                               self._about())
             elif getattr(verdict, "wallet_error", None) is not None:
                 # A wallet's error response, answered 200 and accepted as nothing. Its reason
                 # carries the sender's text only as verifier.py's _printable left it. A caller
                 # that names requests ends them by a rule of its own (`serve --rearm`, the control
                 # endpoint), so the verifier's "it does not close the request" is not this line's
                 # to say, and the request is named once, by `_about`.
-                self.log_error("wallet error: %s%s", _wallet_error_named(verdict)
-                               if self.name_requests else verdict.reason, self._about())
+                self.log_error("wallet error: %s%s", written_reason(_wallet_error_named(verdict)
+                               if self.name_requests else verdict.reason), self._about())
         except Exception:  # noqa: BLE001
             # The wallet must never see a 5xx for a response it sent: a 5xx says "retry",
             # and nothing it can retry will help. An unexpected exception here is this
@@ -399,12 +461,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         return about_request(self.verifier) if self.name_requests else ""
 
     def log_error(self, format, *args, **kwargs):  # noqa: A002
-        import traceback
-        # The whole line as operator_text leaves it. Any line here can carry a sender's text, the
-        # base class's own included: it logs a refused request line with the line in it.
-        sys.stderr.write("polaris-oid4vp: " + operator_text(format % args if args else format) + "\n")
+        # The whole line as logged_line leaves it, quoted and cut. Any line here can carry a
+        # sender's text, the base class's own included: it logs a request line it refuses (a bad
+        # version, an unsupported method, a bad syntax) with the line in it.
+        sys.stderr.write("polaris-oid4vp: " + logged_line(format % args if args else format) + "\n")
         if kwargs.get("exc_info"):
-            traceback.print_exc()
+            sys.stderr.write(exception_text(sys.exc_info()[1]))
 
     def log_message(self, format, *args):  # noqa: A002  the base class names it this
         # Silent by default. A library that writes to a caller's stderr uninvited is a
@@ -412,7 +474,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # that. `serve(verbose=True)` opts in.
         # A request line refused before it was read has no path, and its refusal is log_error's.
         if self.verbose and getattr(self, "path", None) is not None:
-            sys.stderr.write("%s %s\n" % (operator_text(self.command), operator_text(self.path)))
+            sys.stderr.write(logged_line("%s %s" % (self.command, self.path)) + "\n")
 
 
 class _ControlHandler:
@@ -427,21 +489,26 @@ class _ControlHandler:
     no header, another scheme and a value that is not ASCII. Then the body is read (at most
     CONTROL_MAX_BODY_BYTES, judged on the declared length), read as one JSON object (none is `{}`)
     and handed to `on_control(spec)`, whose (status, JSON document) is the answer. Nothing of the
-    token, the header or the body is logged."""
+    token, the header or the body is logged.
+
+    `GET /control/request/{n}`, when the listener was also given `on_control_read`: the caller is
+    authenticated first, as above, so an unknown number and a known one get the same 401. Then a
+    path that is not CONTROL_READ_PREFIX and a number as _CONTROL_READ_NUMBER reads it is 404, and
+    `on_control_read(n)` is called. Its (status, JSON document) is answered with `Cache-Control:
+    no-store` and `Pragma: no-cache`, because the document can carry the claims a presentation
+    disclosed. An exception there, or a document that is not JSON, is a 500, and only the
+    exception's type is logged. Without `on_control_read` a GET under the control path is answered
+    as it is without the control option."""
 
     control_token_digest = None
     on_control = None
+    on_control_read = None
 
     def do_POST(self):
         if self.path.partition("?")[0] != CONTROL_PATH:
             return super().do_POST()
         if not self._control_authorized():
-            self.close_connection = True
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", "Bearer")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return None
+            return self._refuse_unauthorized()
         length = _content_length(self.headers)
         if length is None:
             self.close_connection = True
@@ -477,6 +544,45 @@ class _ControlHandler:
             return self._send(500, {"error": "server_error"})
         return self._send(status, document)
 
+    def do_GET(self):
+        path = self.path.partition("?")[0]
+        if self.on_control_read is None or not (path == CONTROL_PATH
+                                                or path.startswith(CONTROL_READ_PREFIX)):
+            return super().do_GET()
+        # The token before anything about the number, so a known and an unknown one answer alike.
+        authorized = self._control_authorized()
+        if not authorized:
+            return self._refuse_unauthorized()
+        number = path[len(CONTROL_READ_PREFIX):]
+        if not path.startswith(CONTROL_READ_PREFIX) or not _CONTROL_READ_NUMBER.match(number):
+            return self._send(404, {"error": "not_found"})
+        try:
+            status, document = self.on_control_read(int(number))
+            raw = json.dumps(document).encode("utf-8")
+        except Exception as exc:  # noqa: BLE001
+            # The type only: the document can hold the claims a presentation disclosed, and what
+            # an exception says can hold the document.
+            self.log_error("the control read raised %s", type(exc).__name__)
+            return self._send(500, {"error": "server_error"})
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.end_headers()
+        self.wfile.write(raw)
+        return None
+
+    def _refuse_unauthorized(self):
+        """401 with an empty body and `WWW-Authenticate: Bearer`, the connection closed with any
+        body unread: the one answer to a caller without the token, whatever it asked for."""
+        self.close_connection = True
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", "Bearer")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return None
+
     def _control_authorized(self):
         header = self.headers.get("Authorization") or ""
         scheme, _, presented = header.partition(" ")
@@ -486,14 +592,147 @@ class _ControlHandler:
         return same and scheme.lower() == "bearer"
 
     def log_message(self, format, *args):  # noqa: A002  the base class names it this
-        # The control path without its query: a query there is the caller's, and may hold what is
-        # not to be logged. Every other path is logged as the listener logs it without the option.
-        # (`path` is not set when the request line itself was refused.)
-        if getattr(self, "path", "").partition("?")[0] != CONTROL_PATH:
+        # A path under /control/ without its query: a query there is the caller's, and may hold
+        # what is not to be logged. Every other path is logged as the listener logs it without the
+        # option. (`path` is not set when the request line itself was refused.)
+        path = getattr(self, "path", "").partition("?")[0]
+        if not path.startswith(_CONTROL_LOGGED):
             return super().log_message(format, *args)
         if self.verbose:
-            sys.stderr.write("%s %s\n" % (operator_text(self.command), CONTROL_PATH))
+            sys.stderr.write(logged_line("%s %s" % (self.command, path)) + "\n")
         return None
+
+
+class _DcApiHandler:
+    """The page at DC_API_PAGE_PATH and its routes, for a listener given `dc_api_origin`. serve()
+    puts this in front of the handler it builds only then; without it not one line here runs and
+    every /dc-api/ path is answered as any path the listener does not serve.
+
+    `GET /dc-api/` is `dc_api_page.PAGE` under DC_API_PAGE_POLICY, and `GET /dc-api/app.js` its
+    script, each `nosniff` and `no-store`. The two POST routes answer only a request whose one
+    Origin header is `dc_api_origin`, exactly as a browser writes it: any other, none, `null` or
+    two get 403, the connection closed with the body unread, and no verifier code runs. The origin
+    a request is made for and a response judged at is always the configured one, never one read
+    from the request. Then the body is read under MAX_BODY_BYTES as `/response` reads one.
+
+    `POST /dc-api/request` answers `Verifier.dc_api_request`'s member as JSON, `no-store`; 503
+    `temporarily_unavailable` when DC_API_MAX_OUTSTANDING requests are outstanding. Its body is
+    read and not used.
+
+    `POST /dc-api/response` takes one JSON object, `{"protocol": ..., "data": ...}`, as the page
+    builds it from the DigitalCredential. A body that is not one, and a protocol other than
+    DC_API_PROTOCOL, are refused with REFUSAL_BODY before anything is decrypted, the reason
+    logged. Otherwise `data` goes to `Verifier.dc_api_response`, whose answer is sent, heard by
+    `on_verdict`, and, for a refusal or a wallet's error, logged as one line with the refusal's
+    code and reason or the wallet's error. The line names no request (`name_requests` does not
+    reach this route)."""
+
+    dc_api_origin = None
+
+    def do_GET(self):
+        path = self.path.partition("?")[0]
+        if path == DC_API_PAGE_PATH:
+            return self._send_dc_api_file(dc_api_page.PAGE, "text/html; charset=utf-8", DC_API_PAGE_POLICY)
+        if path == DC_API_SCRIPT_PATH:
+            return self._send_dc_api_file(dc_api_page.SCRIPT, "text/javascript; charset=utf-8")
+        return super().do_GET()
+
+    def do_POST(self):
+        path = self.path.partition("?")[0]
+        if path not in (DC_API_REQUEST_PATH, DC_API_RESPONSE_PATH):
+            return super().do_POST()
+        origins = self.headers.get_all("Origin") or []
+        if origins != [self.dc_api_origin]:
+            # Before a byte of the body is read, so a refused caller costs nothing more.
+            self.close_connection = True
+            self.log_error("refused: a post to %s from %s; it answers only %s", path,
+                           written_reason(", ".join(origins) if origins else "no Origin header"),
+                           self.dc_api_origin)
+            return self._send(403, {"error": "access_denied",
+                                    "error_description": "this path answers only its own page"})
+        length = _content_length(self.headers)
+        if length is None:
+            self.close_connection = True
+            return self._send(400, {"error": "invalid_request",
+                                    "error_description": "Content-Length is not a decimal "
+                                                         "number of octets"})
+        if length > MAX_BODY_BYTES:
+            self.close_connection = True
+            return self._send(413, {"error": "invalid_request",
+                                    "error_description": "the request body exceeds %d bytes"
+                                                         % MAX_BODY_BYTES})
+        body = self.rfile.read(length)
+        if len(body) < length:
+            self.close_connection = True
+            return self._send(400, {"error": "invalid_request",
+                                    "error_description": "the body is shorter than "
+                                                         "Content-Length declared"})
+        if path == DC_API_REQUEST_PATH:
+            return self._dc_api_request()
+        return self._dc_api_response(body)
+
+    def _dc_api_request(self):
+        try:
+            member = self.verifier.dc_api_request(self.dc_api_origin)
+        except DcApiRequestsFull as exc:
+            self.log_error("refused: a request over the Digital Credentials API: %s", written_reason(str(exc)))
+            return self._send_no_store(503, {"error": "temporarily_unavailable",
+                                             "error_description": "too many requests are outstanding; "
+                                                                  "try again later"})
+        except Exception:  # noqa: BLE001
+            self.log_error("dc_api_request raised", exc_info=True)
+            return self._send_no_store(500, {"error": "server_error"})
+        return self._send_no_store(200, member)
+
+    def _dc_api_response(self, body):
+        try:
+            document = _loads_depth_bounded(body, "request body", finite=True)
+        except ValueError:
+            document = None
+        if not isinstance(document, dict):
+            return self._dc_api_refused("the body is not one JSON object")
+        protocol = document.get("protocol")
+        if protocol != DC_API_PROTOCOL:
+            return self._dc_api_refused("the response's protocol is %s, not %s; only a signed request is made"
+                                        % (json.dumps(protocol), DC_API_PROTOCOL))
+        try:
+            status, answer, verdict = self.verifier.dc_api_response(document.get("data"),
+                                                                    origin=self.dc_api_origin)
+            if status != 200 and verdict is not None:
+                self.log_error("refused: %s: %s", verdict.code, written_reason(verdict.reason))
+            elif getattr(verdict, "wallet_error", None) is not None:
+                self.log_error("wallet error: %s", written_reason(verdict.reason))
+        except Exception:  # noqa: BLE001
+            # As at /response: the wallet's page sees the constant refusal, the log the traceback.
+            self.log_error("dc_api_response raised", exc_info=True)
+            status, answer, verdict = 400, dict(Verifier.REFUSAL_BODY), None
+        if self.on_verdict:
+            self.on_verdict(status, answer, verdict)
+        return self._send(status, answer)
+
+    def _dc_api_refused(self, reason):
+        self.log_error("refused: invalid_request: %s", written_reason(reason))
+        return self._send(400, dict(Verifier.REFUSAL_BODY))
+
+    def _send_no_store(self, status, body):
+        raw = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _send_dc_api_file(self, raw, content_type, policy=None):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(raw)))
+        if policy:
+            self.send_header("Content-Security-Policy", policy)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
 
 
 class _CorsHandler(_Handler):
@@ -556,9 +795,41 @@ class _CorsHandler(_Handler):
         self.end_headers()
 
 
+class _Server(http.server.ThreadingHTTPServer):
+    """The listener. Its socket stays plain. With TLS (`tls_context`), each accepted connection is
+    wrapped in that connection's own thread, so the handshake is a read like any other: bounded by
+    the handler's timeout and holding that thread alone, never the one that accepts."""
+
+    daemon_threads = True
+    tls_context = None
+
+    def handle_error(self, request, client_address):
+        # socketserver's own prints a banner and the traceback whole (traceback.print_exc), as
+        # when a connection is reset mid-request. This writes them through the same sink as
+        # every other line the listener writes (2026-11-19).
+        sys.stderr.write("polaris-oid4vp: " + logged_line(
+            "an exception occurred handling a request from %s" % (client_address,)) + "\n")
+        sys.stderr.write(exception_text(sys.exc_info()[1]))
+
+    def finish_request(self, request, client_address):
+        # ThreadingMixIn calls this in the connection's own thread.
+        if self.tls_context is None:
+            return super().finish_request(request, client_address)
+        request.settimeout(self.RequestHandlerClass.timeout)
+        try:
+            tls = self.tls_context.wrap_socket(request, server_side=True)
+        except OSError:  # ssl.SSLError, the timeout, a reset: that client alone is let go
+            return None
+        try:
+            return super().finish_request(tls, client_address)
+        finally:
+            self.shutdown_request(tls)
+
+
 def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
           on_verdict=None, background=True, verbose=False, on_request_object=None,
-          cors_origins=None, control_token=None, on_control=None, name_requests=False):
+          cors_origins=None, control_token=None, on_control=None, name_requests=False,
+          on_control_read=None, dc_api_origin=None):
     """Start the two endpoints. Returns the HTTPServer so a caller can shut it down.
 
     TLS is not optional in the profile: the suite refuses a `request_uri` that is not HTTPS
@@ -583,10 +854,21 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
     with no space (`control_token_problem`), or ValueError is raised before anything listens.
     The path never carries a CORS header, whatever `cors_origins` says.
 
+    `on_control_read`, only beside them, adds `GET /control/request/{n}` behind the same token:
+    `on_control_read(n)` returns the (status, JSON document) it is answered with, and the answer
+    carries `Cache-Control: no-store` (`_ControlHandler`). Given without `control_token`, or not callable, it
+    raises ValueError before anything listens.
+
     `name_requests`, for a caller that can hold more than one request open (`serve --rearm`, the
     control endpoint): each line logged for an answer at the response URI then ends with the
     request it was about (`about_request`), and a wallet error's names the error and not what
     became of the request, which the caller's rule decides.
+
+    `dc_api_origin` (experimental), for a verifier built for mso_mdoc: the origin this listener's
+    page is opened at, as `mdoc.dc_api_origin` reads one. It adds the page at DC_API_PAGE_PATH and
+    its routes (`_DcApiHandler`), which make requests for that origin and judge responses at it.
+    A verifier built for another format, or an origin `mdoc.dc_api_origin` refuses, raises
+    ValueError before anything listens.
 
     Shut it down with `httpd.shutdown()` followed by `httpd.server_close()`: the first stops
     the loop and the second releases the socket, and skipping the second leaks a listening
@@ -602,6 +884,9 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         base = _CorsHandler
         members["cors_origins"] = origins
     mixins = ()
+    if on_control_read is not None and (control_token is None or not callable(on_control_read)):
+        raise ValueError("on_control_read is given beside control_token and on_control, and is a "
+                         "function that answers a read of a control request")
     if control_token is not None or on_control is not None:
         if control_token is None or not callable(on_control):
             raise ValueError("control_token and on_control are given together: a token and a "
@@ -612,15 +897,23 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         mixins = (_ControlHandler,)
         members["control_token_digest"] = hashlib.sha256(control_token.encode("ascii")).digest()
         members["on_control"] = staticmethod(on_control)
+        if on_control_read is not None:
+            members["on_control_read"] = staticmethod(on_control_read)
+    if dc_api_origin is not None:
+        if getattr(verifier, "credential_format", None) != MDOC_FORMAT:
+            raise ValueError("dc_api_origin is for a verifier built for %s: a request over the Digital "
+                             "Credentials API asks for an mdoc" % MDOC_FORMAT)
+        members["dc_api_origin"] = _dc_api_origin(dc_api_origin)
+        mixins = mixins + (_DcApiHandler,)
     handler = type("_BoundHandler", mixins + (base,), members)
-    # ThreadingHTTPServer, not HTTPServer, and a read timeout on every connection. Both are
-    # about one thing: a client that opens a socket and then goes quiet must not take the
-    # listener off the air for every wallet. With a single accept loop it did, and it cost
-    # the attacker one TCP connection. The timeout closes the slow client; the thread pool
-    # means even a client that keeps its timeout alive occupies one thread rather than all
-    # of the service.
-    httpd = http.server.ThreadingHTTPServer((host, port), handler)
-    httpd.daemon_threads = True
+    # A thread per connection, and a read timeout on every connection, the TLS handshake
+    # included (_Server). Both are about one thing: a client that opens a socket and then goes
+    # quiet must not take the listener off the air for every wallet. With a single accept loop
+    # it did, and it cost the attacker one TCP connection. The timeout closes the slow client;
+    # the thread means even a client that keeps its timeout alive occupies one thread rather
+    # than all of the service. Held by test_serve's TlsHandshakeTests, on a listener with a
+    # certificate, and by its two stalled-request tests, on one without.
+    httpd = _Server((host, port), handler)
     if certfile:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         # TLS 1.0 and 1.1 are deprecated (RFC 8996). Python 3.10 and later refuse them by
@@ -629,7 +922,7 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         # floor is set, not inherited.
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certfile, keyfile)
-        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        httpd.tls_context = context
     if background:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
     else:  # pragma: no cover - the blocking path is for a real deployment
