@@ -20827,15 +20827,15 @@ def test_package_readme_test_count_check_discriminates(tmp_path):
     pkg = tmp_path / "packages" / "polaris-oid4vp"
     pkg.mkdir(parents=True)
 
-    def write(suites, stated, present=None):
+    def write(suites, stated, present=None, files="three"):
         for s in (suites if present is None else present):
             (pkg / (s + ".py")).write_text(
                 "import unittest\n\n\nclass T(unittest.TestCase):\n"
                 + "".join("    def test_%d(self):\n        pass\n\n" % i for i in range(4)))
         (pkg / "README.md").write_text(
             "## Tests\n\n```bash\ncd packages/polaris-oid4vp && python3 -m unittest %s\n```\n"
-            "\n%s tests in seven files, and they are not equal in weight.\n"
-            % (" ".join(suites), stated))
+            "\n%s tests in %s files, and they are not equal in weight.\n"
+            % (" ".join(suites), stated, files))
 
     fn = checks.check_package_readme_counts_its_tests
     SUITES = ["test_a", "test_b", "test_c"]
@@ -20851,6 +20851,29 @@ def test_package_readme_test_count_check_discriminates(tmp_path):
     # And overstating, which is the direction that flatters.
     write(SUITES, 40)
     assert fn(tmp_path)[0].level == "FAIL", "must FAIL when the README claims more than it has"
+
+    # 2026-11-21: a test file of the package that the command leaves out, its tests out of the
+    # count with it. The check read only the command and passed.
+    write(SUITES, 12)
+    (pkg / "test_left_out.py").write_text("import unittest\n\n\nclass T(unittest.TestCase):\n"
+                                          "    def test_0(self):\n        pass\n")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "test_left_out" in out[0].message, \
+        "must FAIL when a test file of the package is not in the run command"
+    (pkg / "test_left_out.py").unlink()
+    assert fn(tmp_path)[0].level == "OK"
+
+    # The file count, parsed and never compared until 2026-11-21: "seven" over three suites.
+    write(SUITES, 12, files="seven")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "7 files" in out[0].message and "names 3" in out[0].message, \
+        "must FAIL when the stated file count is not the number of suites named"
+    write(SUITES, 12, files="3")
+    assert fn(tmp_path)[0].level == "OK", "a file count in digits is read as well"
+    write(SUITES, 12, files="several")
+    out = fn(tmp_path)
+    assert out[0].level == "FAIL" and "nothing can hold" in out[0].message, \
+        "must FAIL when the file count is not a number"
 
     # A suite named in the command but absent from disk: the command is the source of truth
     # for WHICH suites, so naming a missing one is a broken run instruction, not a count.
@@ -20872,10 +20895,17 @@ def test_package_readme_test_count_check_discriminates(tmp_path):
 
     write(SUITES, 12)
     (pkg / "README.md").write_text(
-        (pkg / "README.md").read_text().replace("12 tests in seven files", "many tests"))
+        (pkg / "README.md").read_text().replace("12 tests in three files", "many tests"))
     out = fn(tmp_path)
     assert out[0].level == "FAIL" and "not checkable" in out[0].message, \
         "must FAIL when the count is written in a form nothing can hold"
+
+
+def test_package_readme_test_count_check_holds_the_real_readme():
+    """The positive control: the package's README, as it is in this tree, names every test file,
+    states their sum and their number, and the check says so."""
+    out = checks.check_package_readme_counts_its_tests(REPO)
+    assert out[0].level == "OK", out[0].message
 
 
 def test_status_assertion_window_check_discriminates(tmp_path):

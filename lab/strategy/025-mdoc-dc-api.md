@@ -857,10 +857,10 @@ request lifecycle are part 2; version 1.1 with `readerAuthAll`, and Apple's samp
   signature), chosen 2026-11-21: OID4VCgo's `mdocdcapi` (MIT), read at v0.85.0. Its `VerifyResponse` builds the
   transcript in its own code (`transcript.go`), opens the response with Go's standard-library `crypto/hpke`, and checks
   the issuer and device signatures in its own `mdoc` package. Its commit 8df41e8d, made after it checked this project's
-  negative vectors, sets the instant `mdocdcapi.VerifyResponse` judges validity at from its caller's `Now`; the lab run
-  names that commit beside the vectors whose certificate verdict turns on the verification instant, and no others. The
-  run goes in
-  through `lab/interop/mdoc/witness-oid4vcgo`, its pin moved from v0.78.0 to v0.85.0, in a lab change after part 1.
+  negative vectors, makes the issuer-certificate checks behind `mdocdcapi.VerifyResponse` use its caller's `Now`, the
+  instant it already judged the credential at; the lab run names that commit beside the vectors whose certificate
+  verdict turns on the verification instant, and no others. The run goes in through `lab/interop/mdoc/witness-oid4vcgo`,
+  its pin moved from v0.78.0 to v0.85.0, in a lab change after part 1.
   @owf/mdoc 0.10.0 leaves HPKE to its caller, so it can witness the transcript and the DeviceResponse but not the open.
 
 ### M5: an over-18/21 page that keeps nothing
