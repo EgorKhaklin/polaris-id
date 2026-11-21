@@ -18,8 +18,9 @@ transport and on the credential, measured rather than asserted.
 
 WHAT IT IS NOT. It is not a conformance result: the suite ran locally, nothing was scored or
 published, and the seven negative modules are not exercised here because refusing them is an
-HTTP 4xx from a listener this package does not yet have. `lab/EXTERNAL-NOUNS.md` stays at
-zero and says so.
+HTTP 4xx from the package's listener, which this test does not start. `lab/EXTERNAL-NOUNS.md`
+lists the capture under Internal readiness, not as external evidence: what this project ran is
+not an outside party's result.
 """
 import json
 import os
