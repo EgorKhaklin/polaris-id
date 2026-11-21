@@ -6,16 +6,21 @@
 and `verdict --status-anchor` hand it. Its rules are the README's, because the URI it is given is
 one an issuer wrote into a credential:
 
-  https only, with the default certificate and host name checks;
+  https only, with the default certificate and host name checks, and TLS 1.2 or later;
   every address the name resolves to is judged before a connection is made to it, and a
   loopback, private, link-local, unique-local, unspecified or other non-global one is not
-  connected to; the address connected to is one of those judged, not a name resolved again;
+  connected to, nor a site-local, IETF protocol-assignment, 6to4 relay or IPv6 documentation
+  one, named so that the rule is the same on every Python the package supports;
+  an IPv4 address inside IPv6 (mapped or 6to4) is judged as itself; the address connected to is
+  one of those judged, not a name resolved again;
   no proxy and no redirect: a 3xx is refused like any answer but 200;
   at most status.MAX_TOKEN_BYTES of body;
-  TIMEOUT_SECONDS for the connection (every address the name resolves to, together) and for each
-  read; and TOTAL_SECONDS after the fetch begins, its connection is cut and the fetch refused
-  whatever it was still reading (the TLS handshake, the status line, a header or the body), well
-  inside the 300-second request lifetime a response is judged within.
+  one User-Agent, USER_AGENT, and no interpreter version;
+  TIMEOUT_SECONDS for the connection (resolving the name and every address it resolves to,
+  together) and for each read; and TOTAL_SECONDS after the fetch begins, the fetch is refused
+  whatever it was still doing (resolving the name, the TLS handshake, the status line, a header
+  or the body), its connection cut, well inside the 300-second request lifetime a response is
+  judged within.
 
 Whatever it raises, `status.decide_by_fetching` reports as `unreachable`.
 
@@ -25,6 +30,7 @@ a byte bound), to which this adds the address rule, the total bound and https on
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import http.client
 import ipaddress
 import socket
@@ -45,14 +51,38 @@ TOTAL_SECONDS = 30
 #: Bytes asked of the connection per read: one read is at most one receive.
 _READ_BYTES = 64 * 1024
 
+#: The one User-Agent a fetch sends, in place of urllib's, which names the interpreter's version.
+USER_AGENT = "polaris-oid4vp"
+
+#: Ranges refused by name, so the rule does not depend on the running Python's address table:
+#: measured 2026-11-21, 3.9.6's table allows an address in each of them, and 3.12.13's two.
+_NAMED_RANGES = (
+    ("site-local", ipaddress.ip_network("fec0::/10")),
+    ("protocol-assignment", ipaddress.ip_network("192.0.0.0/24")),
+    ("6to4 relay", ipaddress.ip_network("192.88.99.0/24")),
+    ("documentation", ipaddress.ip_network("3fff::/20")),
+)
+
+#: When the fetch under way on this thread must end (a `time.monotonic()` value), or None: set by
+#: `_Deadline.connect` around the connection it wraps, so resolving a name stays inside the total.
+_ENDS: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "polaris_oid4vp_status_fetch_ends", default=None)
+
 
 def address_refusal(address):
     """"" when `address` (a string) is one a status list may be fetched from, else why not.
-    An IPv4 address written inside IPv6 is judged as the IPv4 address it carries."""
+    An IPv4 address written inside IPv6, mapped or 6to4, is judged as the IPv4 address it
+    carries; the ranges in `_NAMED_RANGES` are refused by name, then the address table's."""
     ip = ipaddress.ip_address(address.split("%", 1)[0])
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
+    carried = getattr(ip, "sixtofour", None)
+    if carried is not None:
+        ip = carried
+    for kind, network in _NAMED_RANGES:
+        if ip in network:
+            return "%s is a %s address" % (ip, kind)
     for kind, matches in (("loopback", ip.is_loopback), ("link-local", ip.is_link_local),
                           ("unspecified", ip.is_unspecified), ("private or unique-local",
                                                                ip.is_private),
@@ -71,8 +101,12 @@ def connect_public(address, timeout=None, source_address=None):
     differently the second time is never asked again. Has the signature http.client gives
     `_create_connection`."""
     host, port = address
+    # Resolving the name and each allowed address in turn, all of them within one `timeout`: a
+    # name slow to resolve, or one that resolves to many addresses that never answer, takes no
+    # longer to give up on than a name with one.
+    give_up = time.monotonic() + timeout if isinstance(timeout, (int, float)) else None
     refused, allowed = [], []
-    for family, kind, proto, _, sockaddr in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
+    for family, kind, proto, _, sockaddr in _resolve(host, port, _within(give_up)):
         why = address_refusal(sockaddr[0])
         if why:
             refused.append(why)
@@ -81,9 +115,6 @@ def connect_public(address, timeout=None, source_address=None):
     if not allowed:
         raise ValueError("%s resolves to no address a status list may be fetched from: %s"
                          % (host, "; ".join(refused) or "it resolves to none"))
-    # Each allowed address in turn, all of them within one `timeout`: a name that resolves to many
-    # addresses that never answer takes no longer to give up on than a name with one.
-    give_up = time.monotonic() + timeout if isinstance(timeout, (int, float)) else None
     failures = []
     for attempt in allowed:
         left = None if give_up is None else give_up - time.monotonic()
@@ -95,6 +126,37 @@ def connect_public(address, timeout=None, source_address=None):
             failures.append("%s: %s" % (attempt[3][0], exc))
     raise ValueError("no connection to %s within %s seconds: %s"
                      % (host, timeout, "; ".join(failures)))
+
+
+def _within(give_up):
+    """Seconds a name may take to resolve: what is left of the connection's timeout (`give_up`, a
+    `time.monotonic()` value, or None) and no more than what is left of the fetch's total when a
+    `_Deadline` set one; None when neither bounds it."""
+    ends = _ENDS.get()
+    now = time.monotonic()
+    left = [moment - now for moment in (give_up, ends) if moment is not None]
+    return max(0.0, min(left)) if left else None
+
+
+def _resolve(host, port, within):
+    """`socket.getaddrinfo` for `host`, in a worker given `within` seconds (None: as long as it
+    takes). A resolver that has not answered by then is left to finish on its own thread, and
+    the fetch is refused."""
+    answer = {}
+
+    def work():
+        try:
+            answer["infos"] = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        except OSError as exc:
+            answer["error"] = exc
+    worker = threading.Thread(target=work, name="status-fetch-resolve", daemon=True)
+    worker.start()
+    worker.join(within)
+    if worker.is_alive():
+        raise ValueError("resolving %s took more than %.3g seconds" % (host, within))
+    if "error" in answer:
+        raise ValueError("%s does not resolve: %s" % (host, answer["error"]))
+    return answer["infos"]
 
 
 def _connected(attempt, connect_timeout, read_timeout, source_address):
@@ -140,9 +202,14 @@ class _Deadline:
         self._settled = False
         self._timer = threading.Timer(total, self._expire)
         self._timer.daemon = True
+        self._ends = None
 
     def connect(self, address, timeout=None, source_address=None):
-        sock = self._connect(address, timeout, source_address)
+        token = _ENDS.set(self._ends)
+        try:
+            sock = self._connect(address, timeout, source_address)
+        finally:
+            _ENDS.reset(token)
         with contextlib.ExitStack() as unless_held:
             unless_held.callback(sock.close)
             held = sock.dup()
@@ -162,6 +229,7 @@ class _Deadline:
                 _cut(held)
 
     def __enter__(self):
+        self._ends = time.monotonic() + self.total
         self._timer.start()
         return self
 
@@ -192,11 +260,22 @@ def _handler(context, connect):
     return Handler(context=context)
 
 
+def default_context():
+    """The TLS context a fetch uses when it is given none: the default checks, TLS 1.2 or later.
+
+    TLS 1.0 and 1.1 are deprecated (RFC 8996). Python 3.10 and later refuse them by default, but
+    this package supports 3.9, whose default follows the TLS library, so the floor is set, not
+    inherited, as serve.py sets it for its listener."""
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 def fetch_status_list(uri, *, timeout=TIMEOUT_SECONDS, total=TOTAL_SECONDS, context=None,
                       connect=connect_public):
     """The body of one GET of `uri`, or an exception saying why there is none.
 
-    `context` is the TLS context (the default one when None) and `connect` makes the connection
+    `context` is the TLS context (`default_context()` when None) and `connect` makes the connection
     (`connect_public` unless a test hands another); both are here so the rules after them can be
     tested against a listener on this machine."""
     if not isinstance(uri, str) or urllib.parse.urlsplit(uri).scheme != "https":
@@ -204,8 +283,9 @@ def fetch_status_list(uri, *, timeout=TIMEOUT_SECONDS, total=TOTAL_SECONDS, cont
     deadline = _Deadline(total, connect)
     # Only this handler: no proxy, no redirect handling and no other scheme.
     opener = urllib.request.OpenerDirector()
-    opener.add_handler(_handler(context or ssl.create_default_context(), deadline.connect))
-    request = urllib.request.Request(uri, headers={"Accept": "application/statuslist+jwt"})
+    opener.add_handler(_handler(context or default_context(), deadline.connect))
+    request = urllib.request.Request(uri, headers={"Accept": "application/statuslist+jwt",
+                                                   "User-Agent": USER_AGENT})
     body = b""
     with deadline, opener.open(request, timeout=timeout) as answer:
         if answer.status != 200:

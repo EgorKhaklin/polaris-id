@@ -671,6 +671,43 @@ NAMED_MUTANTS = (
     ("status_fetch:a-read-waits-the-connect-budget", "polaris_oid4vp/status_fetch.py",
      "        if isinstance(read_timeout, (int, float)):\n            sock.settimeout(read_timeout)\n",
      "        pass  # MUTANT\n"),
+    # The fetch's own context holds TLS 1.2 or later whatever the library's default allows (a
+    # review before the push found it inheriting the default, as serve.py's listener does not).
+    ("status_fetch:no-tls-floor", "polaris_oid4vp/status_fetch.py",
+     "    context.minimum_version = ssl.TLSVersion.TLSv1_2\n",
+     "    pass  # MUTANT\n"),
+    # The same review: the address rule leaned on the running Python's table, which differs
+    # between 3.9 and 3.12, the name was resolved outside the total, and urllib's User-Agent
+    # named the interpreter. Each named range, the 6to4 reading, both bounds on resolving and
+    # the one User-Agent. A range is removed as a comment line, so the mutant still compiles.
+    ("status_fetch:sixtofour-judged-as-ipv6", "polaris_oid4vp/status_fetch.py",
+     "    carried = getattr(ip, \"sixtofour\", None)\n    if carried is not None:\n        ip = carried\n",
+     "    pass  # MUTANT\n"),
+    ("status_fetch:site-local-allowed", "polaris_oid4vp/status_fetch.py",
+     "    (\"site-local\", ipaddress.ip_network(\"fec0::/10\")),\n",
+     "    # MUTANT\n"),
+    ("status_fetch:protocol-assignments-allowed", "polaris_oid4vp/status_fetch.py",
+     "    (\"protocol-assignment\", ipaddress.ip_network(\"192.0.0.0/24\")),\n",
+     "    # MUTANT\n"),
+    ("status_fetch:6to4-relay-allowed", "polaris_oid4vp/status_fetch.py",
+     "    (\"6to4 relay\", ipaddress.ip_network(\"192.88.99.0/24\")),\n",
+     "    # MUTANT\n"),
+    ("status_fetch:ipv6-documentation-allowed", "polaris_oid4vp/status_fetch.py",
+     "    (\"documentation\", ipaddress.ip_network(\"3fff::/20\")),\n",
+     "    # MUTANT\n"),
+    ("status_fetch:resolution-unbounded", "polaris_oid4vp/status_fetch.py",
+     "    worker.join(within)\n",
+     "    worker.join()  # MUTANT\n"),
+    ("status_fetch:resolution-outside-the-total", "polaris_oid4vp/status_fetch.py",
+     "    ends = _ENDS.get()\n",
+     "    ends = None  # MUTANT\n"),
+    ("status_fetch:connect-budget-restarts-after-resolving", "polaris_oid4vp/status_fetch.py",
+     "    failures = []\n    for attempt in allowed:\n",
+     "    give_up = time.monotonic() + timeout if isinstance(timeout, (int, float)) else None  # MUTANT\n"
+     "    failures = []\n    for attempt in allowed:\n"),
+    ("status_fetch:interpreter-user-agent", "polaris_oid4vp/status_fetch.py",
+     "                                                   \"User-Agent\": USER_AGENT})\n",
+     "                                                   })  # MUTANT\n"),
 )
 
 

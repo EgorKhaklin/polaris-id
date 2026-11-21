@@ -535,9 +535,9 @@ The approach follows EUDIPLO's `registration_cert` configuration and ERICA's req
   `decide` refuses above); and set connect and read timeouts. Whatever it raises becomes
   `unreachable`. Keep the time one response's status fetches take, together, under the request
   lifetime (`request_ttl_seconds`, 300 seconds by default): a response whose request's lifetime
-  ends while it is judged is refused. `status_fetch.fetch_status_list` is such a callable, with
-  a 10-second timeout for connecting and for each read, and it refuses a list that has not fully
-  arrived 30 seconds after the fetch began.
+  ends while it is judged is refused. `status_fetch.fetch_status_list` is such a callable, over
+  TLS 1.2 or later, with a 10-second timeout for connecting and for each read, and it refuses a
+  list that has not fully arrived 30 seconds after the fetch began.
 - **Who may publish status for whom is stated, not inferred:** `StatedAuthority` records that a
   named key may publish for a named issuer at a named URI. Anything else is `no_authority`, and
   no request is sent to a URI an unvetted credential names.
@@ -625,12 +625,12 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1224 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1231 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 381 refusals accept and requires a
-  test to fail: 377 are caught, and the 4 survivors are declared with their reasons. It also makes
-  121 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 383 refusals accept and requires a
+  test to fail: 379 are caught, and the 4 survivors are declared with their reasons. It also makes
+  131 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under
@@ -649,8 +649,10 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
   judged before the fetch and no same-key grant, the signer's key usage, organization and
   distance from the credential anchor, the declaration read only as `True`, an anchor sent in
   `x5c`, a status required and not established, one ask per list entry, and the fetch's address
-  rules, redirects, one connect timeout across addresses and its total over the whole exchange),
-  each of which a test must catch (all 121 are; measured 2026-11-21;
+  rules (each named range, and a 6to4 address judged as the IPv4 address it carries), redirects,
+  its TLS floor and its one User-Agent, one connect timeout across resolving the name and every
+  address, the name resolved within the total too, and its total over the whole exchange),
+  each of which a test must catch (all 131 are; measured 2026-11-21;
   CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

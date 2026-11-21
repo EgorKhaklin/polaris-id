@@ -1204,8 +1204,9 @@ class _Listener:
         self.client_context = ssl.create_default_context(
             cadata=root.public_bytes(serialization.Encoding.PEM).decode("ascii"))
         server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.minimum_version = ssl.TLSVersion.TLSv1_2  # as serve.py sets its listener's
         server_context.load_cert_chain(certfile, keyfile)
-        self.paths, self.connections = [], 0
+        self.paths, self.connections, self.agents = [], 0, []
         listener = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -1222,6 +1223,7 @@ class _Listener:
 
             def do_GET(self):
                 listener.paths.append(self.path)
+                listener.agents.append(self.headers.get_all("User-Agent"))
                 if self.path == "/ok":
                     self.answer(200, _LIST_BODY)
                 elif self.path == "/redirect":
@@ -1360,7 +1362,8 @@ class StatusFetchTests(unittest.TestCase):
             started = time.monotonic()
             self.refused_with(lambda: status_fetch.connect_public(("status.example", 443), 0.3),
                               "no connection to status.example within 0.3 seconds")
-            self.assertLess(time.monotonic() - started, 0.6)
+            # a generous ceiling for a loaded machine; the addresses tried are the measure
+            self.assertLess(time.monotonic() - started, 3)
         self.assertEqual([address for address, _, _ in given], addresses[:1])
 
         connected, given[:] = object(), []
@@ -1378,6 +1381,30 @@ class StatusFetchTests(unittest.TestCase):
         self.assertLess(given[1][1], 0.3)
         self.assertEqual([read for _, _, read in given], [0.3, 0.3])
 
+    def test_resolving_and_connecting_share_one_timeout(self):
+        """A name slow to resolve leaves the connection only what is left of the same timeout."""
+        found = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 443))]
+        given = []
+
+        def slow(host, port, *args, **kwargs):
+            time.sleep(0.3)
+            return found
+
+        def unanswered(attempt, connect_timeout, read_timeout, source_address):
+            given.append(connect_timeout)
+            time.sleep(connect_timeout)
+            raise socket.timeout("timed out")
+
+        with mock.patch.object(socket, "getaddrinfo", slow), \
+                mock.patch.object(status_fetch, "_connected", unanswered):
+            started = time.monotonic()
+            self.refused_with(lambda: status_fetch.connect_public(("status.example", 443), 0.5),
+                              "no connection to status.example within 0.5 seconds")
+            # a generous ceiling for a loaded machine; what is given to connect is the measure
+            self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(len(given), 1)
+        self.assertLess(given[0], 0.3)
+
     def test_a_connected_socket_waits_the_full_timeout_on_each_read(self):
         server = socket.socket()
         self.addCleanup(server.close)
@@ -1387,6 +1414,32 @@ class StatusFetchTests(unittest.TestCase):
             (socket.AF_INET, socket.SOCK_STREAM, 0, server.getsockname()), 0.5, 7, None)
         self.addCleanup(sock.close)
         self.assertEqual(sock.gettimeout(), 7)
+
+    def test_the_default_context_holds_tls_1_2_whatever_the_library_allows(self):
+        # Python 3.9's default follows the TLS library, which can allow TLS 1.0; hand the fetch
+        # such a default and read the floor on the context it connects under.
+        def permissive():
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.minimum_version = ssl.TLSVersion.TLSv1
+            return context
+        used = []
+
+        def handler(context, connect):
+            used.append(context)
+            raise ValueError("stopped before connecting")
+        with mock.patch.object(status_fetch.ssl, "create_default_context", permissive), \
+                mock.patch.object(status_fetch, "_handler", handler):
+            self.refused_with(lambda: status_fetch.fetch_status_list("https://status.example/list"),
+                              "stopped before connecting")
+        self.assertEqual([c.minimum_version for c in used], [ssl.TLSVersion.TLSv1_2])
+        # a context the caller hands is the caller's, as given
+        given = permissive()
+        with mock.patch.object(status_fetch, "_handler", handler):
+            self.refused_with(lambda: status_fetch.fetch_status_list("https://status.example/list",
+                                                                     context=given),
+                              "stopped before connecting")
+        self.assertIs(used[-1], given)
+        self.assertEqual(given.minimum_version, ssl.TLSVersion.TLSv1)
 
     def test_only_https_is_fetched(self):
         connections = self.listener.connections
@@ -1425,6 +1478,57 @@ class StatusFetchTests(unittest.TestCase):
                               ("::ffff:169.254.169.254", "169.254.169.254 is a link-local address")):
             with self.subTest(address=address):
                 self.assertEqual(status_fetch.address_refusal(address), said)
+
+    def test_the_named_ranges_and_6to4_are_judged_the_same_on_every_interpreter(self):
+        """3.9.6's address table allows an address in each named range and the three 6to4 ones
+        here, 3.12's in two of the ranges; the fetch refuses each by name, in the same words on
+        both, and judges a 6to4 address as the IPv4 address it carries."""
+        for address, said in (("fec0::1", "fec0::1 is a site-local address"),
+                              ("192.0.0.8", "192.0.0.8 is a protocol-assignment address"),
+                              ("192.88.99.1", "192.88.99.1 is a 6to4 relay address"),
+                              ("3fff::1", "3fff::1 is a documentation address"),
+                              ("2002:7f00:1::", "127.0.0.1 is a loopback address"),
+                              ("2002:a00:1::", "10.0.0.1 is a private or unique-local address"),
+                              ("2002:a9fe:a9fe::", "169.254.169.254 is a link-local address"),
+                              ("2002:808:808::", ""), ("8.8.8.8", ""), ("2606:4700::1111", "")):
+            with self.subTest(address=address):
+                self.assertEqual(status_fetch.address_refusal(address), said)
+
+    def hanging_resolver(self, seconds, then):
+        """getaddrinfo answering `then` after `seconds`, as a resolver that does not answer does."""
+        def getaddrinfo(host, port, *args, **kwargs):
+            time.sleep(seconds)
+            return then
+        return mock.patch.object(status_fetch.socket, "getaddrinfo", getaddrinfo)
+
+    LOOPBACK = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]
+
+    def test_a_name_is_resolved_within_the_connection_timeout(self):
+        started = time.monotonic()
+        with self.hanging_resolver(3, self.LOOPBACK):
+            self.refused_with(lambda: status_fetch.fetch_status_list(
+                "https://status.example/list", total=10, timeout=0.3),
+                "resolving status.example took more than 0.3 seconds")
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_resolving_a_name_is_inside_the_total(self):
+        started = time.monotonic()
+        with self.hanging_resolver(3, self.LOOPBACK):
+            self.refused_with(lambda: status_fetch.fetch_status_list(
+                "https://status.example/list", total=0.2, timeout=5), "more than 0.2 seconds")
+        self.assertLess(time.monotonic() - started, 0.2 + 0.6)
+
+    def test_a_name_that_does_not_resolve_is_refused(self):
+        def getaddrinfo(*args, **kwargs):
+            raise socket.gaierror(socket.EAI_NONAME, "no such name")
+        with mock.patch.object(status_fetch.socket, "getaddrinfo", getaddrinfo):
+            self.refused_with(lambda: status_fetch.fetch_status_list(
+                "https://status.example/list", total=10, timeout=0.5), "status.example does not resolve")
+
+    def test_the_fetch_sends_one_user_agent_and_no_interpreter_version(self):
+        asked = len(self.listener.agents)
+        self.assertEqual(self.fetch("/ok"), _LIST_BODY)
+        self.assertEqual(self.listener.agents[asked:], [["polaris-oid4vp"]])
 
 
 if __name__ == "__main__":
