@@ -308,7 +308,8 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
                   issuer_trust_anchors=None, public_base_url=None, claims=None,
                   vct_values=None, verifier_info=None, credential_query_id=None,
                   verifier_info_profile=None, credential_format=None, doctype_value=None,
-                  iaca_roots=None, dc_api_client_metadata=None) -> Verifier:
+                  iaca_roots=None, dc_api_client_metadata=None, status_resolver=None,
+                  require_status=False) -> Verifier:
     # A verifier behind a reverse proxy or a tunnel reaches wallets at a public origin that is
     # not its own host:port; the HAIP request_uri and response_uri must advertise that origin.
     base = public_base_url.rstrip("/") if public_base_url else "https://%s:%d" % (host, port)
@@ -339,7 +340,9 @@ def verifier_from(pki: pathlib.Path, host: str, port: int, issuer_jwks=None,
         **({"verifier_info_profile": verifier_info_profile}
            if verifier_info_profile is not None else {}),
         **({"dc_api_client_metadata": dc_api_client_metadata}
-           if dc_api_client_metadata is not None else {}))
+           if dc_api_client_metadata is not None else {}),
+        **({"status_resolver": status_resolver} if status_resolver is not None else {}),
+        **({"require_status": True} if require_status else {}))
 
 
 def _load_trust_anchors(paths):
@@ -358,6 +361,67 @@ def _load_trust_anchors(paths):
             raise SystemExit("polaris-oid4vp: --issuer-trust-anchor %s is not a readable PEM "
                              "certificate file: %s" % (path, exc))
     return anchors
+
+
+#: The members of one `--status-anchor` entry, every one required and no other read.
+STATUS_ANCHOR_MEMBERS = ("credential_anchor", "status_uri_prefix", "status_anchor", "why")
+
+
+def _load_status_anchors(path):
+    """`--status-anchor FILE`: a JSON array of entries, each {"credential_anchor": PEM path,
+    "status_uri_prefix": https URI ending in /, "status_anchor": PEM path, "why": text}, as a
+    `status.AnchoredAuthority`. A PEM path is read relative to FILE's directory and holds exactly
+    one certificate. ValueError says which entry and what is wrong with it."""
+    from cryptography.x509 import load_pem_x509_certificates
+    from .status import AnchoredAuthority
+    folder = pathlib.Path(path).parent
+    try:
+        entries = _loads_depth_bounded(pathlib.Path(path).read_text(encoding="utf-8"),
+                                       "file", finite=True)
+    except (OSError, ValueError) as exc:
+        raise ValueError("--status-anchor %s is not a readable JSON file: %s" % (path, exc)) from None
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("--status-anchor %s is not a non-empty JSON array of entries" % path)
+    authority = AnchoredAuthority()
+    for number, entry in enumerate(entries, start=1):
+        where = "--status-anchor %s entry %d" % (path, number)
+        if not isinstance(entry, dict) or set(entry) != set(STATUS_ANCHOR_MEMBERS):
+            raise ValueError("%s is not an object of exactly %s" % (where, ", ".join(STATUS_ANCHOR_MEMBERS)))
+        anchors = {}
+        for member in ("credential_anchor", "status_anchor"):
+            given = entry[member]
+            if not isinstance(given, str) or not given:
+                raise ValueError("%s: %s is not a file name" % (where, member))
+            try:
+                certificates = load_pem_x509_certificates((folder / given).read_bytes())
+            except (OSError, ValueError) as exc:
+                raise ValueError("%s: %s %s is not a readable PEM certificate file: %s"
+                                 % (where, member, given, exc)) from None
+            if len(certificates) != 1:
+                raise ValueError("%s: %s %s holds %d certificates, and an anchor is one"
+                                 % (where, member, given, len(certificates)))
+            anchors[member] = certificates[0]
+        try:
+            authority.state(credential_anchor=anchors["credential_anchor"],
+                            status_uri_prefix=entry["status_uri_prefix"],
+                            status_anchor=anchors["status_anchor"], why=entry["why"])
+        except ValueError as exc:
+            raise ValueError("%s: %s" % (where, exc)) from None
+    return authority, len(entries)
+
+
+def _status_options(args):
+    """(status_resolver, require_status, entries) for `--status-anchor` and `--require-status`:
+    (None, False, 0) without either. ValueError for a requirement nothing can meet."""
+    if args.require_status and not args.status_anchor:
+        raise ValueError("--require-status needs --status-anchor: without a stated status anchor "
+                         "no status list is read, and every presentation would be refused")
+    if not args.status_anchor:
+        return None, False, 0
+    from .status import make_resolver
+    from .status_fetch import fetch_status_list
+    authority, entries = _load_status_anchors(args.status_anchor)
+    return make_resolver(authority, fetch_status_list), bool(args.require_status), entries
 
 
 def _load_iaca_roots(paths, doctypes):
@@ -1054,7 +1118,9 @@ def _cmd_serve(args) -> int:
         unread = [flag for flag, given in (("--issuer-jwks", args.issuer_jwks),
                                            ("--issuer-trust-anchor", args.issuer_trust_anchor),
                                            ("--vct", args.vct),
-                                           ("--transaction-data", args.transaction_data)) if given]
+                                           ("--transaction-data", args.transaction_data),
+                                           ("--status-anchor", args.status_anchor),
+                                           ("--require-status", args.require_status)) if given]
         why = None
         if not args.experimental:
             why = ("--format %s is experimental and off by default; add --experimental to turn it "
@@ -1089,6 +1155,7 @@ def _cmd_serve(args) -> int:
         return 2
     try:
         claims = [parse_claim(c, args.format) for c in args.claim]
+        status_resolver, require_status, status_entries = _status_options(args)
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
@@ -1164,7 +1231,8 @@ def _cmd_serve(args) -> int:
                                  **({"credential_format": MDOC_FORMAT, "doctype_value": args.doctype,
                                      "iaca_roots": iaca_roots} if as_mdoc else {}),
                                  **({"dc_api_client_metadata": dc_api_client_metadata}
-                                    if dc_api_client_metadata is not None else {}))
+                                    if dc_api_client_metadata is not None else {}),
+                                 status_resolver=status_resolver, require_status=require_status)
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
@@ -1276,6 +1344,12 @@ def _cmd_serve(args) -> int:
               % (dc_api_page_origin, DC_API_PAGE_PATH))
     if cors_origins:
         print("  cors origins  %s" % " ".join(cors_origins))
+    if status_resolver is not None:
+        print("  status lists  %d anchored entr%s from %s; %s"
+              % (status_entries, "y" if status_entries == 1 else "ies", args.status_anchor,
+                 "only a checked, VALID, fresh status is accepted" if require_status
+                 else "the revocation state is reported, and a checked status that is not VALID "
+                      "is refused"))
     if control_token:
         print("  control       POST %s, bearer token from %s, at most %d outstanding requests"
               % (CONTROL_PATH, args.control_token_file, CONTROL_OUTSTANDING_LIMIT))
@@ -1367,7 +1441,9 @@ def _cmd_verdict(args) -> int:
             raise ValueError("--iaca-root belongs to an %s query, and the request has none"
                              % MDOC_FORMAT)
         unread = [flag for flag, given in (("--issuer-jwks", args.issuer_jwks),
-                                           ("--issuer-trust-anchor", args.issuer_trust_anchor))
+                                           ("--issuer-trust-anchor", args.issuer_trust_anchor),
+                                           ("--status-anchor", args.status_anchor),
+                                           ("--require-status", args.require_status))
                   if given]
         if unread and MDOC_FORMAT in asked and SD_JWT_FORMAT not in asked:
             raise ValueError("%s belong%s to a %s query, and the request has none; an mdoc's "
@@ -1381,9 +1457,11 @@ def _cmd_verdict(args) -> int:
         anchors = _load_trust_anchors(args.issuer_trust_anchor)
         # Each root is trusted for the docTypes the request's mso_mdoc queries name.
         iaca_roots = _load_iaca_roots(args.iaca_root, doctypes) if doctypes else None
+        status_resolver, require_status, _ = _status_options(args)
         result = verify_response(request, token, transaction_data_scope=args.transaction_data_scope,
                                  issuer_jwks=issuer_jwks, trust_anchors=anchors, now=args.now,
-                                 iaca_roots=iaca_roots)
+                                 iaca_roots=iaca_roots, status_resolver=status_resolver,
+                                 require_status=require_status)
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -1478,6 +1556,15 @@ and one that judges a response already captured:
     s.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",
                    help="a PEM file of CA certificates an issuer's x5c leaf must chain to "
                         "(repeatable); the HAIP way to trust an issuer")
+    s.add_argument("--status-anchor", default=None, metavar="FILE",
+                   help="a JSON array of anchored status entries, each {credential_anchor: PEM "
+                        "file, status_uri_prefix: https URI ending in /, status_anchor: PEM file, "
+                        "why}: for a credential whose x5c chain ended at credential_anchor, a "
+                        "Token Status List under the prefix is fetched and believed when its "
+                        "signer's x5c chains to status_anchor. PEM files are read relative to FILE")
+    s.add_argument("--require-status", action="store_true",
+                   help="refuse every presentation whose status is not checked, VALID and fresh "
+                        "(needs --status-anchor; not for --format mso_mdoc)")
     s.add_argument("--claim", action="append", default=[], metavar="PATH[=VALUE]",
                    help="a claim to ask for (repeatable; default given_name and family_name): a "
                         "name, a dotted path of object keys such as age_equal_or_over.18, or a "
@@ -1592,6 +1679,12 @@ and one that judges a response already captured:
                    help="a JSON file of issuer public JWKs to trust")
     d.add_argument("--issuer-trust-anchor", action="append", default=[], metavar="PEM",
                    help="a PEM file of CA certificates an issuer's x5c leaf must chain to")
+    d.add_argument("--status-anchor", default=None, metavar="FILE",
+                   help="as for serve: anchored status entries; each status list is fetched and "
+                        "judged as it is now, whatever --now says")
+    d.add_argument("--require-status", action="store_true",
+                   help="refuse every presentation whose status is not checked, VALID and fresh "
+                        "(needs --status-anchor; not for a request that asks for mso_mdoc)")
     d.add_argument("--transaction-data-scope", choices=TRANSACTION_DATA_SCOPES, default=None,
                    help="which entries each key binding JWT must bind: per_credential, those "
                         "naming its credential query; all_entries, every one. Needed when the "

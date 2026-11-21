@@ -4207,5 +4207,157 @@ class AMalformedDisclosureReachesNoSinkTests(_RunningCase):
         self.assertNotIn(DISCLOSED_MARKER, out.getvalue() + err.getvalue())
 
 
+# --------------------------------------------------------------------------- --status-anchor
+
+STATUS_PREFIX = "https://tsl.provider.example/tsl/"
+
+
+def _self_signed_ca(common_name):
+    import datetime
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key, now = ec.generate_private_key(ec.SECP256R1()), datetime.datetime.now(datetime.timezone.utc)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    return (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .sign(key, hashes.SHA256()))
+
+
+def _status_anchor_file(folder, *, entries=None, **change):
+    """A --status-anchor file in a folder of its own under `folder`, beside its two anchors,
+    which the entry names by bare file name: two self-signed CAs, neither certifying the other.
+    `change` replaces members of the one entry (None drops one); `entries` replaces the array.
+    (path, the credential anchor)."""
+    import json
+    from cryptography.hazmat.primitives import serialization
+    home = pathlib.Path(tempfile.mkdtemp(prefix="status-anchor-", dir=str(folder)))
+    credential_anchor = _self_signed_ca("PID-Signer Test CA")
+    for name, cert in (("a.pem", credential_anchor), ("b.pem", _self_signed_ca("Status Test CA"))):
+        (home / name).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (home / "two.pem").write_bytes((home / "a.pem").read_bytes() + (home / "b.pem").read_bytes())
+    entry = {"credential_anchor": "a.pem", "status_uri_prefix": STATUS_PREFIX,
+             "status_anchor": "b.pem", "why": "the trust list names both anchors"}
+    for member, value in change.items():
+        if value is None:
+            entry.pop(member)
+        else:
+            entry[member] = value
+    path = home / "status-anchors.json"
+    path.write_text(json.dumps([entry] if entries is None else entries))
+    return str(path), credential_anchor
+
+
+class StatusAnchorServeTests(unittest.TestCase):
+    """`serve --status-anchor FILE` and `--require-status`: the entries reach the verifier as a
+    resolver over the bounded fetch, and a file or a requirement it cannot use stops it starting."""
+
+    setUp = ServeCommandHeldOutTests.setUp
+    _serve = ServeCommandHeldOutTests._serve
+
+    def stopped(self, result, *says):
+        _MdocServeCase.stopped(self, result, *says)
+
+    def test_the_entries_reach_the_verifier_over_the_bounded_fetch(self):
+        from unittest import mock
+        from polaris_oid4vp import status_fetch
+        path, anchor = _status_anchor_file(self.tmp)
+        fetched = []
+
+        def fetch(uri):
+            fetched.append(uri)
+            raise OSError("not fetched in a test")
+        for flags, require, said in (
+                ((), False, "the revocation state is reported"),
+                (("--require-status",), True, "only a checked, VALID, fresh status is accepted")):
+            with self.subTest(flags=flags):
+                del fetched[:]
+                with mock.patch.object(status_fetch, "fetch_status_list", fetch):
+                    rc, seen, out, err = self._serve("--status-anchor", path, *flags)
+                self.assertEqual(rc, 0, err)
+                verifier = seen["verifier"]
+                self.assertIs(verifier.require_status, require)
+                self.assertIs(verifier.status_resolver.takes_credential_anchor, True)
+                self.assertIn("status lists  1 anchored entry from %s; %s" % (path, said), out)
+                answer = verifier.status_resolver(uri=STATUS_PREFIX + "1", idx=0, issuer=None,
+                                                  credential_anchor=anchor, credential_leaf=None)
+                self.assertEqual(fetched, [STATUS_PREFIX + "1"])
+                self.assertIs(answer["checked"], False)
+
+    def test_require_status_without_an_anchor_stops_it_starting(self):
+        self.stopped(self._serve("--require-status"), "--require-status needs --status-anchor")
+
+    def test_a_status_anchor_file_it_cannot_use_stops_it_starting(self):
+        good = {"credential_anchor": "a.pem", "status_uri_prefix": STATUS_PREFIX,
+                "status_anchor": "b.pem", "why": "a reason"}
+        cases = (
+            ("absent", None, "is not a readable JSON file"),
+            ("not JSON", "{", "is not a readable JSON file"),
+            ("not an array", dict(entries={}), "is not a non-empty JSON array of entries"),
+            ("an empty array", dict(entries=[]), "is not a non-empty JSON array of entries"),
+            ("a member missing", dict(why=None), "entry 1 is not an object of exactly"),
+            ("a member added", dict(note="x"), "entry 1 is not an object of exactly"),
+            ("a path that is not a name", dict(credential_anchor=5),
+             "entry 1: credential_anchor is not a file name"),
+            ("a file that is not there", dict(status_anchor="absent.pem"),
+             "entry 1: status_anchor absent.pem is not a readable PEM certificate file"),
+            ("two certificates", dict(status_anchor="two.pem"),
+             "entry 1: status_anchor two.pem holds 2 certificates, and an anchor is one"),
+            ("an http prefix", dict(status_uri_prefix="http://tsl.provider.example/tsl/"),
+             "entry 1: the status URI prefix"),
+            ("the second entry", dict(entries=[good, dict(good, status_anchor="a.pem")]),
+             "entry 2: "))
+        for label, change, said in cases:
+            with self.subTest(case=label):
+                if change is None:
+                    path = str(self.tmp / "absent.json")
+                elif isinstance(change, str):
+                    path = str(self.tmp / "not-json.json")
+                    pathlib.Path(path).write_text(change)
+                else:
+                    path, _ = _status_anchor_file(self.tmp, **change)
+                self.stopped(self._serve("--status-anchor", path), "--status-anchor", said)
+
+    def test_with_an_mdoc_query_each_flag_stops_it_starting(self):
+        path, _ = _status_anchor_file(self.tmp)
+        self.root = self.tmp / "iaca.pem"
+        from cryptography.hazmat.primitives import serialization
+        self.root.write_bytes(_self_signed_ca("IACA Test Root").public_bytes(
+            serialization.Encoding.PEM))
+        for flags in (("--status-anchor", path), ("--require-status",)):
+            with self.subTest(flag=flags[0]):
+                self.stopped(_MdocServeCase.mdoc(self, *flags), flags[0], "dc+sd-jwt")
+
+
+class StatusAnchorVerdictTests(unittest.TestCase):
+    """`verdict --status-anchor FILE` and `--require-status`, over the two-credential vector,
+    whose credentials name no status list."""
+
+    setUp = VerdictCommandTests.setUp
+    _write = VerdictCommandTests._write
+    _verdict = VerdictCommandTests._verdict
+
+    def test_a_credential_naming_no_list_is_refused_only_under_the_requirement(self):
+        path, _ = _status_anchor_file(self.tmp)
+        scope = ("--transaction-data-scope", "per_credential")
+        rc, result, err = self._verdict("per_credential", *scope, "--status-anchor", path)
+        self.assertEqual((rc, result["accepted"]), (0, True), err)
+        rc, result, err = self._verdict("per_credential", *scope, "--status-anchor", path,
+                                        "--require-status")
+        self.assertEqual((rc, result["accepted"]), (1, False), err)
+        self.assertEqual(result["verdicts"]["pid"]["code"], "status_required")
+        self.assertIn("the revocation state is no_status_claim", result["verdicts"]["pid"]["reason"])
+
+    def test_a_requirement_or_a_file_it_cannot_use_is_refused(self):
+        for flags, said in ((("--require-status",), "--require-status needs --status-anchor"),
+                            (("--status-anchor", self._write("bad.json", "{")), "--status-anchor")):
+            with self.subTest(flag=flags[0]):
+                rc, result, err = self._verdict("per_credential", *flags)
+                self.assertEqual((rc, result), (2, None))
+                self.assertIn(said, err)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

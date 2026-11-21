@@ -1530,6 +1530,89 @@ class RevocationReachesTheOperatorTests(unittest.TestCase):
         self.assertEqual(verdict.revocation["state"], sdjwt.NOT_EVALUATED)
 
 
+class RequireStatusTests(unittest.TestCase):
+    """`require_status`, off by default: the relying party's rule that only a status its resolver
+    checked, VALID and fresh, lets a presentation through (the German PID verifier guidelines,
+    V-20: "If the status cannot be determined, the PID is rejected")."""
+
+    STATUS = RevocationReachesTheOperatorTests.STATUS
+    FRESH = {"checked": True, "status": 0, "stale": False, "meaning": "VALID"}
+
+    def _verifier(self, **kw):
+        return RevocationReachesTheOperatorTests._verifier(self, **kw)
+
+    def _answer(self, verifier, jar=None, status=STATUS):
+        if jar is None:
+            _, jar = verifier.new_request()
+        code, _, verdict = verifier.handle_direct_post(self.wallet.respond(jar, status=status))
+        return code, verdict
+
+    def _unreachable(self, *, uri, idx, issuer):
+        raise OSError("the status host did not answer")
+
+    def test_only_a_checked_valid_fresh_status_is_accepted(self):
+        cases = (
+            ("checked, VALID, fresh", lambda **_: dict(self.FRESH), self.STATUS, 200, None),
+            ("checked, VALID, stale", lambda **_: dict(self.FRESH, stale=True), self.STATUS,
+             400, "but stale"),
+            ("checked, VALID, no freshness", lambda **_: {"checked": True, "status": 0},
+             self.STATUS, 400, "with no freshness stated"),
+            ("checked, status False", lambda **_: dict(self.FRESH, status=False), self.STATUS,
+             400, "status_required"),
+            ("unreachable", self._unreachable, self.STATUS, 400, sdjwt.UNREACHABLE),
+            ("no authority", lambda **_: {"checked": False, "code": "no_authority",
+                                          "reason": "no statement"}, self.STATUS,
+             400, sdjwt.NO_AUTHORITY),
+            ("a list refused", lambda **_: {"checked": False, "code": "sub",
+                                            "reason": "another list"}, self.STATUS,
+             400, "list_refused (sub)"),
+            ("no status claim", lambda **_: dict(self.FRESH), None, 400, sdjwt.NO_STATUS_CLAIM),
+            ("a status claim it cannot read", lambda **_: dict(self.FRESH), {"other": 1},
+             400, sdjwt.UNSUPPORTED_STATUS))
+        for label, resolver, claim, expected, text in cases:
+            with self.subTest(state=label, require_status=True):
+                code, verdict = self._answer(
+                    self._verifier(status_resolver=resolver, require_status=True), status=claim)
+                self.assertEqual(code, expected, getattr(verdict, "reason", verdict))
+                if text is not None:
+                    self.assertEqual(verdict.code, "status_required")
+                    self.assertIn("a checked, VALID, fresh status is required", verdict.reason)
+                    self.assertIn(text, "status_required " + verdict.reason)
+                    self.assertTrue(verdict.authentic is False and verdict.revocation)
+            # The positive control: without the rule each of these is answered, as before.
+            with self.subTest(state=label, require_status=False):
+                code, verdict = self._answer(self._verifier(status_resolver=resolver),
+                                             status=claim)
+                self.assertEqual(code, 200, getattr(verdict, "reason", verdict))
+
+    def test_a_revoked_credential_is_refused_as_revoked_under_the_rule_too(self):
+        code, verdict = self._answer(self._verifier(
+            status_resolver=lambda **_: dict(self.FRESH, status=1, meaning="INVALID"),
+            require_status=True))
+        self.assertEqual((code, verdict.code), (400, "revoked"))
+
+    def test_a_refusal_for_want_of_a_status_leaves_the_request_open(self):
+        v = self._verifier(status_resolver=lambda **_: dict(self.FRESH), require_status=True)
+        _, jar = v.new_request()
+        code, verdict = self._answer(v, jar, status=None)
+        self.assertEqual((code, verdict.code), (400, "status_required"))
+        code, verdict = self._answer(v, jar)
+        self.assertEqual(code, 200, getattr(verdict, "reason", verdict))
+
+    def test_the_rule_without_a_resolver_is_refused_when_built(self):
+        for require in (True, 1):
+            with self.subTest(require_status=require):
+                try:
+                    self._verifier(require_status=require)
+                except Exception as exc:  # noqa: BLE001  the type is asserted
+                    self.assertIsInstance(exc, ValueError)
+                    self.assertIn("require_status needs a status_resolver", str(exc))
+                else:
+                    self.fail("require_status without a status_resolver was built")
+        self.assertIs(self._verifier(require_status=False).require_status, False)
+        self.assertIs(self._verifier(status_resolver=self._unreachable).require_status, False)
+
+
 class TheRequestIsWhatIsAnsweredTests(unittest.TestCase):
     """The review of 2026-09-30: a presentation withholding a claim the DCQL query asked for was
     answered 200, and a request past its lifetime was still served, even re-signed with a new
@@ -3169,6 +3252,122 @@ class _LongQuery(_TwoCredentials):
     SHARED = {"type": "example_type", "credential_ids": [LONG, "pid"]}
 
 
+class _StatusCredentials(_TwoCredentials):
+    """_TwoCredentials whose credentials name entries of one Token Status List, pid index 3 and
+    pay index 4, judged by verify_response with a status resolver."""
+
+    URI = "https://issuer.example/sl/1"
+    SHARED = {"type": "example_type", "credential_ids": ["pid", "pay"]}
+
+    def __init__(self):
+        super().__init__([self.SHARED])
+
+    def _presentation(self, qid, kb_extra):
+        disclosure = b64u_encode(json.dumps(["salt-" + qid, "name", "Jean"],
+                                            separators=(",", ":")).encode())
+        payload = {"iss": "https://issuer.example", "vct": "urn:test:" + qid, "iat": self.at,
+                   "_sd": [b64u_encode(hashlib.sha256(disclosure.encode("ascii")).digest())],
+                   "cnf": {"jwk": _public_jwk(self.holders[qid])},
+                   "status": {"status_list": {"uri": self.URI,
+                                              "idx": self.QUERIES.index(qid) + 3}}}
+        presented = (_jws(self.issuer, {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"},
+                          payload) + "~" + disclosure + "~")
+        kb = dict({"iat": self.at, "aud": self.request["client_id"], "nonce": self.request["nonce"],
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())},
+                  **kb_extra)
+        return presented + _jws(self.holders[qid], {"alg": "ES256", "typ": "kb+jwt"}, kb)
+
+    def judged(self, resolver, require_status=False):
+        """The response with pay binding the one entry, under the per-credential reading."""
+        bound = {"transaction_data_hashes": [b64u_encode(hashlib.sha256(
+                     self.request["transaction_data"][0].encode("ascii")).digest())],
+                 "transaction_data_hashes_alg": "sha-256", "jti": b64u_encode(os.urandom(16)),
+                 "response_mode": "direct_post.jwt", "amr": self.TWO_FACTORS}
+        token = {"pid": [self._presentation("pid", {})],
+                 "pay": [self._presentation("pay", bound)]}
+        return verify_response(self.request, token, transaction_data_scope="per_credential",
+                               issuer_jwks=self.issuer_jwks, now=self.at,
+                               status_resolver=resolver, require_status=require_status)
+
+
+class VerifyResponseStatusTests(unittest.TestCase):
+    """verify_response's `status_resolver` and `require_status`: the resolver asked once per list
+    entry although both transaction_data readings are judged, a revoked credential refused, and
+    the rule holding every presentation to a checked, VALID, fresh status."""
+
+    FRESH = {"checked": True, "status": 0, "stale": False, "meaning": "VALID"}
+
+    def setUp(self):
+        self.creds = _StatusCredentials()
+        self.asked = []
+
+    def resolver(self, answers):
+        """A resolver that records each ask and answers `answers[idx]` (an exception is raised)."""
+        def resolve(*, uri, idx, issuer):
+            self.asked.append((uri, idx))
+            answer = answers[idx]
+            if isinstance(answer, Exception):
+                raise answer
+            return dict(answer)
+        return resolve
+
+    def test_each_list_entry_is_asked_once_for_both_readings(self):
+        """pay is judged under both readings and its entry is asked once; pid's is asked under
+        the per-credential reading (the all-entries one refuses pid for an unbound entry before
+        its status is read)."""
+        for label, answer in (("an answer", self.FRESH), ("a raise", OSError("no answer"))):
+            with self.subTest(resolver=label):
+                del self.asked[:]
+                result = self.creds.judged(self.resolver({3: answer, 4: answer}))
+                self.assertEqual(sorted(self.asked), [(_StatusCredentials.URI, 3),
+                                                      (_StatusCredentials.URI, 4)])
+                state = "checked" if answer is self.FRESH else sdjwt.UNREACHABLE
+                self.assertEqual(
+                    [result["readings"][scope]["pay"].revocation["state"]
+                     for scope in sdjwt.TRANSACTION_DATA_SCOPES], [state, state])
+
+    def test_a_revoked_credential_refuses_the_response(self):
+        result = self.creds.judged(self.resolver(
+            {3: self.FRESH, 4: dict(self.FRESH, status=1, meaning="INVALID")}))
+        self.assertIs(result["accepted"], False)
+        self.assertTrue(result["problem"].startswith("pay: revoked: "), result["problem"])
+
+    def test_the_rule_refuses_a_status_not_established_and_only_with_the_rule(self):
+        answers = {3: self.FRESH, 4: {"checked": False, "code": "no_authority",
+                                      "reason": "no statement"}}
+        result = self.creds.judged(self.resolver(answers), require_status=True)
+        self.assertIs(result["accepted"], False)
+        self.assertTrue(result["problem"].startswith("pay: status_required: "),
+                        result["problem"])
+        self.assertIn("the revocation state is no_authority", result["problem"])
+        control = self.creds.judged(self.resolver(answers))
+        self.assertIs(control["accepted"], True, control["problem"])
+        fresh = self.creds.judged(self.resolver({3: self.FRESH, 4: self.FRESH}),
+                                  require_status=True)
+        self.assertIs(fresh["accepted"], True, fresh["problem"])
+
+    def test_the_rule_is_refused_without_a_resolver_or_with_an_mdoc_query(self):
+        request = self.creds.request
+        mdoc_request = dict(request, dcql_query={"credentials": [
+            {"id": "mdl", "format": "mso_mdoc",
+             "meta": {"doctype_value": "org.iso.18013.5.1.mDL"}}]})
+        mdoc_request.pop("transaction_data")
+        for label, call, text in (
+                ("no resolver", lambda: verify_response(request, {}, require_status=True),
+                 "require_status needs a status_resolver"),
+                ("an mdoc query", lambda: verify_response(
+                    mdoc_request, {}, status_resolver=self.resolver({}), require_status=True),
+                 "the request asks for an mso_mdoc (mdl)")):
+            with self.subTest(case=label):
+                try:
+                    call()
+                except Exception as exc:  # noqa: BLE001  the type is asserted
+                    self.assertIsInstance(exc, ValueError)
+                    self.assertIn(text, str(exc))
+                else:
+                    self.fail("require_status was not refused: " + label)
+
+
 class TheResultIsCutAtEachReturnTests(unittest.TestCase):
     """What verify_response returns names what a sender or the request chose: the members of the
     vp_token and query ids. Its problem and each response refusal are at most REASON_MAX
@@ -3778,7 +3977,8 @@ class MdocResponseTests(MdocVerifierCase):
                        "issuer_jwks", "issuer_trust_anchors", "redirect_uri", "request_ttl_seconds",
                        "vct_values", "claims", "status_resolver", "verifier_info", "credential_query_id",
                        "verifier_info_profile", "redirect", "accept_vp_token_as_json_string",
-                       "credential_format", "doctype_value", "iaca_roots", "dc_api_client_metadata"],
+                       "credential_format", "doctype_value", "iaca_roots", "dc_api_client_metadata",
+                       "require_status"],
             Verifier.handle_direct_post: ["self", "form"],
             Verifier.dc_api_response: ["self", "data", "origin"],
             serve_module.serve: ["verifier", "host", "port", "certfile", "keyfile", "on_verdict",

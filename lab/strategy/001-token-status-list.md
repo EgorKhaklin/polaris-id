@@ -379,3 +379,21 @@ estimate that has been tested rather than argued.
 a ship must verify. Fixed in the same commit, with
 `check_verification_plan_covers_published_artifacts` reading the artifact list out of
 docs/RELEASING.md so a new artifact is covered by being published.
+
+**2026-11-21, a third basis: `anchored`.** The German PID verifier guidelines have a relying party
+validate a Status List Token's chain "up to the anchor of the revocation service in the PID
+provider list (V-03), not up to the anchor of PID issuance" (V-19, Mandatory), and reject a PID
+"If the status cannot be determined" (V-20, Mandatory). Neither basis above reaches that list:
+it is not signed with the credential's key, and a `stated` entry is keyed by an issuer name that
+the credential's certificate does not bind. `AnchoredAuthority` keys an entry by the anchor the
+credential's `x5c` chain ended at and states, beside it, a URI prefix and a status anchor.
+
+The adversaries, each a test and a drill mutant: a list signed under the issuance CA (by its
+leaf, by any leaf it issued, by its own key in another certificate, and under a status anchor
+stated two links above it); a credential under
+another anchor; a status URI on another host, on a host ending in the prefix's, on a sibling path
+or a port, or carrying userinfo, a query, a fragment, a dot segment or an encoded one; a signer
+whose certificate states no key usage or one without digitalSignature, is expired, or names
+another organization than the credential signer's; the status anchor sent in `x5c`. V-20 is
+`require_status`, the relying party's rule, off by default: a status not checked, VALID and fresh
+refuses the presentation as `status_required`.

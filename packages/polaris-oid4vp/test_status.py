@@ -15,12 +15,31 @@ sleep through the version of this bug that matters, and did: a 404 page was repo
 malformed list, which blames the issuer for the endpoint's failure.
 """
 import base64
+import datetime
+import http.server
+import ipaddress
 import json
+import os
 import random
+import shutil
+import socket
+import ssl
+import tempfile
+import threading
+import time
 import unittest
 import zlib
+from unittest import mock
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
+from cryptography.x509.oid import NameOID
 
 from polaris_oid4vp import status as S
+from polaris_oid4vp import status_fetch
+from polaris_oid4vp.sdjwt import verify_presentation
+from test_sdjwt import AUDIENCE, NONCE, _x5c_presentation
 
 NOW = 1_800_000_000
 URI = "https://issuer.example/statuslists/1"
@@ -708,6 +727,705 @@ class AuthorityIsBoundToIssuerAndUri(unittest.TestCase):
                 v = S.decide(tok, index=1, expected_uri=missing, authority=AUTHORITY,
                              credential_issuer=ISSUER, now=NOW, issuer_key_verify=accept)
                 self.assertEqual((v["checked"], v["code"]), (False, "misconfigured"))
+
+
+# --------------------------------------------------------------------------- anchored authority
+#
+# 2026-11-21. A provider whose credentials are signed under one CA and whose status lists are
+# signed under a sibling CA, both under one root, its iss bound by nothing in its certificate:
+# the shape of the German sandbox PID, minted here. The real artifacts stay outside the tree.
+
+ORG = "Provider GmbH"
+PREFIX = "https://tsl.provider.example/tsl/"
+STATUS_URI = PREFIX + "6f1c2a04-5d3e-4b8a-9c71-0e2f8a6b4d19"
+ISS = "https://provider.example"
+WHY = "the trust list's entry for Provider GmbH names both anchors"
+
+
+def _key():
+    return ec.generate_private_key(ec.SECP256R1())
+
+
+def _name(common_name, organization=None):
+    attributes = [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
+    if organization is not None:
+        attributes.append(x509.NameAttribute(NameOID.ORGANIZATION_NAME, organization))
+    return x509.Name(attributes)
+
+
+def _cert(subject, key, issuer=None, issuer_key=None, *, ca=False, path_length=None,
+          usage="sign", not_after=None, san=None):
+    """A certificate for `key` named `subject`, signed by `issuer_key` under `issuer`'s name, or
+    self-signed without an issuer. A CA gets keyCertSign; a leaf gets digitalSignature ("sign"),
+    keyEncipherment alone ("encipher"), or no key usage at all (None)."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    builder = (x509.CertificateBuilder()
+               .subject_name(subject)
+               .issuer_name(subject if issuer is None else issuer.subject)
+               .public_key(key.public_key())
+               .serial_number(x509.random_serial_number())
+               .not_valid_before(now - datetime.timedelta(days=1))
+               .not_valid_after(not_after or now + datetime.timedelta(days=365))
+               .add_extension(x509.BasicConstraints(ca=ca, path_length=path_length), critical=True))
+    if ca or usage is not None:
+        builder = builder.add_extension(x509.KeyUsage(
+            digital_signature=not ca and usage == "sign", content_commitment=False,
+            key_encipherment=not ca and usage == "encipher", data_encipherment=False,
+            key_agreement=False, key_cert_sign=ca, crl_sign=ca, encipher_only=False,
+            decipher_only=False), critical=True)
+    if san:
+        builder = builder.add_extension(x509.SubjectAlternativeName(san), critical=False)
+    return builder.sign(key if issuer is None else issuer_key, hashes.SHA256())
+
+
+class _Pki:
+    """The provider's root, its issuance CA (A) and its status-list CA (B), siblings; the
+    credential signer under A and the status list signer under B, both of one organization; and
+    the variants the refusals are built from."""
+
+    def __init__(self):
+        self.root_key = _key()
+        self.root = _cert(_name("Provider Root Test CA"), self.root_key, ca=True)
+        self.a_key, self.b_key = _key(), _key()
+        self.a = _cert(_name("Provider PID-Signer Test CA"), self.a_key, self.root,
+                       self.root_key, ca=True, path_length=0)
+        self.b = _cert(_name("Provider Status-List-Signer Test CA"), self.b_key, self.root,
+                       self.root_key, ca=True, path_length=0)
+        self.leaf_key, self.signer_key = _key(), _key()
+        self.leaf = _cert(_name("pid issuer", ORG), self.leaf_key, self.a, self.a_key)
+        self.signer = _cert(_name("status list signer", ORG), self.signer_key, self.b, self.b_key)
+        # Another provider's issuance CA, a root of its own.
+        self.a2_key = _key()
+        self.a2 = _cert(_name("Other PID-Signer Test CA"), self.a2_key, ca=True)
+        # A status-list CA that is a root, so that one sent in x5c would chain if it were let.
+        self.bs_key, self.bs_signer_key = _key(), _key()
+        self.bs = _cert(_name("Status-List-Signer Root"), self.bs_key, ca=True)
+        self.bs_signer = _cert(_name("status list signer", ORG), self.bs_signer_key, self.bs,
+                               self.bs_key)
+        # A's key and name under a second certificate: a "status anchor" that is the issuance CA.
+        self.a_twin = _cert(self.a.subject, self.a_key, self.root, self.root_key, ca=True,
+                            path_length=0)
+        self.twin_signer_key = _key()
+        self.twin_signer = _cert(_name("status list signer", ORG), self.twin_signer_key, self.a,
+                                 self.a_key)
+
+    def signer_under_b(self, **kwargs):
+        organization = kwargs.pop("organization", ORG)
+        key = _key()
+        return key, _cert(_name("status list signer", organization), key, self.b, self.b_key,
+                          **kwargs)
+
+
+def _es256(key, header, claims):
+    head = b64u(json.dumps(header, separators=(",", ":")))
+    body = b64u(json.dumps(claims, separators=(",", ":")))
+    r, s = asym_utils.decode_dss_signature(
+        key.sign((head + "." + body).encode("ascii"), ec.ECDSA(hashes.SHA256())))
+    return head + "." + body + "." + b64u(r.to_bytes(32, "big") + s.to_bytes(32, "big"))
+
+
+def _x5c(*certificates):
+    return [base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode("ascii")
+            for c in certificates]
+
+
+def _list_token(key, chain, *, uri=STATUS_URI, statuses=(0, 1), **over):
+    """A Status List Token for `uri` signed by `key`, `chain` its x5c (None: no x5c). Index 0 is
+    VALID and index 1 INVALID."""
+    now = int(time.time())
+    claims = {"sub": uri, "iat": now - 60, "exp": now + 6 * 86400, "ttl": 3600,
+              "status_list": {"bits": 1, "lst": S.encode_status_list(list(statuses), 1)}}
+    claims.update(over)
+    header = {"alg": "ES256", "typ": "statuslist+jwt"}
+    if chain is not None:
+        header["x5c"] = _x5c(*chain)
+    return _es256(key, header, claims)
+
+
+def _anchored(credential_anchor, status_anchor, prefix=PREFIX):
+    return S.AnchoredAuthority().state(credential_anchor=credential_anchor,
+                                       status_uri_prefix=prefix, status_anchor=status_anchor,
+                                       why=WHY)
+
+
+class _Spy:
+    """A fetch that records each URI and answers `token`."""
+
+    def __init__(self, token_):
+        self.token, self.asked = token_, []
+
+    def __call__(self, uri):
+        self.asked.append(uri)
+        return self.token
+
+
+class AnchoredAuthorityTests(unittest.TestCase):
+    """status.AnchoredAuthority and the keyword that reaches it, against the spec's cases a-g."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pki = _Pki()
+
+    def fetching(self, authority, token_, *, uri=STATUS_URI, index=0, anchor=None,
+                 leaf=None, **kwargs):
+        """decide_by_fetching through a spy; (verdict, the URIs it fetched)."""
+        spy = _Spy(token_)
+        verdict = S.decide_by_fetching(
+            index=index, expected_uri=uri, authority=authority, fetch=spy,
+            credential_anchor=self.pki.a if anchor is None else anchor,
+            credential_leaf=self.pki.leaf if leaf is None else leaf, **kwargs)
+        return verdict, spy.asked
+
+    def authority(self):
+        return _anchored(self.pki.a, self.pki.b)
+
+    def signed(self, key=None, chain=None, **kwargs):
+        if key is None:
+            key, chain = self.pki.signer_key, [self.pki.signer]
+        return _list_token(key, chain, **kwargs)
+
+    def no_authority(self, verdict, text):
+        self.assertEqual((verdict["checked"], verdict["code"]), (False, "no_authority"),
+                         verdict["reason"])
+        self.assertIn(text, verdict["reason"])
+
+    # a. The German shape, end to end through verify_presentation.
+    def test_a_an_unbound_iss_is_checked_under_the_anchored_entry_and_not_before_it(self):
+        presentation = _x5c_presentation(self.pki.leaf, self.pki.leaf_key, iss=ISS,
+                                         status={"status_list": {"uri": STATUS_URI, "idx": 0}})
+        spy = _Spy(self.signed())
+        stated = S.StatedAuthority().state(credential_issuer=ISS, status_uri=STATUS_URI,
+                                           verify=accept, why="a statement for the iss")
+        before = verify_presentation(presentation, expected_nonce=NONCE,
+                                     expected_audience=AUDIENCE, trust_anchors=[self.pki.a],
+                                     status_resolver=S.make_resolver(stated, spy))
+        self.assertTrue(before.authentic, before.reason)
+        self.assertIs(before.iss_bound, False)
+        self.assertEqual(before.revocation["state"], "no_authority")
+        self.assertEqual(spy.asked, [])
+        after = verify_presentation(presentation, expected_nonce=NONCE,
+                                    expected_audience=AUDIENCE, trust_anchors=[self.pki.a],
+                                    status_resolver=S.make_resolver(self.authority(), spy))
+        self.assertTrue(after.authentic, after.reason)
+        rev = after.revocation
+        self.assertEqual((rev["state"], rev["status"], rev["stale"], rev["authority"]),
+                         ("checked", S.VALID, False, S.ANCHORED), rev["reason"])
+        self.assertIn(WHY, rev["reason"])
+        self.assertEqual(spy.asked, [STATUS_URI])
+
+    def test_f_a_revoked_index_is_checked_invalid(self):
+        verdict, _ = self.fetching(self.authority(), self.signed(), index=1)
+        self.assertEqual((verdict["checked"], verdict["status"]), (True, S.INVALID))
+
+    # M1. Before the fetch the entry answers only whether the URI may be fetched.
+    def test_m1_the_uri_is_fetched_before_any_x5c_is_seen_and_nothing_verifies_under_that(self):
+        verdict, asked = self.fetching(self.authority(), self.signed())
+        self.assertEqual((verdict["checked"], verdict["status"], verdict["authority"]),
+                         (True, S.VALID, S.ANCHORED))
+        self.assertEqual(asked, [STATUS_URI])
+        grant = self.authority()(credential_issuer=None, status_uri=STATUS_URI, header=None,
+                                 credential_anchor=self.pki.a, credential_leaf=self.pki.leaf)
+        self.assertEqual(grant[1], S.ANCHORED)
+        self.assertIs(grant[0](b"a.b", b"\x00" * 64, {"alg": "ES256"}), False)
+
+    # b. A list signed under the issuance CA is not the revocation service's.
+    def test_b_a_list_signed_under_the_issuance_ca_is_never_valid(self):
+        for label, chain in (("its leaf", [self.pki.leaf]),
+                             ("its leaf and the CA", [self.pki.leaf, self.pki.a])):
+            with self.subTest(x5c=label):
+                verdict, _ = self.fetching(self.authority(),
+                                           self.signed(self.pki.leaf_key, chain))
+                self.no_authority(verdict, "not one the stated status anchor certifies")
+
+    # b2. An anchor that certifies the other is refused when stated.
+    def test_b2_anchors_that_certify_each_other_or_are_one_are_refused(self):
+        for label, a, b, text in (
+                ("the shared root as the status anchor", self.pki.a, self.pki.root,
+                 "the status anchor certifies the credential anchor"),
+                ("the root as the credential anchor", self.pki.root, self.pki.b,
+                 "the credential anchor certifies the status anchor"),
+                ("one certificate twice", self.pki.a, self.pki.a, "are one certificate")):
+            with self.subTest(case=label):
+                self.refused_with(lambda: _anchored(a, b), text)
+
+    # c. The entry is per credential anchor.
+    def test_c_a_credential_under_another_anchor_has_no_authority_and_nothing_is_fetched(self):
+        verdict, asked = self.fetching(self.authority(), self.signed(), anchor=self.pki.a2)
+        self.no_authority(verdict, "no anchored entry names the anchor")
+        self.assertEqual(asked, [])
+
+    # d. The URI rules: each URI is refused before anything is fetched.
+    def test_d_a_status_uri_outside_the_prefix_or_not_canonical_is_never_fetched(self):
+        for label, uri, text in (
+                ("another host", "https://other.example/tsl/x", "under no prefix"),
+                ("a host under the prefix's host", "https://a.tsl.provider.example/tsl/x",
+                 "under no prefix"),
+                ("a host ending in the prefix's", "https://eviltsl.provider.example/tsl/x",
+                 "under no prefix"),
+                ("a sibling path", "https://tsl.provider.example/tsl-other/x", "under no prefix"),
+                ("the prefix's parent", "https://tsl.provider.example/x", "under no prefix"),
+                ("a port", "https://tsl.provider.example:443/tsl/x", "under no prefix"),
+                ("a trailing dot", "https://tsl.provider.example./tsl/x", "under no prefix"),
+                ("http", "http://tsl.provider.example/tsl/x", "is not https"),
+                ("userinfo", "https://u@tsl.provider.example/tsl/x", "carries userinfo"),
+                ("an empty port", "https://tsl.provider.example:/tsl/x", "empty or non-numeric"),
+                ("a fragment", PREFIX + "x#y", "carries a fragment"),
+                ("a query", PREFIX + "x?y=1", "carries a query"),
+                ("a backslash", PREFIX + "a\\b", "backslash"),
+                ("a dot segment", PREFIX + "../x", "dot segment"),
+                ("an encoded dot", PREFIX + "%2e%2e/x", "percent-encodes"),
+                ("an encoded slash", PREFIX + "a%2Fb", "percent-encodes"),
+                ("a host that is not ASCII", "https://tsl.prövider.example/tsl/x", "ASCII")):
+            with self.subTest(case=label):
+                verdict, asked = self.fetching(self.authority(), self.signed(uri=uri), uri=uri)
+                self.no_authority(verdict, text)
+                self.assertEqual(asked, [])
+
+    def test_d_the_host_is_compared_in_lowercase(self):
+        """The positive control for the URI rules: the same host in capitals is the same host."""
+        uri = "https://TSL.Provider.example/tsl/x"
+        verdict, asked = self.fetching(self.authority(), self.signed(uri=uri), uri=uri)
+        self.assertEqual((verdict["checked"], verdict["status"]), (True, S.VALID),
+                         verdict["reason"])
+        self.assertEqual(asked, [uri])
+
+    def test_d_a_prefix_that_is_not_one_is_refused_when_stated(self):
+        for label, prefix, text in (
+                ("no closing slash", "https://tsl.provider.example/tsl", "does not end in /"),
+                ("a query", PREFIX + "?a=1", "carries a query"),
+                ("not a DNS host", "https://tsl_provider.example/tsl/", "names no DNS host"),
+                ("not ASCII", "https://tsl.prövider.example/tsl/", "ASCII"),
+                ("http", "http://tsl.provider.example/tsl/", "is not https")):
+            with self.subTest(case=label):
+                self.refused_with(lambda: _anchored(self.pki.a, self.pki.b, prefix), text)
+
+    def test_an_entry_missing_a_part_or_holding_no_certificate_is_refused(self):
+        for label, kwargs, text in (
+                ("no reason", {"why": ""}, "needs a credential anchor"),
+                ("no status anchor", {"status_anchor": None}, "needs a credential anchor"),
+                ("a status anchor that is not a certificate", {"status_anchor": "B"},
+                 "is not an X.509 certificate")):
+            entry = {"credential_anchor": self.pki.a, "status_uri_prefix": PREFIX,
+                     "status_anchor": self.pki.b, "why": WHY}
+            entry.update(kwargs)
+            with self.subTest(case=label):
+                self.refused_with(lambda: S.AnchoredAuthority().state(**entry), text)
+
+    # e. The status signer's certificate.
+    def test_e_a_signer_certificate_that_is_not_a_status_signers_is_refused(self):
+        expired_key, expired = self.pki.signer_under_b(
+            not_after=datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1))
+        no_sign_key, no_sign = self.pki.signer_under_b(usage="encipher")
+        no_usage_key, no_usage = self.pki.signer_under_b(usage=None)
+        for label, key, chain, text in (
+                ("expired", expired_key, [expired], "validity period"),
+                ("no digitalSignature", no_sign_key, [no_sign], "digitalSignature"),
+                ("no key usage", no_usage_key, [no_usage], "states no key usage"),
+                ("no x5c", self.pki.signer_key, None, "carries no x5c")):
+            with self.subTest(case=label):
+                verdict, _ = self.fetching(self.authority(), self.signed(key, chain))
+                self.no_authority(verdict, text)
+
+    def test_e_the_status_anchor_sent_in_x5c_is_refused(self):
+        """HAIP 1.0 6.1.1 keeps the anchor out of x5c. The status anchor here is a root, so a
+        chain that sends it would verify if that rule were not applied."""
+        authority = _anchored(self.pki.a, self.pki.bs)
+        control, _ = self.fetching(authority, self.signed(self.pki.bs_signer_key,
+                                                          [self.pki.bs_signer]))
+        self.assertEqual((control["checked"], control["status"]), (True, S.VALID),
+                         control["reason"])
+        verdict, _ = self.fetching(authority, self.signed(self.pki.bs_signer_key,
+                                                          [self.pki.bs_signer, self.pki.bs]))
+        self.no_authority(verdict, "is a trust anchor")
+
+    # M5. A status anchor carrying the issuance CA's key and name.
+    def test_b_a_status_anchor_above_the_credential_anchors_path_grants_nothing_under_it(self):
+        """The review of 2026-11-21: a root, a policy CA under it, the credential anchor under
+        that, and the root stated as the status anchor. `state` sees two certificates that do not
+        sign each other and accepts the entry; a list signed under the credential anchor then
+        chains to the root through the credential anchor's path, and must not be VALID."""
+        root_key, policy_key, ca_key = _key(), _key(), _key()
+        root = _cert(_name("Three-Level Root"), root_key, ca=True)
+        policy = _cert(_name("Three-Level Policy CA"), policy_key, root, root_key, ca=True)
+        ca = _cert(_name("Three-Level PID-Signer CA"), ca_key, policy, policy_key, ca=True,
+                   path_length=0)
+        leaf_key, other_key, status_ca_key, signer_key = _key(), _key(), _key(), _key()
+        leaf = _cert(_name("pid issuer", ORG), leaf_key, ca, ca_key)
+        other = _cert(_name("another signer", ORG), other_key, ca, ca_key)
+        status_ca = _cert(_name("Three-Level Status-List CA"), status_ca_key, root, root_key,
+                          ca=True, path_length=0)
+        signer = _cert(_name("status list signer", ORG), signer_key, status_ca, status_ca_key)
+        # The credential anchor's own key in an end-entity certificate the policy CA issued.
+        own_key = _cert(_name("status list signer", ORG), ca_key, policy, policy_key)
+        authority = _anchored(ca, root)
+        control, _ = self.fetching(authority, self.signed(signer_key, [signer, status_ca]),
+                                   anchor=ca, leaf=leaf)
+        self.assertEqual((control["checked"], control["status"], control["authority"]),
+                         (True, S.VALID, S.ANCHORED), control["reason"])
+        for label, key, chain, text in (
+                ("the credential signer, the path sent", leaf_key, [leaf, ca, policy],
+                 "certificate 0 was signed with the credential anchor's key"),
+                ("another leaf of the anchor, the path sent", other_key, [other, ca, policy],
+                 "certificate 0 was signed with the credential anchor's key"),
+                ("the anchor's key under the policy CA", ca_key, [own_key, policy],
+                 "certificate 0 carries the credential anchor's key"),
+                ("a leaf of the anchor, the anchor left out", other_key, [other, policy],
+                 "does not chain to any configured trust anchor")):
+            with self.subTest(x5c=label):
+                verdict, _ = self.fetching(authority, self.signed(key, chain), anchor=ca,
+                                           leaf=leaf)
+                self.no_authority(verdict, "not one the stated status anchor certifies")
+                self.assertIn(text, verdict["reason"])
+
+    def test_m5_a_signer_that_also_chains_to_the_credential_anchor_is_refused(self):
+        authority = _anchored(self.pki.a, self.pki.a_twin)
+        verdict, _ = self.fetching(authority, self.signed(self.pki.twin_signer_key,
+                                                          [self.pki.twin_signer]))
+        self.no_authority(verdict, "also chains to the credential anchor")
+
+    # M6. The signer's organization is the credential signer's.
+    def test_m6_the_signer_is_of_the_credential_signers_organization(self):
+        other_key, other = self.pki.signer_under_b(organization="Other GmbH")
+        verdict, _ = self.fetching(self.authority(), self.signed(other_key, [other]))
+        self.no_authority(verdict, "organizationName")
+        nameless = _cert(_name("pid issuer"), _key(), self.pki.a, self.pki.a_key)
+        verdict, _ = self.fetching(self.authority(), self.signed(), leaf=nameless)
+        self.no_authority(verdict, "organizationName")
+        verdict = S.decide(self.signed(), index=0, expected_uri=STATUS_URI,
+                           authority=self.authority(), now=int(time.time()),
+                           credential_anchor=self.pki.a)
+        self.no_authority(verdict, "no credential signer's certificate")
+
+    # M4. No same-key branch.
+    def test_m4_the_credential_issuers_own_key_is_no_grant_here(self):
+        verdict = S.decide(self.signed(), index=0, expected_uri=STATUS_URI,
+                           authority=self.authority(), now=int(time.time()),
+                           issuer_key_verify=accept, credential_anchor=self.pki.a2,
+                           credential_leaf=self.pki.leaf)
+        self.no_authority(verdict, "no anchored entry names the anchor")
+
+    # Q3. The keyword reaches only an authority that declares it, and the anchor must be there.
+    def test_q3_an_anchored_authority_without_an_anchor_is_no_authority(self):
+        spy = _Spy(self.signed())
+        for verdict in (
+                S.decide(self.signed(), index=0, expected_uri=STATUS_URI,
+                         authority=self.authority(), now=int(time.time())),
+                S.decide_by_fetching(index=0, expected_uri=STATUS_URI,
+                                     authority=self.authority(), fetch=spy)):
+            self.no_authority(verdict, "no credential anchor reached this authority")
+        self.assertEqual(spy.asked, [])
+
+    def test_q3_only_true_declares_the_keyword(self):
+        def four(*, credential_issuer, status_uri, header, issuer_key_verify=None):
+            return (accept, S.STATED, "an authority of four keywords")
+        for declared in ("yes", 1):
+            four.takes_credential_anchor = declared
+            with self.subTest(declared=declared):
+                verdict = S.decide(token(payload()), index=1, expected_uri=URI, authority=four,
+                                   now=NOW, credential_anchor=self.pki.a)
+                self.assertEqual((verdict["checked"], verdict["status"]), (True, S.INVALID),
+                                 verdict["reason"])
+
+    # M3. The resolver hop: declare to receive.
+    def test_m3_a_three_keyword_resolver_is_called_as_it_always_was(self):
+        presentation = _x5c_presentation(self.pki.leaf, self.pki.leaf_key, iss=ISS,
+                                         status={"status_list": {"uri": STATUS_URI, "idx": 0}})
+        handed = []
+
+        def three(*, uri, idx, issuer):
+            handed.append((uri, idx, issuer))
+            return {"checked": True, "status": 0, "stale": False, "authority": "same_key",
+                    "code": None, "reason": "a resolver of three keywords"}
+        for declared in (None, 1):
+            if declared is not None:
+                three.takes_credential_anchor = declared
+            with self.subTest(declared=declared):
+                verdict = verify_presentation(presentation, expected_nonce=NONCE,
+                                              expected_audience=AUDIENCE,
+                                              trust_anchors=[self.pki.a], status_resolver=three)
+                self.assertEqual(verdict.revocation["state"], "checked",
+                                 verdict.revocation["reason"])
+        self.assertEqual(handed, [(STATUS_URI, 0, None)] * 2)
+
+    def test_m3_a_declared_resolver_is_handed_the_anchor_and_the_signer(self):
+        presentation = _x5c_presentation(self.pki.leaf, self.pki.leaf_key, iss=ISS,
+                                         status={"status_list": {"uri": STATUS_URI, "idx": 0}})
+        handed = []
+
+        def declared(*, uri, idx, issuer, credential_anchor=None, credential_leaf=None):
+            handed.append((credential_anchor, credential_leaf))
+            return {"checked": False, "code": "no_authority", "reason": "recorded"}
+        declared.takes_credential_anchor = True
+        verify_presentation(presentation, expected_nonce=NONCE, expected_audience=AUDIENCE,
+                            trust_anchors=[self.pki.a], status_resolver=declared)
+        der = serialization.Encoding.DER
+        self.assertEqual([(a.public_bytes(der), b.public_bytes(der)) for a, b in handed],
+                         [(self.pki.a.public_bytes(der), self.pki.leaf.public_bytes(der))])
+
+    def refused_with(self, call, text):
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001  the type is asserted, so a crash is a failure
+            self.assertIsInstance(exc, ValueError, exc)
+            self.assertIn(text, str(exc))
+        else:
+            self.fail("not refused; expected %r" % text)
+
+
+# --------------------------------------------------------------------------- status_fetch
+#
+# The README's rules for a `fetch`, held against a listener on this machine. Every case but the
+# address rule hands the fetch a plain connect and a context that trusts the listener, since the
+# address rule refuses this machine; the address rule is held on its own.
+
+_LIST_BODY = b"aaa.bbb.ccc"
+
+
+class _Listener:
+    """An HTTPS listener on 127.0.0.1 under a certificate `client_context` trusts. It records the
+    paths asked and counts the connections it accepted."""
+
+    def __init__(self):
+        # A root the client trusts and a server certificate it issued: a self-signed end-entity
+        # certificate is not its own issuer to every TLS library (LibreSSL under Python 3.9).
+        root_key, key = _key(), _key()
+        root = _cert(_name("Listener Test Root"), root_key, ca=True)
+        cert = _cert(_name("127.0.0.1"), key, root, root_key,
+                     san=[x509.IPAddress(ipaddress.ip_address("127.0.0.1"))])
+        self.folder = tempfile.mkdtemp()
+        certfile = os.path.join(self.folder, "cert.pem")
+        keyfile = os.path.join(self.folder, "key.pem")
+        with open(certfile, "wb") as fh:
+            fh.write(cert.public_bytes(serialization.Encoding.PEM))
+        with open(keyfile, "wb") as fh:
+            fh.write(key.private_bytes(serialization.Encoding.PEM,
+                                       serialization.PrivateFormat.PKCS8,
+                                       serialization.NoEncryption()))
+        self.client_context = ssl.create_default_context(
+            cadata=root.public_bytes(serialization.Encoding.PEM).decode("ascii"))
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(certfile, keyfile)
+        self.paths, self.connections = [], 0
+        listener = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def answer(self, code, body, headers=()):
+                self.send_response(code)
+                for name, value in headers:
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                listener.paths.append(self.path)
+                if self.path == "/ok":
+                    self.answer(200, _LIST_BODY)
+                elif self.path == "/redirect":
+                    self.answer(302, b"moved", (("Location", "/ok"),))
+                elif self.path == "/big":
+                    self.answer(200, b"a" * (S.MAX_TOKEN_BYTES + 1))
+                elif self.path == "/slow":
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2000")
+                    self.end_headers()
+                    try:
+                        for _ in range(20):
+                            self.wfile.write(b"a" * 100)
+                            self.wfile.flush()
+                            time.sleep(0.1)
+                    except OSError:
+                        pass  # the client cut the connection, as the test expects
+                elif self.path == "/slow-header":
+                    # The status line at once, then a header one byte every 0.15 s for 1.8 s, then
+                    # a whole list: only a bound over the whole exchange ends it before the body.
+                    try:
+                        self.wfile.write(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+                        for _ in range(12):
+                            self.wfile.write(b"a")
+                            self.wfile.flush()
+                            time.sleep(0.15)
+                        self.wfile.write(b"\r\nContent-Length: %d\r\n\r\n%s"
+                                         % (len(_LIST_BODY), _LIST_BODY))
+                    except OSError:
+                        pass  # the client cut the connection, as the test expects
+                else:
+                    self.answer(404, b"not found")
+
+        class Server(http.server.ThreadingHTTPServer):
+            daemon_threads = True
+
+            def get_request(self):
+                accepted = super().get_request()
+                listener.connections += 1
+                return accepted
+
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.server.socket = server_context.wrap_socket(self.server.socket, server_side=True)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def url(self, path):
+        return "https://127.0.0.1:%d%s" % (self.port, path)
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+
+class StatusFetchTests(unittest.TestCase):
+    """status_fetch.fetch_status_list: https only, public addresses only, no redirect, a byte
+    bound and a time bound."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.listener = _Listener()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.listener.close()
+
+    def fetch(self, path, **kwargs):
+        kwargs.setdefault("context", self.listener.client_context)
+        kwargs.setdefault("connect", socket.create_connection)
+        return status_fetch.fetch_status_list(self.listener.url(path), **kwargs)
+
+    def refused_with(self, call, text):
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001  the type is asserted, so a crash is a failure
+            self.assertIsInstance(exc, ValueError, exc)
+            self.assertIn(text, str(exc))
+        else:
+            self.fail("not refused; expected %r" % text)
+
+    def test_a_list_is_read(self):
+        """The positive control: everything below is refused by its rule, not by the setup."""
+        self.assertEqual(self.fetch("/ok"), _LIST_BODY)
+
+    def test_a_redirect_is_not_followed(self):
+        asked = len(self.listener.paths)
+        self.refused_with(lambda: self.fetch("/redirect"), "answered 302")
+        self.assertEqual(self.listener.paths[asked:], ["/redirect"])
+
+    def test_an_answer_but_200_is_refused(self):
+        self.refused_with(lambda: self.fetch("/missing"), "answered 404")
+
+    def test_a_body_over_the_token_bound_is_refused(self):
+        self.refused_with(lambda: self.fetch("/big"), "over %d bytes" % S.MAX_TOKEN_BYTES)
+
+    def test_a_body_that_arrives_past_the_total_is_refused(self):
+        self.refused_with(lambda: self.fetch("/slow", total=0.3), "more than 0.3 seconds")
+
+    def refused_in_time(self, total, timeout, **kwargs):
+        """The /slow-header fetch, refused for its total within `total` plus one `timeout`; its
+        list arrives whole after about 1.8 s, so a bound that waits for it is seen."""
+        started = time.monotonic()
+        self.refused_with(lambda: self.fetch("/slow-header", total=total, timeout=timeout,
+                                             **kwargs), "more than %s seconds" % total)
+        self.assertLess(time.monotonic() - started, total + timeout)
+
+    def test_a_header_that_arrives_past_the_total_is_refused(self):
+        """The total bounds the whole exchange, not only the body: a header sent a byte at a
+        time, each byte inside the read timeout, is cut at the total."""
+        self.assertEqual(self.fetch("/slow-header", total=10, timeout=0.6), _LIST_BODY)
+        self.refused_in_time(0.3, 0.6)
+
+    def test_a_connection_made_after_the_total_is_cut_at_once(self):
+        """A connection that is made only after the total has passed is cut as it is made."""
+        def late(address, timeout=None, source_address=None):
+            time.sleep(0.4)
+            return socket.create_connection(address, timeout, source_address)
+        self.refused_in_time(0.2, 0.6, connect=late)
+
+    def test_the_connection_has_one_timeout_across_every_address(self):
+        """Each allowed address is tried in turn, all within one timeout; the socket returned waits
+        the full timeout on each read."""
+        addresses = ["93.184.215.%d" % n for n in (14, 15, 16, 17)]
+        found = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, 443)) for a in addresses]
+        given = []
+
+        def unanswered(attempt, connect_timeout, read_timeout, source_address):
+            given.append((attempt[3][0], connect_timeout, read_timeout))
+            time.sleep(connect_timeout)
+            raise socket.timeout("timed out")
+
+        with mock.patch.object(socket, "getaddrinfo", return_value=found), \
+                mock.patch.object(status_fetch, "_connected", unanswered):
+            started = time.monotonic()
+            self.refused_with(lambda: status_fetch.connect_public(("status.example", 443), 0.3),
+                              "no connection to status.example within 0.3 seconds")
+            self.assertLess(time.monotonic() - started, 0.6)
+        self.assertEqual([address for address, _, _ in given], addresses[:1])
+
+        connected, given[:] = object(), []
+
+        def second(attempt, connect_timeout, read_timeout, source_address):
+            given.append((attempt[3][0], connect_timeout, read_timeout))
+            if attempt[3][0] == addresses[0]:
+                raise ConnectionRefusedError("refused")
+            return connected
+
+        with mock.patch.object(socket, "getaddrinfo", return_value=found), \
+                mock.patch.object(status_fetch, "_connected", second):
+            self.assertIs(status_fetch.connect_public(("status.example", 443), 0.3), connected)
+        self.assertEqual([address for address, _, _ in given], addresses[:2])
+        self.assertLess(given[1][1], 0.3)
+        self.assertEqual([read for _, _, read in given], [0.3, 0.3])
+
+    def test_a_connected_socket_waits_the_full_timeout_on_each_read(self):
+        server = socket.socket()
+        self.addCleanup(server.close)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        sock = status_fetch._connected(
+            (socket.AF_INET, socket.SOCK_STREAM, 0, server.getsockname()), 0.5, 7, None)
+        self.addCleanup(sock.close)
+        self.assertEqual(sock.gettimeout(), 7)
+
+    def test_only_https_is_fetched(self):
+        connections = self.listener.connections
+        self.refused_with(lambda: status_fetch.fetch_status_list(
+            "http://127.0.0.1:%d/ok" % self.listener.port, connect=socket.create_connection),
+            "https only")
+        self.assertEqual(self.listener.connections, connections)
+
+    def test_this_machine_is_never_connected_to(self):
+        connections = self.listener.connections
+        self.refused_with(lambda: status_fetch.fetch_status_list(
+            self.listener.url("/ok"), context=self.listener.client_context), "loopback")
+        self.refused_with(lambda: status_fetch.connect_public(("localhost", self.listener.port),
+                                                             2), "no address a status list")
+        self.assertEqual(self.listener.connections, connections)
+
+    def test_each_kind_of_address_is_judged(self):
+        for address, kind in (("127.0.0.1", "loopback"), ("::1", "loopback"),
+                              ("::ffff:127.0.0.1", "loopback"), ("10.1.2.3", "private"),
+                              ("172.16.0.1", "private"), ("192.168.0.1", "private"),
+                              ("169.254.169.254", "link-local"), ("fe80::1", "link-local"),
+                              ("fd00::1", "unique-local"), ("0.0.0.0", "unspecified"),
+                              ("::", "unspecified"), ("224.0.0.1", "multicast"),
+                              ("100.64.0.1", "not a global address")):
+            with self.subTest(address=address):
+                self.assertIn(kind, status_fetch.address_refusal(address))
+        for address in ("93.184.215.14", "2606:2800:21f:cb07:6820:80da:af6b:8b2c"):
+            with self.subTest(address=address):
+                self.assertEqual(status_fetch.address_refusal(address), "")
+
+    def test_an_ipv4_address_inside_ipv6_is_judged_as_the_ipv4_address(self):
+        """Python 3.9 reads ::ffff:10.1.2.3 as an IPv6 address no rule above matches; the fetch
+        judges, and names, the IPv4 address it carries."""
+        for address, said in (("::ffff:127.0.0.1", "127.0.0.1 is a loopback address"),
+                              ("::ffff:10.1.2.3", "10.1.2.3 is a private or unique-local address"),
+                              ("::ffff:169.254.169.254", "169.254.169.254 is a link-local address")):
+            with self.subTest(address=address):
+                self.assertEqual(status_fetch.address_refusal(address), said)
+
 
 if __name__ == "__main__":
     unittest.main()
