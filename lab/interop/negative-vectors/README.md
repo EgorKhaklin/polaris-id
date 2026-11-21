@@ -218,8 +218,9 @@ measured nothing.
 
 Each case carries: `response` (the base64url DeviceResponse), `inputs` (the verifier's own request, from which it
 builds the SessionTranscript: `response_mode`, `client_id` and `response_uri`, or `origin`, with the `nonce`, the
-`encryption_jwk`, the DCQL `doctype_value` and, where the request asks for claims, the DCQL `claims` and
-`claim_sets`), `trust_anchors_pem` (the IACA root), `at` (the instant), `expected`, `layer`, and `class` with its
+`encryption_jwk`, the DCQL `doctype_value` and `claims`, with `claim_sets` where the request has them; in every
+control and twin the `claims` name each element the response discloses, as OpenID4VP 1.0 6.4 and 6.4.1 require
+of a wallet), `trust_anchors_pem` (the IACA root), `at` (the instant), `expected`, `layer`, and `class` with its
 `clauses`. `class` is `spec` where a normative sentence of OpenID4VP 1.0, RFC 9052 or RFC 9053 requires the refusal
 (quoted); `spec-implied` where a quoted sentence binds the issuer or the wallet, or a definition implies the refusal,
 or where the clause is ISO-only: the clause number is given and nothing is quoted; and

@@ -48,7 +48,7 @@ def _load_make_vectors():
 mv = _load_make_vectors()
 b64u = mv.b64u
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 UTC = datetime.timezone.utc
 # The verification instant. The certificates and the MSO are valid at it.
 AT = datetime.datetime.fromtimestamp(mv.NOW, UTC)
@@ -573,7 +573,13 @@ def _pem(cert):
 
 def build():
     """The vectors document: the two controls, then the vectors in the order of VECTORS, each with its twin."""
-    redirect, dcapi = dict(REDIRECT_INPUTS), dict(DCAPI_INPUTS)
+    # Every request asks, in its DCQL claims, for each element IssuerSigned discloses, so no row a verifier should
+    # accept sends an element its request did not select: OpenID4VP 1.0 6.4, "Wallets MUST NOT send selectively
+    # disclosable claims that have not been selected according to the rules below", and 6.4.1, "If claims is absent,
+    # the Verifier is requesting no claims that are selectively disclosable"; 8.6 has the Verifier check 6.4. A
+    # vector with a query of its own replaces these claims. In 0.2.0 and before the base inputs carried none.
+    requested = _query(tuple(name for _, name, _ in ELEMENTS))
+    redirect, dcapi = dict(REDIRECT_INPUTS, **requested), dict(DCAPI_INPUTS, **requested)
     base = {_REDIRECT: (redirect, _rt()), _DCAPI: (dcapi, _dt())}
     vectors = [
         _case("md-accept-redirect", "nothing: the control, an mDL over OpenID4VPHandover with a jwkThumbprint "

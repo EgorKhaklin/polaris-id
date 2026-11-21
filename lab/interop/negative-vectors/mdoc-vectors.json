@@ -1,6 +1,6 @@
 {
  "name": "Negative test vectors for mdoc DeviceResponses presented over OpenID4VP 1.0: the SessionTranscript and the device authentication, the issuer signature, the MSO and its digests, and the claims the request asks for",
- "version": "0.2.1",
+ "version": "0.3.0",
  "warning": "TEST KEYS AND CERTIFICATES, derived from public seeds by make_mdoc_vectors.py. Never trust them.",
  "settings": {
   "encoding": "response is the base64url DeviceResponse; inputs are the verifier's own request, from which it builds the SessionTranscript; repaired is the same vector with its one defect put back, expected accept; source says where each ISO/IEC 18013-5 clause number comes from: the implementation that gives it and the edition that implementation names, both where two number a clause differently"
@@ -49,7 +49,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQAxrZgky-IeRv4oLnqcUIGx0bD8sqJaTlNgQKdFvJzFBvXggtn9ZkxRf5w1WWA59boZRogdd3Wz6x5k-WpYs0Zxmc3RhdHVzAA"
   },
@@ -77,7 +97,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQGp--GPAJZnazTgKLI56SKTOj0IRf2HKJx80Z6btoLqH37JBn1n7ze9b29QdhR4jpm-lyJFEIrS8yO-ye00HM6dmc3RhdHVzAA"
   },
@@ -119,7 +159,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQLMr0PZDAoJRg321cbe7bjYgCk0PvbdZhuE0-SJH3RWY1DBF6d-UWcd_v910vaDOwiseGgkAhq3v-dWZ32RQjO5mc3RhdHVzAA",
    "repaired": {
@@ -138,7 +198,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -176,7 +256,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQB4sh3RXjrOwHDZ0G-LiS23zcpRXDLzsV2HDA8HwVpLkVk7LOQOoExxnWbCxRDYT9s1zIcVm4NbcEJvHenSYEnxmc3RhdHVzAA",
    "repaired": {
@@ -195,7 +295,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -233,7 +353,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQCvCqgbIsQEuMqOOmtm8xC6hGnzpHiU5bsBFELyOD-JcTUK7n6cS85TgPabLhrf28IyIdaLZF7RtXtfWcXprTnJmc3RhdHVzAA",
    "repaired": {
@@ -252,7 +392,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -286,7 +446,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQEONn5xBGFIuZNMOBhNGiZMgKvZa1hgne78L3fN35hfxWqiOU0wpoEqeSLzFBuxeIdmdOkganHpYjv3jg-jEjBhmc3RhdHVzAA",
    "repaired": {
@@ -305,7 +485,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -343,7 +543,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQJFMjXPJgW1COp9tJTk18bHPCo9FWnaDxbhcvZGZ9QYSlY4Q6CrZKPtl5mcqBkghB7MhgYjwN27OM9NY5DUcYaRmc3RhdHVzAA",
    "repaired": {
@@ -362,7 +582,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -396,7 +636,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQCOGrEPz7bOI9tWz-qh6A3-ElK023nig27hcuLSqelfIKMLZiXWdfxRIdIxWBgqYewYkHTq5MSRbHrCQqiI9fqVmc3RhdHVzAA",
    "repaired": {
@@ -415,7 +675,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -449,7 +729,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQGp--GPAJZnazTgKLI56SKTOj0IRf2HKJx80Z6btoLqH37JBn1n7ze9b29QdhR4jpm-lyJFEIrS8yO-ye00HM6dmc3RhdHVzAA",
    "repaired": {
@@ -468,7 +768,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -501,7 +821,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQAxrZgky-IeRv4oLnqcUIGx0bD8sqJaTlNgQKdFvJzFBvXggtn9ZkxRf5w1WWA59boZRogdd3Wz6x5k-WpYs0Zxmc3RhdHVzAA",
    "repaired": {
@@ -519,7 +859,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -552,7 +912,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQCbRuIQ7ymfF1UuhCdqLMTnvlYhCrMu5pehLH_G0KlNDSbqUTeWd7uBAlGYLMpR5HDOYM0Ql9DdxgD4VzQ7Y4ABmc3RhdHVzAA",
    "repaired": {
@@ -570,7 +950,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -603,7 +1003,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQBsbdZjKIalXnwb-i4puEWTDaAeJAC85yAY_G3zpsTwregUrvuQAC7uQm8_F3YmLkdiRvHdYBHrTR1FStY_YM7Jmc3RhdHVzAA",
    "repaired": {
@@ -621,7 +1041,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -663,7 +1103,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQFUeMtcv6IOrHbMGdvGMzwDjF5UwGdWeDZhVFKU2tM1ZHaUvXbram9jbfxIuYhAcx3w-PzvpDnDQopOZAlO5yBhmc3RhdHVzAA",
    "source": "9.1.3 is inferred from 9.1.3.4: @owf/mdoc 0.8.2 (formerly mdoc-ts) numbers DeviceAuth 9.1.3.4, naming no edition there; OID4VCgo 0.49.0 numbers mdoc authentication 12.4, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -683,7 +1143,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -721,7 +1201,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGigZnN0YXR1cwA",
    "repaired": {
@@ -740,7 +1240,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -774,7 +1294,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoFhs2BhYaIR0RGV2aWNlQXV0aGVudGljYXRpb26D9vaCcU9wZW5JRDRWUEhhbmRvdmVyWCDm-e7d2_XQl1SppvllmtJEvP2W29MgQVFyvf7JxPGaanVvcmcuaXNvLjE4MDEzLjUuMS5tREzYGEGgWEAMa2YJMviHkb-KC56nFCBsdGw_LKiWk5TYECnRbycxQb14ILZ_WZMUX-cNVlgOfW6GUaIHXd1s-seZPlqWLNGcZnN0YXR1cwA",
    "source": "the clause is cited without a number: OID4VCgo 0.49.0 numbers the detached DeviceAuthenticationBytes 12.4.4 and the signature over them 12.4.6, citing the 2025-09-14 CD ballot resolution draft of the second edition; @owf/mdoc 0.8.2 (formerly mdoc-ts) numbers DeviceAuth 9.1.3.4, naming no edition there",
@@ -794,7 +1334,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -828,7 +1388,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQGtwZ92_pPmmVA9_jUhRPR_rzaI7wlQW0ZXe7ML60ho0fWMVc4SjPnQKf9OUmnIvt9F0-TlcILosb4ECzByxbnRmc3RhdHVzAA",
    "source": "the clause is cited without a number: OID4VCgo 0.49.0 numbers DeviceAuthenticationBytes 12.4.4, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -848,7 +1428,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -882,7 +1482,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBASABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhABpMei89IJTBdHOzwwq-xF1C9PVo7wJDuC3mIUoYloWmgkLddInf56rJBSXL47x3tE0GEQV9m-rnKc9rolyeny2xkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQAxrZgky-IeRv4oLnqcUIGx0bD8sqJaTlNgQKdFvJzFBvXggtn9ZkxRf5w1WWA59boZRogdd3Wz6x5k-WpYs0Zxmc3RhdHVzAA",
    "repaired": {
@@ -901,7 +1521,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -935,7 +1575,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQHY2BhZAdOmZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-iaWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4XFrZXlBdXRob3JpemF0aW9uc6FqbmFtZVNwYWNlc4F2b3JnLmV4YW1wbGUuYXV0aG9yaXplZGdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhA-fHAZTQyMHeFSJBJiF6kSs7ix_o8mXdsk-QTm7tEofnPnyoYxs6BIwW-_OXi3_daGMV48LabKXOAm6BP62Er5WxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGFg7oXJvcmcuZXhhbXBsZS5kZXZpY2Wha2RldmljZV9ub3RleBhzaWduZWQgYnkgdGhlIGRldmljZSBrZXlqZGV2aWNlQXV0aKFvZGV2aWNlU2lnbmF0dXJlhEOhASag9lhADt_9ffEnftXlKpPPhUgII2XCiwblkq2b6TcWKo5QtN-7bGGKB2P8_HlJaykbVSE4OI1oamDavim5bbr2zLsb8WZzdGF0dXMA",
    "source": "@owf/mdoc 0.8.2 (formerly mdoc-ts) numbers the rule 9.1.3.4 and KeyAuthorizations 9.1.2.4, naming no edition there; OID4VCgo 0.49.0 numbers KeyAuthorizations 12.3.4 and the reader's check 12.8.2 step 1, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -955,7 +1615,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -997,7 +1677,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "eu.europa.ec.eudi.pid.1"
+    "doctype_value": "eu.europa.ec.eudi.pid.1",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQAxrZgky-IeRv4oLnqcUIGx0bD8sqJaTlNgQKdFvJzFBvXggtn9ZkxRf5w1WWA59boZRogdd3Wz6x5k-WpYs0Zxmc3RhdHVzAA",
    "repaired": {
@@ -1016,7 +1716,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1058,7 +1778,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49WxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQAxrZgky-IeRv4oLnqcUIGx0bD8sqJaTlNgQKdFvJzFBvXggtn9ZkxRf5w1WWA59boZRogdd3Wz6x5k-WpYs0Zxmc3RhdHVzAA",
    "source": "9.3.1 is inferred as the clause of the reader's checks of the issuer data: @owf/mdoc 0.8.2 (formerly mdoc-ts) numbers their docType check 9.3.1 step 4, naming no edition there; OID4VCgo 0.49.0 numbers the same check 12.8.1 step 4, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -1078,7 +1818,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1112,7 +1872,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhGMEQCIDwyUE8VoztKxv6dSLJSu78nW2FYD6fbkEMyVlWrLTn-AiArppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQAxrZgky-IeRv4oLnqcUIGx0bD8sqJaTlNgQKdFvJzFBvXggtn9ZkxRf5w1WWA59boZRogdd3Wz6x5k-WpYs0Zxmc3RhdHVzAA",
    "repaired": {
@@ -1131,7 +1911,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1173,7 +1973,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiERKEBOCKhGCFZAjAwggIsMIIB0aADAgECAgoA5unFKScuZ9zTMAoGCCqGSM49BAMCMC4xCzAJBgNVBAYTAlpaMR8wHQYDVQQDDBZNZG9jIFZlY3RvcnMgVGVzdCBJQUNBMB4XDTI2MDkwMTAwMDAwMFoXDTI3MDkzMDAwMDAwMFowOTELMAkGA1UEBhMCWloxKjAoBgNVBAMMIU1kb2MgVmVjdG9ycyBUZXN0IERvY3VtZW50IFNpZ25lcjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABAi8wkEjlgL413Jy7fCxIP63M1371KlBJkwHs3XBWcKu5AoyPXXACrOBdNPX7pGLQgVdwyvvdMGZYrB1qRyzdfijgcswgcgwDgYDVR0PAQH_BAQDAgeAMBUGA1UdJQEB_wQLMAkGByiBjF0FAQIwHwYDVR0jBBgwFoAUKtbpit5ctoQWSY3IDY7vH9XV4KgwHQYDVR0OBBYEFNjegOmLKtyc-qhhCm9hmwujDMzUMCcGA1UdEgQgMB6GHGh0dHBzOi8vbWRvYy12ZWN0b3JzLmV4YW1wbGUwNgYDVR0fBC8wLTAroCmgJ4YlaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZS9pYWNhLmNybDAKBggqhkjOPQQDAgNJADBGAiEAoVE8yKJxycSmfdsiDzfFdE8RYOtsShKlaNw6cGsx9KQCIQDXvDeJykLDFymOJHXQnJlCVCn5LmekmGtbFw8zE4s6l1kBotgYWQGdpmd2ZXJzaW9uYzEuMG9kaWdlc3RBbGdvcml0aG1nU0hBLTI1Nmx2YWx1ZURpZ2VzdHOhcW9yZy5pc28uMTgwMTMuNS4xowBYIJ_NAAN9LP3SlpXl7G_2-Sx7q0ShkXJa7iiZL_cg4YOlAVggqOC-1nRO_WwqiaxewY8VIAX_T8Ky70cHvVhofUiP3wUCWCCNtlMX2Th6QhNsUIDSkkViz3VX0wTl0BbgRZZXSKsFhG1kZXZpY2VLZXlJbmZvoWlkZXZpY2VLZXmkAQIgASFYIGE935FCkWjvjkOPlQRWlQmk0Xg_0aSNiAQHA6EfJq-9IlggXKWrTcTKm0NCPFNYgwHRZqVhszZTteejiNkcuAPm8OFnZG9jVHlwZXVvcmcuaXNvLjE4MDEzLjUuMS5tRExsdmFsaWRpdHlJbmZvo2ZzaWduZWTAdDIwMjYtMDktMzBUMDA6MDA6MDBaaXZhbGlkRnJvbcB0MjAyNi0wOS0zMFQwMDowMDowMFpqdmFsaWRVbnRpbMB0MjAyNy0wOS0zMFQwMDowMDowMFpYQI5c-suP7h1g4xQ4PI38gkouDQjiAcp68U7WracgYKtz3UbtvxY-Scs3P-81e0vKm21dKhXikygxwNcEAO51JcZsZGV2aWNlU2lnbmVkompuYW1lU3BhY2Vz2BhBoGpkZXZpY2VBdXRooW9kZXZpY2VTaWduYXR1cmWEQ6EBJqD2WEAMa2YJMviHkb-KC56nFCBsdGw_LKiWk5TYECnRbycxQb14ILZ_WZMUX-cNVlgOfW6GUaIHXd1s-seZPlqWLNGcZnN0YXR1cwA",
    "policy": "alg-curve-pairing",
@@ -1193,7 +2013,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1227,7 +2067,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEUKMBJgKBOgABAAA6AAEAAPWhGCFZAjAwggIsMIIB0aADAgECAgoA5unFKScuZ9zTMAoGCCqGSM49BAMCMC4xCzAJBgNVBAYTAlpaMR8wHQYDVQQDDBZNZG9jIFZlY3RvcnMgVGVzdCBJQUNBMB4XDTI2MDkwMTAwMDAwMFoXDTI3MDkzMDAwMDAwMFowOTELMAkGA1UEBhMCWloxKjAoBgNVBAMMIU1kb2MgVmVjdG9ycyBUZXN0IERvY3VtZW50IFNpZ25lcjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABAi8wkEjlgL413Jy7fCxIP63M1371KlBJkwHs3XBWcKu5AoyPXXACrOBdNPX7pGLQgVdwyvvdMGZYrB1qRyzdfijgcswgcgwDgYDVR0PAQH_BAQDAgeAMBUGA1UdJQEB_wQLMAkGByiBjF0FAQIwHwYDVR0jBBgwFoAUKtbpit5ctoQWSY3IDY7vH9XV4KgwHQYDVR0OBBYEFNjegOmLKtyc-qhhCm9hmwujDMzUMCcGA1UdEgQgMB6GHGh0dHBzOi8vbWRvYy12ZWN0b3JzLmV4YW1wbGUwNgYDVR0fBC8wLTAroCmgJ4YlaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZS9pYWNhLmNybDAKBggqhkjOPQQDAgNJADBGAiEAoVE8yKJxycSmfdsiDzfFdE8RYOtsShKlaNw6cGsx9KQCIQDXvDeJykLDFymOJHXQnJlCVCn5LmekmGtbFw8zE4s6l1kBotgYWQGdpmd2ZXJzaW9uYzEuMG9kaWdlc3RBbGdvcml0aG1nU0hBLTI1Nmx2YWx1ZURpZ2VzdHOhcW9yZy5pc28uMTgwMTMuNS4xowBYIJ_NAAN9LP3SlpXl7G_2-Sx7q0ShkXJa7iiZL_cg4YOlAVggqOC-1nRO_WwqiaxewY8VIAX_T8Ky70cHvVhofUiP3wUCWCCNtlMX2Th6QhNsUIDSkkViz3VX0wTl0BbgRZZXSKsFhG1kZXZpY2VLZXlJbmZvoWlkZXZpY2VLZXmkAQIgASFYIGE935FCkWjvjkOPlQRWlQmk0Xg_0aSNiAQHA6EfJq-9IlggXKWrTcTKm0NCPFNYgwHRZqVhszZTteejiNkcuAPm8OFnZG9jVHlwZXVvcmcuaXNvLjE4MDEzLjUuMS5tRExsdmFsaWRpdHlJbmZvo2ZzaWduZWTAdDIwMjYtMDktMzBUMDA6MDA6MDBaaXZhbGlkRnJvbcB0MjAyNi0wOS0zMFQwMDowMDowMFpqdmFsaWRVbnRpbMB0MjAyNy0wOS0zMFQwMDowMDowMFpYQJNv7ICPGTqqrSvhW4I3YhSs1bYNf8MCgCeFshgJ3CUYYv-Gfo_q89SMZKLUFzdROQ9DAovcJar_6aZEzbz_bxZsZGV2aWNlU2lnbmVkompuYW1lU3BhY2Vz2BhBoGpkZXZpY2VBdXRooW9kZXZpY2VTaWduYXR1cmWEQ6EBJqD2WEAMa2YJMviHkb-KC56nFCBsdGw_LKiWk5TYECnRbycxQb14ILZ_WZMUX-cNVlgOfW6GUaIHXd1s-seZPlqWLNGcZnN0YXR1cwA",
    "repaired": {
@@ -1246,7 +2106,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1280,7 +2160,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiERaIBJgEmoRghWQIwMIICLDCCAdGgAwIBAgIKAObpxSknLmfc0zAKBggqhkjOPQQDAjAuMQswCQYDVQQGEwJaWjEfMB0GA1UEAwwWTWRvYyBWZWN0b3JzIFRlc3QgSUFDQTAeFw0yNjA5MDEwMDAwMDBaFw0yNzA5MzAwMDAwMDBaMDkxCzAJBgNVBAYTAlpaMSowKAYDVQQDDCFNZG9jIFZlY3RvcnMgVGVzdCBEb2N1bWVudCBTaWduZXIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQIvMJBI5YC-Ndycu3wsSD-tzNd-9SpQSZMB7N1wVnCruQKMj11wAqzgXTT1-6Ri0IFXcMr73TBmWKwdakcs3X4o4HLMIHIMA4GA1UdDwEB_wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB8GA1UdIwQYMBaAFCrW6YreXLaEFkmNyA2O7x_V1eCoMB0GA1UdDgQWBBTY3oDpiyrcnPqoYQpvYZsLowzM1DAnBgNVHRIEIDAehhxodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlMDYGA1UdHwQvMC0wK6ApoCeGJWh0dHBzOi8vbWRvYy12ZWN0b3JzLmV4YW1wbGUvaWFjYS5jcmwwCgYIKoZIzj0EAwIDSQAwRgIhAKFRPMiiccnEpn3bIg83xXRPEWDrbEoSpWjcOnBrMfSkAiEA17w3icpCwxcpjiR10JyZQlQp-S5npJhrWxcPMxOLOpdZAaLYGFkBnaZndmVyc2lvbmMxLjBvZGlnZXN0QWxnb3JpdGhtZ1NIQS0yNTZsdmFsdWVEaWdlc3RzoXFvcmcuaXNvLjE4MDEzLjUuMaMAWCCfzQADfSz90paV5exv9vkse6tEoZFyWu4omS_3IOGDpQFYIKjgvtZ0Tv1sKomsXsGPFSAF_0_Csu9HB71YaH1Ij98FAlggjbZTF9k4ekITbFCA0pJFYs91V9ME5dAW4EWWV0irBYRtZGV2aWNlS2V5SW5mb6FpZGV2aWNlS2V5pAECIAEhWCBhPd-RQpFo745Dj5UEVpUJpNF4P9GkjYgEBwOhHyavvSJYIFylq03EyptDQjxTWIMB0WalYbM2U7Xno4jZHLgD5vDhZ2RvY1R5cGV1b3JnLmlzby4xODAxMy41LjEubURMbHZhbGlkaXR5SW5mb6Nmc2lnbmVkwHQyMDI2LTA5LTMwVDAwOjAwOjAwWml2YWxpZEZyb23AdDIwMjYtMDktMzBUMDA6MDA6MDBaanZhbGlkVW50aWzAdDIwMjctMDktMzBUMDA6MDA6MDBaWEB-egbanSDGH7QMml0QwIrG1tLpUrQhuCkRUQwJphCSNDnmUXvVviE8tijZqhCTo-Z8SmABTcfQ6kymHM3TjACnbGRldmljZVNpZ25lZKJqbmFtZVNwYWNlc9gYQaBqZGV2aWNlQXV0aKFvZGV2aWNlU2lnbmF0dXJlhEOhASag9lhADGtmCTL4h5G_iguepxQgbHRsPyyolpOU2BAp0W8nMUG9eCC2f1mTFF_nDVZYDn1uhlGiB13dbPrHmT5alizRnGZzdGF0dXMA",
    "repaired": {
@@ -1299,7 +2199,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1333,7 +2253,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGdpmd2ZXJzaW9uYzEuMG9kaWdlc3RBbGdvcml0aG1nU0hBLTI1Nmx2YWx1ZURpZ2VzdHOhcW9yZy5pc28uMTgwMTMuNS4xowBYIJ_NAAN9LP3SlpXl7G_2-Sx7q0ShkXJa7iiZL_cg4YOlAVggqOC-1nRO_WwqiaxewY8VIAX_T8Ky70cHvVhofUiP3wUCWCCNtlMX2Th6QhNsUIDSkkViz3VX0wTl0BbgRZZXSKsFhG1kZXZpY2VLZXlJbmZvoWlkZXZpY2VLZXmkAQIgASFYIGE935FCkWjvjkOPlQRWlQmk0Xg_0aSNiAQHA6EfJq-9IlggXKWrTcTKm0NCPFNYgwHRZqVhszZTteejiNkcuAPm8OFnZG9jVHlwZXVvcmcuaXNvLjE4MDEzLjUuMS5tRExsdmFsaWRpdHlJbmZvo2ZzaWduZWTAdDIwMjYtMDktMzBUMDA6MDA6MDBaaXZhbGlkRnJvbcB0MjAyNi0wOS0zMFQwMDowMDowMFpqdmFsaWRVbnRpbMB0MjAyNy0wOS0zMFQwMDowMDowMFpYQDb8VTjer3VLfEV36XFydhWD4ydfii3o5JBJfHET3gjw4_BqC1b-CjM_tPCK4uhwsMaA6W6PFIUQK7ncrYnP7ftsZGV2aWNlU2lnbmVkompuYW1lU3BhY2Vz2BhBoGpkZXZpY2VBdXRooW9kZXZpY2VTaWduYXR1cmWEQ6EBJqD2WEAMa2YJMviHkb-KC56nFCBsdGw_LKiWk5TYECnRbycxQb14ILZ_WZMUX-cNVlgOfW6GUaIHXd1s-seZPlqWLNGcZnN0YXR1cwA",
    "source": "the clause is cited without a number: OID4VCgo 0.49.0 numbers the MSO 12.3.4 and lists MobileSecurityObjectBytes among the tag-24 strings of 10.3.3, citing the 2025-09-14 CD ballot resolution draft of the second edition; @owf/mdoc 0.8.2 (formerly mdoc-ts) numbers the MSO's KeyAuthorizations and digest IDs 9.1.2.4, naming no edition there",
@@ -1353,7 +2293,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1391,7 +2351,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpOdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGi2BhZAZ2mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGx2YWxpZGl0eUluZm-jZnNpZ25lZMB0MjAyNi0wOS0zMFQwMDowMDowMFppdmFsaWRGcm9twHQyMDI2LTA5LTMwVDAwOjAwOjAwWmp2YWxpZFVudGlswHQyMDI3LTA5LTMwVDAwOjAwOjAwWlhAPDJQTxWjO0rG_p1IslK7vydbYVgPp9uQQzJWVastOf4rppsN7CD1vJ8LBVqyft-2N62NVZjbV455Kn3bAuz49GxkZXZpY2VTaWduZWSiam5hbWVTcGFjZXPYGEGgamRldmljZUF1dGihb2RldmljZVNpZ25hdHVyZYRDoQEmoPZYQAxrZgky-IeRv4oLnqcUIGx0bD8sqJaTlNgQKdFvJzFBvXggtn9ZkxRf5w1WWA59boZRogdd3Wz6x5k-WpYs0Zxmc3RhdHVzAA",
    "source": "OID4VCgo 0.49.0 numbers the IssuerSignedItem digests 12.3.5, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -1411,7 +2391,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1445,7 +2445,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGukaGRpZ2VzdElEGABmcmFuZG9tWCD99aRPU-Qv8WCMySibeAzoHQSbuHMN9TLcpkDYkHfL-nFlbGVtZW50SWRlbnRpZmllcmtmYW1pbHlfbmFtZWxlbGVtZW50VmFsdWVqTXVzdGVybWFubtgYWGSkaGRpZ2VzdElEAWZyYW5kb21YINXgHqgpwoLbSunUgVDMrC2yYfMl3nIEELAIooKOoGq5cWVsZW1lbnRJZGVudGlmaWVyamdpdmVuX25hbWVsZWxlbWVudFZhbHVlZUVyaWth2BhYbKRoZGlnZXN0SUQCZnJhbmRvbVggvjtOoww6ApmqCS9Bhh1FYG8IZ_mMWXvORqv8XI94rCZxZWxlbWVudElkZW50aWZpZXJqYmlydGhfZGF0ZWxlbGVtZW50VmFsdWXZA-xqMTk2NC0wOC0xMmppc3N1ZXJBdXRohEOhASahGCFZAjAwggIsMIIB0aADAgECAgoA5unFKScuZ9zTMAoGCCqGSM49BAMCMC4xCzAJBgNVBAYTAlpaMR8wHQYDVQQDDBZNZG9jIFZlY3RvcnMgVGVzdCBJQUNBMB4XDTI2MDkwMTAwMDAwMFoXDTI3MDkzMDAwMDAwMFowOTELMAkGA1UEBhMCWloxKjAoBgNVBAMMIU1kb2MgVmVjdG9ycyBUZXN0IERvY3VtZW50IFNpZ25lcjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABAi8wkEjlgL413Jy7fCxIP63M1371KlBJkwHs3XBWcKu5AoyPXXACrOBdNPX7pGLQgVdwyvvdMGZYrB1qRyzdfijgcswgcgwDgYDVR0PAQH_BAQDAgeAMBUGA1UdJQEB_wQLMAkGByiBjF0FAQIwHwYDVR0jBBgwFoAUKtbpit5ctoQWSY3IDY7vH9XV4KgwHQYDVR0OBBYEFNjegOmLKtyc-qhhCm9hmwujDMzUMCcGA1UdEgQgMB6GHGh0dHBzOi8vbWRvYy12ZWN0b3JzLmV4YW1wbGUwNgYDVR0fBC8wLTAroCmgJ4YlaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZS9pYWNhLmNybDAKBggqhkjOPQQDAgNJADBGAiEAoVE8yKJxycSmfdsiDzfFdE8RYOtsShKlaNw6cGsx9KQCIQDXvDeJykLDFymOJHXQnJlCVCn5LmekmGtbFw8zE4s6l1kBotgYWQGdpmd2ZXJzaW9uYzEuMG9kaWdlc3RBbGdvcml0aG1nU0hBLTI1Nmx2YWx1ZURpZ2VzdHOhcW9yZy5pc28uMTgwMTMuNS4xowBYIJ_NAAN9LP3SlpXl7G_2-Sx7q0ShkXJa7iiZL_cg4YOlAVggqOC-1nRO_WwqiaxewY8VIAX_T8Ky70cHvVhofUiP3wUCWCCNtlMX2Th6QhNsUIDSkkViz3VX0wTl0BbgRZZXSKsFhG1kZXZpY2VLZXlJbmZvoWlkZXZpY2VLZXmkAQIgASFYIGE935FCkWjvjkOPlQRWlQmk0Xg_0aSNiAQHA6EfJq-9IlggXKWrTcTKm0NCPFNYgwHRZqVhszZTteejiNkcuAPm8OFnZG9jVHlwZXVvcmcuaXNvLjE4MDEzLjUuMS5tRExsdmFsaWRpdHlJbmZvo2ZzaWduZWTAdDIwMjYtMDktMzBUMDA6MDA6MDBaaXZhbGlkRnJvbcB0MjAyNi0wOS0zMFQwMDowMDowMFpqdmFsaWRVbnRpbMB0MjAyNy0wOS0zMFQwMDowMDowMFpYQDwyUE8VoztKxv6dSLJSu78nW2FYD6fbkEMyVlWrLTn-K6abDewg9byfCwVasn7ftjetjVWY21eOeSp92wLs-PRsZGV2aWNlU2lnbmVkompuYW1lU3BhY2Vz2BhBoGpkZXZpY2VBdXRooW9kZXZpY2VTaWduYXR1cmWEQ6EBJqD2WEAMa2YJMviHkb-KC56nFCBsdGw_LKiWk5TYECnRbycxQb14ILZ_WZMUX-cNVlgOfW6GUaIHXd1s-seZPlqWLNGcZnN0YXR1cwA",
    "source": "OID4VCgo 0.49.0 numbers the IssuerSignedItem digests 12.3.5, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -1465,7 +2485,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1503,7 +2543,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQF_2BhZAXqmZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGiAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBW1kZXZpY2VLZXlJbmZvoWlkZXZpY2VLZXmkAQIgASFYIGE935FCkWjvjkOPlQRWlQmk0Xg_0aSNiAQHA6EfJq-9IlggXKWrTcTKm0NCPFNYgwHRZqVhszZTteejiNkcuAPm8OFnZG9jVHlwZXVvcmcuaXNvLjE4MDEzLjUuMS5tRExsdmFsaWRpdHlJbmZvo2ZzaWduZWTAdDIwMjYtMDktMzBUMDA6MDA6MDBaaXZhbGlkRnJvbcB0MjAyNi0wOS0zMFQwMDowMDowMFpqdmFsaWRVbnRpbMB0MjAyNy0wOS0zMFQwMDowMDowMFpYQNSBkmjItrGfh19yPqjcS9i4d3Eke1C_jP9SW5jzNTCcC1aEEK9bcxX81J55wzB5nMVRREnVtTH6g3VM4KXiclBsZGV2aWNlU2lnbmVkompuYW1lU3BhY2Vz2BhBoGpkZXZpY2VBdXRooW9kZXZpY2VTaWduYXR1cmWEQ6EBJqD2WEAMa2YJMviHkb-KC56nFCBsdGw_LKiWk5TYECnRbycxQb14ILZ_WZMUX-cNVlgOfW6GUaIHXd1s-seZPlqWLNGcZnN0YXR1cwA",
    "source": "OID4VCgo 0.49.0 numbers the IssuerSignedItem digests 12.3.5, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -1523,7 +2583,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1557,7 +2637,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQF52BhZAXSmZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWVTSEEtMWx2YWx1ZURpZ2VzdHOhcW9yZy5pc28uMTgwMTMuNS4xowBUs_JexonECo9UPqM_ve7x_1HLjfkBVHrSDsrmXpFS47r7pfaXjIbEE4sbAlTdxbqgl3CJXe7tljPOiPZU3RMDaG1kZXZpY2VLZXlJbmZvoWlkZXZpY2VLZXmkAQIgASFYIGE935FCkWjvjkOPlQRWlQmk0Xg_0aSNiAQHA6EfJq-9IlggXKWrTcTKm0NCPFNYgwHRZqVhszZTteejiNkcuAPm8OFnZG9jVHlwZXVvcmcuaXNvLjE4MDEzLjUuMS5tRExsdmFsaWRpdHlJbmZvo2ZzaWduZWTAdDIwMjYtMDktMzBUMDA6MDA6MDBaaXZhbGlkRnJvbcB0MjAyNi0wOS0zMFQwMDowMDowMFpqdmFsaWRVbnRpbMB0MjAyNy0wOS0zMFQwMDowMDowMFpYQEugcNpnLwPr7uu_2SH8IdOPrnsyo21xaQfUa2HrlbYRFi5YIyBduoUVNYGUZ6wHcmJA2jr0-3IhTUl2YZKSIRxsZGV2aWNlU2lnbmVkompuYW1lU3BhY2Vz2BhBoGpkZXZpY2VBdXRooW9kZXZpY2VTaWduYXR1cmWEQ6EBJqD2WEAMa2YJMviHkb-KC56nFCBsdGw_LKiWk5TYECnRbycxQb14ILZ_WZMUX-cNVlgOfW6GUaIHXd1s-seZPlqWLNGcZnN0YXR1cwA",
    "source": "OID4VCgo 0.49.0 numbers the MSO digest algorithms Table 16, citing the 2025-09-14 CD ballot resolution draft of the second edition; HAIP 1.0 9.3.1.2, a non-normative example, says \"Verifiers support all hash algorithms listed in table 21 of [ISO.18013-5].\"; its 3.3 lists [ISO.18013-5] as \"ISO/IEC 18013-5:2021 Personal identification - ISO-compliant driving licence Part 5: Mobile driving licence (mDL) application\"; that the two numbers name one table is inferred",
@@ -1577,7 +2677,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1611,7 +2731,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGV2BhZAZCmZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFSfzQADfSz90paV5exv9vkse6tEoQFYIKjgvtZ0Tv1sKomsXsGPFSAF_0_Csu9HB71YaH1Ij98FAlggjbZTF9k4ekITbFCA0pJFYs91V9ME5dAW4EWWV0irBYRtZGV2aWNlS2V5SW5mb6FpZGV2aWNlS2V5pAECIAEhWCBhPd-RQpFo745Dj5UEVpUJpNF4P9GkjYgEBwOhHyavvSJYIFylq03EyptDQjxTWIMB0WalYbM2U7Xno4jZHLgD5vDhZ2RvY1R5cGV1b3JnLmlzby4xODAxMy41LjEubURMbHZhbGlkaXR5SW5mb6Nmc2lnbmVkwHQyMDI2LTA5LTMwVDAwOjAwOjAwWml2YWxpZEZyb23AdDIwMjYtMDktMzBUMDA6MDA6MDBaanZhbGlkVW50aWzAdDIwMjctMDktMzBUMDA6MDA6MDBaWEBV96oVAcmTADcg1x7mDCwRHUXb8ndLcULLpHzotTwBNPUQxCo0S7miqdgXzQuXCbDrKfpS8jJjJqyYroTlVAHhbGRldmljZVNpZ25lZKJqbmFtZVNwYWNlc9gYQaBqZGV2aWNlQXV0aKFvZGV2aWNlU2lnbmF0dXJlhEOhASag9lhADGtmCTL4h5G_iguepxQgbHRsPyyolpOU2BAp0W8nMUG9eCC2f1mTFF_nDVZYDn1uhlGiB13dbPrHmT5alizRnGZzdGF0dXMA",
    "source": "OID4VCgo 0.49.0 numbers the IssuerSignedItem digests 12.3.5, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -1631,7 +2771,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },
@@ -1669,7 +2829,27 @@
      "alg": "ECDH-ES",
      "kid": "enc-1"
     },
-    "doctype_value": "org.iso.18013.5.1.mDL"
+    "doctype_value": "org.iso.18013.5.1.mDL",
+    "claims": [
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "family_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "given_name"
+      ]
+     },
+     {
+      "path": [
+       "org.iso.18013.5.1",
+       "birth_date"
+      ]
+     }
+    ]
    },
    "response": "o2d2ZXJzaW9uYzEuMGlkb2N1bWVudHOBo2dkb2NUeXBldW9yZy5pc28uMTgwMTMuNS4xLm1ETGxpc3N1ZXJTaWduZWSiam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xg9gYWGqkaGRpZ2VzdElEAGZyYW5kb21YIP31pE9T5C_xYIzJKJt4DOgdBJu4cw31MtymQNiQd8v6cWVsZW1lbnRJZGVudGlmaWVya2ZhbWlseV9uYW1lbGVsZW1lbnRWYWx1ZWpNdXN0ZXJtYW5u2BhYZKRoZGlnZXN0SUQBZnJhbmRvbVgg1eAeqCnCgttK6dSBUMysLbJh8yXecgQQsAiigo6garlxZWxlbWVudElkZW50aWZpZXJqZ2l2ZW5fbmFtZWxlbGVtZW50VmFsdWVlRXJpa2HYGFhspGhkaWdlc3RJRAJmcmFuZG9tWCC-O06jDDoCmaoJL0GGHUVgbwhn-YxZe85Gq_xcj3isJnFlbGVtZW50SWRlbnRpZmllcmpiaXJ0aF9kYXRlbGVsZW1lbnRWYWx1ZdkD7GoxOTY0LTA4LTEyamlzc3VlckF1dGiEQ6EBJqEYIVkCMDCCAiwwggHRoAMCAQICCgDm6cUpJy5n3NMwCgYIKoZIzj0EAwIwLjELMAkGA1UEBhMCWloxHzAdBgNVBAMMFk1kb2MgVmVjdG9ycyBUZXN0IElBQ0EwHhcNMjYwOTAxMDAwMDAwWhcNMjcwOTMwMDAwMDAwWjA5MQswCQYDVQQGEwJaWjEqMCgGA1UEAwwhTWRvYyBWZWN0b3JzIFRlc3QgRG9jdW1lbnQgU2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECLzCQSOWAvjXcnLt8LEg_rczXfvUqUEmTAezdcFZwq7kCjI9dcAKs4F009fukYtCBV3DK-90wZlisHWpHLN1-KOByzCByDAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH_BAswCQYHKIGMXQUBAjAfBgNVHSMEGDAWgBQq1umK3ly2hBZJjcgNju8f1dXgqDAdBgNVHQ4EFgQU2N6A6Ysq3Jz6qGEKb2GbC6MMzNQwJwYDVR0SBCAwHoYcaHR0cHM6Ly9tZG9jLXZlY3RvcnMuZXhhbXBsZTA2BgNVHR8ELzAtMCugKaAnhiVodHRwczovL21kb2MtdmVjdG9ycy5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQChUTzIonHJxKZ92yIPN8V0TxFg62xKEqVo3DpwazH0pAIhANe8N4nKQsMXKY4kddCcmUJUKfkuZ6SYa1sXDzMTizqXWQGk2BhZAZ-mZ3ZlcnNpb25jMS4wb2RpZ2VzdEFsZ29yaXRobWdTSEEtMjU2bHZhbHVlRGlnZXN0c6Fxb3JnLmlzby4xODAxMy41LjGjAFggn80AA30s_dKWleXsb_b5LHurRKGRclruKJkv9yDhg6UBWCCo4L7WdE79bCqJrF7BjxUgBf9PwrLvRwe9WGh9SI_fBQJYII22UxfZOHpCE2xQgNKSRWLPdVfTBOXQFuBFlldIqwWEbWRldmljZUtleUluZm-haWRldmljZUtleaQBAiABIVggYT3fkUKRaO-OQ4-VBFaVCaTReD_RpI2IBAcDoR8mr70iWCBcpatNxMqbQ0I8U1iDAdFmpWGzNlO156OI2Ry4A-bw4Wdkb2NUeXBld2V1LmV1cm9wYS5lYy5ldWRpLnBpZC4xbHZhbGlkaXR5SW5mb6Nmc2lnbmVkwHQyMDI2LTA5LTMwVDAwOjAwOjAwWml2YWxpZEZyb23AdDIwMjYtMDktMzBUMDA6MDA6MDBaanZhbGlkVW50aWzAdDIwMjctMDktMzBUMDA6MDA6MDBaWEDm3kAjgb0-pdOrYulSQfDborjzF27DQpQ_eqfOTtsNrAFcOP1iavhVrsTBtbGMJ-B4FES3UY1Ri_cNJBIX7OPDbGRldmljZVNpZ25lZKJqbmFtZVNwYWNlc9gYQaBqZGV2aWNlQXV0aKFvZGV2aWNlU2lnbmF0dXJlhEOhASag9lhADGtmCTL4h5G_iguepxQgbHRsPyyolpOU2BAp0W8nMUG9eCC2f1mTFF_nDVZYDn1uhlGiB13dbPrHmT5alizRnGZzdGF0dXMA",
    "source": "@owf/mdoc 0.8.2 (formerly mdoc-ts) numbers this check 9.3.1 step 4, naming no edition there; OID4VCgo 0.49.0 numbers it 12.8.1 step 4, citing the 2025-09-14 CD ballot resolution draft of the second edition",
@@ -1689,7 +2869,27 @@
       "alg": "ECDH-ES",
       "kid": "enc-1"
      },
-     "doctype_value": "org.iso.18013.5.1.mDL"
+     "doctype_value": "org.iso.18013.5.1.mDL",
+     "claims": [
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "family_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "given_name"
+       ]
+      },
+      {
+       "path": [
+        "org.iso.18013.5.1",
+        "birth_date"
+       ]
+      }
+     ]
     }
    }
   },

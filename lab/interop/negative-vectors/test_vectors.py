@@ -1064,6 +1064,37 @@ class MdocVectors(unittest.TestCase):
             self.assertLessEqual(serial.bit_length() // 8 + 1, 20, "a serial over 20 octets: %d" % serial)
         self.assertTrue(signers.isdisjoint(anchors), "the IACA and the document signer share a serial")
 
+    @staticmethod
+    def _issuer_signed_elements(response):
+        """The (namespace, elementIdentifier) pairs a response's IssuerSigned discloses, read from the published
+        bytes."""
+        import cbor2
+        raw = base64.urlsafe_b64decode(response + "=" * (-len(response) % 4))
+        name_spaces = cbor2.loads(raw)["documents"][0]["issuerSigned"].get("nameSpaces") or {}
+        return {(ns, cbor2.loads(item.value)["elementIdentifier"]) for ns, items in name_spaces.items()
+                for item in items}
+
+    def test_every_row_a_verifier_should_accept_requests_each_element_it_discloses(self):
+        # OpenID4VP 1.0 6.4: "Wallets MUST NOT send selectively disclosable claims that have not been selected
+        # according to the rules below"; 6.4.1: "If claims is absent, the Verifier is requesting no claims that are
+        # selectively disclosable"; 8.6 has the Verifier check 6.4. Each IssuerSignedItem is released on its own, so
+        # each element is selectively disclosable. Both controls and every twin carry the DCQL claims, and each
+        # element their IssuerSigned discloses is the path of one of them. In 0.2.0, 31 of these 34 rows carried no
+        # claims.
+        rows = 0
+        for vector in self.doc["vectors"]:
+            accepted = [("case", vector)] if vector["expected"] == "accept" else []
+            accepted += [("repaired", vector["repaired"])] if "repaired" in vector else []
+            for label, row in accepted:
+                where = "%s (%s)" % (vector["id"], label)
+                self.assertIn("claims", row["inputs"], where)
+                asked = {tuple(c["path"]) for c in row["inputs"]["claims"]}
+                disclosed = self._issuer_signed_elements(row["response"])
+                self.assertTrue(disclosed, where)
+                self.assertLessEqual(disclosed, asked, where)
+                rows += 1
+        self.assertEqual(rows, 34, "two controls and 32 twins")
+
     def test_the_document_signer_days_option(self):
         script = os.path.join(HERE, "make_mdoc_vectors.py")
         run = subprocess.run([sys.executable, script, "--document-signer-days", "457"], capture_output=True,
@@ -2850,8 +2881,12 @@ class MdocVectorsUnderThePackage(unittest.TestCase):
         self.assertEqual(len(vectors), 34)
         redirect = {i: v for i, v in vectors.items() if v["inputs"]["response_mode"] == "direct_post.jwt"}
         self.assertEqual(sorted(set(vectors) - set(redirect)), sorted(self.MILESTONE_3))
-        judged = {i: v for i, v in redirect.items() if "claims" not in v["inputs"]}
-        self.assertEqual(sorted(set(redirect) - set(judged)), sorted(self.THE_QUERY_CHECKS))
+        # The query checks are the redirect vectors whose claims are their own; every other one asks for what the
+        # control asks for.
+        base = vectors["md-accept-redirect"]["inputs"]["claims"]
+        self.assertEqual(sorted(i for i, v in redirect.items() if v["inputs"]["claims"] != base),
+                         sorted(self.THE_QUERY_CHECKS))
+        judged = {i: v for i, v in redirect.items() if i not in self.THE_QUERY_CHECKS}
         self.assertEqual(sorted(i for i in judged if judged[i]["expected"] == "reject"), sorted(self.CODES))
         self.assertEqual([i for i in judged if judged[i]["expected"] == "accept"], ["md-accept-redirect"])
         control = self.judge_vector(judged["md-accept-redirect"])
