@@ -1445,16 +1445,17 @@ def _gh(*args):
 
 
 def _failed_job_reasons(jobs):
-    """The annotations on the failed jobs, one `job<TAB>message` line each. A job that never got
-    a runner has no steps; a job whose runner was lost has steps. Neither leaves a log, so every
-    failed job is read, not only the ones that ran no step."""
-    lines = []
+    """The annotations on the failed jobs: (job name, [message, ...]) for each, in the run's
+    order, the list empty for a job with none to read. A job that never got a runner has no steps;
+    a job whose runner was lost has steps. Neither leaves a log, so every failed job is read, not
+    only the ones that ran no step."""
+    reasons = []
     for job in jobs.get("jobs", []):
-        if job.get("conclusion") == "failure" and job.get("databaseId"):
+        if job.get("conclusion") == "failure":
             notes = json.loads(_gh("api", "repos/{owner}/{repo}/check-runs/%s/annotations"
-                                   % job["databaseId"]) or "[]")
-            lines += ["%s\t%s" % (job.get("name", "?"), n.get("message", "")) for n in notes]
-    return "\n".join(lines)
+                                   % job["databaseId"]) or "[]") if job.get("databaseId") else []
+            reasons.append((job.get("name", "?"), [n.get("message", "") for n in notes]))
+    return reasons
 
 
 def triage(run_id=None, out=None):
@@ -1472,8 +1473,10 @@ def triage(run_id=None, out=None):
     # A finished run with no failed-job log: a job that never started, or one whose runner was
     # lost, has no log to give, and GitHub records why only as an annotation on it. Read those, so
     # the verdict rests on them.
+    annotated = None
     if jobs.get("conclusion") is not None and not log.strip():
-        log = _failed_job_reasons(jobs)
+        annotated = _failed_job_reasons(jobs)
+        log = "\n".join("%s\t%s" % (job, note) for job, notes in annotated for note in notes)
 
     # v9.377: "I could not look" is not "I looked and found nothing". gh refuses --log-failed
     # while ANY job in the run is still going, so triaging a run whose failure has already
@@ -1488,6 +1491,13 @@ def triage(run_id=None, out=None):
         return 1
 
     verdict, name, advice = classify_failure_log(log)
+    # Read from annotations, each failed job is judged on its own: one job's lost runner does not
+    # explain another job's exit code, so the run is a flake only when every failed job's own
+    # annotations name one. A job with none to read is a reason nobody read.
+    unexplained = [i for i, (_, notes) in enumerate(annotated or [])
+                   if classify_failure_log("\n".join(notes))[0] != "flake"]
+    if verdict == "flake" and unexplained:
+        verdict = "investigate"
     if verdict == "flake":
         print("  verdict: known flake [%s]: %s" % (name, advice), file=out)
         if name in FRESH_RUN_FLAKES:
@@ -1502,6 +1512,14 @@ def triage(run_id=None, out=None):
     if verdict == "upstream":
         print("  verdict: upstream change [%s]: %s" % (name, advice), file=out)
         print("  do NOT rerun; fix the reference and push", file=out)
+        return 1
+    if annotated is not None:
+        print("  verdict: investigate (no known flake signature explains: %s)"
+              % ", ".join(annotated[i][0] for i in unexplained), file=out)
+        for i in unexplained:
+            job, notes = annotated[i]
+            for note in notes[:6] or ["(no annotation)"]:
+                print("  %s: %s" % (job, note.strip()[:160]), file=out)
         return 1
     print("  verdict: investigate (no known flake signature matched)", file=out)
     shown = {}
