@@ -606,7 +606,8 @@ class TriageHonestyTests(unittest.TestCase):
                         "classifier runs over a refusal string and reports on it")
 
     def _triage_with(self, jobs, log, annotations):
-        """triage() against a stand-in for gh: the run's jobs, the failed-job log, annotations."""
+        """triage() against a stand-in for gh: the run's jobs, the failed-job log, annotations
+        (one list for every job, or a dict of each job's own by its databaseId)."""
         import io
         import json
         from unittest import mock
@@ -617,6 +618,8 @@ class TriageHonestyTests(unittest.TestCase):
             if args[:2] == ("run", "view"):
                 return json.dumps(jobs)
             if args[0] == "api" and args[1].endswith("/annotations"):
+                if isinstance(annotations, dict):
+                    return json.dumps(annotations[int(args[1].split("/")[-2])])
                 return json.dumps(annotations)
             raise AssertionError("unexpected gh call %r" % (args,))
         out = io.StringIO()
@@ -635,6 +638,73 @@ class TriageHonestyTests(unittest.TestCase):
         self.assertIn("known flake [runner-not-acquired]", text)
         self.assertIn("gh run rerun 123 --failed", text)
         self.assertEqual(rc, 0)
+
+    def test_a_job_whose_runner_was_lost_is_named_not_left_unknown(self):
+        # Run 44682384966, attempt 1, 2026-11-20 (PR #583): the HA failover drill had started, so
+        # it has steps; GitHub lost its runner, `--log-failed` printed nothing to stdout ("log not
+        # found: 136108679515" on stderr), and the reason was only the check run's annotation.
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "HA profile survives a leader crash", "conclusion": "failure",
+             "steps": [{"name": "Failover drill"}], "databaseId": 9}]}
+        note = [{"message": "The hosted runner lost communication with the server. Anything in "
+                            "your workflow that terminates the runner process, starves it for "
+                            "CPU/Memory, or blocks its network access can cause this error."}]
+        rc, text, calls = self._triage_with(jobs, "", note)
+        self.assertIn("known flake [runner-lost]", text)
+        self.assertIn("gh run rerun 123 --failed", text)
+        self.assertEqual(rc, 0)
+        self.assertIn(("api", "repos/{owner}/{repo}/check-runs/9/annotations"), calls)
+
+    def test_a_started_job_with_no_log_and_an_ordinary_reason_is_not_rerun(self):
+        # A job that failed in a step and left no log is annotated with its exit code. Reading
+        # that annotation must give "investigate", never a rerun and never "no log to read yet".
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "x", "conclusion": "failure", "steps": [{"name": "s"}], "databaseId": 9}]}
+        rc, text, _ = self._triage_with(jobs, "", [{"message": "Process completed with exit "
+                                                               "code 1."}])
+        self.assertIn("verdict: investigate", text)
+        self.assertIn("x: Process completed with exit code 1.", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertNotIn("UNKNOWN", text)
+        self.assertEqual(rc, 1)
+
+    def test_a_lost_runner_beside_a_real_failure_is_not_called_a_flake(self):
+        # Two failed jobs and no failed-job log: job A lost its runner, job B failed in a step.
+        # Each job is judged on its own annotations, so A's flake does not explain B's failure:
+        # the verdict is investigate, B's reason is printed and nothing is rerun. The twin: when
+        # B lost its runner too, every failed job is a flake and the run is rerun.
+        lost = ("The hosted runner lost communication with the server. Anything in your workflow "
+                "that terminates the runner process, starves it for CPU/Memory, or blocks its "
+                "network access can cause this error.")
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "A", "conclusion": "failure", "steps": [{"name": "s"}], "databaseId": 7},
+            {"name": "B", "conclusion": "failure", "steps": [{"name": "s"}], "databaseId": 8}]}
+        rc, text, calls = self._triage_with(jobs, "", {7: [{"message": lost}],
+                                                       8: [{"message": "Process completed with exit code 1."}]})
+        self.assertIn("verdict: investigate", text)
+        self.assertIn("B: Process completed with exit code 1.", text)
+        self.assertNotIn("verdict: known flake", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertEqual(rc, 1)
+        for job in (7, 8):
+            self.assertIn(("api", "repos/{owner}/{repo}/check-runs/%d/annotations" % job), calls)
+        rc, text, _ = self._triage_with(jobs, "", {7: [{"message": lost}], 8: [{"message": lost}]})
+        self.assertIn("known flake [runner-lost]", text)
+        self.assertIn("gh run rerun 123 --failed", text)
+        self.assertEqual(rc, 0)
+        # A failed job with no annotation at all is a reason nobody read: no rerun either.
+        rc, text, _ = self._triage_with(jobs, "", {7: [{"message": lost}], 8: []})
+        self.assertIn("B: (no annotation)", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertEqual(rc, 1)
+        # Nor is a failed job whose annotations cannot be asked for (no id): it is not skipped.
+        unread = {"conclusion": "failure", "jobs": [jobs["jobs"][0], {"name": "C", "conclusion": "failure"}]}
+        rc, text, calls = self._triage_with(unread, "", {7: [{"message": lost}]})
+        self.assertIn("C: (no annotation)", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertEqual(rc, 1)
+        self.assertEqual([c for c in calls if c[0] == "api"],
+                         [("api", "repos/{owner}/{repo}/check-runs/7/annotations")])
 
     def test_a_pages_flake_is_answered_with_a_fresh_run_never_a_rerun(self):
         jobs = {"conclusion": "failure", "workflowName": "Pages", "headBranch": "main", "jobs": [

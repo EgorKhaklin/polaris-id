@@ -75,6 +75,10 @@ polaris-oid4vp keygen --out ./pki --host verifier.example
 polaris-oid4vp serve  --pki ./pki --port 9443 --issuer-jwks issuers.json
 ```
 
+`issuers.json` is a JSON Web Key Set (RFC 7517) holding the signing keys of the issuers whose
+credentials this verifier accepts; [the stranger's path](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/STRANGER-PATH.md#4-give-the-wallet-a-credential-and-the-trust-to-check-yours)
+makes one, `issuer-jwks.json`, in its step 4.
+
 The same two commands run from a container:
 [the image](https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp/image)
 holds this package from PyPI, installed by hash.
