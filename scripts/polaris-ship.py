@@ -181,6 +181,7 @@ VERIFICATION = [
      "the stranger's step 4 moved: run again, the wallet must trust the new certificate and hold only the new credential"),
     (r"^lab/interop/mdoc/",
      ["python3 -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py",
+      "python3 -m unittest lab/interop/mdoc/witness-oid4vcgo/test_check.py",
       "python3 -m unittest lab/interop/mdoc/test_verify_mdoc.py",
       "python3 -m unittest lab/interop/altid/test_avp.py",
       "python3 scripts/polaris-mdoc-mutation-drill.py",
@@ -434,6 +435,7 @@ UNSHARDED_SUITES = {
     # Needs requirements.txt there; without it the suite skips here and CI, which installs it, runs it.
     "packages/polaris-oid4vp/examples/yivi-checkin": ["test_checkin"],
     "lab/interop/mdoc/witness-eudi": ["test_witness_eudi"],
+    "lab/interop/mdoc/witness-oid4vcgo": ["test_check"],
     "lab/interop/mdoc": ["test_verify_mdoc"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
@@ -476,6 +478,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/waltid":       ("unittest", None),
     "packages/polaris-oid4vp/examples/yivi-checkin": ("unittest", None),
     "lab/interop/mdoc/witness-eudi": ("unittest", None),
+    "lab/interop/mdoc/witness-oid4vcgo": ("unittest", None),
     "lab/interop/mdoc":         ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),

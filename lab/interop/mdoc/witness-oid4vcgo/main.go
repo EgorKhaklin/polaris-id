@@ -12,7 +12,7 @@
 //	composed        every case. The exported functions verifier.verifyMdocPresentation calls
 //	                (verifier/verify_response.go:685-766), in its order and with its stage
 //	                labels: oid4vpmdoc.UnmarshalDeviceResponse, the issuer key from the IssuerAuth
-//	                x5chain (verifier.X5ChainIssuerKeyResolver), mdoc.Verify,
+//	                x5chain (verifier.X5ChainIssuerKeyResolver, revocation declined), mdoc.Verify,
 //	                verifier.CheckMdocIssuer, oid4vpmdoc.BuildSessionTranscriptBytes or
 //	                BuildDCAPISessionTranscriptBytes, the DeviceAuth type, mdoc.VerifyDeviceSignature,
 //	                mdoc.CheckKeyAuthorizations, dcql.CredentialQuery.SatisfiedByMdocClaims, after
@@ -66,6 +66,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
@@ -275,6 +276,16 @@ func algForKey(pub crypto.PublicKey) (oid4vci.COSEAlg, error) {
 	}
 }
 
+// issuerKeyResolver is the IssuerAuth x5chain resolver both paths use. Its Revocation is
+// certrevocation.NoCheck{}, OID4VCgo's explicit decline: since v0.53.0 the field is required, with no
+// default, and a resolver without it refuses every document. The vectors' document signer names a
+// CRL distribution point that is never served, and this witness judges the mdoc verdicts, not
+// revocation. OID4VCgo's own test of these vectors makes the same choice
+// (verifier/polaris_mdoc_vectors_test.go:339 at v0.75.0).
+func issuerKeyResolver(roots *x509.CertPool) verifier.X5ChainIssuerKeyResolver {
+	return verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
+}
+
 func composed(raw []byte, in inputs, roots *x509.CertPool, at time.Time, signerChecks bool) verdict {
 	ctx := verifier.WithVerificationTime(context.Background(), at)
 	query, err := in.query()
@@ -289,7 +300,7 @@ func composed(raw []byte, in inputs, roots *x509.CertPool, at time.Time, signerC
 	if err != nil {
 		return refused("decode issuer auth", err, nil)
 	}
-	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots}
+	resolver := issuerKeyResolver(roots)
 	issuerPub, issuerAlg, err := resolver.ResolveMdocIssuerKey(ctx, x5chain, doc.DocType)
 	if err != nil {
 		return refused("resolve issuer key", err, nil)
@@ -391,7 +402,7 @@ func verifyResponse(v *verifier.Verifier, presented string, in inputs, roots *x5
 		Response:              verifier.ParsedResponse{VPToken: map[string][]string{"mdoc": {presented}}},
 		ExpectedNonce:         in.Nonce,
 		Now:                   func() time.Time { return at },
-		MdocIssuerKeys:        verifier.X5ChainIssuerKeyResolver{Roots: roots},
+		MdocIssuerKeys:        issuerKeyResolver(roots),
 		AnyIssuerForAnyType:   true,
 		NoStatusCheck:         true,
 		ResponseEncryptionKey: &ecdsa.PrivateKey{PublicKey: *pub},
