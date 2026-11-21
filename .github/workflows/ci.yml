@@ -3997,6 +3997,10 @@ jobs:
       # come from polaris_web/requirements.txt, installed above.
       - name: The mdoc captures against their two witnesses (lab/interop/mdoc/witness-eudi), every stage classified
         run: python -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py
+      # lab/interop/mdoc/witness-oid4vcgo/check.py holds the OID4VCgo witness's rows to the
+      # vectors; mdoc-witness.yml runs the witness itself (in containers) and then check.py.
+      - name: The OID4VCgo mdoc witness's judge, each broken row set refused (lab/interop/mdoc/witness-oid4vcgo/test_check.py)
+        run: python -m unittest lab/interop/mdoc/witness-oid4vcgo/test_check.py
       # lab/interop/mdoc/verify_mdoc.py refuses each malformed input at the check that names it, with
       # that check's reason: the CBOR reader, the COSE_Sign1 shape, the verifier's own OpenID4VP
       # inputs, and the fields read before a signature decides. The vectors reach the rest.
