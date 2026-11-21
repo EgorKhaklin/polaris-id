@@ -1111,7 +1111,7 @@ class Verifier:
                  status_resolver=None, verifier_info=None, credential_query_id=None,
                  verifier_info_profile=None, redirect=True, accept_vp_token_as_json_string=False,
                  credential_format=SD_JWT_FORMAT, doctype_value=None, iaca_roots=None,
-                 dc_api_client_metadata=None):
+                 dc_api_client_metadata=None, require_status=False):
         if not _HAVE_CRYPTO:
             raise RuntimeError("polaris-oid4vp requires the cryptography package")
         # The format the one credential query asks for. A name this verifier does not build is
@@ -1186,6 +1186,7 @@ class Verifier:
             unread = [name for name, given in (("issuer_jwks", issuer_jwks),
                                                ("issuer_trust_anchors", issuer_trust_anchors),
                                                ("status_resolver", status_resolver),
+                                               ("require_status", require_status or None),
                                                ("vct_values", vct_values))
                       if given is not None]
             if unread:
@@ -1220,6 +1221,14 @@ class Verifier:
         # operator uses: the class that answers the wallet. A parameter reachable only from
         # the function underneath it is a capability the product does not have.
         self.status_resolver = status_resolver
+        # The relying party's own rule, off by default (2026-11-21): when on, only a status the
+        # resolver checked, VALID and fresh, lets a presentation through (`_status_refusal`).
+        # Without a resolver no status is ever established, so a verifier that would refuse every
+        # presentation is refused here instead.
+        if require_status and status_resolver is None:
+            raise ValueError("require_status needs a status_resolver: without one no status is "
+                             "established, and every presentation would be refused")
+        self.require_status = bool(require_status)
         # A profile the verifier_info is held to before any request carries it. An unknown name
         # is refused: one misspelt would otherwise check nothing and say nothing.
         if verifier_info_profile is not None and verifier_info_profile not in VERIFIER_INFO_PROFILES:
@@ -1676,17 +1685,12 @@ class Verifier:
             return self._error("claims", "the presentation discloses %s, which the request did "
                                          "not select" % ", ".join(_shown(p) for p in extra[:5]))
 
-        # A status the operator's resolver CHECKED, whose value is not VALID (0): the issuer
-        # says this credential is revoked or suspended. That is a fact, not a policy question, so
-        # the wallet is refused; until 2026-10-01 it got 200. The states that are not a fact
-        # (unreachable, no_authority, list_refused, unsupported_status) stay in the verdict for
-        # the relying party's own policy, as the README's revocation section says.
-        rev = verdict.revocation if isinstance(verdict.revocation, dict) else {}
-        if rev.get("state") == "checked" and rev.get("status") != 0:
+        # The status: a checked one that is not VALID is refused, and with require_status so is
+        # every state but a checked, VALID, fresh one (`_status_refusal`).
+        refusal = _status_refusal(verdict.revocation, self.require_status)
+        if refusal is not None:
             # The refusal keeps the resolver's answer, so the operator sees why.
-            return 400, dict(self.REFUSAL_BODY), Verdict(
-                False, "revoked", "the issuer's status list gives this credential the value %r, "
-                                  "not VALID (0)" % (rev.get("status"),), revocation=rev)
+            return 400, dict(self.REFUSAL_BODY), refusal
         return self._close_and_answer(session, verdict)
 
     def _judge_mdoc(self, session, presentation):
@@ -2155,8 +2159,76 @@ def _bounded_result(out):
     return out
 
 
+def _asked_once(resolver):
+    """`resolver`, asked once per status list reference and the answer, or what it raised, given
+    again after: `verify_response` judges each presentation under both transaction_data readings,
+    and one status list is one fetch. It declares `takes_credential_anchor` as `resolver` does,
+    and the anchor and signer certificates it is handed are part of the reference, since an
+    anchored authority's answer depends on them."""
+    answers = {}
+
+    def ask(*, uri, idx, issuer, **certified):
+        key = (uri, idx, issuer) + tuple(
+            None if cert is None else cert.public_bytes(serialization.Encoding.DER)
+            for cert in (certified.get("credential_anchor"), certified.get("credential_leaf")))
+        if key not in answers:
+            try:
+                answers[key] = (True, resolver(uri=uri, idx=idx, issuer=issuer, **certified))
+            except Exception as exc:  # noqa: BLE001  given again, as raised, on the next ask
+                answers[key] = (False, exc)
+        answered, value = answers[key]
+        if not answered:
+            raise value
+        return value
+    if getattr(resolver, "takes_credential_anchor", False) is True:
+        ask.takes_credential_anchor = True
+    return ask
+
+
+def _status_established(revocation):
+    """True only for a status a resolver checked, VALID (0), and not past the bound its issuer or
+    the caller set."""
+    status = revocation.get("status")
+    return (revocation.get("state") == "checked" and isinstance(status, int)
+            and not isinstance(status, bool) and status == 0 and revocation.get("stale") is False)
+
+
+def _state_said(revocation):
+    """A revocation state as a refusal names it: the state, and the check that refused a list."""
+    state = str(revocation.get("state"))
+    if state == "checked":
+        return "checked, VALID, %s" % ("but stale: past the bound its issuer or the caller set"
+                                       if revocation.get("stale") is True
+                                       else "with no freshness stated")
+    code = revocation.get("code")
+    return state if not code or code == state else "%s (%s)" % (state, code)
+
+
+def _status_refusal(revocation, require_status):
+    """The refusing verdict a presentation's revocation state calls for, or None.
+
+    A status a resolver CHECKED whose value is not VALID (0) is refused: the issuer says the
+    credential is revoked or suspended, which is a fact, not a policy question (until 2026-10-01
+    it got 200). The states that are not a fact (unreachable, no_authority, list_refused,
+    unsupported_status, no_status_claim, not_evaluated) stay in the verdict for the relying
+    party's own policy, unless `require_status` is that policy: then every state but a checked,
+    VALID, fresh one is refused as `status_required`, its reason naming the state (the German
+    PID verifier guidelines, V-20: "If the status cannot be determined, the PID is rejected").
+    Each refusal keeps the resolver's answer in `revocation`, so the operator sees why."""
+    rev = revocation if isinstance(revocation, dict) else {}
+    if rev.get("state") == "checked" and rev.get("status") != 0:
+        return Verdict(False, "revoked", "the issuer's status list gives this credential the value "
+                                         "%r, not VALID (0)" % (rev.get("status"),), revocation=rev)
+    if require_status and not _status_established(rev):
+        return Verdict(False, "status_required", "a checked, VALID, fresh status is required, and "
+                                                 "the revocation state is %s" % _state_said(rev),
+                       revocation=rev)
+    return None
+
+
 def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jwks=None,
-                    trust_anchors=None, now=None, iaca_roots=None):
+                    trust_anchors=None, now=None, iaca_roots=None, status_resolver=None,
+                    require_status=False):
     """A verdict over a captured response: every presentation in `vp_token`, each held to the
     request it answers, and the request's transaction_data under both readings of which entries
     a key binding JWT binds.
@@ -2174,6 +2246,11 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
     sent: `client_id`, `nonce`, `response_uri` and the one key in `client_metadata.jwks`. With
     `now`, the verdict's reason says it was judged at the supplied instant. Transaction data is
     not read for an mdoc, so a request carrying both is refused.
+
+    `status_resolver` and `require_status` are `Verifier`'s, for the dc+sd-jwt presentations: a
+    checked status that is not VALID refuses one, and with `require_status` so does every state
+    but a checked, VALID, fresh one (`_status_refusal`). The resolver is asked at most once per
+    status list reference, and it reads the status as it is when asked, whatever `now` says.
 
     Each presentation is checked as `verify_presentation` checks it; the claims it discloses are
     returned, not judged against the query. With transaction_data every presentation is
@@ -2229,6 +2306,13 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
                              "dc+sd-jwt and mso_mdoc" % (qid, query.get("format")))
         vct = meta.get("vct_values")
         asked[qid] = vct if isinstance(vct, list) else None
+    if require_status and status_resolver is None:
+        raise ValueError("require_status needs a status_resolver: without one no status is "
+                         "established, and every presentation would be refused")
+    if require_status and mdocs:
+        raise ValueError("require_status holds a dc+sd-jwt credential's status list, and the "
+                         "request asks for an mso_mdoc (%s), whose status this verifier does not "
+                         "read" % ", ".join(sorted(mdocs)))
     transcript = None
     if mdocs:
         if request.get("transaction_data") is not None:
@@ -2305,15 +2389,22 @@ def verify_response(request, vp_token, *, transaction_data_scope=None, issuer_jw
         return mdoc.verify_device_response(device_response, session_transcript=transcript,
                                            iaca_roots=iaca_roots, doctype=mdocs[qid], now=now)
 
+    resolver = None if status_resolver is None else _asked_once(status_resolver)
+
+    def held_to_status(verdict):
+        refusal = _status_refusal(verdict.revocation, require_status) if (
+            resolver is not None and verdict.authentic) else None
+        return verdict if refusal is None else refusal
+
     def evaluate(scope):
         memory = JtiMemory()
-        return {qid: judge_mdoc(qid) if qid in mdocs else verify_presentation(
+        return {qid: judge_mdoc(qid) if qid in mdocs else held_to_status(verify_presentation(
             presentation, expected_nonce=nonce, expected_audience=audience,
             issuer_jwks=issuer_jwks, trust_anchors=trust_anchors, now=now,
-            expected_vct=asked[qid],
+            expected_vct=asked[qid], status_resolver=resolver,
             transaction_data=None if not entries else TransactionDataBinding(
                 entries, qid, scope=scope, response_mode=request.get("response_mode"),
-                jti_fresh=memory, presented=presented))
+                jti_fresh=memory, presented=presented)))
             for qid, presentation in presented.items()}
 
     def bound_once(verdicts):

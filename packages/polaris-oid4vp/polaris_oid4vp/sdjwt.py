@@ -337,12 +337,17 @@ LIST_REFUSED = "list_refused"              # a list was obtained and is not usab
 #: publishes none.
 
 
-def _revocation_answer(payload, resolver=None, issuer=None):
+def _revocation_answer(payload, resolver=None, issuer=None, certified=None):
     """What this verifier can say about revocation.
 
     `issuer` is what the resolver is told the issuer is: the credential's `iss` when something
     binds it to the signing key, else None. An `iss` an x5c leaf does not bind is a claim, and a
     resolver keyed by issuer (`status.StatedAuthority` is) must not read a list under it.
+
+    `certified` is the (leaf, anchor) pair `_issuer_public_keys` returned, or None. A resolver
+    that declares `takes_credential_anchor = True` (`status.make_resolver`'s does) is also handed
+    `credential_anchor` and `credential_leaf` from it, each None for a key from a configured JWK;
+    any other resolver is called with the three keywords it always was (2026-11-21).
 
     Reads the credential's own issuer-signed `status` claim. With no resolver it opens no
     socket and never answers "not revoked", and the state it returns says so, because a
@@ -377,8 +382,11 @@ def _revocation_answer(payload, resolver=None, issuer=None):
                               "verifier did not fetch it, so whether the issuer has revoked "
                               "this credential is UNKNOWN, not false"
                               % (ref["uri"], ref["idx"])}
+        leaf, anchor = certified or (None, None)
+        extra = ({"credential_anchor": anchor, "credential_leaf": leaf}
+                 if getattr(resolver, "takes_credential_anchor", False) is True else {})
         try:
-            answer = resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer)
+            answer = resolver(uri=ref["uri"], idx=ref["idx"], issuer=issuer, **extra)
         except Exception as exc:
             return {"state": UNREACHABLE, "checked": False,
                     "uri": ref["uri"], "idx": ref["idx"],
@@ -408,10 +416,10 @@ def _revocation_answer(payload, resolver=None, issuer=None):
                       "recognise, so its revocation state is unknown"}
 
 
-def _revocation_state(payload, resolver=None, issuer=None):
+def _revocation_state(payload, resolver=None, issuer=None, certified=None):
     """_revocation_answer, its reason at most REASON_MAX characters: it can quote the status URI
     the credential names, a resolver's answer and what the resolver raised."""
-    state = _revocation_answer(payload, resolver, issuer)
+    state = _revocation_answer(payload, resolver, issuer, certified)
     if "reason" in state:
         state["reason"] = bounded_reason(state["reason"])
     return state
@@ -1951,7 +1959,7 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                            "the presentation carries no key binding JWT, and the request asked it "
                            "to bind %s" % transaction_data.describe())
         return Verdict(True, claims=claims,
-                       revocation=_revocation_state(payload, status_resolver, issuer),
+                       revocation=_revocation_state(payload, status_resolver, issuer, certified),
                        disclosed=disclosed,
                        transaction_data=None if transaction_data is None else transaction_data.report(),
                        **signer)
@@ -2060,5 +2068,5 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
             return bound
 
     return Verdict(True, claims=claims,
-                   revocation=_revocation_state(payload, status_resolver, issuer),
+                   revocation=_revocation_state(payload, status_resolver, issuer, certified),
                    disclosed=disclosed, transaction_data=bound, **signer)
