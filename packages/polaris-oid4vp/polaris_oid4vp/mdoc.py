@@ -223,8 +223,12 @@ def dc_api_origin(origin):
     (`serve.cors_origin`), so it comes back as a browser writes it: the scheme and the host
     lowercased and a default port dropped (`HTTPS://Verifier.Example:443` is
     `https://verifier.example`). Raises ValueError for a value written with the `origin:` prefix
-    (B.2.6.2: "It MUST NOT be prefixed with origin:."), for `*`, which names no one origin, and for
-    every value `cors_origin` refuses: a path, a query, no scheme among them."""
+    (B.2.6.2: "It MUST NOT be prefixed with origin:."), for `*`, which names no one origin, for
+    every value `cors_origin` refuses (a path, a query, no scheme among them), and for an http
+    origin a browser does not count as a secure context: the API exists only in one (Digital
+    Credentials, section 7.7: "[Exposed=Window, SecureContext] interface DigitalCredential"), and
+    over http only 127.0.0.0/8, ::1, localhost and a name ending in .localhost are one (W3C Secure
+    Contexts, section 3.1)."""
     if isinstance(origin, str) and origin[:7].lower() == "origin:":
         raise ValueError("%r is written with the origin: prefix; the origin an OpenID4VPDCAPIHandoverInfo "
                          "carries \"MUST NOT be prefixed with origin:\" (OpenID4VP 1.0 B.2.6.2)" % (origin,))
@@ -235,7 +239,29 @@ def dc_api_origin(origin):
     if written == "*":
         raise ValueError("'*' is not one origin: a request over the Digital Credentials API is made from "
                          "one, scheme://host[:port]")
+    if written.startswith("http:") and not _secure_context_over_http(written[len("http://"):]):
+        raise ValueError("%r is not an origin a browser offers the Digital Credentials API at: it offers "
+                         "the API only in a secure context (Digital Credentials, section 7.7), and over "
+                         "http only 127.0.0.0/8, [::1], localhost and a name ending in .localhost are one "
+                         "(W3C Secure Contexts, section 3.1); serve the page over https" % (origin,))
     return written
+
+
+def _secure_context_over_http(host_port):
+    """True for a `host[:port]`, as `serve.cors_origin` writes it, whose host W3C Secure Contexts
+    section 3.1 counts as potentially trustworthy under http: an IPv4 address in 127.0.0.0/8, the
+    IPv6 address ::1, and, either with one trailing dot, `localhost` or a name ending in
+    `.localhost` ("If origin's host matches one of the CIDR notations 127.0.0.0/8 or ::1/128
+    [RFC4632], return "Potentially Trustworthy"."; "origin's host is "localhost" or "localhost."
+    origin's host ends with ".localhost" or ".localhost."")."""
+    if host_port.startswith("["):
+        return host_port[:host_port.find("]") + 1] == "[::1]"
+    host = host_port.rsplit(":", 1)[0]
+    labels = host.split(".")
+    if len(labels) == 4 and all(label.isdigit() for label in labels):
+        return labels[0] == "127"
+    name = host[:-1] if host.endswith(".") else host
+    return name == "localhost" or name.endswith(".localhost")
 
 
 def dc_api_session_transcript(*, origin, nonce, jwk_thumbprint):

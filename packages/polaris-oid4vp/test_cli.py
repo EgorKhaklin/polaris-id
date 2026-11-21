@@ -1569,6 +1569,145 @@ class PublicationRuleTests(_MdocServeCase):
             self.assertIn(b64u_decode(sent[0]), [call.args[0] for call in decode.call_args_list])
 
 
+class DcApiServeCommandTests(_MdocServeCase):
+    """`serve ... --dc-api --dc-api-origin ORIGIN [--dc-api-client-metadata FILE]`: the page and
+    routes of the Digital Credentials API, behind --experimental and --format mso_mdoc."""
+
+    ORIGIN = "https://verifier.example"
+
+    def dc_api(self, *extra, without=()):
+        return self.mdoc("--dc-api", "--dc-api-origin", self.ORIGIN, *extra, without=without)
+
+    def before_the_pki(self, *args):
+        """`serve` with a PKI directory that does not exist: (rc, stderr)."""
+        import contextlib
+        import io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = main(["serve", "--pki", str(self.tmp / "absent"), *args])
+        return rc, err.getvalue()
+
+    def metadata_file(self, text):
+        path = self.tmp / ("metadata-%d.json" % len(list(self.tmp.iterdir())))
+        path.write_text(text)
+        return str(path)
+
+    def test_the_dc_api_path_is_off_by_default(self):
+        rc, seen, out, err = self.mdoc()
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(seen["kwargs"].get("dc_api_origin"))
+        self.assertNotIn("/dc-api/", out)
+        self.assertEqual(seen["verifier"].dc_api_client_metadata, {})
+        result = self.dc_api(without=("--experimental",))
+        self.stopped(result, "--dc-api is experimental and off by default; add --experimental to turn it on")
+
+    def test_dc_api_flags_are_refused_apart_and_before_the_pki_is_read(self):
+        mdoc = ("--format", "mso_mdoc", "--experimental")
+        good = ("--dc-api", "--dc-api-origin", self.ORIGIN) + mdoc
+        cases = (
+            (("--dc-api-origin", self.ORIGIN) + mdoc, "--dc-api-origin belongs to --dc-api, which this command was not given"),
+            (("--dc-api-client-metadata", self.metadata_file("{}")) + mdoc,
+             "--dc-api-client-metadata belongs to --dc-api, which this command was not given"),
+            (("--dc-api-origin", self.ORIGIN, "--dc-api-client-metadata", self.metadata_file("{}")) + mdoc,
+             "--dc-api-origin and --dc-api-client-metadata belong to --dc-api"),
+            (("--dc-api", "--dc-api-origin", self.ORIGIN, "--format", "mso_mdoc"),
+             "--dc-api is experimental and off by default; add --experimental to turn it on"),
+            (("--dc-api", "--dc-api-origin", self.ORIGIN, "--experimental"), "--dc-api asks for an mdoc; add --format mso_mdoc"),
+            (("--dc-api", "--dc-api-origin", self.ORIGIN, "--experimental", "--format", "dc+sd-jwt"),
+             "--dc-api asks for an mdoc; add --format mso_mdoc"),
+            (("--dc-api",) + mdoc, "--dc-api needs --dc-api-origin"),
+            (("--dc-api", "--dc-api-origin", "http://rp.example") + mdoc, "--dc-api-origin 'http://rp.example'"),
+            (("--dc-api", "--dc-api-origin", "*") + mdoc, "--dc-api-origin '*' is not one origin"),
+            (("--dc-api", "--dc-api-origin", self.ORIGIN + "/page") + mdoc, "it carries a path"),
+            (("--dc-api", "--dc-api-origin", "origin:" + self.ORIGIN) + mdoc, "--dc-api-origin"),
+            (good + ("--dc-api-client-metadata", str(self.tmp / "nothing.json")), "--dc-api-client-metadata"),
+            (good + ("--dc-api-client-metadata", self.metadata_file("{")), "--dc-api-client-metadata"),
+            (good + ("--dc-api-client-metadata", self.metadata_file("[]")), "is a JSON object of members"),
+            (good + ("--dc-api-client-metadata", self.metadata_file('{"jwks": {"keys": []}}')),
+             "sets 'jwks', which this verifier writes itself"),
+        )
+        for args, says in cases:
+            with self.subTest(args=args[:4], says=says):
+                rc, err = self.before_the_pki(*args)
+                self.assertEqual(rc, 2, err)
+                self.assertIn(says, err)
+                self.assertNotIn("is missing", err)
+        self.assertIn("secure context", self.before_the_pki("--dc-api", "--dc-api-origin", "http://rp.example", *mdoc)[1])
+        # The twin: the same flags, each one, and the command goes on to the missing PKI.
+        for args in (good, good + ("--dc-api-client-metadata", self.metadata_file('{"x_polaris_test": 1}')),
+                     ("--dc-api", "--dc-api-origin", "http://localhost:8080") + mdoc):
+            with self.subTest(twin=args):
+                rc, err = self.before_the_pki(*args)
+                self.assertEqual(rc, 2)
+                self.assertIn("is missing", err)
+
+    def test_dc_api_does_not_combine_with_the_counting_flags(self):
+        token = self.tmp / "token"
+        token.write_text("t" * 40)
+        token.chmod(0o600)
+        for flags, named in ((("--once",), "--once"), (("--once", "--rearm"), "--once and --rearm"),
+                             (("--result", str(self.tmp / "r.json")), "--result"),
+                             (("--control-token-file", str(token)), "--control-token-file")):
+            with self.subTest(flags=flags):
+                self.stopped(self.dc_api(*flags), "--dc-api is not combined with %s" % named)
+                rc, err = self.before_the_pki("--dc-api", "--dc-api-origin", self.ORIGIN, "--format", "mso_mdoc",
+                                              "--experimental", *flags)
+                self.assertEqual(rc, 2)
+                self.assertIn("--dc-api is not combined with", err)
+                self.assertNotIn("is missing", err)
+
+    def test_the_startup_line_names_the_page(self):
+        rc, seen, out, err = self.mdoc("--dc-api", "--dc-api-origin", "HTTPS://Verifier.Example:443")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(seen["kwargs"]["dc_api_origin"], self.ORIGIN)
+        self.assertIn("\n  dc api page   %s/dc-api/ (Digital Credentials API, experimental)\n" % self.ORIGIN, out)
+        rc, seen, out, err = self.mdoc("--dc-api", "--dc-api-origin", "http://127.0.0.1:8080")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(seen["kwargs"]["dc_api_origin"], "http://127.0.0.1:8080")
+        self.assertIn("  dc api page   http://127.0.0.1:8080/dc-api/ (Digital Credentials API, experimental)", out)
+        # --once is refused beside --dc-api, so the startup text does not point at it; without
+        # --dc-api it still does.
+        self.assertNotIn("--once", out)
+        self.assertIn("\nOpen the dc api page in a browser to start a request.\n", out)
+        rc, _, out, err = self.mdoc()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("\nStart a request with --once to print the parameters a wallet is launched with.\n", out)
+        self.assertNotIn("dc api page", out)
+
+    def test_the_metadata_file_reaches_the_request_and_is_refused_as_the_verifier_refuses(self):
+        import json
+        from polaris_oid4vp.verifier import dc_api_client_metadata_of
+        extra = {"x_polaris_test": {"note": "made up", "n": 1}}
+        rc, seen, _, err = self.dc_api("--dc-api-client-metadata", self.metadata_file(json.dumps(extra)))
+        self.assertEqual(rc, 0, err)
+        verifier = seen["verifier"]
+        self.assertEqual(verifier.dc_api_client_metadata, extra)
+        payload = verifier.dc_api_request(self.ORIGIN)["data"]["request"].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["client_metadata"]["x_polaris_test"], extra["x_polaris_test"])
+        _, jar = verifier.new_request()
+        payload = jar.split(".")[1]
+        redirect = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertNotIn("x_polaris_test", redirect["client_metadata"])
+        for document in ([], "x", {"jwks": {}}, {"vp_formats_supported": {}, "x": 1},
+                         {"x": "a" * 20000}):
+            with self.subTest(document=repr(document)[:30]):
+                with self.assertRaises(ValueError) as caught:
+                    dc_api_client_metadata_of(document)
+                path = self.metadata_file(json.dumps(document))
+                self.stopped(self.dc_api("--dc-api-client-metadata", path),
+                             "--dc-api-client-metadata %s: %s" % (path, caught.exception))
+        # A file nested past the interpreter's recursion limit is refused with this flag's message
+        # (the depth bound reads it), never ended by the parser's RecursionError; a NaN likewise.
+        depth = 100000
+        for text, words in (('{"x":' + '{"a":' * depth + '{}' + '}' * depth + '}', "nests deeper than"),
+                            ('{"x": NaN}', "non-JSON literal NaN")):
+            with self.subTest(text=text[:12]):
+                path = self.metadata_file(text)
+                self.stopped(self.dc_api("--dc-api-client-metadata", path),
+                             "--dc-api-client-metadata %s: the file" % path, words)
+
+
 class MdocServeCommandTests(_MdocServeCase):
     """`serve --format mso_mdoc --doctype D --iaca-root PEM --claim '[NS,EL]' --experimental`:
     what the flags hand the verifier, and what stops the command before it listens."""
@@ -3975,7 +4114,8 @@ class WrittenReasonTests(unittest.TestCase):
         # The writers, by the function each sits in: a site that moves or goes changes this.
         self.assertEqual(sorted({s.split(":")[0] for s in sites}),
                          ["cli._cmd_verdict", "cli._operator_line", "cli._result_of",
-                          "cli._verdict_json", "cli._wallet_error_reason", "serve.do_POST"])
+                          "cli._verdict_json", "cli._wallet_error_reason", "serve._dc_api_response",
+                          "serve.do_POST"])
 
 
 class TheAnswerLineIsBoundedTests(_RunningCase):
