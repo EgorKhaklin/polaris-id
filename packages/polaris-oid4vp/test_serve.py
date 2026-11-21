@@ -2606,7 +2606,8 @@ class DcApiServeTests(DcApiServeTestCase):
         self.assertEqual(_header(headers, "Cache-Control"), ["no-store"])
         page = body.decode("utf-8")
         self.assertEqual(re.findall(r"<script\b[^>]*>", page, re.I), ['<script src="/dc-api/app.js" defer>'])
-        self.assertEqual(re.findall(r"<script\b[^>]*>\s*</script>", page, re.I), ['<script src="/dc-api/app.js" defer></script>'])
+        # Every script element's body is empty, whatever its end tag carries; the line above pins its one opening tag.
+        self.assertEqual(re.findall(r"(?i)<script\b[^>]*>([\s\S]*?)</script\b[^>]*>", page), [""])
         self.assertFalse(re.findall(r"\son[a-z]+\s*=", page, re.I), "an event handler attribute is inline script")
         self.assertFalse(re.findall(r"javascript:", page, re.I))
         status, headers, body = self.ask("GET", "/dc-api/app.js", origin=None)
