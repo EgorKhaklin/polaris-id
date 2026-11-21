@@ -12251,24 +12251,52 @@ class ConcurrencyTests(PolarisTestCase):
                             lambda cur: cur.execute("SELECT uc_rebuild_population_counts()"),
                             'A population recount while a fold holds the lock')
 
+    def _pending_after(self, fold, write, deltas):
+        """Make the change a fold-skip test folds, and count the changes then pending in `deltas`,
+        in the writer's own transaction. Each count trigger also folds now and then, inside the
+        writer's transaction (random() < 0.002 in 06_triggers.sql), and takes the change before it
+        is counted: measured on 2026-11-21, 9 and 6 of 5000 writes left nothing to fold, and a CI
+        run failed on it. So `fold`, a fold of the same counts, holds their lock open in another
+        transaction meanwhile: the trigger's fold only tries the lock, and leaves the change. The
+        remedy test_check_constraints' _folds_held applies, held here by the fold itself, so the
+        lock is the fold's own key rather than a copy of it."""
+        holder = self._new_conn()
+        try:
+            with holder.cursor() as cur:
+                cur.execute(fold)   # holds the counts' fold lock, left open
+            conn = self._new_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(write)
+                    self.assertEqual(cur.rowcount, 1, 'control: the write changes one row')
+                    cur.execute("SELECT count(*) AS n FROM %s" % deltas)
+                    pending = cur.fetchone()['n']
+                conn.commit()
+            finally:
+                conn.close()
+        finally:
+            holder.rollback()
+            holder.close()
+        return pending
+
     def test_an_enrolment_fold_skips_while_a_rebuild_holds_the_lock(self):
         """uc_fold_enrollment_counts takes its lock with pg_try_advisory_xact_lock, and the rebuild
         takes the same lock outright: while a rebuild is open, a fold returns at once having
         folded nothing. Without the rebuild's lock the fold would reach the changes the rebuild
         is deleting and wait on them, which the short lock_timeout turns into a failure; without
         the fold's, the same. The control folds every change once nobody holds the lock."""
-        with self._new_conn() as conn, conn.cursor() as cur:
-            # A delta is written only for a person with an EnrollmentCurrent row, and only on a real
-            # change of jurisdiction. The control picked min(Individual) and set it to US-CA, so it
-            # depended on that person being enrolled and not already in US-CA: in the real-signer
-            # suite's whole-module run (CI, 2026-10-05, 986 of 987 passed) the update wrote no
-            # delta. Pick an enrolled person and flip the value, so the update always changes one.
-            cur.execute("UPDATE Individual SET jurisdiction = CASE WHEN jurisdiction = 'US-CA' "
-                        "THEN 'US-NY' ELSE 'US-CA' END "
-                        "WHERE individual_id = (SELECT min(individual_id) FROM EnrollmentCurrent)")
-            cur.execute("SELECT count(*) AS n FROM EnrollmentCountDelta")
-            self.assertGreater(cur.fetchone()['n'], 0, 'control: there are changes to fold')
-            conn.commit()
+        # A delta is written only for a person with an EnrollmentCurrent row, and only on a real
+        # change of jurisdiction. The control picked min(Individual) and set it to US-CA, so it
+        # depended on that person being enrolled and not already in US-CA: in the real-signer
+        # suite's whole-module run (CI, 2026-10-05, 986 of 987 passed) the update wrote no
+        # delta. Pick an enrolled person and flip the value, so the update always changes one.
+        pending = self._pending_after(
+            "SELECT uc_fold_enrollment_counts()",
+            "UPDATE Individual SET jurisdiction = CASE WHEN jurisdiction = 'US-CA' "
+            "THEN 'US-NY' ELSE 'US-CA' END "
+            "WHERE individual_id = (SELECT min(individual_id) FROM EnrollmentCurrent)",
+            "EnrollmentCountDelta")
+        self.assertGreater(pending, 0, 'control: there are changes to fold')
         holder = self._new_conn()
         try:
             with holder.cursor() as cur:
@@ -12302,9 +12330,16 @@ class ConcurrencyTests(PolarisTestCase):
         """uc_fold_population_counts takes its lock with pg_try_advisory_xact_lock: while a
         recount holds it, a fold returns at once having folded nothing, and leaves the changes
         for the next fold. A try-lock never waits, so assertContends cannot see it; this does."""
-        with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("UPDATE IdentityToken SET status = 'LOST' WHERE token_id = 4")
-            conn.commit()
+        # The token is picked, not named: an ACTIVE credential with a live signature, so the
+        # change decrements two totals that exist, whatever the seed holds.
+        pending = self._pending_after(
+            "SELECT uc_fold_population_counts()",
+            "UPDATE IdentityToken SET status = 'LOST' WHERE token_id = "
+            "(SELECT min(t.token_id) FROM IdentityToken t WHERE t.status = 'ACTIVE' AND EXISTS "
+            "(SELECT 1 FROM TokenSignature s WHERE s.token_id = t.token_id "
+            "AND s.deprecation_date IS NULL))",
+            "PopulationCountDelta")
+        self.assertGreater(pending, 0, 'control: there are changes to fold')
         holder = self._new_conn()
         try:
             with holder.cursor() as cur:
@@ -12381,14 +12416,14 @@ class ConcurrencyTests(PolarisTestCase):
         holds it, a fold returns at once having folded nothing, and leaves the counts for the next
         fold. The control folds every pending count once nobody holds the lock, and the hours it
         leaves equal a recount of the events."""
-        with self._new_conn() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, "
-                        "outcome, disclosure_level) SELECT NULL, min(agency_id), "
-                        "(SELECT min(context_id) FROM VerificationContext), 'FAILURE', 'ZERO_KNOWLEDGE' "
-                        "FROM Agency")
-            conn.commit()
-            cur.execute("SELECT count(*) AS n FROM VerificationRollupDelta")
-            self.assertGreater(cur.fetchone()['n'], 0, 'control: there are counts to fold')
+        pending = self._pending_after(
+            "SELECT uc_fold_activity_rollups()",
+            "INSERT INTO VerificationEvent (token_id, requesting_agency_id, context_id, "
+            "outcome, disclosure_level) SELECT NULL, min(agency_id), "
+            "(SELECT min(context_id) FROM VerificationContext), 'FAILURE', 'ZERO_KNOWLEDGE' "
+            "FROM Agency",
+            "VerificationRollupDelta")
+        self.assertGreater(pending, 0, 'control: there are counts to fold')
         holder = self._new_conn()
         try:
             with holder.cursor() as cur:
