@@ -2851,7 +2851,8 @@ class DcApiServeTests(DcApiServeTestCase):
         self.assertEqual(self.outstanding(), verifier_module.DC_API_MAX_OUTSTANDING)
 
     def test_serve_refuses_a_dc_api_origin_it_cannot_serve_before_listening(self):
-        sd_jwt = Verifier(client_cert_pem=_client_chain()[0], client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        sd_jwt = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
                           request_uri="https://verifier.test/request.jwt",
                           response_uri="https://verifier.test/response")
         for verifier, origin, words in ((sd_jwt, ORIGIN, "mso_mdoc"),
