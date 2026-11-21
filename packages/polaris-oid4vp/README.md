@@ -521,7 +521,9 @@ The approach follows EUDIPLO's `registration_cert` configuration and ERICA's req
   unspecified addresses, judged on the address it connects to rather than on a name resolved
   earlier; follow no redirect; stop reading past `status.MAX_TOKEN_BYTES` (2 MiB, the size
   `decide` refuses above); and set connect and read timeouts. Whatever it raises becomes
-  `unreachable`.
+  `unreachable`. Keep the time one response's status fetches take, together, under the request
+  lifetime (`request_ttl_seconds`, 300 seconds by default): a response whose request's lifetime
+  ends while it is judged is refused.
 - **Who may publish status for whom is stated, not inferred:** `StatedAuthority` records that a
   named key may publish for a named issuer at a named URI. Anything else is `no_authority`, and
   no request is sent to a URI an unvetted credential names.
@@ -586,11 +588,11 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1134 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1140 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 351 refusals accept and requires a
-  test to fail: 347 are caught, and the 4 survivors are declared with their reasons. It also makes
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 353 refusals accept and requires a
+  test to fail: 349 are caught, and the 4 survivors are declared with their reasons. It also makes
   79 named changes (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and

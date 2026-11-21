@@ -1484,6 +1484,12 @@ class Verifier:
             if body.get("vp_token") is not None:
                 return self._error("invalid_request", "the response carries both an error and "
                                                       "a vp_token")
+            # The sweep above ran before the decryption, and the request's lifetime may have
+            # ended since. So the age is tested again here, as the closes test it, under the lock.
+            with self._lock:
+                if session.created < time.time() - self.request_ttl_seconds:
+                    return self._error("invalid_request", "this request's lifetime ended while "
+                                                          "this response was decrypted")
             return self._wallet_error(session, body["error"], body.get("error_description"),
                                       encrypted=True)
 
@@ -1631,12 +1637,15 @@ class Verifier:
         # credential used the request up). Under the lock, so that of two accepted responses to
         # one request (a replay racing the original) exactly one closes it and the other is
         # refused; a request that expired while this one was being judged is not answered either.
+        # The age first, as in `_close_dc_api`.
         with self._lock:
+            if session.created < time.time() - self.request_ttl_seconds:
+                return self._error("invalid_request", "this request's lifetime ended while this "
+                                                      "response was judged")
             if session.answered or self._sessions.get(session.state) is not session:
                 return self._error("invalid_request",
-                                   "this request has already been answered, or expired while "
-                                   "this response was judged; a second presentation for the "
-                                   "same nonce is a replay")
+                                   "this request has already been answered; a second "
+                                   "presentation for the same nonce is a replay")
             session.answered = True
             self._sessions.pop(session.state, None)
             self._by_request.pop(session.state, None)
