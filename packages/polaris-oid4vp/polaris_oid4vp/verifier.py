@@ -49,7 +49,8 @@ import time
 try:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
-    from cryptography.x509 import load_pem_x509_certificate
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.x509 import load_pem_x509_certificates
     _HAVE_CRYPTO = True
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
@@ -1060,6 +1061,42 @@ def logged_line(text):
     return cut_to(operator_text(text), LINE_MAX)
 
 
+def _issued_by(cert, issuer):
+    """Whether `issuer`'s key signed `cert` under `issuer`'s subject name, RSA and ECDSA alike."""
+    try:
+        cert.verify_directly_issued_by(issuer)
+    except (ValueError, TypeError, InvalidSignature):
+        return False
+    return True
+
+
+def request_signer_chain(client_cert_pem, key):
+    """The certificates the request object's `x5c` carries, read from `client_cert_pem`: the leaf,
+    whose key is `key`, then any intermediates, each the issuer of the one before it (RFC 7515
+    section 4.1.6: the certificate with the signing key MUST be the first, and each subsequent one
+    is the one used to certify the previous one). A self-signed certificate after the leaf is a
+    trust anchor, which HAIP 1.0 section 5 says MUST NOT be in `x5c`. A file that breaks any of
+    these is refused here, when the verifier is made, rather than sent to a wallet that refuses it
+    later or cut to its first certificate without a word."""
+    certs = load_pem_x509_certificates(client_cert_pem)
+    for i, cert in enumerate(certs[1:], 2):
+        if _issued_by(cert, cert):
+            raise ValueError("certificate %d of %d in the request signer's file is self-signed, a "
+                             "trust anchor: the file holds the leaf and its intermediates, and the "
+                             "trust anchor stays out of x5c (HAIP 1.0 section 5)" % (i, len(certs)))
+    for i in range(1, len(certs)):
+        if not _issued_by(certs[i - 1], certs[i]):
+            raise ValueError("certificate %d of %d in the request signer's file did not issue "
+                             "certificate %d: the leaf comes first, then each intermediate after "
+                             "the certificate it issued (RFC 7515 section 4.1.6)"
+                             % (i + 1, len(certs), i))
+    spki = serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    if key.public_key().public_bytes(*spki) != certs[0].public_key().public_bytes(*spki):
+        raise ValueError("the request signer's key is not the key of the first certificate in its "
+                         "file, the leaf, which x5c puts first and whose hash is the client_id")
+    return certs
+
+
 class Verifier:
     """Builds requests and judges responses. Holds no socket: see `serve()` for that.
 
@@ -1093,13 +1130,17 @@ class Verifier:
         if not isinstance(self.query_id, str) or not _DCQL_ID.fullmatch(self.query_id):
             raise ValueError("a credential query id is a non-empty string of letters, digits, _ "
                              "and - (OpenID4VP 1.0 section 6.1), not %r" % (self.query_id,))
-        self.cert = load_pem_x509_certificate(client_cert_pem)
         self.key = serialization.load_pem_private_key(client_key_pem, password=None)
+        chain = request_signer_chain(client_cert_pem, self.key)
+        self.cert = chain[0]
         der = self.cert.public_bytes(serialization.Encoding.DER)
         # x509_hash: the client identifier IS the leaf's digest, so the wallet can tie the
         # request object's signing certificate to the identifier without a directory.
         self.client_id = "x509_hash:" + b64u_encode(_sha256(der))
-        self.x5c = [base64.b64encode(der).decode("ascii")]
+        # The leaf, then the intermediates in the file's order: a wallet that trusts only a root
+        # finds the path to it here, without fetching anything.
+        self.x5c = [base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode("ascii")
+                    for c in chain]
         self.request_uri = request_uri
         self.response_uri = response_uri
         self.redirect_uri = redirect_uri or (response_uri.rsplit("/", 1)[0] + "/done")
@@ -1398,7 +1439,7 @@ class Verifier:
 
     def _signed(self, claims):
         """`claims` as a signed request object: a JWS under this verifier's key, carrying its
-        leaf certificate alone in `x5c`."""
+        leaf certificate and any intermediates in `x5c`."""
         header = {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.x5c}
         return _sign_es256(self.key, header, claims)
 

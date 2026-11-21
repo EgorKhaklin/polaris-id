@@ -17,7 +17,9 @@ that look perfectly reasonable:
 
 So the leaf needs an issuer, the issuer is registered out of band, and the chain carries the
 leaf alone. Each of those cost a failed conformance run to discover, and a command that
-produces the right shape is worth more than a paragraph saying what the right shape is.
+produces the right shape is worth more than a paragraph saying what the right shape is. A
+`client.pem` from a public authority may hold the leaf's intermediates after it: `serve` sends
+them in `x5c` in that order, for a wallet that trusts only the root.
 
     polaris-oid4vp keygen --out ./pki --host verifier.example
     polaris-oid4vp serve --pki ./pki --port 9443
@@ -64,7 +66,7 @@ from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_
 #: for the order somebody happened to generate them in.
 FILES = {
     "anchor": "anchor.pem",          # register THIS with the conformance suite
-    "client_cert": "client.pem",     # the leaf, and the only thing that goes in x5c
+    "client_cert": "client.pem",     # the leaf, then any intermediates: all of it goes in x5c
     "client_key": "client-key.pem",
     "tls_cert": "tls.pem",           # the listener's certificate; may be self-signed
     "tls_key": "tls-key.pem",
@@ -1446,7 +1448,10 @@ and one that judges a response already captured:
     g.set_defaults(func=_cmd_keygen)
 
     s = sub.add_parser("serve", help="run a verifier")
-    s.add_argument("--pki", default="./pki")
+    s.add_argument("--pki", default="./pki",
+                   help="the directory keygen wrote: its client.pem holds the request signer's leaf and then any "
+                        "intermediates, all sent in x5c in that order; a self-signed certificate after the "
+                        "leaf is refused")
     s.add_argument("--host", default=DEFAULT_HOST,
                    help="the name a wallet reaches this by, a name or an IPv4 address: 127.0.0.1 by "
                         "default, the address --bind listens on by default; give the name keygen was given")
