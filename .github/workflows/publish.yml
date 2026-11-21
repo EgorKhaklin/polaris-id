@@ -23,6 +23,7 @@ on:
           - polaris-oid4vp (PyPI)
           - polaris-id-cli (PyPI)
           - polaris-sdk-ts (npm)
+          - polaris-negative-vectors (npm)
       confirm:
         description: 'Type PUBLISH to actually publish. Anything else stays a dry run.'
         required: false
@@ -74,6 +75,15 @@ jobs:
         run: bash scripts/polaris-cli-package-check.sh dist/polaris-id-cli/polaris_id_cli-*-py3-none-any.whl
       - name: Pack the npm tarball
         run: cd sdk/typescript && npm pack --pack-destination "$GITHUB_WORKSPACE/dist"
+      # The negative-vectors package holds data only: staged from lab/interop/negative-vectors byte for
+      # byte, checked, packed, and the packed tarball checked again as an installer unpacks it.
+      - name: Stage, check and pack the negative-vectors npm package
+        run: |
+          python packages/polaris-negative-vectors/stage.py "$RUNNER_TEMP/negvec"
+          mkdir -p dist/polaris-negative-vectors "$RUNNER_TEMP/negvec-unpacked"
+          (cd "$RUNNER_TEMP/negvec" && npm pack --pack-destination "$GITHUB_WORKSPACE/dist/polaris-negative-vectors")
+          tar -xzf dist/polaris-negative-vectors/*.tgz -C "$RUNNER_TEMP/negvec-unpacked"
+          python packages/polaris-negative-vectors/stage.py --check "$RUNNER_TEMP/negvec-unpacked/package"
 
       - name: What would be published
         # Inputs reach the shell as variables, never as pasted text (OpenSSF Baseline OSPS-BR-01.04).
@@ -131,7 +141,7 @@ jobs:
   npm:
     name: Publish to npm
     needs: build-and-gate
-    if: inputs.confirm == 'PUBLISH' && inputs.target == 'polaris-sdk-ts (npm)'
+    if: inputs.confirm == 'PUBLISH' && (inputs.target == 'polaris-sdk-ts (npm)' || inputs.target == 'polaris-negative-vectors (npm)')
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -178,7 +188,14 @@ jobs:
           }
           need "$NPM_V" 11.15.0 "npm"
           need "$NODE_V" 22.14.0 "node"
-      - run: cd sdk/typescript && npm ci
+      - if: inputs.target == 'polaris-sdk-ts (npm)'
+        run: cd sdk/typescript && npm ci
+      # The negative-vectors package is staged again here, from this job's own checkout of the same
+      # commit, and checked before anything is uploaded; it has no build and no dependencies.
+      - name: Stage and check the negative-vectors package
+        if: inputs.target == 'polaris-negative-vectors (npm)'
+        run: |
+          python3 packages/polaris-negative-vectors/stage.py "$RUNNER_TEMP/negvec"
       # prepack builds dist/, which is what `exports` points at. Publishing without it
       # would ship a package with nothing to import, which is the state this repository
       # was already in once and measured rather than assumed.
@@ -207,24 +224,38 @@ jobs:
       # THE JOB GOING GREEN NO LONGER MEANS PUBLISHED. It means staged. The approval is a
       # separate, human, 2FA step, and docs/RELEASING.md carries it.
       - name: Stage the publish
+        env:
+          TARGET: ${{ inputs.target }}
         run: |
-          cd sdk/typescript
+          case "$TARGET" in
+            "polaris-sdk-ts (npm)")           cd sdk/typescript ;;
+            "polaris-negative-vectors (npm)") cd "$RUNNER_TEMP/negvec" ;;
+            *) echo "::error::unknown target: $TARGET"; exit 1 ;;
+          esac
+          NAME="$(node -p "require('./package.json').name")"
           VERSION="$(node -p "require('./package.json').version")"
           case "$VERSION" in
             *-*) TAG=next ;;
             *)   TAG=latest ;;
           esac
-          echo "staging polaris-sdk-ts@$VERSION under dist-tag $TAG"
+          echo "staging $NAME@$VERSION under dist-tag $TAG"
           npm stage publish --provenance --access public --tag "$TAG" --loglevel verbose
       - name: What is staged, and what has to happen next
+        env:
+          TARGET: ${{ inputs.target }}
         run: |
-          cd sdk/typescript
+          case "$TARGET" in
+            "polaris-sdk-ts (npm)")           cd sdk/typescript ;;
+            "polaris-negative-vectors (npm)") cd "$RUNNER_TEMP/negvec" ;;
+          esac
+          NAME="$(node -p "require('./package.json').name")"
           npm stage list || true
+          echo "package: $NAME"
           cat <<'EOF'
           ============================================================
           STAGED, NOT PUBLISHED. Nothing is installable yet.
           A maintainer with 2FA finishes it from their own machine:
-              npm stage list polaris-sdk-ts
+              npm stage list <package>
               npm stage view <stage-id>          # inspect before approving
               npm stage download <stage-id>      # or unpack the tarball first
               npm stage approve <stage-id> --otp <code>

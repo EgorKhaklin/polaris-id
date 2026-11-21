@@ -68,9 +68,11 @@ PKG = ROOT / "packages" / "polaris-oid4vp"
 #: measured that day, 6 of its 12 raise-refusals could be inverted with the package green.
 #: `cbor.py`, `cose.py` and `mdoc.py` joined on 2026-11-16 with the mso_mdoc format: the CBOR
 #: decoder, the COSE reader and the mdoc judge, which refuse by raising.
+#: `status_fetch.py` joined on 2026-11-21: the fetch serve hands a status resolver, which refuses
+#: by raising (a scheme, an answer but 200, a total time, a size, no address it may connect to).
 SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py",
            "polaris_oid4vp/status.py", "polaris_oid4vp/serve.py", "polaris_oid4vp/cbor.py",
-           "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py")
+           "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py", "polaris_oid4vp/status_fetch.py")
 
 #: The package's other modules, each with the reason it has no refusal for this drill to
 #: invert. A module that is in neither list fails the drill (`module_problems`): status.py sat
@@ -80,6 +82,9 @@ NO_REFUSALS = {
     "polaris_oid4vp/__init__.py": "names what the package exports",
     "polaris_oid4vp/cli.py": "the command line: it hands flags and files to the verifier, and "
                              "test_cli holds its refusals of flags directly",
+    "polaris_oid4vp/dc_api_page.py": "the bytes of a page and its script: test_serve holds what the "
+                                     "listener sends, and scripts/polaris-oid4vp-dc-page-drill.py "
+                                     "what a browser does with them",
 }
 
 #: Every suite in the package. A new test file that is not listed here is invisible to this
@@ -171,7 +176,8 @@ _STATUS_PATTERNS = (
 #: The statement stays whole however many lines it spans and whether or not it ends in
 #: `from None`, which a bare call would not survive: a mutant that does not compile fails every
 #: test and reads as caught.
-_RAISING = ("polaris_oid4vp/cbor.py", "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py")
+_RAISING = ("polaris_oid4vp/cbor.py", "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py",
+            "polaris_oid4vp/status_fetch.py")
 _RAISE_PATTERNS = (
     (re.compile(r"^(\s*)raise (CborError|CoseError|_Refused|_Unread|ValueError)\b"),
      r"\1pass  # MUTANT\n\1if False: raise \2"),
@@ -277,6 +283,100 @@ NAMED_MUTANTS = (
     ("verifier:a-refused-presentation-closes-the-request", "polaris_oid4vp/verifier.py",
      "            # gets the same constant refusal every other cause gets. The request stays open.\n",
      "            self._sessions.pop(session.state, None)\n"),
+    # 2026-11-19: a serve without --experimental keeps a wallet's mdoc away from mdoc.py and the
+    # CBOR decoder in two places, the flag cli.py will not build an mso_mdoc verifier without, and
+    # the credential format the response handler dispatches on. The first mutant also judges as
+    # an mdoc any presentation with no "~", which an SD-JWT VC always has.
+    ("verifier:a-default-verifier-judges-an-mdoc", "polaris_oid4vp/verifier.py",
+     "        if self.credential_format == MDOC_FORMAT:\n"
+     "            verdict = self._judge_mdoc(session, presentation)\n",
+     "        if self.credential_format == MDOC_FORMAT or \"~\" not in (presentation or \"~\"):  # MUTANT\n"
+     "            verdict = self._judge_mdoc(session, presentation)\n"),
+    ("cli:mdoc-without-the-experimental-flag", "polaris_oid4vp/cli.py",
+     "        if not args.experimental:\n"
+     "            why = (\"--format %s is experimental and off by default; add --experimental to turn it \"\n",
+     "        if False:  # MUTANT\n"
+     "            why = (\"--format %s is experimental and off by default; add --experimental to turn it \"\n"),
+    # 2026-11-19: what serve and verdict write from a sender's input is cut where it is written:
+    # a reason at WRITTEN_REASON_MAX characters in every writer, every line serve writes to
+    # stderr and its <- line on stdout at LINE_MAX, a logged exception at EXCEPTION_LOG_MAX, each
+    # with its full length when it is cut. The first takes every cut away; each of the others
+    # writes whole at one writer or one sink, which the tests that enumerate them must see.
+    ("verifier:nothing-cut", "polaris_oid4vp/verifier.py",
+     "    if len(text) <= limit:\n        return text\n",
+     "    if True:  # MUTANT\n        return text\n"),
+    ("serve:a-logged-line-uncut", "polaris_oid4vp/serve.py",
+     "        sys.stderr.write(\"polaris-oid4vp: \" + logged_line(format % args if args else format) + \"\\n\")\n",
+     "        sys.stderr.write(\"polaris-oid4vp: \" + operator_text(format % args if args else format) + \"\\n\")  # MUTANT\n"),
+    ("serve:an-exception-logged-whole", "polaris_oid4vp/serve.py",
+     "            sys.stderr.write(exception_text(sys.exc_info()[1]))\n",
+     "            __import__(\"traceback\").print_exc()  # MUTANT\n"),
+    ("serve:a-verbose-line-uncut", "polaris_oid4vp/serve.py",
+     "            sys.stderr.write(logged_line(\"%s %s\" % (self.command, self.path)) + \"\\n\")\n",
+     "            sys.stderr.write(\"%s %s\\n\" % (operator_text(self.command), operator_text(self.path)))  # MUTANT\n"),
+    ("serve:a-wallet-error-logged-whole", "polaris_oid4vp/serve.py",
+     "                self.log_error(\"wallet error: %s%s\", written_reason(_wallet_error_named(verdict)\n"
+     "                               if self.name_requests else verdict.reason), self._about())\n",
+     "                self.log_error(\"wallet error: %s%s\", _wallet_error_named(verdict)  # MUTANT\n"
+     "                               if self.name_requests else verdict.reason, self._about())\n"),
+    ("verifier:cut-at-the-bound", "polaris_oid4vp/verifier.py",
+     "    if len(text) <= limit:\n        return text\n    return \"%s... (cut at %d of %d characters)\"",
+     "    if len(text) < limit:  # MUTANT\n        return text\n    return \"%s... (cut at %d of %d characters)\""),
+    ("serve:exception-lines-uncut", "polaris_oid4vp/serve.py",
+     "    text = \"\\n\".join(logged_line(line) for line in \"\\n\".join(blocks).split(\"\\n\"))\n",
+     "    text = \"\\n\".join(blocks)  # MUTANT\n"),
+    ("serve:the-inherited-handle-error", "polaris_oid4vp/serve.py",
+     "    def handle_error(self, request, client_address):\n",
+     "    def _handle_error_unused(self, request, client_address):  # MUTANT\n"),
+    ("cli:a-verdict-error-uncut", "polaris_oid4vp/cli.py",
+     "        print(\"polaris-oid4vp: \" + logged_line(str(exc)), file=sys.stderr)\n",
+     "        print(\"polaris-oid4vp: \" + str(exc), file=sys.stderr)  # MUTANT\n"),
+    ("cli:an-answer-line-uncut", "polaris_oid4vp/cli.py",
+     "        print(\"  <- %d %s\" % (status, logged_line(line)), flush=True)\n",
+     "        print(\"  <- %d %s\" % (status, line), flush=True)  # MUTANT\n"),
+    ("serve:a-refused-reason-logged-whole", "polaris_oid4vp/serve.py",
+     "                self.log_error(\"refused: %s: %s%s\", verdict.code, written_reason(verdict.reason),\n",
+     "                self.log_error(\"refused: %s: %s%s\", verdict.code, verdict.reason,  # MUTANT\n"),
+    ("cli:a-refused-line-reason-whole", "polaris_oid4vp/cli.py",
+     "    return \"refused: %s: %s\" % (operator_text(verdict.code), written_reason(verdict.reason))\n",
+     "    return \"refused: %s: %s\" % (operator_text(verdict.code), operator_text(verdict.reason))  # MUTANT\n"),
+    ("cli:a-result-reason-whole", "polaris_oid4vp/cli.py",
+     "        out.update(outcome=\"refused\", check=verdict.code, reason=written_reason(verdict.reason))\n",
+     "        out.update(outcome=\"refused\", check=verdict.code, reason=verdict.reason)  # MUTANT\n"),
+    ("cli:a-verdict-reason-whole", "polaris_oid4vp/cli.py",
+     "           \"reason\": written_reason(verdict.reason),\n",
+     "           \"reason\": verdict.reason,  # MUTANT\n"),
+    # 2026-11-19: the CBOR decoder's two limits, beside the drill's own inversion of each of its
+    # three refusals (which takes the entry check away, so a head alone reads as input that ran
+    # out). A count kept per container never reaches the total, nor one that leaves a map's values
+    # out; either limit one higher lets its one-over input through; and an accepted mdoc's line
+    # without what was checked.
+    ("cbor:the-item-count-per-container", "polaris_oid4vp/cbor.py",
+     "        raise CborError(\"nesting deeper than %d\" % MAX_DEPTH)\n    # An array or a map that states",
+     "        raise CborError(\"nesting deeper than %d\" % MAX_DEPTH)\n    count = [0]  # MUTANT\n"
+     "    # An array or a map that states"),
+    ("cbor:the-entry-limit-one-higher", "polaris_oid4vp/cbor.py",
+     "        if arg > MAX_ENTRIES:\n            raise CborError(\"an array",
+     "        if arg > MAX_ENTRIES + 1:  # MUTANT\n            raise CborError(\"an array"),
+    ("cbor:the-item-limit-one-higher", "polaris_oid4vp/cbor.py",
+     "    if count[0] > MAX_ITEMS:\n",
+     "    if count[0] > MAX_ITEMS + 1:  # MUTANT\n"),
+    ("cbor:a-map-value-uncounted", "polaris_oid4vp/cbor.py",
+     "                raise CborError(\"a map key that repeats\")\n"
+     "            value, i = _item(buf, i, depth + 1, count)\n",
+     "                raise CborError(\"a map key that repeats\")\n"
+     "            value, i = _item(buf, i, depth + 1, [0])  # MUTANT\n"),
+    ("cli:an-accepted-mdoc-line-without-its-checks", "polaris_oid4vp/cli.py",
+     "    if verdict.authentic and credential_format == MDOC_FORMAT:\n",
+     "    if False:  # MUTANT\n"),
+    ("cli:a-verdict-problem-whole", "polaris_oid4vp/cli.py",
+     "    problem = written_reason(result[\"problem\"])\n",
+     "    problem = result[\"problem\"]  # MUTANT\n"),
+    # 2026-11-19: a disclosure of the wrong shape is named by its JSON kind, never its content,
+    # which the reason would carry to every writer. This puts the content back in the reason.
+    ("sdjwt:a-malformed-disclosure-printed-whole", "polaris_oid4vp/sdjwt.py",
+     "                                         % _json_kind(parsed))\n",
+     "                                         % (repr(parsed),))  # MUTANT\n"),
     # serve --cors-origin: an answer names only a listed origin, only on the two paths, and says
     # that it varies by Origin, so no cache hands one origin's answer to another.
     ("serve:cors-allows-any-origin", "polaris_oid4vp/serve.py",
@@ -288,6 +388,326 @@ NAMED_MUTANTS = (
     ("serve:cors-without-vary", "polaris_oid4vp/serve.py",
      "            self.send_header(\"Vary\", \"Origin\")\n",
      ""),
+    # 2026-11-18, GET /control/request/{n}: what became of a request the control endpoint started,
+    # with the claims an accepted SD-JWT VC presentation disclosed. Each takes away one part of
+    # the read: the token, the no-store answer, the logging of a path under /control/ without its
+    # query, the one read that returns the claims, their lifetime from the answer, the bound on
+    # the records kept and the rule that an outstanding one is never dropped. The last two put the
+    # values where they never go: on disk in the --result file, and in the line serve prints.
+    ("serve:control-read-without-the-token", "polaris_oid4vp/serve.py",
+     "        if not authorized:\n",
+     "        if False:  # MUTANT\n"),
+    ("serve:control-read-cached", "polaris_oid4vp/serve.py",
+     "        self.send_header(\"Cache-Control\", \"no-store\")\n"
+     "        self.send_header(\"Pragma\", \"no-cache\")\n"
+     "        self.end_headers()\n"
+     "        self.wfile.write(raw)\n"
+     "        return None\n",
+     "        self.end_headers()  # MUTANT\n"
+     "        self.wfile.write(raw)\n"
+     "        return None\n"),
+    ("serve:control-logged-with-its-query-off-the-exact-path", "polaris_oid4vp/serve.py",
+     "        if not path.startswith(_CONTROL_LOGGED):\n",
+     "        if path != CONTROL_PATH:  # MUTANT\n"),
+    ("cli:control-read-returns-the-claims-twice", "polaris_oid4vp/cli.py",
+     "                    record.released, record.withheld = None, \"returned\"\n",
+     "                    pass  # MUTANT\n"),
+    ("cli:control-read-after-the-lifetime", "polaris_oid4vp/cli.py",
+     "                and now - record.answered_at > self.verifier.request_ttl_seconds):\n",
+     "                and False):  # MUTANT\n"),
+    ("cli:control-records-unbounded", "polaris_oid4vp/cli.py",
+     "        for number in finished[:max(0, len(finished) - CONTROL_FINISHED_KEPT)]:\n",
+     "        for number in []:  # MUTANT\n"),
+    ("cli:control-drops-an-outstanding-record", "polaris_oid4vp/cli.py",
+     "                    if record.document is not None or not self.verifier.is_outstanding(record.state)]\n",
+     "                    if True]  # MUTANT\n"),
+    ("cli:claims-on-disk-in-the-result-file", "polaris_oid4vp/cli.py",
+     "        out.update(outcome=\"accepted\", claims=_claim_names(verdict, credential_format))\n",
+     "        out.update(outcome=\"accepted\", claims=_claim_names(verdict, credential_format),  # MUTANT\n"
+     "                   released=verdict.claims)\n"),
+    ("cli:claims-in-the-answer-line", "polaris_oid4vp/cli.py",
+     "        return \"authentic, claims %s\" % _claim_names(verdict, credential_format)\n",
+     "        return \"authentic, claims %s\" % (verdict.claims,)  # MUTANT\n"),
+    ("cli:control-read-without-the-lock", "polaris_oid4vp/cli.py",
+     "        with self._lock:\n            record = self._records.get(number)\n",
+     "        with threading.Lock():  # MUTANT\n            record = self._records.get(number)\n"),
+    ("cli:control-read-refused-at-the-lifetime", "polaris_oid4vp/cli.py",
+     "                and now - record.answered_at > self.verifier.request_ttl_seconds):\n",
+     "                and now - record.answered_at >= self.verifier.request_ttl_seconds):  # MUTANT\n"),
+    ("cli:control-record-replaces-an-acceptance", "polaris_oid4vp/cli.py",
+     "        if record.document is not None and record.document[\"outcome\"] == \"accepted\":\n",
+     "        if False:  # MUTANT\n"),
+    ("cli:control-record-keeps-the-first-answer", "polaris_oid4vp/cli.py",
+     "        if record.document is not None and record.document[\"outcome\"] == \"accepted\":\n",
+     "        if record.document is not None:  # MUTANT\n"),
+    ("cli:mdoc-values-held-for-a-read", "polaris_oid4vp/cli.py",
+     "        if (record.document[\"outcome\"] == \"accepted\"\n"
+     "                and self.verifier.credential_format == SD_JWT_FORMAT):\n",
+     "        if (record.document[\"outcome\"] == \"accepted\"):  # MUTANT\n"),
+    ("cli:control-lifetime-from-the-first-answer", "polaris_oid4vp/cli.py",
+     "        record.answered_at = self._clock()\n",
+     "        record.answered_at = record.answered_at or self._clock()  # MUTANT\n"),
+    ("cli:control-clock-bound-at-start", "polaris_oid4vp/cli.py",
+     "        self._clock = lambda: time.time()\n",
+     "        self._clock = time.time  # MUTANT\n"),
+    # 2026-11-18, the listener and the files an operator keeps: the TLS handshake back in the
+    # accept loop, and in the worker without the timeout; the token file's mode unchecked, read
+    # from its path rather than from the file read, and the group refused with the others; a key
+    # created readable and then narrowed, a file written through whatever its path names, and a
+    # file's mode left to the umask.
+    ("serve:tls-handshake-in-the-accept-loop", "polaris_oid4vp/serve.py",
+     "        httpd.tls_context = context\n",
+     "        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)  # MUTANT\n"),
+    ("serve:tls-handshake-without-the-timeout", "polaris_oid4vp/serve.py",
+     "        request.settimeout(self.RequestHandlerClass.timeout)\n",
+     "        pass  # MUTANT\n"),
+    ("cli:control-token-file-mode-unchecked", "polaris_oid4vp/cli.py",
+     "            if mode & 0o007:\n",
+     "            if False:  # MUTANT\n"),
+    ("cli:control-token-file-mode-from-its-path", "polaris_oid4vp/cli.py",
+     "            mode = os.fstat(fh.fileno()).st_mode & 0o7777\n",
+     "            mode = os.stat(path).st_mode & 0o7777  # MUTANT\n"),
+    ("cli:control-token-file-group-refused", "polaris_oid4vp/cli.py",
+     "            if mode & 0o007:\n",
+     "            if mode & 0o077:  # MUTANT\n"),
+    ("cli:keygen-key-created-readable", "polaris_oid4vp/cli.py",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)\n",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)  # MUTANT\n"),
+    ("cli:keygen-key-written-through-its-path", "polaris_oid4vp/cli.py",
+     "        try:\n"
+     "            path.unlink()\n"
+     "        except FileNotFoundError:\n"
+     "            pass\n"
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)\n",
+     "        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)  # MUTANT\n"),
+    ("cli:keygen-mode-left-to-the-umask", "polaris_oid4vp/cli.py",
+     "                os.fchmod(fh.fileno(), mode)\n",
+     "                pass  # MUTANT\n"),
+    # 2026-11-19, OpenID4VP 1.0 Appendix A, an mso_mdoc over the Digital Credentials API: a response
+    # is held to the origin its request was made for (A.4), its SessionTranscript is B.2.6.2's,
+    # labelled OpenID4VPDCAPIHandover and hashing the response key's thumbprint, and the request
+    # names the origins it may be answered from (A.2, expected_origins). Each takes one away.
+    ("verifier:dc-api-origin-unchecked", "polaris_oid4vp/verifier.py",
+     "        if session.origin != posted_at:\n",
+     "        if False:  # MUTANT\n"),
+    ("mdoc:dc-api-handover-labelled-as-the-redirects", "polaris_oid4vp/mdoc.py",
+     "    return cbor.encode([None, None, [\"OpenID4VPDCAPIHandover\", hashlib.sha256(info).digest()]])\n",
+     "    return cbor.encode([None, None, [\"OpenID4VPHandover\", hashlib.sha256(info).digest()]])  # MUTANT\n"),
+    ("mdoc:dc-api-handover-without-the-thumbprint", "polaris_oid4vp/mdoc.py",
+     "    info = cbor.encode([written, nonce, jwk_thumbprint])\n",
+     "    info = cbor.encode([written, nonce])  # MUTANT\n"),
+    ("verifier:dc-api-request-without-expected-origins", "polaris_oid4vp/verifier.py",
+     "            \"expected_origins\": [written],\n",
+     ""),
+    # The request object's audience (OpenID4VP 1.0 s5.8, Static Discovery); a request that expires
+    # while its response is judged is not answered, though no call swept the table; and a value
+    # that is not one DeviceResponse is refused before the SessionTranscript is built.
+    ("verifier:dc-api-request-without-aud", "polaris_oid4vp/verifier.py",
+     "            \"aud\": WALLET_AUDIENCE,\n            \"client_id\": self.client_id,\n"
+     "            \"expected_origins\": [written],\n",
+     "            \"client_id\": self.client_id,\n            \"expected_origins\": [written],  # MUTANT\n"),
+    ("verifier:dc-api-close-without-the-clock", "polaris_oid4vp/verifier.py",
+     "            if session.created < time.time() - self.request_ttl_seconds:\n"
+     "                return self._error(\"invalid_request\", \"this request's lifetime ended while this \"\n"
+     "                                                      \"response was judged\")\n"
+     "            if session.answered or self._dc_api.get(session.nonce) is not session:\n",
+     "            if session.answered or self._dc_api.get(session.nonce) is not session:  # MUTANT\n"),
+    ("verifier:mdoc-transcript-built-before-the-decode", "polaris_oid4vp/verifier.py",
+     "        if presentation is None:\n"
+     "            return Verdict(False, \"malformed\", \"the vp_token is not one DeviceResponse for the one \"\n",
+     "        make_transcript()  # MUTANT\n        if presentation is None:\n"
+     "            return Verdict(False, \"malformed\", \"the vp_token is not one DeviceResponse for the one \"\n"),
+    # 2026-11-21, the page and its routes (serve(dc_api_origin=...), experimental): a post from any
+    # origin answered; a response for another protocol judged; dc_api_client_metadata put in place
+    # of a member the verifier writes, at construction or by being written after the verifier's
+    # own; the requests outstanding not capped; and the routes served on a listener not given the
+    # option.
+    ("serve:dc-api-answers-any-origin", "polaris_oid4vp/serve.py",
+     "        if origins != [self.dc_api_origin]:\n",
+     "        if False:  # MUTANT\n"),
+    ("serve:dc-api-judges-another-protocol", "polaris_oid4vp/serve.py",
+     "        if protocol != DC_API_PROTOCOL:\n",
+     "        if False:  # MUTANT\n"),
+    ("verifier:dc-api-metadata-replaces-a-member", "polaris_oid4vp/verifier.py",
+     "    written = sorted(set(extra) & set(_client_metadata_of({}, {})))\n",
+     "    written = []  # MUTANT\n"),
+    ("verifier:dc-api-metadata-written-after-the-verifiers", "polaris_oid4vp/verifier.py",
+     "        client_metadata = json.loads(json.dumps(self.dc_api_client_metadata or {}))\n"
+     "        client_metadata.update(self._client_metadata(_encryption_jwk(session.enc_key, session.kid)))\n",
+     "        client_metadata = self._client_metadata(_encryption_jwk(session.enc_key, session.kid))  # MUTANT\n"
+     "        client_metadata.update(json.loads(json.dumps(self.dc_api_client_metadata or {})))\n"),
+    ("verifier:dc-api-requests-uncapped", "polaris_oid4vp/verifier.py",
+     "        if len(self._dc_api) >= DC_API_MAX_OUTSTANDING:\n",
+     "        if False:  # MUTANT\n"),
+    ("serve:dc-api-routes-without-the-option", "polaris_oid4vp/serve.py",
+     "    handler = type(\"_BoundHandler\", mixins + (base,), members)\n",
+     "    mixins = mixins + (() if _DcApiHandler in mixins else (_DcApiHandler,))  # MUTANT\n"
+     "    handler = type(\"_BoundHandler\", mixins + (base,), members)\n"),
+    # 2026-11-21, a status list signed under a status anchor stated beside the credential anchor
+    # (status.AnchoredAuthority), the fetch serve uses (status_fetch), and require_status on the
+    # Verifier, verify_response and the command line. Each takes away one rule: the entry matched
+    # for any credential anchor, a host or a path compared loosely, the basis misreported, the
+    # pre-fetch grant verifying a signature, a same-key grant, a signer without a key usage, one
+    # under the credential anchor (by its key or its signature), of another organization, an
+    # entry without a reason, the keyword declared by any truthy value or handed to a resolver
+    # that did not declare it, an anchor sent in x5c, and a status not established let through.
+    ("status:anchored-entry-for-any-anchor", "polaris_oid4vp/status.py",
+     "        entries = [entry for entry in self._entries if entry[0] == anchor_id]\n",
+     "        entries = list(self._entries)  # MUTANT\n"),
+    ("status:anchored-host-by-suffix", "polaris_oid4vp/status.py",
+     "                   if host == entry[1][0] and port == entry[1][1] and path.startswith(entry[1][2])]\n",
+     "                   if host.endswith(entry[1][0]) and port == entry[1][1]  # MUTANT\n"
+     "                   and path.startswith(entry[1][2])]\n"),
+    ("status:anchored-prefix-without-its-slash", "polaris_oid4vp/status.py",
+     "                   if host == entry[1][0] and port == entry[1][1] and path.startswith(entry[1][2])]\n",
+     "                   if host == entry[1][0] and port == entry[1][1]  # MUTANT\n"
+     "                   and path.startswith(entry[1][2].rstrip(\"/\"))]\n"),
+    ("status:anchored-reported-as-stated", "polaris_oid4vp/status.py",
+     "                return (verify, ANCHORED, why)\n",
+     "                return (verify, STATED, why)  # MUTANT\n"),
+    ("status:anchored-uri-grant-verifies-a-signature", "polaris_oid4vp/status.py",
+     "    return False\n\n\nclass AnchoredAuthority:",
+     "    return True  # MUTANT\n\n\nclass AnchoredAuthority:"),
+    ("status:anchored-same-key-branch", "polaris_oid4vp/status.py",
+     "        entries = [entry for entry in self._entries if entry[0] == anchor_id]\n",
+     "        if issuer_key_verify is not None:  # MUTANT\n"
+     "            return (issuer_key_verify, SAME_KEY, \"the credential issuer's own key\")\n"
+     "        entries = [entry for entry in self._entries if entry[0] == anchor_id]\n"),
+    ("status:status-signer-without-a-key-usage", "polaris_oid4vp/status.py",
+     "        return None, \"the signer's certificate states no key usage, so it is not shown to sign\"\n",
+     "        pass  # MUTANT\n"),
+    ("status:status-signer-under-the-credential-anchor", "polaris_oid4vp/status.py",
+     "    why = _under_the_credential_anchor(header[\"x5c\"], issuance_anchor)\n",
+     "    why = \"\"  # MUTANT\n"),
+    ("status:walk-without-the-signature-check", "polaris_oid4vp/status.py",
+     "            anchor_key.verify(cert.signature, cert.tbs_certificate_bytes,\n"
+     "                              sdjwt.ec.ECDSA(cert.signature_hash_algorithm))\n",
+     "            raise ValueError(\"not checked\")  # MUTANT\n"),
+    ("status:walk-without-the-key-check", "polaris_oid4vp/status.py",
+     "        if carries:\n",
+     "        if False:  # MUTANT\n"),
+    ("status:status-signer-of-any-organization", "polaris_oid4vp/status.py",
+     "    if not signer_organizations or signer_organizations != _organizations(credential_leaf):\n",
+     "    if False:  # MUTANT\n"),
+    ("status:anchored-entry-without-a-reason", "polaris_oid4vp/status.py",
+     "        if credential_anchor is None or status_anchor is None or not status_uri_prefix or not why:\n",
+     "        if False:  # MUTANT\n"),
+    ("status:declared-by-any-truthy-value", "polaris_oid4vp/status.py",
+     "    return getattr(callable_, \"takes_credential_anchor\", False) is True\n",
+     "    return bool(getattr(callable_, \"takes_credential_anchor\", False))  # MUTANT\n"),
+    ("sdjwt:declared-by-any-truthy-value", "polaris_oid4vp/sdjwt.py",
+     "                 if getattr(resolver, \"takes_credential_anchor\", False) is True else {})\n",
+     "                 if getattr(resolver, \"takes_credential_anchor\", False) else {})  # MUTANT\n"),
+    ("sdjwt:anchor-handed-to-every-resolver", "polaris_oid4vp/sdjwt.py",
+     "        extra = ({\"credential_anchor\": anchor, \"credential_leaf\": leaf}\n"
+     "                 if getattr(resolver, \"takes_credential_anchor\", False) is True else {})\n",
+     "        extra = {\"credential_anchor\": anchor, \"credential_leaf\": leaf}  # MUTANT\n"),
+    ("sdjwt:anchor-sent-in-x5c", "polaris_oid4vp/sdjwt.py",
+     "        why = _an_anchor_in_the_chain(intermediates, trust_anchors)\n",
+     "        why = \"\"  # MUTANT\n"),
+    ("verifier:require-status-accepts-stale", "polaris_oid4vp/verifier.py",
+     "            and not isinstance(status, bool) and status == 0 and revocation.get(\"stale\") is False)\n",
+     "            and not isinstance(status, bool) and status == 0)  # MUTANT\n"),
+    ("verifier:require-status-accepts-a-bool", "polaris_oid4vp/verifier.py",
+     "            and not isinstance(status, bool) and status == 0 and revocation.get(\"stale\") is False)\n",
+     "            and status == 0 and revocation.get(\"stale\") is False)  # MUTANT\n"),
+    ("verifier:require-status-accepts-unreachable", "polaris_oid4vp/verifier.py",
+     "    if require_status and not _status_established(rev):\n",
+     "    if require_status and not _status_established(rev) and rev.get(\"state\") != \"unreachable\":  # MUTANT\n"),
+    ("verifier:the-class-ignores-require-status", "polaris_oid4vp/verifier.py",
+     "        refusal = _status_refusal(verdict.revocation, self.require_status)\n",
+     "        refusal = _status_refusal(verdict.revocation, False)  # MUTANT\n"),
+    ("verifier:require-status-built-without-a-resolver", "polaris_oid4vp/verifier.py",
+     "        if require_status and status_resolver is None:\n",
+     "        if False:  # MUTANT\n"),
+    ("verifier:verify-response-asks-each-reading", "polaris_oid4vp/verifier.py",
+     "    resolver = None if status_resolver is None else _asked_once(status_resolver)\n",
+     "    resolver = status_resolver  # MUTANT\n"),
+    ("verifier:verify-response-not-held-to-status", "polaris_oid4vp/verifier.py",
+     "        return verdict if refusal is None else refusal\n",
+     "        return verdict  # MUTANT\n"),
+    ("verifier:verify-response-require-with-an-mdoc", "polaris_oid4vp/verifier.py",
+     "    if require_status and mdocs:\n",
+     "    if False:  # MUTANT\n"),
+    ("verifier:verify-response-require-without-a-resolver", "polaris_oid4vp/verifier.py",
+     "        asked[qid] = vct if isinstance(vct, list) else None\n"
+     "    if require_status and status_resolver is None:\n",
+     "        asked[qid] = vct if isinstance(vct, list) else None\n"
+     "    if False:  # MUTANT\n"),
+    ("cli:require-status-dropped", "polaris_oid4vp/cli.py",
+     "    return make_resolver(authority, fetch_status_list), bool(args.require_status), entries\n",
+     "    return make_resolver(authority, fetch_status_list), False, entries  # MUTANT\n"),
+    ("status_fetch:an-address-of-any-kind", "polaris_oid4vp/status_fetch.py",
+     "        if matches:\n",
+     "        if False:  # MUTANT\n"),
+    ("status_fetch:a-non-global-address", "polaris_oid4vp/status_fetch.py",
+     "    if not ip.is_global:\n",
+     "    if False:  # MUTANT\n"),
+    ("status_fetch:mapped-ipv4-judged-as-ipv6", "polaris_oid4vp/status_fetch.py",
+     "    if mapped is not None:\n",
+     "    if False:  # MUTANT\n"),
+    ("status_fetch:connect-ignores-the-judgment", "polaris_oid4vp/status_fetch.py",
+     "        if why:\n            refused.append(why)\n        else:\n"
+     "            allowed.append((family, kind, proto, sockaddr))\n",
+     "        allowed.append((family, kind, proto, sockaddr))  # MUTANT\n"),
+    ("status_fetch:redirects-followed", "polaris_oid4vp/status_fetch.py",
+     "    opener = urllib.request.OpenerDirector()\n",
+     "    opener = urllib.request.build_opener()  # MUTANT\n"),
+    # The total bounds the whole exchange (a review before the push found it bounding only the
+    # body): the timer, the cut it makes, the cut of a connection made after it fired, and the
+    # one connect timeout shared by every address and then given back to each read.
+    ("status_fetch:deadline-timer-never-started", "polaris_oid4vp/status_fetch.py",
+     "        self._timer.start()\n",
+     "        pass  # MUTANT\n"),
+    ("status_fetch:deadline-cuts-nothing", "polaris_oid4vp/status_fetch.py",
+     "        sock.shutdown(socket.SHUT_RDWR)\n",
+     "        pass  # MUTANT\n"),
+    ("status_fetch:deadline-blind-to-a-late-connection", "polaris_oid4vp/status_fetch.py",
+     "            if self._expired:\n                _cut(held)\n",
+     "            pass  # MUTANT\n"),
+    ("status_fetch:connect-timeout-per-address", "polaris_oid4vp/status_fetch.py",
+     "        left = None if give_up is None else give_up - time.monotonic()\n",
+     "        left = timeout  # MUTANT\n"),
+    ("status_fetch:a-read-waits-the-connect-budget", "polaris_oid4vp/status_fetch.py",
+     "        if isinstance(read_timeout, (int, float)):\n            sock.settimeout(read_timeout)\n",
+     "        pass  # MUTANT\n"),
+    # The fetch's own context holds TLS 1.2 or later whatever the library's default allows (a
+    # review before the push found it inheriting the default, as serve.py's listener does not).
+    ("status_fetch:no-tls-floor", "polaris_oid4vp/status_fetch.py",
+     "    context.minimum_version = ssl.TLSVersion.TLSv1_2\n",
+     "    pass  # MUTANT\n"),
+    # The same review: the address rule leaned on the running Python's table, which differs
+    # between 3.9 and 3.12, the name was resolved outside the total, and urllib's User-Agent
+    # named the interpreter. Each named range, the 6to4 reading, both bounds on resolving and
+    # the one User-Agent. A range is removed as a comment line, so the mutant still compiles.
+    ("status_fetch:sixtofour-judged-as-ipv6", "polaris_oid4vp/status_fetch.py",
+     "    carried = getattr(ip, \"sixtofour\", None)\n    if carried is not None:\n        ip = carried\n",
+     "    pass  # MUTANT\n"),
+    ("status_fetch:site-local-allowed", "polaris_oid4vp/status_fetch.py",
+     "    (\"site-local\", ipaddress.ip_network(\"fec0::/10\")),\n",
+     "    # MUTANT\n"),
+    ("status_fetch:protocol-assignments-allowed", "polaris_oid4vp/status_fetch.py",
+     "    (\"protocol-assignment\", ipaddress.ip_network(\"192.0.0.0/24\")),\n",
+     "    # MUTANT\n"),
+    ("status_fetch:6to4-relay-allowed", "polaris_oid4vp/status_fetch.py",
+     "    (\"6to4 relay\", ipaddress.ip_network(\"192.88.99.0/24\")),\n",
+     "    # MUTANT\n"),
+    ("status_fetch:ipv6-documentation-allowed", "polaris_oid4vp/status_fetch.py",
+     "    (\"documentation\", ipaddress.ip_network(\"3fff::/20\")),\n",
+     "    # MUTANT\n"),
+    ("status_fetch:resolution-unbounded", "polaris_oid4vp/status_fetch.py",
+     "    worker.join(within)\n",
+     "    worker.join()  # MUTANT\n"),
+    ("status_fetch:resolution-outside-the-total", "polaris_oid4vp/status_fetch.py",
+     "    ends = _ENDS.get()\n",
+     "    ends = None  # MUTANT\n"),
+    ("status_fetch:connect-budget-restarts-after-resolving", "polaris_oid4vp/status_fetch.py",
+     "    failures = []\n    for attempt in allowed:\n",
+     "    give_up = time.monotonic() + timeout if isinstance(timeout, (int, float)) else None  # MUTANT\n"
+     "    failures = []\n    for attempt in allowed:\n"),
+    ("status_fetch:interpreter-user-agent", "polaris_oid4vp/status_fetch.py",
+     "                                                   \"User-Agent\": USER_AGENT})\n",
+     "                                                   })  # MUTANT\n"),
 )
 
 

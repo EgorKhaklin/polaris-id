@@ -184,6 +184,48 @@ DOCKERHUB_BLOB_FETCH = (
     'er\n'
     '2026-11-13T09:09:10.3943135Z ##[error]Docker pull failed with exit code 1')
 
+#: Job 135639532621 (2026-11-19, procedure drill shard 3 of 6), as its log has it: an apt-get update
+#: that listed packages.microsoft.com and no Ubuntu archive, then the install that found no package.
+APT_NO_UBUNTU_SOURCES = (
+    '2026-11-19T14:44:05.8405241Z ##[endgroup]\n'
+    '2026-11-19T14:44:05.9755670Z Get:1 https://packages.microsoft.com/ubuntu/26.04/prod resolute InRelease [3964 B]\n'
+    '2026-11-19T14:44:06.1237905Z Get:2 https://packages.microsoft.com/ubuntu/26.04/prod resolute/main arm64 Packages [151 kB]\n'
+    '2026-11-19T14:44:06.1758382Z Get:3 https://packages.microsoft.com/ubuntu/26.04/prod resolute/main amd64 Packages [165 kB]\n'
+    '2026-11-19T14:44:07.0107126Z Fetched 320 kB in 0s (1071 kB/s)\n'
+    '2026-11-19T14:44:07.0367531Z Reading package lists...\n'
+    '2026-11-19T14:44:07.0482480Z Reading package lists...\n'
+    '2026-11-19T14:44:07.0575606Z Building dependency tree...\n'
+    '2026-11-19T14:44:07.0580007Z Reading state information...\n'
+    '2026-11-19T14:44:07.0597576Z E: Unable to locate package age\n'
+    '2026-11-19T14:44:07.0614722Z ##[error]Process completed with exit code 100.')
+
+#: Run 44565122170's failing line (2026-11-19, the eudi-issuer canary job), as the lab fetch now writes
+#: it: the same 429 with the URL it was fetching.
+GITHUB_RAW_RATE_LIMIT = (
+    '2026-11-19T16:21:41.5824411Z could not fetch https://raw.githubusercontent.com/eu-digital-identity-'
+    'wallet/eudi-srv-pid-issuer/9177177071157b20724b04eed619049e40679bbb/docker-compose/docker-compose.yaml: '
+    'HTTP Error 429: Too Many Requests\n'
+    '2026-11-19T16:21:41.6324557Z ##[error]Process completed with exit code 1.')
+
+#: Run 44569876571 (2026-11-19, Pages on main), its deploy step as gh run view --log-failed gives it:
+#: attempt 1, the artifact not listed yet, and attempt 2, the re-run that then held two.
+_PAGES_STEP = ('Redirect the old GitHub Pages address to the project site\tRun actions/deploy-pages@'
+               '368f82528645a54fb793d4d04e342629a3f51346\t')
+PAGES_ARTIFACT_NOT_LISTED = "\n".join(_PAGES_STEP + line for line in (
+    '2026-11-19T16:48:23.9820646Z Fetching artifact metadata for "github-pages" in this workflow run',
+    '2026-11-19T16:48:24.2126367Z Found 0 artifact(s)',
+    '2026-11-19T16:48:24.2146385Z ##[error]Fetching artifact metadata failed. Is githubstatus.com reporting '
+    'issues with API requests, Pages, or Actions? Please re-run the deployment at a later time.',
+    '2026-11-19T16:48:24.3963336Z ##[error]Error: No artifacts named "github-pages" were found for this '
+    'workflow run. Ensure artifacts are uploaded with actions/upload-artifact@v4 or later.'))
+PAGES_ARTIFACT_TWICE = "\n".join(_PAGES_STEP + line for line in (
+    '2026-11-19T17:13:51.0797557Z Fetching artifact metadata for "github-pages" in this workflow run',
+    '2026-11-19T17:13:51.3378062Z Found 2 artifact(s)',
+    '2026-11-19T17:13:51.3403523Z ##[error]Fetching artifact metadata failed. Is githubstatus.com reporting '
+    'issues with API requests, Pages, or Actions? Please re-run the deployment at a later time.',
+    '2026-11-19T17:13:51.5043395Z ##[error]Error: Multiple artifacts named "github-pages" were unexpectedly '
+    'found for this workflow run. Artifact count is 2.'))
+
 
 class FlakeClassifierTests(unittest.TestCase):
     def test_the_alpine_apk_layer_is_a_known_flake(self):
@@ -378,6 +420,64 @@ class FlakeClassifierTests(unittest.TestCase):
             with self.subTest(line=line[:30]):
                 self.assertEqual(ship.classify_failure_log(line)[1], "apt-index")
 
+    def test_an_apt_update_with_no_ubuntu_archive_is_a_known_flake(self):
+        verdict, name, advice = ship.classify_failure_log(APT_NO_UBUNTU_SOURCES)
+        self.assertEqual((verdict, name), ("flake", "apt-no-ubuntu-sources"))
+        self.assertIn("rerun", advice)
+        prefixed = "\n".join("procedure drill (3/6)\tInstall\t" + line
+                             for line in APT_NO_UBUNTU_SOURCES.split("\n"))
+        self.assertEqual(ship.classify_failure_log(prefixed)[1], "apt-no-ubuntu-sources",
+                         "as gh run view --log-failed prefixes each line")
+
+    def test_a_missing_package_on_a_runner_with_an_ubuntu_archive_is_investigated(self):
+        """The same block with an Ubuntu archive among its index lines, first or after the
+        Microsoft ones, is a package that does not exist, which no rerun clears; and the
+        install's line alone says nothing about the update."""
+        ubuntu = '2026-11-19T14:44:05.9000000Z Hit:%d http://azure.archive.ubuntu.com/ubuntu resolute InRelease\n'
+        lines = APT_NO_UBUNTU_SOURCES.split("\n")
+        first = "\n".join([lines[0], ubuntu.rstrip("\n") % 1] + lines[1:])
+        after = "\n".join(lines[:4] + [ubuntu.rstrip("\n") % 4] + lines[4:])
+        alone = "\n".join(lines[-2:])
+        for label, log in (("ubuntu first", first), ("ubuntu after", after), ("install alone", alone)):
+            with self.subTest(label):
+                self.assertEqual(ship.classify_failure_log(log), ("investigate", None, None))
+
+    def test_a_429_from_raw_githubusercontent_is_a_known_flake(self):
+        verdict, name, advice = ship.classify_failure_log(GITHUB_RAW_RATE_LIMIT)
+        self.assertEqual((verdict, name), ("flake", "github-raw-rate-limit"))
+        self.assertIn("rerun", advice)
+
+    def test_a_429_from_another_host_or_with_no_url_is_investigated(self):
+        """The verifier under test answers 429 too (its control endpoint at capacity), and a
+        traceback from a script read from stdin names no URL."""
+        for label, log in (
+                ("another host", GITHUB_RAW_RATE_LIMIT.replace("raw.githubusercontent.com", "127.0.0.1:9443")),
+                ("404 from the same host", GITHUB_RAW_RATE_LIMIT.replace("HTTP Error 429: Too Many Requests",
+                                                                          "HTTP Error 404: Not Found")),
+                ("traceback without the URL", "urllib.error.HTTPError: HTTP Error 429: Too Many Requests")):
+            with self.subTest(label):
+                self.assertEqual(ship.classify_failure_log(log), ("investigate", None, None))
+
+    def test_a_pages_artifact_not_listed_or_held_twice_is_a_known_flake(self):
+        for log, want in ((PAGES_ARTIFACT_NOT_LISTED, "pages-artifact-not-listed"),
+                          (PAGES_ARTIFACT_TWICE, "pages-artifact-twice")):
+            with self.subTest(want):
+                verdict, name, advice = ship.classify_failure_log(log)
+                self.assertEqual((verdict, name), ("flake", want))
+                self.assertIn("fresh run", advice)
+                self.assertIn(name, ship.FRESH_RUN_FLAKES)
+
+    def test_a_missing_pages_artifact_without_the_empty_listing_or_of_another_name_is_investigated(self):
+        """The error line alone does not say the upload passed and was not listed yet; a deploy of
+        another artifact name is not this workflow's."""
+        lines = PAGES_ARTIFACT_NOT_LISTED.split("\n")
+        for label, log in (
+                ("the error alone", lines[-1]),
+                ("a listing of one", PAGES_ARTIFACT_NOT_LISTED.replace("Found 0 artifact(s)", "Found 1 artifact(s)")),
+                ("another name, twice", PAGES_ARTIFACT_TWICE.replace('named "github-pages"', 'named "site"'))):
+            with self.subTest(label):
+                self.assertEqual(ship.classify_failure_log(log), ("investigate", None, None))
+
     def test_the_caddy_module_proxy_flake_still_classifies(self):
         self.assertEqual(
             ship.classify_failure_log("verifying sum.golang.org: stream error")[1],
@@ -473,8 +573,14 @@ class FlakeClassifierTests(unittest.TestCase):
                 self.assertTrue(pattern, "%s has no pattern" % name)
                 self.assertGreater(len(advice), 30,
                                    "%s: advice must say what to DO, not name the flake" % name)
-                self.assertIn("rerun", advice.lower(),
-                              "%s: a flake's advice is to rerun; say so" % name)
+                if name in ship.FRESH_RUN_FLAKES:
+                    self.assertIn("fresh run", advice.lower(),
+                                  "%s: its remedy is a fresh run; say so" % name)
+                else:
+                    self.assertIn("rerun", advice.lower(),
+                                  "%s: a flake's advice is to rerun; say so" % name)
+        self.assertTrue(ship.FRESH_RUN_FLAKES <= {name for name, _, _ in ship.FLAKE_SIGNATURES},
+                        "a fresh-run flake that is not a signature names nothing")
 
 
 class TriageHonestyTests(unittest.TestCase):
@@ -500,7 +606,8 @@ class TriageHonestyTests(unittest.TestCase):
                         "classifier runs over a refusal string and reports on it")
 
     def _triage_with(self, jobs, log, annotations):
-        """triage() against a stand-in for gh: the run's jobs, the failed-job log, annotations."""
+        """triage() against a stand-in for gh: the run's jobs, the failed-job log, annotations
+        (one list for every job, or a dict of each job's own by its databaseId)."""
         import io
         import json
         from unittest import mock
@@ -511,6 +618,8 @@ class TriageHonestyTests(unittest.TestCase):
             if args[:2] == ("run", "view"):
                 return json.dumps(jobs)
             if args[0] == "api" and args[1].endswith("/annotations"):
+                if isinstance(annotations, dict):
+                    return json.dumps(annotations[int(args[1].split("/")[-2])])
                 return json.dumps(annotations)
             raise AssertionError("unexpected gh call %r" % (args,))
         out = io.StringIO()
@@ -529,6 +638,88 @@ class TriageHonestyTests(unittest.TestCase):
         self.assertIn("known flake [runner-not-acquired]", text)
         self.assertIn("gh run rerun 123 --failed", text)
         self.assertEqual(rc, 0)
+
+    def test_a_job_whose_runner_was_lost_is_named_not_left_unknown(self):
+        # Run 44682384966, attempt 1, 2026-11-20 (PR #583): the HA failover drill had started, so
+        # it has steps; GitHub lost its runner, `--log-failed` printed nothing to stdout ("log not
+        # found: 136108679515" on stderr), and the reason was only the check run's annotation.
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "HA profile survives a leader crash", "conclusion": "failure",
+             "steps": [{"name": "Failover drill"}], "databaseId": 9}]}
+        note = [{"message": "The hosted runner lost communication with the server. Anything in "
+                            "your workflow that terminates the runner process, starves it for "
+                            "CPU/Memory, or blocks its network access can cause this error."}]
+        rc, text, calls = self._triage_with(jobs, "", note)
+        self.assertIn("known flake [runner-lost]", text)
+        self.assertIn("gh run rerun 123 --failed", text)
+        self.assertEqual(rc, 0)
+        self.assertIn(("api", "repos/{owner}/{repo}/check-runs/9/annotations"), calls)
+
+    def test_a_started_job_with_no_log_and_an_ordinary_reason_is_not_rerun(self):
+        # A job that failed in a step and left no log is annotated with its exit code. Reading
+        # that annotation must give "investigate", never a rerun and never "no log to read yet".
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "x", "conclusion": "failure", "steps": [{"name": "s"}], "databaseId": 9}]}
+        rc, text, _ = self._triage_with(jobs, "", [{"message": "Process completed with exit "
+                                                               "code 1."}])
+        self.assertIn("verdict: investigate", text)
+        self.assertIn("x: Process completed with exit code 1.", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertNotIn("UNKNOWN", text)
+        self.assertEqual(rc, 1)
+
+    def test_a_lost_runner_beside_a_real_failure_is_not_called_a_flake(self):
+        # Two failed jobs and no failed-job log: job A lost its runner, job B failed in a step.
+        # Each job is judged on its own annotations, so A's flake does not explain B's failure:
+        # the verdict is investigate, B's reason is printed and nothing is rerun. The twin: when
+        # B lost its runner too, every failed job is a flake and the run is rerun.
+        lost = ("The hosted runner lost communication with the server. Anything in your workflow "
+                "that terminates the runner process, starves it for CPU/Memory, or blocks its "
+                "network access can cause this error.")
+        jobs = {"conclusion": "failure", "jobs": [
+            {"name": "A", "conclusion": "failure", "steps": [{"name": "s"}], "databaseId": 7},
+            {"name": "B", "conclusion": "failure", "steps": [{"name": "s"}], "databaseId": 8}]}
+        rc, text, calls = self._triage_with(jobs, "", {7: [{"message": lost}],
+                                                       8: [{"message": "Process completed with exit code 1."}]})
+        self.assertIn("verdict: investigate", text)
+        self.assertIn("B: Process completed with exit code 1.", text)
+        self.assertNotIn("verdict: known flake", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertEqual(rc, 1)
+        for job in (7, 8):
+            self.assertIn(("api", "repos/{owner}/{repo}/check-runs/%d/annotations" % job), calls)
+        rc, text, _ = self._triage_with(jobs, "", {7: [{"message": lost}], 8: [{"message": lost}]})
+        self.assertIn("known flake [runner-lost]", text)
+        self.assertIn("gh run rerun 123 --failed", text)
+        self.assertEqual(rc, 0)
+        # A failed job with no annotation at all is a reason nobody read: no rerun either.
+        rc, text, _ = self._triage_with(jobs, "", {7: [{"message": lost}], 8: []})
+        self.assertIn("B: (no annotation)", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertEqual(rc, 1)
+        # Nor is a failed job whose annotations cannot be asked for (no id): it is not skipped.
+        unread = {"conclusion": "failure", "jobs": [jobs["jobs"][0], {"name": "C", "conclusion": "failure"}]}
+        rc, text, calls = self._triage_with(unread, "", {7: [{"message": lost}]})
+        self.assertIn("C: (no annotation)", text)
+        self.assertNotIn("gh run rerun", text)
+        self.assertEqual(rc, 1)
+        self.assertEqual([c for c in calls if c[0] == "api"],
+                         [("api", "repos/{owner}/{repo}/check-runs/7/annotations")])
+
+    def test_a_pages_flake_is_answered_with_a_fresh_run_never_a_rerun(self):
+        jobs = {"conclusion": "failure", "workflowName": "Pages", "headBranch": "main", "jobs": [
+            {"name": "Redirect the old GitHub Pages address to the project site",
+             "conclusion": "failure", "steps": [{"name": "deploy"}], "databaseId": 9}]}
+        for log in (PAGES_ARTIFACT_NOT_LISTED, PAGES_ARTIFACT_TWICE):
+            with self.subTest(log.split("\n")[1][-24:]):
+                rc, text, _ = self._triage_with(jobs, log, [])
+                self.assertIn("gh workflow run Pages --ref main", text)
+                self.assertNotIn("gh run rerun", text)
+                self.assertEqual(rc, 0)
+        bare = {k: v for k, v in jobs.items() if k not in ("workflowName", "headBranch")}
+        rc, text, _ = self._triage_with(bare, PAGES_ARTIFACT_TWICE, [])
+        self.assertIn("start a fresh run", text)
+        self.assertNotIn("gh run rerun", text)
 
     def test_a_finished_run_with_no_log_and_no_reason_stays_unknown(self):
         jobs = {"conclusion": "failure", "jobs": [

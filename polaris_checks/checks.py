@@ -27413,6 +27413,7 @@ _PUBLISHED_READMES = (
     "packages/polaris-oid4vp/README.md",
     "sdk/python/README.md",
     "sdk/typescript/README.md",
+    "packages/polaris-negative-vectors/README.md",
 )
 _RELATIVE_LINK = re.compile(r"\]\((\.{1,2}/[^)]*)\)")
 
@@ -27446,10 +27447,21 @@ def check_published_readmes_have_no_relative_links(root: pathlib.Path) -> list[F
 # carried no licence at all and the npm `files` list named only dist and the README. A
 # published version cannot be amended, so the omission would have been permanent per version.
 _PUBLISHABLE_PACKAGES = ("packages/polaris-verify", "packages/polaris-oid4vp",
-                         "sdk/python", "sdk/typescript")
+                         "sdk/python", "sdk/typescript", "packages/polaris-negative-vectors")
+_NPM_PACKAGES = ("sdk/typescript", "packages/polaris-negative-vectors")
 
 
 def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]:
+    # 2026-11-20: every package NOTICE carries the root NOTICE's copyright line, the attribution
+    # 4(d) passes on. The length floor holds every LICENSE and every NOTICE, except the NOTICE of
+    # a package published as data only (_DEPENDENCY_FREE_MANIFESTS, whose own check holds it to
+    # no dependency): with no code and no dependency it has no component notices to carry.
+    root_notice = _read(root, "NOTICE")
+    copyright_line = next((ln.strip() for ln in root_notice.splitlines()
+                           if ln.strip().startswith("Copyright ")), "") if root_notice else ""
+    if not copyright_line:
+        return _fail("distribution_licence", "the root NOTICE is missing or carries no Copyright "
+                                             "line, so no package NOTICE can be held to it")
     for pkg in _PUBLISHABLE_PACKAGES:
         for name in ("LICENSE", "NOTICE"):
             path = root / pkg / name
@@ -27460,25 +27472,37 @@ def check_distributions_carry_their_licence(root: pathlib.Path) -> list[Finding]
                              "does not satisfy it. setuptools picks these up from the package "
                              "directory by default; a root-level copy is not in the sdist"
                              % (pkg, name))
-            if len(_read_path(path)) < 1000:
+            text = _read_path(path)
+            if name == "LICENSE" and len(text) < 1000:
                 return _fail("distribution_licence",
                              "%s/%s is too short to be the licence text" % (pkg, name))
+            if (name == "NOTICE" and len(text) < 1000
+                    and pkg + "/package.json" not in _DEPENDENCY_FREE_MANIFESTS):
+                return _fail("distribution_licence",
+                             "%s/NOTICE is too short to carry the notices of what the package "
+                             "ships; only a package published as data only may keep a short one"
+                             % pkg)
+            if name == "NOTICE" and copyright_line not in text:
+                return _fail("distribution_licence",
+                             "%s/NOTICE does not carry the root NOTICE's %r, so the attribution "
+                             "Apache-2.0 4(d) passes on with the work is not in it" % (pkg, copyright_line))
 
     # npm includes LICENSE on its own but NOT NOTICE, and a `files` allowlist overrides even
-    # that, so this is the one artifact where naming them is the whole mechanism.
-    pkg_json = _read(root, "sdk/typescript/package.json")
-    if not pkg_json:
-        return _fail("distribution_licence", "sdk/typescript/package.json is missing")
-    try:
-        files = json.loads(pkg_json).get("files") or []
-    except Exception as e:  # noqa: BLE001
-        return _fail("distribution_licence", "sdk/typescript/package.json is not valid JSON (%s)" % e)
-    for name in ("LICENSE", "NOTICE"):
-        if name not in files:
-            return _fail("distribution_licence",
-                         "sdk/typescript/package.json has a `files` allowlist that omits %r, "
-                         "so the published tarball will not carry it whatever is on disk"
-                         % name)
+    # that, so these are the artifacts where naming them is the whole mechanism.
+    for npm in _NPM_PACKAGES:
+        pkg_json = _read(root, npm + "/package.json")
+        if not pkg_json:
+            return _fail("distribution_licence", "%s/package.json is missing" % npm)
+        try:
+            files = json.loads(pkg_json).get("files") or []
+        except Exception as e:  # noqa: BLE001
+            return _fail("distribution_licence", "%s/package.json is not valid JSON (%s)" % (npm, e))
+        for name in ("LICENSE", "NOTICE"):
+            if name not in files:
+                return _fail("distribution_licence",
+                             "%s/package.json has a `files` allowlist that omits %r, "
+                             "so the published tarball will not carry it whatever is on disk"
+                             % (npm, name))
     # A registry project page is an outward surface, and the standing rule is that one must
     # not read as more settled than the thing is. sdk/python declared NO classifiers: on PyPI
     # that is a page with no maturity signal at all for a pre-pilot 0.1.0.
@@ -29043,6 +29067,15 @@ def check_publishable_packages_keep_their_dependency_budget(root: pathlib.Path) 
 #: liboqs-python uses (2026-10-15). The value is the source repository the registry's own
 #: metadata named when the entry was written, read anonymously; adding a name means doing
 #: that again. Python names are normalized as PEP 503 does.
+#: The manifests published as data only (2026-11-20): each must declare no dependency at all,
+#: where any other manifest that declares none fails as a parse that found nothing.
+_DEPENDENCY_FREE_MANIFESTS = {
+    "packages/polaris-negative-vectors/package.json":
+        "the negative vectors as JSON, with nothing to install or run",
+}
+#: Every key under which an npm manifest declares a dependency (docs.npmjs.com, package.json).
+_NPM_DEPENDENCY_KEYS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies",
+                        "bundleDependencies", "bundledDependencies")
 _PUBLISHED_DEPENDENCY_PROJECTS = {
     "pypi:cryptography": "github.com/pyca/cryptography",
     "pypi:liboqs-python": "github.com/open-quantum-safe/liboqs-python",
@@ -29133,7 +29166,8 @@ def _published_manifests(root: pathlib.Path):
     if not text:
         return [], ".github/workflows/publish.yml is missing"
     manifests = []
-    for line in text.splitlines():
+    lines = text.splitlines()
+    for line in lines:
         if re.search(r"\bpython3? -m build\b", line):
             manifests.append("%s/pyproject.toml" % line.split()[-1].rstrip("/"))
         elif re.search(r"\bnpm pack\b", line):
@@ -29141,7 +29175,21 @@ def _published_manifests(root: pathlib.Path):
             if not m:
                 return [], ("publish.yml packs npm without `cd <dir> && npm pack`, so this check "
                             "cannot tell which package.json is published: %s" % line.strip())
-            manifests.append("%s/package.json" % m.group(1).rstrip("/"))
+            where = m.group(1)
+            if "$" in where:
+                # A directory staged at run time (2026-11-20, the negative-vectors package):
+                # its package.json is the one beside the stage.py that writes it, which the
+                # stage copies byte for byte and its --check holds to that.
+                staged = sorted({s.group(1) for s in (
+                    re.search(r"(\S+)/stage\.py %s(?:\s|$)" % re.escape(where), x) for x in lines) if s})
+                if len(staged) != 1:
+                    return [], ("publish.yml packs npm in %s, which %s `<dir>/stage.py %s` line "
+                                "writes, so this check cannot tell which package.json is published"
+                                % (where, "no" if not staged else "more than one", where))
+                where = staged[0]
+            rel = "%s/package.json" % where.rstrip("/")
+            if rel not in manifests:
+                manifests.append(rel)
     if not manifests:
         return [], ("publish.yml builds no package this check can read (no `python -m build` "
                     "and no `npm pack` line), so it would pass having checked nothing")
@@ -29186,6 +29234,16 @@ def check_published_dependency_names_are_the_intended_projects(root: pathlib.Pat
                 findings.extend(_fail(name, "%s %s" % (rel, why)))
                 continue
             names = {"pypi:" + n for n in raw}
+        if rel in _DEPENDENCY_FREE_MANIFESTS:
+            # "no dependency at all": every dependency key npm reads, not the three the names
+            # come from, and any value under one (bundleDependencies may be a list or true)
+            held = ([k for k in _NPM_DEPENDENCY_KEYS if doc.get(k)] if rel.endswith("package.json")
+                    else sorted(names))
+            if held:
+                findings.extend(_fail(name, "%s is published as data only (%s), and declares a "
+                                            "dependency under %s"
+                                            % (rel, _DEPENDENCY_FREE_MANIFESTS[rel], ", ".join(held))))
+            continue
         if not names:
             findings.extend(_fail(name, "%s declares no dependency at all, not even a build "
                                         "requirement: the parse found nothing" % rel))
@@ -29204,6 +29262,10 @@ def check_published_dependency_names_are_the_intended_projects(root: pathlib.Pat
     if stale:
         return _fail(name, "_PUBLISHED_DEPENDENCY_PROJECTS lists %s, which no published manifest "
                            "declares now: remove the entry" % ", ".join(stale))
+    unbuilt = sorted(set(_DEPENDENCY_FREE_MANIFESTS) - set(manifests))
+    if unbuilt:
+        return _fail(name, "_DEPENDENCY_FREE_MANIFESTS lists %s, which publish.yml does not build "
+                           "now: remove the entry" % ", ".join(unbuilt))
     wrong = []
     for rel in _tracked_files(root):
         parts = rel.split("/")

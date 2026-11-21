@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cryptography import x509  # noqa: E402
 from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec, rsa, utils as asym_utils  # noqa: E402
 from cryptography.x509.oid import NameOID  # noqa: E402
 
 from polaris_oid4vp.jwe import b64u_decode, b64u_encode, decrypt_compact, encrypt_compact  # noqa: E402
@@ -1130,6 +1130,116 @@ class TheDefaultRequestIsUnchangedTests(VerifierTestCase):
         self.assert_as_before(v)
 
 
+class RequestSignerChainTests(unittest.TestCase):
+    """The request signer's file may hold its leaf and then its intermediates, and all of them go in
+    `x5c` in the file's order: a wallet that trusts only roots and fetches nothing (ProtocolSoup's
+    wallet harness) needs the path to its root in the request itself. The trust anchor stays out
+    (HAIP 1.0 section 5), each certificate is the issuer of the one before it (RFC 7515 section
+    4.1.6), and the key is the leaf's; a file that breaks one of these is refused when the verifier
+    is made. A file of one certificate is read as it always was."""
+
+    @staticmethod
+    def _issue(subject, subject_key, issuer, issuer_key, ca=True):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        builder = (x509.CertificateBuilder()
+                   .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject)]))
+                   .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer)]))
+                   .public_key(subject_key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(now - datetime.timedelta(days=1))
+                   .not_valid_after(now + datetime.timedelta(days=30)))
+        if ca:
+            builder = builder.add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        return builder.sign(issuer_key, hashes.SHA256())
+
+    @classmethod
+    def setUpClass(cls):
+        def p256():
+            return ec.generate_private_key(ec.SECP256R1())
+        # An RSA root, as a public chain may end at, outside every file below.
+        anchor_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.anchor = cls._issue("root", anchor_key, "root", anchor_key)
+        # Two certificates: the leaf and the one intermediate the root issued.
+        cls.int_key, cls.short_leaf_key = p256(), p256()
+        cls.intermediate = cls._issue("intermediate", cls.int_key, "root", anchor_key)
+        cls.short_leaf = cls._issue("verifier", cls.short_leaf_key, "intermediate", cls.int_key, ca=False)
+        # Four certificates, the shape of a publicly trusted chain that reaches an RSA root through a
+        # cross-signed certificate: i3 is signed by the RSA root, i2 by i3, i1 by i2's RSA key (so
+        # one link inside the file is an RSA signature), and the leaf by i1.
+        i3_key, i2_key, i1_key, cls.leaf_key = p256(), rsa.generate_private_key(65537, 2048), p256(), p256()
+        cls.i3 = cls._issue("i3", i3_key, "root", anchor_key)
+        cls.i2 = cls._issue("i2", i2_key, "i3", i3_key)
+        cls.i1 = cls._issue("i1", i1_key, "i2", i2_key)
+        cls.leaf = cls._issue("verifier", cls.leaf_key, "i1", i1_key, ca=False)
+        # Named i1 and issued by i2, but under another key: only the signature tells it apart.
+        cls.impostor = cls._issue("i1", p256(), "i2", i2_key)
+        # i1's own key and names, signed by an RSA key that is not i2's: a link whose issuer is RSA
+        # that only the signature tells apart.
+        cls.forged_i1 = cls._issue("i1", i1_key, "i2", rsa.generate_private_key(65537, 2048))
+
+    @staticmethod
+    def _pem(*certs):
+        return b"".join(c.public_bytes(serialization.Encoding.PEM) for c in certs)
+
+    @staticmethod
+    def _b64(cert):
+        return base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode("ascii")
+
+    def _verifier(self, certs, key):
+        return Verifier(client_cert_pem=self._pem(*certs),
+                        client_key_pem=key.private_bytes(serialization.Encoding.PEM,
+                                                         serialization.PrivateFormat.PKCS8,
+                                                         serialization.NoEncryption()),
+                        request_uri="https://verifier.test/request.jwt",
+                        response_uri="https://verifier.test/response")
+
+    def assert_sent(self, verifier, certs):
+        header, claims = Wallet.read_request(verifier.new_request()[1])
+        self.assertEqual(header["x5c"], [self._b64(c) for c in certs])
+        self.assertEqual(verifier.cert, certs[0])
+        digest = hashlib.sha256(certs[0].public_bytes(serialization.Encoding.DER)).digest()
+        self.assertEqual(claims["client_id"], "x509_hash:" + b64u_encode(digest))
+
+    def test_a_leaf_and_its_intermediate_go_in_x5c_in_that_order(self):
+        self.assert_sent(self._verifier([self.short_leaf, self.intermediate], self.short_leaf_key),
+                         [self.short_leaf, self.intermediate])
+
+    def test_four_certificates_with_an_rsa_link_go_in_x5c_in_that_order(self):
+        chain = [self.leaf, self.i1, self.i2, self.i3]
+        self.assert_sent(self._verifier(chain, self.leaf_key), chain)
+
+    def test_a_leaf_alone_is_sent_alone(self):
+        self.assert_sent(self._verifier([self.short_leaf], self.short_leaf_key), [self.short_leaf])
+
+    def test_the_root_in_the_file_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 3 of 3 .* is self-signed"):
+            self._verifier([self.short_leaf, self.intermediate, self.anchor], self.short_leaf_key)
+
+    def test_a_self_signed_leaf_alone_is_sent_as_before(self):
+        alone = self._issue("verifier", self.short_leaf_key, "verifier", self.short_leaf_key, ca=False)
+        self.assert_sent(self._verifier([alone], self.short_leaf_key), [alone])
+
+    def test_a_self_signed_leaf_before_an_intermediate_is_refused(self):
+        signed_itself = self._issue("verifier", self.short_leaf_key, "verifier", self.short_leaf_key, ca=False)
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 2 .* did not issue certificate 1"):
+            self._verifier([signed_itself, self.intermediate], self.short_leaf_key)
+
+    def test_intermediates_out_of_order_are_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 4 .* did not issue certificate 1"):
+            self._verifier([self.leaf, self.i2, self.i1, self.i3], self.leaf_key)
+
+    def test_an_intermediate_with_the_issuers_name_but_not_its_key_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 2 of 4 .* did not issue certificate 1"):
+            self._verifier([self.leaf, self.impostor, self.i2, self.i3], self.leaf_key)
+
+    def test_an_rsa_issuers_name_without_its_signature_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"certificate 3 of 4 .* did not issue certificate 2"):
+            self._verifier([self.leaf, self.forged_i1, self.i2, self.i3], self.leaf_key)
+
+    def test_a_key_that_is_not_the_leafs_is_refused(self):
+        with self.assertRaisesRegex(ValueError, r"key is not the key of the first certificate"):
+            self._verifier([self.short_leaf, self.intermediate], self.leaf_key)
+
+
 class TheRequestTests(VerifierTestCase):
     """Built from what the running conformance suite accepted, condition by condition."""
 
@@ -1420,6 +1530,89 @@ class RevocationReachesTheOperatorTests(unittest.TestCase):
         self.assertEqual(verdict.revocation["state"], sdjwt.NOT_EVALUATED)
 
 
+class RequireStatusTests(unittest.TestCase):
+    """`require_status`, off by default: the relying party's rule that only a status its resolver
+    checked, VALID and fresh, lets a presentation through (the German PID verifier guidelines,
+    V-20: "If the status cannot be determined, the PID is rejected")."""
+
+    STATUS = RevocationReachesTheOperatorTests.STATUS
+    FRESH = {"checked": True, "status": 0, "stale": False, "meaning": "VALID"}
+
+    def _verifier(self, **kw):
+        return RevocationReachesTheOperatorTests._verifier(self, **kw)
+
+    def _answer(self, verifier, jar=None, status=STATUS):
+        if jar is None:
+            _, jar = verifier.new_request()
+        code, _, verdict = verifier.handle_direct_post(self.wallet.respond(jar, status=status))
+        return code, verdict
+
+    def _unreachable(self, *, uri, idx, issuer):
+        raise OSError("the status host did not answer")
+
+    def test_only_a_checked_valid_fresh_status_is_accepted(self):
+        cases = (
+            ("checked, VALID, fresh", lambda **_: dict(self.FRESH), self.STATUS, 200, None),
+            ("checked, VALID, stale", lambda **_: dict(self.FRESH, stale=True), self.STATUS,
+             400, "but stale"),
+            ("checked, VALID, no freshness", lambda **_: {"checked": True, "status": 0},
+             self.STATUS, 400, "with no freshness stated"),
+            ("checked, status False", lambda **_: dict(self.FRESH, status=False), self.STATUS,
+             400, "status_required"),
+            ("unreachable", self._unreachable, self.STATUS, 400, sdjwt.UNREACHABLE),
+            ("no authority", lambda **_: {"checked": False, "code": "no_authority",
+                                          "reason": "no statement"}, self.STATUS,
+             400, sdjwt.NO_AUTHORITY),
+            ("a list refused", lambda **_: {"checked": False, "code": "sub",
+                                            "reason": "another list"}, self.STATUS,
+             400, "list_refused (sub)"),
+            ("no status claim", lambda **_: dict(self.FRESH), None, 400, sdjwt.NO_STATUS_CLAIM),
+            ("a status claim it cannot read", lambda **_: dict(self.FRESH), {"other": 1},
+             400, sdjwt.UNSUPPORTED_STATUS))
+        for label, resolver, claim, expected, text in cases:
+            with self.subTest(state=label, require_status=True):
+                code, verdict = self._answer(
+                    self._verifier(status_resolver=resolver, require_status=True), status=claim)
+                self.assertEqual(code, expected, getattr(verdict, "reason", verdict))
+                if text is not None:
+                    self.assertEqual(verdict.code, "status_required")
+                    self.assertIn("a checked, VALID, fresh status is required", verdict.reason)
+                    self.assertIn(text, "status_required " + verdict.reason)
+                    self.assertTrue(verdict.authentic is False and verdict.revocation)
+            # The positive control: without the rule each of these is answered, as before.
+            with self.subTest(state=label, require_status=False):
+                code, verdict = self._answer(self._verifier(status_resolver=resolver),
+                                             status=claim)
+                self.assertEqual(code, 200, getattr(verdict, "reason", verdict))
+
+    def test_a_revoked_credential_is_refused_as_revoked_under_the_rule_too(self):
+        code, verdict = self._answer(self._verifier(
+            status_resolver=lambda **_: dict(self.FRESH, status=1, meaning="INVALID"),
+            require_status=True))
+        self.assertEqual((code, verdict.code), (400, "revoked"))
+
+    def test_a_refusal_for_want_of_a_status_leaves_the_request_open(self):
+        v = self._verifier(status_resolver=lambda **_: dict(self.FRESH), require_status=True)
+        _, jar = v.new_request()
+        code, verdict = self._answer(v, jar, status=None)
+        self.assertEqual((code, verdict.code), (400, "status_required"))
+        code, verdict = self._answer(v, jar)
+        self.assertEqual(code, 200, getattr(verdict, "reason", verdict))
+
+    def test_the_rule_without_a_resolver_is_refused_when_built(self):
+        for require in (True, 1):
+            with self.subTest(require_status=require):
+                try:
+                    self._verifier(require_status=require)
+                except Exception as exc:  # noqa: BLE001  the type is asserted
+                    self.assertIsInstance(exc, ValueError)
+                    self.assertIn("require_status needs a status_resolver", str(exc))
+                else:
+                    self.fail("require_status without a status_resolver was built")
+        self.assertIs(self._verifier(require_status=False).require_status, False)
+        self.assertIs(self._verifier(status_resolver=self._unreachable).require_status, False)
+
+
 class TheRequestIsWhatIsAnsweredTests(unittest.TestCase):
     """The review of 2026-09-30: a presentation withholding a claim the DCQL query asked for was
     answered 200, and a request past its lifetime was still served, even re-signed with a new
@@ -1495,7 +1688,8 @@ class TheSevenRefusalsReachTheWireTests(VerifierTestCase):
 class TheTransportRefusalsTests(VerifierTestCase):
 
     def test_a_response_encrypted_to_another_verifier_is_4xx(self):
-        other = Verifier(client_cert_pem=_client_chain()[0], client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        other = Verifier(client_cert_pem=cert_pem, client_key_pem=key_pem,
                          request_uri="https://other.test/request.jwt",
                          response_uri="https://other.test/response",
                          issuer_jwks=[self.wallet.issuer_jwk])
@@ -1540,8 +1734,9 @@ class TheTransportRefusalsTests(VerifierTestCase):
             self.assertLess(status, 500, "%r produced %d" % (kw, status))
 
     def test_an_expired_request_cannot_be_answered(self):
-        verifier = Verifier(client_cert_pem=_client_chain()[0],
-                            client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem,
+                            client_key_pem=key_pem,
                             request_uri="https://verifier.test/request.jwt",
                             response_uri="https://verifier.test/response",
                             issuer_jwks=[self.wallet.issuer_jwk],
@@ -1661,6 +1856,43 @@ class OnlyTheHolderClosesTheRequestTests(VerifierTestCase):
             with self.verifier._lock:
                 self.verifier._expire_locked()
         self.assertEqual(self._racing(expire), [400, 400])
+
+    def test_a_request_whose_ttl_passes_while_it_is_judged_is_not_answered_though_no_call_swept(self):
+        """`DEFAULT_REQUEST_TTL_SECONDS` is "How long an outstanding request stays answerable",
+        and "a request that expired while this one was being judged is not answered either"
+        (`_close_and_answer`). Nothing sweeps the table between the judgement and the close here,
+        so the close must read the clock itself. The operator is told the lifetime refused it,
+        not a replay."""
+        from polaris_oid4vp import verifier as module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        original = module.verify_presentation
+
+        def aging(*args, **kwargs):
+            verdict = original(*args, **kwargs)
+            session.created -= self.verifier.request_ttl_seconds + 1
+            return verdict
+        with mock.patch.object(module, "verify_presentation", aging):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertFalse(session.answered)
+        self.assertIn("lifetime ended while this response was judged", verdict.reason)
+        self.assertNotIn("replay", verdict.reason)
+
+    def test_a_request_exactly_at_its_lifetime_is_still_answered(self):
+        """The close's comparison is `_expire_locked`'s, boundary included: a request whose age is
+        exactly request_ttl_seconds is live for both, so the sweep keeps it and the close accepts
+        its presentation. Either comparison made inclusive refuses it."""
+        import time as time_module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond(jar)
+        now = float(int(time_module.time()))
+        session.created = now - self.verifier.request_ttl_seconds
+        with mock.patch.object(time_module, "time", lambda: now):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 200, verdict.reason)
+        self.assertTrue(verdict.authentic)
+        self.assertTrue(session.answered)
 
 
 class TheLastTwoRefusalsTests(VerifierTestCase):
@@ -1925,8 +2157,9 @@ class HeldOutTransportTests(VerifierTestCase):
     def test_a_request_expires_at_its_lifetime_not_later(self):
         from unittest import mock
         from polaris_oid4vp import verifier as verifier_module
-        verifier = Verifier(client_cert_pem=_client_chain()[0],
-                            client_key_pem=_client_chain()[1],
+        cert_pem, key_pem = _client_chain()
+        verifier = Verifier(client_cert_pem=cert_pem,
+                            client_key_pem=key_pem,
                             request_uri="https://verifier.test/request.jwt",
                             response_uri="https://verifier.test/response",
                             issuer_jwks=[self.wallet.issuer_jwk], request_ttl_seconds=100)
@@ -2304,6 +2537,39 @@ class AWalletsErrorResponseTests(VerifierTestCase):
         self.assertIn("anyone who saw the request could send, so it does not close the request",
                       verdict.reason)
         self.assertIs(self.verifier._sessions.get(session.state), session)
+
+    def test_an_encrypted_error_to_a_request_whose_ttl_passes_while_it_is_decrypted_is_refused(self):
+        """An error in the clear to an expired request names no outstanding request and is
+        refused. The encrypted one is decrypted outside the lock, after the sweep, so its answer
+        reads the clock itself: a request whose lifetime ends during the decryption is not
+        answered."""
+        from polaris_oid4vp import verifier as module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond_error(jar)
+        original = module._open_response
+
+        def aging(*args, **kwargs):
+            opened = original(*args, **kwargs)
+            session.created -= self.verifier.request_ttl_seconds + 1
+            return opened
+        with mock.patch.object(module, "_open_response", aging):
+            status, body, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual((status, body), (400, self.verifier.REFUSAL_BODY))
+        self.assertFalse(verdict.authentic)
+        self.assertIsNone(verdict.wallet_error)
+        self.assertIn("lifetime ended while this response was decrypted", verdict.reason)
+
+    def test_an_encrypted_error_to_a_request_exactly_at_its_lifetime_is_answered(self):
+        """The age is tested as the closes and the sweep test it, boundary included: at exactly
+        request_ttl_seconds the request is live, and its error is answered 200 as any other."""
+        import time as time_module
+        session, jar = self.verifier.new_request()
+        form = self.wallet.respond_error(jar)
+        now = float(int(time_module.time()))
+        session.created = now - self.verifier.request_ttl_seconds
+        with mock.patch.object(time_module, "time", lambda: now):
+            verdict = self._record(form)
+        self.assertEqual(verdict.wallet_error["state"], session.state)
 
     def test_an_error_in_the_clear_is_answered_200_and_accepts_nothing(self):
         session, jar = self.verifier.new_request()
@@ -2957,6 +3223,209 @@ class _TwoCredentials:
                                issuer_jwks=self.issuer_jwks, now=self.at)
 
 
+def cut_once(test, text, full, limit=512):
+    """`text` is at most `limit` characters and carries one note, at its end, naming `full`, the
+    length the text has when nothing cuts it."""
+    import re
+    test.assertLessEqual(len(text), limit)
+    found = re.findall(r"\.\.\. \(cut at (\d+) of (\d+) characters\)", text)
+    test.assertEqual(len(found), 1, text[-120:])
+    test.assertTrue(text.endswith(" characters)"), text[-120:])
+    kept, length = (int(n) for n in found[0])
+    test.assertEqual(length, full)
+    test.assertEqual(len(text), kept + len("... (cut at %d of %d characters)" % (kept, length)))
+
+
+def uncut_by(module):
+    """A patch that makes `module`'s bounded_reason return its text whole, to measure the length
+    a cut reason names."""
+    from unittest import mock
+    return mock.patch.object(module, "bounded_reason", lambda text: text)
+
+
+class _LongQuery(_TwoCredentials):
+    """_TwoCredentials with a query id of 5000 characters, first, beside pid: a query id has no
+    length bound, and verify_response's problem and response refusals name query ids."""
+
+    LONG = "q" * 5000
+    QUERIES = (LONG, "pid")
+    SHARED = {"type": "example_type", "credential_ids": [LONG, "pid"]}
+
+
+class _StatusCredentials(_TwoCredentials):
+    """_TwoCredentials whose credentials name entries of one Token Status List, pid index 3 and
+    pay index 4, judged by verify_response with a status resolver."""
+
+    URI = "https://issuer.example/sl/1"
+    SHARED = {"type": "example_type", "credential_ids": ["pid", "pay"]}
+
+    def __init__(self):
+        super().__init__([self.SHARED])
+
+    def _presentation(self, qid, kb_extra):
+        disclosure = b64u_encode(json.dumps(["salt-" + qid, "name", "Jean"],
+                                            separators=(",", ":")).encode())
+        payload = {"iss": "https://issuer.example", "vct": "urn:test:" + qid, "iat": self.at,
+                   "_sd": [b64u_encode(hashlib.sha256(disclosure.encode("ascii")).digest())],
+                   "cnf": {"jwk": _public_jwk(self.holders[qid])},
+                   "status": {"status_list": {"uri": self.URI,
+                                              "idx": self.QUERIES.index(qid) + 3}}}
+        presented = (_jws(self.issuer, {"alg": "ES256", "typ": "dc+sd-jwt", "kid": "issuer-1"},
+                          payload) + "~" + disclosure + "~")
+        kb = dict({"iat": self.at, "aud": self.request["client_id"], "nonce": self.request["nonce"],
+                   "sd_hash": b64u_encode(hashlib.sha256(presented.encode("ascii")).digest())},
+                  **kb_extra)
+        return presented + _jws(self.holders[qid], {"alg": "ES256", "typ": "kb+jwt"}, kb)
+
+    def judged(self, resolver, require_status=False):
+        """The response with pay binding the one entry, under the per-credential reading."""
+        bound = {"transaction_data_hashes": [b64u_encode(hashlib.sha256(
+                     self.request["transaction_data"][0].encode("ascii")).digest())],
+                 "transaction_data_hashes_alg": "sha-256", "jti": b64u_encode(os.urandom(16)),
+                 "response_mode": "direct_post.jwt", "amr": self.TWO_FACTORS}
+        token = {"pid": [self._presentation("pid", {})],
+                 "pay": [self._presentation("pay", bound)]}
+        return verify_response(self.request, token, transaction_data_scope="per_credential",
+                               issuer_jwks=self.issuer_jwks, now=self.at,
+                               status_resolver=resolver, require_status=require_status)
+
+
+class VerifyResponseStatusTests(unittest.TestCase):
+    """verify_response's `status_resolver` and `require_status`: the resolver asked once per list
+    entry although both transaction_data readings are judged, a revoked credential refused, and
+    the rule holding every presentation to a checked, VALID, fresh status."""
+
+    FRESH = {"checked": True, "status": 0, "stale": False, "meaning": "VALID"}
+
+    def setUp(self):
+        self.creds = _StatusCredentials()
+        self.asked = []
+
+    def resolver(self, answers):
+        """A resolver that records each ask and answers `answers[idx]` (an exception is raised)."""
+        def resolve(*, uri, idx, issuer):
+            self.asked.append((uri, idx))
+            answer = answers[idx]
+            if isinstance(answer, Exception):
+                raise answer
+            return dict(answer)
+        return resolve
+
+    def test_each_list_entry_is_asked_once_for_both_readings(self):
+        """pay is judged under both readings and its entry is asked once; pid's is asked under
+        the per-credential reading (the all-entries one refuses pid for an unbound entry before
+        its status is read)."""
+        for label, answer in (("an answer", self.FRESH), ("a raise", OSError("no answer"))):
+            with self.subTest(resolver=label):
+                del self.asked[:]
+                result = self.creds.judged(self.resolver({3: answer, 4: answer}))
+                self.assertEqual(sorted(self.asked), [(_StatusCredentials.URI, 3),
+                                                      (_StatusCredentials.URI, 4)])
+                state = "checked" if answer is self.FRESH else sdjwt.UNREACHABLE
+                self.assertEqual(
+                    [result["readings"][scope]["pay"].revocation["state"]
+                     for scope in sdjwt.TRANSACTION_DATA_SCOPES], [state, state])
+
+    def test_a_revoked_credential_refuses_the_response(self):
+        result = self.creds.judged(self.resolver(
+            {3: self.FRESH, 4: dict(self.FRESH, status=1, meaning="INVALID")}))
+        self.assertIs(result["accepted"], False)
+        self.assertTrue(result["problem"].startswith("pay: revoked: "), result["problem"])
+
+    def test_the_rule_refuses_a_status_not_established_and_only_with_the_rule(self):
+        answers = {3: self.FRESH, 4: {"checked": False, "code": "no_authority",
+                                      "reason": "no statement"}}
+        result = self.creds.judged(self.resolver(answers), require_status=True)
+        self.assertIs(result["accepted"], False)
+        self.assertTrue(result["problem"].startswith("pay: status_required: "),
+                        result["problem"])
+        self.assertIn("the revocation state is no_authority", result["problem"])
+        control = self.creds.judged(self.resolver(answers))
+        self.assertIs(control["accepted"], True, control["problem"])
+        fresh = self.creds.judged(self.resolver({3: self.FRESH, 4: self.FRESH}),
+                                  require_status=True)
+        self.assertIs(fresh["accepted"], True, fresh["problem"])
+
+    def test_the_rule_is_refused_without_a_resolver_or_with_an_mdoc_query(self):
+        request = self.creds.request
+        mdoc_request = dict(request, dcql_query={"credentials": [
+            {"id": "mdl", "format": "mso_mdoc",
+             "meta": {"doctype_value": "org.iso.18013.5.1.mDL"}}]})
+        mdoc_request.pop("transaction_data")
+        for label, call, text in (
+                ("no resolver", lambda: verify_response(request, {}, require_status=True),
+                 "require_status needs a status_resolver"),
+                ("an mdoc query", lambda: verify_response(
+                    mdoc_request, {}, status_resolver=self.resolver({}), require_status=True),
+                 "the request asks for an mso_mdoc (mdl)")):
+            with self.subTest(case=label):
+                try:
+                    call()
+                except Exception as exc:  # noqa: BLE001  the type is asserted
+                    self.assertIsInstance(exc, ValueError)
+                    self.assertIn(text, str(exc))
+                else:
+                    self.fail("require_status was not refused: " + label)
+
+
+class TheResultIsCutAtEachReturnTests(unittest.TestCase):
+    """What verify_response returns names what a sender or the request chose: the members of the
+    vp_token and query ids. Its problem and each response refusal are at most REASON_MAX
+    characters at each of its four returns, with one note saying the full length."""
+
+    def held(self, call, *fields, accepted=False):
+        result = call()
+        with uncut_by(verifier_module):
+            whole = call()
+        self.assertIs(result["accepted"], accepted)
+        for field in fields:
+            got = result
+            full = whole
+            for key in field:
+                got, full = got[key], full[key]
+            with self.subTest(field="/".join(field)):
+                self.assertGreater(len(full), 5000)
+                cut_once(self, got, len(full))
+        return result
+
+    def test_the_vp_token_does_not_answer_the_request(self):
+        v = TwoCredentialVectorTests
+        v.setUpClass()
+        token = v.v["responses"]["per_credential"]["vp_token"]
+        out = self.held(lambda: verify_response(
+            v.v["request"], dict(token, **{"m" * 5000: token["pay"]}),
+            issuer_jwks=v.v["issuer_jwks"], now=v.v["at"], transaction_data_scope="per_credential"),
+            ("problem",))
+        self.assertIn("vp_token does not answer", out["problem"])
+
+    def test_the_vp_token_holds_no_single_presentation(self):
+        c = _LongQuery([_LongQuery.SHARED])
+        out = self.held(lambda: verify_response(c.request, {_LongQuery.LONG: 5, "pid": ["x"]},
+                                                issuer_jwks=c.issuer_jwks, now=c.at),
+                        ("problem",))
+        self.assertIn("holds no single presentation", out["problem"])
+
+    def test_the_two_readings_differ_and_none_is_named(self):
+        c = _LongQuery([_LongQuery.SHARED])
+        both = {_LongQuery.LONG: [0], "pid": [0]}
+        out = self.held(lambda: c.judge(both, scope=None),
+                        ("response_refusals", "per_credential"), accepted=None)
+        self.assertIn("name the transaction_data scope", out["problem"])
+        self.assertTrue(out["response_refusals"]["per_credential"].startswith(
+            "transaction_data_extra"))
+
+    def test_the_named_reading_refuses_the_response(self):
+        c = _LongQuery([_LongQuery.SHARED])
+        both = {_LongQuery.LONG: [0], "pid": [0]}
+        out = self.held(lambda: c.judge(both), ("problem",), ("response_refusals", "per_credential"))
+        self.assertTrue(out["problem"].startswith("transaction_data_extra"))
+
+    def test_the_named_reading_refuses_a_presentation(self):
+        c = _LongQuery([_LongQuery.SHARED])
+        out = self.held(lambda: c.judge({}, "all_entries"), ("problem",))
+        self.assertTrue(out["problem"].startswith(_LongQuery.LONG[:100]))
+
+
 class AnEntryNamingTwoPresentedCredentialsTests(unittest.TestCase):
     """OpenID4VP 1.0 section 5.1: "If there is more than one element in the array, the Wallet
     MUST use only one of the referenced Credentials for transaction authorization." Under
@@ -3343,6 +3812,24 @@ class MdocResponseTests(MdocVerifierCase):
                 self.refused("issuer_key", self.exchange(self.make(iaca_roots=none)),
                              "no IACA root is configured")
 
+    def test_a_value_that_is_not_one_device_response_is_malformed_before_the_transcript_is_built(self):
+        # The transcript needs a non-empty response_uri, and building it raises without one. A
+        # value that is not one base64url DeviceResponse is refused before it is built, so even a
+        # verifier configured without one answers such a value with a verdict.
+        verifier = Verifier(client_cert_pem=self.chain[0], client_key_pem=self.chain[1],
+                            request_uri="https://verifier.test/request.jwt", response_uri="",
+                            claims=[AGE_OVER_21], iaca_roots=[IacaRoot(md.IACA, [md.MDL])],
+                            doctype_value=md.MDL, credential_format="mso_mdoc")
+        session, _ = verifier.new_request()
+        for value, words in ((None, "not one DeviceResponse"), ("%%%", "not a base64url DeviceResponse")):
+            with self.subTest(value=value):
+                try:
+                    verdict = verifier._judge_mdoc(session, value)
+                except Exception as exc:  # noqa: BLE001
+                    self.fail("_judge_mdoc raised %s (%s); it returns a verdict" % (type(exc).__name__, exc))
+                self.assertEqual((verdict.authentic, verdict.code), (False, "malformed"), verdict.reason)
+                self.assertIn(words, verdict.reason)
+
     def test_the_handover_uses_the_requests_effective_client_id(self):
         """OpenID4VP 1.0 section 14.8, "Always Use the Full Client Identifier": the handover
         hashes the client_id the request carried, prefix and all. A refused response leaves the
@@ -3490,11 +3977,14 @@ class MdocResponseTests(MdocVerifierCase):
                        "issuer_jwks", "issuer_trust_anchors", "redirect_uri", "request_ttl_seconds",
                        "vct_values", "claims", "status_resolver", "verifier_info", "credential_query_id",
                        "verifier_info_profile", "redirect", "accept_vp_token_as_json_string",
-                       "credential_format", "doctype_value", "iaca_roots"],
+                       "credential_format", "doctype_value", "iaca_roots", "dc_api_client_metadata",
+                       "require_status"],
             Verifier.handle_direct_post: ["self", "form"],
+            Verifier.dc_api_response: ["self", "data", "origin"],
             serve_module.serve: ["verifier", "host", "port", "certfile", "keyfile", "on_verdict",
                                  "background", "verbose", "on_request_object", "cors_origins",
-                                 "control_token", "on_control", "name_requests"],
+                                 "control_token", "on_control", "name_requests",
+                                 "on_control_read", "dc_api_origin"],
         }
         for what, names in pinned.items():
             target = what.__init__ if what is Verifier else what
@@ -3887,3 +4377,665 @@ class ARequestsOwnSpecificationIsHeldToTheRegistrationCertificateTests(_EtsiProf
         v = self.verifier([_registrar(), _certificate()], profile=None)
         _, jar = v.new_request(claims=["given_name", "birthdate"])
         self.assertEqual(len(Wallet.read_request(jar)[1]["dcql_query"]["credentials"][0]["claims"]), 2)
+
+
+# ----------------------------------------------------------------- the Digital Credentials API
+# `Verifier.dc_api_request` and `Verifier.dc_api_response`, OpenID4VP 1.0 Appendix A for an
+# mso_mdoc: the signed request a page hands navigator.credentials.get, and the DigitalCredential's
+# `data` the page posts back.
+
+ORIGIN = "https://verifier.test"
+OTHER_ORIGIN = "https://other.test"
+
+
+def _dc_api_request(member):
+    """The header and the claims of the request object a `dc_api_request` member carries."""
+    return Wallet.read_request(member["data"]["request"])
+
+
+def _dc_api_key(member):
+    """The response key a `dc_api_request` member's request object carries."""
+    return _dc_api_request(member)[1]["client_metadata"]["jwks"]["keys"][0]
+
+
+def _verifies_under(compact, public_key):
+    """Whether an ES256 compact JWS verifies under `public_key`: the one check the leaf signature
+    test and its negative controls both run, so the controls test the check the test uses."""
+    from cryptography.exceptions import InvalidSignature
+    signing_input, _, signature = compact.rpartition(".")
+    raw = b64u_decode(signature)
+    try:
+        public_key.verify(asym_utils.encode_dss_signature(int.from_bytes(raw[:32], "big"),
+                                                          int.from_bytes(raw[32:], "big")),
+                          signing_input.encode("ascii"), ec.ECDSA(hashes.SHA256()))
+    except InvalidSignature:
+        return False
+    return True
+
+
+class DcApiWallet:
+    """A wallet answering over the Digital Credentials API, holding the mDL `test_mdoc.py` mints. It
+    reads the signed request the page hands it and hashes, as OpenID4VP 1.0 B.2.6.2 has it, the
+    origin the browser gives it, the request's nonce and the RFC 7638 thumbprint of the request's
+    response key. Each can be replaced, and so can the whole transcript, which is how a response
+    made for something else is built."""
+
+    ITEMS = MdocWallet.ITEMS
+
+    def device_response(self, member, *, origin=ORIGIN, nonce=None, thumbprint=None, transcript=None,
+                        **knobs):
+        _, claims = _dc_api_request(member)
+        if transcript is None:
+            transcript = md.witness_dc_api_transcript(
+                origin, claims["nonce"] if nonce is None else nonce,
+                md.witness_thumbprint(_dc_api_key(member)) if thumbprint is None else thumbprint)
+        knobs.setdefault("items", self.ITEMS)
+        return md.mint(wallet_transcript=transcript, **knobs)
+
+    def respond(self, member, **knobs):
+        """The `data` a page posts: `{"response": JWE}`, the vp_token, the base64url DeviceResponse
+        under the query's id, encrypted to the request's key with that key's kid in the JWE header
+        (OpenID4VP 1.0 section 8.3)."""
+        _, claims = _dc_api_request(member)
+        value = b64u_encode(self.device_response(member, **knobs))
+        query_id = claims["dcql_query"]["credentials"][0]["id"]
+        return {"response": self.encrypt({"vp_token": {query_id: [value]}}, member)}
+
+    @staticmethod
+    def encrypt(body, member):
+        """`body`, an object or raw bytes, as a compact JWE to the response key of `member`."""
+        jwk = _dc_api_key(member)
+        public = ec.EllipticCurvePublicNumbers(int.from_bytes(b64u_decode(jwk["x"]), "big"),
+                                               int.from_bytes(b64u_decode(jwk["y"]), "big"),
+                                               ec.SECP256R1()).public_key()
+        raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+        return encrypt_compact(raw, public, extra_header={"kid": jwk["kid"]})
+
+
+class DcApiVerifierCase(MdocVerifierCase):
+
+    def setUp(self):
+        super().setUp()
+        self.redirect_wallet, self.wallet = self.wallet, DcApiWallet()
+
+    def judged(self, data, origin=ORIGIN):
+        """`dc_api_response`, held to its docstring: nothing it is given makes it raise, so an
+        exception is a failure of the calling test, not an error."""
+        try:
+            return self.verifier.dc_api_response(data, origin=origin)
+        except Exception as exc:  # noqa: BLE001
+            self.fail("dc_api_response raised %s (%s); it returns a verdict" % (type(exc).__name__, exc))
+
+    def accepted(self, result):
+        """An accepted presentation: 200 and `{}`, as no redirect follows over the DC API."""
+        status, body, verdict = result
+        self.assertEqual(status, 200, "%s: %s" % (getattr(verdict, "code", None), getattr(verdict, "reason", None)))
+        self.assertEqual(body, {})
+        self.assertTrue(verdict.authentic)
+        self.assertEqual((verdict.code, verdict.wallet_error, verdict.response_code), ("", None, None))
+        return verdict
+
+    def wallet_error(self, result, error, words, *, encrypted, description=None):
+        """A wallet's error response: 200 and `{}`, never authentic, coded `wallet_error`, naming
+        the wallet's code; no request named, since the DC API has no state."""
+        status, body, verdict = result
+        self.assertEqual((status, body), (200, {}), "%s: %s" % (getattr(verdict, "code", None),
+                                                               getattr(verdict, "reason", None)))
+        self.assertFalse(verdict.authentic)
+        self.assertEqual(verdict.code, "wallet_error", verdict.reason)
+        self.assertEqual(verdict.wallet_error, {"error": error, "error_description": description, "state": None,
+                                                "encrypted": encrypted})
+        self.assertTrue(verdict.reason.startswith(error + ", "), verdict.reason)
+        self.assertIn(words, verdict.reason)
+        self.assertEqual((verdict.claims, verdict.disclosed), ({}, frozenset()))
+        return verdict
+
+    def outstanding_dc_api(self):
+        """The nonces of the DC API requests outstanding now."""
+        with self.verifier._lock:
+            self.verifier._expire_locked()
+            return set(self.verifier._dc_api)
+
+
+class DcApiRequestTests(DcApiVerifierCase):
+    """`Verifier.dc_api_request(origin)`: the member a page passes to navigator.credentials.get,
+    and the signed request object it carries (OpenID4VP 1.0 A.2, A.3.2.1)."""
+
+    def test_the_member_is_the_signed_protocol_with_the_request_in_its_data(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        self.assertEqual(sorted(member), ["data", "protocol"])
+        self.assertEqual(member["protocol"], "openid4vp-v1-signed")
+        self.assertEqual(sorted(member["data"]), ["request"])
+        request = member["data"]["request"]
+        self.assertIsInstance(request, str)
+        self.assertEqual(request.count("."), 2, "a JWS in its compact serialization")
+        self.assertEqual(json.loads(json.dumps(member)), member)
+
+    def test_the_request_names_its_origin_and_dc_api_jwt_and_carries_no_response_uri_or_state(self):
+        _, claims = _dc_api_request(self.verifier.dc_api_request(ORIGIN))
+        self.assertEqual(claims.get("expected_origins"), [ORIGIN])
+        self.assertEqual(claims.get("response_mode"), "dc_api.jwt")
+        self.assertEqual(claims.get("response_type"), "vp_token")
+        for absent in ("response_uri", "state"):
+            self.assertNotIn(absent, claims)
+        self.assertEqual(sorted(claims), sorted(["aud", "client_id", "expected_origins", "response_type",
+                                                 "response_mode", "nonce", "client_metadata", "dcql_query"]))
+
+    def test_the_request_object_is_addressed_to_the_static_discovery_audience(self):
+        # OpenID4VP 1.0 s5.8: "the aud claim MUST be "https://self-issued.me/v2", when Static
+        # Discovery metadata is used." This verifier fetches no wallet's metadata, so s5.8's
+        # Dynamic Discovery case does not arise; the redirect request object carries the same
+        # audience.
+        _, claims = _dc_api_request(self.verifier.dc_api_request(ORIGIN))
+        self.assertEqual(claims.get("aud"), "https://self-issued.me/v2")
+        _, redirect = Wallet.read_request(self.verifier.new_request()[1])
+        self.assertEqual(claims["aud"], redirect["aud"])
+
+    def test_the_request_is_signed_by_the_leaf_its_client_id_is_the_hash_of(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        header, claims = _dc_api_request(member)
+        self.assertEqual(header, {"alg": "ES256", "typ": "oauth-authz-req+jwt", "x5c": self.verifier.x5c})
+        self.assertEqual(header, Wallet.read_request(self.verifier.new_request()[1])[0],
+                         "the redirect request object's header")
+        leaf_der = base64.b64decode(header["x5c"][0])
+        self.assertEqual(claims.get("client_id"), "x509_hash:" + b64u_encode(hashlib.sha256(leaf_der).digest()))
+        self.assertEqual(claims.get("client_id"), self.verifier.client_id)
+        self.assertTrue(_verifies_under(member["data"]["request"], x509.load_der_x509_certificate(leaf_der).public_key()),
+                        "the request object does not verify under its x5c leaf")
+
+    def test_the_leaf_signature_check_has_its_negative_controls(self):
+        """The negative controls of test_the_request_is_signed_by_the_leaf_its_client_id_is_the_hash_of:
+        the same check, run as that test runs it, refuses the request object with one payload byte
+        changed and the request object signed again by another key under the same x5c. Without them
+        its positive result could come from a check that accepts anything. Both run `_verifies_under`."""
+        member = self.verifier.dc_api_request(ORIGIN)
+        jws = member["data"]["request"]
+        header, _ = _dc_api_request(member)
+        leaf = x509.load_der_x509_certificate(base64.b64decode(header["x5c"][0])).public_key()
+
+        def verifies(compact):
+            return _verifies_under(compact, leaf)
+
+        self.assertTrue(verifies(jws), "the control's own check refuses the request it was made for")
+        protected, payload, signature = jws.split(".")
+        at = len(payload) // 2
+        changed = payload[:at] + ("A" if payload[at] != "A" else "B") + payload[at + 1:]
+        self.assertNotEqual(b64u_decode(changed), b64u_decode(payload))
+        self.assertFalse(verifies(".".join((protected, changed, signature))),
+                         "a request object with one payload byte changed verifies under the leaf")
+        other = ec.generate_private_key(ec.SECP256R1())
+        r, s = asym_utils.decode_dss_signature(other.sign((protected + "." + payload).encode("ascii"),
+                                                          ec.ECDSA(hashes.SHA256())))
+        resigned = protected + "." + payload + "." + b64u_encode(r.to_bytes(32, "big") + s.to_bytes(32, "big"))
+        self.assertEqual(_dc_api_request({"data": {"request": resigned}})[0]["x5c"], header["x5c"])
+        self.assertFalse(verifies(resigned), "a request object signed by another key verifies under the leaf")
+
+    def test_client_metadata_and_the_query_are_the_redirect_requests_around_a_key_of_its_own(self):
+        _, claims = _dc_api_request(self.verifier.dc_api_request(ORIGIN))
+        _, redirect = Wallet.read_request(self.verifier.new_request()[1])
+        metadata, theirs = claims["client_metadata"], redirect["client_metadata"]
+        self.assertEqual(list(metadata), ["jwks", "vp_formats_supported", "encrypted_response_enc_values_supported"])
+        self.assertEqual(metadata["vp_formats_supported"], theirs["vp_formats_supported"])
+        self.assertEqual(metadata["encrypted_response_enc_values_supported"], ["A128GCM", "A256GCM"])
+        (jwk,), (their_jwk,) = metadata["jwks"]["keys"], theirs["jwks"]["keys"]
+        self.assertNotEqual((jwk["x"], jwk["y"]), (their_jwk["x"], their_jwk["y"]))
+        self.assertEqual(claims["dcql_query"], redirect["dcql_query"])
+
+    def test_the_response_key_carries_a_kid_of_its_own_and_its_alg(self):
+        """Google's sample DC API request marks the response key's `kid` and `alg` as required;
+        section 8.3 has the JWE repeat the `kid`. A key and a kid of its own for each request."""
+        keys = [_dc_api_key(self.verifier.dc_api_request(ORIGIN)) for _ in range(2)]
+        for jwk in keys:
+            self.assertEqual({name: jwk.get(name) for name in ("kty", "crv", "use", "alg")},
+                             {"kty": "EC", "crv": "P-256", "use": "enc", "alg": "ECDH-ES"})
+            self.assertRegex(jwk.get("kid") or "", r"\Aenc-[A-Za-z0-9_-]{22}\Z")
+        self.assertNotEqual(keys[0]["kid"], keys[1]["kid"])
+        self.assertNotEqual(keys[0]["x"], keys[1]["x"])
+
+    def test_each_request_has_a_fresh_nonce_and_is_kept_under_it(self):
+        first, second = (_dc_api_request(self.verifier.dc_api_request(ORIGIN))[1]["nonce"] for _ in range(2))
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(b64u_decode(first)), 32, "256 bits, as a redirect request's")
+        self.assertEqual(self.outstanding_dc_api(), {first, second})
+
+    def test_the_origin_is_carried_as_a_browser_writes_it(self):
+        _, claims = _dc_api_request(self.verifier.dc_api_request("HTTPS://Verifier.TEST:443"))
+        self.assertEqual(claims.get("expected_origins"), [ORIGIN])
+
+    def test_an_origin_that_is_not_one_makes_no_request(self):
+        for bad in ("origin:" + ORIGIN, ORIGIN + "/", ORIGIN + "/page", "verifier.test", "*", "", None):
+            with self.subTest(origin=bad):
+                with self.assertRaises(ValueError):
+                    self.verifier.dc_api_request(bad)
+        self.assertEqual(self.verifier._dc_api, {})
+
+    def test_a_verifier_not_built_for_mso_mdoc_makes_no_request(self):
+        verifier = Verifier(client_cert_pem=self.chain[0], client_key_pem=self.chain[1],
+                            request_uri="https://verifier.test/request.jwt",
+                            response_uri="https://verifier.test/response")
+        with self.assertRaises(ValueError) as caught:
+            verifier.dc_api_request(ORIGIN)
+        self.assertIn("mso_mdoc", str(caught.exception))
+        self.assertEqual((verifier._dc_api, verifier.outstanding()), ({}, 0))
+
+    def test_verifier_info_is_carried_as_the_redirect_request_carries_it(self):
+        verifier = self.make(verifier_info=[{"format": "registration_cert", "data": "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"}])
+        _, claims = _dc_api_request(verifier.dc_api_request(ORIGIN))
+        _, redirect = Wallet.read_request(verifier.new_request()[1])
+        self.assertEqual(claims.get("verifier_info"), redirect["verifier_info"])
+
+
+class DcApiResponseTests(DcApiVerifierCase):
+    """`Verifier.dc_api_response(data, origin=...)`: the response decrypted under the key of the
+    request it answers, held to the origin that request was made for, and its DeviceResponse judged
+    against OpenID4VP 1.0 B.2.6.2's SessionTranscript of that request's origin, nonce and key."""
+
+    def refused_then_accepted(self, code, words, **knobs):
+        """A response the wallet made for something else, refused as `code`, and the request left
+        open: the holder's own response is accepted after it."""
+        member = self.verifier.dc_api_request(ORIGIN)
+        self.refused(code, self.judged(self.wallet.respond(member, **knobs)), words)
+        return self.accepted(self.judged(self.wallet.respond(member)))
+
+    def test_an_answering_mdoc_is_accepted_and_closes_its_request(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        verdict = self.accepted(self.judged(self.wallet.respond(member)))
+        self.assertEqual(verdict.claims, {md.MDL_NS: {"age_over_21": True}})
+        self.assertEqual(verdict.disclosed, frozenset({(md.MDL_NS, "age_over_21")}))
+        self.assertEqual(verdict.issuer_anchor, "CN=Test IACA")
+        self.assertEqual(self.outstanding_dc_api(), set())
+
+    def test_the_same_response_posted_again_is_refused(self):
+        data = self.wallet.respond(self.verifier.dc_api_request(ORIGIN))
+        self.accepted(self.judged(data))
+        self.refused("invalid_request", self.judged(data),
+                     "did not decrypt under any outstanding Digital Credentials API request's key")
+
+    def test_a_presentation_over_the_redirect_handover_is_refused(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        _, claims = _dc_api_request(member)
+        redirect = md.witness_transcript(claims["client_id"], claims["nonce"], md.witness_thumbprint(_dc_api_key(member)),
+                                         self.verifier.response_uri)
+        self.refused("device_signature", self.judged(self.wallet.respond(member, transcript=redirect)),
+                     "over the SessionTranscript this verifier built for its own request")
+        self.accepted(self.judged(self.wallet.respond(member)))
+
+    def test_a_presentation_over_the_origin_written_with_the_origin_prefix_is_refused(self):
+        self.refused_then_accepted("device_signature", "over the SessionTranscript this verifier built",
+                                   origin="origin:" + ORIGIN)
+
+    def test_a_presentation_made_for_another_origin_is_refused(self):
+        self.refused_then_accepted("device_signature", "over the SessionTranscript this verifier built",
+                                   origin=OTHER_ORIGIN)
+
+    def test_a_presentation_over_another_keys_thumbprint_is_refused(self):
+        other = md.witness_thumbprint(md.public_jwk(ec.generate_private_key(ec.SECP256R1())))
+        self.refused_then_accepted("device_signature", "over the SessionTranscript this verifier built",
+                                   thumbprint=other)
+
+    def test_a_presentation_over_another_nonce_is_refused(self):
+        self.refused_then_accepted("device_signature", "over the SessionTranscript this verifier built",
+                                   nonce="mG3v7Rz0qLw5Hc1TfYb8NdQ2xK9pJ4sV6uA1eZ0oWcI")
+
+    def test_a_response_posted_from_another_origin_than_its_requests_is_refused(self):
+        """OpenID4VP 1.0 A.4: "The security properties that are normally provided by the Client
+        Identifier are achieved by binding the response to the Origin it was received from." The
+        wallet answered the request where it was made; posted from another origin, the response is
+        refused for that alone, and the request stays open."""
+        data = self.wallet.respond(self.verifier.dc_api_request(ORIGIN))
+        self.refused("origin", self.judged(data, origin=OTHER_ORIGIN),
+                     "posted from https://other.test and answers a request made for https://verifier.test")
+        self.accepted(self.judged(data, origin="HTTPS://Verifier.TEST:443"))
+
+    def test_a_vp_token_in_the_clear_is_refused(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        clear = {"vp_token": {self.verifier.query_id: [b64u_encode(self.wallet.device_response(member))]}}
+        for data in (clear, dict(clear, response=self.wallet.respond(member)["response"])):
+            with self.subTest(members=sorted(data)):
+                verdict = self.refused("invalid_request", self.judged(data), "the vp_token was posted in the clear")
+                self.assertIn("\"The Verifier MUST use the Response Mode dc_api.jwt.\"", verdict.reason)
+        self.accepted(self.judged(self.wallet.respond(member)))
+
+    def test_a_response_to_no_outstanding_request_is_refused(self):
+        other = self.make()
+        data = self.wallet.respond(other.dc_api_request(ORIGIN))
+        self.refused("invalid_request", self.judged(data), "did not decrypt under any outstanding")
+        self.verifier.dc_api_request(ORIGIN)
+        self.refused("invalid_request", self.judged(data), "did not decrypt under any outstanding")
+        self.accepted(other.dc_api_response(data, origin=ORIGIN))
+
+    def test_a_response_after_the_request_expired_is_refused(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        (session,) = self.verifier._dc_api.values()
+        session.created -= self.verifier.request_ttl_seconds + 1
+        self.refused("invalid_request", self.judged(self.wallet.respond(member)),
+                     "did not decrypt under any outstanding")
+        self.assertEqual(self.verifier._dc_api, {})
+
+    def _racing(self, between=None):
+        """Two responses to one request, both judged before either closes it: each waits for the
+        other inside the mdoc judgement. `between(session)` runs once there."""
+        import threading
+        member = self.verifier.dc_api_request(ORIGIN)
+        (session,) = self.verifier._dc_api.values()
+        posted = [self.wallet.respond(member), self.wallet.respond(member)]
+        barrier, original, results = threading.Barrier(2, timeout=30), mdoc_module.judge_device_response, []
+
+        def waiting(*args, **kwargs):
+            judged = original(*args, **kwargs)
+            if barrier.wait() == 0 and between:
+                between(session)
+            barrier.wait()
+            return judged
+
+        with mock.patch.object(mdoc_module, "judge_device_response", waiting):
+            threads = [threading.Thread(target=lambda d=d: results.append(self.verifier.dc_api_response(d, origin=ORIGIN)))
+                       for d in posted]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(60)
+        self.assertEqual(len(results), 2)
+        return sorted(results, key=lambda result: result[0])
+
+    def test_two_responses_racing_close_the_request_once(self):
+        first, second = self._racing()
+        self.assertEqual([first[0], second[0]], [200, 400])
+        self.accepted(first)
+        self.refused("invalid_request", second, "this request has already been answered")
+
+    def test_a_request_that_expires_while_it_is_judged_is_not_answered(self):
+        def expire(session):
+            session.created -= self.verifier.request_ttl_seconds + 1
+            with self.verifier._lock:
+                self.verifier._expire_locked()
+        for result in self._racing(expire):
+            self.refused("invalid_request", result, "lifetime ended while this response was judged")
+
+    def test_a_request_whose_ttl_passes_while_it_is_judged_is_not_answered_though_no_call_swept(self):
+        # Nothing sweeps the table between the response's arrival and its close: the close reads
+        # the clock itself. The reason, the operator's line, names the lifetime and not a replay.
+        member = self.verifier.dc_api_request(ORIGIN)
+        (session,) = self.verifier._dc_api.values()
+        original = mdoc_module.judge_device_response
+
+        def aging(*args, **kwargs):
+            judged = original(*args, **kwargs)
+            session.created -= self.verifier.request_ttl_seconds + 1
+            return judged
+
+        with mock.patch.object(mdoc_module, "judge_device_response", aging):
+            result = self.judged(self.wallet.respond(member))
+        self.refused("invalid_request", result, "lifetime ended while this response was judged")
+        self.assertNotIn("replay", result[2].reason)
+        self.assertEqual(self.outstanding_dc_api(), set())
+
+    def test_a_request_exactly_at_its_lifetime_is_still_answered(self):
+        """The close's comparison is `_expire_locked`'s, boundary included: a request whose age is
+        exactly request_ttl_seconds is live for both, so the sweep keeps it and the close accepts
+        its response. Either comparison made inclusive refuses it."""
+        import time as time_module
+        member = self.verifier.dc_api_request(ORIGIN)
+        (session,) = self.verifier._dc_api.values()
+        data = self.wallet.respond(member)
+        now = float(int(time_module.time()))
+        session.created = now - self.verifier.request_ttl_seconds
+        with mock.patch.object(time_module, "time", lambda: now):
+            self.accepted(self.judged(data))
+        self.assertEqual(self.outstanding_dc_api(), set())
+
+    def test_a_wallet_error_in_the_clear_is_reported_by_its_code_and_closes_nothing(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        self.wallet_error(self.judged({"error": "access_denied"}), "access_denied", "names no request",
+                          encrypted=False)
+        self.wallet_error(self.judged({"error": "invalid_request", "error_description": "the user said no"}),
+                          "invalid_request", "names no request", encrypted=False, description="the user said no")
+        self.accepted(self.judged(self.wallet.respond(member)))
+
+    def test_a_wallet_error_encrypted_to_a_requests_key_closes_it(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        data = {"response": DcApiWallet.encrypt({"error": "access_denied", "error_description": "declined"}, member)}
+        self.wallet_error(self.judged(data), "access_denied", "which it closes", encrypted=True,
+                          description="declined")
+        self.assertEqual(self.outstanding_dc_api(), set())
+        self.refused("invalid_request", self.judged(self.wallet.respond(member)), "did not decrypt under any outstanding")
+
+    def test_an_error_that_is_not_an_error_response_is_refused_and_closes_nothing(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        token = {self.verifier.query_id: ["x"]}
+        for data, words in (
+                ({"error": "access denied"}, "is not an error code"), ({"error": "x" * 65}, "is not an error code"),
+                ({"error": 5}, "is not an error code"), ({"error": ""}, "is not an error code"),
+                ({"error": "access_denied", "error_description": 5}, "error_description is not a string"),
+                ({"error": "access_denied", "response": "x.y.z.a.b"}, "both an error and a response"),
+                ({"error": "access_denied", "vp_token": token}, "both an error and a response"),
+                ({"response": DcApiWallet.encrypt({"error": "access denied"}, member)}, "is not an error code"),
+                ({"response": DcApiWallet.encrypt({"error": "access_denied", "error_description": ["x"]}, member)},
+                 "error_description is not a string"),
+                ({"response": DcApiWallet.encrypt({"error": "access_denied", "vp_token": token}, member)},
+                 "both an error and a vp_token")):
+            with self.subTest(data=data):
+                self.refused("invalid_request", self.judged(data), words)
+        self.accepted(self.judged(self.wallet.respond(member)))
+
+    def test_malformed_data_is_a_verdict_never_an_exception(self):
+        from polaris_oid4vp.jwe import MAX_COMPACT_CHARS
+        member = self.verifier.dc_api_request(ORIGIN)
+        value = b64u_encode(self.wallet.device_response(member))
+        query = self.verifier.query_id
+
+        def sealed(body):
+            return {"response": DcApiWallet.encrypt(body, member)}
+
+        for data, code, words in (
+                (None, "invalid_request", "is not an object"), ([], "invalid_request", "is not an object"),
+                ("response", "invalid_request", "is not an object"), (5, "invalid_request", "is not an object"),
+                ({}, "invalid_request", "carries no response"), ({"response": ""}, "invalid_request", "carries no response"),
+                ({"response": None}, "invalid_request", "carries no response"),
+                ({"response": 5}, "invalid_request", "a compact JWE is a string"),
+                ({"response": ["a.b.c.d.e"]}, "invalid_request", "a compact JWE is a string"),
+                ({"response": "A" * (MAX_COMPACT_CHARS + 1)}, "invalid_request", "over the %d" % MAX_COMPACT_CHARS),
+                ({"response": "not-a-jwe"}, "invalid_request", "did not decrypt"),
+                ({"response": "a.b.c.d.e"}, "invalid_request", "did not decrypt"),
+                (sealed(b"not json"), "invalid_request", "did not decrypt"),
+                (sealed(b"[1, 2]"), "invalid_request", "did not decrypt"),
+                (sealed({}), "malformed", "is not one DeviceResponse"),
+                (sealed({"vp_token": {"pid": [value]}}), "malformed", "is not one DeviceResponse"),
+                (sealed({"vp_token": {query: [value, value]}}), "malformed", "is not one DeviceResponse"),
+                (sealed({"vp_token": json.dumps({query: [value]})}), "malformed", "is not one DeviceResponse"),
+                (sealed({"vp_token": {query: ["%%%"]}}), "malformed", "is not a base64url DeviceResponse"),
+                (sealed({"vp_token": {query: [b64u_encode(b"\xff\x00")]}}), "malformed", "is not CBOR")):
+            with self.subTest(data=data if not isinstance(data, dict) or len(repr(data)) < 120 else sorted(data)):
+                self.refused(code, self.judged(data), words)
+        self.accepted(self.judged(self.wallet.respond(member)))
+
+    def test_an_origin_argument_that_is_not_one_is_a_verdict(self):
+        data = self.wallet.respond(self.verifier.dc_api_request(ORIGIN))
+        for bad in ("origin:" + ORIGIN, ORIGIN + "/", "*", "", None):
+            with self.subTest(origin=bad):
+                self.refused("misconfigured", self.judged(data, origin=bad), "is not one")
+        self.accepted(self.judged(data))
+
+
+class DcApiAndRedirectRequestsTests(DcApiVerifierCase):
+    """A request over the Digital Credentials API and a redirect request outstanding on one
+    verifier: neither kind's response answers the other, and a DC API nonce is no redirect state."""
+
+    def test_a_dc_api_response_posted_as_a_redirect_response_answers_nothing(self):
+        session, _ = self.verifier.new_request()
+        data = self.wallet.respond(self.verifier.dc_api_request(ORIGIN))
+        self.refused("invalid_request", self.verifier.handle_direct_post({"response": [data["response"]]}),
+                     "did not decrypt under any outstanding request's key")
+        self.assertTrue(self.verifier.is_outstanding(session.state))
+        self.accepted(self.judged(data))
+
+    def test_a_redirect_response_posted_over_the_dc_api_answers_nothing(self):
+        session, jar = self.verifier.new_request()
+        self.verifier.dc_api_request(ORIGIN)
+        form = self.redirect_wallet.respond(jar)
+        self.refused("invalid_request", self.judged({"response": form["response"][0]}),
+                     "did not decrypt under any outstanding Digital Credentials API request's key")
+        self.assertEqual(len(self.outstanding_dc_api()), 1)
+        status, _, verdict = self.verifier.handle_direct_post(form)
+        self.assertEqual(status, 200, "%s: %s" % (verdict.code, verdict.reason))
+        self.assertTrue(verdict.authentic)
+
+    def test_a_dc_api_nonce_is_no_redirect_state(self):
+        member = self.verifier.dc_api_request(ORIGIN)
+        nonce = _dc_api_request(member)[1]["nonce"]
+        self.assertIsNone(self.verifier.request_object(nonce))
+        self.assertFalse(self.verifier.is_outstanding(nonce))
+        self.assertEqual(self.verifier.outstanding(), 0)
+        self.refused("invalid_request", self.verifier.handle_direct_post({"error": ["access_denied"], "state": [nonce]}),
+                     "names no outstanding request")
+        self.assertFalse(self.verifier.close_request(nonce))
+        self.accepted(self.judged(self.wallet.respond(member)))
+
+    def test_a_dc_api_answer_is_about_no_redirect_request(self):
+        session, _ = self.verifier.new_request()
+        self.verifier.request_object(session.state)
+        self.assertEqual(self.verifier.attributed_request(), session.state)
+        self.accepted(self.judged(self.wallet.respond(self.verifier.dc_api_request(ORIGIN))))
+        self.assertIsNone(self.verifier.attributed_request())
+
+
+class DcApiClientMetadataTests(DcApiVerifierCase):
+    """`Verifier(dc_api_client_metadata=...)`: members added to the `client_metadata` of every
+    request over the Digital Credentials API, never one the verifier writes itself (add, never
+    override). The member here is made up; no wallet's value enters this tree."""
+
+    EXTRA = {"x_polaris_test": {"note": "made up", "n": 1}}
+    WRITTEN = {"jwks", "vp_formats_supported", "encrypted_response_enc_values_supported"}
+
+    def test_extra_members_reach_every_dc_api_request_and_no_redirect_request(self):
+        given = json.loads(json.dumps(self.EXTRA))
+        self.verifier = self.make(dc_api_client_metadata=given)
+        # What the caller does with its own dict afterwards changes no request.
+        given["x_polaris_test"]["n"] = 2
+        given["jwks"] = {"keys": []}
+        members = [self.verifier.dc_api_request(ORIGIN) for _ in range(2)]
+        for member in members:
+            metadata = _dc_api_request(member)[1]["client_metadata"]
+            self.assertEqual(set(metadata), self.WRITTEN | {"x_polaris_test"})
+            self.assertEqual(metadata["x_polaris_test"], self.EXTRA["x_polaris_test"])
+        self.assertNotEqual(_dc_api_key(members[0]), _dc_api_key(members[1]),
+                            "each request is encrypted to a key of its own")
+        _, redirect = Wallet.read_request(self.verifier.new_request()[1])
+        self.assertEqual(set(redirect["client_metadata"]), self.WRITTEN)
+        # A response encrypted to the key the request carries is judged as without the member.
+        self.accepted(self.judged(self.wallet.respond(members[1])))
+
+    def test_a_member_the_verifier_sets_is_refused(self):
+        self.assertEqual(set(self.verifier._client_metadata({})), self.WRITTEN,
+                         "the members the verifier writes, read from the function that writes them")
+        for name in sorted(self.WRITTEN):
+            with self.subTest(member=name):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(dc_api_client_metadata={name: {"keys": []}, "x_polaris_test": 1})
+                self.assertIn(repr(name), str(caught.exception))
+                self.assertIn("writes", str(caught.exception))
+
+    def test_the_verifier_writes_its_members_last_whatever_the_attribute_became(self):
+        """The served jwks is always the request's own key. dc_api_client_metadata is a public
+        attribute, checked at construction; changed afterwards, in place or replaced, it still puts
+        no member in place of one the verifier writes, because the verifier's are written last."""
+        planted = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "x_polaris_planted", "x": "AA", "y": "AA"}]}
+        changes = (
+            ("changed in place", lambda v: v.dc_api_client_metadata.update(jwks=planted, x_polaris_late=2)),
+            ("replaced", lambda v: setattr(v, "dc_api_client_metadata",
+                                           dict({name: planted for name in self.WRITTEN}, x_polaris_late=2))),
+        )
+        for label, change in changes:
+            with self.subTest(label):
+                verifier = self.make(dc_api_client_metadata={"x_polaris_test": 1})
+                change(verifier)
+                _, claims = _dc_api_request(verifier.dc_api_request(ORIGIN))
+                session = verifier._dc_api[claims["nonce"]]
+                own = verifier._client_metadata(verifier_module._encryption_jwk(session.enc_key, session.kid))
+                served = claims["client_metadata"]
+                self.assertEqual({name: served[name] for name in self.WRITTEN}, own)
+                self.assertEqual(served["jwks"]["keys"][0]["kid"], session.kid)
+                self.assertEqual(served.get("x_polaris_late"), 2, "the attribute's other members are still added")
+
+    def test_metadata_that_is_not_an_object_or_too_large_is_refused(self):
+        limit = verifier_module.DC_API_CLIENT_METADATA_MAX_BYTES
+        # {"x":"..."} is 8 bytes around the string, written compactly.
+        self.assertEqual(len(json.dumps({"x": ""}, separators=(",", ":"))), 8)
+        for good in (None, {}, {"x": "a" * (limit - 8)}):
+            with self.subTest(good=None if good is None else len(json.dumps(good))):
+                self.make(dc_api_client_metadata=good)
+        for bad, words in (([], "JSON object"), ("x_polaris_test", "JSON object"),
+                           ({1: "x"}, "names"), ({"x": float("nan")}, "JSON"),
+                           ({"x": object()}, "JSON"), ({"x": {1, 2}}, "JSON"),
+                           ({"x": "a" * (limit - 7)}, "%d bytes" % limit)):
+            with self.subTest(bad=repr(bad)[:40]):
+                with self.assertRaises(ValueError) as caught:
+                    self.make(dc_api_client_metadata=bad)
+                self.assertIn(words, str(caught.exception))
+        # Nested past what json.dumps recurses through (100000 levels: 3.12's C encoder writes a
+        # few thousand), it raises RecursionError; that is refused as a value that does not
+        # serialize, a ValueError like the rest, before any size is measured.
+        deep = inner = {}
+        for _ in range(100000):
+            inner["a"] = inner = {}
+        with self.assertRaises(ValueError) as caught:
+            self.make(dc_api_client_metadata={"x": deep})
+        self.assertIn("does not serialize as JSON", str(caught.exception))
+
+
+class DcApiCapTests(DcApiVerifierCase):
+    """At most DC_API_MAX_OUTSTANDING requests over the Digital Credentials API are outstanding:
+    serve answers them on a public route, and every response is tried against each one's key."""
+
+    def test_the_dc_api_requests_outstanding_are_capped(self):
+        cap = verifier_module.DC_API_MAX_OUTSTANDING
+        self.assertEqual(cap, 64)
+        members = [self.verifier.dc_api_request(ORIGIN) for _ in range(cap)]
+        self.assertEqual(len(self.outstanding_dc_api()), cap)
+        # At the cap no key is made and nothing is signed: the refusal comes before the work.
+        with mock.patch.object(verifier_module.ec, "generate_private_key",
+                               side_effect=AssertionError("a key was made at the cap")):
+            with self.assertRaises(verifier_module.DcApiRequestsFull) as caught:
+                self.verifier.dc_api_request(ORIGIN)
+        self.assertNotIsInstance(caught.exception, ValueError)
+        self.assertIn(str(cap), str(caught.exception))
+        self.assertEqual(len(self.outstanding_dc_api()), cap)
+        # An answered request frees its place, and only its place.
+        self.accepted(self.judged(self.wallet.respond(members[0])))
+        self.verifier.dc_api_request(ORIGIN)
+        with self.assertRaises(verifier_module.DcApiRequestsFull):
+            self.verifier.dc_api_request(ORIGIN)
+        # Expired requests free theirs.
+        for session in self.verifier._dc_api.values():
+            session.created -= self.verifier.request_ttl_seconds + 1
+        self.verifier.dc_api_request(ORIGIN)
+        self.assertEqual(len(self.outstanding_dc_api()), 1)
+
+    def test_the_cap_holds_when_requests_race(self):
+        """The count is taken again when the request is kept, under the lock: threads that all
+        pass the early test still keep no more than the cap."""
+        import threading
+        cap = verifier_module.DC_API_MAX_OUTSTANDING
+        for _ in range(cap - 1):
+            self.verifier.dc_api_request(ORIGIN)
+        barrier, original, outcomes = threading.Barrier(4, timeout=30), self.verifier._signed, []
+
+        def signing(claims):
+            barrier.wait()
+            return original(claims)
+
+        def ask():
+            try:
+                self.verifier.dc_api_request(ORIGIN)
+                outcomes.append("made")
+            except verifier_module.DcApiRequestsFull:
+                outcomes.append("full")
+
+        with mock.patch.object(self.verifier, "_signed", signing):
+            threads = [threading.Thread(target=ask) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30)
+        self.assertEqual(sorted(outcomes), ["full", "full", "full", "made"])
+        self.assertEqual(len(self.outstanding_dc_api()), cap)

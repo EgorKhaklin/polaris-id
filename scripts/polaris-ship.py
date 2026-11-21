@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -180,6 +181,7 @@ VERIFICATION = [
      "the stranger's step 4 moved: run again, the wallet must trust the new certificate and hold only the new credential"),
     (r"^lab/interop/mdoc/",
      ["python3 -m unittest lab/interop/mdoc/witness-eudi/test_witness_eudi.py",
+      "python3 -m unittest lab/interop/mdoc/witness-oid4vcgo/test_check.py",
       "python3 -m unittest lab/interop/mdoc/test_verify_mdoc.py",
       "python3 -m unittest lab/interop/altid/test_avp.py",
       "python3 scripts/polaris-mdoc-mutation-drill.py",
@@ -421,6 +423,8 @@ UNSHARDED_SUITES = {
     "lab/interop/eudi-dev/capture": ["test_capture"],
     "lab/interop/eudi-dev": ["test_walk"],
     "lab/interop/negative-vectors": ["test_vectors"],
+    # Needs node and npm; packs and installs offline into a temporary project.
+    "packages/polaris-negative-vectors": ["test_package"],
     "lab/interop/swiyu": ["test_swiyu"],
     "lab/interop/status-list/revoked": ["test_fixture"],
     "lab/interop/fixtures/ed25519-holder": ["test_fixture"],
@@ -431,6 +435,7 @@ UNSHARDED_SUITES = {
     # Needs requirements.txt there; without it the suite skips here and CI, which installs it, runs it.
     "packages/polaris-oid4vp/examples/yivi-checkin": ["test_checkin"],
     "lab/interop/mdoc/witness-eudi": ["test_witness_eudi"],
+    "lab/interop/mdoc/witness-oid4vcgo": ["test_check"],
     "lab/interop/mdoc": ["test_verify_mdoc"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
@@ -463,6 +468,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/eudi-dev/capture": ("unittest", None),
     "lab/interop/eudi-dev":     ("unittest", None),
     "lab/interop/negative-vectors": ("unittest", None),
+    "packages/polaris-negative-vectors": ("unittest", None),
     "lab/interop/swiyu":        ("unittest", None),
     "lab/interop/status-list/revoked": ("unittest", None),
     "lab/interop/fixtures/ed25519-holder": ("unittest", None),
@@ -472,6 +478,7 @@ UNSHARDED_RUNNERS = {
     "lab/interop/waltid":       ("unittest", None),
     "packages/polaris-oid4vp/examples/yivi-checkin": ("unittest", None),
     "lab/interop/mdoc/witness-eudi": ("unittest", None),
+    "lab/interop/mdoc/witness-oid4vcgo": ("unittest", None),
     "lab/interop/mdoc":         ("unittest", None),
     "polaris_zk/witness2":      ("pytest-file", None),
     ".":                        ("mixed", None),
@@ -1328,11 +1335,64 @@ FLAKE_SIGNATURES = [
 # 2026-09-30: a job GitHub could not give a runner never starts: it has no steps and no log,
 # so `--log-failed` returns nothing for a run that has in fact finished, and triage used to say
 # "UNKNOWN, no log to read yet" about it (run 36712294233, "Full prod compose boots"). The reason
-# exists only in the job's check-run annotation, which triage now reads for exactly those jobs.
+# exists only in the job's check-run annotation, which triage reads (see _failed_job_reasons).
 FLAKE_SIGNATURES.append(
     ("runner-not-acquired", r"was not started because it repeatedly failed to be acquired",
      "GitHub could not give the job a runner, so it never started and left no log; rerun the "
      "failed jobs"))
+# 2026-11-20, job 136108679515 (the HA failover drill, PR #583, run 44682384966): GitHub lost the
+# job's runner mid-run. The job had started, so it has steps; `--log-failed` printed nothing ("log
+# not found" for the job, on stderr), and triage, which read annotations only for jobs with no
+# steps, said UNKNOWN about the finished run. The rerun, on another runner, passed. GitHub's text
+# adds that a job which starves or kills its runner causes the same error, so a job that loses its
+# runner again is the job's fault, not a flake.
+FLAKE_SIGNATURES.append(
+    ("runner-lost", r"The hosted runner lost communication with the server",
+     "GitHub lost the job's runner mid-run, so the job left no log; rerun the failed jobs (if "
+     "the same job loses its runner again, it is starving or killing the runner: investigate)"))
+# 2026-11-19, job 135639532621 (procedure drill shard 3 of 6, PR #596): the runner's apt-get
+# update fetched packages.microsoft.com and no Ubuntu archive, so `apt-get install ... age` found
+# no package and exited 100; the rerun, on another runner, passed. The match is the whole block:
+# every index line of the update names packages.microsoft.com (the line before the first is not an
+# index line), then Fetched, then Unable to locate package. A package missing on a runner whose
+# update lists an Ubuntu archive is a real failure and does not match.
+FLAKE_SIGNATURES.append(
+    ("apt-no-ubuntu-sources",
+     r"(?m)^(?![^\n]*\b(?:Get|Hit|Ign|Err):\d+ )[^\n]*\n"
+     r"(?:[^\n]*\b(?:Get|Hit|Ign):\d+ https?://packages\.microsoft\.com/[^\n]*\n)+"
+     r"[^\n]*\bFetched [^\n]*\n(?:[^\n]*\n){0,8}?[^\n]*E: Unable to locate package ",
+     "the runner's apt-get update listed no Ubuntu archive (only packages.microsoft.com), so no "
+     "Ubuntu package could be found; rerun the failed jobs"))
+# 2026-11-19, run 44565122170 (the wallet canary's eudi-issuer job on PR #597): a fetch from
+# raw.githubusercontent.com was answered 429 Too Many Requests, a limit on the runner's address;
+# the rerun passed. Keyed on the host, which the lab fetch names in its message: a 429 from any
+# other host, the verifier under test among them, is not this.
+FLAKE_SIGNATURES.append(
+    ("github-raw-rate-limit",
+     r"could not fetch https://raw\.githubusercontent\.com/\S+: HTTP Error 429",
+     "raw.githubusercontent.com answered 429 Too Many Requests, a rate limit on the runner's "
+     "address; rerun the failed jobs"))
+# 2026-11-19, run 44569876571 (Pages on main at 4439a5eb): deploy-pages, which runs only after its
+# job's upload-pages-artifact passed, found no github-pages artifact 1 s after the upload made it;
+# a fresh dispatch, 44575082485, passed. A re-run of that run (attempt 2) failed at the same step
+# for another reason: the run then held attempt 1's artifact and its own, and deploy-pages refuses
+# two of one name. So the remedy for both is a fresh run, which the triage verdict prints.
+FLAKE_SIGNATURES.append(
+    ("pages-artifact-not-listed",
+     r"Found 0 artifact\(s\)\n[^\n]*##\[error\]Fetching artifact metadata failed\.[^\n]*\n"
+     r"[^\n]*##\[error\]Error: No artifacts named \"github-pages\" were found",
+     "deploy-pages found no github-pages artifact just after its job's upload made one, so the "
+     "artifact API had not listed it yet; start a fresh run, not a re-run, which would hold two"))
+FLAKE_SIGNATURES.append(
+    ("pages-artifact-twice",
+     r"##\[error\]Error: Multiple artifacts named \"github-pages\" were unexpectedly found for "
+     r"this workflow run",
+     "a re-run of a Pages run keeps its first attempt's github-pages artifact beside its own, "
+     "and deploy-pages refuses two of one name; start a fresh run"))
+
+#: Known flakes whose remedy is a fresh run of the workflow, which triage prints in place of the
+#: re-run of the failed jobs.
+FRESH_RUN_FLAKES = frozenset({"pages-artifact-not-listed", "pages-artifact-twice"})
 
 
 UPSTREAM_SIGNATURES = [
@@ -1387,15 +1447,18 @@ def _gh(*args):
     return r.stdout
 
 
-def _never_started_reasons(jobs):
-    """The annotations on failed jobs that ran no step, one `job<TAB>message` line each."""
-    lines = []
+def _failed_job_reasons(jobs):
+    """The annotations on the failed jobs: (job name, [message, ...]) for each, in the run's
+    order, the list empty for a job with none to read. A job that never got a runner has no steps;
+    a job whose runner was lost has steps. Neither leaves a log, so every failed job is read, not
+    only the ones that ran no step."""
+    reasons = []
     for job in jobs.get("jobs", []):
-        if job.get("conclusion") == "failure" and not job.get("steps") and job.get("databaseId"):
+        if job.get("conclusion") == "failure":
             notes = json.loads(_gh("api", "repos/{owner}/{repo}/check-runs/%s/annotations"
-                                   % job["databaseId"]) or "[]")
-            lines += ["%s\t%s" % (job.get("name", "?"), n.get("message", "")) for n in notes]
-    return "\n".join(lines)
+                                   % job["databaseId"]) or "[]") if job.get("databaseId") else []
+            reasons.append((job.get("name", "?"), [n.get("message", "") for n in notes]))
+    return reasons
 
 
 def triage(run_id=None, out=None):
@@ -1406,14 +1469,17 @@ def triage(run_id=None, out=None):
             print("triage: no failed run on main", file=out)
             return 0
         run_id = str(latest[0]["databaseId"])
-    jobs = json.loads(_gh("run", "view", str(run_id), "--json", "jobs,conclusion"))
+    jobs = json.loads(_gh("run", "view", str(run_id), "--json", "jobs,conclusion,headBranch,workflowName"))
     failed = [j["name"] for j in jobs.get("jobs", []) if j.get("conclusion") == "failure"]
     log = subprocess.run(["gh", "run", "view", str(run_id), "--log-failed"], capture_output=True, text=True, cwd=ROOT).stdout
     print("run %s: %s; failed jobs: %s" % (run_id, jobs.get("conclusion"), ", ".join(failed) or "none"), file=out)
-    # A finished run with no failed-job log: a job that never started has no log to give, and
-    # GitHub records why only as an annotation on it. Read those, so the verdict rests on them.
+    # A finished run with no failed-job log: a job that never started, or one whose runner was
+    # lost, has no log to give, and GitHub records why only as an annotation on it. Read those, so
+    # the verdict rests on them.
+    annotated = None
     if jobs.get("conclusion") is not None and not log.strip():
-        log = _never_started_reasons(jobs)
+        annotated = _failed_job_reasons(jobs)
+        log = "\n".join("%s\t%s" % (job, note) for job, notes in annotated for note in notes)
 
     # v9.377: "I could not look" is not "I looked and found nothing". gh refuses --log-failed
     # while ANY job in the run is still going, so triaging a run whose failure has already
@@ -1428,13 +1494,35 @@ def triage(run_id=None, out=None):
         return 1
 
     verdict, name, advice = classify_failure_log(log)
+    # Read from annotations, each failed job is judged on its own: one job's lost runner does not
+    # explain another job's exit code, so the run is a flake only when every failed job's own
+    # annotations name one. A job with none to read is a reason nobody read.
+    unexplained = [i for i, (_, notes) in enumerate(annotated or [])
+                   if classify_failure_log("\n".join(notes))[0] != "flake"]
+    if verdict == "flake" and unexplained:
+        verdict = "investigate"
     if verdict == "flake":
         print("  verdict: known flake [%s]: %s" % (name, advice), file=out)
-        print("  gh run rerun %s --failed" % run_id, file=out)
+        if name in FRESH_RUN_FLAKES:
+            if jobs.get("workflowName") and jobs.get("headBranch"):
+                print("  gh workflow run %s --ref %s"
+                      % (shlex.quote(jobs["workflowName"]), shlex.quote(jobs["headBranch"])), file=out)
+            else:
+                print("  start a fresh run of the run's workflow on its branch; do NOT rerun", file=out)
+        else:
+            print("  gh run rerun %s --failed" % run_id, file=out)
         return 0
     if verdict == "upstream":
         print("  verdict: upstream change [%s]: %s" % (name, advice), file=out)
         print("  do NOT rerun; fix the reference and push", file=out)
+        return 1
+    if annotated is not None:
+        print("  verdict: investigate (no known flake signature explains: %s)"
+              % ", ".join(annotated[i][0] for i in unexplained), file=out)
+        for i in unexplained:
+            job, notes = annotated[i]
+            for note in notes[:6] or ["(no annotation)"]:
+                print("  %s: %s" % (job, note.strip()[:160]), file=out)
         return 1
     print("  verdict: investigate (no known flake signature matched)", file=out)
     shown = {}

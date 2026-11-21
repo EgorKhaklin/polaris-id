@@ -81,7 +81,7 @@ PYTHONPATH="%(stubs)s/site" exec "%(py)s" "$@"
 '''
 OID4VP = r'''#!/bin/sh
 case "$1" in
-  serve) echo "  --issuer-trust-anchor PEM";;
+  serve) echo "  --issuer-trust-anchor PEM"; echo "  --result FILE";;
   keygen) mkdir -p pki && echo anchor > pki/anchor.pem;;
   *) exit 98;;
 esac
@@ -165,6 +165,19 @@ class WalletInputs(unittest.TestCase):
         (src / "cmd" / "conformance-wallet-vp" / "main.go").write_text(
             "package main\n\n// token: %s\nfunc main() {}\n" % token)
         return src, token
+
+    # -- the verifier the walk judges by
+
+    def test_a_release_without_serve_result_is_refused_before_any_wallet(self):
+        """The walk reads the verifier's verdict from `serve --result`; a polaris-oid4vp whose `serve --help`
+        does not list it is refused (exit 2, saying why), not walked with a judge that has nothing to read."""
+        stub = OID4VP.replace('; echo "  --result FILE"', '')
+        self.assertNotEqual(stub, OID4VP, "the fixture drifted: the stub no longer lists --result")
+        write_exec(self.tmp / "stubs" / "oid4vp", stub)
+        r = self.run_sh()
+        self.assertEqual(r.returncode, 2, self.out)
+        self.assertIn("reads the verifier's verdict from serve --result", self.out)
+        self.assertFalse((self.work / "wallet.ran").exists(), self.out)
 
     # -- each input is the wallet that runs
 
