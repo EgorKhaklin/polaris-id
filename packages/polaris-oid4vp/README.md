@@ -372,7 +372,7 @@ for an issuer key configured with `issuer_jwks`, and for a refusal.
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
 | `vct` | a credential of a type the query did not ask for |
 | `issuer_typ` | an issuer JWT not typed `dc+sd-jwt`, a W3C VC Data Model `vc+sd-jwt` credential among them |
-| `disclosure` | a disclosure that supplies a claim SD-JWT VC keeps out of disclosures (draft 19, section 2.2.2.3: `iss`, `nbf`, `exp`, `cnf`, `vct`, `vct#integrity`, `aka_vcts`, `status`) or anything inside one, judged by where it lands, so a disclosed `sub` or `iat`, or a private claim's `status` member, is accepted; a disclosure named `_sd`, `_sd_alg` or `...`; a colliding claim, a digest the credential commits to twice, or nesting past the depth cap |
+| `disclosure` | a disclosure that supplies a claim SD-JWT VC keeps out of disclosures (draft 19, section 2.2.2.3: `iss`, `nbf`, `exp`, `cnf`, `vct`, `vct#integrity`, `aka_vcts`, `status`) or anything inside one, judged by where it lands, so a disclosed `sub` or `iat`, or a private claim's `status` member, is accepted; digest structure (an `_sd` key or an array-element digest) anywhere inside one of those claims, whether or not a disclosure matches it; a disclosure named `_sd`, `_sd_alg` or `...`; a colliding claim, a digest the credential commits to twice, or nesting past the depth cap |
 | `issuer_key` | an untrusted key; an x5c leaf, or a CA certificate it sends, outside its validity (the reason names the period); a leaf not marked for signing (the reason names the key usage, or an extended key usage for another purpose), self-signed or a CA, or one whose subjectAltName names an issuer other than the credential's `iss` |
 | `crit` | an issuer JWT, key-binding JWT or status list token whose `crit` names an extension; none is implemented |
 | `transaction_data_missing`, `transaction_data_extra`, `transaction_data_mismatch` | (transaction data) `transaction_data_hashes` that lack, add to or differ from the hashes of the entries the key-binding JWT must bind, in the request's order |
@@ -625,12 +625,12 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc
 ```
 
-- 1231 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1233 tests in eight files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 383 refusals accept and requires a
-  test to fail: 379 are caught, and the 4 survivors are declared with their reasons. It also makes
-  131 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 384 refusals accept and requires a
+  test to fail: 380 are caught, and the 4 survivors are declared with their reasons. It also makes
+  136 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under
@@ -651,8 +651,10 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
   `x5c`, a status required and not established, one ask per list entry, and the fetch's address
   rules (each named range, and a 6to4 address judged as the IPv4 address it carries), redirects,
   its TLS floor and its one User-Agent, one connect timeout across resolving the name and every
-  address, the name resolved within the total too, and its total over the whole exchange),
-  each of which a test must catch (all 131 are; measured 2026-11-21;
+  address, the name resolved within the total too, and its total over the whole exchange;
+  and digest structure inside a claim no disclosure may supply, found at every depth and in an
+  array element, an empty `_sd` included, in those claims alone, the shallowest named first),
+  each of which a test must catch (all 136 are; measured 2026-11-21;
   CI runs it on every push).
 - Held-out boundary mutations (off-by-one windows, header binding, listener routing) each have a
   dedicated test class.

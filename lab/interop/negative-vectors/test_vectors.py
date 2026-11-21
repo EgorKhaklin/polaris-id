@@ -154,8 +154,8 @@ class Vectors(unittest.TestCase):
         self.assertEqual(by_id["accept-status-list"]["layer"], "status-list")
         # Every negative is judged under a trust mode that has its control.
         self.assertEqual({v["trust"] for v in self.doc["vectors"]}, {"x5c", "jwks"})
-        self.assertEqual(len(ids), 38)
-        self.assertEqual(len(set(ids)), 38)
+        self.assertEqual(len(ids), 41)
+        self.assertEqual(len(set(ids)), 41)
 
     def test_a_trust_mode_judged_without_its_own_control_fails(self):
         # disclosed-iss is the one jwks negative: without accept-jwks it would be judged with no jwks control.
@@ -747,7 +747,7 @@ class RepairedTwins(unittest.TestCase):
     # 1. every negative carries a twin or a reason, never both; the controls neither
     def test_every_negative_carries_a_twin_or_a_reason_never_both(self):
         self.assertEqual(twin_problems(self.doc, NO_TWIN), [])
-        self.assertEqual(sum("repaired" in v for v in self.doc["vectors"]), 34)
+        self.assertEqual(sum("repaired" in v for v in self.doc["vectors"]), 37)
         for vid in SDJWT_CONTROLS + ["accept-status-list"]:
             self.assertFalse({"repaired", "no_twin"} & set(self.by_id[vid]), vid)
         self.assertEqual([v["id"] for v in self.doc["vectors"] if "no_twin" in v], sorted(NO_TWIN))
@@ -796,7 +796,7 @@ class RepairedTwins(unittest.TestCase):
             if "repaired" in vector:
                 twins += 1
                 self.assertNotEqual(served(twin_row(vector)), served(vector), vector["id"])
-        self.assertEqual(twins, 34)
+        self.assertEqual(twins, 37)
 
     def test_a_twin_keeps_its_vectors_knobs(self):
         by_id, control = self.by_id, self.by_id["accept-x5c"]
@@ -859,7 +859,7 @@ class RepairedTwins(unittest.TestCase):
         code, out, err = self._run(self.doc)
         self.assertEqual(code, 0, out + err)
         self.assertTrue(out.endswith("done\n"))
-        self.assertEqual(out.count("+repaired"), 34)
+        self.assertEqual(out.count("+repaired"), 37)
 
     def test_the_run_fails_when_a_repaired_twin_is_refused(self):
         for vid in ("kb-nonce-missing", "status-list-expired", "x5c-leaf-names-other-host"):
@@ -903,11 +903,11 @@ class RepairedTwins(unittest.TestCase):
             if "repaired" in vector:
                 rows.append(vector["id"] + "+repaired")
         self.assertEqual([v["id"] for v in handed[0]["vectors"]], rows)
-        self.assertEqual(sum(r.endswith("+repaired") for r in rows), 34)
+        self.assertEqual(sum(r.endswith("+repaired") for r in rows), 37)
         self.assertEqual(handed[0]["settings"], self.doc["settings"])
         twin = next(v for v in handed[0]["vectors"] if v["id"] == "kb-crit+repaired")
         self.assertEqual(twin["presentation"], self.by_id["kb-crit"]["repaired"]["presentation"])
-        self.assertEqual(out.getvalue().count("+repaired"), 34)
+        self.assertEqual(out.getvalue().count("+repaired"), 37)
         # a second run in the same process judges afresh: the first run's verdicts are not reused
         refuse.add("accept-x5c")
         code, out = run()
@@ -1566,6 +1566,21 @@ REFUSAL_REASONS = {
         "disclosure: a disclosure was presented that the issuer never committed to: its digest appears nowhere in "
         "the signed payload"
     ),
+    "disclosed-status-sub-claim": (
+        "disclosure: a disclosure supplies [\"status\", \"status_list\", \"idx\"], inside 'status', which SD-JWT VC "
+        "draft 19 (section 2.2.2.3) keeps out of disclosures with every claim inside it: the issuer signs it in "
+        "clear text or leaves it out, and a holder-supplied one is not handed on"
+    ),
+    "status-sd-withheld": (
+        "disclosure: the issuer-signed 'status' holds an _sd key at [\"status\", \"status_list\"]; this verifier "
+        "refuses digest structure anywhere inside a claim SD-JWT VC draft 19 (section 2.2.2.3) keeps out of "
+        "Disclosures, whether or not a disclosure matches it"
+    ),
+    "aka-vcts-element-withheld": (
+        "disclosure: the issuer-signed 'aka_vcts' holds an array-element digest at [\"aka_vcts\", 1]; this verifier "
+        "refuses digest structure anywhere inside a claim SD-JWT VC draft 19 (section 2.2.2.3) keeps out of "
+        "Disclosures, whether or not a disclosure matches it"
+    ),
     "kb-typ-jwt": "kb_typ: the key binding JWT declares typ='JWT' rather than 'kb+jwt'",
     "kb-alg-none": "kb_alg: the key binding JWT declares alg='none', which is not in the accepted set ('ES256',)",
     "kb-alg-hs256": "kb_alg: the key binding JWT declares alg='HS256', which is not in the accepted set ('ES256',)",
@@ -1720,7 +1735,7 @@ class RefusalReasons(unittest.TestCase):
                     cls.seen[vector["id"]] = adapter(vector, doc["settings"])
 
     def test_each_negative_is_refused_with_its_pinned_reason(self):
-        self.assertEqual(len(self.seen), 67)
+        self.assertEqual(len(self.seen), 70)
         self.assertEqual(reason_problems(self.seen, REFUSAL_REASONS), [])
 
     def test_each_pin_carries_the_code_the_runner_compares(self):
@@ -1793,6 +1808,17 @@ ONE_CHANGE = {
     # the Disclosures are the twin's, byte for byte: what differs is that nothing the issuer signed commits to one
     "disclosure-unreferenced": ("+repaired",
         ["/issuer/payload/_sd[+0 -1]"],
+        ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    # 0.7.0: the twin signs status.status_list.idx in clear text; the negative commits to it by digest inside
+    # status_list and presents its Disclosure, or withholds it; or adds an element digest to aka_vcts
+    "disclosed-status-sub-claim": ("+repaired",
+        ["/disclosures[+1 -0]", "/issuer/payload/status/status_list/_sd(+)",
+         "/issuer/payload/status/status_list/idx(-)"],
+        ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    "status-sd-withheld": ("+repaired",
+        ["/issuer/payload/status/status_list/_sd(+)", "/issuer/payload/status/status_list/idx(-)"],
+        ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
+    "aka-vcts-element-withheld": ("+repaired", ["/issuer/payload/aka_vcts[+1 -0]"],
         ["/issuer/sig", "/kb/payload/sd_hash", "/kb/sig"]),
     "kb-typ-jwt": ("+repaired", ["/kb/header/typ"], ["/kb/sig"]),
     "kb-alg-none": ("+repaired", ["/kb/header/alg"], ["/kb/sig"]),
@@ -1948,7 +1974,7 @@ class OneChange(unittest.TestCase):
                 cls.docs[filename] = json.load(fh)
 
     def test_each_negative_differs_from_its_reference_by_its_pinned_paths_only(self):
-        self.assertEqual(len(ONE_CHANGE), 67)
+        self.assertEqual(len(ONE_CHANGE), 70)
         self.assertEqual(one_change_problems(self.oc, self.docs.values(), ONE_CHANGE), [])
 
     def test_the_pinned_reference_is_the_nearest_control_of_the_trust_mode_or_the_twin(self):
@@ -2355,7 +2381,7 @@ SDJWT_KNOCKOUTS = {
         "issuer-crit": "accept",
         "kb-crit": "accept",
     }),
-    "disclosure": (13, {
+    "disclosure": (14, {
         "digest-twice": "accept",
         "digest-twice-decoy": "accept",
         "claim-overwrite": "accept",
@@ -2364,6 +2390,9 @@ SDJWT_KNOCKOUTS = {
         "disclosure-four-elements": "accept",
         "disclosure-named-sd": "accept",
         "disclosure-unreferenced": "accept",
+        "disclosed-status-sub-claim": "accept",
+        "status-sd-withheld": "accept",
+        "aka-vcts-element-withheld": "accept",
     }),
     "issuer_key": (2, {
         "x5c-self-signed": "reject:issuer_signature",

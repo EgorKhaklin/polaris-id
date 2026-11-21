@@ -73,7 +73,9 @@ Issuer-signed SD-JWT VCs (`dc+sd-jwt`) are verified by the verifier, which check
 signature, the certificate chain, the selective-disclosure digests and the key binding.
 Disclosures are held to section 2.2.2.3 of the IETF draft (draft 19): one that supplies `iss`,
 `nbf`, `exp`, `cnf`, `vct`, `vct#integrity`, `aka_vcts` or `status`, or anything inside one, is
-refused (`disclosure`); `sub` and `iat` may be disclosed. An issuer
+refused (`disclosure`); `sub` and `iat` may be disclosed. Digest structure inside one of those
+claims (an `_sd` key or an array-element digest) is refused too, whether or not a disclosure
+matches it (`disclosure`). An issuer
 JWT typed `vc+sd-jwt` is refused (`issuer_typ`): that was the type's name before SD-JWT VC renamed
 it, and it now names a W3C VC Data Model credential. Polaris issues SD-JWT VCs as wallet copies over
 OpenID4VCI, typed `dc+sd-jwt` and signed ES256 under a per-agency certificate. See
