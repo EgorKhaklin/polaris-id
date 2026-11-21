@@ -642,39 +642,56 @@ the response in both formats: SD-JWT VC with the key binding JWT's audience `ori
 API handover (B.2.6.2). HAIP 5.2 conformance: the DC API, `dc_api.jwt`, Appendix A, and one request option (signed). Not:
 unsigned or multi-signed requests, `dc_api` without encryption, Android app origins.
 
-**Module and API.**
-- `Verifier(..., transport="dc_api", expected_origins=("https://rp.example",))`. Each entry is an https origin in its
-  serialized form (scheme, host, a port only when not the default; no path, query or fragment), checked at construction.
-- `new_request()`: per request a fresh nonce, a fresh P-256 ECDH-ES key with `kid` and `alg` (section 8.3 requires
-  `alg`; Google's sample marks both required), and the session's origin. The request object carries `client_id`
-  (`x509_hash`, as today), `expected_origins`, `response_type`, `response_mode` `dc_api.jwt`, `nonce`, `client_metadata`
-  (`jwks`, `vp_formats_supported`, `encrypted_response_enc_values_supported`), `dcql_query`, `iat`, `exp`, and `aud`
-  `https://self-issued.me/v2` (section 5.8, static discovery, as the redirect request has it); no `state`,
-  `response_uri` or `redirect_uri` ("since the state parameter is not defined for the DC API, the Verifier cannot expect
-  it to be included in the response", A.2).
-- `dc_api_request(session)` returns `{"protocol": "openid4vp-v1-signed", "data": {"request": "<JWS>"}}`. Chrome began
-  deprecating protocol identifiers the specification does not list in 151 and schedules their removal for 160 (S4):
-  only listed ones are sent.
-- `handle_dc_api_response(handle, data)` returns `(status, body, verdict)`: `data` is the DigitalCredential's `data`,
-  `{"response": "<JWE>"}`, or `{"error": ...}` (A.4), which becomes a `wallet_error` verdict as today. It takes no
-  instant.
-- The origin comes from configuration, never from the request. With one origin configured the session takes it; with
-  several, it takes the one equal to the `Origin` header of the page's session request, and a request naming none is
-  refused.
+**Module and API.** Amended on 2026-11-21 to the API as built for `mso_mdoc`. The sketch it replaces named
+`Verifier(transport="dc_api", expected_origins=...)`, `new_request()`, `dc_api_request(session)`,
+`handle_dc_api_response(handle, data)`, `iat` and `exp` in the request object, routes under `/dc/`,
+`--client-metadata-extra` admitting one key, and `--expected-origin`.
+- `Verifier.dc_api_request(origin)` returns `{"protocol": "openid4vp-v1-signed", "data": {"request": "<JWS>"}}`, on a
+  verifier built for `mso_mdoc` (any other format: ValueError). Per request: a fresh nonce and a fresh P-256 ECDH-ES
+  response key with `kid` and `alg` (section 8.3 requires `alg`; Google's sample marks both required). The request
+  object, signed as the redirect request object is, carries `aud` `https://self-issued.me/v2` (section 5.8, static
+  discovery), `client_id` (`x509_hash`, as today), `expected_origins` (`[origin]`), `response_type`, `response_mode`
+  `dc_api.jwt`, `nonce`, `client_metadata` (`jwks`, `vp_formats_supported`, `encrypted_response_enc_values_supported`),
+  `dcql_query`, and `verifier_info` when the verifier carries one; no `state`, `response_uri` or `redirect_uri` ("since
+  the state parameter is not defined for the DC API, the Verifier cannot expect it to be included in the response",
+  A.2). Chrome began deprecating protocol identifiers the specification does not list in 151 and schedules their removal
+  for 160 (S4): only listed ones are sent.
+- At most `DC_API_MAX_OUTSTANDING` (64) requests are outstanding: at that many, `dc_api_request` raises
+  `DcApiRequestsFull` and makes none. `POST /dc-api/request` is the first public route that creates verifier state, and
+  every response tries each outstanding request's key.
+- `Verifier.dc_api_response(data, *, origin)` returns `(status, body, verdict)`: `data` is the DigitalCredential's
+  `data`, `{"response": "<JWE>"}`, or `{"error": ...}` (A.4), which becomes a `wallet_error` verdict as today. It takes
+  no instant, and nothing it is given makes it raise.
+- The origin comes from configuration, never from the request: `serve(..., dc_api_origin=...)` and `--dc-api-origin`
+  take one origin, read by `mdoc.dc_api_origin`: an https origin in its serialized form (scheme, host, a port only when
+  not the default; no path, query or fragment), or an http one only for a host a browser treats as a secure context
+  (`localhost`, a name ending in `.localhost`, 127.0.0.0/8, `[::1]`; W3C Secure Contexts, 3.1), since the API exists
+  only in a secure context (W3C Digital Credentials, Working Draft of 2026-11-19, 7.7).
 - SD-JWT VC: `verify_presentation(..., expected_audience=...)` accepts exactly `origin:<origin>` and `origin:<origin>/`
-  (A.4's own example carries the trailing slash), nothing else. mdoc: `mdoc.dc_api_transcript(origin, nonce, jwk)`, the
-  origin exactly as serialized, with no `origin:` prefix and no trailing slash (B.2.6.2 and its example).
-- `serve.py`: `GET /dc/`, `GET /dc/app.js`, `POST /dc/request` (a session: its handle and request), `POST /dc/response`
-  (the handle and `data`); no inline script, `script-src 'self'`. The page fetches its request before the click so that
-  `get()` runs inside the click's transient activation (S3). It checks `typeof DigitalCredential` and `typeof
-  DigitalCredential.userAgentAllowsProtocol` before calling either, and never throws where they are absent; without the
-  method it sends `openid4vp-v1-signed` alone, the protocol Chrome's and Google's pages document. Whether Chrome ships
-  the method is UNCONFIRMED and measured here. The three existing paths are unchanged.
+  (A.4's own example carries the trailing slash), nothing else. mdoc: `mdoc.dc_api_session_transcript(origin=...,
+  nonce=..., jwk_thumbprint=...)`, the origin exactly as serialized, with no `origin:` prefix and no trailing slash
+  (B.2.6.2 and its example).
+- `serve.py`: `GET /dc-api/` (the page: no inline script; `Content-Security-Policy: default-src 'none'; script-src
+  'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`), `GET /dc-api/app.js`,
+  `POST /dc-api/request` (the member; 503 `temporarily_unavailable` at the cap) and `POST /dc-api/response` (the
+  DigitalCredential's `protocol` and `data`; another protocol is refused before decryption). Both POST routes answer
+  only a request whose `Origin` header is the configured origin, and any other gets 403 before its body is read; no
+  `/dc-api/` path carries a CORS header. The page fetches its request before the click so that `get()` runs inside the
+  click's transient activation (S3). It checks `typeof DigitalCredential` and `typeof
+  DigitalCredential.userAgentAllowsProtocol` before calling either, and never throws where they are absent; it sends
+  `openid4vp-v1-signed` alone, the protocol Chrome's and Google's pages document, and says the browser does not offer
+  the API when `DigitalCredential` is absent or the method answers false for that protocol. Whether Chrome ships the
+  method is UNCONFIRMED; `scripts/polaris-oid4vp-dc-page-drill.py` drives both branches in headless Chromium under a
+  stub. The three existing paths are unchanged.
 - Google Wallet requires `gw_rp_metadata_bytes` inside `client_metadata` in every request, sandbox and production (S7).
-  `--client-metadata-extra FILE` admits that one key and nothing else: a file that replaced `jwks` would re-key response
-  encryption, so `jwks`, `vp_formats_supported`, `encrypted_response_enc_values_supported` and any other key are
-  refused, and the served `jwks` stays this request's own key.
-- `cli.py`: `serve --dc-api --expected-origin https://rp.example --experimental`.
+  `Verifier(..., dc_api_client_metadata=...)` and `--dc-api-client-metadata FILE` add a JSON object's members to the
+  `client_metadata` of every DC API request, never to a redirect request object. A member the verifier writes itself
+  (`jwks`, `vp_formats_supported`, `encrypted_response_enc_values_supported`, read from the function that writes them)
+  is refused, since a file that replaced `jwks` would re-key response encryption, and so is an object that does not
+  serialize as JSON or is over 16 KiB; the served `jwks` stays this request's own key.
+- `cli.py`: `serve --format mso_mdoc --dc-api --dc-api-origin https://rp.example --experimental`, refused before the
+  PKI is read without `--experimental`, without `--format mso_mdoc` or without `--dc-api-origin`, and with `--once`,
+  `--rearm`, `--result` or `--control-token-file`.
 
 **Wire.** OpenID4VP 1.0 Appendix A (A.1 protocol identifiers; A.2 parameters and `expected_origins`; A.3.2.1; A.4
 response and audience; A.5), section 5.8 (`aud`), B.2.6.2, 8.3, 15.9.2 (S1); HAIP 1.0 5.2 (S2); W3C Digital
