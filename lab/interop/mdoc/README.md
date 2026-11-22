@@ -1,16 +1,18 @@
-# mdoc over OpenID4VP: real DeviceResponses, verified offline (plan 025, milestone 1)
+# mdoc over OpenID4VP: real DeviceResponses, verified offline (plan 025, milestones 1 and 2)
 
 Lab only. Nothing here is product code, and nothing here supports a claim that Polaris verifies mdoc.
 
 **Result, 2026-10-11.** A DeviceResponse built by walt.id's mdoc library from a PID issued by the EUDI
 reference issuer verifies; the mDL is refused at the ISO 18013-5 Annex B DS certificate profile (as
 isomdl tabulates it). The SessionTranscript it is checked against is pinned to the
-OpenID4VP 1.0 example. Three limits apply:
+OpenID4VP 1.0 example. Two limits apply:
 - On the two `direct_post.jwt` captures, the DCQL query was polaris-oid4vp's `dc+sd-jwt` query.
   1.0.0rc18 asks for no mdoc, so those were not query-driven mdoc presentations.
 - The third capture answers an `mso_mdoc` query, but that query comes from this lab's request
   rewrite (`request_shim.py`).
-- No independent wallet app has presented yet. That is milestone 2.
+
+**Result, 2026-11-22.** A wallet app on a phone presented an mDL to polaris-oid4vp, and the presentation was
+accepted: [Milestone 2](#milestone-2-a-wallet-app-on-a-phone-2026-11-22).
 
 ## What is where
 
@@ -158,6 +160,53 @@ Still one-witness:
 With no root, the EU verifier trusts any chain, so its trust verdict there is not witnessed. Ours and
 @owf/mdoc refuse that case. No disagreement is a fault in our code or unexplained.
 
+## Milestone 2: a wallet app on a phone (2026-11-22)
+
+A wallet app on a phone presented an mDL to polaris-oid4vp over OpenID4VP, and the presentation was accepted. Two
+outside implementations judged the same DeviceResponse, and on every stage each is counted for, each reached the
+verdict ours did.
+
+- Wallet: Multipaz Wallet Dev 2026.W45.1-175-git-db6d830, its Dev flavor, from the publisher's download page
+  ([apps.multipaz.org](https://apps.multipaz.org)), APK SHA-256
+  `6cf94531df5071a409dc4733f153230f78177fa5f9ddc37093dbd180fd3a6cf8`, on a Pixel 9a (Android 17). It was installed
+  and set up over USB with adb, the document form's taps included; the selfie and Create Document were done on the
+  phone by hand. The credential is a self-signed mDL (`org.iso.18013.5.1.mDL`) under the wallet's own development
+  IACA, whose private key is in the wallet's public source (`DeveloperSelfSignedDocumentIssuer.kt`), made with its
+  Developer Mode's "Add self-signed document".
+- The run: the QR code was scanned, and the presentation confirmed, on the phone by hand. No adb input reached the
+  phone between the QR code and the response.
+- Verifier: polaris-oid4vp built from main at b82de544 (2026-11-22), installed from the wheel with SHA-256
+  `8e7d39b4ce56342a80d20814822232edd218173a68d939b38fc80426c5d39ede`.
+  `serve --format mso_mdoc --experimental --doctype org.iso.18013.5.1.mDL` asked for `given_name`, `family_name` and
+  `age_over_18`, with client_id `x509_hash` (fresh keys from `keygen`), response mode `direct_post.jwt`, and the
+  wallet's in-app IACA as the root (PEM SHA-256 `4cff5874090265f276cf483ebfff56138b20fdcdaea4c7cd7dc39faad7907bef`).
+  It ran inside [`capture_shim.py`](capture_shim.py), behind [`../altid/run_tunnel.sh`](../altid/run_tunnel.sh)'s
+  `--` mode over a cloudflared quick tunnel, both as committed at 036e0cd1 (SHA-256
+  `1a0cf45e1feee77db6599d47802fee5e536894f48a7ee046baf7126dbdcacb07` and
+  `dafdf8706bf9d98594f71ab8e24564772f1b60ee747826d30589e41a13835bcf`).
+- The answer: one DeviceResponse, 3722 bytes, SHA-256
+  `d3721ebf8096bac693cc8f430fda3ce2afd2d9adfe70010368ac7d5ecb4a33f5`.
+
+Three witnesses, over the answer and two vectors made from it (`vectors.json`, SHA-256
+`55cf587cc9ffda3c3348077dd351da0165d52389fa4f1dd8dab84fc6c9ca5f46`):
+
+| vector | polaris-oid4vp, the build from b82de544 | OID4VCgo v0.85.0, its functions composed by our harness ([`witness-oid4vcgo/`](witness-oid4vcgo/)) | isomdl-uniffi 0.2.0-indicio.2 ([`witness_isomdl.py`](witness_isomdl.py)) |
+|---|---|---|---|
+| the wallet's answer | accepted | accepted | issuer authentication VALID; the three elements |
+| the same answer under another response encryption key (a fresh P-256 key) | refused: device signature | refused: device signature | not counted (device stage) |
+| one element value changed (`given_name`; SHA-256 `5e2fe4013cf9eec779e362dd856f1974116084a7b3e4edbea24d2333e79617ea`) | refused: digest | refused: issuer signed, digest mismatch for `given_name` | refused: issuer authentication INVALID, digest mismatch for `given_name` |
+
+- Each witness is counted for the stages its own code decides, as in M1b: OID4VCgo for the device signature over
+  the `direct_post.jwt` SessionTranscript, isomdl-uniffi for issuer authentication and the elements.
+- Ours and OID4VCgo built the same SessionTranscript (OpenID4VP 1.0 B.2.6.1, 56 bytes) on both vectors where
+  OID4VCgo built one; it refused the changed element before building one.
+- isomdl-uniffi read the root rewrapped at 64 characters a line, the same DER (SHA-256
+  `039b7a04f5309d8c8b1a4e83fa9d9814948e1765163412b458e1c63ede2b33af`).
+- polaris-oid4vp 1.3.0 from PyPI (wheel SHA-256 `9084517c7a8d85b8e881daafa7a0afc6932c49229d17d4251aea77cca134457f`)
+  judged the answer and both vectors offline, at the capture's instant, and drew the same verdict on each as the
+  build.
+- An emulator run the same day, with the same wallet build and wheel, drew the same verdict on every vector.
+
 ## Observations
 
 - walt.id writes an empty x5chain (`{33: []}`) into the DeviceSignature's unprotected header.
@@ -199,7 +248,6 @@ three captures carry x5chain in the unprotected header only, so they are judged 
 
 - One issuer: the reference issuer's development deployment, with its public test keys.
 - One wallet library stack, ES256 only, DeviceSignature only, and no revocation.
-- No independent wallet app presented, and rc18 asked for no mdoc.
 - isomdl-uniffi was a second witness for the device signature (null thumbprint) and for the
   profile refusal, not for the MSO signature.
 - Nothing here is product code or a claim.
