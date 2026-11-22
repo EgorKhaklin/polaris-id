@@ -48,8 +48,14 @@ def refusal(side, stage):
 
 class AgreeTests(unittest.TestCase):
 
+    def scratch(self):
+        """A new scratch directory, removed when the test ends."""
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory, True)
+        return directory
+
     def setUp(self):
-        self.repo = pathlib.Path(tempfile.mkdtemp())
+        self.repo = pathlib.Path(self.scratch())
         rows = []
         for name, origin, stage in (("ANNEXC-DETERMINISTIC-001", "https://verifier.example", "document"),
                                     ("ANNEXC-REAL-001", "https://verifier.multipaz.org", "open")):
@@ -226,7 +232,7 @@ class AgreeTests(unittest.TestCase):
         # path that climbs out of the tree.
         self.setUp()
         source = self.row("ANNEXC-REAL-001")["source"]
-        outside = pathlib.Path(tempfile.mkdtemp()) / "vector.json"
+        outside = pathlib.Path(self.scratch()) / "vector.json"
         outside.write_bytes((self.repo / source["path"]).read_bytes())
         for path in (str(outside), os.path.relpath(outside, self.repo)):
             with self.subTest(path=path):
@@ -318,7 +324,7 @@ class AgreeTests(unittest.TestCase):
         self.assertFails("CONTROL-ANOTHER-KEY is of kind 'extra'")
 
     def test_read_theirs_refuses_a_file_it_cannot_take_as_one_verdict_per_row_and_time(self):
-        path = os.path.join(tempfile.mkdtemp(), "theirs.jsonl")
+        path = os.path.join(self.scratch(), "theirs.jsonl")
         cases = (("", "holds no verdict"),
                  ('{"id": "A", "when": "instant", "outcome": "refused"}\n'
                   '{"id": "A", "when": "instant", "outcome": "accepted"}\n', "judged A twice at the instant"),
@@ -342,7 +348,7 @@ class AgreeTests(unittest.TestCase):
     def test_main_exits_1_and_prints_fail_on_a_wrong_verdict_or_a_broken_verdict_file(self):
         # main as the workflow runs it, over a rows file and OID4VCgo's verdict file, with this repository's
         # verdicts (ours(), which needs the cryptography) given as fixed ones and the outside files in self.repo.
-        directory = pathlib.Path(tempfile.mkdtemp())
+        directory = pathlib.Path(self.scratch())
         rows_path, theirs_path = directory / "rows.json", directory / "annexc.jsonl"
         rows_path.write_text(json.dumps(self.fixture))
         real_judge = agree.judge
@@ -382,7 +388,7 @@ class AgreeTests(unittest.TestCase):
     def test_the_workflow_gate_passes_only_on_exit_0_with_one_pass_line_and_no_fail_line(self):
         # agree-gate.sh, which the workflow step runs, over made-up agree.py outputs: a stand-in agree.py beside a
         # copy of the gate prints each and exits with each status.
-        bash, bin_dir = shutil.which("bash"), tempfile.mkdtemp()
+        bash, bin_dir = shutil.which("bash"), self.scratch()
         self.assertIsNotNone(bash, "no bash on PATH")
         os.symlink(sys.executable, os.path.join(bin_dir, "python"))
         env = {"PATH": os.pathsep.join((bin_dir, "/usr/bin", "/bin"))}
@@ -392,11 +398,12 @@ class AgreeTests(unittest.TestCase):
                  ("exit 0 with no table line", 0, "ROW A\n", 1),
                  ("exit 0 with nothing printed", 0, "", 1),
                  ("a FAIL line beside a PASS line", 0, "FAIL A: no verdict\nAGREEMENT TABLE: PASS\n", 1),
+                 ("a FAIL table line beside a PASS line", 0, "AGREEMENT TABLE: PASS\nAGREEMENT TABLE: FAIL\n", 1),
                  ("two PASS lines", 0, "AGREEMENT TABLE: PASS\nAGREEMENT TABLE: PASS\n", 1),
                  ("a PASS line that is not the whole line", 0, "AGREEMENT TABLE: PASSED\n", 1))
         for name, status, text, want in cases:
             with self.subTest(name):
-                directory = tempfile.mkdtemp()
+                directory = self.scratch()
                 shutil.copy(os.path.join(HERE, "agree-gate.sh"), directory)
                 with open(os.path.join(directory, "agree.py"), "w") as handle:
                     handle.write("import sys\nsys.stdout.write(%r)\nsys.exit(%d)\n" % (text, status))

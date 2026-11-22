@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
-"""test_check.py -- check.py passes the row shape the vectors call for, and fails each way it can break.
+"""test_check.py -- check.py passes the row shape the vectors call for, and fails on each broken case made here.
 
 The rows are made here from the tree's mdoc-vectors.json, the shape main.go writes when OID4VCgo judges
 every vector as the vector says; no witness run, no network. mdoc-witness.yml runs this before the witness.

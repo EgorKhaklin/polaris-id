@@ -7,7 +7,7 @@
 # only its first phase, `go mod download`, reaches the Go module proxy. check.py then holds every
 # case to the vector's `expected` and every repaired twin to accepted, on the composed path and on
 # VerifyResponse, which must have run on every row whose inputs say dc_api.jwt (test_check.py, run
-# first, shows check.py failing each way it can break). A bump of the pinned version that changes
+# first, shows check.py failing on each broken case it makes). A bump of the pinned version that changes
 # what OID4VCgo asks of its caller, or a vectors change that OID4VCgo reads otherwise, is red on its
 # own pull request.
 #
@@ -60,7 +60,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: The row check fails each way it can break
+      - name: The row check fails on each broken case its tests make
         run: python -I lab/interop/mdoc/witness-oid4vcgo/test_check.py
 
       - name: The agreement check and its gate fail on each broken case their tests make
