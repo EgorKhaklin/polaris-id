@@ -1,0 +1,86 @@
+{
+  "description": "One credential query (pay) and two transaction_data entries naming it: a TS12 payment (entry 0) and a urn:example:terms-acceptance object (entry 1). OpenID4VP 1.0 B.3.3.1: each hash \"maps to, the respective transaction data object\"; no sentence says whether the hash at position i is entry i's. `responses` holds the key binding JWT listing the two hashes in the request's order and in the reverse, its other claims alike but the TS12 jti. Under `by_position` a hash names the entry at its position, so the reversed list hashes entry 1 where entry 0 is due; under `in_any_order` any non-empty subset of the request's hashes, in any order, is accepted, so both lists pass. Judged at `at` with `issuer_jwks`. Hashes are base64url(SHA-256(the ASCII bytes of the string in transaction_data)).",
+  "made_by": "lab/interop/transaction-data/two_entries_order.py, Polaris, Apache-2.0",
+  "at": 1795332049,
+  "issuer_jwks": [
+    {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "CgLMQnJK2TLCN1lJbIOc1vudmVNZ_CbUWDcNfd_zzs4",
+      "y": "-EoE7le8R4c0U91Z9e2y5HLESCoB5MMhlRcQHD12900",
+      "kid": "issuer-1"
+    }
+  ],
+  "request": {
+    "client_id": "x509_hash:crHiQKuwWQQ-rWSOv33L_A-v2VqEwH8yinBSL-o7qu0",
+    "response_type": "vp_token",
+    "response_mode": "direct_post.jwt",
+    "nonce": "CwuSU59hXc_bjGeJVR7qKisNyxHmsxfyQkfedJgMCzI",
+    "dcql_query": {
+      "credentials": [
+        {
+          "id": "pay",
+          "format": "dc+sd-jwt",
+          "meta": {
+            "vct_values": [
+              "https://psp.example/sca-attestation"
+            ]
+          },
+          "claims": [
+            {
+              "path": [
+                "account_holder"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "transaction_data": [
+      "eyJ0eXBlIjoidXJuOmV1ZGk6c2NhOnBheW1lbnQ6MSIsImNyZWRlbnRpYWxfaWRzIjpbInBheSJdLCJ0cmFuc2FjdGlvbl9kYXRhX2hhc2hlc19hbGciOlsic2hhLTI1NiJdLCJwYXlsb2FkIjp7InRyYW5zYWN0aW9uX2lkIjoib3JkZXItdmVjdG9yLTAwMDEiLCJwYXllZSI6eyJuYW1lIjoiRXhhbXBsZSBTaG9wIiwiaWQiOiJERTAwRVhBTVBMRTAwMDEifSwiY3VycmVuY3kiOiJFVVIiLCJhbW91bnQiOjEyLjV9fQ",
+      "eyJ0eXBlIjoidXJuOmV4YW1wbGU6dGVybXMtYWNjZXB0YW5jZSIsImNyZWRlbnRpYWxfaWRzIjpbInBheSJdLCJ0cmFuc2FjdGlvbl9kYXRhX2hhc2hlc19hbGciOlsic2hhLTI1NiJdLCJ0ZXJtc191cmkiOiJodHRwczovL3JwLmV4YW1wbGUvdGVybXMvMjAyNi0xMSJ9"
+    ]
+  },
+  "transaction_data_hashes": {
+    "sha-256": [
+      "WYPqy7PrZzErVeLoFnfnU8kZz1_fFFgrRHQRnnRTHBo",
+      "lZDmgqMJfQMXyS2iTzL7oLnRCmYeUSkNVzMWigltO0g"
+    ]
+  },
+  "listed": {
+    "request_order": [
+      "WYPqy7PrZzErVeLoFnfnU8kZz1_fFFgrRHQRnnRTHBo",
+      "lZDmgqMJfQMXyS2iTzL7oLnRCmYeUSkNVzMWigltO0g"
+    ],
+    "reversed": [
+      "lZDmgqMJfQMXyS2iTzL7oLnRCmYeUSkNVzMWigltO0g",
+      "WYPqy7PrZzErVeLoFnfnU8kZz1_fFFgrRHQRnnRTHBo"
+    ]
+  },
+  "responses": {
+    "request_order": {
+      "vp_token": {
+        "pay": [
+          "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsImtpZCI6Imlzc3Vlci0xIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoiaHR0cHM6Ly9wc3AuZXhhbXBsZS9zY2EtYXR0ZXN0YXRpb24iLCJpYXQiOjE3OTUzMzIwNDksIl9zZCI6WyJxcU1jRVl2S3huUTVtZmE2WDNoeDlETXJDVFNHQ0pBblE2bV95T1ZDaEdzIl0sIl9zZF9hbGciOiJzaGEtMjU2IiwiY25mIjp7Imp3ayI6eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6IkI2RXJKSkJXVTQ2b2tJU0dfeXlXOF9BX1lTdGI1NVU3U1dYMUJ1UFdFbjgiLCJ5IjoibnJUTWZ0alA5NVpqejRDRTYtbmtOVzltNl81U0Vuc3lfVUIwajJZRGZiRSJ9fX0.Z_oY5j98rLVnConHn_BOSK0eSbq42h-_wQSaKmxD5hsclNetBDC0KZVDD_VNMRuLNxN8rds5RVBR41XY0Nq8UA~WyJ6T01zNXExSWlsaUFVbVNGR1RBS1BBIiwiYWNjb3VudF9ob2xkZXIiLCJKZWFuIER1cG9udCJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTUzMzIwNDksImF1ZCI6Ing1MDlfaGFzaDpjckhpUUt1d1dRUS1yV1NPdjMzTF9BLXYyVnFFd0g4eWluQlNMLW83cXUwIiwibm9uY2UiOiJDd3VTVTU5aFhjX2JqR2VKVlI3cUtpc055eEhtc3hmeVFrZmVkSmdNQ3pJIiwic2RfaGFzaCI6InIxZ2ZjdHRfaFVsQklsRVRhRy1pU2w1WXdMQUs0VmRheGlfcWs0REkwbU0iLCJ0cmFuc2FjdGlvbl9kYXRhX2hhc2hlcyI6WyJXWVBxeTdQclp6RXJWZUxvRm5mblU4a1p6MV9mRkZnclJIUVJublJUSEJvIiwibFpEbWdxTUpmUU1YeVMyaVR6TDdvTG5SQ21ZZVVTa05Wek1XaWdsdE8wZyJdLCJ0cmFuc2FjdGlvbl9kYXRhX2hhc2hlc19hbGciOiJzaGEtMjU2IiwicmVzcG9uc2VfbW9kZSI6ImRpcmVjdF9wb3N0Lmp3dCIsImFtciI6W3sia25vd2xlZGdlIjoicGluXzZfb3JfbW9yZV9kaWdpdHMifSx7InBvc3Nlc3Npb24iOiJrZXlfaW5fbG9jYWxfbmF0aXZlX3dzY2QifV0sImp0aSI6IjczOTMyYTNmLTA4M2ItNGJmYy05NDE0LTBjYzIzMTY0YmI5ZCJ9.2GIB2JdQkuDDBFCkH6tfyJbXf8BRUW24YTTT-m4aetniB8PVrwJYKSBuOtS12Tnx_iYcp599eNoyC1VO0H0LXQ"
+        ]
+      }
+    },
+    "reversed": {
+      "vp_token": {
+        "pay": [
+          "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCIsImtpZCI6Imlzc3Vlci0xIn0.eyJpc3MiOiJodHRwczovL2lzc3Vlci5leGFtcGxlIiwidmN0IjoiaHR0cHM6Ly9wc3AuZXhhbXBsZS9zY2EtYXR0ZXN0YXRpb24iLCJpYXQiOjE3OTUzMzIwNDksIl9zZCI6WyJxcU1jRVl2S3huUTVtZmE2WDNoeDlETXJDVFNHQ0pBblE2bV95T1ZDaEdzIl0sIl9zZF9hbGciOiJzaGEtMjU2IiwiY25mIjp7Imp3ayI6eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6IkI2RXJKSkJXVTQ2b2tJU0dfeXlXOF9BX1lTdGI1NVU3U1dYMUJ1UFdFbjgiLCJ5IjoibnJUTWZ0alA5NVpqejRDRTYtbmtOVzltNl81U0Vuc3lfVUIwajJZRGZiRSJ9fX0.Z_oY5j98rLVnConHn_BOSK0eSbq42h-_wQSaKmxD5hsclNetBDC0KZVDD_VNMRuLNxN8rds5RVBR41XY0Nq8UA~WyJ6T01zNXExSWlsaUFVbVNGR1RBS1BBIiwiYWNjb3VudF9ob2xkZXIiLCJKZWFuIER1cG9udCJd~eyJhbGciOiJFUzI1NiIsInR5cCI6ImtiK2p3dCJ9.eyJpYXQiOjE3OTUzMzIwNDksImF1ZCI6Ing1MDlfaGFzaDpjckhpUUt1d1dRUS1yV1NPdjMzTF9BLXYyVnFFd0g4eWluQlNMLW83cXUwIiwibm9uY2UiOiJDd3VTVTU5aFhjX2JqR2VKVlI3cUtpc055eEhtc3hmeVFrZmVkSmdNQ3pJIiwic2RfaGFzaCI6InIxZ2ZjdHRfaFVsQklsRVRhRy1pU2w1WXdMQUs0VmRheGlfcWs0REkwbU0iLCJ0cmFuc2FjdGlvbl9kYXRhX2hhc2hlcyI6WyJsWkRtZ3FNSmZRTVh5UzJpVHpMN29MblJDbVllVVNrTlZ6TVdpZ2x0TzBnIiwiV1lQcXk3UHJaekVyVmVMb0ZuZm5VOGtaejFfZkZGZ3JSSFFSbm5SVEhCbyJdLCJ0cmFuc2FjdGlvbl9kYXRhX2hhc2hlc19hbGciOiJzaGEtMjU2IiwicmVzcG9uc2VfbW9kZSI6ImRpcmVjdF9wb3N0Lmp3dCIsImFtciI6W3sia25vd2xlZGdlIjoicGluXzZfb3JfbW9yZV9kaWdpdHMifSx7InBvc3Nlc3Npb24iOiJrZXlfaW5fbG9jYWxfbmF0aXZlX3dzY2QifV0sImp0aSI6IjU4ZTdiZDBmLTFjMTQtNGFjMS05ODJkLWYxNzM5YmU1OWNmMyJ9.mATd3FLJB8m6y0jomqtlypgDlUawoGBbijwwejp8box06M8KgcBY6dDMJCXLWt5TPPe5AotaxCCKEvsvqEsbMQ"
+        ]
+      }
+    }
+  },
+  "outcomes": {
+    "request_order": {
+      "by_position": "accepted",
+      "in_any_order": "accepted"
+    },
+    "reversed": {
+      "by_position": "refused: pay transaction_data_mismatch",
+      "in_any_order": "accepted"
+    }
+  }
+}

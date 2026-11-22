@@ -61,6 +61,25 @@ authorization." SIROS's rule read literally would put it in both. No published v
 shape; the package's tests (`AnEntryNamingTwoPresentedCredentialsTests`) accept it bound by either
 credential and refuse it bound by both or by neither.
 
+## The order vector
+
+`two_entries_order.py` writes
+[`transaction-data-two-entries-order.json`](../../../packages/polaris-oid4vp/testdata/transaction-data-two-entries-order.json):
+one credential query, `pay`, binding two entries (a TS12 payment and a `urn:example:terms-acceptance`
+object), and two responses whose key binding JWTs list the two hashes in the request's order and
+reversed. OpenID4VP 1.0 B.3.3.1 says each hash "maps to, the respective transaction data object";
+no sentence says whether the hash at position i is entry i's.
+
+| Reading | request order | reversed |
+|---|---|---|
+| `by_position`: this package, and openwallet-foundation/multipaz, which zips them in order (`sdjwt/SdJwtKb.kt` L122, L136 at cd9578b3) | accepted | refused, `transaction_data_mismatch` |
+| `in_any_order`: eu-digital-identity-wallet/eudi-srv-verifier-endpoint, which accepts any non-empty subset in any order (`ValidateSdJwtVcOrMsoMdocVerifiablePresentation.kt` L274-276 at df07af2f) | accepted | accepted |
+
+The two outside readings are read from their source at those commits, as `polaris_oid4vp/sdjwt.py`
+records them.
+
+    python3 lab/interop/transaction-data/two_entries_order.py  # rewrites the vector in testdata/
+
 ## Results
 
 2026-10-10, the tree of this change: `wmp_vectors.py` passed (7 hash-only vectors, 21 hashes; 5
