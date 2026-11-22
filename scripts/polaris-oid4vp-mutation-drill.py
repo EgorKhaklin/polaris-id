@@ -70,9 +70,12 @@ PKG = ROOT / "packages" / "polaris-oid4vp"
 #: decoder, the COSE reader and the mdoc judge, which refuse by raising.
 #: `status_fetch.py` joined on 2026-11-21: the fetch serve hands a status resolver, which refuses
 #: by raising (a scheme, an answer but 200, a total time, a size, no address it may connect to).
+#: `annexc.py` joined on 2026-11-21 with ISO/IEC 18013-7 Annex C: the request it builds and the
+#: encrypted response it opens, refusing by raising as mdoc.py does.
 SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py",
            "polaris_oid4vp/status.py", "polaris_oid4vp/serve.py", "polaris_oid4vp/cbor.py",
-           "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py", "polaris_oid4vp/status_fetch.py")
+           "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py", "polaris_oid4vp/status_fetch.py",
+           "polaris_oid4vp/annexc.py")
 
 #: The package's other modules, each with the reason it has no refusal for this drill to
 #: invert. A module that is in neither list fails the drill (`module_problems`): status.py sat
@@ -92,7 +95,7 @@ NO_REFUSALS = {
 #: is tested, and the drill still calls it unprotected or, worse, calls it protected by
 #: something else.
 SUITES = ("test_sdjwt", "test_jwe", "test_verifier", "test_serve", "test_cli",
-          "test_conformance_capture", "test_status", "test_mdoc")
+          "test_conformance_capture", "test_status", "test_mdoc", "test_annex_c")
 
 #: Refusals a passing suite cannot reach, with the reason. Every one is the same shape: the
 #: guard fires only when `cryptography` is ABSENT, and a suite that runs has it installed,
@@ -177,7 +180,7 @@ _STATUS_PATTERNS = (
 #: `from None`, which a bare call would not survive: a mutant that does not compile fails every
 #: test and reads as caught.
 _RAISING = ("polaris_oid4vp/cbor.py", "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py",
-            "polaris_oid4vp/status_fetch.py")
+            "polaris_oid4vp/status_fetch.py", "polaris_oid4vp/annexc.py")
 _RAISE_PATTERNS = (
     (re.compile(r"^(\s*)raise (CborError|CoseError|_Refused|_Unread|ValueError)\b"),
      r"\1pass  # MUTANT\n\1if False: raise \2"),
@@ -723,6 +726,49 @@ NAMED_MUTANTS = (
     ("status_fetch:interpreter-user-agent", "polaris_oid4vp/status_fetch.py",
      "                                                   \"User-Agent\": USER_AGENT})\n",
      "                                                   })  # MUTANT\n"),
+    # 2026-11-21, annexc.py (record 025, M4): what is not a refusal. The transcript is hashed over
+    # [Base64EncryptionInfo, origin] in that order; HPKE's info is that transcript; the device
+    # signature is judged under it; each request has its own nonce and key; and open_response
+    # takes no instant from its caller.
+    ("annexc:transcript-over-the-origin-first", "polaris_oid4vp/annexc.py",
+     "    info = cbor.encode([encryption_info, written])\n",
+     "    info = cbor.encode([written, encryption_info])  # MUTANT\n"),
+    ("annexc:hpke-info-empty", "polaris_oid4vp/annexc.py",
+     "        return SUITE.decrypt(enc + ciphertext, session._recipient_key, info=session.transcript)\n",
+     "        return SUITE.decrypt(enc + ciphertext, session._recipient_key, info=b\"\")  # MUTANT\n"),
+    ("annexc:device-signature-under-the-dc-api-transcript", "polaris_oid4vp/annexc.py",
+     "    return mdoc.verify_device_response(device_response, session_transcript=session.transcript,\n",
+     "    return mdoc.verify_device_response(device_response, session_transcript=mdoc.dc_api_session_transcript(  # MUTANT\n"
+     "        origin=session.origin, nonce=\"n\", jwk_thumbprint=bytes(32)),\n"),
+    ("annexc:a-fixed-nonce", "polaris_oid4vp/annexc.py",
+     "\"nonce\": secrets.token_bytes(NONCE_BYTES)",
+     "\"nonce\": bytes(NONCE_BYTES)"),
+    ("annexc:a-fixed-key", "polaris_oid4vp/annexc.py",
+     "    key = ec.generate_private_key(ec.SECP256R1())\n",
+     "    key = ec.derive_private_key(7, ec.SECP256R1())  # MUTANT\n"),
+    ("annexc:open-response-takes-an-instant", "polaris_oid4vp/annexc.py",
+     'def open_response(response, session, *, iaca_roots):\n'
+     '    """The verdict on `response`, the base64url EncryptedResponse a wallet answered `session`\'s\n'
+     "    request with: opened under the session's key and transcript, then judged as a DeviceResponse\n"
+     "    for the session's docType against `iaca_roots`, at this verifier's clock. Returns a Verdict\n"
+     '    and never raises on bad input."""\n'
+     '    try:\n'
+     '        device_response = _open(response, session)\n'
+     '    except _Refused as refusal:\n'
+     '        return Verdict(False, refusal.code, refusal.reason)\n'
+     '    return mdoc.verify_device_response(device_response, session_transcript=session.transcript,\n'
+     '                                       iaca_roots=iaca_roots, doctype=session.doctype)\n',
+     'def open_response(response, session, *, iaca_roots, now=None):  # MUTANT\n'
+     '    """The verdict on `response`, the base64url EncryptedResponse a wallet answered `session`\'s\n'
+     "    request with: opened under the session's key and transcript, then judged as a DeviceResponse\n"
+     "    for the session's docType against `iaca_roots`, at this verifier's clock. Returns a Verdict\n"
+     '    and never raises on bad input."""\n'
+     '    try:\n'
+     '        device_response = _open(response, session)\n'
+     '    except _Refused as refusal:\n'
+     '        return Verdict(False, refusal.code, refusal.reason)\n'
+     '    return mdoc.verify_device_response(device_response, session_transcript=session.transcript,\n'
+     '                                       iaca_roots=iaca_roots, doctype=session.doctype, now=now)\n'),
 )
 
 

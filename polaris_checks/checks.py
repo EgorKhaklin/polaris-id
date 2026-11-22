@@ -13913,6 +13913,10 @@ def check_package_readme_counts_its_tests(root: pathlib.Path) -> list[Finding]:
     command and not to the count fails, and so does the reverse. The count is `def test_`
     across those files, which is exactly what unittest reports: a subTest does not add to the
     total, and a table-driven case is one test however many rows it walks.
+
+    2026-11-21: a test file the command left out was out of the count too, and the check passed,
+    because it never looked past the command; and "M files" was parsed and never compared. So
+    every top-level test_*.py of the package must be named, and M must be the number named.
     """
     name = "package_readme_counts"
     rel = "packages/polaris-oid4vp/README.md"
@@ -13940,6 +13944,11 @@ def check_package_readme_counts_its_tests(root: pathlib.Path) -> list[Finding]:
     if missing:
         return _fail(name, "%s names %d suite(s) that do not exist: %s"
                            % (rel, len(missing), ", ".join(missing)))
+    unnamed = sorted(p.stem for p in pkg.glob("test_*.py") if p.stem not in suites)
+    if unnamed:
+        return _fail(name, "%s's run command leaves out %d test file(s) of the package: %s. Their "
+                           "tests are in neither the run it shows nor the count it states"
+                           % (rel, len(unnamed), ", ".join(unnamed)))
     if not total:
         return _fail(name, "no test methods found across the %d suite(s) %s names; the count "
                            "has broken and this check would pass by finding nothing"
@@ -13953,9 +13962,19 @@ def check_package_readme_counts_its_tests(root: pathlib.Path) -> list[Finding]:
         return _fail(name, "%s says %d tests and the %d suite(s) it names hold %d; the "
                            "package's account of its own depth is %d out"
                            % (rel, said, len(suites), total, abs(said - total)))
-    return _ok(name, "%s states %d tests and the %d suites it names hold exactly that many, "
-                     "so the number a reader weighs the coverage argument against is the "
-                     "real one" % (rel, said, len(suites)))
+    word = stated.group(2).lower()
+    files = int(word) if word.isdigit() else (
+        _CLAIM_NUMBER_WORDS.index(word) if word in _CLAIM_NUMBER_WORDS else None)
+    if files is None:
+        return _fail(name, "%s says its tests are in %r files, a count nothing can hold"
+                           % (rel, stated.group(2)))
+    if files != len(suites):
+        return _fail(name, "%s says its tests are in %d files and its run command names %d; the "
+                           "file count was not restated when the suites changed"
+                           % (rel, files, len(suites)))
+    return _ok(name, "%s states %d tests in %d files, and they are the %d suites its command names "
+                     "and every test file of the package, so the number a reader weighs the "
+                     "coverage argument against is the real one" % (rel, said, files, len(suites)))
 
 
 def check_status_assertion_window_is_caller_policy(root: pathlib.Path) -> list[Finding]:
