@@ -1,15 +1,15 @@
 # mdoc over OpenID4VP: real DeviceResponses, verified offline (plan 025, milestones 1 and 2)
 
-Lab only. Nothing here is product code, and nothing here supports a claim that Polaris verifies mdoc.
+Lab work: experiments and dated records, outside the product code. The verifier under test, "ours" below, is the
+prototype [`verify_mdoc.py`](verify_mdoc.py) in milestone 1 and M1b, and polaris-oid4vp's experimental `mso_mdoc`
+mode (`serve --format mso_mdoc --experimental`) in milestone 2.
 
 **Result, 2026-10-11.** A DeviceResponse built by walt.id's mdoc library from a PID issued by the EUDI
 reference issuer verifies; the mDL is refused at the ISO 18013-5 Annex B DS certificate profile (as
 isomdl tabulates it). The SessionTranscript it is checked against is pinned to the
-OpenID4VP 1.0 example. Two limits apply:
-- On the two `direct_post.jwt` captures, the DCQL query was polaris-oid4vp's `dc+sd-jwt` query.
-  1.0.0rc18 asks for no mdoc, so those were not query-driven mdoc presentations.
-- The third capture answers an `mso_mdoc` query, but that query comes from this lab's request
-  rewrite (`request_shim.py`).
+OpenID4VP 1.0 example. The two `direct_post.jwt` captures answer polaris-oid4vp's `dc+sd-jwt` query
+(1.0.0rc18 asks for no mdoc). The third capture answers an `mso_mdoc` query from this lab's request
+rewrite (`request_shim.py`).
 
 **Result, 2026-11-22.** A wallet app on a phone presented an mDL to polaris-oid4vp, and the presentation was
 accepted: [Milestone 2](#milestone-2-a-wallet-app-on-a-phone-2026-11-22).
@@ -60,6 +60,8 @@ A wallet app on a phone, through a quick tunnel to a lab verifier with keys from
 
 ## The captures (eudi-srv-pid-issuer v0.11.1; the wallet: eudi-lib-jvm-openid4vp-kt 0.16.2, waltid-mdoc-credentials-jvm 0.11.0, cose-java 1.1.0, JDK 21)
 
+The issuer is the reference issuer's development deployment, with its public test keys.
+
 | | docType | Request | SessionTranscript thumbprint |
 |---|---|---|---|
 | `capture-pid/` | `eu.europa.ec.eudi.pid.1` | polaris-oid4vp 1.0.0rc18: `direct_post.jwt`, DCQL `dc+sd-jwt` | the verifier's encryption key |
@@ -71,7 +73,7 @@ In all three:
 - IssuerAuth is ES256, with x5chain `CN=ISSUANCE` <- `CN=ISSUANCE INTERMEDIATE` and the root
   `CN=ISSUANCE ROOT`, taken from the issuer's keystore.
 - DeviceAuth is a DeviceSignature: ES256, detached, under the MSO deviceKey.
-- `polaris-oid4vp` refused the response. It verifies SD-JWT VC only.
+- `polaris-oid4vp` 1.0.0rc18 refused the response; that release verified SD-JWT VC only.
 
 ## What it measured
 
@@ -136,8 +138,9 @@ Multipaz deferred.
 plus one negative for each stage. Each witness is counted only for the stages its own code decides
 ([`results.md`](witness-eudi/results.md)).
 - The EU reference verifier is eudi-srv-verifier-endpoint v0.12.0, its image pinned by digest. It
-  counts for the SessionTranscript bytes, PKIX trust and validity. Its MSO signature, digests, docType
-  and device signature are walt.id's, the library that built these responses, so they are not counted.
+  counts for the SessionTranscript bytes, PKIX trust under the configured IACA root, and validity. Its
+  MSO signature, digests, docType and device signature are walt.id's, the library that built these
+  responses, so they are not counted.
 - @owf/mdoc 0.9.3 counts for the MSO signature, digests, validity, docType and the device signature,
   checked against its own SessionTranscript. It also counts for the certificate signatures up to the
   given root, but not for the PKIX path rules: certificate validity, the CA flag, path length and key
@@ -153,12 +156,11 @@ negative control that ours and every counted witness refuse:
 - docType;
 - the device signature.
 
-Still one-witness:
-- the mDL DS certificate profile (only ours enforces it);
-- the DS certificate's countryName (only @owf/mdoc checks it, and the issuer's DS certificate has none).
+Checked by one implementation each:
+- the mDL DS certificate profile, by ours;
+- the DS certificate's countryName, by @owf/mdoc (the issuer's DS certificate has none).
 
-With no root, the EU verifier trusts any chain, so its trust verdict there is not witnessed. Ours and
-@owf/mdoc refuse that case. No disagreement is a fault in our code or unexplained.
+With no root given, ours and @owf/mdoc refuse the chain. No disagreement is a fault in our code or unexplained.
 
 ## Milestone 2: a wallet app on a phone (2026-11-22)
 
@@ -243,11 +245,3 @@ that check passes and no verdict changes; the pairing (ES256 under P-256, ES384 
 check that refuses ES384 under a P-256 key. x5chain is taken from IssuerAuth's protected header when it is there, and
 from the unprotected one only when it is not (RFC 9052 section 3); it was read from the unprotected header first. The
 three captures carry x5chain in the unprotected header only, so they are judged as before.
-
-## What this does not establish
-
-- One issuer: the reference issuer's development deployment, with its public test keys.
-- One wallet library stack, ES256 only, DeviceSignature only, and no revocation.
-- isomdl-uniffi was a second witness for the device signature (null thumbprint) and for the
-  profile refusal, not for the MSO signature.
-- Nothing here is product code or a claim.
