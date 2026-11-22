@@ -139,8 +139,8 @@ def ours(fixture, when=None, only=None):
 
 def _outside_problems(row, repo):
     source = row.get("source") or {}
-    path = repo / source.get("path", "")
-    if not source.get("path") or not path.is_file():
+    path = (repo / str(source.get("path") or "")).resolve()
+    if pathlib.Path(repo).resolve() not in path.parents or not path.is_file():
         return ["%s copies no file this tree holds (%r)" % (row["id"], source.get("path"))]
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != source.get("sha256"):
@@ -173,7 +173,8 @@ def _window_problems(row, at, today):
     except (KeyError, TypeError, ValueError):
         return ["%s states no document signer or MSO window" % row["id"]]
     if not (ds_from <= signed <= ds_until and signed <= mso_from < mso_until):
-        return ["%s's MSO is not signed inside its document signer's validity, before its own" % row["id"]]
+        return ["%s's dates are out of order: the MSO must be signed inside the document signer's validity, at "
+                "or before its own validity starts, and its validity must end after it starts" % row["id"]]
     if row.get("expect") == "accepted" and not (ds_from <= at < ds_until < today and mso_from <= at
                                                 and today < mso_until):
         return ["%s no longer separates the instant from the run date: its document signer and MSO must be valid at "

@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
-"""test_agree.py -- agree.py's judge passes a row set both verifiers judged as each row expects, and
-fails each way it can break.
+"""test_agree.py -- agree.py passes a row set both verifiers judged as each row expects, and fails on
+each broken row set, OID4VCgo verdict file and exit status made here; agree-gate.sh, the workflow's
+step, passes only when agree.py exits 0 and prints its one PASS line and no FAIL line.
 
 The rows and both sides' verdicts, at the instant and at the run date, are made here, with two outside
-vector files in a scratch directory; no witness run, no cryptography, no network. mdoc-witness.yml
-runs this before the witness.
+vector files in a scratch directory; no witness run, no cryptography, no network. main runs here with
+this repository's verdicts given as fixed ones. mdoc-witness.yml runs this before the witness.
 
     python3 -I lab/interop/mdoc/witness-oid4vcgo/test_agree.py
 """
+import contextlib
 import copy
 import datetime
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("witness_agree", os.path.join(HERE, "agree.py"))
@@ -103,7 +108,11 @@ class AgreeTests(unittest.TestCase):
         return next(row for row in self.fixture["rows"] if row["id"] == row_id)
 
     def assertFails(self, needle):
-        lines, problems = self.judged()
+        # The judge reports a broken row set as a problem; raising on one is a failure here, not an error.
+        try:
+            lines, problems = self.judged()
+        except Exception as error:
+            self.fail("the judge raised %r where a problem naming %r was expected" % (error, needle))
         self.assertTrue(any(needle in problem for problem in problems), "no problem names %r: %r" % (needle, problems))
         return lines
 
@@ -146,6 +155,10 @@ class AgreeTests(unittest.TestCase):
         self.ours["CONTROL-ANOTHER-ORIGIN"] = {"outcome": "refused", "code": "hpke", "error": "something else"}
         self.assertFails("CONTROL-ANOTHER-ORIGIN: Polaris refused it at hpke")
         self.setUp()
+        self.ours["CONTROL-ANOTHER-ORIGIN"] = {"outcome": "refused", "code": "malformed",
+                                               "error": "the check does not open here"}
+        self.assertFails("CONTROL-ANOTHER-ORIGIN: Polaris refused it at malformed")
+        self.setUp()
         self.theirs[NOT_YET] = {"outcome": "refused", "error": "mdocdcapi: mdoc: the MSO is not yet valid"}
         self.assertFails(NOT_YET + ": OID4VCgo refused it with")
         self.setUp()
@@ -163,6 +176,11 @@ class AgreeTests(unittest.TestCase):
         self.ours["CONTROL-ANOTHER-KEY"] = {"outcome": "error", "error": "KeyError: 'session'"}
         self.assertFails("ANNEXC-REAL-001: no verdict from OID4VCgo")
         self.assertFails("CONTROL-ANOTHER-KEY: Polaris gave no verdict")
+
+    def test_two_verdicts_that_are_no_outcome_do_not_count_as_agreeing(self):
+        self.ours["ANNEXC-REAL-001"] = self.theirs["ANNEXC-REAL-001"] = {"outcome": "error", "error": "a panic"}
+        lines = self.assertFails("ANNEXC-REAL-001: OID4VCgo gave no verdict")
+        self.assertTrue(lines[-1].startswith("ROWS 7  BOTH-AGREE 6  BOTH-AS-EXPECTED 6  "), lines[-1])
 
     def test_a_verdict_on_a_row_the_file_does_not_hold_fails(self):
         self.theirs["CONTROL-SOMETHING-ELSE"] = {"outcome": "refused"}
@@ -204,10 +222,46 @@ class AgreeTests(unittest.TestCase):
         self.assertFails("is not the one its SHA-256 names")
         self.row("ANNEXC-REAL-001")["source"]["path"] = "testdata/absent.json"
         self.assertFails("copies no file this tree holds")
+        # The same bytes, so the same SHA-256, in a file outside the tree: named by its absolute path and by a
+        # path that climbs out of the tree.
+        self.setUp()
+        source = self.row("ANNEXC-REAL-001")["source"]
+        outside = pathlib.Path(tempfile.mkdtemp()) / "vector.json"
+        outside.write_bytes((self.repo / source["path"]).read_bytes())
+        for path in (str(outside), os.path.relpath(outside, self.repo)):
+            with self.subTest(path=path):
+                source["path"] = path
+                self.assertFails("copies no file this tree holds")
+
+    def test_a_copied_member_absent_from_both_the_row_and_its_file_fails(self):
+        # Absent from both, the two compare equal (None == None): the row then copies nothing from its file.
+        for field, member in agree.COPIED:
+            with self.subTest(field):
+                self.setUp()
+                row = self.row("ANNEXC-REAL-001")
+                path = self.repo / row["source"]["path"]
+                vector = json.loads(path.read_bytes())
+                parent = vector
+                for name in member[:-1]:
+                    parent = parent[name]
+                del parent[member[-1]]
+                raw = json.dumps(vector).encode()
+                path.write_bytes(raw)
+                row["source"]["sha256"] = hashlib.sha256(raw).hexdigest()
+                del row[field]
+                self.assertFails("ANNEXC-REAL-001's %s is not its file's %s" % (field, ".".join(member)))
 
     def test_a_window_row_whose_dates_no_longer_separate_the_instant_from_the_run_date_fails(self):
-        apart, unsigned = " no longer separates the instant from the run date", "'s MSO is not signed inside"
+        apart, unsigned = " no longer separates the instant from the run date", "'s dates are out of order"
         cases = ((VALID, [("document_signer", "not_after", "2027-01-01T00:00:00Z")], VALID + apart),
+                 (VALID, [("document_signer", "not_before", "2026-05-01T00:00:00Z"),
+                          ("document_signer", "not_after", "2026-05-31T00:00:00Z"),
+                          ("mso", "signed", "2026-05-15T00:00:00Z"), ("mso", "valid_from", "2026-05-15T00:00:00Z")],
+                  VALID + apart),
+                 (NOT_YET, [("document_signer", "not_after", "2026-10-01T00:00:00Z")], NOT_YET + apart),
+                 (VALID, [("mso", "signed", "2026-07-02T00:00:00Z"), ("mso", "valid_from", "2026-07-02T00:00:00Z")],
+                  VALID + unsigned),
+                 (VALID, [("mso", "valid_until", "2026-06-01T11:00:00Z")], VALID + unsigned),
                  (VALID, [("mso", "valid_until", "2026-07-01T12:00:00Z")], VALID + apart),
                  (VALID, [("mso", "valid_from", "2026-06-01T12:30:00Z")], VALID + apart),
                  (NOT_YET, [("document_signer", "not_before", "2026-12-01T00:00:00Z"),
@@ -257,6 +311,8 @@ class AgreeTests(unittest.TestCase):
     def test_a_control_of_a_row_not_both_accept_or_a_row_of_no_kind_fails(self):
         self.row("CONTROL-ANOTHER-KEY")["of"] = NOT_YET
         self.assertFails("CONTROL-ANOTHER-KEY is a control of %r" % NOT_YET)
+        self.row("CONTROL-ANOTHER-KEY")["of"] = "NO-SUCH-ROW"
+        self.assertFails("CONTROL-ANOTHER-KEY is a control of 'NO-SUCH-ROW'")
         self.setUp()
         self.row("CONTROL-ANOTHER-KEY")["kind"] = "extra"
         self.assertFails("CONTROL-ANOTHER-KEY is of kind 'extra'")
@@ -282,6 +338,73 @@ class AgreeTests(unittest.TestCase):
         self.assertEqual(agree.read_theirs(path), ({"instant": {"A": {"id": "A", "when": "instant", "outcome": "refused"}},
                                                     "run_date": {"A": {"id": "A", "when": "run_date",
                                                                        "outcome": "accepted"}}}, []))
+
+    def test_main_exits_1_and_prints_fail_on_a_wrong_verdict_or_a_broken_verdict_file(self):
+        # main as the workflow runs it, over a rows file and OID4VCgo's verdict file, with this repository's
+        # verdicts (ours(), which needs the cryptography) given as fixed ones and the outside files in self.repo.
+        directory = pathlib.Path(tempfile.mkdtemp())
+        rows_path, theirs_path = directory / "rows.json", directory / "annexc.jsonl"
+        rows_path.write_text(json.dumps(self.fixture))
+        real_judge = agree.judge
+
+        def judge(*args, **kwargs):
+            return real_judge(*args, **dict(kwargs, repo=self.repo))
+
+        def ours(fixture, when=None, only=None):
+            return copy.deepcopy(self.ours_later if when else self.ours)
+
+        def run(theirs_lines):
+            theirs_path.write_text("".join(json.dumps(line) + "\n" for line in theirs_lines))
+            out = io.StringIO()
+            with mock.patch.object(agree, "ours", ours), mock.patch.object(agree, "judge", judge), \
+                    contextlib.redirect_stdout(out):
+                status = agree.main(["agree.py", str(theirs_path), str(rows_path)])
+            return status, out.getvalue().splitlines()
+
+        clean = ([dict(verdict, id=row_id, when="instant") for row_id, verdict in self.theirs.items()]
+                 + [dict(verdict, id=row_id, when="run_date") for row_id, verdict in self.theirs_later.items()])
+        status, lines = run(clean)
+        self.assertEqual((status, lines[-1]), (0, "AGREEMENT TABLE: PASS"), lines)
+        self.assertEqual([line for line in lines if line.startswith("FAIL ")], [])
+        accepted = [dict(line, outcome="accepted", claims=CLAIMS) if line["id"] == "ANNEXC-REAL-001" else line
+                    for line in clean]
+        for name, theirs_lines, needle in (
+                ("a row their verifier judges otherwise", accepted, "ANNEXC-REAL-001: OID4VCgo accepted it"),
+                ("a verdict file judging a row twice", clean + clean[:1],
+                 "judged ANNEXC-DETERMINISTIC-001 twice at the instant"),
+                ("a verdict file with a line that is no verdict", clean + [{"WITNESS-DONE": 1}],
+                 "line %d is not a verdict line" % (len(clean) + 1))):
+            with self.subTest(name):
+                status, lines = run(theirs_lines)
+                self.assertEqual((status, lines[-1]), (1, "AGREEMENT TABLE: FAIL"), lines)
+                self.assertTrue(any(line.startswith("FAIL ") and needle in line for line in lines), lines)
+
+    def test_the_workflow_gate_passes_only_on_exit_0_with_one_pass_line_and_no_fail_line(self):
+        # agree-gate.sh, which the workflow step runs, over made-up agree.py outputs: a stand-in agree.py beside a
+        # copy of the gate prints each and exits with each status.
+        bash, bin_dir = shutil.which("bash"), tempfile.mkdtemp()
+        self.assertIsNotNone(bash, "no bash on PATH")
+        os.symlink(sys.executable, os.path.join(bin_dir, "python"))
+        env = {"PATH": os.pathsep.join((bin_dir, "/usr/bin", "/bin"))}
+        cases = (("the table passes", 0, "ROW A\nAGREEMENT TABLE: PASS\n", 0),
+                 ("exit 1 under a PASS line", 1, "ROW A\nAGREEMENT TABLE: PASS\n", 1),
+                 ("exit 0 with FAIL printed", 0, "ROW A\nFAIL A: OID4VCgo accepted it\nAGREEMENT TABLE: FAIL\n", 1),
+                 ("exit 0 with no table line", 0, "ROW A\n", 1),
+                 ("exit 0 with nothing printed", 0, "", 1),
+                 ("a FAIL line beside a PASS line", 0, "FAIL A: no verdict\nAGREEMENT TABLE: PASS\n", 1),
+                 ("two PASS lines", 0, "AGREEMENT TABLE: PASS\nAGREEMENT TABLE: PASS\n", 1),
+                 ("a PASS line that is not the whole line", 0, "AGREEMENT TABLE: PASSED\n", 1))
+        for name, status, text, want in cases:
+            with self.subTest(name):
+                directory = tempfile.mkdtemp()
+                shutil.copy(os.path.join(HERE, "agree-gate.sh"), directory)
+                with open(os.path.join(directory, "agree.py"), "w") as handle:
+                    handle.write("import sys\nsys.stdout.write(%r)\nsys.exit(%d)\n" % (text, status))
+                run = subprocess.run([str(bash), os.path.join(directory, "agree-gate.sh"), "annexc.jsonl"],
+                                     capture_output=True, text=True, env=env)
+                self.assertEqual(run.returncode, want, run.stdout + run.stderr)
+                self.assertTrue(run.stdout.startswith(text), run.stdout)
+                self.assertEqual(run.stdout.rstrip("\n").endswith("agree-gate: PASS"), want == 0, run.stdout)
 
     def test_a_wrong_argument_count_exits_2(self):
         run = [sys.executable, "-I", os.path.join(HERE, "agree.py")]

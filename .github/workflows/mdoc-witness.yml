@@ -15,9 +15,11 @@
 # responses, with OID4VCgo's mdocdcapi.VerifyResponse (annexc/main.go), and agree.py sets each
 # verdict beside this repository's at the rows' instant, failing unless both are each row's
 # expected one, refused at the stage the row names; each window row is judged again at the run
-# date, where both must give the other verdict (test_agree.py, run first, shows agree.py failing
-# each way it can break). A change to the package's verifier that moves an Annex C verdict is red
-# on its own pull request too.
+# date, where both must give the other verdict. agree-gate.sh runs agree.py and passes only on its
+# exit 0 with the line AGREEMENT TABLE: PASS and no FAIL line (test_agree.py, run first, shows
+# agree.py failing on each broken row set, verdict file and exit status it makes, and the gate on
+# each made-up output). A change to the package's verifier that moves an Annex C verdict is red on
+# its own pull request too.
 # ============================================================================
 name: mdoc witness (OID4VCgo judges the mdoc vectors)
 
@@ -61,7 +63,7 @@ jobs:
       - name: The row check fails each way it can break
         run: python -I lab/interop/mdoc/witness-oid4vcgo/test_check.py
 
-      - name: The agreement check fails each way it can break
+      - name: The agreement check and its gate fail on each broken case their tests make
         run: python -I lab/interop/mdoc/witness-oid4vcgo/test_agree.py
 
       - name: Build and run the witness (the Go module proxy in phase 1 only)
@@ -78,4 +80,4 @@ jobs:
         run: pip install --require-hashes -r lab/interop/requirements.txt
 
       - name: Every Annex C row judged by both verifiers as the row says
-        run: python -I lab/interop/mdoc/witness-oid4vcgo/agree.py "$RUNNER_TEMP/witness/annexc.jsonl"
+        run: lab/interop/mdoc/witness-oid4vcgo/agree-gate.sh "$RUNNER_TEMP/witness/annexc.jsonl"
