@@ -501,8 +501,18 @@ def seconds(n):
     return datetime.timedelta(seconds=n)
 
 
-def x509_name(cn):
-    return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+#: The countryName of every certificate here: a user-assigned ISO 3166-1 code, the one the corpus uses.
+#: An mDL's IACA and document signer each carry one, and the same (ISO/IEC 18013-5 9.3.3, Tables B.1
+#: and B.3).
+COUNTRY = "ZZ"
+
+
+def x509_name(cn, country=COUNTRY, state=None):
+    """A subject: countryName (None leaves it out), stateOrProvinceName when given, commonName."""
+    attributes = [x509.NameAttribute(NameOID.COUNTRY_NAME, country)] if country else []
+    if state:
+        attributes.append(x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, state))
+    return x509.Name(attributes + [x509.NameAttribute(NameOID.COMMON_NAME, cn)])
 
 
 def key_usage(*, sign=False, cert_sign=False, encipher=False):
@@ -512,10 +522,12 @@ def key_usage(*, sign=False, cert_sign=False, encipher=False):
 
 
 def make_cert(cn, public_key, issuer_cn, issuer_key, *, ca=None, path_length=None, usage=None, eku=None,
-              ski=False, not_before=None, not_after=None, extra=()):
+              ski=False, not_before=None, not_after=None, extra=(), subject=None, issuer=None):
     """One certificate. `ca` None states no basicConstraints; `usage` is "sign", "ca", "tls" or
-    None (no keyUsage); `eku` a list of OIDs or None; `extra` further (extension, critical) pairs."""
-    builder = (x509.CertificateBuilder().subject_name(x509_name(cn)).issuer_name(x509_name(issuer_cn))
+    None (no keyUsage); `eku` a list of OIDs or None; `extra` further (extension, critical) pairs;
+    `subject` and `issuer` a whole Name in place of x509_name(cn) and x509_name(issuer_cn)."""
+    builder = (x509.CertificateBuilder().subject_name(subject or x509_name(cn))
+               .issuer_name(issuer or x509_name(issuer_cn))
                .public_key(public_key).serial_number(x509.random_serial_number())
                .not_valid_before(not_before or BOOT - days(1))
                .not_valid_after(not_after or BOOT + days(365)))
@@ -534,10 +546,11 @@ def make_cert(cn, public_key, issuer_cn, issuer_key, *, ca=None, path_length=Non
     return builder.sign(issuer_key, hashes.SHA256())
 
 
-def make_root(cn="Test IACA", *, path_length=0, **kw):
+def make_root(cn="Test IACA", *, path_length=0, name=None, **kw):
+    """A self-signed IACA; `name` a whole Name for its subject and issuer."""
     key = ec.generate_private_key(P256)
     return key, make_cert(cn, key.public_key(), cn, key, ca=True, path_length=path_length, usage="ca",
-                          ski=True, **kw)
+                          ski=True, subject=name, issuer=name, **kw)
 
 
 def make_ca(cn, issuer_cn, issuer_key, *, path_length=0, **kw):
@@ -1199,8 +1212,8 @@ class DeviceResponseTests(MdocCase):
         self.assertEqual(v.reason, "")
         self.assertEqual(v.claims, {MDL_NS: {"family_name": "Mustermann", "age_over_21": True}})
         self.assertEqual(v.disclosed, frozenset(((MDL_NS, "family_name"), (MDL_NS, "age_over_21"))))
-        self.assertEqual(v.issuer_subject, "CN=Test Document Signer")
-        self.assertEqual(v.issuer_anchor, "CN=Test IACA")
+        self.assertEqual(v.issuer_subject, "CN=Test Document Signer,C=ZZ")
+        self.assertEqual(v.issuer_anchor, "CN=Test IACA,C=ZZ")
         self.assertEqual(v.revocation["state"], "no_status_claim")
         self.assertIs(v.revocation["checked"], False)
 
@@ -1228,6 +1241,94 @@ class DeviceResponseTests(MdocCase):
                 self.assertIn("org.iso.18013.5.1.mDL", v.reason)
                 # The control: the profile is the mDL's alone. The same certificate signs a PID.
                 self.accepted(mint(doctype=PID, items=pid_items, ds=ds, ds_key=key))
+
+    # ---- the issuer's country and state (ISO/IEC 18013-5 9.3.3, Tables B.1 and B.3; 7.2.1)
+
+    @staticmethod
+    def issuer(iaca_country=COUNTRY, iaca_state=None, ds_country=COUNTRY, ds_state=None):
+        """(the roots, the DS key, the DS): an IACA and a document signer under it, each with the
+        countryName and stateOrProvinceName given (None leaves one out)."""
+        root_key, root = make_root("Region IACA", name=x509_name("Region IACA", iaca_country, iaca_state))
+        ds_key, ds = make_ds(root_key, subject=x509_name("Region DS", ds_country, ds_state), issuer=root.subject)
+        return [IacaRoot(root, [MDL, PID])], ds_key, ds
+
+    def test_the_mdl_ds_names_its_iacas_country(self):
+        pid_items = (el("family_name", "x", PID),)
+        for words, names in (("countryName", {"ds_country": None}),
+                             ("countryName", {"ds_country": "XA"}),
+                             ("countryName", {"iaca_country": None, "ds_country": None}),
+                             ("countryName", {"iaca_country": None}),
+                             ("stateOrProvinceName", {"iaca_state": "ZZ-AA"}),
+                             ("stateOrProvinceName", {"iaca_state": "ZZ-AA", "ds_state": "ZZ-BB"})):
+            with self.subTest(names=names):
+                roots, key, ds = self.issuer(**names)
+                v = self.refused("issuer_key", words, mint(ds=ds, ds_key=key), roots=roots)
+                self.assertIn("org.iso.18013.5.1.mDL", v.reason)
+                # The control: the rule is the mDL's alone. The same certificates sign a PID.
+                self.accepted(mint(doctype=PID, items=pid_items, ds=ds, ds_key=key), roots=roots)
+        # The repaired ones: the same country in both; the IACA's state in the DS too.
+        for names in ({}, {"iaca_state": "ZZ-AA", "ds_state": "ZZ-AA"},
+                      # A DS may name a state its IACA does not.
+                      {"ds_state": "ZZ-AA"}):
+            with self.subTest(repaired=names):
+                roots, key, ds = self.issuer(**names)
+                self.accepted(mint(ds=ds, ds_key=key), roots=roots)
+
+    def test_an_mdls_issuing_elements_name_its_document_signer(self):
+        cases = (("issuing_country", "XA", {}, "issuing_country"),
+                 ("issuing_country", 1, {}, "issuing_country"),
+                 ("issuing_jurisdiction", "ZZ-BB", {"iaca_state": "ZZ-AA", "ds_state": "ZZ-AA"},
+                  "issuing_jurisdiction"),
+                 ("issuing_jurisdiction", 1, {"iaca_state": "ZZ-AA", "ds_state": "ZZ-AA"},
+                  "issuing_jurisdiction"))
+        for element, value, names, words in cases:
+            with self.subTest(element=element, value=value):
+                roots, key, ds = self.issuer(**names)
+                items = DEFAULT_ITEMS + (el(element, value),)
+                self.refused("issuing_authority", words, mint(items=items, ds=ds, ds_key=key), roots=roots)
+                # The control: the same element in another namespace is not this rule's.
+                self.accepted(mint(items=DEFAULT_ITEMS + (el(element, value, "org.example.other"),), ds=ds,
+                                   ds_key=key), roots=roots)
+        accepted = (("issuing_country", COUNTRY, {}),
+                    ("issuing_jurisdiction", "ZZ-AA", {"iaca_state": "ZZ-AA", "ds_state": "ZZ-AA"}),
+                    # No stateOrProvinceName in the DS: issuing_jurisdiction has nothing to be held to.
+                    ("issuing_jurisdiction", "ZZ-AA", {}))
+        for element, value, names in accepted:
+            with self.subTest(accepted=element, names=names):
+                roots, key, ds = self.issuer(**names)
+                v = self.accepted(mint(items=DEFAULT_ITEMS + (el(element, value),), ds=ds, ds_key=key), roots=roots)
+                self.assertEqual(v.claims[MDL_NS][element], value)
+        # The PID is not this rule's: its issuing_country is not held to the DS.
+        pid = mint(doctype=PID, items=(el("issuing_country", "XA", PID),))
+        self.accepted(pid)
+        # Nor is a PID that discloses the mDL namespace's issuing elements: the rule is the mDL docType's.
+        for element, value in (("issuing_country", "XA"), ("issuing_jurisdiction", "ZZ-BB")):
+            with self.subTest(pid_discloses=element):
+                roots, key, ds = self.issuer(iaca_state="ZZ-AA", ds_state="ZZ-AA")
+                self.accepted(mint(doctype=PID, items=(el(element, value, MDL_NS),), ds=ds, ds_key=key), roots=roots)
+
+    def test_the_issuing_elements_are_judged_after_their_digest_and_before_the_device(self):
+        wrong = DEFAULT_ITEMS + (el("issuing_country", "XA"),)
+
+        def swap_value(name_spaces):
+            # The item is re-encoded with another value after the MSO signed its digest.
+            for n, tagged in enumerate(name_spaces[MDL_NS]):
+                item = cbor2.loads(tagged.value)
+                if item["elementIdentifier"] == "issuing_country":
+                    item["elementValue"] = "XB"
+                    name_spaces[MDL_NS][n] = cbor2.CBORTag(24, cbor2.dumps(item))
+        self.refused("digest", "does not match the digest", mint(items=wrong, edit_items=swap_value))
+        # A device signature over other bytes: refused at the device when the element is right, and the
+        # element's refusal comes first when it is not.
+        def elsewhere(key, signed, hash_cls):
+            return raw_signature(key, signed + b"\x00", hash_cls)
+        self.refused("device_signature", "does not verify", mint(device_signature=elsewhere))
+        self.refused("issuing_authority", "issuing_country", mint(items=wrong, device_signature=elsewhere))
+
+    def test_a_pid_whose_certificates_name_no_country_is_accepted(self):
+        roots, key, ds = self.issuer(iaca_country=None, ds_country=None)
+        self.accepted(mint(doctype=PID, items=(el("family_name", "x", PID),), ds=ds, ds_key=key), roots=roots)
+        self.refused("issuer_key", "countryName", mint(ds=ds, ds_key=key), roots=roots)
 
     def chain_of(self, length, *, root_path_length=None):
         """A root, `length` CA certificates under it one below the other, and a DS under the last."""
@@ -1486,9 +1587,9 @@ class DeviceResponseTests(MdocCase):
         self.refused("issuer_key", "does not chain to any IACA root configured for",
                      mint(ds=other_ds, ds_key=other_ds_key), roots=roots)
         # The controls: each under its own root.
-        self.assertEqual(self.accepted(mint(), roots=roots).issuer_anchor, "CN=Test IACA")
+        self.assertEqual(self.accepted(mint(), roots=roots).issuer_anchor, "CN=Test IACA,C=ZZ")
         self.assertEqual(self.accepted(mint(doctype=PID, items=pid_items, ds=other_ds, ds_key=other_ds_key),
-                                       roots=roots).issuer_anchor, "CN=Other IACA")
+                                       roots=roots).issuer_anchor, "CN=Other IACA,C=ZZ")
 
     def test_a_root_sent_in_the_response_is_never_trusted(self):
         root_key, root = make_root(cn="Sent Root")

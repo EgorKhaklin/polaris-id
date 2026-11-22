@@ -21,6 +21,7 @@ import ipaddress
 import json
 import os
 import random
+import re
 import shutil
 import socket
 import ssl
@@ -1514,8 +1515,19 @@ class StatusFetchTests(unittest.TestCase):
     def test_resolving_a_name_is_inside_the_total(self):
         started = time.monotonic()
         with self.hanging_resolver(3, self.LOOPBACK):
-            self.refused_with(lambda: status_fetch.fetch_status_list(
-                "https://status.example/list", total=0.2, timeout=5), "more than 0.2 seconds")
+            with self.assertRaises(ValueError) as refused:
+                status_fetch.fetch_status_list("https://status.example/list", total=0.2, timeout=5)
+        # The refusal names a bound in seconds: what was left of the 0.2 second total when resolution
+        # began (the resolver's refusal), or the total itself when its deadline passed first. The time
+        # spent before resolution varies with load, so the number is bounded, not matched: one run at
+        # a load average near 6 named 0.198, and a resolver reached after the total has passed, before
+        # the deadline's timer fires, is given no time and names 0. Resolution given a fresh budget
+        # instead of the time left waits out the resolver's 3 seconds, and the bound on the time fails.
+        said = str(refused.exception)
+        named = re.fullmatch(r"resolving status\.example took more than ([0-9.eE+-]+) seconds"
+                             r"|the status list took more than ([0-9.eE+-]+) seconds to arrive", said)
+        self.assertIsNotNone(named, said)
+        self.assertTrue(0 <= float(named.group(1) or named.group(2)) <= 0.2, said)
         self.assertLess(time.monotonic() - started, 0.2 + 0.6)
 
     def test_a_name_that_does_not_resolve_is_refused(self):

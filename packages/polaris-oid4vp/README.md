@@ -590,8 +590,8 @@ polaris-oid4vp serve --pki ./pki --port 9443 --experimental --format mso_mdoc \
   for it, the object is inside its validity window, and the key it names signed this session's
   transcript, which the verifier builds from its own request (OpenID4VP 1.0, B.2.6.1).
 - A refusal names the one check that made it: `malformed`, `doctype`, `issuer_signature`,
-  `issuer_key`, `mso`, `credential_validity`, `digest`, `device_auth`, `device_key`,
-  `device_namespaces` or `device_signature`. `malformed` includes a DeviceResponse over 512 KiB.
+  `issuer_key`, `mso`, `credential_validity`, `digest`, `issuing_authority`, `device_auth`,
+  `device_key`, `device_namespaces` or `device_signature`. `malformed` includes a DeviceResponse over 512 KiB.
   Each CBOR decode refuses arrays, maps and tags nested more than 32 deep, an array or map whose
   head states more than 1024 entries, and more than 4096 data items, under the check of the part
   it reads: `malformed` for the DeviceResponse itself.
@@ -625,11 +625,11 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_serve test_cli test_conformance_capture test_status test_mdoc test_annex_c
 ```
 
-- 1254 tests in nine files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1258 tests in nine files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 398 refusals accept and requires a
-  test to fail: 394 are caught, and the 4 survivors are declared with their reasons. It also makes
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 399 refusals accept and requires a
+  test to fail: 395 are caught, and the 4 survivors are declared with their reasons. It also makes
   142 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and

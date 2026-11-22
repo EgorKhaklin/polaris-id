@@ -26,6 +26,8 @@ THE CHECKS, in order, each with the code a refusal carries:
     credential_validity  outside validFrom to validUntil, or signed ahead of the clock
     digest               an item that is not one, does not match its signed digest, repeats a
                          digestID or an element, or carries a salt under 16 bytes
+    issuing_authority    an mDL's disclosed issuing_country or issuing_jurisdiction is not its
+                         document signer's countryName or stateOrProvinceName
     device_auth          no device signature, a device MAC, or a signature header refused
     device_key           the MSO's device key is not an EC2 key on P-256 or P-384
     device_namespaces    device-signed elements, which this verifier does not read
@@ -35,7 +37,8 @@ TRUST COMES FROM CONFIGURATION ONLY. An `IacaRoot` is a certificate bound to the
 may sign. No root configured for a document's docType, and the document is refused; a root
 carried in the response is never one. The chain is judged by `sdjwt.py`'s path rules, the
 ones an SD-JWT VC's `x5c` is held to, and an mDL adds its own: its signer is issued directly
-by the IACA and carries a SubjectKeyIdentifier and the id-mdl-ds extended key usage.
+by the IACA, carries a SubjectKeyIdentifier and the id-mdl-ds extended key usage, and names the
+IACA's countryName, and its stateOrProvinceName when the IACA carries one.
 
 THE TRANSCRIPT IS THE VERIFIER'S. `redirect_session_transcript` builds OpenID4VP 1.0 B.2.6.1
 from the request's own client_id, nonce, response_uri and the thumbprint of its response
@@ -68,6 +71,8 @@ MAX_DEVICE_RESPONSE_BYTES = 512 * 1024
 #: The docType whose document signer certificate has a profile of its own.
 MDL_DOCTYPE = "org.iso.18013.5.1.mDL"
 ID_MDL_DS = "1.0.18013.5.1.2"
+#: The mDL's namespace, whose issuing_country and issuing_jurisdiction name its issuer (ISO/IEC 18013-5 7.2.1).
+MDL_NAMESPACE = "org.iso.18013.5.1"
 
 #: The shortest `random` an IssuerSignedItem may carry. A shorter salt lets a verifier that
 #: holds the digest of a withheld element guess its value.
@@ -466,6 +471,12 @@ def _judge(device_response, transcript, roots, doctype, now, max_skew_seconds):
     # ---- what was disclosed, each item against its signed digest
     elements, claims = _disclosed(issuer_signed, value_digests, digest)
 
+    # ---- whose document it says it is: an mDL's issuing elements, once their digests matched
+    if doc_type == MDL_DOCTYPE:
+        why = _issuing_authority_refusal(elements, leaf)
+        if why:
+            raise _Refused("issuing_authority", why)
+
     # ---- who presents it: the device signature, under the MSO's key, over this session
     _device_signature(device_signed, mso, transcript, doc_type)
 
@@ -549,15 +560,23 @@ def _document_signer(issuer_auth, roots, doc_type, now):
         raise _Refused("issuer_key", "the document signer certificate does not chain to any IACA root configured "
                                      "for docType %s" % _show(doc_type))
     if doc_type == MDL_DOCTYPE:
-        why = _mdl_profile_refusal(leaf, intermediates)
+        why = _mdl_profile_refusal(leaf, intermediates, anchor)
         if why:
             raise _Refused("issuer_key", why)
     return leaf, anchor
 
 
-def _mdl_profile_refusal(leaf, intermediates):
+def _subject_values(certificate, oid):
+    """The values of a certificate subject's attributes of type `oid`, in their order."""
+    return [attribute.value for attribute in certificate.subject.get_attributes_for_oid(oid)]
+
+
+def _mdl_profile_refusal(leaf, intermediates, iaca):
     """"" when the document signer certificate meets the mDL profile, else why not: issued
-    directly by the IACA, with a SubjectKeyIdentifier and the id-mdl-ds extended key usage."""
+    directly by the IACA, with a SubjectKeyIdentifier and the id-mdl-ds extended key usage, and
+    naming the IACA's countryName, and its stateOrProvinceName when the IACA carries one
+    (ISO/IEC 18013-5 9.3.3, Tables B.1 and B.3). OID4VCgo's checkSignerNamesItsIACA makes the
+    same two comparisons."""
     if intermediates:
         return ("the document signer certificate of an %s is issued directly by its IACA, and this x5chain "
                 "carries %d CA certificate(s) between them" % (MDL_DOCTYPE, len(intermediates)))
@@ -573,6 +592,39 @@ def _mdl_profile_refusal(leaf, intermediates):
     if ID_MDL_DS not in usages:
         return ("the document signer certificate's extended key usage does not name id-mdl-ds (%s), which the "
                 "signer of an %s carries" % (ID_MDL_DS, MDL_DOCTYPE))
+    iaca_country = _subject_values(iaca, x509.NameOID.COUNTRY_NAME)
+    if not iaca_country:
+        return ("the IACA root names no countryName, which the IACA of an %s and its document signer each carry"
+                % MDL_DOCTYPE)
+    country = _subject_values(leaf, x509.NameOID.COUNTRY_NAME)
+    if country != iaca_country:
+        return ("the document signer certificate's countryName is %s and its IACA's is %s: the signer of an %s "
+                "names its IACA's" % (_show(country), _show(iaca_country), MDL_DOCTYPE))
+    iaca_state = _subject_values(iaca, x509.NameOID.STATE_OR_PROVINCE_NAME)
+    state = _subject_values(leaf, x509.NameOID.STATE_OR_PROVINCE_NAME)
+    if iaca_state and state != iaca_state:
+        return ("the document signer certificate's stateOrProvinceName is %s and its IACA's is %s: the signer of "
+                "an %s names its IACA's" % (_show(state), _show(iaca_state), MDL_DOCTYPE))
+    return ""
+
+
+def _issuing_authority_refusal(elements, leaf):
+    """"" when an mDL's disclosed issuing_country is its document signer's countryName, and its
+    disclosed issuing_jurisdiction the document signer's stateOrProvinceName when it carries one
+    (ISO/IEC 18013-5 7.2.1), else why not. An element not disclosed is not judged. OID4VCgo's
+    checkIssuingAuthority makes the same comparisons, there in further namespaces too."""
+    for element, oid, attribute in (("issuing_country", x509.NameOID.COUNTRY_NAME, "countryName"),
+                                    ("issuing_jurisdiction", x509.NameOID.STATE_OR_PROVINCE_NAME,
+                                     "stateOrProvinceName")):
+        if (MDL_NAMESPACE, element) not in elements:
+            continue
+        names = _subject_values(leaf, oid)
+        if element == "issuing_jurisdiction" and not names:
+            continue
+        value = elements[(MDL_NAMESPACE, element)]
+        if not isinstance(value, str) or value not in names:
+            return ("the disclosed %s is %s, and the document signer certificate's %s is %s: an %s names the "
+                    "issuer whose key signed it" % (element, _show(value), attribute, _show(names), MDL_DOCTYPE))
     return ""
 
 

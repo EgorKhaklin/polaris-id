@@ -3800,7 +3800,7 @@ class MdocResponseTests(MdocVerifierCase):
         self.assertEqual(verdict.claims, {md.MDL_NS: {"age_over_21": True}})
         self.assertEqual(verdict.disclosed, frozenset({(md.MDL_NS, "age_over_21")}))
         self.assertEqual(verdict.revocation["state"], "no_status_claim")
-        self.assertEqual(verdict.issuer_anchor, "CN=Test IACA")
+        self.assertEqual(verdict.issuer_anchor, "CN=Test IACA,C=ZZ")
         self.assertFalse(verdict.vp_token_from_string)
         # The result is fetched with the redirect's code, once, as for an SD-JWT VC.
         self.assertIs(self.verifier.redeem(verdict.response_code, session.state), verdict)
@@ -4642,7 +4642,7 @@ class DcApiResponseTests(DcApiVerifierCase):
         verdict = self.accepted(self.judged(self.wallet.respond(member)))
         self.assertEqual(verdict.claims, {md.MDL_NS: {"age_over_21": True}})
         self.assertEqual(verdict.disclosed, frozenset({(md.MDL_NS, "age_over_21")}))
-        self.assertEqual(verdict.issuer_anchor, "CN=Test IACA")
+        self.assertEqual(verdict.issuer_anchor, "CN=Test IACA,C=ZZ")
         self.assertEqual(self.outstanding_dc_api(), set())
 
     def test_the_same_response_posted_again_is_refused(self):
