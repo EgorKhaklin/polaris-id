@@ -36,6 +36,7 @@ class KeygenTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-cli-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         keygen(self.tmp, "verifier.test")
         self.leaf = x509.load_pem_x509_certificate((self.tmp / FILES["client_cert"]).read_bytes())
         self.anchor = x509.load_pem_x509_certificate((self.tmp / FILES["anchor"]).read_bytes())
@@ -191,6 +192,7 @@ class KeygenTests(unittest.TestCase):
 
     def test_generating_twice_does_not_reuse_a_key(self):
         second = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-cli-"))
+        self.addCleanup(shutil.rmtree, second, ignore_errors=True)
         keygen(second, "verifier.test")
         a = verifier_from(self.tmp, "verifier.test", 9443).client_id
         b = verifier_from(second, "verifier.test", 9443).client_id
@@ -201,11 +203,13 @@ class ServeCommandTests(unittest.TestCase):
 
     def test_serve_refuses_a_directory_with_no_keys_in_it(self):
         empty = tempfile.mkdtemp(prefix="polaris-oid4vp-empty-")
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
         self.assertEqual(main(["serve", "--pki", empty]), 2)
 
     def test_the_command_is_reachable_as_a_module(self):
         """`python -m polaris_oid4vp.cli` is what the console script wraps."""
         out = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-m-"))
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
         proc = subprocess.run([sys.executable, "-m", "polaris_oid4vp.cli", "keygen",
                                "--out", str(out), "--host", "example.test"],
                               capture_output=True, text=True,
@@ -236,6 +240,7 @@ class ServeCommandTests(unittest.TestCase):
     def test_a_verifier_built_from_the_keys_completes_an_exchange(self):
         """The whole point: what keygen produces has to actually work."""
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-e2e-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         keygen(tmp, "verifier.test")
         wallet = Wallet()
         verifier = verifier_from(tmp, "verifier.test", 9443, [wallet.issuer_jwk])
@@ -248,6 +253,7 @@ class ServeCommandTests(unittest.TestCase):
         """Serving with no trusted issuer refuses everything. That is correct and is a trap,
         so the command warns rather than letting it read as a verifier that works."""
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-warn-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         keygen(tmp, "verifier.test")
         wallet = Wallet()
         verifier = verifier_from(tmp, "verifier.test", 9443)
@@ -343,6 +349,7 @@ class KeygenHeldOutTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-cli-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         keygen(self.tmp, "verifier.test")
         self.leaf = x509.load_pem_x509_certificate((self.tmp / FILES["client_cert"]).read_bytes())
         self.anchor = x509.load_pem_x509_certificate((self.tmp / FILES["anchor"]).read_bytes())
@@ -444,6 +451,7 @@ class ServeCommandHeldOutTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-serve-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         keygen(self.tmp, DEFAULT_HOST)
         from cryptography.hazmat.primitives.asymmetric import ec
         from polaris_oid4vp.jwe import b64u_encode
@@ -929,6 +937,7 @@ class ServeCommandHeldOutTests(unittest.TestCase):
         for name in FILES.values():
             with self.subTest(missing=name):
                 partial = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-part-"))
+                self.addCleanup(shutil.rmtree, partial, ignore_errors=True)
                 for other in FILES.values():
                     if other != name:
                         shutil.copy(self.tmp / other, partial / other)
@@ -1293,6 +1302,7 @@ class TransactionDataServeTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-td-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         keygen(self.tmp, DEFAULT_HOST)
 
     def _file(self, content):
@@ -1363,6 +1373,7 @@ class VerifierInfoProfileServeTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-vinfo-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         keygen(self.tmp, DEFAULT_HOST)
         self.vectors = dict(verifier_info_vectors())
 
@@ -1994,6 +2005,7 @@ class VerdictCommandTests(unittest.TestCase):
         self.v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
                             .read_text(encoding="utf-8"))
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-verdict-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.request = self._write("request.json", self.v["request"])
         self.issuers = self._write("issuers.json", {"keys": self.v["issuer_jwks"]})
 
@@ -4017,6 +4029,7 @@ class WrittenReasonTests(unittest.TestCase):
         v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
                        .read_text(encoding="utf-8"))
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-written-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         (tmp / "request.json").write_text(json.dumps(v["request"]))
         (tmp / "vp_token.json").write_text(json.dumps(v["responses"]["per_credential"]["vp_token"]))
         from test_serve import uncut
@@ -4049,6 +4062,7 @@ class WrittenReasonTests(unittest.TestCase):
         v = json.loads((here / "testdata" / "transaction-data-two-credentials.json")
                        .read_text(encoding="utf-8"))
         tmp = pathlib.Path(tempfile.mkdtemp(prefix="polaris-oid4vp-written-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         (tmp / "request.json").write_text(json.dumps(v["request"]))
         (tmp / "vp_token.json").write_text(json.dumps(v["responses"]["per_credential"]["vp_token"]))
         out, err = io.StringIO(), io.StringIO()
