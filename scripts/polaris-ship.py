@@ -184,6 +184,7 @@ VERIFICATION = [
       "python3 -m unittest lab/interop/mdoc/witness-oid4vcgo/test_check.py",
       "python3 -m unittest lab/interop/mdoc/witness-oid4vcgo/test_agree.py",
       "python3 -m unittest lab/interop/mdoc/test_verify_mdoc.py",
+      "python3 -m unittest lab/interop/mdoc/test_capture_shim.py",
       "python3 -m unittest lab/interop/altid/test_avp.py",
       "python3 scripts/polaris-mdoc-mutation-drill.py",
       "lab/interop/mdoc/witness-eudi/run.sh if a witness, a case or verify_mdoc.py changed"],
@@ -438,7 +439,7 @@ UNSHARDED_SUITES = {
     "packages/polaris-oid4vp/examples/yivi-checkin": ["test_checkin"],
     "lab/interop/mdoc/witness-eudi": ["test_witness_eudi"],
     "lab/interop/mdoc/witness-oid4vcgo": ["test_check", "test_agree"],
-    "lab/interop/mdoc": ["test_verify_mdoc"],
+    "lab/interop/mdoc": ["test_verify_mdoc", "test_capture_shim"],
     # pytest, not unittest, and the card suite is a directory discovery. Named so the
     # coverage check can see them; run them with the commands CI uses.
     "polaris_zk/witness2": ["test_witness2"],
