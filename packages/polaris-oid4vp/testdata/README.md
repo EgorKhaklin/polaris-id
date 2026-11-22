@@ -73,6 +73,19 @@ which mints with its own code rather than this package's; the private keys were 
 `TwoCredentialVectorTests` and `VerdictCommandTests` judge it at its own `at`, as the capture is
 judged at its `iat`.
 
+## transaction-data-two-entries-order.json: a vector this project made
+
+One credential query, `pay`, and two transaction_data entries naming it (a TS12 payment and an
+object of the example type `urn:example:terms-acceptance`), with one response whose key binding JWT
+lists the two hashes in the request's order and one that lists them reversed, alike in every other
+claim but the TS12 `jti`. Under `by_position` a hash names the entry at its position; under
+`in_any_order` any non-empty subset of the request's hashes, in any order, is accepted, so both
+lists pass. It was written by
+[`lab/interop/transaction-data/two_entries_order.py`](../../../lab/interop/transaction-data/two_entries_order.py),
+which mints with its own code; the private keys were discarded. `TwoEntryOrderVectorTests` judges it
+at its own `at`: this package reads a hash by its position, accepting the first and refusing the
+reversed one (`transaction_data_mismatch`).
+
 ## verifier-info/: verifier_info cases for ETSI TS 119 472-2, made by this project
 
 One JSON file per case for the opt-in `etsi-119472-2` profile (the package README's "verifier_info

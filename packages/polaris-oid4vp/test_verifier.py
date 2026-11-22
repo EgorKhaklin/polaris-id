@@ -3108,6 +3108,78 @@ class TwoCredentialVectorTests(unittest.TestCase):
         self.assertEqual(result["verdicts"]["pid"].code, "kb_freshness")
 
 
+ORDER_VECTOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata",
+                            "transaction-data-two-entries-order.json")
+
+
+class TwoEntryOrderVectorTests(unittest.TestCase):
+    """One credential binding two entries, its hashes listed in the request's order and reversed.
+    The vector was written by lab/interop/transaction-data/two_entries_order.py with its own code."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(ORDER_VECTOR, encoding="utf-8") as fh:
+            cls.v = json.load(fh)
+
+    def judge(self, response):
+        return verify_response(self.v["request"], self.v["responses"][response]["vp_token"],
+                               issuer_jwks=self.v["issuer_jwks"], now=self.v["at"])
+
+    def kb_claims(self, response):
+        """The key binding JWT's claims, read here with base64 and json."""
+        kb = self.v["responses"][response]["vp_token"]["pay"][0].rsplit("~", 1)[1]
+        body = kb.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+
+    def test_the_hashes_are_of_the_strings_as_sent(self):
+        raw = self.v["request"]["transaction_data"]
+        self.assertEqual(len(raw), 2)
+        self.assertEqual([transaction_data_hash(r) for r in raw], self.v["transaction_data_hashes"]["sha-256"])
+        h0, h1 = self.v["transaction_data_hashes"]["sha-256"]
+        self.assertNotEqual(h0, h1)
+        self.assertEqual(self.v["listed"], {"request_order": [h0, h1], "reversed": [h1, h0]})
+
+    def test_the_two_answers_differ_in_the_order_alone(self):
+        a, b = self.kb_claims("request_order"), self.kb_claims("reversed")
+        self.assertEqual(a["transaction_data_hashes"], self.v["listed"]["request_order"])
+        self.assertEqual(b["transaction_data_hashes"], self.v["listed"]["reversed"])
+        self.assertEqual(sorted(a["transaction_data_hashes"]), sorted(b["transaction_data_hashes"]))
+        self.assertNotEqual(a["jti"], b["jti"])
+        drop = ("transaction_data_hashes", "jti")
+        self.assertEqual({k: x for k, x in a.items() if k not in drop}, {k: x for k, x in b.items() if k not in drop})
+
+    def test_this_verifier_reads_a_hash_by_its_position(self):
+        """The by_position outcomes. With one credential the two transaction_data scopes agree, so
+        no scope is named."""
+        for response, outcomes in self.v["outcomes"].items():
+            with self.subTest(response=response):
+                result = self.judge(response)
+                self.assertEqual(result["expected"], {"per_credential": {"pay": [0, 1]},
+                                                      "all_entries": {"pay": [0, 1]}})
+                verdict = result["verdicts"]["pay"]
+                if outcomes["by_position"] == "accepted":
+                    self.assertTrue(result["accepted"], result["problem"])
+                    self.assertEqual(verdict.transaction_data["bound"], [0, 1])
+                    continue
+                _, qid, code = outcomes["by_position"].split()
+                self.assertFalse(result["accepted"])
+                self.assertEqual((qid, verdict.code), ("pay", code))
+                self.assertIn("transaction_data_hashes[0] is not the sha-256 hash of entry 0", verdict.reason)
+                self.assertIn("it is another entry's, so the order is not the request's", verdict.reason)
+
+    def test_in_any_order_each_answer_is_a_non_empty_subset_of_the_requests_hashes(self):
+        """The in_any_order outcomes, read off the vector's own data: the rule accepts any non-empty
+        subset of the request's hashes in any order, and each list is one (here, all of them)."""
+        wanted = set(self.v["transaction_data_hashes"]["sha-256"])
+        for response, outcomes in self.v["outcomes"].items():
+            with self.subTest(response=response):
+                self.assertEqual(outcomes["in_any_order"], "accepted")
+                listed = self.kb_claims(response)["transaction_data_hashes"]
+                self.assertTrue(listed)
+                self.assertLessEqual(set(listed), wanted)
+                self.assertEqual(len(set(listed)), len(listed))
+
+
 class VerifyResponseTests(unittest.TestCase):
     """verify_response's own refusals: a request nothing can be held to, a vp_token that does not
     answer it, and a request with no transaction_data at all."""
