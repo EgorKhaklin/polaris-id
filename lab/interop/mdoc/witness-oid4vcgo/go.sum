@@ -1,8 +1,8 @@
 github.com/fxamacker/cbor/v2 v2.10.0 h1:HVF3T5vYwLqO81ebPirWEPNv2SMrUMD3HLnKgEr6uWE=
 github.com/fxamacker/cbor/v2 v2.10.0/go.mod h1:uSwlToFuT9BZAKRxxVm3qQC8DR4tlWl7D6pf20iRYH4=
-github.com/idfoundry/fapigo v0.73.0 h1:jbWc0CG2XNlm8i5CEUSoEg0mlM8Gocy03CF9gzohte0=
-github.com/idfoundry/fapigo v0.73.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
-github.com/idfoundry/oid4vcgo v0.78.0 h1:Vd09fk+87Urz9/8Q8kfRhcNaeinhKotuXf/hcWF/A4o=
-github.com/idfoundry/oid4vcgo v0.78.0/go.mod h1:EDdS5tv8Eodcx798ovxN8BrWR4n1o0CXqvlqF7D9iIM=
+github.com/idfoundry/fapigo v0.78.0 h1:XAylSzmjeUncK8S9tLoNeWDEKJYRbVlCBw6HDZlUIPQ=
+github.com/idfoundry/fapigo v0.78.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
+github.com/idfoundry/oid4vcgo v0.85.0 h1:U9paUd5+i80v5g6FwaXNzcgxClh4zjfyD6Dy/RJqUho=
+github.com/idfoundry/oid4vcgo v0.85.0/go.mod h1:TxMcVPqsteg86B5qzGPvyOuOGm6Xyrho9jDf/cn36Dw=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
