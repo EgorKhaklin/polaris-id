@@ -653,12 +653,24 @@ class Tunnel(unittest.TestCase):
         s.close()
         return port
 
-    def start(self, env):
+    #: A stand-in for the command after --: it serves 200 on the port it is given and says the URL it was given.
+    STAND_IN = ("import http.server, sys\n"
+                "class H(http.server.BaseHTTPRequestHandler):\n"
+                "    def do_GET(self):\n"
+                "        self.send_response(200); self.end_headers()\n"
+                "    def log_message(self, *a):\n"
+                "        pass\n"
+                "s = http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), H)\n"
+                "print('ready: a command for %s' % sys.argv[2], flush=True)\n"
+                "s.serve_forever()\n")
+
+    def start(self, env, command=None):
         """run_tunnel.sh in a session of its own, on a free port (never the default one a real run uses). Whatever
         the script leaves behind, its whole process group is killed at cleanup, which runs after the test's own
-        assertions have judged what the script stopped by itself."""
+        assertions have judged what the script stopped by itself. `command(port)`, when given, is what follows --."""
         port = self.free_port()
-        p = subprocess.Popen(["bash", os.path.join(HERE, "run_tunnel.sh"), "--port", str(port)], env=env,
+        p = subprocess.Popen(["bash", os.path.join(HERE, "run_tunnel.sh"), "--port", str(port)]
+                             + (["--"] + command(port) if command else []), env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         self.addCleanup(self.kill_group, p)
         return p, port
@@ -684,10 +696,10 @@ class Tunnel(unittest.TestCase):
         self.assertIn("production", out)
         self.assertFalse(os.path.exists(self.env["FAKE_CF_PIDFILE"]))
 
-    def stopped_by(self, stop):
+    def stopped_by(self, stop, command=None):
         """Start the script, wait until it serves (the control: a page answers and the tunnel log exists), stop it
         with stop(p), and return its exit status and output once it has ended."""
-        p, port = self.start(self.env)
+        p, port = self.start(self.env, command)
         lines, deadline = [], time.time() + 30
         assert p.stdout is not None
         try:
@@ -700,6 +712,8 @@ class Tunnel(unittest.TestCase):
                     break
             self.assertTrue(any(x.startswith("ready:") for x in lines), lines)
             self.assertIn("for https://avp-lab-test.trycloudflare.com", lines[-1])
+            if command:  # the command's own ready line, not serve.py's
+                self.assertEqual(lines[-1], "ready: a command for https://avp-lab-test.trycloudflare.com")
             c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
             c.request("GET", "/")
             self.assertEqual(c.getresponse().status, 200)
@@ -724,6 +738,12 @@ class Tunnel(unittest.TestCase):
     def test_ctrl_c_stops_both_processes_and_deletes_the_tunnel_log(self):
         # Ctrl-C signals the whole foreground group: the script and both of its children.
         self.assertEqual(self.stopped_by(lambda p: os.killpg(p.pid, signal.SIGINT)), 130)
+
+    def test_a_command_after_dashes_runs_in_place_of_serve_and_is_stopped_alike(self):
+        """The mode lab/interop/mdoc/README.md uses: the command runs with {url} replaced by the tunnel's URL (the
+        ready line says the URL it was given), and a TERM stops it and the tunnel as it stops serve.py."""
+        command = lambda port: [sys.executable, "-c", self.STAND_IN, str(port), "{url}"]  # noqa: E731
+        self.assertEqual(self.stopped_by(lambda p: p.send_signal(signal.SIGTERM), command), 143)
 
 
 class WitnessResults(unittest.TestCase):

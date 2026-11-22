@@ -18,6 +18,7 @@ OpenID4VP 1.0 example. Three limits apply:
 |---|---|
 | [`capture.sh`](capture.sh) | Runs the first 218 lines of [`../eudi-issuer/run.sh`](../eudi-issuer/run.sh) unchanged, pinned by SHA-256: the issuer stack, the wallet build and the issuance. They run against a copy of `../eudi-issuer` whose `Issue.kt` asks for `CONFIG` (the mDL `org.iso.18013.5.1.mDL` by default, or the PID `eu.europa.ec.eudi.pid_mso_mdoc`) and whose wallet presents with [`Present.kt`](wallet/src/main/kotlin/Present.kt). `MODE=jwt` (the default) answers `polaris-oid4vp` from PyPI. `MODE=direct_post` answers the same verifier through `request_shim.py`. Everything runs in containers except the verifier (a venv). |
 | [`request_shim.py`](request_shim.py) | Runs `polaris-oid4vp serve` in-process and rewrites its request object just before signing: `direct_post` with no encryption key, and an `mso_mdoc` DCQL query. |
+| [`capture_shim.py`](capture_shim.py) | Runs `polaris-oid4vp serve`, its request objects and verdicts unchanged, and keeps each DeviceResponse it judges, for the second witnesses, in `OUT/1`, `OUT/2` and so on: the DeviceResponse, the inputs its SessionTranscript is built from (the response encryption key's public members among them), the verdict and the time. It wraps one method and returns the original's verdict; [`test_capture_shim.py`](test_capture_shim.py) holds the request object, and the verdicts on five answers (one accepted, four refused), to those of the verifier without it. |
 | [`wallet/`](wallet/) | `Present.kt` and its build: `../eudi-issuer/wallet`'s, plus walt.id's mdoc library. com.upokecenter:cbor is lifted to 4.5.6 (GHSA-fj2w-wfgv-mwq6, fixed in 4.5.1), and net.i2p.crypto:eddsa (GHSA-p53j-g8pw-4w5f, EdDSA only) is excluded. 157 components are checked against [`verification-metadata.xml`](wallet/gradle/verification-metadata.xml), and OSV-Scanner finds none of them affected. |
 | [`verify_mdoc.py`](verify_mdoc.py) | The prototype verifier, on `cbor2` and `cryptography` (its docstring lists the checks). |
 | [`witness_isomdl.py`](witness_isomdl.py), [`checks.py`](checks.py) | The second witness, and every case run through both verifiers. |
@@ -32,6 +33,20 @@ OpenID4VP 1.0 example. Three limits apply:
     /tmp/v/bin/python -I lab/interop/mdoc/verify_mdoc.py lab/interop/mdoc/capture-pid --root lab/interop/mdoc/capture-pid/iaca-root.pem
     /tmp/v/bin/python -I lab/interop/mdoc/checks.py lab/interop/mdoc/capture-pid ISOMDL_VENV/bin/python
 
+A wallet app on a phone, through a quick tunnel to a lab verifier with keys from `keygen`:
+
+    VENV/bin/polaris-oid4vp keygen --out PKI --host localhost
+    lab/interop/altid/run_tunnel.sh --port 8765 -- VENV/bin/python -I lab/interop/mdoc/capture_shim.py OUT \
+        serve --pki PKI --public-base-url '{url}' --no-local-tls --bind 127.0.0.1 --port 8765 \
+        --format mso_mdoc --experimental --doctype org.iso.18013.5.1.mDL --iaca-root IACA.pem \
+        --claim '["org.iso.18013.5.1","given_name"]' --once --result RESULT.json
+    ISOMDL_VENV/bin/python -I lab/interop/mdoc/witness_isomdl.py OUT/1 --root IACA.pem
+
+- `run_tunnel.sh` replaces `{url}` with the tunnel's https URL and stops the command and the tunnel
+  together on Ctrl-C or a TERM. `capture_shim.py` refuses an `OUT` that is not empty, so each run keeps
+  its answers apart. `serve` prints the `openid4vp:` and `haip-vp:` links the wallet opens.
+- isomdl-uniffi 0.2.0-indicio.2 refused a root PEM written in 76-character lines and read the same
+  DER at RFC 7468's 64; `openssl x509 -in A.pem -out B.pem` rewraps one with the same DER.
 - `capture.sh` uses Docker and port 9491 (`PORT`), under the compose project
   `polaris-mdoc-capture`. Hold the gate locks for it.
 - The verifiers run offline.

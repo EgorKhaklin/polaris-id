@@ -6,7 +6,10 @@
 # flow with a phone. Modelled on scripts/polaris-dev-tunnel.sh: its production refusal, its cloudflared check, and
 # its quick tunnel with no account, whose https URL it reads back. Lab only: it refuses POLARIS_ENV=production.
 #
-#   lab/interop/altid/run_tunnel.sh [--port 8765]
+#   lab/interop/altid/run_tunnel.sh [--port 8765] [-- COMMAND ...]
+#
+# With a COMMAND after --, it runs that in place of serve.py, each argument {url} replaced by the tunnel's https URL
+# (lab/interop/mdoc/README.md runs polaris-oid4vp serve through capture_shim.py so); it listens on the port given.
 #
 #   AVP_PYTHON  the interpreter for serve.py, with cbor2 and cryptography (default python3)
 #   AVP_QR_LIB  a directory holding segno, passed to serve.py --qr-lib (optional; without it the links show as text)
@@ -18,10 +21,12 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT=8765
+CMD=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --port) PORT="$2"; shift 2 ;;
-        -h|--help) sed -n '5,18p' "$0"; exit 0 ;;
+        --) shift; CMD=("$@"); break ;;
+        -h|--help) sed -n '5,20p' "$0"; exit 0 ;;
         *) echo "run_tunnel: unknown argument $1" >&2; exit 2 ;;
     esac
 done
@@ -65,6 +70,16 @@ if [ -z "$URL" ]; then
     exit 1
 fi
 echo ">> public URL: $URL"
+
+if [ ${#CMD[@]} -gt 0 ]; then
+    ARGS=()
+    for a in "${CMD[@]}"; do ARGS+=("${a//\{url\}/$URL}"); done
+    "${ARGS[@]}" &
+    SV_PID=$!
+    echo ">> the given command runs behind $URL; Ctrl-C stops it and the tunnel."
+    wait "$SV_PID"
+    exit $?
+fi
 
 QR=()
 if [ -n "${AVP_QR_LIB:-}" ]; then QR=(--qr-lib "$AVP_QR_LIB"); fi

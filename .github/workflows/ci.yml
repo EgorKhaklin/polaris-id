@@ -4006,6 +4006,12 @@ jobs:
       # inputs, and the fields read before a signature decides. The vectors reach the rest.
       - name: The mdoc verifier, each malformed input refused at its own check (lab/interop/mdoc/test_verify_mdoc.py)
         run: python -m unittest lab/interop/mdoc/test_verify_mdoc.py
+      # lab/interop/mdoc/capture_shim.py keeps each DeviceResponse polaris-oid4vp serve judges, for
+      # the second witnesses, when the wallet is an app this lab cannot instrument. Its test holds
+      # that it only observes: one method replaced and put back, the verifier's own request objects
+      # and verdicts, and what it keeps rebuilds the SessionTranscript the wallet signed over.
+      - name: The mdoc capture shim only observes (lab/interop/mdoc/test_capture_shim.py)
+        run: python -m unittest lab/interop/mdoc/test_capture_shim.py
       # lab/interop/altid: an age-verification response checked against the AltID integration
       # guide's Appendix D, over its 23 vectors; the tunnel runner's cleanup; and the
       # witness table rebuilt from the recorded outputs, with its control. cbor2 and cryptography
