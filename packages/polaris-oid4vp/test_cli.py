@@ -1803,7 +1803,7 @@ class MdocServeCommandTests(_MdocServeCase):
         self.assertEqual(rc, 0, err)
         roots = seen["verifier"].iaca_roots
         self.assertEqual([r.certificate.subject.rfc4514_string() for r in roots],
-                         ["CN=Test IACA", "CN=Another IACA", "CN=A third IACA"])
+                         ["CN=Test IACA,C=ZZ", "CN=Another IACA,C=ZZ", "CN=A third IACA,C=ZZ"])
         self.assertEqual({r.doctypes for r in roots}, {frozenset([md.MDL])})
 
     def test_a_root_file_it_cannot_use_stops_it_starting(self):
