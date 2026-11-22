@@ -141,13 +141,15 @@ class CaptureShimTests(tv.MdocVerifierCase):
                          {"authentic": False, "code": verdict.code, "reason": verdict.reason})
 
     def test_a_value_that_is_not_a_device_response_is_not_kept(self):
-        """Not base64url; empty; base64url of bytes that are not CBOR; of a CBOR array; of a CBOR
-        map without a DeviceResponse's version and status. Each is refused and none is kept."""
+        """Not base64url; empty; base64url of bytes that are not CBOR; of a CBOR array or text string
+        holding both names; of a CBOR map without a DeviceResponse's version and status. Each is refused
+        and none is kept."""
         def b64u(raw):
             return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
         self.install()
-        for value in ("!!", "", b64u(b"\xff\x00"), b64u(cbor2.dumps([1, 2])),
-                      b64u(cbor2.dumps({"version": "1.0"})), b64u(cbor2.dumps({"status": 0}))):
+        for value in ("!!", "", b64u(b"\xff\x00"), b64u(cbor2.dumps(["version", "status"])),
+                      b64u(cbor2.dumps("version status")), b64u(cbor2.dumps({"version": "1.0"})),
+                      b64u(cbor2.dumps({"status": 0}))):
             with self.subTest(value=value):
                 _, (status, _, verdict) = self.answer(vp_token=lambda _, value=value: {"mdoc": [value]})
                 self.assertEqual((status, verdict.authentic), (400, False))
