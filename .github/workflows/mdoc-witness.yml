@@ -10,6 +10,14 @@
 # first, shows check.py failing each way it can break). A bump of the pinned version that changes
 # what OID4VCgo asks of its caller, or a vectors change that OID4VCgo reads otherwise, is red on its
 # own pull request.
+#
+# The same run judges lab/interop/mdoc/witness-oid4vcgo/annexc-rows.json, ISO/IEC 18013-7 Annex C
+# responses, with OID4VCgo's mdocdcapi.VerifyResponse (annexc/main.go), and agree.py sets each
+# verdict beside this repository's at the rows' instant, failing unless both are each row's
+# expected one, refused at the stage the row names; each window row is judged again at the run
+# date, where both must give the other verdict (test_agree.py, run first, shows agree.py failing
+# each way it can break). A change to the package's verifier that moves an Annex C verdict is red
+# on its own pull request too.
 # ============================================================================
 name: mdoc witness (OID4VCgo judges the mdoc vectors)
 
@@ -18,12 +26,18 @@ on:
     paths:
       - "lab/interop/mdoc/witness-oid4vcgo/**"
       - "lab/interop/negative-vectors/mdoc-vectors.json"
+      - "lab/interop/requirements.txt"
+      - "packages/polaris-oid4vp/polaris_oid4vp/**"
+      - "packages/polaris-oid4vp/testdata/annex-c/**"
       - ".github/workflows/mdoc-witness.yml"
   push:
     branches: [main]
     paths:
       - "lab/interop/mdoc/witness-oid4vcgo/**"
       - "lab/interop/negative-vectors/mdoc-vectors.json"
+      - "lab/interop/requirements.txt"
+      - "packages/polaris-oid4vp/polaris_oid4vp/**"
+      - "packages/polaris-oid4vp/testdata/annex-c/**"
       - ".github/workflows/mdoc-witness.yml"
   workflow_dispatch:
 
@@ -47,6 +61,9 @@ jobs:
       - name: The row check fails each way it can break
         run: python -I lab/interop/mdoc/witness-oid4vcgo/test_check.py
 
+      - name: The agreement check fails each way it can break
+        run: python -I lab/interop/mdoc/witness-oid4vcgo/test_agree.py
+
       - name: Build and run the witness (the Go module proxy in phase 1 only)
         env:
           OUT: ${{ runner.temp }}/witness
@@ -56,3 +73,9 @@ jobs:
         run: >-
           python -I lab/interop/mdoc/witness-oid4vcgo/check.py
           "$RUNNER_TEMP/witness/oid4vcgo.jsonl" lab/interop/negative-vectors/mdoc-vectors.json
+
+      - name: This repository's verifier's dependency, hash-pinned
+        run: pip install --require-hashes -r lab/interop/requirements.txt
+
+      - name: Every Annex C row judged by both verifiers as the row says
+        run: python -I lab/interop/mdoc/witness-oid4vcgo/agree.py "$RUNNER_TEMP/witness/annexc.jsonl"

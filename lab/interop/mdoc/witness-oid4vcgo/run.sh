@@ -4,11 +4,15 @@
 # OID4VCgo as an mdoc witness over ../../negative-vectors/mdoc-vectors.json (main.go says what it
 # calls). Writes OUT/oid4vcgo.jsonl (one line per case and per repaired twin: the verdicts, and the
 # diagnostic main.go names, which is never a verdict) and OUT/run.json. check.py holds those rows to
-# the verdicts the vectors expect; .github/workflows/mdoc-witness.yml runs both on every change to
-# this directory or to the vectors file.
+# the verdicts the vectors expect. It also runs annexc/main.go, OID4VCgo's Annex C verifier, over
+# annexc-rows.json, into OUT/annexc.jsonl (one line per row at the rows' instant, and one more per
+# window row at the run date), which agree.py sets beside this repository's verdicts.
+# .github/workflows/mdoc-witness.yml runs all three on every change to this directory, to the
+# vectors file or to the package.
 #
 #   OUT=/some/dir lab/interop/mdoc/witness-oid4vcgo/run.sh
 #   OUT=/some/dir VECTORS=/path/to/mdoc-vectors.json lab/interop/mdoc/witness-oid4vcgo/run.sh
+#   OUT=/some/dir ANNEXC_ROWS=/path/to/annexc-rows.json lab/interop/mdoc/witness-oid4vcgo/run.sh
 #
 # The module and its dependencies are go.mod and go.sum here (github.com/idfoundry/oid4vcgo at
 # the version go.mod names, which phase 1 prints). Phase 1, the only one with a network: go mod
@@ -17,7 +21,7 @@
 # run.json, and when it fails the last lines of its log are printed. Phase 2 builds the witness
 # with --network none, the module cache read-only, GOPROXY=off and -mod=readonly, so go.sum is
 # what was built. Phase 3 runs it with --network none, a read-only root, no capabilities and the
-# vectors file mounted read-only. DOCKER_CONFIG is a fresh directory seeded before any docker
+# vectors file mounted read-only, and then annexc the same way over the rows file. DOCKER_CONFIG is a fresh directory seeded before any docker
 # command, so no credential helper or keychain is consulted. The volume is deleted at the end.
 # No gate lock: no shared database, Redis or host port. Needs: docker, python3.
 set -euo pipefail
@@ -32,8 +36,11 @@ exit_trap() {  # $1 the run's exit status: kept, unless the run stopped early wi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VECTORS="${VECTORS:-$HERE/../../negative-vectors/mdoc-vectors.json}"
 [ -n "${OUT:-}" ] || { echo "set OUT to a directory for the results" >&2; exit 2; }
+ROWS="${ANNEXC_ROWS:-$HERE/annexc-rows.json}"
 [ -s "$VECTORS" ] || { echo "no vectors file at $VECTORS" >&2; exit 2; }
+[ -s "$ROWS" ] || { echo "no Annex C rows file at $ROWS" >&2; exit 2; }
 VECTORS="$(cd "$(dirname "$VECTORS")" && pwd)/$(basename "$VECTORS")"
+ROWS="$(cd "$(dirname "$ROWS")" && pwd)/$(basename "$ROWS")"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 # The Go image (read from Docker Hub's manifest index on 2026-11-16: golang:1.26, Go 1.26.11), as
@@ -69,8 +76,9 @@ echo "== phase 2: the build, no network"
 mkdir -p "$WORK/bin"
 docker run --rm --network none --read-only --tmpfs /tmp -v "$VOL":/go/pkg/mod:ro -v "$HERE":/src:ro -v "$WORK/bin":/out \
   -w /src -e GOCACHE=/tmp/gocache -e GOTOOLCHAIN=local -e GOPROXY=off -e GOFLAGS=-mod=readonly -e CGO_ENABLED=0 \
-  "$GO_IMAGE" go build -trimpath -o /out/witness .
+  "$GO_IMAGE" sh -c 'go build -trimpath -o /out/witness . && go build -trimpath -o /out/annexc ./annexc'
 [ -s "$WORK/bin/witness" ] || { echo "the witness did not build" >&2; exit 1; }
+[ -s "$WORK/bin/annexc" ] || { echo "annexc did not build" >&2; exit 1; }
 
 echo "== phase 3: the witness, no network"
 docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
@@ -80,18 +88,31 @@ n="$(python3 -I -c 'import json,sys; v=json.load(open(sys.argv[1]))["vectors"]; 
 grep -q "^WITNESS-DONE $n\$" "$WORK/oid4vcgo.out" || { echo "the witness did not finish all $n cases" >&2; exit 1; }
 sed -n 's/^WITNESS //p' "$WORK/oid4vcgo.out" > "$OUT/oid4vcgo.jsonl"
 
-python3 -I - "$OUT/run.json" "$WORK/phase1.hosts" "$GO_IMAGE" "$MODULE_VERSION" "$HERE/go.sum" "$VECTORS" "$(docker version --format '{{.Server.Version}}')" "$n" <<'EOF'
+echo "== phase 3: annexc (mdocdcapi.VerifyResponse), no network"
+docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  -v "$WORK/bin/annexc":/w/annexc:ro -v "$ROWS":/in/annexc-rows.json:ro "$GO_IMAGE" \
+  /w/annexc /in/annexc-rows.json > "$WORK/annexc.out" 2> "$WORK/annexc.err" || { tail -20 "$WORK/annexc.err" >&2; exit 1; }
+m="$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["rows"]))' "$ROWS")"
+w="$(python3 -I -c 'import json,sys; print(sum(r.get("kind") == "window" for r in json.load(open(sys.argv[1]))["rows"]))' "$ROWS")"
+[ "$m" -gt 0 ] || { echo "the rows file has no rows" >&2; exit 1; }
+grep -q "^WITNESS-DONE $m\$" "$WORK/annexc.out" || { echo "annexc did not finish all $m rows" >&2; exit 1; }
+sed -n 's/^WITNESS //p' "$WORK/annexc.out" > "$OUT/annexc.jsonl"
+k="$(python3 -I -c 'import sys; print(sum(1 for line in open(sys.argv[1]) if line.strip()))' "$OUT/annexc.jsonl")"
+[ "$k" -eq $((m + w)) ] || { echo "annexc wrote $k verdicts, not $((m + w)): one per row and one more per window row" >&2; exit 1; }
+
+python3 -I - "$OUT/run.json" "$WORK/phase1.hosts" "$GO_IMAGE" "$MODULE_VERSION" "$HERE/go.sum" "$VECTORS" "$(docker version --format '{{.Server.Version}}')" "$n" "$ROWS" "$k" <<'EOF'
 import datetime, hashlib, json, sys
-out, hosts, image, version, gosum, vectors, docker, n = sys.argv[1:]
+out, hosts, image, version, gosum, vectors, docker, n, rows, m = sys.argv[1:]
 json.dump({
     "ran_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "go_image": image, "module": "github.com/idfoundry/oid4vcgo", "module_version": version,
     "go_sum": open(gosum).read().splitlines(),
     "vectors_sha256": hashlib.sha256(open(vectors, "rb").read()).hexdigest(), "lines": int(n),
+    "annexc_rows_sha256": hashlib.sha256(open(rows, "rb").read()).hexdigest(), "annexc_lines": int(m),
     "network": "none", "docker": docker,
     "phase1_hosts": sorted({h.split("://", 1)[1] for h in open(hosts).read().split()}),
 }, open(out, "w"), indent=1)
 open(out, "a").write("\n")
 EOF
-echo "        wrote $OUT/oid4vcgo.jsonl ($n lines) and $OUT/run.json"
+echo "        wrote $OUT/oid4vcgo.jsonl ($n lines), $OUT/annexc.jsonl ($k lines) and $OUT/run.json"
 finished=1

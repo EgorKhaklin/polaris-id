@@ -856,11 +856,20 @@ request lifecycle are part 2; version 1.1 with `readerAuthAll`, and Apple's samp
 - Second witness for part 1's three stages (the transcript, the HPKE open, the DeviceResponse with its device
   signature), chosen 2026-11-21: OID4VCgo's `mdocdcapi` (MIT), read at v0.85.0. Its `VerifyResponse` builds the
   transcript in its own code (`transcript.go`), opens the response with Go's standard-library `crypto/hpke`, and checks
-  the issuer and device signatures in its own `mdoc` package. Its commit 8df41e8d, made after it checked this project's
-  negative vectors, makes the issuer-certificate checks behind `mdocdcapi.VerifyResponse` use its caller's `Now`, the
-  instant it already judged the credential at; the lab run names that commit beside the vectors whose certificate
-  verdict turns on the verification instant, and no others. The run goes in through `lab/interop/mdoc/witness-oid4vcgo`,
-  its pin moved from v0.78.0 to v0.85.0, in a lab change after part 1.
+  the issuer and device signatures in its own `mdoc` package. `lab/interop/mdoc/witness-oid4vcgo`, its pin moved from
+  v0.78.0 to v0.85.0, runs it over `annexc-rows.json` at one fixed instant, 2026-06-01T12:00:00Z, and `agree.py` sets
+  each verdict beside this package's at that instant, each refusal held to the stage its row names. The rows: the two
+  vectors under `packages/polaris-oid4vp/testdata/annex-c`, ANNEXC-DETERMINISTIC-001 (the transcript row: both open
+  it, then refuse it for holding no document) and ANNEXC-REAL-001 (the refusal row: both refuse it at the open); two
+  responses minted by this package's suite, one valid at the instant whose document signer has expired by the run
+  date, one whose document signer starts a day after the instant; and three controls on the first one's bytes
+  (another origin, another key, a flipped ciphertext byte), each refused at the open. Both verifiers also judge the
+  two minted rows at the run date. Measured at v0.85.0: they agree on all seven rows at the instant, each as the row
+  expects, the accepted row with the same claims. At the run date both refuse the first minted row at its document
+  signer's validity, the only one of its dates the run date falls outside, and both accept the second, which both
+  refuse at the instant at that check. OID4VCgo's commit 8df41e8d, made after it checked this project's negative
+  vectors, gives the issuer-certificate checks behind `VerifyResponse` its caller's `Now`. v0.78.0 and v0.85.0 both
+  contain it (1512 and 2005 commits later), so the pins give no control for it, and the run names it beside no row.
   @owf/mdoc 0.10.0 leaves HPKE to its caller, so it can witness the transcript and the DeviceResponse but not the open.
 
 ### M5: an over-18/21 page that keeps nothing
