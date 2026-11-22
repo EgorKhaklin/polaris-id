@@ -236,7 +236,7 @@ configured, every mdoc refused (`issuer_key`), never skipped; a root carried in 
 document-signer (DS) certificate, the `x5chain` leaf, must chain to the root under the shared path rules, and:
 - `org.iso.18013.5.1.mDL`: the DS issued directly by the IACA, with SubjectKeyIdentifier and the id-mdl-ds EKU
   (1.0.18013.5.1.2), following ISO/IEC 18013-5 Annex B as isomdl tabulates it (the ISO text is paywalled and was not
-  read);
+  read); since M2b, also naming the IACA's countryName, and its stateOrProvinceName when the IACA carries one;
 - the EU PID: the PID rulebook states no DS profile, so the shared rules only: chain and validity as in M1, and key
   usage, which M1 left unenforced and M2 adds with a test;
 - `eu.europa.ec.av.1`: the shared rules only. isomdl implements an ETSI EN 319 411-1 policy rule for it, while the AV
@@ -635,6 +635,53 @@ signed the DS. The record that adds mdoc status starts from the test this needs,
 - Witness runs, counted stage by stage as M1b counts them, on every M2 vector: the EU reference verifier's own
   validator classes, in-process, at its own stages; `@owf/mdoc` at the docType, the MSO signature, the digests and the
   device signature, and at the transcript bytes; isomdl-uniffi for the DS profile and null-thumbprint cases only.
+
+### M2b: an mDL's signer names its IACA's country, and its issuing elements name its signer (amendment, 2026-11-22)
+
+Qualifying reason: STRATEGIC-BUILD, this amendment written before any code. It changes M2's verdicts for the mDL
+docType only.
+
+**Who needs it.** A relying party that trusts more than one issuer's IACA for the same docType, as one configured from
+M6's VICAL does, needs the country and state a document names tied to the IACA it chains to (ISO/IEC 18013-5 9.3.3
+with Tables B.1 and B.3, and 7.2.1, as the rule below cites them).
+
+**What already solves it.** OID4VCgo's `CheckDocumentSigner` (credential/mdoc/document_signer.go, MIT, by Oscar
+Sanderson, read at v0.85.0): the IACA's countryName equals the document signer's, and so does stateOrProvinceName when
+the IACA carries one; a disclosed `issuing_country` matches the document signer's countryName, and a disclosed
+`issuing_jurisdiction` its stateOrProvinceName when it has one. `@owf/mdoc` refuses a document signer certificate without
+countryName (lab/interop/mdoc/witness-eudi/results.md). This build takes OID4VCgo's rules for the mDL docType, credited,
+in this package's two stages.
+
+**The rule**, ISO/IEC 18013-5:2021 as read, keyword shall:
+- 9.3.3 with Tables B.1 and B.3: countryName is present in the IACA and in the document signer certificate, and the two
+  are equal; when the IACA carries stateOrProvinceName, the document signer carries the same one. Absence is refused.
+  These checks join `_mdl_profile_refusal` and refuse as `issuer_key`, as every other document signer profile check
+  there does.
+- 7.2.1: a disclosed `issuing_country` in `org.iso.18013.5.1` equals the document signer's countryName, and a disclosed
+  `issuing_jurisdiction` its stateOrProvinceName when the document signer carries one. A new code, `issuing_authority`,
+  judged after `digest` (an element is trusted only once its digest matches) and before the device checks, and only
+  when the element was disclosed.
+
+**The claim**, once the evidence below exists: implemented. `polaris-oid4vp` refuses an mDL whose document signer does
+not name its IACA's country and state as `issuer_key`, and one whose disclosed issuing country or jurisdiction is not
+its document signer's as `issuing_authority`.
+
+**Tests that must fail first.**
+
+| Test | Input | Expected |
+|---|---|---|
+| `test_mdoc.py`, one test per rule | an mDL DS without countryName, with another, with none in either, under an IACA without one, without the IACA's stateOrProvinceName, with another; a disclosed `issuing_country` or `issuing_jurisdiction` that is not the DS's | `issuer_key` for the certificate rules, `issuing_authority` for the elements |
+| `test_mdoc.py`, the accept controls | a DS with stateOrProvinceName under an IACA without one; `issuing_jurisdiction` disclosed under a DS without stateOrProvinceName; a PID whose DS carries no countryName; a PID that discloses the mDL namespace's `issuing_country` or `issuing_jurisdiction` unlike its DS | accepted |
+| the corpus, 0.4.0, in a pull request of its own | the same cases in a new layer, `document-signer` (the document signer certificate profile and the issuing authority it names), each with its repaired twin, and the two accept controls in the control layer | as above; before 0.4.0 is cut, OID4VCgo at v0.85.0 refuses each case with ReasonUntrustedIssuer, the Reason its `CheckAnchored` failure carries, and accepts each twin and control; a row it judges otherwise is held out |
+| `scripts/polaris-oid4vp-mutation-drill.py` | each new refusal removed in turn | a test fails for each |
+
+**Kill criterion.** A genuine mDL from a named issuer, its document signer meeting every other rule of the mDL profile,
+refused by these checks alone, where the clause as read does not require what refused it: the rule shrinks to what the
+clause requires, and the corpus rows that encoded the wrong reading are withdrawn in the same pull request.
+
+**Publication.** No CHANGELOG line until M7. The M7 CHANGELOG entry names this refusal (the certificate's
+country and state, and the disclosed issuing elements), so the stricter verdict is never left out at release. The
+corpus 0.4.0 notes state the new rows, as every bump does.
 
 ### M3: OpenID4VP over the DC API (`dc_api.jwt`)
 
