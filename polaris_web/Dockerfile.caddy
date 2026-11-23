@@ -74,7 +74,7 @@ RUN for attempt in 1 2 3 4; do \
         sleep $((attempt * 20)); \
     done
 
-FROM caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
+FROM caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
 
 # Every Polaris image carries the same provenance labels; the version is
 # passed in by scripts/polaris-image-build.sh from polaris_web/__version__.py.
