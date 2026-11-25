@@ -8,12 +8,12 @@ Anything the author ran against the author's own code belongs in the last sectio
 
 | Noun | State |
 |---|---|
-| Wallets | 8 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 8 more implementations (six libraries or services under a wallet or harness built here; an adapter and a testing tool whose test issuer was replaced); 2 received wallet copies from the product; the AltID test app (iOS) presented an mdoc proof of age to the lab mdoc verifier, 2026-11-13 |
+| Wallets | 8 unmodified wallets presented to `polaris-oid4vp` and were accepted, and 8 more implementations (six libraries or services under a wallet or harness built here; an adapter and a testing tool whose test issuer was replaced); 2 received wallet copies from the product; the AltID test app (iOS) presented an mdoc proof of age to the lab mdoc verifier, 2026-11-13; Multipaz Wallet (Android, its Dev flavor) presented a self-signed mDL to `polaris-oid4vp`'s experimental `mso_mdoc` mode, built from main, 2026-11-22 |
 | Conformance profile | `polaris-oid4vp 1.0.0rc7` OpenID Certified to OID4VP 1.0 + HAIP 1.0 Verifier, 2026-09-24 |
 | Outside test corpus | Wycheproof ML-DSA-65 verify vectors, 58 of 58, every push; the Token Status List draft's vectors and signed example, all decided (lab walk, 2026-10-04) |
 | Public distribution | all four packages on PyPI and npm since 2026-09-15 |
 | External relying party / operator | Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per release, since 2026-10-11; four national wallet sandboxes, 2026-11-02 to 2026-11-12 (below). |
-| Use | 6 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-13, 25 are in openwallet-foundation-labs/identity-common-ts's CI, against its `@sd-jwt/sd-jwt-vc` verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier; since 2026-11-17, Iya CyberSecurity Solutions' id-proto-debugger runs polaris-oid4vp v1.1.0's published image, copied into their own registry mirror, as the verifier in its scheduled test workflow; LimogiAI's VerySafe EUDI Verifier runs the negative vectors in its CI on every change, pinned to commit afa39e9d (moved from f1e25c39 on 2026-11-21; LimogiAI's written confirmation, 2026-11-21); on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check |
+| Use | 7 outside projects: OID4VCgo's CI runs polaris-oid4vp since 2026-10-11, and this repository's negative vectors against its own verifier since 2026-10-16; since 2026-10-28, 20 of this repository's SD-JWT VC negative vectors are externally exercised in vouchkit's CI, against its verifier; since 2026-11-13, 25 are in openwallet-foundation-labs/identity-common-ts's CI, against its `@sd-jwt/sd-jwt-vc` verifier; since 2026-11-15, 54 of this repository's negative vectors (SD-JWT VC and mdoc) are externally exercised in openeudi/openid4vp's CI, against its verifier, and 55 since 2026-11-24; since 2026-11-17, Iya CyberSecurity Solutions' id-proto-debugger runs polaris-oid4vp v1.1.0's published image, copied into their own registry mirror, as the verifier in its scheduled test workflow; LimogiAI's VerySafe EUDI Verifier runs the negative vectors in its CI on every change, pinned to commit afa39e9d (moved from f1e25c39 on 2026-11-21; LimogiAI's written confirmation, 2026-11-21); on 2026-11-13, Neil Berkman (Xuku LLC) reported that Attesto 2.17.0 refuses all 66 negative vectors of 0.4.0, the seven status-list cases by its status-list check; since 2026-11-22, cre8/rp-conformance's relying-party test catalogue carries 16 faults made from this repository's negative vectors |
 | Findings from outside | 3, all fixed |
 
 ## External nouns
@@ -66,6 +66,7 @@ accepts everything prints the same success line.
 | 2026-11-13 | the AltID test app (Denmark's Agency for Digital Government, iOS, its test environment), presenting a Proof of Age (`eu.europa.ec.av.1`) its test issuer signed, operated by the author | this repository, lab/interop/altid | accepted: `VERIFIED` | the same response posted again to its restored record (offline, at step 13: the record is one-use); a changed nonce (offline, at the device signature) | [lab/interop/altid](interop/altid/README.md); two outside mdoc verifiers agree offline: @owf/mdoc 0.9.3 and eudi-srv-verifier-endpoint v0.12.0 (with our classification input) |
 | 2026-11-13 | the swiyu Sandbox Wallet 1.19.0 (iOS), presenting a Beta-ID from the Beta Credential Service, operated by the author | this repository at c5b0ba5f, lab/interop/swiyu: `polaris-oid4vp` with `accept_vp_token_as_json_string` | accepted: `200 authentic`; the issuer's status list VALID under its pinned key | offline, by a second implementation: another nonce; no key; each of 17 other pinned keys | [lab/interop/swiyu](interop/swiyu/README.md#result-2026-11-13); a second implementation agrees offline: `@sd-jwt/sd-jwt-vc` 0.24.3 (OpenWallet Foundation Labs) |
 | 2026-11-21 | ProtocolSoup's hosted wallet (`wallet.protocolsoup.com`, run by its maintainer, who invited the run), driven by the author through its API, presenting its issuer's `UniversityDegreeCredentialSDJWTHAIP` (`dc+sd-jwt`) over `direct_post.jwt` to a request signed under a publicly trusted chain (`x509_hash` client_id) | this repository at main `cee2821b` (not a release) | accepted: `200 authentic` | an unrelated issuer CA | [lab/interop/protocolsoup](interop/protocolsoup/README.md#the-hosted-wallet-2026-11-21); the [result](https://github.com/ParleSec/ProtocolSoup/issues/187#issuecomment-7061654051) on ProtocolSoup's issue 187, and the maintainer's [agreement](https://github.com/ParleSec/ProtocolSoup/issues/187#issuecomment-7061887365) to this row |
+| 2026-11-22 | Multipaz Wallet Dev 2026.W45.1-175-git-db6d830 (OpenWallet Foundation, Android, its Dev flavor from the publisher's download page, APK SHA-256 `6cf94531`), on a Pixel 9a, presenting a self-signed mDL (`org.iso.18013.5.1.mDL`) its Developer Mode made under the wallet's own development IACA, operated by the author | this repository at main `b82de544` (not a release): `polaris-oid4vp` built from it (wheel `8e7d39b4`), `serve --format mso_mdoc --experimental --doctype org.iso.18013.5.1.mDL`; offline, `polaris-oid4vp` 1.3.0 from PyPI (wheel `9084517c`) drew the same verdict on the answer and on each control | accepted | offline: the same answer under another response encryption key (at the device signature); one element value changed (at the digest) | [lab/interop/mdoc](interop/mdoc/README.md#milestone-2-a-wallet-app-on-a-phone-2026-11-22); two outside implementations agree offline, each on the stages its own code decides: OID4VCgo v0.85.0 and isomdl-uniffi 0.2.0-indicio.2 |
 
 eudi-dev v2.3.7, OID4VCgo 0.12.0 and ProtocolSoup are listed by the OpenID Foundation as certified
 OID4VP 1.0 + HAIP 1.0 wallets.
@@ -114,7 +115,9 @@ base64 DER.
 
 **What the wallet rows are.** Each was driven by the author: interoperability. Every wallet
 presented an SD-JWT VC over OpenID4VP `direct_post.jwt`, ES256 throughout, but on 2026-11-13, when
-the AltID test app presented an mdoc over OpenID4VP `direct_post` to the lab mdoc verifier. The
+the AltID test app presented an mdoc over OpenID4VP `direct_post` to the lab mdoc verifier, and on
+2026-11-22, when Multipaz Wallet presented an mdoc over `direct_post.jwt` to `polaris-oid4vp`'s experimental
+`mso_mdoc` mode. The
 issuing side of 2026-09-28 (above) uses a pre-authorized code, and a wallet copy is an ES256
 credential.
 
@@ -171,6 +174,14 @@ reporter. 0.24.1, on npm since 2026-10-30, is patched, and the fix is upstream c
 [260114a5](https://github.com/openwallet-foundation-labs/identity-common-ts/commit/260114a597a9d585f42fc6609c8fbe4b0253dbbd),
 whose author line reads Egor Khaklin.
 
+**Multipaz changed after a report from here, 2026-11-23.** The OpenWallet Foundation's Multipaz
+project published
+[GHSA-7vcm-wwvf-7v9x](https://github.com/openwallet-foundation/multipaz/security/advisories/GHSA-7vcm-wwvf-7v9x)
+(severity low) for `org.multipaz:multipaz` 0.102.0 and earlier, crediting EgorKhaklin as
+reporter. The fix is upstream commit
+[0ac2a5db](https://github.com/openwallet-foundation/multipaz/commit/0ac2a5db612b6f71b44d4d46e3bd8b9d158745fd),
+merged the same day.
+
 draft-ietf-oauth-status-list-21: the byte arrays of Section 4.2, the four Appendix C test vectors (1, 2, 4 and 8 bits, 2^20 entries) and the signed example of Section 8.2 under the example key the draft's authors publish, decided by `polaris_oid4vp.status.decide`, with tokens signed by the OpenWallet Foundation's `@sd-jwt/jwt-status-list` 0.19.0 beside them (2026-10-04, [lab/interop/status-list](interop/status-list/README.md); run by the author, not every push). Every status matched. The library's 2^20-entry list at 10% revoked was refused by 1.0.0rc15 (payload over 64 KiB); the bound is fixed in the tree.
 
 ### Public distribution
@@ -222,7 +233,7 @@ message to the project.
 
 ### Use
 
-    Outside projects running it:   6 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28; openwallet-foundation-labs/identity-common-ts's CI, since 2026-11-13; openeudi/openid4vp's CI, since 2026-11-15; rcbj/id-proto-debugger's CI, since 2026-11-17; LimogiAI's VerySafe EUDI Verifier's CI, confirmed 2026-11-21)
+    Outside projects running it:   7 (IDFoundry/OID4VCgo's CI, since 2026-10-11; vouchkit/vouchkit's CI, since 2026-10-28; openwallet-foundation-labs/identity-common-ts's CI, since 2026-11-13; openeudi/openid4vp's CI, since 2026-11-15; rcbj/id-proto-debugger's CI, since 2026-11-17; LimogiAI's VerySafe EUDI Verifier's CI, confirmed 2026-11-21; cre8/rp-conformance's CI, since 2026-11-22)
 
 1. 2026-10-11: IDFoundry/OID4VCgo (maintainer osanderson) added
    [polaris-interop.yml](https://github.com/IDFoundry/OID4VCgo/blob/main/.github/workflows/polaris-interop.yml):
@@ -243,7 +254,10 @@ message to the project.
    [PR 750](https://github.com/IDFoundry/OID4VCgo/pull/750) (merged 2026-10-28, 8485b535) requires
    each control to be accepted and each mdoc refusal to carry a `Reason` of its vector's layer. The
    first run on main after it ([40735536223](https://github.com/IDFoundry/OID4VCgo/actions/runs/40735536223))
-   passed both jobs.
+   passed both jobs. On 2026-11-23 the mdoc job moved to `mdoc-vectors.json` 0.3.0
+   ([PR 1155](https://github.com/IDFoundry/OID4VCgo/pull/1155), opened from here and merged by the maintainer,
+   82c264cb): all 34 vectors pass, 32 repaired twins are accepted and none fails. The run on that merge
+   commit ([45157654722](https://github.com/IDFoundry/OID4VCgo/actions/runs/45157654722)) passed.
 3. 2026-10-28: 20 of this repository's SD-JWT VC negative vectors are externally exercised in
    vouchkit/vouchkit's CI, against its verifier, on each push to main and on pull requests;
    vouchkit's CI reads a copy of the file from a pinned commit and checks its SHA-256, since [PR 17](https://github.com/vouchkit/vouchkit/pull/17),
@@ -277,7 +291,11 @@ message to the project.
    SHA-256, accepts the four controls, and requires each of the 54 to be refused and its repaired
    twin accepted, since [PR 82](https://github.com/openeudi/openid4vp/pull/82), opened from here
    and merged by the maintainer on 2026-11-15 (36d66bf5). The first run on main with them
-   ([43737527166](https://github.com/openeudi/openid4vp/actions/runs/43737527166)) passed on both.
+   ([43737527166](https://github.com/openeudi/openid4vp/actions/runs/43737527166)) passed on both. On 2026-11-24
+   the files moved to `vectors.json` 0.6.0 and `mdoc-vectors.json` 0.2.0
+   ([PR 84](https://github.com/openeudi/openid4vp/pull/84), opened from here and merged by the maintainer,
+   c29aa911), and 55 are refused (25 SD-JWT VC, 30 mso_mdoc), each with its repaired twin accepted. The first
+   run on main with them ([45462582246](https://github.com/openeudi/openid4vp/actions/runs/45462582246)) passed.
 7. 2026-11-17: Iya CyberSecurity Solutions'
    [id-proto-debugger](https://github.com/rcbj/id-proto-debugger) runs polaris-oid4vp v1.1.0's
    published image, copied into their own registry mirror, as the verifier in their scheduled test
@@ -289,6 +307,12 @@ message to the project.
 8. 2026-11-21: LimogiAI's [VerySafe EUDI Verifier](https://verysafe.id) runs the negative vectors in
    its CI on every change, pinned to commit afa39e9d (moved from f1e25c39 on 2026-11-21). Source:
    LimogiAI's written confirmation, 2026-11-21.
+9. 2026-11-22: [cre8/rp-conformance](https://github.com/cre8/rp-conformance), functional conformance tests
+   for EUDI Wallet relying parties, carries 16 faults made from this repository's negative vectors, one per
+   stimulus, built by its forge from a valid artifact, in the rows of its relying-party test catalogue. Its
+   maintainer's [PR 66](https://github.com/cre8/rp-conformance/pull/66) (d5ad5ab4) brought
+   [PR 36](https://github.com/cre8/rp-conformance/pull/36), opened from here, onto main; the CI run on that
+   merge commit ([45030154195](https://github.com/cre8/rp-conformance/actions/runs/45030154195)) passed.
 
 ### Findings from outside
 
