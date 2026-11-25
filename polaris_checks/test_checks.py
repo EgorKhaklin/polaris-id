@@ -3367,7 +3367,7 @@ def test_supply_chain_pins_check_discriminates(tmp_path):
            'kubectl apply -f "$CALICO_MANIFEST"',
            "must FAIL when the Calico manifest is applied straight from its URL")
     broken(".github/workflows/ci.yml",
-           "redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0",
+           "redis:8-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3",
            "redis:8-alpine", "must FAIL when a CI service image runs by tag")
     broken(".github/workflows/sbom-build.yml",
            "aquasec/trivy:0.58.1@sha256:ab70a02200597efa04748f210f793936eb647cbcdb0ea69cc30b226d6f5a22c7",
@@ -3441,7 +3441,7 @@ def test_supply_chain_pins_reads_a_tagged_docker_run(tmp_path):
     assert found.level == "FAIL" and "zz-fixture.yml:8 runs redis:8-alpine by tag (docker run)" in found.message, \
         f"must FAIL, naming the line, when a run step runs an image by tag: {found.message}"
     _supply_chain_workflow(tmp_path, "      - run: docker run --rm redis:8-alpine@sha256:"
-                           "3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 redis-cli\n")
+                           "7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3 redis-cli\n")
     found = checks.check_supply_chain_pins(tmp_path)[0]
     assert found.level == "OK", f"must PASS on the pinned form: {found.message}"
 
