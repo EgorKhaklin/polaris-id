@@ -1,6 +1,7 @@
 The OpenID Certified mark belongs to the OpenID Foundation. Polaris uses it under the OpenID
-Foundation's certification terms, beside a statement naming the certified package and version,
-the profile and the credential format. What is certified: polaris-oid4vp 1.0.0rc7 is OpenID
+Foundation's certification terms, with a statement naming the certified package and version,
+the profile and the credential format: beside the mark in the README, and as the mark's text
+alternative on the site, where the mark links to the Foundation's listing. What is certified: polaris-oid4vp 1.0.0rc7 is OpenID
 Certified by Egor Khaklin to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC, a
 self-certification, not an endorsement or an independent verification. It is not licensed under
 the Apache License, and nothing in this repository grants any right to it.
