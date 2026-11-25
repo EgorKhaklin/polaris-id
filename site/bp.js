@@ -176,11 +176,12 @@
     /* The card's sides, in the order they are shown. stops: the two places the reticle rests on, in the frame
        (0..1 of its width and height); box: the card in the frame, the furthest the reticle can be taken;
        mm: the plane map from the frame to millimetres on the side shown, from its top left corner. All of it is
-       read off the renders' own cameras (brand/card-blueprint, site-geom). */
+       read off the renders' own cameras (brand/card-blueprint, site-geom). pic: the side's name in the addresses
+       of its pictures; the first side's pictures are in the page itself. */
     var VIEWS = [
         { stops: [[0.457, 0.427], [0.8318, 0.5995]], box: [0.363, 0.888, 0.262, 0.677], mm: [212.72, 24.731, -93.445, -3.7777, 175.17, -44.411, 0.020264, 0.4338] },
-        { stops: [[0.5207, 0.4363], [0.8423, 0.5308]], box: [0.345, 0.906, 0.219, 0.757], mm: [177.24, -50.148, -44.2, 41.616, 144.33, -63.126, -0.22373, 0.41659] },
-        { stops: [[0.488, 0.4026], [0.75, 0.5889]], box: [0.286, 1.182, 0.055, 0.84], mm: [106.49, -24.51, -26.077, 18.389, 97.706, -22.669, -0.18506, 0.39438] }
+        { pic: 'back', stops: [[0.5207, 0.4363], [0.8423, 0.5308]], box: [0.345, 0.906, 0.219, 0.757], mm: [177.24, -50.148, -44.2, 41.616, 144.33, -63.126, -0.22373, 0.41659] },
+        { pic: 'macro', stops: [[0.488, 0.4026], [0.75, 0.5889]], box: [0.286, 1.182, 0.055, 0.84], mm: [106.49, -24.51, -26.077, 18.389, 97.706, -22.669, -0.18506, 0.39438] }
     ];
     var GLIDE = 950;                 /* from one place to the next */
     var DWELL = 1700;                /* resting on a place */
@@ -215,15 +216,19 @@
         C.s = 0;
         glide(now);
     }
-    /* the other sides are fetched once the first has landed, and join the round when they are in */
+    /* the other sides are fetched once the first has landed, and join the round when they are in. Their addresses
+       are built here from the sides' names and the three widths, so the script takes no address from the page */
+    var WIDTHS = [1600, 2560, 3840];
     function loadViews() {
-        stills.concat(xrays).forEach(function (im) {
-            var src = im.getAttribute('data-src');
-            if (!src) { return; }
-            im.addEventListener('load', function () { if (pager && sides() > 1) { pager.hidden = false; } });
-            im.srcset = im.getAttribute('data-srcset') || '';
-            im.src = src;
-            im.removeAttribute('data-src');
+        [[stills, 'hero'], [xrays, 'xray']].forEach(function (kind) {
+            kind[0].forEach(function (im, i) {
+                var side = VIEWS[i] && VIEWS[i].pic;
+                if (!side || im.hasAttribute('src')) { return; }
+                var base = 'card/view-' + side + '-' + kind[1] + '-';
+                im.addEventListener('load', function () { if (pager && sides() > 1) { pager.hidden = false; } });
+                im.srcset = WIDTHS.map(function (w) { return base + w + '.webp ' + w + 'w'; }).join(', ');
+                im.src = base + WIDTHS[0] + '.webp';
+            });
         });
     }
     if ($('#pager-prev')) { $('#pager-prev').addEventListener('click', function () { showView(C.v - 1, performance.now()); }); }
