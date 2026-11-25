@@ -1,8 +1,9 @@
-# mdoc over OpenID4VP: real DeviceResponses, verified offline (plan 025, milestones 1 and 2)
+# mdoc over OpenID4VP: real DeviceResponses, verified offline (plan 025, milestones 1 to 3)
 
 Lab work: experiments and dated records, outside the product code. The verifier under test, "ours" below, is the
-prototype [`verify_mdoc.py`](verify_mdoc.py) in milestone 1 and M1b, and polaris-oid4vp's experimental `mso_mdoc`
-mode (`serve --format mso_mdoc --experimental`) in milestone 2.
+prototype [`verify_mdoc.py`](verify_mdoc.py) in milestone 1 and M1b, polaris-oid4vp's experimental `mso_mdoc`
+mode (`serve --format mso_mdoc --experimental`) in milestone 2, and that mode over the Digital Credentials API
+(`serve --dc-api`) in milestone 3.
 
 **Result, 2026-10-11.** A DeviceResponse built by walt.id's mdoc library from a PID issued by the EUDI
 reference issuer verifies; the mDL is refused at the ISO 18013-5 Annex B DS certificate profile (as
@@ -13,6 +14,10 @@ rewrite (`request_shim.py`).
 
 **Result, 2026-11-22.** A wallet app on a phone presented an mDL to polaris-oid4vp, and the presentation was
 accepted: [Milestone 2](#milestone-2-a-wallet-app-on-a-phone-2026-11-22).
+
+**Result, 2026-11-22.** Google Wallet, in its sandbox environment, presented its test ID pass to polaris-oid4vp over
+the Digital Credentials API, and polaris-oid4vp accepted the presentation:
+[Milestone 3](#milestone-3-a-sandbox-id-pass-over-the-digital-credentials-api-2026-11-22).
 
 ## What is where
 
@@ -208,6 +213,55 @@ Three witnesses, over the answer and two vectors made from it (`vectors.json`, S
   judged the answer and both vectors offline, at the capture's instant, and drew the same verdict on each as the
   build.
 - An emulator run the same day, with the same wallet build and wheel, drew the same verdict on every vector.
+
+## Milestone 3: a sandbox ID pass over the Digital Credentials API (2026-11-22)
+
+Google Wallet, in its sandbox environment, presented its test ID pass to polaris-oid4vp over the Digital Credentials
+API, and polaris-oid4vp accepted the presentation. Two outside implementations judged the same DeviceResponse, and on
+every stage each is counted for, each reached the verdict ours did.
+
+- Holder: Google Wallet on a Pixel 9a (Android 17), in its sandbox environment, holding its test ID pass (doctype
+  `com.google.wallet.idcard.1`). The request came from the phone's Chrome. Versions, read on the phone after the
+  run: Google Wallet 26.45.1018379642, Google Play services 26.45.31, Chrome 158.0.8127.42.
+- The run: the page's button, Chrome's prompt and Wallet's consent screens were pressed over adb. Wallet asked for no
+  screen lock on this request; the screen lock had been entered on the phone by hand a minute before.
+- Verifier: polaris-oid4vp built from main at b82de544, installed from the wheel with SHA-256
+  `8e7d39b4ce56342a80d20814822232edd218173a68d939b38fc80426c5d39ede`.
+  `serve --dc-api --experimental --format mso_mdoc --doctype com.google.wallet.idcard.1` served a request signed
+  with the sandbox test key pair Google publishes for relying parties (client_id `x509_hash`), the relying-party
+  metadata published beside it in `client_metadata`, protocol `openid4vp-v1-signed` and response mode `dc_api.jwt`.
+  The root was Google's sandbox IACA test root, from the same page (SHA-256
+  `ed9b690fb7fc4f282fa377d7028169d34df0aae0e1fbe17954468309f3aacd68`).
+- It ran behind [`../altid/run_tunnel.sh`](../altid/run_tunnel.sh) over a cloudflared quick tunnel, inside
+  [`capture_shim.py`](capture_shim.py) with one more wrapper, on the Digital Credentials API judge, that keeps each
+  judged answer and returns serve's verdict (SHA-256
+  `281724a757adf9be673a5bd073360b2eea1cc44bb55dc97942ba9fc510c828c3`).
+- The answer: one DeviceResponse, 2246 bytes, SHA-256
+  `8ca6f1da124ac44edc30bbb0caf8b042dd2841ae3bc0e5eda6815356c21d09b1`. Its DS certificate (SHA-256
+  `9d78f064152593549fc34031fac158414b41cbce3d1cb399b31bb4e7f8d15bee`) chains to that root (`openssl verify`: OK).
+- The request asked for one element, age_over_18 (namespace org.iso.18013.5.1); the answer carried that element and
+  no other.
+
+Three witnesses, over the answer and three vectors made from it, offline at the answer's instant, with Google's root
+as the only anchor (`vectors.json`, SHA-256 `28546b1c7f27246dd4145fd44ca5611373dde0fd68ba700983e65aeff8fa0c95`):
+
+| vector | polaris-oid4vp, the build from b82de544 | OID4VCgo v0.85.0, its functions composed by our harness and its `mdocdcapi.VerifyResponse` ([`witness-oid4vcgo/`](witness-oid4vcgo/)) | isomdl-uniffi 0.2.0-indicio.2 |
+|---|---|---|---|
+| the wallet's answer | accepted | accepted, by both | issuer authentication verified |
+| the same answer under another response encryption key (a fresh P-256 key) | refused: device signature | refused: device signature, by both | not run (device stage) |
+| one element value changed (one byte; SHA-256 `d9c1138fd56c85676b005cb204dc46ecdd98f73bda5b57c2f3f0c35552181195`) | refused: digest | refused: digest mismatch, by both | refused: digest mismatch |
+| one byte of the issuer signature changed (SHA-256 `8d80fd75c0f1cba86dceb8b13aa46332b71b39b7865227d3e0f3a9f0f4739651`) | refused: issuer signature | refused: issuer signature, by both | refused: issuer signature |
+
+- Each witness is counted for the stages its own code decides, as in M1b: OID4VCgo for the device signature over
+  the Digital Credentials API SessionTranscript, isomdl-uniffi for issuer authentication and the elements.
+- Ours and OID4VCgo built the same SessionTranscript (OpenID4VP 1.0 B.2.6.2, 61 bytes) on both vectors where
+  OID4VCgo built one; it refused the other two at its issuer stage, before building one.
+- isomdl-uniffi's OpenID4VP entry point reads the mDL doctype, so it judged this pass through
+  `Mdoc.verify_issuer_signature`, over the IssuerSigned taken byte for byte from the DeviceResponse. With another
+  root as the only anchor, it refused the chain.
+- polaris-oid4vp 1.3.0 from PyPI (wheel SHA-256 `9084517c7a8d85b8e881daafa7a0afc6932c49229d17d4251aea77cca134457f`)
+  judged the four DeviceResponses offline, at the answer's instant, under the SessionTranscripts the build made, and
+  drew the same verdict on each as the build.
 
 ## Observations
 
