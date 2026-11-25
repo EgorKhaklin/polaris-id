@@ -7,7 +7,7 @@ images:
   caddy: polaris-caddy:prod
   pgbouncer: polaris-pgbouncer:prod
   postgres: polaris-postgres:prod
-  redis: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+  redis: redis:8-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
   # The database router (v9.244): the same HAProxy as the compose HA profile.
   haproxy: haproxy:3.4-alpine@sha256:b9fe316f718d5015c5cfebd8ca019591f3e44656f61d93cb8b59a1028961e530
   # For the four self-built images. The drill sets Never (nothing pulled).
