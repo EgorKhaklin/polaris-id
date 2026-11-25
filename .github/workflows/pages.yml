@@ -13,6 +13,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      drill:
+        description: "Test the deploy retry: first = attempt 1 looks up a name that does not exist (the run must deploy through attempt 2); all = every attempt does (the run must end red)"
+        type: choice
+        options: [none, first, all]
+        default: none
 
 permissions:
   contents: read
@@ -46,9 +52,10 @@ jobs:
       contents: read
       pages: write
       id-token: write
+      actions: read # the wait step reads this run's artifact list
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deploy1.outputs.page_url || steps.deploy2.outputs.page_url || steps.deploy3.outputs.page_url }}
     steps:
       - name: Write the redirect
         env:
@@ -76,5 +83,75 @@ jobs:
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: redirect/
-      - id: deployment
+      # deploy-pages looks the artifact up once, at once, and GitHub's listing can trail the upload
+      # by seconds, so the deploy is the poll: up to three attempts, and the last step requires one.
+      # Remove the retry when a deploy-pages release retries its own lookup (actions/deploy-pages#455).
+      # Never re-run a failed Pages run: the re-run uploads a second github-pages artifact beside the
+      # first, and deploy-pages refuses two of one name (2026-11-19). Start a fresh run instead.
+      # Every condition below reads outcome: a failed continue-on-error step concludes success.
+      - id: deploy1
+        name: Deploy, attempt 1
+        continue-on-error: true
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+        with:
+          artifact_name: ${{ (inputs.drill == 'first' || inputs.drill == 'all') && 'drill-no-such-artifact' || 'github-pages' }}
+      - name: Wait until this run's artifact list shows github-pages
+        if: steps.deploy1.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          n=""
+          err=""
+          for i in $(seq 1 20); do
+            if n=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?name=github-pages" --jq '.total_count' 2>"$RUNNER_TEMP/gh.err"); then
+              err=""
+            else
+              n=""
+              err=$(tail -n 1 "$RUNNER_TEMP/gh.err")
+            fi
+            if [ "$n" = "1" ]; then
+              echo "github-pages is in the run's artifact list (poll $i)"
+              exit 0
+            fi
+            # More than one cannot become one by waiting.
+            case "$n" in ""|0) ;; *) break ;; esac
+            sleep 3
+          done
+          if [ -z "$n" ]; then seen="could not be read (gh api: ${err:-no error text})"; else seen="holds $n artifact(s) named github-pages"; fi
+          echo "::error::At poll $i of 20 (3 s apart), this run's artifact list $seen; the deploy needs exactly one. Start a fresh Pages run (Run workflow), not a re-run."
+          exit 1
+      - id: deploy2
+        name: Deploy, attempt 2
+        if: steps.deploy1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+        with:
+          artifact_name: ${{ inputs.drill == 'all' && 'drill-no-such-artifact' || 'github-pages' }}
+      - name: Back off before the last attempt
+        if: steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        run: sleep 30
+      - id: deploy3
+        name: Deploy, attempt 3
+        if: steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+        with:
+          artifact_name: ${{ inputs.drill == 'all' && 'drill-no-such-artifact' || 'github-pages' }}
+      - name: Exactly one attempt deployed
+        if: ${{ !cancelled() }}
+        env:
+          FIRST: ${{ steps.deploy1.outcome }}
+          SECOND: ${{ steps.deploy2.outcome }}
+          THIRD: ${{ steps.deploy3.outcome }}
+        run: |
+          ok=0
+          for o in "$FIRST" "$SECOND" "$THIRD"; do
+            if [ "$o" = "success" ]; then ok=$((ok + 1)); fi
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::$ok of the deploy attempts succeeded (outcomes: $FIRST, $SECOND, $THIRD); exactly one must. When each attempt's log says no artifact named github-pages was found, GitHub never listed this run's upload: start a fresh Pages run (Run workflow), not a re-run."
+            exit 1
+          fi
+          echo "deployed (outcomes: $FIRST, $SECOND, $THIRD)"
