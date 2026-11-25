@@ -1,0 +1,68 @@
+/* site/contact.css: the contact page. It stands in the landing page's frame (tokens.css, bp.css) and adds only
+   its own block: a statement, three addresses and a short form that writes a draft in the reader's own mail app.
+   No inline style: the site's Content-Security-Policy refuses it. */
+.contact { min-height: 100vh; min-height: 100svh; padding: 9.5rem var(--gutter) 7rem; background: linear-gradient(to bottom, #000 0, var(--ground) 30%); }
+.contact > .tag { margin-bottom: 2.2rem; color: var(--gold); }
+.contact-row { display: grid; grid-template-columns: 1.25fr 1fr; gap: 4rem; align-items: start; }
+.contact .statement { margin: 0 0 3.4rem; font-size: var(--h1); line-height: 0.98; }
+.contact-meta { display: grid; grid-template-columns: repeat(3, max-content); gap: 1.6rem 2.8rem; margin: 0; }
+.contact-meta dt { margin-bottom: 0.45rem; color: var(--ink-3); }
+.contact-meta dd { margin: 0; }
+.contact-meta a { text-decoration: none; }
+.contact-meta a:hover { color: var(--gold); }
+.copy { margin: -0.5rem 0 -0.5rem 0.5rem; padding: 0.5rem 0.4rem; color: var(--gold); opacity: 0.8; transition: opacity var(--dur-base); }
+.copy:hover { opacity: 1; }
+.compose[hidden], .copy[hidden], .contact-note[hidden] { display: none; }
+.field { position: relative; display: block; padding: 0 0 0.95rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--line-strong); transition: border-color var(--dur-base); }
+.field:focus-within { border-bottom-color: var(--gold); }
+.field .tag { display: block; margin-bottom: 0.7rem; color: var(--ink-3); transition: color var(--dur-base); }
+.field:focus-within .tag { color: var(--gold); }
+/* what the reader types is shown as typed, and never under 16 px: a phone zooms the page on a smaller field */
+.field input, .field textarea {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    outline: none;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    font-size: max(16px, 0.8rem);
+    letter-spacing: 0.02em;
+    text-transform: none;
+    resize: none;
+    -webkit-appearance: none;
+    appearance: none;
+}
+.field ::placeholder { color: var(--ink-3); opacity: 0.6; letter-spacing: 0.06em; text-transform: uppercase; }
+.count { position: absolute; right: 0; top: 0.1rem; color: var(--ink-3); font-size: max(0.58rem, 10px); }
+.contact-send { display: flex; align-items: center; gap: 1.6rem; margin-top: 2.2rem; }
+.contact-send .btn { flex: none; }
+.contact-note { max-width: 24em; color: var(--ink-3); font-size: max(0.58rem, 10px); }
+/* one column on a tablet, and in any upright window (a wide upright one would leave the form a narrow column) */
+@media (max-width: 1023.98px), (max-aspect-ratio: 1/1) {
+    .contact { padding: 8rem var(--gutter) 6rem; }
+    .contact-row { grid-template-columns: 1fr; gap: 3.4rem; }
+}
+@media (max-width: 599.98px), (max-aspect-ratio: 1/1) {
+    .contact { padding: 7rem var(--gutter) 5rem; }
+    .contact .statement { margin-bottom: 2.6rem; font-size: 2.9rem; }
+    .contact-meta { grid-template-columns: 1fr; gap: 1.5rem; }
+    .contact-send { flex-direction: column; align-items: flex-start; gap: 1.1rem; }
+    .contact-note, .count { font-size: max(0.66rem, 10px); }
+}
+/* an upright tablet or a tall window: the facts two across, and the form keeps to a line's length */
+@media (min-width: 600px) and (max-aspect-ratio: 1/1) {
+    .contact-meta { grid-template-columns: repeat(2, max-content); gap: 1.6rem 2.4rem; }
+    .contact-form { max-width: 26rem; }
+    .contact-send { flex-direction: row; align-items: center; gap: 1.6rem; }
+}
+/* a phone held sideways: less air above the page's first words */
+@media (max-height: 499.98px) and (min-aspect-ratio: 1/1) {
+    .contact { padding: 6rem var(--gutter) 4rem; }
+}
+/* a very wide window: the page keeps to the centred frame, and the two columns to a width that reads */
+@media (min-width: 1024px) and (min-aspect-ratio: 12/5) {
+    .contact-row { max-width: 92rem; }
+}
