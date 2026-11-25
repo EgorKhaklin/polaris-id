@@ -320,9 +320,12 @@
             var PAD = 64;                                   /* the canvas stands this far above and below the word */
             var art = footWord.querySelector('svg');
             var shape = art && art.querySelector('path') && window.Path2D ? new window.Path2D(art.querySelector('path').getAttribute('d')) : null;
+            var letterA = art && art.querySelector('path.foot-a') && window.Path2D ? new window.Path2D(art.querySelector('path.foot-a').getAttribute('d')) : null;
             var vb = art ? art.viewBox.baseVal : null;
             var tone = window.getComputedStyle(footWord).color;
             var gold = window.getComputedStyle(document.documentElement).getPropertyValue('--gold').trim() || '#ddca9b';
+            var crimson = window.getComputedStyle(document.documentElement).getPropertyValue('--lambda').trim() || '#a51d1d';
+            var ofA;
             var canvas = document.createElement('canvas');
             var ctx = canvas.getContext('2d');
             var base = document.createElement('canvas');    /* the word at rest */
@@ -343,16 +346,16 @@
             canvas.setAttribute('aria-hidden', 'true');
             footWord.appendChild(canvas);
 
-            function drawWord(c, scale, color, box) {
+            function drawWord(c, scale, color, box, part) {
                 /* the page's own drawing of the word, at the place and size the page gave it */
                 var g = c.getContext('2d');
                 var at = art.getBoundingClientRect();
                 var k = at.width / vb.width;
                 g.setTransform(scale, 0, 0, scale, 0, 0);
-                g.clearRect(0, 0, w, h);
+                if (!part) { g.clearRect(0, 0, w, h); }
                 g.setTransform(scale * k, 0, 0, scale * k, scale * (at.left - box.left - vb.x * k), scale * (at.top - box.top + PAD - vb.y * k));
                 g.fillStyle = color;
-                g.fill(shape);
+                g.fill(part || shape);
                 g.setTransform(scale, 0, 0, scale, 0, 0);
             }
 
@@ -367,12 +370,23 @@
                 [canvas, base, gilt].forEach(function (c) { c.width = w * dpr; c.height = h * dpr; });
                 drawWord(base, dpr, tone, box);
                 drawWord(gilt, dpr, gold, box);
+                if (letterA) { drawWord(gilt, dpr, crimson, box, letterA); }
                 var probe = document.createElement('canvas');
                 probe.width = w;
                 probe.height = h;
                 drawWord(probe, 1, '#fff', box);
                 var data;
                 try { data = probe.getContext('2d').getImageData(0, 0, w, h).data; } catch (err) { return; }
+                var dataA = null;
+                if (letterA) {
+                    /* the A is read from a canvas of its own: one read per canvas */
+                    var probeA = document.createElement('canvas');
+                    probeA.width = w;
+                    probeA.height = h;
+                    drawWord(probeA, 1, '#fff', box, letterA);
+                    try { dataA = probeA.getContext('2d').getImageData(0, 0, w, h).data; } catch (err2) { dataA = null; }
+                }
+                var A = [];
                 var X = [];
                 var Y = [];
                 var x; var y; var xx; var yy; var a; var v;
@@ -385,7 +399,7 @@
                                 if (v > a) { a = v; }
                             }
                         }
-                        if (a > 6) { X.push(x); Y.push(y); }
+                        if (a > 6) { X.push(x); Y.push(y); A.push(dataA && dataA[(Math.min(h - 1, y | 0) * w + Math.min(w - 1, x | 0)) * 4 + 3] > 6 ? 1 : 0); }
                     }
                 }
                 n = X.length;
@@ -397,6 +411,7 @@
                 vx = new Float32Array(n);
                 vy = new Float32Array(n);
                 near = new Uint8Array(n);
+                ofA = Uint8Array.from(A);
                 ready = true;
                 footWord.classList.add('dusty');
                 footWord.setAttribute('data-cells', String(n));
@@ -456,6 +471,7 @@
                         ctx.drawImage(gilt, (hx[i] - half) * dpr, (hy[i] - half) * dpr, CELL * dpr, CELL * dpr, hx[i] - half, hy[i] - half, CELL, CELL);
                     } else {
                         var sp = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
+                        ctx.fillStyle = ofA[i] ? crimson : gold;
                         if (sp > 2.2) { ctx.fillRect(cx[i] - 2 - sp * 0.6, cy[i] - 1, 4 + sp * 1.2, 2); } else { ctx.fillRect(cx[i] - 1.5, cy[i] - 1.5, 3, 3); }
                     }
                 }

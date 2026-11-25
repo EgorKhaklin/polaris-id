@@ -31,6 +31,7 @@
 }
 
 :root {
+    --lambda: #a51d1d;                              /* the A in the word at the foot, under the pointer */
     --paper: #ebe5d8;
     --paper-2: #e1dacb;
     --paper-ink: #15120d;
