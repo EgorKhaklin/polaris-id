@@ -1,6 +1,7 @@
 /* The styles for 404.html, kept out of the page so the site's Content-Security-Policy
    (site/_headers) can refuse inline styles. The palette lives in tokens.css; the fonts are
-   index.css's files, declared again here because this page does not load index.css. */
+   the files in fonts/ that bp.css declares, declared again here because this page does not
+   load bp.css. */
 @font-face { font-family: "Inter"; src: url("/fonts/inter.ce552fd9.woff2") format("woff2");
              font-weight: 100 900; font-display: swap; }
 @font-face { font-family: "JetBrains Mono"; src: url("/fonts/jetbrains-mono.0c051e48.woff2") format("woff2");

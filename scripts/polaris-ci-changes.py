@@ -431,13 +431,13 @@ REVIEWED_MENTIONS = {
         "the key of the reviewed mention above, in this file's own source",
     ("scripts/polaris-ci-changes.py", "site/.well-known/"):
         "SITE_KEYS_DIR, a prefix site_only() compares paths with; this file opens no site file",
-    ("scripts/test_ci_changes.py", "site/film.css"):
+    ("scripts/test_ci_changes.py", "site/bp.css"):
         "a path handed to the classifier; the test reads no site file",
-    ("scripts/test_ci_changes.py", "site/index.css"):
+    ("scripts/test_ci_changes.py", "site/tokens.css"):
         "a path handed to the classifier; the test reads no site file",
-    ("scripts/polaris-ci-changes.py", "site/film.css"):
+    ("scripts/polaris-ci-changes.py", "site/bp.css"):
         "the key of the reviewed mention above, in this file's own source",
-    ("scripts/polaris-ci-changes.py", "site/index.css"):
+    ("scripts/polaris-ci-changes.py", "site/tokens.css"):
         "the key of the reviewed mention above, in this file's own source",
     ("packages/polaris-oid4vp/test_cli.py", "README.md"):
         "pathlib.Path(__file__).with_name(\"README.md\"): the package's own README beside the test, "
