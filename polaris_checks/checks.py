@@ -12431,10 +12431,23 @@ def check_site_tokens_match_app(root: pathlib.Path) -> list[Finding]:
     page = _read(root, "site/index.html")
     if page and ":root" in page.split("<style>")[-1][:400]:
         return _fail("design_tokens", "site/index.html redeclares the palette; tokens.css owns it")
-    # The page's own styles live in stylesheets beside it (the site's policy refuses inline style).
+    # The page's own styles live in stylesheets beside it (the site's policy refuses inline style). A sheet may keep
+    # names of its own on :root (a gutter, a type size, the paper of a drawing sheet). The palette is every name the
+    # token file or the application's first :root block declares, and no other sheet declares one of those on :root,
+    # inside a media query or outside one. A comment declares nothing, and a :root rule this cannot read to its
+    # closing brace fails, since a browser applies it all the same.
+    palette = set(site) | set(app)
     for sheet in sorted((root / "site").glob("*.css")):
-        if sheet.name != "tokens.css" and ":root" in sheet.read_text(encoding="utf-8", errors="replace"):
-            return _fail("design_tokens", f"site/{sheet.name} redeclares the palette; tokens.css owns it")
+        if sheet.name == "tokens.css":
+            continue
+        css = re.sub(r"(?s)/\*.*?\*/", "", sheet.read_text(encoding="utf-8", errors="replace"))
+        blocks = re.findall(r":root[^{};]*\{([^{}]*)\}", css)
+        if css.count(":root") != len(blocks):
+            return _fail("design_tokens", f"site/{sheet.name} has a :root rule that cannot be read as one block")
+        declared = {d.partition(":")[0].strip() for block in blocks for d in block.split(";") if ":" in d}
+        again = sorted(n for n in declared if n in palette)
+        if again:
+            return _fail("design_tokens", f"site/{sheet.name} redeclares the palette ({again[0]}); tokens.css owns it")
     return _ok("design_tokens",
                f"the site and the application share all {len(site)} design tokens by name and value")
 
@@ -12699,6 +12712,13 @@ def check_site_pages_render_under_their_headers(root: pathlib.Path) -> list[Find
                     kind = "script" if "modulepreload" in rel_attr else _PRELOAD_KINDS.get(as_attr, as_attr or "default")
                     loads += [(rel, kind, u) for u in urls]
             elif name == "script":
+                # A script element typed application/ld+json that loads nothing is a data block: no browser runs
+                # it, so script-src has nothing to refuse (the first type attribute counts, as the parser keeps
+                # it). Every other type is held as a script: a module, an import map and speculation rules are run
+                # or obeyed, and a type nothing here knows is not taken on trust.
+                script_type = next((v for k, v in attrs if k == "type"), "").strip().lower()
+                if not urls and script_type == "application/ld+json":
+                    continue
                 loads += [(rel, "script", u) for u in urls] or [(rel, "script", None)]
             elif name == "source":
                 # HTML lets a <source> carry src only in a <video> or <audio>, srcset only in a <picture>
@@ -16613,6 +16633,11 @@ _CARD_OVERCLAIMS = ((r"\bdeployed\b", "deployed"), (r"\bpiloted\b", "piloted"),
                     (r"\bproduction[- ]ready\b", "production-ready"))
 
 
+# What a description or a card may say of the certification: this sentence, whole, at its opening, or nothing.
+_SITE_CERTIFIED_SENTENCE = ("polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier "
+                            "profile for SD-JWT VC.")
+
+
 def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     """The site title and social card must not overstate Polaris in a browser
     tab or a shared link: each name field (every page <title>, og:title, and any og:site_name
@@ -16677,6 +16702,14 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
             return _fail("public_claims",
                          f"the site {label} says 'certified'; only polaris-oid4vp 1.0.0rc7 is, to one profile, "
                          "and a name field has no room for that scope")
+    # A description, or the text alternative of a card's image, is what a search result or a shared link shows. One
+    # that says "certified" opens with the whole scoped sentence (one package, one version, one profile, one format),
+    # so the word never travels without its scope; one that says nothing of the certification is held to nothing here.
+    for label, value in texts:
+        if re.search(r"certified", value, re.I) and not " ".join(value.split()).startswith(_SITE_CERTIFIED_SENTENCE):
+            return _fail("public_claims",
+                         f"the site {label} says 'certified' without opening with the scoped sentence "
+                         f"({_SITE_CERTIFIED_SENTENCE!r})")
     for label, value in names + texts:
         low = value.lower()
         # The category must match the honest GitHub one (a pre-pilot identity-token

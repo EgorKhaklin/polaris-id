@@ -1,0 +1,836 @@
+/* ============================================================================
+   site/bp.css: the landing page. Seven blocks: header, hero, label band, what we do,
+   built for, how it works, closing line and footer.
+
+   Colours and font stacks come from tokens.css (shared with the application). The
+   few values only this page uses are declared once below. The page works with no
+   script: bp.js adds the motion (the preloader count, the card's frames, the lens,
+   the pinned band, the reveals); every rule that hides or pins something for it
+   sits under html.js, a class pre.js sets before first paint.
+   ============================================================================ */
+@font-face {
+    font-family: "Inter";
+    src: url("fonts/inter.ce552fd9.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: "Cinzel";
+    src: url("fonts/cinzel.6eb9f004.woff2") format("woff2");
+    font-weight: 400 900;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: "JetBrains Mono";
+    src: url("fonts/jetbrains-mono.0c051e48.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    --lambda: #a51d1d;                              /* the A in the word at the foot, under the pointer */
+    --paper: #ebe5d8;
+    --paper-2: #e1dacb;
+    --paper-ink: #15120d;
+    --paper-ink-2: #5d5547;
+    --paper-line: rgba(21, 18, 13, 0.2);
+    --gutter: 1.75rem;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+    --dur-base: 0.45s;
+    --dur-slow: 0.9s;
+    --h1: 5.6rem;
+    --h2: 2.9rem;
+}
+
+/* One picture at every window size: every length is in rem, and the root size follows the window. Three tiers,
+   each drawn for one width: a phone at 375, a tablet at 768, a desk at 1440 (where 1rem is 20px). From 600 px up a
+   short window holds the size down, so the first screen still fits its height. */
+html {
+    font-size: clamp(14px, 4.26667vw, 18px);
+    background: var(--ground);
+    scrollbar-color: var(--line-strong) var(--ground);
+    -webkit-text-size-adjust: 100%;
+}
+*, *::before, *::after { box-sizing: border-box; }
+@media (min-width: 600px) {
+    html { font-size: clamp(12px, min(2.08333vw, 3.4vh), 20px); font-size: clamp(12px, min(2.08333vw, 3.4svh), 20px); }
+    :root { --h1: 4rem; }
+}
+@media (min-width: 1024px) {
+    html { font-size: clamp(13px, min(1.38889vw, 2.5vh), 32px); font-size: clamp(13px, min(1.38889vw, 2.5svh), 32px); }
+    :root { --h1: 5.6rem; }
+}
+body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    line-height: 1.55;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: clip;
+}
+/* Film grain over everything. */
+body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: url("grain.png");
+    opacity: 0.55;
+    pointer-events: none;
+}
+::selection { background: var(--gold); color: #000; }
+a { color: inherit; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 1px solid var(--gold); outline-offset: 0.25rem; }
+img, canvas, svg { display: block; }
+p { margin: 0; }
+button { font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+
+/* Smooth scrolling (the vendored library's own rules). */
+html.lenis, html.lenis body { height: auto; }
+.lenis.lenis-stopped { overflow: clip; }
+html.lock, html.lock body { overflow: hidden; }
+
+/* Words that rise into place, one after another. */
+.w { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: 0.1em; margin-bottom: -0.1em; }
+.w > span { display: inline-block; }
+html.js .w > span { translate: 0 108%; transition: translate 1.15s var(--ease-out); }
+html.js .in .w > span, html.js .in.w > span { translate: 0 0; }
+html.js [data-r]:not([data-split]) { opacity: 0; translate: 0 1.6rem; transition: opacity 0.9s var(--ease-out), translate 1.1s var(--ease-out); }
+html.js [data-r].in { opacity: 1; translate: 0 0; }
+
+.tag { font-size: 0.68rem; letter-spacing: 0.1em; }
+
+/* ---------------------------------------------------------------- preloader */
+/* An instrument: the owl fixed at the centre, the sky's dial turning around it while the card's files load. */
+.pre {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    overflow: hidden;
+    background: linear-gradient(160deg, #0d0d10, #000 68%);
+    color: var(--gold);
+    font-family: var(--font-mono);
+    font-size: max(0.6rem, 9px);
+    line-height: 1.7;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    clip-path: inset(0);
+    animation: pre-auto 0.9s 2.6s var(--ease-io) forwards;   /* with no script the layer lifts itself */
+}
+html.js .pre { animation: none; transition: clip-path var(--dur-slow) var(--ease-io) 0.28s; }
+html.pre-done .pre { clip-path: inset(0 0 100% 0); pointer-events: none; }
+html.pre-skip .pre, html.pre-gone .pre { display: none; }
+@keyframes pre-auto { to { clip-path: inset(0 0 100% 0); visibility: hidden; } }
+.pre-glow {
+    position: absolute;
+    inset: -20%;
+    background:
+        radial-gradient(34% 38% at 50% 47%, rgba(221, 202, 155, 0.1), transparent 70%),
+        radial-gradient(55% 45% at 78% 108%, rgba(221, 202, 155, 0.13), transparent 70%),
+        radial-gradient(45% 40% at 8% -6%, rgba(255, 255, 255, 0.045), transparent 70%);
+    animation: pre-breathe 3.4s ease-in-out infinite alternate;
+}
+@keyframes pre-breathe { from { scale: 1; opacity: 0.8; } to { scale: 1.08; opacity: 1; } }
+/* the chart: one drawing centred on the screen, 121rem across (1rem is 18.18 of its units) */
+.pre-chart { position: absolute; left: 50%; top: 50%; width: 121rem; height: 121rem; translate: -50% -50%; overflow: visible; pointer-events: none; }
+.pre-chart * { fill: none; stroke: var(--gold); stroke-width: 0.9; }
+.pre-sky > * { opacity: 0.2; stroke-dasharray: 1; stroke-dashoffset: 1; animation: pre-draw 1.7s var(--ease-io) 0.1s forwards; }
+.pre-hours > * { opacity: 0.13; animation-delay: 0.4s; }
+.pre-rings > :nth-child(2) { animation-delay: 0.2s; }
+.pre-rings > :nth-child(3) { animation-delay: 0.3s; }
+.pre-rings > :nth-child(4) { animation-delay: 0.4s; }
+.pre-rings > :nth-child(5) { animation-delay: 0.5s; }
+@keyframes pre-draw { to { stroke-dashoffset: 0; } }
+html.js .pre-turn { transform: rotate(48deg); }
+.pre-ticks { opacity: 0.8; }
+.pre-rim { opacity: 0.4; }
+.pre-chart text { fill: var(--gold); stroke: none; font-size: 8.4px; letter-spacing: 0.1em; text-anchor: middle; dominant-baseline: central; }
+.pre-arc-bg { opacity: 0.25; }
+.pre-chart .pre-arc { stroke-width: 1.7; stroke-dasharray: 100; stroke-dashoffset: 100; }
+html:not(.js) .pre-chart .pre-arc { stroke-dashoffset: 0; }
+.pre-ui { position: absolute; inset: 0; transition: opacity 0.3s var(--ease-io), translate 0.3s var(--ease-io); }
+html.pre-done .pre-ui { opacity: 0; translate: 0 -0.6rem; }
+.pre-row { position: absolute; left: var(--gutter); right: var(--gutter); align-items: center; }
+.pre-top { top: calc(var(--gutter) - 0.15rem); }
+.pre-bottom { bottom: var(--gutter); }
+.pre-word { margin: 0; }
+.pre-word .brand-word { height: 1.02rem; }
+.pre-frame {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(46rem, 100% - 2 * var(--gutter));
+    height: min(28rem, 100vh - 15rem);
+    height: min(28rem, 100svh - 15rem);
+    translate: -50% -50%;
+}
+.pre-frame p, .pre-frame ul { position: absolute; margin: 0; padding: 0; list-style: none; animation: pre-in 0.8s var(--ease-out) 0.5s both; }
+@keyframes pre-in { from { opacity: 0; } }
+.pre-index { left: 1rem; top: 0.8rem; }
+.pre-coord { right: 1rem; top: 0.8rem; text-align: right; }
+.pre-crumbs { left: 1rem; bottom: 0.8rem; }
+.pre-crumbs li::before { content: "/ "; opacity: 0.55; }
+.pre-list { right: 1rem; bottom: 0.8rem; }
+.pre-list li { display: flex; align-items: center; justify-content: flex-end; gap: 0.6rem; opacity: 0.45; transition: opacity 0.4s linear; }
+.pre-list li::after { content: ""; width: 0.36rem; height: 0.36rem; border: 1px solid currentColor; transition: background-color 0.4s linear; }
+.pre-list li.on { opacity: 1; }
+.pre-list li.on::after { background: currentColor; }
+html:not(.js) .pre-list { display: none; }
+.pre-frame .tick { --dx: -1; --dy: -1; position: absolute; width: 0.9rem; height: 0.9rem; border: 0 solid var(--gold); animation: pre-tick 1.2s var(--ease-io) 0.6s 6 alternate; }
+.pre-frame .tick:nth-child(1) { left: 0; top: 0; border-left-width: 1px; border-top-width: 1px; }
+.pre-frame .tick:nth-child(2) { --dx: 1; right: 0; top: 0; border-right-width: 1px; border-top-width: 1px; }
+.pre-frame .tick:nth-child(3) { --dy: 1; left: 0; bottom: 0; border-left-width: 1px; border-bottom-width: 1px; }
+.pre-frame .tick:nth-child(4) { --dx: 1; --dy: 1; right: 0; bottom: 0; border-right-width: 1px; border-bottom-width: 1px; }
+@keyframes pre-tick { to { translate: calc(var(--dx) * 0.3rem) calc(var(--dy) * 0.3rem); } }
+.pre-edge { position: absolute; left: 0; top: calc(50% - 0.35rem); width: 0.7rem; height: 0.7rem; border: 1px solid; }
+.pre-edge::before { content: ""; position: absolute; inset: -1px auto -1px -1px; width: 0.3rem; background: currentColor; }
+.pre-edge-r { left: auto; right: 0; scale: -1 1; }
+/* The owl never moves: the lockup's left square is the owl in its ring, shown through a square window. */
+.pre-owl { position: absolute; inset: 0; margin: auto; width: 6.4rem; height: 6.4rem; overflow: hidden; }
+.pre-owl img { height: 100%; width: auto; max-width: none; }
+.pre-meter {
+    position: absolute;
+    left: 50%;
+    bottom: calc(var(--gutter) + 1.2rem);
+    translate: -50% 0;
+    display: grid;
+    justify-items: center;
+    gap: 0.7rem;
+}
+.pre-num { font-size: 2.1rem; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+.pre-bar {
+    position: relative;
+    width: 12rem;
+    height: 0.5rem;
+    overflow: hidden;
+    background: repeating-linear-gradient(115deg, rgba(221, 202, 155, 0.28) 0 1px, transparent 1px 5px);
+}
+.pre-bar i {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(115deg, var(--gold) 0 2px, transparent 2px 5px);
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+}
+html:not(.js) .pre-meter { display: none; }
+
+/* ------------------------------------------------------------------- header */
+.top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 60;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 1.15rem var(--gutter);
+    color: var(--ink);
+    transition: color var(--dur-base) var(--ease-out);
+}
+html.js .top { position: fixed; }
+.top.on-paper { color: var(--paper-ink); }
+/* once the page has moved, the header stands on a bar in the ground of the section it is over, so nothing that
+   passes under it shows through its words; the bar's last 1.5rem fades out */
+.top::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: -1.5rem;
+    z-index: -1;
+    background: linear-gradient(to bottom, rgb(9, 9, 11) 0, rgb(9, 9, 11) calc(100% - 1.5rem), rgba(9, 9, 11, 0) 100%);
+    opacity: 0;
+    transition: opacity var(--dur-base) var(--ease-out);
+    pointer-events: none;
+}
+.top.on-paper::before { background: linear-gradient(to bottom, rgb(235, 229, 216) 0, rgb(235, 229, 216) calc(100% - 1.5rem), rgba(235, 229, 216, 0) 100%); }
+.top.scrolled::before { opacity: 1; }
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    text-decoration: none;
+}
+.brand img { width: 1.9rem; height: 1.9rem; }
+/* the name is drawn, not typed: outlines of the display face, the A cut as a lambda, ID on a gold plate */
+.brand-word { display: block; width: auto; height: 0.94rem; overflow: visible; }
+.bw-gold { fill: var(--gold); transition: fill var(--dur-base) var(--ease-out); }
+.top.on-paper .bw-gold { fill: currentColor; }
+/* on the paper sections the gold mark is drawn in the paper's ink */
+.top.on-paper .brand img { filter: brightness(0.11); }
+.nav { position: absolute; left: 50%; top: 1.2rem; display: grid; gap: 0.05rem; }
+.nav a { position: relative; padding-left: 1.3rem; text-decoration: none; opacity: 0.55; transition: opacity var(--dur-base); }
+.nav a::before { content: "\2192"; position: absolute; left: 0; opacity: 0; translate: -0.4rem 0; transition: opacity var(--dur-base), translate var(--dur-base) var(--ease-out); }
+.nav a:hover, .nav a.on { opacity: 1; }
+.nav a.on::before { opacity: 1; translate: 0 0; }
+.top-r { display: flex; align-items: center; gap: 1.5rem; }
+.top-link { text-decoration: none; opacity: 0.7; transition: opacity var(--dur-base); }
+.top-link:hover { opacity: 1; }
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.72rem 1.05rem 0.72rem 1.15rem;
+    background: var(--gold);
+    color: var(--ground);
+    text-decoration: none;
+    transition: background var(--dur-base), color var(--dur-base);
+}
+.btn:hover { background: var(--ink); }
+.btn-arrow { width: 0.46rem; height: 0.46rem; fill: none; stroke: currentColor; stroke-width: 1.1; transition: translate var(--dur-base) var(--ease-out); }
+.btn:hover .btn-arrow { translate: 0.12rem -0.12rem; }
+.top.on-paper .btn { background: var(--paper-ink); color: var(--paper); }
+.menu-btn { display: none; padding: 0.72rem 0; }
+
+.menu[hidden] { display: none; }
+.menu {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 6rem var(--gutter) 2rem;
+    background: linear-gradient(160deg, #0d0d10, #000 68%);
+    color: var(--gold);
+    clip-path: inset(0 0 100% 0);
+    visibility: hidden;
+    transition: clip-path var(--dur-slow) var(--ease-io), visibility 0s var(--dur-slow);
+}
+html.menu-open .menu { clip-path: inset(0); visibility: visible; transition: clip-path var(--dur-slow) var(--ease-io), visibility 0s; }
+.menu nav { display: grid; gap: 0.4rem; }
+.menu nav a { font-family: var(--font-display); font-weight: 600; font-size: 2.3rem; line-height: 1.12; letter-spacing: -0.01em; text-decoration: none; }
+.menu-close { align-self: flex-start; padding: 0.8rem 0; }
+
+/* --------------------------------------------------------------------- hero */
+.hero { position: relative; height: 100vh; height: 100svh; min-height: 28rem; overflow: clip; background: #000; }
+/* The stage is a 16:9 box that always covers the hero, with a little to spare: it moves a few pixels against the
+   pointer (bp.js), and its edge must not show. Every layer of the card fills it, so they stay registered. */
+.stage {
+    --sw: max(100vw + 1.6rem, 183svh);
+    --fx: 0.5;
+    position: absolute;
+    left: calc(50vw - var(--fx) * var(--sw));
+    top: 50%;
+    width: var(--sw);
+    aspect-ratio: 16 / 9;
+    translate: 0 -50%;
+    will-change: transform;
+}
+.stage > img, .stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Bottom to top: the frames, the still (the same pose as the last frame), the glass view inside the lens. */
+.stage-seq { z-index: 0; }
+/* The card is shown from three sides: a still and a glass view of each, and only the pair that is "on" shows. A side
+   comes in by fading up and settling from a little larger. */
+.stage-still { z-index: 1; opacity: 0; transform: scale(1.035) translateY(1.2%); transition: opacity 0.55s var(--ease-io), transform 0.9s var(--ease-out); }
+.stage-still.on { opacity: 1; transform: none; }
+.stage-xray { z-index: 2; opacity: 0; clip-path: circle(0 at 40% 47%); transition: opacity 0.55s var(--ease-io); }
+.stage-xray.on { opacity: 1; }
+/* The gold glow under the card is in the pictures: a light pass added to the arrival's frames and the stills. */
+.hero.seq .stage-still, .hero.seq .stage-xray { opacity: 0; transition: none; }
+html.js .hero:not(.shown) .stage-still { opacity: 0; }
+/* the headline's two lines end together: a Greek key takes up what the second line leaves */
+.h1-l { display: block; white-space: nowrap; }
+.h1-l2 { display: flex; align-items: flex-start; gap: 0.2em; }
+.h1-mark { flex: 1 1 0; min-width: 0.9em; }
+.h1-mark > span { display: block; }
+.key { display: block; width: 0; min-width: calc(100% - 0.07em); height: 0.63em; margin: 0.108em 0.035em 0; overflow: visible; }
+.key path { fill: none; stroke: var(--gold); stroke-width: 0.07em; stroke-linecap: square; stroke-linejoin: miter; vector-effect: non-scaling-stroke; }
+
+/* small sky marks at the corners of things: the Little Dipper, its pole star steady while the others flicker */
+.hud-row { display: flex; justify-content: space-between; pointer-events: none; }
+.hud { display: flex; align-items: center; justify-content: space-between; width: 6.25rem; color: var(--gold); }
+.hud-r { flex-direction: row-reverse; }
+.hud-stars { position: relative; flex: none; width: 1.7rem; height: 0.95rem; }
+.hud-stars i { position: absolute; width: 0.15rem; height: 0.15rem; background: currentColor; opacity: 0.45; transition: opacity 0.35s ease-in-out; }
+.hud-stars i:nth-child(1) { left: 0; top: 0.02rem; width: 0.21rem; height: 0.21rem; opacity: 1; }
+.hud-stars i:nth-child(2) { left: 0.36rem; top: 0.17rem; }
+.hud-stars i:nth-child(3) { left: 0.66rem; top: 0.35rem; opacity: 0.7; }
+.hud-stars i:nth-child(4) { left: 0.96rem; top: 0.52rem; }
+.hud-stars i:nth-child(5) { left: 1.03rem; top: 0.8rem; opacity: 0.3; }
+.hud-stars i:nth-child(6) { left: 1.5rem; top: 0.75rem; opacity: 0.7; }
+.hud-stars i:nth-child(7) { left: 1.46rem; top: 0.42rem; opacity: 1; }
+.hud-star { flex: none; width: 0.62rem; height: 0.62rem; fill: currentColor; }
+.paper .hud { color: var(--paper-ink); }
+.hero-hud { position: absolute; left: var(--gutter); right: var(--gutter); top: 5.5rem; }
+.sec-hud { position: absolute; left: var(--gutter); right: var(--gutter); top: 2.4rem; }
+.close .sec-hud { top: auto; bottom: 2.4rem; }
+.what, .built, .how, .why { position: relative; }
+.foot-hud { margin-top: 3.4rem; }
+
+.lens {
+    --lr: 0px;
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 3;
+    display: none;
+    width: calc(var(--lr) * 2);
+    height: calc(var(--lr) * 2);
+    margin: calc(var(--lr) * -1) 0 0 calc(var(--lr) * -1);
+    border: 1px solid var(--gold);
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), inset 0 0 2.4rem rgba(221, 202, 155, 0.16);
+    cursor: crosshair;
+    touch-action: none;
+}
+html.js .lens { display: block; }
+html.js .hero:not(.live) .lens, .hero.away .lens, .hero.inside .lens { pointer-events: none; }
+/* a line of light passes down the glass, as over a scanner's bed */
+.lens::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: linear-gradient(to bottom, rgba(221, 202, 155, 0) 0, rgba(221, 202, 155, 0.16) 48%, rgba(244, 244, 245, 0.55) 50%, rgba(221, 202, 155, 0) 52%) 0 0 / 100% 34% no-repeat;
+    animation: lens-scan 3.8s var(--ease-io) infinite;
+    pointer-events: none;
+}
+@keyframes lens-scan { from { background-position: 0 -55%; } to { background-position: 0 155%; } }
+/* where on the card the reticle is, in millimetres from the corner of the side shown */
+.lens-read {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 1.05rem);
+    translate: -50% 0;
+    font-weight: 400;
+    font-size: max(0.5rem, 9.5px);
+    letter-spacing: 0.1em;
+    text-transform: none;
+    white-space: pre;
+    color: var(--gold);
+    opacity: 0.8;
+    pointer-events: none;
+}
+.lens i { position: absolute; background: var(--gold); }
+.lens i:nth-child(1), .lens i:nth-child(2) { left: 50%; width: 1px; height: 0.55rem; }
+.lens i:nth-child(1) { top: -0.75rem; }
+.lens i:nth-child(2) { bottom: -0.75rem; }
+.lens i:nth-child(3), .lens i:nth-child(4) { top: 50%; height: 1px; width: 0.55rem; }
+.lens i:nth-child(3) { left: -0.75rem; }
+.lens i:nth-child(4) { right: -0.75rem; }
+.hero-shade {
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(to top, rgba(0, 0, 0, 0.78), transparent 44%),
+        linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent 24%);
+    pointer-events: none;
+}
+.wire { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.wire line { stroke: var(--gold); stroke-width: 1; opacity: 0.75; }
+.wire circle { fill: var(--gold); }
+.callout { position: absolute; left: var(--gutter); top: max(23%, 7.9rem); width: 15.5rem; }
+.callout-item { display: none; }
+.callout-item.on { display: block; }
+.callout .code { color: var(--gold); }
+.callout .name { margin: 0.5rem 0 0.45rem; font-family: var(--font-display); font-weight: 600; font-size: 1.3rem; line-height: 1.05; letter-spacing: 0; }
+.callout .line { color: var(--ink-2); }
+html.js .lens, html.js .wire, html.js .callout, html.js .seg, html.js .seg-tag, html.js .hero-hud { opacity: 0; transition: opacity 0.7s var(--ease-out); }
+html.js .hero.live .lens, html.js .hero.live .wire, html.js .hero.live .callout, html.js .hero.live .seg, html.js .hero.live .seg-tag, html.js .hero.live .hero-hud { opacity: 1; }
+/* the reticle, its leader and the tag the leader ends at are there before the card lands under them */
+html.js .hero.near .lens, html.js .hero.near .wire, html.js .hero.near .seg-tag { opacity: 1; }
+html.js .hero.away .lens, html.js .hero.away .wire, html.js .hero.inside .lens, html.js .hero.inside .wire { opacity: 0; }
+.h1 {
+    position: absolute;
+    left: var(--gutter);
+    bottom: 1.5rem;
+    display: grid;
+    width: max-content;
+    max-width: calc(100vw - 2 * var(--gutter));
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--h1);
+    line-height: 0.94;
+    letter-spacing: -0.02em;
+    will-change: transform;
+}
+.seg { position: absolute; right: var(--gutter); bottom: 1.9rem; display: flex; border: 1px solid rgba(244, 244, 245, 0.3); }
+/* what the picture is: the card's drawing number and its status */
+.seg-tag { position: absolute; right: var(--gutter); bottom: 5.25rem; margin: 0; color: var(--gold); text-align: right; }
+.seg button { padding: 0.7rem 1.15rem; transition: background var(--dur-base), color var(--dur-base); }
+.seg button.on { background: var(--ink); color: #000; }
+/* which side of the card is shown: back, the count, the time left on this side, on */
+.pager { position: absolute; right: calc(var(--gutter) + 11.7rem); bottom: 1.9rem; display: flex; align-items: center; gap: 0.75rem; height: 2.55rem; }
+.pager[hidden] { display: none; }
+html.js .pager { opacity: 0; transition: opacity 0.7s var(--ease-out); }
+html.js .hero.live .pager { opacity: 1; }
+.pager-n { margin: 0; color: var(--ink-2); }
+.pager-n b { font-weight: inherit; color: var(--gold); }
+.pager-btn { padding: 0.55rem 0.2rem; opacity: 0.6; transition: opacity var(--dur-base); }
+.pager-btn:hover { opacity: 1; }
+.pager-btn.prev { scale: -1 1; }
+.hatch { display: flex; gap: 2px; color: var(--gold); }
+.hatch i { width: 0.44rem; height: 0.44rem; background: currentColor; opacity: 0.28; clip-path: polygon(0 35%, 0 0, 35% 0, 100% 65%, 100% 100%, 65% 100%); transition: opacity 0.4s var(--ease-io); }
+.hatch i.on { opacity: 1; }
+
+/* --------------------------------------------------------------------- band */
+.band { position: relative; background: #000; }
+.band-pin { position: relative; overflow: clip; }
+.band-label {
+    padding: 6rem var(--gutter) 3rem;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--h1);
+    line-height: 0.96;
+    letter-spacing: -0.02em;
+}
+.band-label > span { display: block; }
+.band-label > span + i + span { color: var(--gold); }
+.band-label > i { display: none; }
+.band-tile { position: relative; background: #000; }
+.band-stage { position: relative; }
+.band-stage > img { width: 100%; height: auto; }
+.band-stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+.band-cap { display: none; }
+html.js .band { height: 340vh; height: 340svh; }
+html.js .band-pin { position: sticky; top: 0; height: 100vh; height: 100svh; }
+html.js .band-label { position: absolute; left: var(--gutter); top: 50%; z-index: 1; max-width: 64vw; padding: 0; font-size: 4.3rem; translate: 0 -50%; will-change: transform, opacity; }
+html.js .band-tile { position: absolute; inset: 0; z-index: 2; clip-path: inset(30% 4% 30% 70%); will-change: clip-path; }
+html.js .band-stage {
+    --sw: max(100vw, 177.78svh);
+    position: absolute;
+    left: calc(50vw - 0.5 * var(--sw));
+    top: 50%;
+    width: var(--sw);
+    aspect-ratio: 16 / 9;
+    translate: 0 -50%;
+    will-change: transform;
+}
+html.js .band-stage > img { position: absolute; inset: 0; height: 100%; }
+.band.ready .band-stage > canvas { opacity: 1; }
+html.js .band-cap {
+    position: absolute;
+    left: var(--gutter);
+    bottom: 1.6rem;
+    z-index: 3;
+    display: flex;
+    gap: 1.4rem;
+    color: var(--gold);
+    opacity: 0;
+    transition: opacity var(--dur-base);
+}
+html.js .band.end .band-cap { opacity: 1; }
+
+/* ------------------------------------------------------------ paper sections */
+.paper { background: var(--paper); color: var(--paper-ink); }
+.what { padding: 7.5rem var(--gutter) 6.5rem; }
+.what > .tag { margin-bottom: 2.2rem; }
+.statement {
+    max-width: 21.5em;
+    margin: 0 0 5.5rem;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--h2);
+    line-height: 1.05;
+    letter-spacing: -0.012em;
+}
+.proof {
+    display: grid;
+    grid-template-columns: 13rem 15rem minmax(0, 1fr);
+    gap: 3rem;
+    align-items: start;
+    padding-top: 2rem;
+    border-top: 1px solid var(--paper-ink);
+}
+/* The mark's white ground is multiplied into the paper. The blend sits on the revealed element itself: a child's
+   blend would stop at that element's own stacking context. */
+.oidc { display: block; width: 9.5rem; mix-blend-mode: multiply; }
+.oidc img { width: 100%; height: auto; }
+.tested .tag { margin-bottom: 1.2rem; }
+.tally { display: grid; }
+.tally b { font-family: var(--font-display); font-weight: 600; font-size: 8rem; line-height: 0.8; letter-spacing: -0.03em; }
+.tally span { margin-top: 1rem; }
+.ledger { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 2.4rem; counter-reset: row; }
+.ledger li {
+    display: flex;
+    gap: 1rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--paper-line);
+    break-inside: avoid;
+    counter-increment: row;
+}
+.ledger li::before { content: counter(row, decimal-leading-zero); color: var(--paper-ink-2); }
+.ledger a { display: inline-block; min-width: 2.75rem; padding: 0.3rem 0; margin: -0.3rem 0; text-decoration: none; }
+.ledger a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+.caps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.4rem; margin: 6.5rem 0 0; padding: 0; list-style: none; }
+.caps figure { margin: 0 0 1.3rem; aspect-ratio: 4 / 3; overflow: hidden; background: var(--paper-2); }
+.caps img { width: 100%; height: 100%; object-fit: cover; mix-blend-mode: multiply; transition: scale 1.4s var(--ease-out); }
+.caps li:hover img { scale: 1.06; }
+.caps h2 { margin: 0.5rem 0 0.6rem; font-family: var(--font-display); font-weight: 600; font-size: 1.5rem; line-height: 1.05; letter-spacing: 0; }
+.caps li > p:last-child { max-width: 25em; color: var(--paper-ink-2); }
+
+.how { padding: 7.5rem var(--gutter); }
+.how-head { display: grid; grid-template-columns: 13rem 1fr; gap: 3rem; align-items: start; margin-bottom: 4.5rem; }
+.how-fig { margin: 0; mix-blend-mode: multiply; }
+.how-fig img { width: 100%; height: auto; }
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.4rem; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--paper-ink); }
+.steps li { position: relative; padding-top: 1.4rem; }
+.steps li::before { content: ""; position: absolute; left: 0; top: -0.3rem; width: 0.55rem; height: 0.55rem; background: var(--paper-ink); }
+.steps h2 { margin: 2.6rem 0 0.7rem; font-family: var(--font-display); font-weight: 600; font-size: 1.75rem; line-height: 1.05; letter-spacing: 0; }
+.steps li > p:last-child { max-width: 21em; color: var(--paper-ink-2); }
+
+/* ---------------------------------------------------------------- built for */
+.built { display: grid; grid-template-columns: 1.4fr 1fr; gap: 3rem; align-items: start; padding: 7.5rem var(--gutter); background: var(--ground); }
+.built .tag { margin-bottom: 2.2rem; }
+:root { interpolate-size: allow-keywords; }
+.acc details { border-top: 1px solid var(--line-strong); }
+.acc details:last-child { border-bottom: 1px solid var(--line-strong); }
+.acc details::details-content { block-size: 0; overflow: hidden; transition: block-size 0.6s var(--ease-out), content-visibility 0.6s allow-discrete; }
+.acc details[open]::details-content { block-size: auto; }
+.acc summary { display: grid; grid-template-columns: 4.6rem 1fr auto; gap: 1rem; align-items: baseline; padding: 1.6rem 0; list-style: none; cursor: pointer; }
+.acc summary::-webkit-details-marker { display: none; }
+.acc .no { color: var(--gold); }
+.acc .ti { font-family: var(--font-display); font-weight: 600; font-size: 2.1rem; line-height: 1.05; letter-spacing: -0.01em; transition: translate var(--dur-slow) var(--ease-out); }
+.acc summary:hover .ti { translate: 0.7rem 0; }
+.acc .vw { color: var(--ink-3); white-space: nowrap; transition: color var(--dur-base); }
+.acc details[open] .vw, .acc summary:hover .vw { color: var(--gold); }
+.acc details > p { max-width: 35em; margin: 0 0 1.9rem 5.6rem; color: var(--ink-2); }
+.built-fig { position: sticky; top: 6rem; margin: 0; }
+.built-fig img { width: 100%; height: auto; }
+
+/* ------------------------------------------------------------------ closing */
+.close { position: relative; display: grid; place-items: center; height: 100vh; height: 100svh; min-height: 30rem; overflow: clip; background: #000; }
+.close-bg { position: absolute; inset: -14% 0; will-change: transform; }
+.close-bg img { width: 100%; height: 100%; object-fit: cover; object-position: 66% 46%; scale: 1.35; opacity: 0.4; }
+.close-line {
+    position: relative;
+    max-width: 11.5em;
+    padding: 0 var(--gutter);
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: var(--h1);
+    line-height: 0.96;
+    letter-spacing: -0.02em;
+    text-align: center;
+}
+
+/* ------------------------------------------------------------------- footer */
+.foot { padding: 4.5rem var(--gutter) 1.4rem; overflow: hidden; background: var(--ground); border-top: 1px solid var(--line); }
+/* the last column holds an address: it takes the address's own width, so the address never breaks */
+.foot-cols { display: grid; grid-template-columns: 1.7fr repeat(3, 1fr) max-content; gap: 2rem; }
+.foot-cols .tag { margin-bottom: 1rem; color: var(--ink-3); }
+.foot-cols a { display: block; padding: 0.18rem 0; text-decoration: none; }
+.foot-cols a:hover { color: var(--gold); }
+.foot-brand img { width: 13rem; height: auto; }
+.foot-word {
+    position: relative;
+    margin: 2.2rem 0 0;
+    line-height: 0;
+    color: var(--line-strong);
+    user-select: none;
+}
+/* the word is a drawing, set to the full measure of the page */
+.foot-svg { display: block; width: 100%; height: auto; }
+/* with a mouse the word is drawn on a canvas (bp.js): under the pointer it turns to gold and breaks into dust,
+   and the dust finds its way home. The drawing itself stays for every other case. */
+.foot-word.dusty .foot-svg { visibility: hidden; }
+.foot-dust { position: absolute; left: 0; top: -64px; width: 100%; height: calc(100% + 128px); pointer-events: none; }
+.foot-legal { display: flex; justify-content: space-between; gap: 2rem; margin-top: 1.6rem; padding-top: 1.2rem; border-top: 1px solid var(--line); color: var(--ink-3); font-size: max(0.58rem, 10px); }
+
+/* ------------------------------------------------- narrow and upright screens */
+/* A window narrower than about 3:2: the stage stops growing with the height, so the card keeps to about six tenths
+   of the width; the stage no longer covers the screen, so its upper and lower edges fade out. */
+@media (max-aspect-ratio: 29/20) {
+    .stage {
+        --sw: 120vw;
+        --fx: 0.56;
+        -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16%, #000 80%, transparent 100%);
+        mask-image: linear-gradient(to bottom, transparent 0, #000 16%, #000 80%, transparent 100%);
+    }
+}
+/* the tablet tier: the list of projects takes its own full row, below the mark and the count */
+@media (max-width: 1023.98px) {
+    .callout { width: 13.4rem; }
+    /* beside the headline there is room for the count and one arrow */
+    .hatch, .pager-btn.prev { display: none; }
+    .proof { grid-template-columns: 13rem minmax(0, 1fr); }
+    .ledger { grid-column: 1 / -1; }
+}
+@media (max-width: 599.98px), (max-aspect-ratio: 1/1) {
+    html { font-size: clamp(14px, 4.26667vw, 18px); }
+    :root { --gutter: 1.15rem; --h1: 3.15rem; --h2: 1.75rem; }
+    body { font-size: 0.7rem; }
+    .nav, .top-link { display: none; }
+    .hero-hud { top: 4.5rem; }
+    .hud { width: 5rem; }
+    .top-r { gap: 1.05rem; }
+    .top .btn { padding: 0.6rem 0.75rem 0.6rem 0.85rem; gap: 0.45rem; }
+    .brand { gap: 0.55rem; }
+    .brand img { width: 1.7rem; height: 1.7rem; }
+    .brand-word { height: 0.84rem; }
+    .menu-btn { display: block; }
+    /* --csw: the stage's width (the card is a little over half of it); --crow: the row of the label and the tag,
+       kept below the lowest place the reticle rests on */
+    .hero { --ca: 37svh; --csw: max(140vw, min(170vw, 120svh)); --crow: max(55svh, calc(var(--ca) + 0.176 * var(--csw))); }
+    /* the reticle's lower tick would land in the tag's row when the reticle rests at its lowest place */
+    .lens i:nth-child(2) { display: none; }
+    .stage {
+        --sw: var(--csw);
+        --fx: 0.6275;
+        top: calc(var(--ca) - 0.2644 * var(--csw));
+        translate: none;
+        -webkit-mask-image: linear-gradient(to bottom, transparent 2%, #000 22%, #000 74%, transparent 96%);
+        mask-image: linear-gradient(to bottom, transparent 2%, #000 22%, #000 74%, transparent 96%);
+    }
+    /* the label takes the window's width, so the longest of the four (a two-line name, a three-line text in a
+       narrow column) is never deeper than the shortest, and none reaches the headline */
+    .callout { top: var(--crow); right: var(--gutter); width: auto; }
+    .callout .name { font-size: 1.12rem; }
+    .callout .line { max-width: 17rem; text-wrap: balance; }
+    .pre-frame { height: min(30rem, 100vh - 17rem); height: min(30rem, 100svh - 17rem); }
+    .pre-frame p, .pre-frame ul { line-height: 1.55; }
+    .pre-index, .pre-coord { top: 0.9rem; }
+    .pre-crumbs, .pre-list { bottom: 0.9rem; }
+    .pre-meter { bottom: calc(var(--gutter) + 2.4rem); }
+    .pre-edge { display: none; }
+    .pre-bar { width: 9rem; }
+    .close-line { font-size: 2.05rem; }
+    .h1 { bottom: 5.4rem; }
+    .seg { left: var(--gutter); right: auto; bottom: 1.4rem; }
+    /* the tag sits on the label's first line, at the right: the leader comes down to it from the reticle */
+    .seg-tag { top: var(--crow); bottom: auto; }
+    .hatch, .pager-btn.prev { display: flex; }
+    .pager-btn.prev { display: inline-block; }
+    .pager { right: var(--gutter); bottom: 1.4rem; }
+    html.js .band-label { top: 26%; max-width: none; font-size: 2.5rem; }
+    html.js .band-stage {
+        --sw: 215vw;
+        -webkit-mask-image: linear-gradient(to bottom, transparent 3%, #000 26%, #000 74%, transparent 97%);
+        mask-image: linear-gradient(to bottom, transparent 3%, #000 26%, #000 74%, transparent 97%);
+    }
+    .what, .how, .built { padding: 4.5rem var(--gutter); }
+    .statement { margin-bottom: 3.2rem; }
+    .proof { grid-template-columns: 1fr 1fr; gap: 2rem 1.4rem; }
+    .ledger { grid-column: 1 / -1; columns: 1; }
+    .tally b { font-size: 5.6rem; }
+    .caps {
+        display: flex;
+        gap: 0.9rem;
+        margin: 4rem calc(var(--gutter) * -1) 0;
+        padding: 0 var(--gutter) 0.6rem;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        scrollbar-width: none;
+    }
+    .caps li { flex: 0 0 76vw; scroll-snap-align: center; }
+    .built { grid-template-columns: 1fr; }
+    .built-fig { position: static; order: -1; max-width: 70%; }
+    .acc summary { grid-template-columns: 3.4rem 1fr; }
+    .acc .vw { grid-column: 2; }
+    .acc .ti { font-size: 1.45rem; }
+    .acc details > p { margin-left: 4.4rem; }
+    .how-head { grid-template-columns: 1fr; gap: 1.6rem; margin-bottom: 3rem; }
+    .steps { grid-template-columns: 1fr 1fr; gap: 2.4rem 1.2rem; border-top: 0; }
+    .steps li { border-top: 1px solid var(--paper-ink); }
+    .steps h2 { margin-top: 1.4rem; font-size: 1.35rem; }
+    .foot-cols { grid-template-columns: 1fr 1fr; gap: 2.2rem 1.4rem; }
+    .foot-brand { grid-column: 1 / -1; }
+    .foot-legal { flex-direction: column; gap: 0.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pre { display: none; }
+    .lens::after { display: none; }
+    .stage-still { transform: none; }
+    html.js .w > span, html.js [data-r]:not([data-split]) { translate: none; opacity: 1; transition: none; }
+}
+
+/* a phone's smallest texts */
+@media (max-width: 599.98px), (max-aspect-ratio: 1/1) {
+    .lens-read { font-size: max(0.6rem, 9.5px); }
+    .foot-legal, .foot-legal p { font-size: max(0.66rem, 10px); }
+}
+
+/* a narrow phone: the two controls of the hero share one row, so the buttons and the count take a little less each */
+@media (max-width: 479.98px) {
+    .seg button { padding: 0.7rem 0.9rem; }
+    .pager { gap: 0.45rem; }
+    .hatch i { width: 0.36rem; height: 0.36rem; }
+}
+
+/* a short phone window (a small phone with its browser bars, about 550 px of page): the card a little smaller and
+   higher and the headline a size down, so the label's two lines stand clear of the headline */
+@media (max-width: 599.98px) and (max-height: 599.98px), (max-aspect-ratio: 1/1) and (max-height: 599.98px) {
+    :root { --h1: 2.75rem; }
+    .hero { --ca: 33svh; --csw: max(130vw, min(153vw, 104svh)); --crow: max(50svh, calc(var(--ca) + 0.176 * var(--csw))); }
+    .h1 { bottom: 4.9rem; }
+}
+
+/* an upright tablet, or a tall window on a desk: the phone's arrangement at the larger screen's own size. The type
+   follows the width and never outgrows the height, so the hero's rows (card, label, headline, controls) keep apart */
+@media (min-width: 600px) and (max-aspect-ratio: 1/1) {
+    html { font-size: clamp(15px, min(3vw, 2.35vh), 30px); font-size: clamp(15px, min(3vw, 2.35svh), 30px); }
+    :root { --h1: 4.4rem; }
+    .hero { --ca: 34svh; --csw: min(150vw, max(96vw, 104svh)); --crow: max(50svh, calc(var(--ca) + 0.176 * var(--csw))); }
+    /* here the stage can end inside the window, so its sides fade out as its upper and lower edges do */
+    .stage {
+        -webkit-mask-image: linear-gradient(to bottom, transparent 2%, #000 22%, #000 74%, transparent 96%), linear-gradient(to right, transparent 0, #000 9%, #000 88%, transparent 99%);
+        -webkit-mask-composite: source-in;
+        mask-image: linear-gradient(to bottom, transparent 2%, #000 22%, #000 74%, transparent 96%), linear-gradient(to right, transparent 0, #000 9%, #000 88%, transparent 99%);
+        mask-composite: intersect;
+    }
+    .caps li { flex: 0 0 44vw; }
+    .built-fig { max-width: 52%; }
+}
+
+/* a phone held sideways: a low, wide window. The desk arrangement, with the type held at a size that reads;
+   the headline follows the width, so it keeps clear of the controls beside it */
+@media (max-height: 499.98px) and (min-aspect-ratio: 1/1) {
+    html { font-size: clamp(14px, 3.9vh, 17px); font-size: clamp(14px, 3.9svh, 17px); }
+    :root { --h1: min(4rem, 7.6vw); }
+    /* the window is lower than the least height these two keep elsewhere */
+    .hero, .close { min-height: 0; }
+    /* two lines, as on a desk */
+    html.js .band-label { max-width: 72vw; font-size: 3rem; }
+    /* the reticle rests close under the header here, and its reading would run into the header's words */
+    .lens-read { display: none; }
+}
+
+/* a very wide window (an ultra-wide monitor): the words keep to a centred frame about 2.3 times as wide as the window
+   is high, and the card stops growing with the width, so the header never cuts it; the stage then ends inside the
+   window, and its sides fade out */
+@media (min-width: 1024px) and (min-aspect-ratio: 12/5) {
+    :root { --gutter: max(1.75rem, calc((100vw - 92rem) / 2)); }
+    .stage {
+        --sw: min(100vw + 1.6rem, 250svh);
+        -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
+        mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
+    }
+    /* the pictures of the card coming apart keep the same bound, and end the same way */
+    html.js .band-stage {
+        --sw: min(100vw, 250svh);
+        -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
+        mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
+    }
+    /* the closing line's side padding is the plain gutter here: the frame's would leave it no width */
+    .close-line { padding: 0 1.75rem; }
+}
+
+/* why now: one statement on the dark ground, between the card coming apart and what we do */
+/* the band above ends on the pictures' own black: the ground eases in from it, with no step */
+.why { padding: 8.5rem var(--gutter) 8rem; background: linear-gradient(to bottom, #000 0, var(--ground) 30%); }
+.why > .tag { margin-bottom: 2.2rem; color: var(--gold); }
+.why-row { display: grid; grid-template-columns: 1.4fr 1fr; gap: 3rem; align-items: end; padding-bottom: 2.4rem; border-bottom: 1px solid var(--line-strong); }
+.why .statement { margin: 0; font-size: var(--h1); line-height: 0.98; }
+.why-body { max-width: 31em; margin: 0 0 0.5rem; color: var(--ink-2); }
+@media (max-width: 1023.98px) {
+    .why { padding: 7rem var(--gutter) 6rem; }
+    .why-row { grid-template-columns: 1fr; gap: 2rem; align-items: start; }
+}
+@media (max-width: 599.98px), (max-aspect-ratio: 1/1) {
+    .why { padding: 6rem var(--gutter) 5rem; }
+    .why .statement { font-size: 2.9rem; }
+}

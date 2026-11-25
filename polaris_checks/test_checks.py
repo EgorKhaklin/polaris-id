@@ -2906,16 +2906,17 @@ def test_claims_manifest_check_discriminates(tmp_path):
 def test_claims_manifest_holds_the_certification_sentences_on_the_tree(monkeypatch):
     # Each sentence the OpenID certification needs, dropped from one surface of this tree: the check turns red.
     # Before the meta surfaces and the 3(e) entries, every one of these left every public check green.
+    import json
     import re
 
     real = checks._read
     assert checks.check_claims_manifest(REPO)[0].level == "OK"
 
-    def finding(path, change):
-        text = real(REPO, path)
+    def finding(path, change, base=lambda rel, text: text):
+        text = base(path, real(REPO, path))
         changed = change(text)
         assert changed != text, path
-        monkeypatch.setattr(checks, "_read", lambda root, rel: changed if rel == path else real(root, rel))
+        monkeypatch.setattr(checks, "_read", lambda root, rel: changed if rel == path else base(rel, real(root, rel)))
         try:
             return checks.check_claims_manifest(REPO)[0]
         finally:
@@ -2927,6 +2928,30 @@ def test_claims_manifest_holds_the_certification_sentences_on_the_tree(monkeypat
     page = "site/index.html"
     D, O = '<meta name="description" content="', '<meta property="og:description" content="'
     claim = "polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC. "
+    # The page's description fields say nothing of the certification since 2026-11-25 (owner): the statement stands
+    # with the mark, and check_public_claims_honest holds a description that says "certified" to the scoped sentence.
+    # The meta surface is still read here, on this tree with the sentence put at the head of both fields and its entry
+    # put in the manifest: a page that states the sentence there is held to it as before.
+    assert "certified" not in real(REPO, page).split("</head>")[0].lower(), "the page's head says nothing of the certification"
+    entry = {"id": "openid-certified-meta", "kind": "statement", "claim": claim.strip()[:-1],
+             "surfaces": [page + "#meta:description", page + "#meta:og:description"],
+             "evidence": ["file:docs/reference/SPEC-COMPLIANCE.md"], "reproduce": "Open the Foundation's listing."}
+
+    def stated(rel, text):
+        if rel == page:
+            assert D in text and O in text
+            return text.replace(D, D + claim, 1).replace(O, O + claim, 1)
+        if rel == "docs/reference/claims.json":
+            manifest = json.loads(text)
+            manifest["claims"].append(entry)
+            return json.dumps(manifest)
+        return text
+
+    monkeypatch.setattr(checks, "_read", lambda root, rel: stated(rel, real(root, rel)))
+    try:
+        assert checks.check_claims_manifest(REPO)[0].level == "OK", "the sentence at the head of both fields, listed, is held"
+    finally:
+        monkeypatch.setattr(checks, "_read", real)
 
     def tag(text, start):
         i = text.index(start)
@@ -2950,30 +2975,36 @@ def test_claims_manifest_holds_the_certification_sentences_on_the_tree(monkeypat
             ("the format is cut from the description", D, told(D, claim.replace(" for SD-JWT VC", ""))),
             ("the format is cut from og:description", O, told(O, claim.replace(" for SD-JWT VC", ""))),
             ("a tagline moves before the claim", D, told(D, "Polaris ID. " + claim))):
-        f = finding(page, change)
+        f = finding(page, change, stated)
         surface = page + "#meta:" + ("description" if start == D else "og:description")
         assert f.level == "FAIL" and surface + " " in f.message, (why, f.message[:200])
     first = lambda t: t.replace(tag(t, D), '<meta content="%s" name="description">' % tag(t, D)[len(D):-2], 1)  # noqa: E731
-    assert finding(page, first).level == "OK", "a tag with its content first is read"
-    assert finding(page, lambda t: first(t).replace(" for SD-JWT VC", "", 1)).level == "FAIL", \
+    assert finding(page, first, stated).level == "OK", "a tag with its content first is read"
+    assert finding(page, lambda t: first(t).replace(" for SD-JWT VC", "", 1), stated).level == "FAIL", \
         "a tag with its content first is read, not skipped"
-    # The page-wide reader takes double-quoted content only, so a single-quoted description fails closed, never unread.
-    assert finding(page, lambda t: t.replace(tag(t, D), tag(t, D).replace('"', "'"), 1)).level == "FAIL"
-    assert red("site/index.html", r'content="polaris-oid4vp 1\.0\.0rc7 is OpenID', 'content="Polaris is OpenID', 0), \
-        "both tags name Polaris instead of the package"
+    # A single-quoted description is read as a double-quoted one is: held with the sentence, red when its format is cut.
+    single = lambda t: t.replace(tag(t, D), tag(t, D).replace('"', "'"), 1)  # noqa: E731
+    assert finding(page, single, stated).level == "OK", "a single-quoted description is read"
+    assert finding(page, lambda t: single(t).replace(" for SD-JWT VC", "", 1), stated).level == "FAIL", \
+        "a single-quoted description is read, not skipped"
+    # The page-wide reader takes a double-quoted text alternative only, so the mark's, single-quoted, fails closed.
+    assert red(page, r'alt="(OpenID Certified mark: [^"]*)"', r"alt='\1'"), "the mark's text alternative, single-quoted"
+    assert finding(page, lambda t: t.replace('content="polaris-oid4vp 1.0.0rc7 is OpenID', 'content="Polaris is OpenID'),
+                   stated).level == "FAIL", "both tags name Polaris instead of the package"
     assert red("site/llms.txt", r"`polaris-oid4vp 1\.0\.0rc7` is OpenID", "`polaris-oid4vp 1.0.0rc8` is OpenID"), \
         "llms.txt: the version changes"
     assert red("site/llms.txt", r"\(`sd_jwt_vc`, `direct_post\.jwt`;", "(`direct_post.jwt`;"), \
         "llms.txt: the format is cut"
     assert red("lab/EXTERNAL-NOUNS.md", r" \(Certification Terms 3\(e\)\)", ""), "the scoreboard without the terms' clause"
-    # The mark on the site stands beside its caption, the certified package and version, the profile and the
-    # credential format (owner, 2026-11-17): either one without the other, or the caption changed, turns the check red.
-    assert red(page, r"polaris-oid4vp 1\.0\.0rc7<br>OpenID4VP 1\.0 \+ HAIP 1\.0 Verifier &middot; SD-JWT VC", ""), \
-        "the mark without its caption"
-    assert red(page, r'<img src="openid-certified-mark-on-white\.png"[^>]*>', ""), "the caption without the mark"
-    assert red(page, r"polaris-oid4vp 1\.0\.0rc7<br>", "polaris-oid4vp 1.0.0rc8<br>"), "the caption's version changes"
-    assert red(page, r"HAIP 1\.0 Verifier &middot;", "HAIP 1.0 &middot;"), "the caption's profile is cut"
-    assert red(page, r"&middot; SD-JWT VC</span>", "</span>"), "the caption's credential format is cut"
+    # The mark on the site links to the Foundation's listing, and its text alternative is the statement: the certified
+    # package and version, the profile and the credential format (owner, 2026-11-25: the mark stands alone on the page).
+    # The mark gone, its statement gone or its statement changed turns the check red.
+    mark = r'(<img src="openid-certified-mark-on-white\.png" alt="OpenID Certified mark: )'
+    assert red(page, r'<img src="openid-certified-mark-on-white\.png"[^>]*>', ""), "the mark and its statement gone"
+    assert red(page, mark + r'[^"]*"', r'\1"'), "the mark without its statement"
+    assert red(page, mark + r"polaris-oid4vp 1\.0\.0rc7 ", r"\1polaris-oid4vp 1.0.0rc8 "), "the statement's version changes"
+    assert red(page, mark + r'([^"]*) Verifier profile', r"\1\2 profile"), "the statement's profile is cut"
+    assert red(page, mark + r'([^"]*) for SD-JWT VC"', r'\1\2"'), "the statement's credential format is cut"
     tail = r"not\s+an\s+endorsement\s+(?:or\s+an|and\s+not\s+an)\s+independent\s+verification"
     for path in ("README.md", "polaris_web/templates/landing.html", "TRADEMARKS.md",
                  "LICENSES/LicenseRef-OpenID-Certified-Mark.txt", "ROADMAP.md", "docs/INTEGRATION.md",
@@ -10662,9 +10693,29 @@ def test_site_tokens_match_app_check_fails_when_the_palette_forks(tmp_path):
     assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
         "must FAIL when the page redeclares the palette inline"
 
-    write({"site/tokens.css": good["site/tokens.css"], "site/index.css": ":root{--ink:#000}\n"})
+    # The page is restored first: left as the case above wrote it, every case below would fail on the page alone.
+    write({"site/tokens.css": good["site/tokens.css"], "site/index.html": good["site/index.html"]})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "OK", \
+        "must PASS again once the page no longer redeclares the palette"
+    write({"site/index.css": ":root{--ink:#000}\n"})
     assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
         "must FAIL when the page's own stylesheet redeclares the palette"
+    # A sheet may keep names of its own on :root; the palette is the names the token file or the application holds.
+    write({"site/index.css": ":root{--gutter:1rem;--h1:4rem}\n@media (min-width:60rem){:root{--h1:5rem}}\n"})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "OK", \
+        "must PASS when a sheet keeps on :root only names neither the token file nor the application declares"
+    write({"site/index.css": ":root{--gutter:1rem;--gold:#000}\n"})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
+        "must FAIL when a sheet declares on :root a name the application holds, though the token file does not carry it"
+    write({"site/index.css": ":root{--gutter:1rem}\n@media (min-width:60rem){:root{--ink:#000}}\n"})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
+        "must FAIL when the palette is redeclared inside a media query"
+    write({"site/index.css": "/* :root{--ink:#000} */\n:root{--gutter:1rem}\n"})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "OK", \
+        "must not read a declaration inside a comment"
+    write({"site/index.css": ":root{--gutter:1rem}\n:root{--ink:#000"})
+    assert checks.check_site_tokens_match_app(tmp_path)[0].level == "FAIL", \
+        "must FAIL on a :root rule it cannot read to its closing brace, which a browser still applies"
     (tmp_path / "site/index.css").unlink()
 
     # The application's sheet may open with a comment naming :root and @font-face rules before
@@ -10759,6 +10810,10 @@ def test_site_pages_render_under_their_headers_check_discriminates(tmp_path):
                                               '<input type="text" type="image" src="https://example.org/x.png">\n'
                                               '<input type="image" src="go.png" alt="go">\n') == "OK", \
         "must PASS an input that is not an image input whatever its src, and a same-origin image input"
+    # a script element typed application/ld+json that loads nothing is a data block: no browser runs it
+    assert result(site__index_dot_html=page + '<script type="application/ld+json">{"@context":"https://schema.org"}</script>\n'
+                                              "<SCRIPT TYPE=' Application/LD+JSON '>{}</SCRIPT>\n") == "OK", \
+        "must PASS a JSON-LD data block, which script-src does not govern, however its type is written"
     broken = {
         "the headers file is missing": {"site___headers": None},
         "the policy allows inline style": {"site___headers": headers.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")},
@@ -10771,6 +10826,13 @@ def test_site_pages_render_under_their_headers_check_discriminates(tmp_path):
         "a page carries an inline style block": {"site__index_dot_html": page + "<style>p{}</style>\n"},
         "a page carries a style attribute": {"site__index_dot_html": page + '<p style="color:red">x</p>\n'},
         "a page carries an inline script": {"site__index_dot_html": page + "<script>go()</script>\n"},
+        "an inline script is typed as a module": {"site__index_dot_html": page + '<script type="module">go()</script>\n'},
+        "a page carries an inline import map": {"site__index_dot_html": page + '<script type="importmap">{"imports":{}}</script>\n'},
+        "an inline script carries a type no rule knows": {"site__index_dot_html": page + '<script type="text/plain">go()</script>\n'},
+        "a data block's type is the second type attribute": {
+            "site__index_dot_html": page + '<script type="text/javascript" type="application/ld+json">go()</script>\n'},
+        "a JSON-LD script element names a source the policy does not list": {
+            "site__index_dot_html": page + '<script type="application/ld+json" src="app.json"></script>\n'},
         "a page loads a script the policy does not list": {"site__index_dot_html": page + '<script src="app.js"></script>\n'},
         "a page carries an event handler": {"site__index_dot_html": page + '<a href="#" onclick="go()">x</a>\n'},
         "an event handler follows a slash": {"site__index_dot_html": page + '<img/onerror="x()" src="logo.png">\n'},
@@ -11675,9 +11737,10 @@ def test_public_claims_honest_check_discriminates(tmp_path):
                  BARE + '<body><math><mtext>' + LOUD + '</mtext></math></body>'):
         write(site=page)
         assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", f"must FAIL on an overclaiming <title> beside an innocent one: {page!r}"
-    # the card's descriptions and image text: the scoped certification sentence is theirs to carry,
+    # the card's descriptions and image text: the scoped certification sentence is theirs to carry, whole and first
+    # (a looser wording is refused: test_public_claims_honest_holds_a_description_that_says_certified_to_its_scope),
     # 'international' is not 'national', and every refused word fails in every one of them
-    CERT = "Its verifier is OpenID Certified at 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile; international standards."
+    CERT = checks._SITE_CERTIFIED_SENTENCE + " It follows international standards."
     TEXTS = (("name", "description"), ("property", "og:description"), ("property", "og:image:alt"),
              ("name", "twitter:description"), ("name", "twitter:image:alt"))
     for attr, key in TEXTS:
@@ -11755,6 +11818,42 @@ def test_public_claims_honest_check_discriminates(tmp_path):
     write(readme="# POLARIS\n\nRelying parties cannot link two presentations.\n")
     assert checks.check_public_claims_honest(tmp_path)[0].level == "FAIL", \
         "must FAIL when unlinkability is claimed as 'cannot link' with no two-sided correlation statement"
+
+
+def test_public_claims_honest_holds_a_description_that_says_certified_to_its_scope(tmp_path):
+    # Owner, 2026-11-25: the site's description fields say nothing of the certification; the statement stands with the
+    # mark. A field that says "certified" opens with the whole scoped sentence, so a search result or a shared link
+    # never carries the word without the package, the version, the profile and the format.
+    (tmp_path / "README.md").write_text("# POLARIS\n\nPre-pilot, on notional data.\n")
+    (tmp_path / "site").mkdir()
+    S = "polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC."
+
+    def level(fields):
+        metas = "".join('<meta %s="%s" content="%s">\n' % ("property" if k.startswith("og:") else "name", k, v)
+                        for k, v in fields.items())
+        (tmp_path / "site" / "index.html").write_text(
+            '<title>Polaris ID</title>\n<meta property="og:title" content="Polaris ID">\n' + metas
+            + "<body><h1>Proof over trust.</h1></body>\n")
+        return checks.check_public_claims_honest(tmp_path)[0].level
+
+    assert level({}) == "OK", "must PASS the page with no description at all (the control)"
+    assert level({"description": "Identity a person carries and anyone can check, offline."}) == "OK", \
+        "must PASS a description that says nothing of the certification"
+    assert level({"description": S + " Identity a person carries."}) == "OK", \
+        "must PASS a description that opens with the whole scoped sentence"
+    assert level({"description": S.replace(" to the ", "  to\n the ") + " More."}) == "OK", \
+        "must compare with whitespace normalised"
+    for field in ("description", "og:description", "twitter:description", "og:image:alt", "twitter:image:alt"):
+        for why, text in (("the word alone", "OpenID Certified. Identity a person carries."),
+                          ("a looser wording of the scope",
+                           "Its verifier is OpenID Certified at 1.0.0rc7 to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile."),
+                          ("the word in another case", "An openid CERTIFIED verifier."),
+                          ("a tagline before the sentence", "Polaris ID. " + S),
+                          ("the version dropped", S.replace(" 1.0.0rc7", "")),
+                          ("the profile cut", S.replace(" Verifier profile", " profile")),
+                          ("the format cut", S.replace(" for SD-JWT VC", "")),
+                          ("the sentence without its full stop, run into another", S[:-1] + " and more.")):
+            assert level({field: text}) == "FAIL", f"must FAIL on {field}: {why}"
 
 
 def test_public_claims_honest_holds_a_headline_title_to_the_page_h1(tmp_path):

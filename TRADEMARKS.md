@@ -1,7 +1,9 @@
 # Trademarks
 
 The [Apache License](LICENSE) covers Polaris's code, documents and image files, except the
-site's sky and star trails (CC BY-SA 3.0 IGO; see [NOTICE](NOTICE)). It grants no right to use
+OpenID Certified mark (the OpenID Foundation's; see below), the site's sky and star trails
+(CC BY-SA 3.0 IGO; see [NOTICE](NOTICE)) and the pictures of the Polaris card reference design
+and the founder's portrait (all rights reserved; see [NOTICE](NOTICE)). It grants no right to use
 the names and marks those files carry (section 6 of the license). This page says what that
 means in practice.
 
@@ -10,7 +12,7 @@ means in practice.
 | Mark | Files |
 |---|---|
 | The Polaris and Polaris ID names, as the names of this project and its packages | throughout |
-| The Polaris logo and star mark | `site/polaris_logo_clean.png`, `site/polaris_logo.webp`, `site/polaris_logo_180.png`, `site/polaris_logo_192.png`, `site/favicon.ico`, `site/hero/coin-*`, `polaris_web/static/favicon.svg` |
+| The Polaris logo and star mark | `site/polaris_logo_clean.png`, `site/polaris_logo.webp`, `site/polaris_logo_180.png`, `site/polaris_logo_192.png`, `site/favicon.ico`, `site/icon-*.png`, `site/mark.webp`, `site/hero/coin-*`, `polaris_web/static/favicon.svg` |
 | The owl emblem | `docs/assets/seal.svg` |
 | The Khaklin Technologies name and lockup, with the Polaris logo | `docs/assets/hero.svg` |
 
@@ -32,9 +34,10 @@ project or its maintainer endorses it.
 ## A mark that is not the project's
 
 The OpenID Certified mark (`openid-certified-mark-on-white.png`, in `docs/assets/` and `site/`)
-belongs to the OpenID Foundation and is used under its certification terms, beside a statement
+belongs to the OpenID Foundation and is used under its certification terms, with a statement
 naming the certified package and version, the profile and the credential format (the mark itself
-carries "OpenID Certified"). What is certified: polaris-oid4vp 1.0.0rc7 is OpenID Certified to the
+carries "OpenID Certified"): beside the mark in the README, and as the mark's text alternative on
+the site, where the mark links to the Foundation's listing. What is certified: polaris-oid4vp 1.0.0rc7 is OpenID Certified to the
 OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC. It is a self-certification, not an
 endorsement or an independent verification. Neither the project's license nor this page grants any
 right to the mark, and a fork or a later release is not certified.
