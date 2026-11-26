@@ -31,6 +31,7 @@
 }
 
 :root {
+    --lambda: #a51d1d;                              /* the A in the word at the foot, under the pointer */
     --paper: #ebe5d8;
     --paper-2: #e1dacb;
     --paper-ink: #15120d;
@@ -109,12 +110,16 @@ html.js [data-r].in { opacity: 1; translate: 0 0; }
 .tag { font-size: 0.68rem; letter-spacing: 0.1em; }
 
 /* ---------------------------------------------------------------- preloader */
-/* An instrument: the owl fixed at the centre, the sky's dial turning around it while the card's files load. */
+/* An instrument: the owl fixed at the centre, the sky's dial turning around it while the card's files load. Its
+   ground is a pair of doors. When the files are in, the instrument fades where it stands and the owl stays; a line of
+   light runs down the seam; the two leaves swing inward on the page, the owl fades as they part, and the view moves
+   through the doorway. */
 .pre {
     position: fixed;
     inset: 0;
     z-index: 100;
     overflow: hidden;
+    perspective: 110vw;
     background: linear-gradient(160deg, #0d0d10, #000 68%);
     color: var(--gold);
     font-family: var(--font-mono);
@@ -125,10 +130,117 @@ html.js [data-r].in { opacity: 1; translate: 0 0; }
     clip-path: inset(0);
     animation: pre-auto 0.9s 2.6s var(--ease-io) forwards;   /* with no script the layer lifts itself */
 }
-html.js .pre { animation: none; transition: clip-path var(--dur-slow) var(--ease-io) 0.28s; }
-html.pre-done .pre { clip-path: inset(0 0 100% 0); pointer-events: none; }
+/* the instrument's unit (--pu): the dial, the owl, the count and the doors' engraving are drawn in it. It is the root
+   unit wherever the window has the height for the dial, the count below it and the margins; in a shorter window it is
+   the share of the height they need. --pg is the layer's margin at the top and the bottom. */
+.pre { --pg: var(--gutter); --pu: min(1rem, (50vh - var(--pg) - 0.4rem) / 14.3); }
+@supports (height: 1svh) { .pre { --pu: min(1rem, (50svh - var(--pg) - 0.4rem) / 14.3); } }
+html.js .pre { animation: none; }
+html.pre-done .pre { background: none; pointer-events: none; }
 html.pre-skip .pre, html.pre-gone .pre { display: none; }
 @keyframes pre-auto { to { clip-path: inset(0 0 100% 0); visibility: hidden; } }
+/* the leaves: each paints its half of the layer's own ground and is hinged at the window's edge. A leaf stands taller
+   than the window by 24% of it above and below (so the window is the middle 67.5676% of a leaf, from 16.2162% down),
+   which keeps the doorway closed above and below as the leaves turn away */
+.pre-door {
+    position: absolute;
+    top: -24%;
+    bottom: -24%;
+    width: calc(50% + 0.5px);              /* the two meet with no hairline between them at an odd width */
+    overflow: hidden;
+    background: #050506 linear-gradient(160deg, #0d0d10, #000 68%) 0 50% / 200% 67.5676% no-repeat;
+}
+.pre-door-l { left: 0; transform-origin: 0 50%; }
+.pre-door-r { right: 0; transform-origin: 100% 50%; background-position: 100% 50%; }
+/* a panel line on each leaf, inset from the window's edges and the seam */
+.pre-door i { position: absolute; top: calc(16.2162% + 1.1rem); bottom: calc(16.2162% + 1.1rem); left: 1.1rem; right: 1.1rem; border: 1px solid rgba(221, 202, 155, 0.2); opacity: 0; }
+/* the engraving, shown as the instrument fades: the chart's five rings where the chart drew them, centred on the
+   seam */
+.pre-door::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: calc(100 * var(--pu));
+    height: calc(100 * var(--pu));
+    translate: -50% -50%;
+    opacity: 0;
+    background: radial-gradient(circle,
+        transparent calc(12.98 * var(--pu) - 1px), rgba(221, 202, 155, 0.22) calc(12.98 * var(--pu) - 0.4px), rgba(221, 202, 155, 0.22) calc(12.98 * var(--pu) + 0.4px), transparent calc(12.98 * var(--pu) + 1px),
+        transparent calc(18.15 * var(--pu) - 1px), rgba(221, 202, 155, 0.22) calc(18.15 * var(--pu) - 0.4px), rgba(221, 202, 155, 0.22) calc(18.15 * var(--pu) + 0.4px), transparent calc(18.15 * var(--pu) + 1px),
+        transparent calc(25.85 * var(--pu) - 1px), rgba(221, 202, 155, 0.22) calc(25.85 * var(--pu) - 0.4px), rgba(221, 202, 155, 0.22) calc(25.85 * var(--pu) + 0.4px), transparent calc(25.85 * var(--pu) + 1px),
+        transparent calc(35.75 * var(--pu) - 1px), rgba(221, 202, 155, 0.22) calc(35.75 * var(--pu) - 0.4px), rgba(221, 202, 155, 0.22) calc(35.75 * var(--pu) + 0.4px), transparent calc(35.75 * var(--pu) + 1px),
+        transparent calc(48.4 * var(--pu) - 1px), rgba(221, 202, 155, 0.22) calc(48.4 * var(--pu) - 0.4px), rgba(221, 202, 155, 0.22) calc(48.4 * var(--pu) + 0.4px), transparent calc(48.4 * var(--pu) + 1px));
+}
+.pre-door-l::before { left: 100%; }
+.pre-door-r::before { left: 0; }
+/* as a leaf turns: its free edge catches the light, and the rest of it falls into shade */
+.pre-door::after { content: ""; position: absolute; inset: 0; opacity: 0; }
+.pre-door-l::after { background: linear-gradient(to left, rgba(240, 226, 190, 0.75), rgba(221, 202, 155, 0.18) 0.45rem, rgba(0, 0, 0, 0.42) 4.5rem, rgba(0, 0, 0, 0.62)); }
+.pre-door-r::after { background: linear-gradient(to right, rgba(240, 226, 190, 0.75), rgba(221, 202, 155, 0.18) 0.45rem, rgba(0, 0, 0, 0.42) 4.5rem, rgba(0, 0, 0, 0.62)); }
+html.pre-done .pre-door i, html.pre-done .pre-door::before { opacity: 1; transition: opacity 0.35s var(--ease-io); }
+html.pre-done .pre-door-l { animation: pre-open-l 1.55s 0.55s forwards, pre-walk 0.95s cubic-bezier(0.55, 0, 0.8, 0.5) 1.2s forwards; }
+html.pre-done .pre-door-r { animation: pre-open-r 1.55s 0.55s forwards, pre-walk 0.95s cubic-bezier(0.55, 0, 0.8, 0.5) 1.2s forwards; }
+html.pre-done .pre-door::after { animation: pre-shade 1.55s 0.55s forwards; }
+/* a heavy pair: they give a little, rest, then swing */
+@keyframes pre-open-l {
+    0% { rotate: y 0deg; animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1); }
+    11% { rotate: y 2.4deg; animation-timing-function: linear; }
+    19% { rotate: y 2.4deg; animation-timing-function: cubic-bezier(0.62, 0, 0.16, 1); }
+    100% { rotate: y 88deg; }
+}
+@keyframes pre-open-r {
+    0% { rotate: y 0deg; animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1); }
+    11% { rotate: y -2.4deg; animation-timing-function: linear; }
+    19% { rotate: y -2.4deg; animation-timing-function: cubic-bezier(0.62, 0, 0.16, 1); }
+    100% { rotate: y -88deg; }
+}
+@keyframes pre-shade {
+    0%, 19% { opacity: 0; animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1); }
+    100% { opacity: 1; }
+}
+/* through the doorway: the leaves come toward the eye and pass out of sight at the sides */
+@keyframes pre-walk { to { translate: 0 0 62vw; } }
+/* the light behind the doors, seen through the gap as it widens */
+.pre-light {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse 13% 92% at 50% 50%, rgba(247, 236, 208, 0.96), rgba(236, 220, 180, 0.5) 46%, transparent),
+        radial-gradient(ellipse 46% 78% at 50% 50%, rgba(236, 220, 180, 0.4), rgba(221, 202, 155, 0.12) 52%, transparent 78%);
+}
+html.pre-done .pre-light { animation: pre-light 1.7s 0.4s forwards; }
+@keyframes pre-light {
+    0% { opacity: 0; animation-timing-function: linear; }
+    6% { opacity: 1; animation-timing-function: linear; }
+    50% { opacity: 1; animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1); }
+    100% { opacity: 0; }
+}
+/* the seam: a line of light that runs down between the leaves, kept clear of the owl, and goes as they part */
+.pre-seam {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: calc(4 * var(--pu));
+    translate: -50% 0;
+    pointer-events: none;
+    background:
+        linear-gradient(var(--gold), var(--gold)) 50% 0 / 1px 100% no-repeat,
+        linear-gradient(to right, transparent, rgba(221, 202, 155, 0.2) 50%, transparent);
+    -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent calc(4.3 * var(--pu)), #000 calc(6.2 * var(--pu)));
+    mask-image: radial-gradient(circle at 50% 50%, transparent calc(4.3 * var(--pu)), #000 calc(6.2 * var(--pu)));
+    opacity: 0;
+    clip-path: inset(0 0 100% 0);
+}
+html.pre-done .pre-seam { animation: pre-seam 0.95s var(--ease-io) 0.1s forwards; }
+@keyframes pre-seam {
+    0% { clip-path: inset(0 0 100% 0); opacity: 1; }
+    40% { clip-path: inset(0); opacity: 1; }
+    79% { clip-path: inset(0); opacity: 1; }
+    100% { clip-path: inset(0); opacity: 0; }
+}
 .pre-glow {
     position: absolute;
     inset: -20%;
@@ -138,9 +250,11 @@ html.pre-skip .pre, html.pre-gone .pre { display: none; }
         radial-gradient(45% 40% at 8% -6%, rgba(255, 255, 255, 0.045), transparent 70%);
     animation: pre-breathe 3.4s ease-in-out infinite alternate;
 }
+html.pre-done .pre-glow { animation: none; opacity: 0; transition: opacity 0.35s linear; }
 @keyframes pre-breathe { from { scale: 1; opacity: 0.8; } to { scale: 1.08; opacity: 1; } }
 /* the chart: one drawing centred on the screen, 121rem across (1rem is 18.18 of its units) */
-.pre-chart { position: absolute; left: 50%; top: 50%; width: 121rem; height: 121rem; translate: -50% -50%; overflow: visible; pointer-events: none; }
+.pre-chart { position: absolute; left: 50%; top: 50%; width: calc(121 * var(--pu)); height: calc(121 * var(--pu)); translate: -50% -50%; overflow: visible; pointer-events: none; }
+html.pre-done .pre-chart { opacity: 0; transition: opacity 0.35s var(--ease-io); }
 .pre-chart * { fill: none; stroke: var(--gold); stroke-width: 0.9; }
 .pre-sky > * { opacity: 0.2; stroke-dasharray: 1; stroke-dashoffset: 1; animation: pre-draw 1.7s var(--ease-io) 0.1s forwards; }
 .pre-hours > * { opacity: 0.13; animation-delay: 0.4s; }
@@ -156,11 +270,16 @@ html.js .pre-turn { transform: rotate(48deg); }
 .pre-arc-bg { opacity: 0.25; }
 .pre-chart .pre-arc { stroke-width: 1.7; stroke-dasharray: 100; stroke-dashoffset: 100; }
 html:not(.js) .pre-chart .pre-arc { stroke-dashoffset: 0; }
-.pre-ui { position: absolute; inset: 0; transition: opacity 0.3s var(--ease-io), translate 0.3s var(--ease-io); }
-html.pre-done .pre-ui { opacity: 0; translate: 0 -0.6rem; }
+/* the words, the count and the frame's marks fade where they stand; the owl stays until the leaves begin to part, and never
+   moves */
+.pre-ui { position: absolute; inset: 0; }
+html.pre-done .pre-row, html.pre-done .pre-meter, html.pre-done .pre-frame .tick, html.pre-done .pre-edge { opacity: 0; transition: opacity 0.35s var(--ease-io); }
+html.pre-done .pre-frame p, html.pre-done .pre-frame ul { animation: pre-out 0.35s var(--ease-io) forwards; }
+html.pre-done .pre-owl { animation: pre-out 0.35s var(--ease-io) 0.8s forwards; }
+@keyframes pre-out { to { opacity: 0; } }
 .pre-row { position: absolute; left: var(--gutter); right: var(--gutter); align-items: center; }
-.pre-top { top: calc(var(--gutter) - 0.15rem); }
-.pre-bottom { bottom: var(--gutter); }
+.pre-top { top: calc(var(--pg) - 0.15rem); }
+.pre-bottom { bottom: var(--pg); }
 .pre-word { margin: 0; }
 .pre-word .brand-word { height: 1.02rem; }
 .pre-frame {
@@ -194,22 +313,22 @@ html:not(.js) .pre-list { display: none; }
 .pre-edge::before { content: ""; position: absolute; inset: -1px auto -1px -1px; width: 0.3rem; background: currentColor; }
 .pre-edge-r { left: auto; right: 0; scale: -1 1; }
 /* The owl never moves: the lockup's left square is the owl in its ring, shown through a square window. */
-.pre-owl { position: absolute; inset: 0; margin: auto; width: 6.4rem; height: 6.4rem; overflow: hidden; }
+.pre-owl { position: absolute; inset: 0; margin: auto; width: calc(6.4 * var(--pu)); height: calc(6.4 * var(--pu)); overflow: hidden; }
 .pre-owl img { height: 100%; width: auto; max-width: none; }
 .pre-meter {
     position: absolute;
     left: 50%;
-    bottom: calc(var(--gutter) + 1.2rem);
+    bottom: calc(var(--pg) + 1.2 * var(--pu));
     translate: -50% 0;
     display: grid;
     justify-items: center;
-    gap: 0.7rem;
+    gap: calc(0.7 * var(--pu));
 }
-.pre-num { font-size: 2.1rem; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+.pre-num { font-size: calc(2.1 * var(--pu)); line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
 .pre-bar {
     position: relative;
-    width: 12rem;
-    height: 0.5rem;
+    width: calc(12 * var(--pu));
+    height: calc(0.5 * var(--pu));
     overflow: hidden;
     background: repeating-linear-gradient(115deg, rgba(221, 202, 155, 0.28) 0 1px, transparent 1px 5px);
 }
@@ -650,6 +769,15 @@ html.js .band.end .band-cap { opacity: 1; }
         mask-image: linear-gradient(to bottom, transparent 0, #000 16%, #000 80%, transparent 100%);
     }
 }
+/* A window narrower than 9:7: the pictures of the card coming apart stop growing with the height, so the whole stack
+   keeps inside the width; the stage then ends inside the window, and its upper and lower edges fade out. */
+@media (max-aspect-ratio: 9/7) {
+    html.js .band-stage {
+        --sw: 138vw;
+        -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 13%, #000 87%, transparent 100%);
+        mask-image: linear-gradient(to bottom, transparent 0, #000 13%, #000 87%, transparent 100%);
+    }
+}
 /* the tablet tier: the list of projects takes its own full row, below the mark and the count */
 @media (max-width: 1023.98px) {
     .callout { width: 13.4rem; }
@@ -695,7 +823,7 @@ html.js .band.end .band-cap { opacity: 1; }
     .pre-crumbs, .pre-list { bottom: 0.9rem; }
     .pre-meter { bottom: calc(var(--gutter) + 2.4rem); }
     .pre-edge { display: none; }
-    .pre-bar { width: 9rem; }
+    .pre-bar { width: calc(9 * var(--pu)); }
     .close-line { font-size: 2.05rem; }
     .h1 { bottom: 5.4rem; }
     .seg { left: var(--gutter); right: auto; bottom: 1.4rem; }
@@ -705,26 +833,26 @@ html.js .band.end .band-cap { opacity: 1; }
     .pager-btn.prev { display: inline-block; }
     .pager { right: var(--gutter); bottom: 1.4rem; }
     html.js .band-label { top: 26%; max-width: none; font-size: 2.5rem; }
-    html.js .band-stage {
-        --sw: 215vw;
-        -webkit-mask-image: linear-gradient(to bottom, transparent 3%, #000 26%, #000 74%, transparent 97%);
-        mask-image: linear-gradient(to bottom, transparent 3%, #000 26%, #000 74%, transparent 97%);
-    }
+    /* the header has no bar behind it here: its mark and buttons stand over the page, the menu button on a plate,
+       and once the page has moved the name gives way to the mark alone */
+    .top::before { display: none; }
+    .brand-word { transition: opacity var(--dur-base) var(--ease-out); }
+    .top.scrolled .brand-word { opacity: 0; }
+    .menu-btn { padding: 0.6rem 0.75rem; background: var(--ground); box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .top.on-paper .menu-btn { background: var(--paper); box-shadow: inset 0 0 0 1px var(--paper-line); }
+    .top-r { gap: 0.55rem; }
+    /* a tap between the mark and the buttons, or where the name stood, reaches the page beneath */
+    .top { pointer-events: none; }
+    .top > * { pointer-events: auto; }
+    .top.scrolled .brand { pointer-events: none; }
+    .top.scrolled .brand img { pointer-events: auto; }
     .what, .how, .built { padding: 4.5rem var(--gutter); }
     .statement { margin-bottom: 3.2rem; }
     .proof { grid-template-columns: 1fr 1fr; gap: 2rem 1.4rem; }
     .ledger { grid-column: 1 / -1; columns: 1; }
     .tally b { font-size: 5.6rem; }
-    .caps {
-        display: flex;
-        gap: 0.9rem;
-        margin: 4rem calc(var(--gutter) * -1) 0;
-        padding: 0 var(--gutter) 0.6rem;
-        overflow-x: auto;
-        scroll-snap-type: x mandatory;
-        scrollbar-width: none;
-    }
-    .caps li { flex: 0 0 76vw; scroll-snap-align: center; }
+    /* the three drawings stand one under another, each whole */
+    .caps { grid-template-columns: minmax(0, 1fr); gap: 2.6rem; margin-top: 4rem; }
     .built { grid-template-columns: 1fr; }
     .built-fig { position: static; order: -1; max-width: 70%; }
     .acc summary { grid-template-columns: 3.4rem 1fr; }
@@ -781,14 +909,37 @@ html.js .band.end .band-cap { opacity: 1; }
         mask-image: linear-gradient(to bottom, transparent 2%, #000 22%, #000 74%, transparent 96%), linear-gradient(to right, transparent 0, #000 9%, #000 88%, transparent 99%);
         mask-composite: intersect;
     }
-    .caps li { flex: 0 0 44vw; }
+    /* three across again; a column is never wider than its share, and the names are set to fit one */
+    .caps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.4rem; }
+    .caps h2 { font-size: 1rem; }
     .built-fig { max-width: 52%; }
+}
+
+/* the loading screen in a narrow window (a phone held upright): the frame's corner words stand above and below the
+   dial, so the frame grows to the least height that keeps them clear of it, and the unit is the largest that leaves
+   the frame above the count */
+@media (max-width: 599.98px) {
+    .pre { --pu: min(1rem, (50vh - var(--pg) - 7.2rem) / 13.1); }
+    .pre-frame { height: max(min(30rem, 100vh - 17rem), 19.6 * var(--pu) + 8.6rem); }
+    @supports (height: 1svh) {
+        .pre { --pu: min(1rem, (50svh - var(--pg) - 7.2rem) / 13.1); }
+        .pre-frame { height: max(min(30rem, 100svh - 17rem), 19.6 * var(--pu) + 8.6rem); }
+    }
 }
 
 /* a phone held sideways: a low, wide window. The desk arrangement, with the type held at a size that reads;
    the headline follows the width, so it keeps clear of the controls beside it */
 @media (max-height: 499.98px) and (min-aspect-ratio: 1/1) {
     html { font-size: clamp(14px, 3.9vh, 17px); font-size: clamp(14px, 3.9svh, 17px); }
+    /* the loading screen: the frame reaches from under the name to over the bottom row, the count sits as low as on a
+       desk window, and the unit also keeps the dial clear of the frame's lower left words */
+    .pre { --pu: min(1rem, (50vh - var(--pg) - 0.4rem) / 14.3, (min(50vw - var(--pg), 23rem) + 50vh - var(--pg) - 17.27rem) / 13.86 - 0.0408rem); }
+    .pre-frame { height: min(28rem, 100vh - 2 * var(--pg) - 2.74rem); }
+    @supports (height: 1svh) {
+        .pre { --pu: min(1rem, (50svh - var(--pg) - 0.4rem) / 14.3, (min(50vw - var(--pg), 23rem) + 50svh - var(--pg) - 17.27rem) / 13.86 - 0.0408rem); }
+        .pre-frame { height: min(28rem, 100svh - 2 * var(--pg) - 2.74rem); }
+    }
+    .pre-meter { bottom: calc(var(--pg) + 1.2 * var(--pu)); }
     :root { --h1: min(4rem, 7.6vw); }
     /* the window is lower than the least height these two keep elsewhere */
     .hero, .close { min-height: 0; }
@@ -796,6 +947,44 @@ html.js .band.end .band-cap { opacity: 1; }
     html.js .band-label { max-width: 72vw; font-size: 3rem; }
     /* the reticle rests close under the header here, and its reading would run into the header's words */
     .lens-read { display: none; }
+    /* the card's pictures keep inside the height, as on a desk: the stage then ends inside the width, and its sides
+       fade out. A window under 600px wide keeps the phone's hero stage, which is whole there already. */
+    @media (min-width: 600px) {
+        .stage {
+            --sw: min(100vw + 1.6rem, 195svh);
+            -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 92%, transparent 100%);
+            mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 92%, transparent 100%);
+        }
+    }
+    html.js .band-stage {
+        --sw: min(100vw, 196svh);
+        -webkit-mask-image: linear-gradient(to right, transparent 0, #000 10%, #000 90%, transparent 100%);
+        mask-image: linear-gradient(to right, transparent 0, #000 10%, #000 90%, transparent 100%);
+    }
+    /* the header as on an upright phone: no bar, the sections behind the menu button, and the name giving way to the
+       mark once the page has moved */
+    .top::before { display: none; }
+    .nav, .top-link { display: none; }
+    .menu-btn { display: block; padding: 0.6rem 0.75rem; background: var(--ground); box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .top.on-paper .menu-btn { background: var(--paper); box-shadow: inset 0 0 0 1px var(--paper-line); }
+    .top-r { gap: 0.55rem; }
+    .brand-word { transition: opacity var(--dur-base) var(--ease-out); }
+    .top.scrolled .brand-word { opacity: 0; }
+    .top { pointer-events: none; }
+    .top > * { pointer-events: auto; }
+    .top.scrolled .brand { pointer-events: none; }
+    .top.scrolled .brand img { pointer-events: auto; }
+    /* the menu in a low window: its links in two columns */
+    .menu { padding: 4.2rem var(--gutter) 1.2rem; }
+    .menu nav { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.2rem 2rem; }
+    .menu nav a { font-size: 1.7rem; }
+}
+/* lower still (a phone held sideways with its browser's bars showing): the headline follows the height as well, and
+   the note stands right under the header, in the place of the small stars, so the two keep clear of each other */
+@media (max-height: 359.98px) and (min-aspect-ratio: 1/1) {
+    :root { --h1: min(4rem, 7.6vw, 15vh); --h1: min(4rem, 7.6vw, 15svh); }
+    .hero-hud { display: none; }
+    .callout { top: 4.5rem; }
 }
 
 /* a very wide window (an ultra-wide monitor): the words keep to a centred frame about 2.3 times as wide as the window
@@ -803,14 +992,16 @@ html.js .band.end .band-cap { opacity: 1; }
    window, and its sides fade out */
 @media (min-width: 1024px) and (min-aspect-ratio: 12/5) {
     :root { --gutter: max(1.75rem, calc((100vw - 92rem) / 2)); }
+    /* the loading screen keeps the usual margin at the top and the bottom */
+    .pre { --pg: 1.75rem; }
     .stage {
         --sw: min(100vw + 1.6rem, 250svh);
         -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
         mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
     }
-    /* the pictures of the card coming apart keep the same bound, and end the same way */
+    /* the pictures of the card coming apart keep inside the height, so the whole stack shows, and end the same way */
     html.js .band-stage {
-        --sw: min(100vw, 250svh);
+        --sw: min(100vw, 196svh);
         -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
         mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
     }
