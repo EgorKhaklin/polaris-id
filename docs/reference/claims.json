@@ -283,6 +283,7 @@
       "id": "pypi-oid4vp",
       "kind": "badge",
       "claim": "PyPI: polaris-oid4vp",
+      "label": "PyPI: polaris-oid4vp",
       "surfaces": [
         "README.md"
       ],
@@ -291,7 +292,7 @@
         "file:packages/polaris-oid4vp"
       ],
       "reproduce": "pip install polaris-oid4vp",
-      "why": "The newest final release of polaris-oid4vp, which shields.io reads live from PyPI."
+      "why": "Where polaris-oid4vp is published: its PyPI project page."
     },
     {
       "id": "npm",

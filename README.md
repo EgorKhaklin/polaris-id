@@ -24,7 +24,7 @@
 [![FN-DSA: Falcon-1024](https://img.shields.io/badge/FN--DSA-Falcon--1024_(FIPS_206_draft)-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#fn-dsa-draft-fips-206)
 
 [![PyPI](https://img.shields.io/badge/PyPI-polaris--verify-3775a9?labelColor=0a1421&style=flat-square)](packages/polaris-verify)
-[![PyPI: polaris-oid4vp](https://img.shields.io/pypi/v/polaris-oid4vp?label=PyPI%20polaris-oid4vp&color=3775a9&labelColor=0a1421&style=flat-square)](packages/polaris-oid4vp)
+[![PyPI: polaris-oid4vp](https://img.shields.io/badge/PyPI-polaris--oid4vp-3775a9?labelColor=0a1421&style=flat-square)](packages/polaris-oid4vp)
 [![npm](https://img.shields.io/npm/v/polaris-sdk-ts/next?label=npm%20polaris-sdk-ts&color=cb3837&labelColor=0a1421&style=flat-square)](sdk/typescript)<br>
 [![npm: polaris-negative-vectors](https://img.shields.io/npm/v/polaris-negative-vectors?label=npm%20polaris-negative-vectors&color=cb3837&labelColor=0a1421&style=flat-square)](https://www.npmjs.com/package/polaris-negative-vectors)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
@@ -90,6 +90,8 @@ polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack 
 **Tested against software nobody here wrote.** Eight wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup, Procivis One Core, the Yivi app (developer mode; built on irmago) and the swiyu Sandbox Wallet. Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck and Multipaz through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. Every walk is driven from here except OID4VCgo's, which its own CI runs. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
 
 **Per implementation:** the version, date, result and controls of each one's latest run, in [INTEROP.md](docs/reference/INTEROP.md).
+
+Polaris is pre-pilot, on test data.
 
 **Run by an outside project.** Since 2026-10-11, OID4VCgo's CI runs the verifier daily and on each of its releases, which met the 1.0.0 condition: an operator who is not the author ([the scoreboard](lab/EXTERNAL-NOUNS.md#use)). Versions: [RELEASING.md](docs/RELEASING.md).
 
