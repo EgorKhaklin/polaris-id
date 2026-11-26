@@ -42,7 +42,8 @@ It reads back a `VerifyVerdict`:
 - `decision` is `accept` or `reject`;
 - `usable` is `authentic` and `currently_authoritative` together.
 
-A presentation that does not verify gets the same uniform reject, whatever the reason.
+A `token_value` that is not found, and a signature that matches none of the credential's signatures in force,
+get the same reject: `authentic` false, `decision` `reject`, `reason` `not a verifiable presentation`.
 
 ### TypeScript
 
