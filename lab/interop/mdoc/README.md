@@ -114,10 +114,10 @@ test always true fails the "mDL, no EKU" unit, and making the SKI test always tr
 id-mdl-ds EKU but did not enforce it. Now, for docType `org.iso.18013.5.1.mDL`, it requires the DS
 certificate's SubjectKeyIdentifier and id-mdl-ds EKU. The EKU is what stops a TLS key or another
 key under the same root from signing MSOs.
-- Source: the rule follows ISO/IEC 18013-5 Annex B as isomdl tabulates it (tables B.2 and B.4, and B.1.1 NOTE 1;
-  (`src/definitions/x509/validation/extensions/mod.rs` and `validation/mod.rs` at
-  Indicio-tech/isomdl `204440bd`).
-- The ISO text itself was not read: it is paywalled. Nothing here claims more than isomdl's tables.
+- Source: the rule follows ISO/IEC 18013-5:2021 Annex B, Table B.3 (the document signer certificate) and B.1.1
+  NOTE 1, as isomdl implements them (`src/definitions/x509/validation/extensions/mod.rs` and `validation/mod.rs`
+  at Indicio-tech/isomdl `204440bd`).
+- Checked against ISO/IEC 18013-5:2021, Table B.3; not quoted.
 - For the PID, nothing more is enforced. The PID rulebook (eudi-doc-attestation-rulebooks-catalog
   `rulebooks/pid/pid-rulebook.md`, commit `6d8f7f84`, 2026-07-17) states no DS certificate
   profile. It says the PID "complies with [ISO/IEC 18013-5]" in its encoding, and that trust

@@ -368,8 +368,8 @@ def cose_key(k):
 
 
 ID_MDL_DS = "1.0.18013.5.1.2"
-# The docTypes whose DS certificate must carry SubjectKeyIdentifier and the id-mdl-ds EKU (ISO 18013-5
-# Annex B, table B.4, as isomdl implements it). The PID rulebook states no DS certificate profile.
+# The docTypes whose DS certificate must carry SubjectKeyIdentifier and the id-mdl-ds EKU (ISO/IEC 18013-5:2021
+# Annex B, Table B.3, as isomdl implements it). The PID rulebook states no DS certificate profile.
 PROFILE_DOCTYPES = {"org.iso.18013.5.1.mDL"}
 
 

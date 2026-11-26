@@ -1,6 +1,6 @@
 {
   "name": "polaris-negative-vectors",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Negative test vectors for OpenID4VP 1.0 verifiers, SD-JWT VC and mdoc, as JSON: each presentation with the verdict a correct verifier reaches.",
   "license": "Apache-2.0",
   "files": [
