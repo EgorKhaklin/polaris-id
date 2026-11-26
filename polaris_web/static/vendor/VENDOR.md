@@ -5,11 +5,11 @@ Each entry names its upstream release and licence; the fonts are byte for byte a
 
 | Asset | Source | Licence | Use |
 |---|---|---|---|
-| MapLibre GL JS 5.24.0 | https://github.com/maplibre/maplibre-gl-js | BSD-3-Clause | carried since v9.248; the Atlas globe |
-| Inter 4.1 | https://github.com/rsms/inter/releases/tag/v4.1 (Inter-4.1.zip: web/InterVariable.woff2, LICENSE.txt) | SIL OFL 1.1 | the console's text face, unmodified |
-| JetBrains Mono 2.304 | https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 (fonts/webfonts/*.woff2, OFL.txt) | SIL OFL 1.1 | identifiers, hashes and instants, unmodified |
-| Cinzel | https://github.com/google/fonts/tree/main/ofl/cinzel (Cinzel[wght].ttf, git blob d218a0b9) | SIL OFL 1.1 | the POLARIS wordmark only, unmodified |
-| Lucide 1.49.0 | https://github.com/lucide-icons/lucide/releases/tag/1.49.0 (lucide-icons-1.49.0.zip, sha256 66141a7b...ca1fbd5) | ISC | 73 icons combined into sprite.svg by scripts/polaris-vendor-icons.py |
+| MapLibre GL JS 5.24.0 | https://github.com/maplibre/maplibre-gl-js | BSD-3-Clause AND MIT AND ISC AND BSD-2-Clause AND 0BSD | carried since v9.248; the Atlas globe |
+| Inter 4.1 | https://github.com/rsms/inter/releases/tag/v4.1 (Inter-4.1.zip: web/InterVariable.woff2, LICENSE.txt) | OFL-1.1 | the console's text face, unmodified |
+| JetBrains Mono 2.304 | https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 (fonts/webfonts/*.woff2, OFL.txt) | OFL-1.1 | identifiers, hashes and instants, unmodified |
+| Cinzel | https://github.com/google/fonts/tree/main/ofl/cinzel (Cinzel[wght].ttf, git blob d218a0b9) | OFL-1.1 | the POLARIS wordmark only, unmodified |
+| Lucide 1.49.0 | https://github.com/lucide-icons/lucide/releases/tag/1.49.0 (lucide-icons-1.49.0.zip, sha256 66141a7b...ca1fbd5) | ISC AND MIT | 73 icons combined into sprite.svg by scripts/polaris-vendor-icons.py |
 
 ## Files and SHA-256
 
