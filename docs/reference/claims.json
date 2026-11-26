@@ -200,6 +200,7 @@
       "evidence": [
         "file:docs/reference/SPEC-COMPLIANCE.md",
         "test:packages/polaris-oid4vp/test_sdjwt.py::TheSevenConformanceRefusalsTests",
+        "test:packages/polaris-oid4vp/test_sdjwt.py::CredentialAudienceTests",
         "test:packages/polaris-oid4vp/test_sdjwt.py::AbsentKeyBindingClaimsTests",
         "test:packages/polaris-oid4vp/test_sdjwt.py::StructuralRefusalsTests",
         "test:packages/polaris-oid4vp/test_sdjwt.py::DisclosureCollisionTests",
