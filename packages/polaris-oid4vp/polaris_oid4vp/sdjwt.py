@@ -1829,7 +1829,7 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
         why = _leaf_names(leaf, payload["iss"])
         if why:
             return _refuse("issuer_key", why)
-        iss_bound = why == ""            # None: the leaf names no issuer, so nothing binds iss
+        iss_bound = why == ""            # why is None when the leaf names no issuer: iss_bound False, nothing binds iss
     # Who signed, for the verdict. An `iss` nothing binds is left out of `claims` and away from
     # the status resolver: it is the credential's word about itself, and every decision keyed by
     # issuer would otherwise take it as the issuer's name (2026-10-10).
@@ -1979,6 +1979,25 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
     if iss_bound is False:
         # `claims["iss"]` is whose credential this is, and an unbound `iss` is not that.
         claims.pop("iss", None)
+
+    # 2b. WHOM THE ISSUER ADDRESSED IT TO. RFC 9901 7.1 step 6: "Check that the SD-JWT is valid
+    # using claims such as nbf, exp, and aud in the processed payload, if present." The PROCESSED
+    # payload, because 9.7 lets an issuer make the entries of `aud` selectively disclosable: the
+    # `aud` judged is the one the resolver built, the one a relying party reads. RFC 7519 4.1.3:
+    # a principal that does not identify itself with a value in a present `aud` MUST reject the
+    # JWT, and this verifier is `expected_audience`, as the key binding JWT's `aud` is held to it
+    # below. Until 2026-11-26 it was not read, and a credential addressed to another verifier, as
+    # a string or a list, verified as authentic. Before step 3, so the path without key binding
+    # reads it too.
+    if "aud" in claims:
+        aud = claims["aud"]
+        named = [aud] if isinstance(aud, str) else aud
+        if not (isinstance(named, list) and all(isinstance(n, str) for n in named)
+                and expected_audience in named):
+            return _refuse("credential_audience",
+                           "the credential's aud is %r, which does not name this verifier, %r: a "
+                           "credential its issuer addressed to another verifier is not ours to "
+                           "accept (RFC 9901 7.1 step 6; RFC 7519 4.1.3)" % (aud, expected_audience))
 
     # 3. key binding, which is what makes this a presentation rather than a copy
     if not kb_jwt:

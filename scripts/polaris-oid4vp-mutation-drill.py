@@ -623,6 +623,21 @@ NAMED_MUTANTS = (
     ("sdjwt:anchor-sent-in-x5c", "polaris_oid4vp/sdjwt.py",
      "        why = _an_anchor_in_the_chain(intermediates, trust_anchors)\n",
      "        why = \"\"  # MUTANT\n"),
+    # 2026-11-26, RFC 9901 7.1 step 6: the credential's `aud` is judged in the processed payload.
+    # Read from the signed payload instead, a disclosed entry naming this verifier is not seen and
+    # a disclosed `aud` naming another is not judged; without the type check a list holding this
+    # verifier beside a number passes; a string read as a list is a substring test.
+    ("sdjwt:credential-aud-read-unprocessed", "polaris_oid4vp/sdjwt.py",
+     "    if \"aud\" in claims:\n        aud = claims[\"aud\"]\n",
+     "    if \"aud\" in payload:\n        aud = payload[\"aud\"]  # MUTANT\n"),
+    ("sdjwt:credential-aud-list-untyped", "polaris_oid4vp/sdjwt.py",
+     "        if not (isinstance(named, list) and all(isinstance(n, str) for n in named)\n",
+     "        if not (isinstance(named, list)  # MUTANT\n"),
+    ("sdjwt:credential-aud-a-string-read-as-a-list", "polaris_oid4vp/sdjwt.py",
+     "        named = [aud] if isinstance(aud, str) else aud\n"
+     "        if not (isinstance(named, list) and all(isinstance(n, str) for n in named)\n"
+     "                and expected_audience in named):\n",
+     "        if not (isinstance(aud, (str, list)) and expected_audience in aud):  # MUTANT\n"),
     ("verifier:require-status-accepts-stale", "polaris_oid4vp/verifier.py",
      "            and not isinstance(status, bool) and status == 0 and revocation.get(\"stale\") is False)\n",
      "            and not isinstance(status, bool) and status == 0)  # MUTANT\n"),
