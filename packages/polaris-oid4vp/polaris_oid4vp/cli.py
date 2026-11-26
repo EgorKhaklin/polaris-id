@@ -1696,7 +1696,7 @@ and one that judges a response already captured:
                    help="with --format mso_mdoc: a PEM file of IACA root certificates a "
                         "document's signer must chain to, each trusted for --doctype (repeatable)")
     s.add_argument("--experimental", action="store_true",
-                   help="turn on what is off by default: --format mso_mdoc and --dc-api")
+                   help="turn on what is off by default: --format mso_mdoc, --dc-api and --age-check")
     s.add_argument("--verifier-info", default=None, metavar="FILE",
                    help="verifier attestations to put in the request object: a JSON array "
                         "(OpenID4VP 1.0 section 5.1) or one object (as the German EUDI wallet "

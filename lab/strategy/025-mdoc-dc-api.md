@@ -682,9 +682,12 @@ its document signer's as `issuing_authority`.
 refused by these checks alone, where the clause as read does not require what refused it: the rule shrinks to what the
 clause requires, and the corpus rows that encoded the wrong reading are withdrawn in the same pull request.
 
-**Publication.** No CHANGELOG line until M7. The M7 CHANGELOG entry names this refusal (the certificate's
-country and state, and the disclosed issuing elements), so the stricter verdict is never left out at release. The
-corpus 0.4.0 notes state the new rows, as every bump does.
+**Publication** (amended 2026-11-26). Until M7, the CHANGELOG records this refusal as experimental and off by
+default, in the line of the first release that carries it (`polaris-oid4vp` 1.4.0), as M7 records each such path;
+the M7 CHANGELOG entry names it again (the certificate's country and state, and the disclosed issuing elements)
+with its evidence, so the stricter verdict is never left out at release. Until this amendment the paragraph said
+no CHANGELOG line until M7, and M7's named external exercise needs a released `polaris-oid4vp` that carries the
+path, so the two could not both hold. The corpus 0.4.0 notes state the new rows, as every bump does.
 
 ### M3: OpenID4VP over the DC API (`dc_api.jwt`)
 
