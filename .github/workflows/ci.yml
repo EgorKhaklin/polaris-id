@@ -4051,6 +4051,11 @@ jobs:
       # test_mdoc judges a DeviceResponse; each refusal is asserted with its code.
       - name: An Annex C request, and its encrypted response opened and judged
         run: cd packages/polaris-oid4vp && python -m unittest test_annex_c
+      # Decision record 025, milestone 5: the age page, serve --age-check (experimental). Its
+      # request asks for one element; its answer is one of three strings, in the body of the
+      # one response that carries it; each refusal is asserted with its code.
+      - name: The age page, its one-element request and its three answers
+        run: cd packages/polaris-oid4vp && python -m unittest test_age_page
       # The image a stranger pulls holds the released wheel, by hash, and nothing of this tree
       # (packages/polaris-oid4vp/image). Built here, then presented to by the suite's wallet over
       # TLS: a valid presentation accepted, the wrong nonce refused, as a user that is not root.
