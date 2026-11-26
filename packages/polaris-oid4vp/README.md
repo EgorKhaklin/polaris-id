@@ -623,15 +623,16 @@ package instead of the tree). A run is not a certification.
 
 ```bash
 cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verifier \
-    test_serve test_cli test_conformance_capture test_status test_mdoc test_annex_c
+    test_serve test_cli test_conformance_capture test_status test_mdoc test_annex_c \
+    test_age_page
 ```
 
-- 1268 tests in nine files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1296 tests in ten files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 400 refusals accept and requires a
-  test to fail: 396 are caught, and the 4 survivors are declared with their reasons. It also makes
-  145 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 422 refusals accept and requires a
+  test to fail: 418 are caught, and the 4 survivors are declared with their reasons. It also makes
+  162 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under

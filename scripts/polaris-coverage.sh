@@ -233,7 +233,8 @@ mine && run_standalone "$ROOT" pytest -q polaris_zk/witness2/test_witness2.py po
 # them out measured the tree and not what PyPI and npm carry.
 mine && run_standalone "$ROOT/sdk/python" unittest test_sdk
 mine && run_standalone "$ROOT/packages/polaris-oid4vp" unittest test_sdjwt test_jwe test_verifier test_serve \
-                                                       test_cli test_conformance_capture test_status test_mdoc test_annex_c
+                                                       test_cli test_conformance_capture test_status test_mdoc test_annex_c \
+                                                       test_age_page
 # The conformance suite drives the Python SDK's command line in a child process per case, which
 # subprocess coverage records; and the detached verifier's own check of every published vector,
 # as CI runs it. (Its --selftest needs liboqs, which this job does not install.)
