@@ -612,8 +612,8 @@
         root.classList.remove('lock');
         try { sessionStorage.setItem('plr-pre', '1'); } catch (e) { /* private mode: the screen shows again next time */ }
         if (lenis) { lenis.start(); }
-        window.setTimeout(startIntro, 660);
-        window.setTimeout(function () { root.classList.add('pre-gone'); }, 1400);
+        window.setTimeout(startIntro, 900);                  /* as the leaves begin to swing */
+        window.setTimeout(function () { root.classList.add('pre-gone'); }, 2250);
     }
 
     arrive.load(function (part) { loadedPart = part; }, function () { if (skipPre && !introDone) { /* frames arrive late: used for the scroll only */ } });
