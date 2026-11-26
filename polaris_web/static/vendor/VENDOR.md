@@ -5,7 +5,7 @@ Each entry names its upstream release and licence; the fonts are byte for byte a
 
 | Asset | Source | Licence | Use |
 |---|---|---|---|
-| MapLibre GL JS | https://github.com/maplibre/maplibre-gl-js | BSD-3-Clause | carried since v9.248; the Atlas globe |
+| MapLibre GL JS 5.24.0 | https://github.com/maplibre/maplibre-gl-js | BSD-3-Clause | carried since v9.248; the Atlas globe |
 | Inter 4.1 | https://github.com/rsms/inter/releases/tag/v4.1 (Inter-4.1.zip: web/InterVariable.woff2, LICENSE.txt) | SIL OFL 1.1 | the console's text face, unmodified |
 | JetBrains Mono 2.304 | https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 (fonts/webfonts/*.woff2, OFL.txt) | SIL OFL 1.1 | identifiers, hashes and instants, unmodified |
 | Cinzel | https://github.com/google/fonts/tree/main/ofl/cinzel (Cinzel[wght].ttf, git blob d218a0b9) | SIL OFL 1.1 | the POLARIS wordmark only, unmodified |
@@ -23,6 +23,6 @@ Each entry names its upstream release and licence; the fonts are byte for byte a
 | `fonts/jetbrains-mono/JetBrainsMono-Regular.woff2` | 92164 | `a9cb1cd82332b23a47e3a1239d25d13c86d16c4220695e34b243effa999f45f2` |
 | `fonts/jetbrains-mono/OFL.txt` | 4399 | `30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad` |
 | `lucide/LICENSE` | 3208 | `b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57` |
-| `lucide/sprite.svg` | 22668 | `07b2c3543c2c27c304aa8e1036657b49546572fc0f859b1ab6af7c4edb550d2a` |
+| `lucide/sprite.svg` | 17996 | `af4e80bb5a2260e335bbfd06fe927d0db5618e3158415441c8591999c7ef6af7` |
 | `maplibre-gl.css` | 70024 | `ab1e70d59ec40465bae7e7030da2f3ccf28133fd502e62bd598eefbadfd7a732` |
 | `maplibre-gl.js` | 1056837 | `45a9b07a9189ce56054c620a947ccf41e291e58c95e9b61533b740aaa65ee5cb` |

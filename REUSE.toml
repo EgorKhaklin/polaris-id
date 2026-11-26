@@ -44,3 +44,66 @@ path = ["site/grain.png"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin and the Polaris contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Files from other projects, each under its own licence. The texts sit in LICENSES/ and, as each upstream ships
+# them, beside the files; polaris_web/static/vendor/VENDOR.md lists the console's files and their sources. The
+# site's fonts are the console's, cut to the characters the site needs.
+[[annotations]]
+path = ["polaris_web/static/vendor/fonts/inter/**", "site/fonts/inter.*.woff2", "site/fonts/Inter-OFL.txt"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2016 The Inter Project Authors"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = ["polaris_web/static/vendor/fonts/jetbrains-mono/**", "site/fonts/jetbrains-mono.*.woff2",
+        "site/fonts/JetBrainsMono-OFL.txt"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors"
+SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = ["polaris_web/static/vendor/fonts/cinzel/**", "site/fonts/cinzel.*.woff2", "site/fonts/Cinzel-OFL.txt"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2020 The Cinzel Project Authors"
+SPDX-License-Identifier = "OFL-1.1"
+
+# MapLibre GL JS 5.24.0, byte for byte its npm build. Sources: its LICENSE.txt (MapLibre, and the code it holds
+# from mapbox-gl-js, glfx.js and d3-color) and its v5.24.0 lockfile. The bundled packages are the 17 that the
+# build's own sourcemap, dist/maplibre-gl.js.map, names as sources; each holder is from that package's LICENSE
+# at its locked version. @maplibre/mlt is offered as "MIT OR Apache-2.0" and is taken here under MIT.
+[[annotations]]
+path = ["polaris_web/static/vendor/maplibre-gl.js"]
+precedence = "closest"
+SPDX-FileCopyrightText = ["2020-2025 MapLibre contributors", "2014-2025 Mapbox", "2008 Apple Inc.", "2011 Evan Wallace",
+                          "2010-2016 Mike Bostock", "2015 Anand Thakker", "2015-2025 Brandon Jones, Colin MacKenzie IV",
+                          "2017-2018 Vladimir Agafonkin", "2011 Gary Court", "Microsoft Corporation"]
+SPDX-License-Identifier = "BSD-3-Clause AND MIT AND ISC AND BSD-2-Clause AND 0BSD"
+
+# MapLibre GL JS 5.24.0's stylesheet, MapLibre's own and mapbox-gl-js's.
+[[annotations]]
+path = ["polaris_web/static/vendor/maplibre-gl.css"]
+precedence = "closest"
+SPDX-FileCopyrightText = ["2023 MapLibre contributors", "2020 Mapbox"]
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# Lucide 1.49.0: 73 icons in one sprite, 26 of them derived from Feather, which its LICENSE places under MIT.
+[[annotations]]
+path = ["polaris_web/static/vendor/lucide/**"]
+precedence = "closest"
+SPDX-FileCopyrightText = ["2026 Lucide Icons and Contributors", "2013-present Cole Bemis"]
+SPDX-License-Identifier = "ISC AND MIT"
+
+# Lenis 1.3.27, the site's smooth scroll.
+[[annotations]]
+path = ["site/vendor/lenis-1.3.27.min.js", "site/vendor/lenis-LICENSE.txt"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2024 darkroom.engineering"
+SPDX-License-Identifier = "MIT"
+
+# The Code of Conduct: the Contributor Covenant 3.0, which the Organization for Ethical Source stewards, with the
+# project's line for reporting a concern.
+[[annotations]]
+path = ["CODE_OF_CONDUCT.md"]
+precedence = "closest"
+SPDX-FileCopyrightText = ["Organization for Ethical Source", "2026 Egor Khaklin and the Polaris contributors"]
+SPDX-License-Identifier = "CC-BY-SA-4.0"
