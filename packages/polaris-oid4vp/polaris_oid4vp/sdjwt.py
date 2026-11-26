@@ -24,7 +24,7 @@ The seven, and where each is caught:
     kb-jwt-iat-in-past             KB-JWT minted 365 days ago               -> kb_freshness
     kb-jwt-iat-in-future           KB-JWT minted 365 days ahead             -> kb_freshness
 
-Reference: draft-ietf-oauth-selective-disclosure-jwt, draft-ietf-oauth-sd-jwt-vc, and
+Reference: RFC 9901 (SD-JWT), draft-ietf-oauth-sd-jwt-vc, and
 OpenID4VP 1.0 section 8. Measured against the suite rather than read off them alone: the
 issuer JWT's `typ` is `dc+sd-jwt`, the key binding JWT's is `kb+jwt`, and `sd_hash` is the
 base64url SHA-256 of the US-ASCII bytes of everything up to and including the final `~`.
@@ -1199,7 +1199,7 @@ def _subject_of(cert):
 def _committed_digests(payload, by_digest):
     """Every digest the issuer committed to, following recursive disclosures to a fixpoint.
 
-    draft-ietf-oauth-selective-disclosure-jwt section 4.2.4.1: a disclosure's VALUE may
+    RFC 9901 sections 4.2.4.1 and 4.2.6: a disclosure's VALUE may
     itself carry `_sd`, so the issuer commits to the outer digest only and the inner one is
     reachable solely through the outer disclosure. Walking the signed payload alone missed
     those, and a conformant credential was refused with "a disclosure was presented that the
@@ -1297,7 +1297,7 @@ def _resolve(node, by_digest, used, collisions=None, depth=0, memo=None, path=()
     disclosure has one path and the memo below never hides a second one.
 
     `collisions` collects any disclosure whose name is already present at the same level.
-    draft-ietf-oauth-selective-disclosure-jwt section 9.3 requires the verifier to REJECT
+    RFC 9901 section 7.1, step 3.c.ii.3, requires the verifier to REJECT
     that, and until 2026-09-17 this function silently overwrote instead. Measured: a
     disclosure named `iss` replaced the real issuer in the returned claims while the verdict
     stayed authentic, and one named `cnf` returned a key that was NOT the key the key
@@ -1968,7 +1968,7 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                        "keeps out of Disclosures, whether or not a disclosure matches it"
                        % (structure[0], structure[2], structure[1]))
     if collisions:
-        # SD-JWT section 9.3. The clear-text claims go in first and the disclosed ones
+        # RFC 9901 7.1, step 3.c.ii.3. The clear-text claims go in first and the disclosed ones
         # second, so before this check a disclosure named `iss` simply replaced the issuer in
         # the returned claims and the verdict stayed authentic. `cnf` was the sharpest: the
         # claims named a key that was not the key the key binding was checked against.
@@ -2064,7 +2064,7 @@ def verify_presentation(presentation, *, expected_nonce, expected_audience,
                                        "now, outside the %d second window"
                                        % (now - iat, max_skew_seconds))
     # RFC 9901 7.3: the key binding JWT must also be "a valid JWT in all other respects, per
-    # RFC 7519", so an `exp` it carries must not have passed and an `nbf` must have. Both were
+    # RFC 7519 and RFC 8725", so an `exp` it carries must not have passed and an `nbf` must have. Both were
     # ignored: a holder's proof that declared itself expired an hour ago verified. The same
     # rule, and the same allowance, as the credential's own exp and nbf.
     for claim, human in (("exp", "expired"), ("nbf", "not yet valid")):

@@ -190,6 +190,26 @@
       "reproduce": "bash lab/interop/eudi-dev/run.sh (the wallet runs with HAIP enforced in strict mode); or cd packages/polaris-oid4vp && python -m unittest test_jwe"
     },
     {
+      "id": "sd-jwt-rfc-9901",
+      "kind": "badge",
+      "claim": "SD-JWT: RFC 9901",
+      "label": "SD-JWT: RFC 9901",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "file:docs/reference/SPEC-COMPLIANCE.md",
+        "test:packages/polaris-oid4vp/test_sdjwt.py::TheSevenConformanceRefusalsTests",
+        "test:packages/polaris-oid4vp/test_sdjwt.py::AbsentKeyBindingClaimsTests",
+        "test:packages/polaris-oid4vp/test_sdjwt.py::StructuralRefusalsTests",
+        "test:packages/polaris-oid4vp/test_sdjwt.py::DisclosureCollisionTests",
+        "test:packages/polaris-oid4vp/test_sdjwt.py::RecursiveDisclosureTests",
+        "url:https://www.rfc-editor.org/rfc/rfc9901.txt"
+      ],
+      "reproduce": "cd packages/polaris-oid4vp && python -m unittest test_sdjwt",
+      "why": "polaris-oid4vp verifies SD-JWT+KB presentations by RFC 9901 sections 7.1 and 7.3, with Key Binding required."
+    },
+    {
       "id": "sd-jwt-vc",
       "kind": "badge",
       "claim": "SD-JWT VC",

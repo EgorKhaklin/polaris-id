@@ -18,6 +18,7 @@
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
 [![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)
 [![OpenID4VCI 1.0](https://img.shields.io/badge/OpenID4VCI-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vci-10)
+[![SD-JWT: RFC 9901](https://img.shields.io/badge/SD--JWT-RFC_9901-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-rfc-9901)
 [![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
 [![Token Status List](https://img.shields.io/badge/Token_Status_List-IETF_draft-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#token-status-list)<br>
 [![ML-DSA-65](https://img.shields.io/badge/ML--DSA--65-FIPS_204-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#ml-dsa-65)

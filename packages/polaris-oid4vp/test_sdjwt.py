@@ -1695,7 +1695,7 @@ class NonFiniteTimestampTests(unittest.TestCase):
 
 
 class DisclosureCollisionTests(unittest.TestCase):
-    """SD-JWT section 9.3: a disclosure whose name is already a claim must be REJECTED.
+    """RFC 9901 7.1, step 3.c.ii.3: a disclosure whose name is already a claim must be REJECTED.
 
     Clear-text claims are written first and disclosed ones second, so before 2026-09-17 the
     disclosure silently won. `cnf` is the sharpest case: the returned claims named a key
@@ -2229,7 +2229,7 @@ class CredentialTypeTests(unittest.TestCase):
 
 
 class RecursiveDisclosureTests(unittest.TestCase):
-    """SD-JWT section 4.2.4.1, which this verifier rejected.
+    """RFC 9901 section 4.2.4.1, which this verifier rejected.
 
     A digest reachable only through another disclosure's value was never in the committed
     set, because the set was collected from the signed payload alone. Conformant credentials
