@@ -370,6 +370,7 @@ for an issuer key configured with `issuer_jwks`, and for a refusal.
 | `claims` | (`Verifier`) a presentation that withholds a claim the request asked for, discloses it with a value the request does not accept, or discloses a selectively disclosable claim the request did not select (OpenID4VP 1.0 section 6.4) |
 | `revoked` | (`Verifier`) a credential whose checked status value is not VALID (0) |
 | `credential_validity` | a credential past its `exp` or before its `nbf` |
+| `credential_audience` | a credential whose `aud`, read after its disclosures, does not name this verifier: a string other than the request's audience, or anything but a list of strings that holds it |
 | `vct` | a credential of a type the query did not ask for |
 | `issuer_typ` | an issuer JWT not typed `dc+sd-jwt`, a W3C VC Data Model `vc+sd-jwt` credential among them |
 | `disclosure` | a disclosure that supplies a claim SD-JWT VC keeps out of disclosures (draft 19, section 2.2.2.3: `iss`, `nbf`, `exp`, `cnf`, `vct`, `vct#integrity`, `aka_vcts`, `status`) or anything inside one, judged by where it lands, so a disclosed `sub` or `iat`, or a private claim's `status` member, is accepted; digest structure (an `_sd` key or an array-element digest) anywhere inside one of those claims, whether or not a disclosure matches it; a disclosure named `_sd`, `_sd_alg` or `...`; a colliding claim, a digest the credential commits to twice, or nesting past the depth cap |
@@ -380,7 +381,7 @@ for an issuer key configured with `issuer_jwks`, and for a refusal.
 | `ts12_jti`, `ts12_response_mode`, `ts12_amr` | (a TS12 entry naming the credential) no `jti` or one used before; a `response_mode` other than the request's; `amr` that is not single-member objects naming at least two TS12 categories |
 | `malformed` | over 256 KiB, JSON over 64 KiB or 64 levels, or non-finite numbers |
 
-Recursive disclosures (SD-JWT 4.2.4.1) are supported.
+Recursive disclosures (RFC 9901 4.2.6) are supported.
 
 **Refusal codes are for the operator and never go on the wire.** Every refused presentation gets
 one constant body, which names no check:
@@ -626,12 +627,12 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_age_page
 ```
 
-- 1290 tests in ten files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1296 tests in ten files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
-- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 399 refusals accept and requires a
-  test to fail: 395 are caught, and the 4 survivors are declared with their reasons. It also makes
-  142 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
+- `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 422 refusals accept and requires a
+  test to fail: 418 are caught, and the 4 survivors are declared with their reasons. It also makes
+  162 named changes, among them (the redirect's `response_code` and its redemption, the posted `wallet_nonce`,
   the x5c leaf and name constraints, the JWE bounds, when a request closes, which origin, path
   and cache key a CORS answer names, the control endpoint waiting on a body it will not read, and
   the control read: its token, its cache header, its log line, the claims returned once, under

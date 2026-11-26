@@ -11,6 +11,7 @@ Each outside implementation's latest run, with its version and controls: [INTERO
 |---|---|---|---|---|---|---|
 | OpenID4VP 1.0 + HAIP 1.0 | Verifier | `polaris-oid4vp` 1.0.0rc7 | polaris-oid4vp 1.0.0rc7: self-certification to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile (sd_jwt_vc, direct_post.jwt), approved and listed by the OpenID Foundation, 2026-09-24 (OCS-3049). The Foundation's conformance suite, hosted plan `oid4vp-1final-verifier-haip-test-plan` (7hXWngaA7f0QO): 11 of 11 modules finished without failure ([listing](https://openid.net/certification/certified-oid4vp-haip-final/), [record](../../lab/EXTERNAL-NOUNS.md#conformance-profile)) | `sd_jwt_vc` only, no mdoc; no Digital Credentials API; one DCQL credential query; no array indices or null wildcard in claim paths | self (OIDF conformance suite), listed by OIDF | 2026-09-24 |
 | OpenID4VP 1.0 + HAIP 1.0 | Verifier | `polaris-oid4vp` 1.3.0 | [`test_verifier.py`](../../packages/polaris-oid4vp/test_verifier.py), 260 tests; [`test_jwe.py`](../../packages/polaris-oid4vp/test_jwe.py), 46 tests | `sd_jwt_vc`; `mso_mdoc` experimental and off by default; no Digital Credentials API; one DCQL credential query; no array indices or null wildcard in claim paths | self | 2026-11-19 |
+| SD-JWT (RFC 9901) | Verifier | `polaris-oid4vp` on main after 1.3.0 | [`test_sdjwt.py`](../../packages/polaris-oid4vp/test_sdjwt.py), 273 tests: sections 7.1 and 7.3, Key Binding required | compact serialization; ES256 | self | 2026-11-26 |
 | SD-JWT VC (IETF draft 19) | verify + issue | `polaris-oid4vp` (verify), wallet copies (issue) | verify: [`test_sdjwt.py`](../../packages/polaris-oid4vp/test_sdjwt.py), 235 tests at polaris-oid4vp 1.0.0rc20; [lab record 018](../../lab/strategy/018-negative-vectors.md)'s [`vectors.json`](../../lab/interop/negative-vectors/vectors.json) 0.2.0, 25 of 25 verdicts as expected against polaris-oid4vp 1.0.0rc20 issue: [`test_wallet_copy.py`](../../polaris_web/test_wallet_copy.py) `CopyTests`, 3 tests on main after v1.0.0-rc.72 | `dc+sd-jwt` only (`vc+sd-jwt` refused); ES256 only | self | 2026-10-11 |
 | SD-JWT VC (IETF draft 19) + Token Status List (IETF draft 21) | verify | `polaris-oid4vp` | [lab record 018](../../lab/strategy/018-negative-vectors.md)'s [`vectors.json`](../../lab/interop/negative-vectors/vectors.json) 0.3.0, 36 of 36 verdicts as expected against polaris-oid4vp 1.0.0 at ff3e7848, now=1790812800: 3 controls accepted, 33 refused with the expected code, the 7 status-list vectors under the status-required policy | the signer family is `x5c` only (no vector is graded under `--issuer-jwks`); a status-list verdict is the policy's over the revocation state polaris-oid4vp reports, not a refusal of its own | self | 2026-10-14 |
 | OpenID4VCI 1.0 | Issuer | `/api/v1/oid4vci` | [`test_wallet_copy.py`](../../polaris_web/test_wallet_copy.py), 12 tests on main after v1.0.0-rc.72; [lab record 005, step 5](../../lab/strategy/005/STEP5.md): Credo 0.6.3 and walt.id Wallet API v2 1.0.0 each received a wallet copy from `polaris_web` | pre-authorized code only; not HAIP; `dc+sd-jwt` signed ES256 only | self | 2026-10-10; step 5 2026-09-28 |
@@ -66,6 +67,18 @@ several of them (section 5.1: one of them binds it), so the reading is a named o
 The High Assurance Interoperability Profile, Verifier (certified, above): the `sd_jwt_vc` credential
 format, the `direct_post.jwt` response mode with an encrypted response, and an x509 client
 identifier. The normative wire details are in [WIRE-SPEC.md](WIRE-SPEC.md).
+
+## SD-JWT (RFC 9901)
+
+`polaris-oid4vp` verifies SD-JWT+KB presentations as RFC 9901 sections 7.1 and 7.3 set them out. Key Binding
+is required on every path it serves, decided before the presentation is read (section 9.5): a presentation
+without a Key Binding JWT is refused (`kb_missing`). Each of these is refused under its code: an
+issuer-signed JWT whose signature fails (`issuer_signature`) or whose `aud` in the processed payload, when
+present, does not hold the audience the verifier expects (section 7.1 step 6, `credential_audience`); a
+disclosure the issuer never committed to, a digest seen twice and a claim name already present
+(`disclosure`); and a Key Binding JWT whose signature under the credential's `cnf` key (`kb_signature`),
+`typ` (`kb_typ`), `iat` (`kb_freshness`), `nonce`, `aud` (`audience`) or `sd_hash` fails its check. See
+[`test_sdjwt.py`](../../packages/polaris-oid4vp/test_sdjwt.py).
 
 ## SD-JWT VC
 
