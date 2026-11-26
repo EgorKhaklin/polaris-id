@@ -21,10 +21,6 @@
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
-      "source": "/film/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
-    },
-    {
       "source": "/.well-known/did.json",
       "headers": [{ "key": "Access-Control-Allow-Origin", "value": "*" }]
     },

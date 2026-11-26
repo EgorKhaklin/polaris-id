@@ -1,18 +1,17 @@
 # Trademarks
 
-The [Apache License](LICENSE) covers Polaris's code, documents and image files, except the
-OpenID Certified mark (the OpenID Foundation's; see below), the site's sky and star trails
-(CC BY-SA 3.0 IGO; see [NOTICE](NOTICE)) and the pictures of the Polaris card reference design
-and the founder's portrait (all rights reserved; see [NOTICE](NOTICE)). It grants no right to use
-the names and marks those files carry (section 6 of the license). This page says what that
-means in practice.
+The [Apache License](LICENSE) covers what Polaris's contributors wrote and drew, except the
+pictures of the Polaris card reference design (all rights reserved; see [NOTICE](NOTICE)). Files
+from other projects keep their own licences, and the OpenID Certified mark is the OpenID
+Foundation's (see below). The license grants no right to use the names and marks Polaris's
+files carry (section 6 of the license). This page says what that means in practice.
 
 ## The marks
 
 | Mark | Files |
 |---|---|
 | The Polaris and Polaris ID names, as the names of this project and its packages | throughout |
-| The Polaris logo and star mark | `site/polaris_logo_clean.png`, `site/polaris_logo.webp`, `site/polaris_logo_180.png`, `site/polaris_logo_192.png`, `site/favicon.ico`, `site/icon-*.png`, `site/mark.webp`, `site/hero/coin-*`, `polaris_web/static/favicon.svg` |
+| The Polaris logo and star mark | `site/polaris_logo_clean.png`, `site/polaris_logo.webp`, `site/favicon.ico`, `site/icon-*.png`, `site/mark.webp`, `site/hero/coin-*`, `polaris_web/static/favicon.svg` |
 | The owl emblem | `docs/assets/seal.svg` |
 | The Khaklin Technologies name and lockup, with the Polaris logo | `docs/assets/hero.svg` |
 

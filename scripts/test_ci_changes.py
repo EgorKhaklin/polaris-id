@@ -164,11 +164,12 @@ class WhatOnlyASiteChangeMaySkip(unittest.TestCase):
                              paths)
 
     def test_what_a_site_change_carries_skips_them_too(self):
-        # The path lists of the two site changes sent on 2026-11-17: each carried its changelog
-        # line, and ran everything the allowlist does not skip. The manifest the site's sentences
-        # are held to is the other file such a change carries.
-        for paths in (["CHANGELOG.md", "site/film.css", "site/index.css"],
-                      ["CHANGELOG.md", "site/film.css", "site/index.html"],
+        # The path lists of the two site changes sent on 2026-11-17, with sheets the site has now in
+        # place of the two they changed (since removed): each carried its changelog line, and ran
+        # everything the allowlist does not skip. The manifest the site's sentences are held to is
+        # the other file such a change carries.
+        for paths in (["CHANGELOG.md", "site/bp.css", "site/tokens.css"],
+                      ["CHANGELOG.md", "site/bp.css", "site/index.html"],
                       ["docs/reference/claims.json", "site/index.html"],
                       ["CHANGELOG.md", "docs/reference/claims.json", "site/index.html"]):
             r = classify(paths)

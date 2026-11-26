@@ -1131,7 +1131,7 @@ rule, not a falsifier.
 1. **The OpenID Foundation.** Its listing shows no verifier profile for the DC API, and its suite's verifier tests offer
    `direct_post` and `direct_post.jwt` only (S12). We ask whether verifier tests for `dc_api.jwt` and `org-iso-mdoc` are
    planned, and what re-testing a later version for `iso_mdl` takes.
-2. **Apple's reader certificate.** Whether Apple Business Connect issues one to a pre-pilot open-source verifier, on
+2. **Apple's reader certificate.** Whether Apple Business Connect issues one to a pre-pilot open-core verifier, on
    what terms and how fast.
 3. **The origin string.** OpenID4VP's A.4 writes the audience as `origin:https://verifier.example.com/`, with a trailing
    slash; B.2.6.2's example hashes `https://example.com`, without one. Which form named wallets put in a key binding JWT
