@@ -4,7 +4,7 @@
     {
       "id": "hero",
       "kind": "badge",
-      "claim": "Polaris ID. Proof over trust. The Polaris card, reference design PC-0001",
+      "claim": "Polaris ID. Proof over trust. The Polaris card",
       "surfaces": [
         "README.md"
       ],
@@ -12,7 +12,7 @@
         "file:site/og.png"
       ],
       "reproduce": null,
-      "why": "The project's link card as an image: the star mark and the name Polaris ID, the Polaris card reference design, the headline \"Proof over trust.\" and the card's drawing number, PC-0001. It states nothing else."
+      "why": "The project's link card as an image: the star mark and the name Polaris ID, the Polaris card reference design and the headline \"Proof over trust.\" It states nothing else."
     },
     {
       "id": "ci",
@@ -44,25 +44,10 @@
       "why": "A live value the release host renders: the newest release's tag. It names a version and claims nothing about it."
     },
     {
-      "id": "status-pre-pilot",
-      "kind": "badge",
-      "claim": "Status: pre-pilot",
-      "label": "status: pre-pilot",
-      "surfaces": [
-        "README.md"
-      ],
-      "evidence": [
-        "check:public_claims_honest",
-        "file:docs/PRODUCTION-READINESS.md",
-        "file:lab/EXTERNAL-NOUNS.md"
-      ],
-      "reproduce": "Read docs/PRODUCTION-READINESS.md, the bound on what the repository may claim, and the Pilot section of lab/EXTERNAL-NOUNS.md, which reads None, and its External relying party / operator section, which names no relying party."
-    },
-    {
       "id": "openid-certified-badge",
       "kind": "badge",
-      "claim": "OpenID Certified: polaris-oid4vp 1.0.0rc7 verifier",
-      "label": "OpenID Certified: polaris-oid4vp 1.0.0rc7 verifier",
+      "claim": "polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC",
+      "label": "OpenID Certified: OpenID4VP 1.0 + HAIP 1.0 verifier",
       "surfaces": [
         "README.md"
       ],
@@ -143,7 +128,7 @@
         "url:https://www.bestpractices.dev/projects/15004"
       ],
       "reproduce": null,
-      "why": "A level the OpenSSF Best Practices service renders live from the project's own answers there."
+      "why": "A share shields.io reads live from the OpenSSF Best Practices service's own record of the project (badge_percentage_baseline_2 in projects/15004.json), shown as level 2."
     },
     {
       "id": "openssf-scorecard",
@@ -157,7 +142,7 @@
         "url:https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id"
       ],
       "reproduce": null,
-      "why": "A score the OpenSSF Scorecard service computes from the public repository and renders live."
+      "why": "A score shields.io reads live from the OpenSSF Scorecard service, which computes it from the public repository."
     },
     {
       "id": "software-heritage",
@@ -170,7 +155,8 @@
         "url:https://archive.softwareheritage.org/browse/origin/?origin_url=https://github.com/EgorKhaklin/polaris-id"
       ],
       "reproduce": null,
-      "why": "An archive state the Software Heritage service renders live from its own visits to the repository."
+      "why": "The repository is in the Software Heritage archive; the badge links to its record there.",
+      "label": "Software Heritage: archived"
     },
     {
       "id": "openid4vp",
@@ -294,17 +280,45 @@
       "reproduce": "pip install --pre \"polaris-verify[cryptography]\""
     },
     {
+      "id": "pypi-oid4vp",
+      "kind": "badge",
+      "claim": "PyPI: polaris-oid4vp",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "url:https://pypi.org/project/polaris-oid4vp/",
+        "file:packages/polaris-oid4vp"
+      ],
+      "reproduce": "pip install polaris-oid4vp",
+      "why": "The newest final release of polaris-oid4vp, which shields.io reads live from PyPI."
+    },
+    {
       "id": "npm",
       "kind": "badge",
       "claim": "npm",
-      "label": "npm: polaris-sdk-ts",
       "surfaces": [
         "README.md"
       ],
       "evidence": [
         "url:https://www.npmjs.com/package/polaris-sdk-ts"
       ],
-      "reproduce": "npm install polaris-sdk-ts@next"
+      "reproduce": "npm install polaris-sdk-ts@next",
+      "why": "The version npm's next tag points at, which shields.io reads live from the npm registry."
+    },
+    {
+      "id": "npm-negative-vectors",
+      "kind": "badge",
+      "claim": "npm: polaris-negative-vectors",
+      "surfaces": [
+        "README.md"
+      ],
+      "evidence": [
+        "url:https://www.npmjs.com/package/polaris-negative-vectors",
+        "file:lab/interop/negative-vectors"
+      ],
+      "reproduce": "npm install polaris-negative-vectors",
+      "why": "The newest release of the negative test vectors as an npm package, which shields.io reads live from the npm registry."
     },
     {
       "id": "discord",
