@@ -4,7 +4,7 @@
     {
       "id": "hero",
       "kind": "badge",
-      "claim": "Polaris ID",
+      "claim": "Polaris ID. Proof over trust. The Polaris card, reference design PC-0001",
       "surfaces": [
         "README.md"
       ],
