@@ -1538,6 +1538,28 @@ class PublicationRuleTests(_MdocServeCase):
         rc, seen, _, _ = self._serve("--experimental")
         self.assertEqual((rc, seen["verifier"].credential_format), (0, "dc+sd-jwt"))
 
+    def test_the_experimental_flag_s_help_names_every_flag_it_gates(self):
+        """serve's --experimental help says what it turns on. The gates are read from the command's
+        own refusals ("FLAG is experimental and off by default"), so a gate whose flag the help
+        leaves out fails here, and so does a fourth gate this test has not been told of."""
+        import contextlib
+        import io
+        import os
+        import re
+        from unittest import mock
+        from polaris_oid4vp import cli
+        source = pathlib.Path(cli.__file__).read_text(encoding="utf-8")
+        gated = [flag.replace("%s", cli.MDOC_FORMAT)
+                 for flag in re.findall(r'"(--[a-z-]+(?: %s)?) is experimental and off by default', source)]
+        self.assertEqual(sorted(gated), ["--age-check", "--dc-api", "--format mso_mdoc"])
+        with mock.patch.dict(os.environ, {"COLUMNS": "1000"}), \
+                contextlib.redirect_stdout(io.StringIO()) as shown, self.assertRaises(SystemExit):
+            main(["serve", "--help"])
+        help_text = " ".join(re.search(r"^  --experimental\s(.*?)(?=\n  -)", shown.getvalue(),
+                                       re.M | re.S).group(1).split())
+        for flag in gated:
+            self.assertIn(flag, help_text)
+
     def test_without_the_flag_a_posted_mdoc_reaches_no_mdoc_or_cbor_code(self):
         """The verifier a serve without --experimental builds is the one its listener hands every
         POST to. An mdoc DeviceResponse posted to it, as the listener parses the form, is refused on
@@ -1949,8 +1971,8 @@ class MdocVerdictCommandTests(unittest.TestCase):
     def test_without_the_flag_a_captured_mdoc_is_not_judged(self):
         rc, result, err = self.verdict(experimental=False)
         self.assertEqual((rc, result), (2, None))
-        self.assertIn("--experimental", err)
-        self.assertIn("mso_mdoc", err)
+        self.assertIn("the request asks for mso_mdoc, which is experimental and off by default; "
+                      "add --experimental to judge it", err)
 
     def test_at_this_machine_s_clock_the_capture_has_run_out(self):
         rc, result, _ = self.verdict(now=False)
