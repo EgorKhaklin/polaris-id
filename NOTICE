@@ -96,12 +96,12 @@ external sources under fair-use academic citation conventions.
 Names and marks
 ================================================================================
 
-The Apache License covers this work's code, documents and image files, except
-the OpenID Certified mark (openid-certified-mark-on-white.png, in docs/assets/
-and site/), which belongs to the OpenID Foundation and is used under its
-certification terms, and the pictures of the Polaris card reference design
-(site/card/ and site/og.png), in which all rights are reserved, as REUSE.toml
-records. The license
+The Apache License covers what this work's contributors wrote and drew, except
+the pictures of the Polaris card reference design (site/card/ and site/og.png),
+in which all rights are reserved, as REUSE.toml records. Files from other
+projects keep their own licences, and the OpenID Certified mark
+(openid-certified-mark-on-white.png, in docs/assets/ and site/) belongs to the
+OpenID Foundation and is used under its certification terms. The license
 grants no right to the names and marks the files carry (section 6): the
 Polaris name, logo and star mark, the owl emblem, and the Khaklin Technologies
 name and lockup. TRADEMARKS.md says what that allows.
