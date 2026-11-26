@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       drill:
-        description: "Test the deploy retry: first = attempt 1 looks up a name that does not exist (the run must deploy through attempt 2); all = every attempt does (the run must end red)"
+        description: "Test the deploy retry: first = attempt 1 looks up a name that does not exist (the run ends green, through attempt 2 or 3); all = every attempt does (the run must end red)"
         type: choice
         options: [none, first, all]
         default: none
@@ -52,7 +52,6 @@ jobs:
       contents: read
       pages: write
       id-token: write
-      actions: read # the wait step reads this run's artifact list
     environment:
       name: github-pages
       url: ${{ steps.deploy1.outputs.page_url || steps.deploy2.outputs.page_url || steps.deploy3.outputs.page_url }}
@@ -83,8 +82,13 @@ jobs:
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: redirect/
-      # deploy-pages looks the artifact up once, at once, and GitHub's listing can trail the upload
-      # by seconds, so the deploy is the poll: up to three attempts, and the last step requires one.
+      # deploy-pages looks the artifact up once, at once, and GitHub's listing can trail the upload,
+      # so the deploy is the poll: up to three attempts on a timer, and the last step requires one.
+      # The job waits rather than reads a list: the list a step can read is not the one the deploy
+      # reads. Run 45673317681 measured it: the run's artifact list showed github-pages 1.1 s after
+      # the upload finalized, attempt 2 found none 0.6 s later, and attempt 3 found it 32.4 s after
+      # the upload.
+      # The back-offs, 15 s and then 30 s, put attempt 3 at least 45 s after attempt 1.
       # Remove the retry when a deploy-pages release retries its own lookup (actions/deploy-pages#455).
       # Never re-run a failed Pages run: the re-run uploads a second github-pages artifact beside the
       # first, and deploy-pages refuses two of one name (2026-11-19). Start a fresh run instead.
@@ -95,33 +99,9 @@ jobs:
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
         with:
           artifact_name: ${{ (inputs.drill == 'first' || inputs.drill == 'all') && 'drill-no-such-artifact' || 'github-pages' }}
-      - name: Wait until this run's artifact list shows github-pages
+      - name: Back off before the second attempt
         if: steps.deploy1.outcome == 'failure'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          n=""
-          err=""
-          for i in $(seq 1 20); do
-            if n=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?name=github-pages" --jq '.total_count' 2>"$RUNNER_TEMP/gh.err"); then
-              err=""
-            else
-              n=""
-              err=$(tail -n 1 "$RUNNER_TEMP/gh.err")
-            fi
-            if [ "$n" = "1" ]; then
-              echo "github-pages is in the run's artifact list (poll $i)"
-              exit 0
-            fi
-            # More than one cannot become one by waiting.
-            case "$n" in ""|0) ;; *) break ;; esac
-            sleep 3
-          done
-          if [ -z "$n" ]; then seen="could not be read (gh api: ${err:-no error text})"; else seen="holds $n artifact(s) named github-pages"; fi
-          echo "::error::At poll $i of 20 (3 s apart), this run's artifact list $seen; the deploy needs exactly one. Start a fresh Pages run (Run workflow), not a re-run."
-          exit 1
+        run: sleep 15
       - id: deploy2
         name: Deploy, attempt 2
         if: steps.deploy1.outcome == 'failure'

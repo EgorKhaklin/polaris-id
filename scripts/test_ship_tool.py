@@ -226,6 +226,64 @@ PAGES_ARTIFACT_TWICE = "\n".join(_PAGES_STEP + line for line in (
     '2026-11-19T17:13:51.5043395Z ##[error]Error: Multiple artifacts named "github-pages" were unexpectedly '
     'found for this workflow run. Artifact count is 2.'))
 
+#: A Pages run since #629, as gh run view gives it. The attempts run with continue-on-error, so
+#: --log-failed holds only the last step (run 45674121986: 19 lines, all of them its own), and the
+#: attempts' lines are in the whole log (gh run view --log: job, step, line). Shapes from run
+#: 45673317681 (attempts 1 and 2 not listed, attempt 3 deployed) and run 45674121986 (drill=all); the
+#: job and step columns are as gh run view --log printed them for those runs and for 45674839399.
+_PAGES_JOB = 'Redirect the old GitHub Pages address to the project site'
+PAGES_LAST_STEP_FAILED = "\n".join("%s\tExactly one attempt deployed\t%s" % (_PAGES_JOB, line) for line in (
+    '2026-11-25T18:23:58.4303339Z ##[error]0 of the deploy attempts succeeded (outcomes: failure, failure, '
+    'failure); exactly one must. When each attempt\'s log says no artifact named github-pages was found, '
+    'GitHub never listed this run\'s upload: start a fresh Pages run (Run workflow), not a re-run.',
+    '2026-11-25T18:23:58.4307842Z ##[error]Process completed with exit code 1.'))
+_NOT_LISTED = (
+    '2026-11-25T18:17:47.0876026Z Fetching artifact metadata for "github-pages" in this workflow run',
+    '2026-11-25T18:17:47.2877116Z Found 0 artifact(s)',
+    '2026-11-25T18:17:47.2894993Z ##[error]Fetching artifact metadata failed. Is githubstatus.com reporting '
+    'issues with API requests, Pages, or Actions? Please re-run the deployment at a later time.',
+    '2026-11-25T18:17:47.3960051Z ##[error]Error: No artifacts named "github-pages" were found for this '
+    'workflow run. Ensure artifacts are uploaded with actions/upload-artifact@v4 or later.')
+_TWICE = (
+    '2026-11-19T17:13:51.0797557Z Fetching artifact metadata for "github-pages" in this workflow run',
+    '2026-11-19T17:13:51.3378062Z Found 2 artifact(s)',
+    '2026-11-19T17:13:51.3403523Z ##[error]Fetching artifact metadata failed. Is githubstatus.com reporting '
+    'issues with API requests, Pages, or Actions? Please re-run the deployment at a later time.',
+    '2026-11-19T17:13:51.5043395Z ##[error]Error: Multiple artifacts named "github-pages" were unexpectedly '
+    'found for this workflow run. Artifact count is 2.')
+_DEPLOYED = (
+    '2026-11-25T18:18:18.9265178Z Fetching artifact metadata for "github-pages" in this workflow run',
+    '2026-11-25T18:18:19.0997130Z Found 1 artifact(s)',
+    '2026-11-25T18:18:20.2609930Z Created deployment for afb70eb0bcd19a57695e9371fbb7d0ca170a9e18, ID: '
+    'afb70eb0bcd19a57695e9371fbb7d0ca170a9e18',
+    '2026-11-25T18:18:24.7120628Z Reported success!')
+_DRILL = (
+    '2026-11-25T18:23:23.0477939Z Fetching artifact metadata for "drill-no-such-artifact" in this workflow run',
+    '2026-11-25T18:23:23.1713717Z Found 1 artifact(s)',
+    '2026-11-25T18:23:23.1740709Z ##[error]Fetching artifact metadata failed. Is githubstatus.com reporting '
+    'issues with API requests, Pages, or Actions? Please re-run the deployment at a later time.',
+    '2026-11-25T18:23:23.3611298Z ##[error]Error: No artifacts named "drill-no-such-artifact" were found for '
+    'this workflow run. Ensure artifacts are uploaded with actions/upload-artifact@v4 or later.')
+#: Made up for the test: every attempt fails on a known flake that a re-run would answer, which a
+#: Pages run must never be told (a re-run uploads a second github-pages artifact).
+_NETWORK = (
+    '2026-11-25T18:17:48.2547920Z Fetching artifact metadata for "github-pages" in this workflow run',
+    '2026-11-25T18:17:48.4466739Z curl: (56) Recv failure: Connection reset by peer')
+#: Made up for the test: an attempt that fails on something other than the listing.
+_FORBIDDEN = (
+    '2026-11-25T18:17:48.2547920Z Fetching artifact metadata for "github-pages" in this workflow run',
+    '2026-11-25T18:17:48.4466739Z ##[error]Error: HttpError: Resource not accessible by integration')
+
+
+def pages_full_log(*attempts):
+    """The whole log of a Pages run whose deploy attempts printed these lines, one tuple each."""
+    rows = ["%s\tRun actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9\t"
+            "2026-11-25T18:17:46.7471064Z Artifact github-pages successfully finalized." % _PAGES_JOB]
+    for n, lines in enumerate(attempts, 1):
+        rows += ["%s\tDeploy, attempt %d\t%s" % (_PAGES_JOB, n, line) for line in lines]
+    rows += PAGES_LAST_STEP_FAILED.split("\n")
+    return "\n".join(rows)
+
 
 class FlakeClassifierTests(unittest.TestCase):
     def test_the_alpine_apk_layer_is_a_known_flake(self):
@@ -720,6 +778,73 @@ class TriageHonestyTests(unittest.TestCase):
         rc, text, _ = self._triage_with(bare, PAGES_ARTIFACT_TWICE, [])
         self.assertIn("start a fresh run", text)
         self.assertNotIn("gh run rerun", text)
+
+    def _triage_pages(self, full_log, full_rc=0):
+        """triage() on a Pages run since #629: --log-failed holds only the last step, and the whole
+        log (gh run view --log) answers with full_log and exit code full_rc."""
+        import io
+        import json
+        from unittest import mock
+        jobs = {"conclusion": "failure", "workflowName": "Pages", "headBranch": "main", "jobs": [
+            {"name": _PAGES_JOB, "conclusion": "failure", "steps": [{"name": "deploy"}], "databaseId": 9}]}
+        reads = []
+
+        def run(argv, **kw):
+            reads.append(argv[-1])
+            if argv[-1] == "--log-failed":
+                return mock.Mock(stdout=PAGES_LAST_STEP_FAILED, stderr="", returncode=0)
+            if argv[-1] == "--log":
+                return mock.Mock(stdout=full_log, stderr="" if full_rc == 0 else "HTTP 404", returncode=full_rc)
+            raise AssertionError("unexpected command %r" % (argv,))
+        out = io.StringIO()
+        with mock.patch.object(ship, "_gh", lambda *a: json.dumps(jobs)), \
+                mock.patch.object(ship.subprocess, "run", run):
+            rc = ship.triage("123", out=out)
+        return rc, out.getvalue(), reads
+
+    def test_a_pages_run_whose_attempts_all_failed_on_one_flake_is_answered_with_a_fresh_run(self):
+        for label, attempt, want in (("not listed", _NOT_LISTED, "pages-artifact-not-listed"),
+                                     ("twice", _TWICE, "pages-artifact-twice")):
+            with self.subTest(label):
+                rc, text, reads = self._triage_pages(pages_full_log(attempt, attempt, attempt))
+                self.assertIn("known flake [%s]" % want, text)
+                self.assertIn("gh workflow run Pages --ref main", text)
+                self.assertNotIn("gh run rerun", text)
+                self.assertEqual(rc, 0)
+                self.assertEqual(reads, ["--log-failed", "--log"])
+
+    def test_a_pages_run_is_a_flake_only_when_every_attempt_failed_on_the_same_signature(self):
+        for label, attempts in (
+                ("not listed, then another error", (_NOT_LISTED, _FORBIDDEN, _FORBIDDEN)),
+                ("not listed, then twice", (_NOT_LISTED, _TWICE, _TWICE)),
+                ("a drill's name", (_DRILL, _DRILL, _DRILL)),
+                ("another known flake on every attempt", (_NETWORK, _NETWORK, _NETWORK)),
+                ("no attempt in the log", ())):
+            with self.subTest(label):
+                rc, text, reads = self._triage_pages(pages_full_log(*attempts))
+                self.assertIn("verdict: investigate", text)
+                self.assertNotIn("verdict: known flake", text)
+                self.assertNotIn("gh run rerun", text)
+                self.assertEqual(rc, 1)
+                self.assertEqual(reads, ["--log-failed", "--log"])
+
+    def test_a_pages_run_whose_whole_log_cannot_be_read_is_unknown_never_a_flake(self):
+        for label, full, code in (("empty", "", 0), ("blank", "\n \n", 0),
+                                  ("the read failed", pages_full_log(_NOT_LISTED, _NOT_LISTED, _NOT_LISTED), 1)):
+            with self.subTest(label):
+                rc, text, reads = self._triage_pages(full, code)
+                self.assertEqual(reads, ["--log-failed", "--log"])
+                self.assertIn("verdict: UNKNOWN", text)
+                self.assertNotIn("verdict: known flake", text)
+                self.assertNotIn("investigate", text)
+                self.assertEqual(rc, 1)
+
+    def test_an_attempt_that_deployed_is_never_a_flake(self):
+        """A green run is never triaged, but the function is called on text."""
+        for attempts in ((_TWICE, _DEPLOYED), (_NOT_LISTED, _NOT_LISTED, _DEPLOYED), (_NOT_LISTED + _DEPLOYED,)):
+            with self.subTest(len(attempts)):
+                self.assertEqual(ship.classify_pages_attempts(pages_full_log(*attempts)),
+                                 ("investigate", None, None))
 
     def test_a_finished_run_with_no_log_and_no_reason_stays_unknown(self):
         jobs = {"conclusion": "failure", "jobs": [

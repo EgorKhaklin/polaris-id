@@ -1397,6 +1397,38 @@ FLAKE_SIGNATURES.append(
 #: re-run of the failed jobs.
 FRESH_RUN_FLAKES = frozenset({"pages-artifact-not-listed", "pages-artifact-twice"})
 
+#: The Pages deploy job's last step, which fails unless exactly one attempt deployed. The attempts
+#: run with continue-on-error, so a failed attempt concludes success and its lines are not in
+#: --log-failed: on run 45674121986 (drill=all) that log held 19 lines, all of them this step's.
+#: When the failed log holds this line, triage reads the run's whole log and judges the attempts.
+PAGES_LAST_STEP = re.compile(r"[0-9]+ of the deploy attempts succeeded \(outcomes: ")
+PAGES_ATTEMPT_STEP = re.compile(r"Deploy, attempt [0-9]+")
+
+
+def classify_pages_attempts(text):
+    """A Pages run's whole log (gh run view --log: job, step and line, tab-separated), judged by
+    its deploy attempts. A known flake only when every attempt that ran failed on one and the same
+    fresh-run signature. An attempt that deployed, an attempt that failed on anything else, or no
+    attempt in the log at all leaves it unmatched."""
+    attempts = {}
+    for line in text.split("\n"):
+        parts = line.split("\t", 2)
+        if len(parts) == 3 and PAGES_ATTEMPT_STEP.fullmatch(parts[1]):
+            attempts.setdefault(parts[1], []).append(line)
+    names = set()
+    for lines in attempts.values():
+        body = "\n".join(lines)
+        if "Reported success!" in body:
+            return ("investigate", None, None)
+        verdict, name, _ = classify_failure_log(body)
+        if verdict != "flake" or name not in FRESH_RUN_FLAKES:
+            return ("investigate", None, None)
+        names.add(name)
+    if len(names) != 1:
+        return ("investigate", None, None)
+    (name,) = names
+    return next(("flake", n, advice) for n, _, advice in FLAKE_SIGNATURES if n == name)
+
 
 UPSTREAM_SIGNATURES = [
     ("registry-removal",
@@ -1496,7 +1528,17 @@ def triage(run_id=None, out=None):
               "python3 scripts/polaris-ship.py triage %s" % run_id, file=out)
         return 1
 
-    verdict, name, advice = classify_failure_log(log)
+    if PAGES_LAST_STEP.search(log):
+        full = subprocess.run(["gh", "run", "view", str(run_id), "--log"], capture_output=True, text=True, cwd=ROOT)
+        if full.returncode != 0 or not (full.stdout or "").strip():
+            print("  verdict: UNKNOWN, the Pages deploy's attempts are not in --log-failed, and the run's "
+                  "whole log could not be read (gh run view --log: %s)"
+                  % ((full.stderr or "").strip()[:160] or "no output"), file=out)
+            print("  re-run this triage: python3 scripts/polaris-ship.py triage %s" % run_id, file=out)
+            return 1
+        verdict, name, advice = classify_pages_attempts(full.stdout)
+    else:
+        verdict, name, advice = classify_failure_log(log)
     # Read from annotations, each failed job is judged on its own: one job's lost runner does not
     # explain another job's exit code, so the run is a flake only when every failed job's own
     # annotations name one. A job with none to read is a reason nobody read.
