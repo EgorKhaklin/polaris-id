@@ -1,36 +1,37 @@
 <div align="center">
 
-<img src="site/og.png" width="100%" alt="Polaris ID. Proof over trust. The Polaris card, reference design PC-0001">
+<img src="site/og.png" width="100%" alt="Polaris ID. Proof over trust. The Polaris card">
 
 **Polaris ID is identity infrastructure built to be checked, not trusted.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/EgorKhaklin/polaris-id?include_prereleases&label=release&color=c9a352&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/releases/latest)
-[![Status: pre-pilot](https://img.shields.io/badge/status-pre--pilot-9a6b2f?labelColor=0a1421&style=flat-square)](#status)
-[![OpenID Certified: polaris-oid4vp 1.0.0rc7 verifier](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_1.0.0rc7_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
-[![Tested against 16 outside implementations](https://img.shields.io/badge/tested_against-16_outside_implementations-2b5797?labelColor=0a1421&style=flat-square)](#status)
-[![Wallet canary: outside wallets' newest releases against the published verifier, weekly](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/wallet-canary.yml?branch=main&event=schedule&label=wallet%20canary&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/wallet-canary.yml?query=event%3Aschedule)
 [![License](https://img.shields.io/badge/license-Apache--2.0-2b5797?labelColor=0a1421&style=flat-square)](LICENSE)
+[![Wallet canary: outside wallets' newest releases against the published verifier, weekly](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/wallet-canary.yml?branch=main&event=schedule&label=wallet%20canary&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/wallet-canary.yml?query=event%3Aschedule)<br>
+[![polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier profile for SD-JWT VC](https://img.shields.io/badge/OpenID_Certified-OpenID4VP_1.0_%2B_HAIP_1.0_verifier-c9a352?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid-certified)
+[![Tested against 16 outside implementations](https://img.shields.io/badge/tested_against-16_outside_implementations-2b5797?labelColor=0a1421&style=flat-square)](#status)<br>
 [![OpenSSF Best Practices](https://img.shields.io/cii/level/15004?label=OpenSSF%20best%20practices&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
-[![OpenSSF Baseline](https://www.bestpractices.dev/projects/15004/baseline)](https://www.bestpractices.dev/projects/15004)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/EgorKhaklin/polaris-id/badge)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
-[![Archived by Software Heritage](https://archive.softwareheritage.org/badge/origin/https://github.com/EgorKhaklin/polaris-id/)](https://archive.softwareheritage.org/browse/origin/?origin_url=https://github.com/EgorKhaklin/polaris-id)
+[![OpenSSF Baseline](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fwww.bestpractices.dev%2Fprojects%2F15004.json&query=%24.badge_percentage_baseline_2&prefix=level%202%3A%20&suffix=%25&label=OpenSSF%20baseline&color=2b5797&labelColor=0a1421&style=flat-square)](https://www.bestpractices.dev/projects/15004)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/EgorKhaklin/polaris-id?label=OpenSSF%20scorecard&labelColor=0a1421&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/EgorKhaklin/polaris-id)
+[![Archived by Software Heritage](https://img.shields.io/badge/Software_Heritage-archived-2b5797?labelColor=0a1421&style=flat-square)](https://archive.softwareheritage.org/browse/origin/?origin_url=https://github.com/EgorKhaklin/polaris-id)
 
 [![OpenID4VP 1.0](https://img.shields.io/badge/OpenID4VP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vp-10)
 [![HAIP 1.0](https://img.shields.io/badge/HAIP-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#haip-10)
-[![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
 [![OpenID4VCI 1.0](https://img.shields.io/badge/OpenID4VCI-1.0-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#openid4vci-10)
-[![Token Status List](https://img.shields.io/badge/Token_Status_List-IETF_draft-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#token-status-list)
+[![SD-JWT VC](https://img.shields.io/badge/SD--JWT_VC-supported-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#sd-jwt-vc)
+[![Token Status List](https://img.shields.io/badge/Token_Status_List-IETF_draft-2b5797?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#token-status-list)<br>
 [![ML-DSA-65](https://img.shields.io/badge/ML--DSA--65-FIPS_204-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#ml-dsa-65)
 [![FN-DSA: Falcon-1024](https://img.shields.io/badge/FN--DSA-Falcon--1024_(FIPS_206_draft)-5b4b8a?labelColor=0a1421&style=flat-square)](docs/reference/SPEC-COMPLIANCE.md#fn-dsa-draft-fips-206)
 
 [![PyPI](https://img.shields.io/badge/PyPI-polaris--verify-3775a9?labelColor=0a1421&style=flat-square)](packages/polaris-verify)
-[![npm](https://img.shields.io/badge/npm-polaris--sdk--ts-cb3837?labelColor=0a1421&style=flat-square)](sdk/typescript)
+[![PyPI: polaris-oid4vp](https://img.shields.io/badge/PyPI-polaris--oid4vp-3775a9?labelColor=0a1421&style=flat-square)](packages/polaris-oid4vp)
+[![npm](https://img.shields.io/npm/v/polaris-sdk-ts/next?label=npm%20polaris-sdk-ts&color=cb3837&labelColor=0a1421&style=flat-square)](sdk/typescript)<br>
+[![npm: polaris-negative-vectors](https://img.shields.io/npm/v/polaris-negative-vectors?label=npm%20polaris-negative-vectors&color=cb3837&labelColor=0a1421&style=flat-square)](https://www.npmjs.com/package/polaris-negative-vectors)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)
 
 <a href="https://polaris-id.org/"><img src="docs/assets/nav/project-site.svg" alt="Project site"></a>
 <a href="#try-it"><img src="docs/assets/nav/try-it.svg" alt="Try it"></a>
-<a href="#status"><img src="docs/assets/nav/status.svg" alt="Status"></a>
+<a href="#status"><img src="docs/assets/nav/status.svg" alt="Status"></a><br>
 <a href="#the-ten-guarantees"><img src="docs/assets/nav/the-ten-guarantees.svg" alt="The ten guarantees"></a>
 <a href="#documentation"><img src="docs/assets/nav/documentation.svg" alt="Documentation"></a>
 
@@ -89,6 +90,8 @@ polaris-verify --pqc-provider auto --issuer-anchor ml-dsa-65-issuer.json --pack 
 **Tested against software nobody here wrote.** Eight wallets ran unmodified: walt.id, Credo, eudi-dev, OID4VCgo, ProtocolSoup, Procivis One Core, the Yivi app (developer mode; built on irmago) and the swiyu Sandbox Wallet. Eight more libraries, services and test tools took part: the European Commission's reference OpenID4VP libraries (Kotlin and Swift) and PID issuer, vck and Multipaz through a wallet built here; Axle's Kotlin OpenID4VP client, driven by a harness written here; and SpruceID's adapter and ERICA through their own wallet harnesses. Every run carries controls that must be refused, and a [weekly canary](.github/workflows/wallet-canary.yml) re-runs them against the newest release. Every walk is driven from here except OID4VCgo's, which its own CI runs. Dated runs: [the scoreboard](lab/EXTERNAL-NOUNS.md#wallets).
 
 **Per implementation:** the version, date, result and controls of each one's latest run, in [INTEROP.md](docs/reference/INTEROP.md).
+
+Polaris is pre-pilot, on test data.
 
 **Run by an outside project.** Since 2026-10-11, OID4VCgo's CI runs the verifier daily and on each of its releases, which met the 1.0.0 condition: an operator who is not the author ([the scoreboard](lab/EXTERNAL-NOUNS.md#use)). Versions: [RELEASING.md](docs/RELEASING.md).
 

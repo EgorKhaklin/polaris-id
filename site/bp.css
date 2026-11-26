@@ -723,6 +723,39 @@ html.js .band.end .band-cap { opacity: 1; }
 .close { position: relative; display: grid; place-items: center; height: 100vh; height: 100svh; min-height: 30rem; overflow: clip; background: #000; }
 .close-bg { position: absolute; inset: -14% 0; will-change: transform; }
 .close-bg img { width: 100%; height: 100%; object-fit: cover; object-position: 66% 46%; scale: 1.35; opacity: 0.4; }
+/* phones and tablets (a window under 1024 px wide, or taller than it is wide): every picture shows whole. A landscape
+   window 1024 px wide or more keeps the rules above. */
+@media (max-width: 1023.98px), (max-aspect-ratio: 1/1) {
+    /* the three drawings keep their own proportions and are fitted inside their frame; the hover zoom is off because a
+       tap leaves hover on and the zoom would cut the edges */
+    .caps figure { aspect-ratio: auto; }
+    .caps img { height: auto; object-fit: contain; }
+    .caps li:hover img { scale: none; }
+    /* the closing section stacks: the whole card, as wide as the window allows inside the page's side margin, and
+       the line below it, so the line never stands over the card. The scroll drift of #close-bg (set inline by bp.js)
+       is off here: it would move the card toward the line. */
+    .close { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2.4rem; }
+    .close-bg { position: relative; inset: auto; flex: none; width: calc(100% - 2 * var(--gutter)); transform: none !important; will-change: auto; }
+    .close-bg img {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 9;
+        object-fit: contain;
+        object-position: 50% 50%;
+        scale: none;
+        opacity: 0.92;
+        -webkit-mask-image: linear-gradient(to right, transparent 0, #000 15%, #000 85%, transparent 100%), linear-gradient(to bottom, transparent 0, #000 15%, #000 85%, transparent 100%);
+        -webkit-mask-composite: source-in;
+        mask-image: linear-gradient(to right, transparent 0, #000 15%, #000 85%, transparent 100%), linear-gradient(to bottom, transparent 0, #000 15%, #000 85%, transparent 100%);
+        mask-composite: intersect;
+    }
+    /* a window wider than tall (a phone held sideways): the card and the line side by side */
+    @media (min-aspect-ratio: 1/1) {
+        .close { flex-direction: row; gap: 1.4rem; padding: 0 var(--gutter); }
+        .close-bg { width: 54%; }
+        .close .close-line { flex: 1 1 0; min-width: 0; max-width: none; padding: 0; font-size: clamp(1.3rem, 3.9vw, var(--h1)); }
+    }
+}
 .close-line {
     position: relative;
     max-width: 11.5em;
