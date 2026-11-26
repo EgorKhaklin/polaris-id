@@ -1132,7 +1132,7 @@ class MdocVectors(unittest.TestCase):
             for clause in vector["clauses"]:
                 self.assertTrue(clause["ref"] and clause["text"], vid)
                 if clause["ref"].startswith("ISO"):
-                    # The ISO text was not read, so no ISO clause is quoted.
+                    # No ISO text is quoted: an ISO clause is named by its number and its heading.
                     self.assertTrue(clause["text"].startswith("not quoted"), vid)
             unquoted = [c for c in vector["clauses"] if c["text"].startswith("not quoted")]
             if vector["class"] == "spec":
@@ -1142,8 +1142,8 @@ class MdocVectors(unittest.TestCase):
             self.assertEqual("policy" in vector, vector["class"] == "policy", vid)
             if vector["class"] == "policy":
                 self.assertIn(vector["policy"], self.doc["policies"], vid)
-            # Every ISO clause number carries its source: the implementation that gives it, with the edition that
-            # implementation names.
+            # Every ISO clause number carries its source: the 2021 edition's number and heading, then the number each
+            # implementation gives it, with the edition that implementation names.
             iso = [c["ref"] for c in vector["clauses"] if c["ref"].startswith("ISO")]
             self.assertEqual("source" in vector, bool(iso), vid)
             for number in re.findall(r"\d+(?:\.\d+)+|Table \d+", " ".join(iso)):
@@ -1173,13 +1173,25 @@ class MdocVectors(unittest.TestCase):
                                            "md-digest-alg-sha1", "md-digest-id-absent", "md-digest-length",
                                            "md-digest-reencoded-item", "md-digest-value-modified", "md-doctype-vs-mso",
                                            "md-issuerauth-sig-flipped", "md-mso-not-tag24"])
-        # Where two implementations number a clause differently, the source gives both, each with its edition.
+        # Where two implementations number a clause differently, the source gives both, each with its edition,
+        # after the 2021 edition's own numbers and headings.
         self.assertEqual(sources["md-devicesigned-unauthorized-ns"],
+                         "checked against ISO/IEC 18013-5:2021: 9.1.3.4 Mechanism and 9.1.2.4 Signing method and "
+                         "structure for MSO; "
                          "@owf/mdoc 0.8.2 (formerly mdoc-ts) numbers the rule 9.1.3.4 and KeyAuthorizations 9.1.2.4, "
                          "naming no edition there; OID4VCgo 0.49.0 numbers KeyAuthorizations 12.3.4 and the reader's "
                          "check 12.8.2 step 1, citing the 2025-09-14 CD ballot resolution draft of the second edition")
-        # No edition is named but by an implementation, and by HAIP 1.0 in its own words.
-        self.assertEqual(self.text.count("18013-5:2021"), 1)
+        # Every ISO ref names the 2021 edition and only clauses of it the generator holds, and its text names each
+        # clause's heading in that edition, so a second-edition draft's number (12.3.5, Table 16) cannot come back.
+        iso_refs = [c for v in self.doc["vectors"] for c in v["clauses"] if c["ref"].startswith("ISO")]
+        self.assertEqual(len(iso_refs), 12)
+        for clause in iso_refs:
+            self.assertTrue(clause["ref"].startswith(self.mm.ISO_REF), clause["ref"])
+            numbers = re.findall(r"\d+(?:\.\d+)+|Table \d+", clause["ref"][len(self.mm.ISO_REF):])
+            self.assertTrue(numbers, clause["ref"])
+            for number in numbers:
+                self.assertIn(number, self.mm.ISO_2021, clause["ref"])
+                self.assertIn(self.mm.ISO_2021[number], clause["text"], clause["ref"])
         self.assertIn(self.mm.FROM_HAIP_TABLE, sources["md-digest-alg-sha1"])
         # RFC 9360 is cited at its section 5 and at no other.
         refs = [c["ref"] for v in self.doc["vectors"] for c in v["clauses"]]
@@ -2573,7 +2585,7 @@ X5C_CHAIN_FAMILY = ["x5c-self-signed", "x5c-includes-anchor", "x5c-unknown-root"
 #   issuer      it binds the issuer, a certificate's signer or a status provider;
 #   definition  a definition, a grammar, or the structure of a value;
 #   none        it requires no refusal: a SHOULD, a suggestion, a check left open, or context;
-#   unread      an ISO clause whose text the file does not quote (assigned by rule, not listed here).
+#   unquoted    an ISO clause whose text the file does not quote (assigned by rule, not listed here).
 # An entry is (ref, the sentence's opening words, binds); opening words ending in $ are the whole text. Every clause in both files matches exactly one entry, and
 # every entry is matched: a new citation needs its reading here first.
 CLAUSE_BINDS = [
@@ -2663,7 +2675,7 @@ CLAUSE_BINDS = [
     ("draft-ietf-oauth-status-list-21 s8.3 step 5", "Decompress the Status List", "verifier"),
     ("draft-ietf-oauth-status-list-21 s8.3 step 6", "If the provided index is out of bounds", "verifier"),
 ]
-BINDS_WORDS = {"verifier", "wallet", "issuer", "definition", "none", "unread"}
+BINDS_WORDS = {"verifier", "wallet", "issuer", "definition", "none", "unquoted"}
 CLASS_WORDS = {"control", "spec", "spec-implied", "policy"}
 # `spec` vectors whose cited sentences bind no verifier today (the reviews' over-claims, one root cause): each is
 # corrected in the corpus release, and this list then loses its id.
@@ -2689,8 +2701,8 @@ SPEC_WITHOUT_A_VERIFIER_CLAUSE = {
 def clause_binds(clause, table=None):
     """The binds word of one clause, and the table entries it matched (exactly one when the table holds it)."""
     table = CLAUSE_BINDS if table is None else table
-    if clause.get("text", "").startswith("not quoted:"):
-        return ("unread" if clause.get("ref", "").startswith("ISO/IEC 18013-5") else None), []
+    if clause.get("text", "").startswith("not quoted;"):
+        return ("unquoted" if clause.get("ref", "").startswith("ISO/IEC 18013-5") else None), []
     text = clause.get("text", "")
     hits = [e for e in table if clause.get("ref") == e[0]
             and (text == e[1][:-1] if e[1].endswith("$") else text.startswith(e[1]))]
@@ -2752,7 +2764,7 @@ class ClassGuard(unittest.TestCase):
                 for c in v.get("clauses", []):
                     used.update(e[:2] for e in clause_binds(c)[1])
         self.assertEqual([e[:2] for e in CLAUSE_BINDS if e[:2] not in used], [])
-        self.assertTrue(all(e[2] in BINDS_WORDS - {"unread"} for e in CLAUSE_BINDS))
+        self.assertTrue(all(e[2] in BINDS_WORDS - {"unquoted"} for e in CLAUSE_BINDS))
 
     def test_a_spec_vector_cites_a_sentence_that_binds_the_verifier(self):
         # Expected to fail for the listed ids until the corpus release corrects them: the set must be exactly the

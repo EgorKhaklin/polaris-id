@@ -48,7 +48,7 @@ def _load_make_vectors():
 mv = _load_make_vectors()
 b64u = mv.b64u
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 UTC = datetime.timezone.utc
 # The verification instant. The certificates and the MSO are valid at it.
 AT = datetime.datetime.fromtimestamp(mv.NOW, UTC)
@@ -325,14 +325,37 @@ T_REPLAY = ("The Verifier MUST validate every individual Verifiable Presentation
 T_NONCE_REJECT = "If any Verifiable Presentation in the response does not contain the correct nonce value, the response MUST be rejected."
 T_HOLDER_BINDING = ("For Verifiable Presentations, validate the Holder Binding, including the checks required to "
                     "prevent replay described in Section 14.1.")
-NOT_QUOTED = "not quoted: the ISO text is paywalled and was not read; the clause number is inferred"
+# The ISO/IEC 18013-5:2021 clauses the vectors cite, each by its heading in that edition. No ISO text is quoted.
+ISO_2021 = {
+    "9.1.2.4": "Signing method and structure for MSO",
+    "9.1.2.5": "Message digest function",
+    "Table 21": "Digest algorithm identifiers",
+    "9.1.3": "mdoc authentication",
+    "9.1.3.4": "Mechanism",
+    "9.1.3.6": "mdoc ECDSA / EdDSA Authentication",
+    "9.3.1": "Inspection procedure for issuer data authentication",
+}
+ISO_REF = "ISO/IEC 18013-5:2021 "
+
+
+def iso(*numbers):
+    """One ISO/IEC 18013-5:2021 clause: its ref, and its text, which names each number's heading and quotes nothing."""
+    return (ISO_REF + " and ".join(numbers),
+            "not quoted; checked against ISO/IEC 18013-5:2021, headed %s" % " and ".join(ISO_2021[n] for n in numbers))
+
+
+def iso_read(*numbers):
+    """The start of a vector's source: the clauses as the 2021 edition numbers and heads them."""
+    return "checked against ISO/IEC 18013-5:2021: %s; " % " and ".join("%s %s" % (n, ISO_2021[n]) for n in numbers)
+
+
 T_INTEGRITY = "Validate the integrity and authenticity of the Presentation and Credential."
 T_CRITERIA = ("Validate that the returned Credential(s) meet all criteria defined in the query in the Authorization "
               "Request (e.g., Claims included in the presentation).")
 T_SATISFIES = ("Check that the set of Presentations returned satisfies all requirements defined in the Verifier's "
                "request as described in Section 6.4.")
-# Where an ISO/IEC 18013-5 clause number comes from: the implementation that gives it, with the edition that
-# implementation names. No edition is named otherwise.
+# An ISO/IEC 18013-5 clause number is the 2021 edition's, checked against that edition. Where an implementation
+# numbers the clause by another edition, the source gives that number with the edition the implementation names.
 OWF_EDITION = "naming no edition there"
 OID4VCGO_EDITION = "citing the 2025-09-14 CD ballot resolution draft of the second edition"
 
@@ -345,13 +368,13 @@ def _oid4vcgo(what):
     return "OID4VCgo 0.49.0 numbers %s, %s" % (what, OID4VCGO_EDITION)
 
 
-FROM_DIGESTS = _oid4vcgo("the IssuerSignedItem digests 12.3.5")
+FROM_DIGESTS = iso_read("9.1.2.5") + _oid4vcgo("the IssuerSignedItem digests 12.3.5")
 T_HAIP_TABLE = "Verifiers support all hash algorithms listed in table 21 of [ISO.18013-5]."
 T_HAIP_ISO = ("ISO/IEC 18013-5:2021 Personal identification - ISO-compliant driving licence Part 5: Mobile driving "
               "licence (mDL) application")
 # HAIP 1.0 numbers a table from the edition it references, in its own words.
-FROM_HAIP_TABLE = ('HAIP 1.0 9.3.1.2, a non-normative example, says "%s"; its 3.3 lists [ISO.18013-5] as "%s"; '
-                   'that the two numbers name one table is inferred' % (T_HAIP_TABLE, T_HAIP_ISO))
+FROM_HAIP_TABLE = ('HAIP 1.0 9.3.1.2, a non-normative example, says "%s"; its 3.3 lists [ISO.18013-5] as "%s", '
+                   'whose Table 21 is the table of digest algorithm identifiers' % (T_HAIP_TABLE, T_HAIP_ISO))
 T_VERIFY = ("Call the signature verification algorithm, passing in K (the key to verify with), alg (the algorithm "
             "used to sign with), ToBeSigned (the value to sign), and sig (the signature to be verified).")
 T_RS = ("The signature is encoded by converting the integers into byte strings of the same length as the key size. "
@@ -439,11 +462,11 @@ VECTORS = (
              "Appendix A.2.")],
      None, _DCAPI, {}, {"transcript": _dt(origin=OTHER_ORIGIN)}, {}, {}),
     ("md-devicesig-other-key", "the DeviceSignature is made by a key other than the MSO's deviceKey", "spec", _DA,
-     [("ISO/IEC 18013-5 9.1.3 (inferred)", NOT_QUOTED), (S86, T_HOLDER_BINDING),
+     [iso("9.1.3"), (S86, T_HOLDER_BINDING),
       ("OpenID4VP 1.0 2", "Cryptographic Holder Binding: Ability of the Holder to prove legitimate possession of a "
                           "Credential by proving control over the same private key during the issuance and "
                           "presentation.")],
-     "9.1.3 is inferred from 9.1.3.4: " + _owf("DeviceAuth 9.1.3.4") + "; " + _oid4vcgo("mdoc authentication 12.4"),
+     iso_read("9.1.3") + _owf("DeviceAuth 9.1.3.4") + "; " + _oid4vcgo("mdoc authentication 12.4"),
      _REDIRECT, {}, {"signer": OTHER_DEVICE_K}, {}, {}),
     ("md-devicesig-missing", "deviceAuth is empty: no deviceSignature, where holder binding is required", "spec", _DA,
      [(S86, "Validate that all Presentations contain a cryptographic proof of Holder Binding (i.e., that they are "
@@ -453,13 +476,13 @@ VECTORS = (
      None, _REDIRECT, {}, {"devsig": "missing"}, {}, {}),
     ("md-devicesig-not-detached", "the DeviceSignature carries its payload (DeviceAuthenticationBytes) instead of "
                                  "detaching it", "spec-implied", _DA,
-     [("ISO/IEC 18013-5 (clause inferred)", NOT_QUOTED)],
-     "the clause is cited without a number: "
+     [iso("9.1.3.6")],
+     iso_read("9.1.3.6")
      + _oid4vcgo("the detached DeviceAuthenticationBytes 12.4.4 and the signature over them 12.4.6") + "; "
      + _owf("DeviceAuth 9.1.3.4"), _REDIRECT, {}, {"devsig": "embedded"}, {}, {}),
     ("md-devicesig-doctype-other", "DeviceAuthentication names another docType than the document's",
-     "spec-implied", _DA, [("ISO/IEC 18013-5 DeviceAuthentication (clause inferred)", NOT_QUOTED)],
-     "the clause is cited without a number: " + _oid4vcgo("DeviceAuthenticationBytes 12.4.4"), _REDIRECT, {},
+     "spec-implied", _DA, [iso("9.1.3.4")],
+     iso_read("9.1.3.4") + _oid4vcgo("DeviceAuthenticationBytes 12.4.4"), _REDIRECT, {},
      {"signed_doc_type": OTHER_DOCTYPE}, {}, {}),
     ("md-devicekey-kty-crv", "the MSO's deviceKey has key type OKP with curve P-256", "spec", _DA,
      [("RFC 9053 7.1", "Applications MUST check that the curve and the key type are consistent and reject a key if "
@@ -467,8 +490,8 @@ VECTORS = (
      None, _REDIRECT, {}, {"mso_kty": 1}, {}, {}),
     ("md-devicesigned-unauthorized-ns", "DeviceSigned carries an element in a namespace the MSO's KeyAuthorizations "
                                        "do not list", "spec-implied", _DA,
-     [("ISO/IEC 18013-5 9.1.3.4 and 12.3.4", NOT_QUOTED)],
-     _owf("the rule 9.1.3.4 and KeyAuthorizations 9.1.2.4") + "; "
+     [iso("9.1.3.4", "9.1.2.4")],
+     iso_read("9.1.3.4", "9.1.2.4") + _owf("the rule 9.1.3.4 and KeyAuthorizations 9.1.2.4") + "; "
      + _oid4vcgo("KeyAuthorizations 12.3.4 and the reader's check 12.8.2 step 1"),
      _REDIRECT, {"device_signed": DEVICE_SIGNED},
      {"key_authorizations": {"nameSpaces": [AUTHORIZED_NS]}},
@@ -483,10 +506,8 @@ VECTORS = (
      None, _REDIRECT, {}, {}, {}, {"doctype_value": OTHER_DOCTYPE}),
     # The issuer signature: the IssuerAuth COSE_Sign1 and its payload.
     ("md-issuerauth-sig-flipped", "one byte of the IssuerAuth signature is changed (the low bit of its last byte)",
-     "spec", _IA, [("RFC 9052 4.4", T_VERIFY), ("ISO/IEC 18013-5 9.3.1 (inferred)", NOT_QUOTED),
-                   (S86, T_INTEGRITY)],
-     "9.3.1 is inferred as the clause of the reader's checks of the issuer data: "
-     + _owf("their docType check 9.3.1 step 4") + "; " + _oid4vcgo("the same check 12.8.1 step 4"),
+     "spec", _IA, [("RFC 9052 4.4", T_VERIFY), iso("9.3.1"), (S86, T_INTEGRITY)],
+     iso_read("9.3.1") + _owf("their docType check 9.3.1 step 4") + "; " + _oid4vcgo("the same check 12.8.1 step 4"),
      _REDIRECT, {}, {"issuer_auth": "sig-flipped"}, {}, {}),
     ("md-issuerauth-sig-der", "the IssuerAuth ES256 signature is DER-encoded, not the fixed-length r || s",
      "spec-implied", _IA, [("RFC 9053 2.1", T_RS)], None, _REDIRECT, {}, {"issuer_auth": "sig-der"}, {}, {}),
@@ -501,34 +522,34 @@ VECTORS = (
                                 "signed as those bytes", "spec", _IA,
      [("RFC 9052 3", T_LABELS)], None, _REDIRECT, {}, {"issuer_auth": "dup-label"}, {}, {}),
     ("md-mso-not-tag24", "IssuerAuth's payload is the bare MSO, not MobileSecurityObjectBytes (tag 24)",
-     "spec-implied", _IA, [("ISO/IEC 18013-5 MobileSecurityObjectBytes (clause inferred)", NOT_QUOTED)],
-     "the clause is cited without a number: "
+     "spec-implied", _IA, [iso("9.1.2.4")],
+     iso_read("9.1.2.4")
      + _oid4vcgo("the MSO 12.3.4 and lists MobileSecurityObjectBytes among the tag-24 strings of 10.3.3") + "; "
      + _owf("the MSO's KeyAuthorizations and digest IDs 9.1.2.4"),
      _REDIRECT, {}, {"issuer_auth": "not-tag24"}, {}, {}),
     # The MSO and its digests.
     ("md-digest-value-modified", "one byte of family_name's elementValue is changed (Mustermann to Nustermann); the "
                                  "MSO is untouched", "spec", _MSO,
-     [("ISO/IEC 18013-5 12.3.5 (inferred)", NOT_QUOTED), (S86, T_INTEGRITY)],
+     [iso("9.1.2.5"), (S86, T_INTEGRITY)],
      FROM_DIGESTS, _REDIRECT, {}, {"sent": "value-modified"}, {}, {}),
     ("md-digest-reencoded-item", "family_name's IssuerSignedItemBytes are re-encoded: the same item with its "
                                  "digestID 0 written in two bytes (18 00), not the bytes the MSO digests",
-     "spec-implied", _MSO, [("ISO/IEC 18013-5 12.3.5 (inferred)", NOT_QUOTED)],
+     "spec-implied", _MSO, [iso("9.1.2.5")],
      FROM_DIGESTS, _REDIRECT, {}, {"sent": "reencoded"}, {}, {}),
     ("md-digest-id-absent", "the MSO's valueDigests has no digestID 2, the disclosed birth_date's", "spec", _MSO,
-     [("ISO/IEC 18013-5 12.3.5 (inferred)", NOT_QUOTED), (S86, T_INTEGRITY)],
+     [iso("9.1.2.5"), (S86, T_INTEGRITY)],
      FROM_DIGESTS, _REDIRECT, {}, {"mso_digests": {2: None}}, {}, {}),
     ("md-digest-alg-sha1", "the MSO's digestAlgorithm is SHA-1, its digests SHA-1 over the items", "spec-implied",
-     _MSO, [("ISO/IEC 18013-5 Table 16 (inferred)", NOT_QUOTED)],
-     _oid4vcgo("the MSO digest algorithms Table 16") + "; " + FROM_HAIP_TABLE,
+     _MSO, [iso("Table 21")],
+     iso_read("Table 21") + _oid4vcgo("the MSO digest algorithms Table 16") + "; " + FROM_HAIP_TABLE,
      _REDIRECT, {}, {"digest_alg": "SHA-1"}, {}, {}),
     ("md-digest-length", "the MSO's digest for digestID 0 is the first 20 bytes of its SHA-256", "spec-implied",
-     _MSO, [("ISO/IEC 18013-5 12.3.5 (inferred)", NOT_QUOTED)],
+     _MSO, [iso("9.1.2.5")],
      FROM_DIGESTS, _REDIRECT, {}, {"mso_digests": {0: 20}}, {}, {}),
     ("md-doctype-vs-mso", "the MSO's docType is eu.europa.ec.eudi.pid.1; the document's, and the request's, is the "
                           "mDL's", "spec-implied", _MSO,
-     [("ISO/IEC 18013-5 9.3.1 (inferred)", NOT_QUOTED), ("ISO/IEC 18013-5 12.8.1 (inferred)", NOT_QUOTED)],
-     _owf("this check 9.3.1 step 4") + "; " + _oid4vcgo("it 12.8.1 step 4"), _REDIRECT, {},
+     [iso("9.3.1")],
+     iso_read("9.3.1") + _owf("this check 9.3.1 step 4") + "; " + _oid4vcgo("it 12.8.1 step 4"), _REDIRECT, {},
      {"mso_doc_type": OTHER_DOCTYPE}, {}, {}),
     ("md-sd-claim-absent", "the request's claims ask for family_name and birth_date; IssuerSigned discloses "
                            "family_name only", "spec", _RQ,

@@ -226,10 +226,11 @@ of a wallet), `trust_anchors_pem` (the IACA root), `at` (the instant), `expected
 or where the clause is ISO-only: the clause number is given and nothing is quoted; and
 `policy` where no sentence requires the refusal, the verdict following the vector's `policy`, which the file's
 `policies` states. 10 vectors are `spec-implied` and two are `policy`: `md-issuerauth-alg-curve` (`alg-curve-pairing`)
-and `md-sd-value-other` (`values-checked`). Every ISO/IEC 18013-5 clause number comes with the vector's `source`: the
-implementation that gives the number and the edition that implementation names (OID4VCgo 0.49.0 cites the 2025-09-14 CD
-ballot resolution draft of the second edition; @owf/mdoc 0.8.2 names none for these numbers), both where two number a
-clause differently.
+and `md-sd-value-other` (`values-checked`). Every ISO/IEC 18013-5 clause number is checked against ISO/IEC
+18013-5:2021: its ref names that edition and its text the clause's heading there, not quoted. The vector's `source`
+gives that number and heading, then the number each implementation gives the clause and the edition that
+implementation names (OID4VCgo 0.49.0 cites the 2025-09-14 CD ballot resolution draft of the second edition;
+@owf/mdoc 0.8.2 names none for these numbers), both where two number a clause differently.
 `md-issuerauth-dup-label` is refused as malformed, the refusal RFC 9052 section 3 requires.
 
 The claims vectors judge the IssuerSigned elements a document discloses against the request's `claims`: every
