@@ -5,12 +5,12 @@ asking anyone a question.** If you cannot, that is the bug and we want to hear i
 [open a report](https://github.com/EgorKhaklin/polaris-id/issues/new?template=stranger_path_report.yml).
 
 This page is run start to finish before it is changed, from outside the repository, against the
-package on PyPI rather than a working copy. Last walked 2026-11-19 against `polaris-oid4vp`
-1.3.0 installed from the registry, with the system Python 3.9.6 on macOS. In the first minute,
+package on PyPI rather than a working copy. Last walked 2026-11-26 against `polaris-oid4vp`
+1.4.0 installed from the registry, with the system Python 3.9.6 on macOS. In the first minute,
 eudi-dev v2.3.7's image presented a credential, the verifier answered 200 and accepted it, and all
 three controls were refused; the wallet's own binary did the same without Docker. In the ten
 minutes, walt.id's wallet presented from an empty directory and the verifier answered `200
-authentic`, 6 seconds after the wallet came up. Nothing here is from memory.
+authentic`, within a second of the present call. Nothing here is from memory.
 
 ## One minute first
 
@@ -36,9 +36,9 @@ the hashes in `requirements.txt`, lets the wallet generate its own
 key, mints one credential bound to it, has the wallet present it with HAIP enforced, then runs
 three controls that must each be refused ([what they are](../lab/interop/eudi-dev/README.md)). It
 does every step for you, so it shows THAT the path works; the ten minutes below show what each
-step is. Walked 2026-11-19 as written, from an empty directory outside the repository, with the
-system Python 3.9.6 on macOS: it installed 1.3.0, and the wallet presented and the verifier
-accepted with all three controls refused, in 12 seconds with Docker running; without Docker
+step is. Walked 2026-11-26 as written, from an empty directory outside the repository, with the
+system Python 3.9.6 on macOS: it installed 1.4.0, and the wallet presented and the verifier
+accepted with all three controls refused, in 15 seconds with Docker running; without Docker
 (`EUDI_NATIVE=1`), the same in 10 seconds.
 
 ## 0. Prerequisites
