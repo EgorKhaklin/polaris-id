@@ -626,7 +626,7 @@ cd packages/polaris-oid4vp && python3 -m unittest test_sdjwt test_jwe test_verif
     test_age_page
 ```
 
-- 1290 tests in ten files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
+- 1291 tests in ten files. `test_conformance_capture` replays a real `direct_post.jwt` response built by the
   OpenID Foundation suite's wallet (Nimbus JOSE), so this package's ECDH-ES, KDF, AAD binding and
   digests are checked against an independent implementation.
 - `scripts/polaris-oid4vp-mutation-drill.py` makes each of the 399 refusals accept and requires a

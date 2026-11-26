@@ -23275,10 +23275,22 @@ def _mdoc_claims_tree(tmp_path):
     })
     files = dict(surfaces)
     files[checks._MDOC_CLAIM_CLI] = ('if not args.experimental:\n'
-                                     '    why = "--format %s is experimental and off by default" % MDOC_FORMAT\n')
+                                     '    why = "--format %s is experimental and off by default" % MDOC_FORMAT\n'
+                                     'if args.dc_api and not args.experimental:\n'
+                                     '    raise ValueError("--dc-api is experimental and off by default")\n'
+                                     'if MDOC_FORMAT in asked and not args.experimental:\n'
+                                     '    raise ValueError("the request asks for %s, which is experimental and off '
+                                     'by default" % MDOC_FORMAT)\n')
     files[checks._MDOC_CLAIM_CLI_SUITE] = ("class PublicationRuleTests:\n"
                                            "    def test_the_unexercised_paths_are_off_by_default(self):\n"
+                                           "        pass\n\n"
+                                           "    def test_the_dc_api_path_is_off_by_default(self):\n"
+                                           "        pass\n\n"
+                                           "    def test_without_the_flag_a_captured_mdoc_is_not_judged(self):\n"
                                            "        pass\n")
+    package = "packages/polaris-oid4vp/polaris_oid4vp/"
+    files[package + "annexc.py"] = '"""annexc.py: ISO/IEC 18013-7 Annex C."""\n\n\ndef new_request(doctypes):\n    return doctypes\n'
+    files[package + "serve.py"] = "from . import mdoc\n\n\ndef serve(verifier):\n    return mdoc, verifier\n"
     files[checks._MDOC_CLAIM_SCOREBOARD] = (
         "### Wallets\n\n| Date | Wallet | Verifier | Result | Controls, each refused | Evidence |\n"
         "|---|---|---|---|---|---|\n"
@@ -23309,8 +23321,8 @@ def _mdoc_claims_tree(tmp_path):
 def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
     # lab/strategy/025, M7: no outward surface says the verifier reads mdoc, the browser's Digital
     # Credentials API, wallet-platform or US IDs or age-verification attestations ahead of its
-    # evidence. The path built behind --experimental may be called experimental; the others
-    # may only be called absent.
+    # evidence. The paths built and off by default (mdoc, the Digital Credentials API, ISO/IEC
+    # 18013-7 Annex C) may be called experimental; the others may only be called absent.
     check = checks.check_mdoc_dc_api_claims_are_gated
     files, write, said = _mdoc_claims_tree(tmp_path)
     surfaces = checks._MDOC_CLAIM_SURFACES
@@ -23352,6 +23364,8 @@ def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
         ("The page calls navigator.credentials.get.", DC),
         ("It follows ISO/IEC 18013-7 Annex C.", ANNEX_C),
         ("It answers `org-iso-mdoc`.", ANNEX_C),
+        ("It follows Annex C.", ANNEX_C),
+        ("The `annexc` module opens the response.", ANNEX_C),
         ("Accepts IDs from Apple Wallet.", IDS),
         ("Accepts IDs from Google Wallet.", IDS),
         ("Verifies US IDs.", IDS),
@@ -23366,6 +23380,7 @@ def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
         # In whatever case they are written.
         ("An MDOC verifier.", REDIRECT),
         ("it supports the digital credentials api.", DC),
+        ("it follows annex c.", ANNEX_C),
         ("ids from apple wallet.", IDS),
         ("AGE VERIFICATION.", AGE),
     )
@@ -23377,9 +23392,10 @@ def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
     # Experimental, in the same sentence, is what the path behind the flag may be called, and only it.
     for rel in surfaces:
         assert passed(check(said(rel, "polaris-oid4vp verifies mdoc presentations, an mDL among them (experimental)."))), rel
-        for sentence, path in (("Experimental: the Digital Credentials API.", DC),
-                               ("Experimental: ISO/IEC 18013-7 Annex C.", ANNEX_C),
-                               ("Experimental support for Apple Wallet IDs.", IDS),
+        for sentence in ("Experimental: the Digital Credentials API.", "Experimental: ISO/IEC 18013-7 Annex C.",
+                         "Annex C (`annexc`) is experimental and off by default."):
+            assert passed(check(said(rel, sentence))), (rel, sentence)
+        for sentence, path in (("Experimental support for Apple Wallet IDs.", IDS),
                                ("Experimental age verification.", AGE)):
             assert failed(check(said(rel, sentence)), rel, "names " + path, "it is not built"), (rel, sentence)
     # A sentence that takes the word back has not said it.
@@ -23466,8 +23482,12 @@ def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
     # "Experimental, off by default" is true while the command refuses the format without the flag
     # and the suite holds the refusal. Commented out is gone.
     cli, suite = checks._MDOC_CLAIM_CLI, checks._MDOC_CLAIM_CLI_SUITE
-    for rel, needle in ((cli, "if not args.experimental:"), (cli, "is experimental and off by default"),
-                        (suite, "def test_the_unexercised_paths_are_off_by_default(self):")):
+    for rel, needle in ((cli, "if not args.experimental:"), (cli, "--format %s is experimental and off by default"),
+                        (suite, "def test_the_unexercised_paths_are_off_by_default(self):"),
+                        (cli, "--dc-api is experimental and off by default"),
+                        (suite, "def test_the_dc_api_path_is_off_by_default(self):"),
+                        (cli, "the request asks for %s, which is experimental and off by default"),
+                        (suite, "def test_without_the_flag_a_captured_mdoc_is_not_judged(self):")):
         line = next(text for text in files[rel].splitlines() if needle in text)
         commented = line[:len(line) - len(line.lstrip())] + "# " + line.lstrip()
         for text in (files[rel].replace(needle, ""), files[rel].replace(line, commented), None):
@@ -23482,6 +23502,60 @@ def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
     # Surfaces that name none of it at all: the check has stopped seeing, or they have stopped saying.
     silent = {rel: "# A surface\n\nIt says nothing of the paths.\n" for rel in surfaces}
     assert failed(check(write(**silent)), "at all")
+
+
+def test_mdoc_claims_each_path_is_held_by_its_own_gate(tmp_path):
+    # lab/strategy/025, M7, as polaris-oid4vp 1.4.0 ships it: the Digital Credentials API and
+    # ISO/IEC 18013-7 Annex C may be called experimental, each only while its own gate holds. The
+    # command's gates share their words, so a path held by shared words would stay open after its
+    # own gate was gone: each is held by its own.
+    check = checks.check_mdoc_dc_api_claims_are_gated
+    files, write, said = _mdoc_claims_tree(tmp_path)
+    cli, suite = checks._MDOC_CLAIM_CLI, checks._MDOC_CLAIM_CLI_SUITE
+    package = "packages/polaris-oid4vp/polaris_oid4vp/"
+    serve = package + "serve.py"
+    needles = ((cli, "if not args.experimental:"), (cli, "--format %s is experimental and off by default"),
+               (suite, "def test_the_unexercised_paths_are_off_by_default(self):"),
+               (cli, "--dc-api is experimental and off by default"),
+               (suite, "def test_the_dc_api_path_is_off_by_default(self):"),
+               (cli, "the request asks for %s, which is experimental and off by default"),
+               (suite, "def test_without_the_flag_a_captured_mdoc_is_not_judged(self):"))
+
+    def failed(findings, *words):
+        return any(f.level == "FAIL" and all(w in f.message for w in words) for f in findings)
+
+    def passed(findings):
+        return bool(findings) and all(f.level == "OK" for f in findings)
+
+    assert passed(check(write()))
+    # One gate's own words gone, and every other gate's words still there, the shared ones among
+    # them: the check fails and names the path whose gate went.
+    for rel, needle, path in ((cli, "--dc-api is experimental and off by default", "the Digital Credentials API path"),
+                              (suite, "def test_the_dc_api_path_is_off_by_default(self):",
+                               "the Digital Credentials API path"),
+                              (cli, "--format %s is experimental and off by default", "the mdoc path"),
+                              (cli, "the request asks for %s, which is experimental and off by default", "the mdoc path"),
+                              (suite, "def test_without_the_flag_a_captured_mdoc_is_not_judged(self):", "the mdoc path")):
+        gone = files[rel].replace(needle, "")
+        assert gone != files[rel]
+        assert all(other in gone for where, other in needles if where == rel and other != needle), needle
+        assert rel != cli or "is experimental and off by default" in gone, needle
+        assert failed(check(write(**{rel: gone})), rel, needle, "nothing keeps %s off by default" % path), (rel, needle)
+
+    # ISO/IEC 18013-7 Annex C has no flag: it is off by default while no module of the package but
+    # its own names it. However another module imports it, wherever in the package, it is wired in.
+    for rel, line in ((serve, "from . import annexc\n"), (serve, "from .annexc import new_request\n"),
+                      (cli, "import polaris_oid4vp.annexc as annex\n"),
+                      (package + "verifier.py", "from polaris_oid4vp import annexc\n"),
+                      (package + "web/routes.py", "from .. import annexc\n")):
+        bad = check(write(**{rel: line + files.get(rel, "")}))
+        assert failed(bad, "annexc is named by " + rel, "not wired into serve"), (rel, line, bad)
+    # A comment that names it wires nothing, and the module may name itself.
+    assert passed(check(write(**{serve: "# annexc is not imported here\n" + files[serve]})))
+    assert passed(check(write(**{package + "annexc.py": files[package + "annexc.py"] + "annexc = None\n"})))
+    # Without the modules the pin reads, nothing shows it is not wired in.
+    for rel in (package + "annexc.py", serve, cli):
+        assert failed(check(write(**{rel: None})), "not wired into serve"), rel
 
 
 def test_mdoc_claims_a_scoreboard_row_opens_only_its_path(tmp_path):

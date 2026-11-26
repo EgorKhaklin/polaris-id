@@ -27285,11 +27285,12 @@ _MDOC_CLAIM_SCOREBOARD = "lab/EXTERNAL-NOUNS.md"
 _MDOC_CLAIM_CLI = "packages/polaris-oid4vp/polaris_oid4vp/cli.py"
 _MDOC_CLAIM_CLI_SUITE = "packages/polaris-oid4vp/test_cli.py"
 
-#: Each path: its name; the words a surface may call it by; whether it is built and behind the
-#: flag, which is what lets a sentence call it experimental; and what its scoreboard row's
-#: Result cell names beside "accepted". A path with no such marks has no row that opens it
-#: yet: the rule asks more of it than a row (a state-issued document, a named person), and
-#: this check gains the marks together with that evidence.
+#: Each path: its name; the words a surface may call it by; whether it is built and off by
+#: default, which is what lets a sentence call it experimental (the check holds each such path
+#: to a gate of its own); and what its scoreboard row's Result cell names beside "accepted". A
+#: path with no such marks has no row that opens it yet: the rule asks more of it than a row (a
+#: state-issued document, a named person), and this check gains the marks together with that
+#: evidence.
 _MDOC_CLAIM_PATHS = (
     ("mdoc over OpenID4VP redirects",
      re.compile(r"(?i:(?<![\w/.-])(?:mdocs?|mso_mdoc|mDLs?|DeviceResponses?)(?![\w/-])|18013-5"
@@ -27297,10 +27298,10 @@ _MDOC_CLAIM_PATHS = (
      True, ("`mso_mdoc`", "`direct_post.jwt`")),
     ("the Digital Credentials API",
      re.compile(r"(?i:digital\s+credentials?\s+api|\bDC\s+API\b|(?<![\w/.-])dc_api|navigator\.credentials)"),
-     False, ("`dc_api.jwt`",)),
+     True, ("`dc_api.jwt`",)),
     ("ISO/IEC 18013-7 Annex C",
-     re.compile(r"18013-7|org-iso-mdoc"),
-     False, ("`org-iso-mdoc`",)),
+     re.compile(r"18013-7|org-iso-mdoc|(?i:\bannex\s+c\b|(?<![\w/.-])annexc(?![\w/-]))"),
+     True, ("`org-iso-mdoc`",)),
     ("US and wallet-platform IDs",
      re.compile(r"(?i:apple\s+wallet|google\s+wallet|state-issued|\bstate\s+IDs?\b)|\bUS\s+(?:mobile\s+)?IDs?\b"),
      False, None),
@@ -27383,9 +27384,12 @@ def check_mdoc_dc_api_claims_are_gated(root: pathlib.Path) -> list[Finding]:
     wallet-platform or US IDs, or age-verification attestations, ahead of its evidence.
 
     A sentence that names one of these paths passes when the scoreboard holds the path's row,
-    when it says the path is absent, or, for a path built behind --experimental, when the
+    when it says the path is absent, or, for a path built and off by default, when the
     sentence or the heading it stands under says experimental; that last holds only while the
-    command refuses the format without the flag and the suite tests that refusal. A CHANGELOG
+    path's own gate holds. The mdoc path and the Digital Credentials API are each held by the
+    command's refusal without --experimental and the suite's test of it; ISO/IEC 18013-7 Annex
+    C, which has no flag yet, by no module of the package but its own naming it, so that it is
+    not wired into serve. A CHANGELOG
     line passes only with the row or the word experimental. Sentences about the negative
     vectors, polaris-verify's verify_mdoc and a certificate's profile carry some of the same
     words and are about those.
@@ -27396,17 +27400,43 @@ def check_mdoc_dc_api_claims_are_gated(root: pathlib.Path) -> list[Finding]:
     """
     name = "mdoc_dc_api_claims_are_gated"
     problems = []
-    # What keeps "experimental, off by default" true of a path: the command refuses the format
-    # without the flag, and the package's suite holds that refusal. The words are written here,
-    # where the check-mutation drill finds them.
+    # What keeps "experimental, off by default" true of a path, path by path: the command refuses
+    # it without the flag at every door to it (serve's --format and verdict, for the mdoc path), and
+    # the package's suite holds each refusal. Three of the command's four
+    # gates read "if not args.experimental:" and all four say "is experimental and off by
+    # default", so each path is held by its own refusal and its own test: one gate gone fails here
+    # while the others' words remain. The words are written here, where the check-mutation drill
+    # finds them.
     command, suite = _read(root, _MDOC_CLAIM_CLI), _read(root, _MDOC_CLAIM_CLI_SUITE)
-    for rel, code, needle in (
-            (_MDOC_CLAIM_CLI, command, "if not args.experimental:"),
-            (_MDOC_CLAIM_CLI, command, "is experimental and off by default"),
-            (_MDOC_CLAIM_CLI_SUITE, suite, "def test_the_unexercised_paths_are_off_by_default(self):")):
+    for path, rel, code, needle in (
+            ("the mdoc path", _MDOC_CLAIM_CLI, command, "if not args.experimental:"),
+            ("the mdoc path", _MDOC_CLAIM_CLI, command, "--format %s is experimental and off by default"),
+            ("the mdoc path", _MDOC_CLAIM_CLI_SUITE, suite,
+             "def test_the_unexercised_paths_are_off_by_default(self):"),
+            ("the mdoc path", _MDOC_CLAIM_CLI, command,
+             "the request asks for %s, which is experimental and off by default"),
+            ("the mdoc path", _MDOC_CLAIM_CLI_SUITE, suite,
+             "def test_without_the_flag_a_captured_mdoc_is_not_judged(self):"),
+            ("the Digital Credentials API path", _MDOC_CLAIM_CLI, command,
+             "--dc-api is experimental and off by default"),
+            ("the Digital Credentials API path", _MDOC_CLAIM_CLI_SUITE, suite,
+             "def test_the_dc_api_path_is_off_by_default(self):")):
         if needle not in code:
-            problems.append("%s no longer carries %r, so nothing keeps the mdoc path off by default and "
-                            "no sentence may call it experimental" % (rel, needle))
+            problems.append("%s no longer carries %r, so nothing keeps %s off by default and no sentence "
+                            "may call it experimental" % (rel, needle, path))
+    # ISO/IEC 18013-7 Annex C has no flag yet. It is off by default while no module of the package
+    # but its own names it: a module a caller imports, not wired into serve. A comment names nothing.
+    modules = sorted((root / "packages" / "polaris-oid4vp" / "polaris_oid4vp").rglob("*.py"))
+    held = [module.relative_to(root).as_posix() for module in modules]
+    own = "packages/polaris-oid4vp/polaris_oid4vp/annexc.py"
+    if not {own, "packages/polaris-oid4vp/polaris_oid4vp/serve.py", _MDOC_CLAIM_CLI} <= set(held):
+        problems.append("packages/polaris-oid4vp/polaris_oid4vp holds no annexc.py beside serve.py and "
+                        "cli.py, so nothing shows ISO/IEC 18013-7 Annex C is not wired into serve")
+    wired = [rel for rel, module in zip(held, modules)
+             if rel != own and re.search(r"\bannexc\b", _read_path(module))]
+    if wired:
+        problems.append("annexc is named by %s, so nothing shows ISO/IEC 18013-7 Annex C is not wired into "
+                        "serve and no sentence may call it experimental" % ", ".join(wired))
     scoreboard = _read_raw(root, _MDOC_CLAIM_SCOREBOARD)
     dated, opened = _mdoc_paths_a_row_opens(scoreboard)
     if not dated:
@@ -27450,7 +27480,7 @@ def check_mdoc_dc_api_claims_are_gated(root: pathlib.Path) -> list[Finding]:
     if problems:
         return _fail(name, "; ".join(problems))
     return _ok(name, "%d mentions of mdoc, the Digital Credentials API, wallet-platform IDs and age "
-                     "verification on %d surfaces: each is experimental behind the flag, says the path is "
+                     "verification on %d surfaces: each is experimental and off by default, says the path is "
                      "absent, or is about another subject; paths a scoreboard row opens: %s"
                      % (mentions, len(_MDOC_CLAIM_SURFACES), ", ".join(opened) or "none"))
 
