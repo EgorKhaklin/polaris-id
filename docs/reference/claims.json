@@ -4,15 +4,15 @@
     {
       "id": "hero",
       "kind": "badge",
-      "claim": "Polaris ID",
+      "claim": "Polaris ID. Proof over trust. The Polaris card, reference design PC-0001",
       "surfaces": [
         "README.md"
       ],
       "evidence": [
-        "file:docs/assets/hero.svg"
+        "file:site/og.png"
       ],
       "reproduce": null,
-      "why": "The project's name as an image: the logo, the wordmark and the maker's mark. It states nothing else."
+      "why": "The project's link card as an image: the star mark and the name Polaris ID, the Polaris card reference design, the headline \"Proof over trust.\" and the card's drawing number, PC-0001. It states nothing else."
     },
     {
       "id": "ci",

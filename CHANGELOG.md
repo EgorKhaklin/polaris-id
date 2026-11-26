@@ -198,6 +198,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `check_public_claims_honest` holds a site h1 or h2 named by an aria-label to exactly its own text, and `check_interop_page_matches_the_count` fails when the site says "outside projects" anywhere it does not read the count (a "tested against N outside projects" sentence or the tally).
 - site/ drops the earlier page's files that no page loads: 90 images and stylesheets (the coin's other poses, the sky, the acts' renders, the portrait and two logo sizes), with their entries in NOTICE, REUSE.toml and TRADEMARKS.md.
 - REUSE.toml records the licence and copyright of the fonts, MapLibre GL JS (its stylesheet, and its script with the 17 packages it bundles), Lucide, Lenis and the Code of Conduct, with each licence's text in LICENSES/. NOTICE, TRADEMARKS.md and the four package NOTICEs say the Code of Conduct keeps its own licence, and the package NOTICEs carry the root NOTICE's sentence on what the Apache License covers.
+- README.md shows the card (site/og.png) as its banner; docs/assets/hero.svg, the October sky only it showed, is removed.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 

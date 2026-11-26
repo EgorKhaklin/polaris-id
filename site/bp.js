@@ -525,9 +525,43 @@
             return { top: s.offsetTop, bottom: s.offsetTop + s.offsetHeight, paper: s.classList.contains('paper'), id: s.id };
         });
     }
-    window.addEventListener('resize', measure);
+    /* The reader's place: the section at the window's middle and how far through it, written as the page moves.
+       When the window changes width (a phone turned, a window dragged) the page is put back at that place, since
+       the sections are other heights then. A change of height alone (a phone's bars sliding away) moves nothing. */
+    var place = { id: '', f: 0, w: 0, busy: 0 };
+    function notePlace(sy) {
+        if (place.busy || !M.secs.length) { return; }
+        var mid = sy + M.vh * 0.5;
+        place.id = '';
+        if (sy < 2) { return; }                              /* at the very top the page stays at the top */
+        for (var i = 0; i < M.secs.length; i += 1) {
+            if (mid >= M.secs[i].top && mid < M.secs[i].bottom) {
+                place.id = M.secs[i].id || String(i);
+                place.i = i;
+                place.f = (mid - M.secs[i].top) / Math.max(1, M.secs[i].bottom - M.secs[i].top);
+            }
+        }
+    }
+    function backToPlace() {
+        if (!place.id || !M.secs[place.i]) { return; }
+        var s = M.secs[place.i];
+        var y = Math.max(0, Math.round(s.top + place.f * (s.bottom - s.top) - M.vh * 0.5));
+        if (lenis) { lenis.scrollTo(y, { immediate: true, force: true }); } else { window.scrollTo(0, y); }
+    }
+    function resized() {
+        var turned = place.w && Math.abs(window.innerWidth - place.w) > 1;
+        measure();
+        place.w = M.vw;
+        if (!turned) { return; }
+        backToPlace();
+        /* a turned phone settles its sizes over a few frames: measure and place once more when it has */
+        place.busy += 1;
+        window.setTimeout(function () { measure(); backToPlace(); place.busy -= 1; }, 320);
+    }
+    window.addEventListener('resize', resized);
     window.addEventListener('load', measure);
     measure();
+    place.w = M.vw;
 
     /* ---- the loading screen, then the card's arrival --------------------- */
     var pre = $('#pre');
@@ -578,8 +612,8 @@
         root.classList.remove('lock');
         try { sessionStorage.setItem('plr-pre', '1'); } catch (e) { /* private mode: the screen shows again next time */ }
         if (lenis) { lenis.start(); }
-        window.setTimeout(startIntro, 660);
-        window.setTimeout(function () { root.classList.add('pre-gone'); }, 1400);
+        window.setTimeout(startIntro, 900);                  /* as the leaves begin to swing */
+        window.setTimeout(function () { root.classList.add('pre-gone'); }, 2250);
     }
 
     arrive.load(function (part) { loadedPart = part; }, function () { if (skipPre && !introDone) { /* frames arrive late: used for the scroll only */ } });
@@ -596,6 +630,7 @@
     function frame(now) {
         if (lenis) { lenis.raf(now); }
         var sy = window.scrollY || 0;
+        notePlace(sy);
 
         /* the loading count */
         if (!lifted) {
@@ -752,7 +787,7 @@
             tile.style.clipPath = 'inset(' + T.toFixed(1) + 'px ' + R.toFixed(1) + 'px ' + B.toFixed(1) + 'px ' + Lf.toFixed(1) + 'px)';
             if (bandStage) {
                 var sh = bandStage.offsetHeight || M.vh;
-                var k0 = (side * 1.5) / sh;
+                var k0 = Math.min(0.82, (side * 1.5) / sh);       /* the tile's picture is never larger than the full one */
                 var ddx = (left0 + side / 2 - M.vw / 2) * (1 - e);
                 var ddy = (top0 + side / 2 - M.vh / 2) * (1 - e);
                 bandStage.style.transform = 'translate3d(' + ddx.toFixed(1) + 'px,' + ddy.toFixed(1) + 'px,0) scale(' + lerp(k0, 1, e).toFixed(4) + ')';
