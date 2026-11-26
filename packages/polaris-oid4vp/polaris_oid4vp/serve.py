@@ -24,7 +24,8 @@ import sys
 import threading
 import urllib.parse
 
-from . import dc_api_page
+from . import age_page, dc_api_page
+from .age import COULD_NOT_CHECK, AgeVerifier
 from .jwe import _loads_depth_bounded
 from .mdoc import dc_api_origin as _dc_api_origin
 from .verifier import (  # noqa: F401  Verifier re-exported for callers of serve()
@@ -105,6 +106,19 @@ DC_API_RESPONSE_PATH = DC_API_PREFIX + "response"
 #: else: no inline script, no style, no frame around it, no form and no base URL.
 DC_API_PAGE_POLICY = ("default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; "
                       "form-action 'none'; frame-ancestors 'none'")
+#: The paths `serve(age_origin=...)` answers (experimental, record 025 M5): the age page, its
+#: script, and the two routes the script posts to (`_AgeHandler`). A listener given age_origin
+#: answers these and no other path.
+AGE_PREFIX = "/age/"
+AGE_PAGE_PATH = AGE_PREFIX
+AGE_SCRIPT_PATH = AGE_PREFIX + "app.js"
+AGE_REQUEST_PATH = AGE_PREFIX + "request"
+AGE_RESPONSE_PATH = AGE_PREFIX + "response"
+#: The age page's Content-Security-Policy, the /dc-api/ page's.
+AGE_PAGE_POLICY = DC_API_PAGE_POLICY
+#: A refusal's code as the age page's operator line writes it: the code alone, and only one of this
+#: shape; anything else is written as invalid_request.
+_AGE_CODE = re.compile(r"[a-z_]{1,64}")
 #: What follows `scheme://` in an origin, lowercased: a host (in brackets, what ipaddress then
 #: reads as IPv6, or else a name or IPv4 address with no colon or bracket), then, if any, `:` and
 #: a port of ASCII digits, of which at most five follow the leading zeros.
@@ -735,6 +749,136 @@ class _DcApiHandler:
         self.wfile.write(raw)
 
 
+class _AgeHandler:
+    """The age page and its routes, for a listener given `age_origin` and an `age.AgeVerifier`.
+    serve() builds the listener's handler from this and `_Handler` alone, and nothing here falls
+    through to `_Handler`: every other path, the request and response URIs, the control path and
+    /dc-api/ among them, is 404. Every answer these routes write carries `Cache-Control: no-store`,
+    and none sets a cookie; the standard library's own error answers (a method this class does not
+    define, a request line it cannot read) carry neither a verdict nor a cookie.
+
+    `GET /age/` is `age_page.page` for the verifier's age and its roots' labels, under
+    AGE_PAGE_POLICY, and `GET /age/app.js` its script, each `nosniff`. The two POST routes answer
+    only a request whose one Origin header is `age_origin`, as `_DcApiHandler`'s do: any other,
+    none, `null` or two get 403 with the body unread. Then the body is read under MAX_BODY_BYTES.
+
+    `POST /age/request` answers `Verifier.dc_api_request(age_origin)`'s member; 503
+    `temporarily_unavailable` when DC_API_MAX_OUTSTANDING requests are outstanding.
+
+    `POST /age/response` answers 200 and `{"answer": ...}` for every body it reads: the answer
+    `AgeVerifier.age_answer` gives for `data` when the body is one JSON object whose protocol is
+    DC_API_PROTOCOL, and `age.COULD_NOT_CHECK` otherwise. Nothing about the answer is kept, and no
+    callback hears it.
+
+    The operator line: for every refusal, `refused: CODE`, the code alone and never its reason,
+    because a reason can quote what a document disclosed (mdoc's issuing_authority quotes the
+    disclosed issuing_country and the signer's countryName). Under `verbose`, the method and path
+    of each request, without its query. No line carries the caller's address."""
+
+    age_origin = None
+    age_page_bytes = b""
+
+    def do_GET(self):
+        path = self.path.partition("?")[0]
+        if path == AGE_PAGE_PATH:
+            return self._age_file(self.age_page_bytes, "text/html; charset=utf-8", AGE_PAGE_POLICY)
+        if path == AGE_SCRIPT_PATH:
+            return self._age_file(age_page.SCRIPT, "text/javascript; charset=utf-8")
+        return self._age_send(404, {"error": "not_found"})
+
+    def do_POST(self):
+        path = self.path.partition("?")[0]
+        if path not in (AGE_REQUEST_PATH, AGE_RESPONSE_PATH):
+            self.close_connection = True
+            return self._age_send(404, {"error": "not_found"})
+        origins = self.headers.get_all("Origin") or []
+        if origins != [self.age_origin]:
+            # Before a byte of the body is read, as on the /dc-api/ routes.
+            self.close_connection = True
+            self._age_refused("access_denied")
+            return self._age_send(403, {"error": "access_denied",
+                                        "error_description": "this path answers only its own page"})
+        length = _content_length(self.headers)
+        if length is None:
+            self.close_connection = True
+            self._age_refused("invalid_request")
+            return self._age_send(400, {"error": "invalid_request",
+                                        "error_description": "Content-Length is not a length"})
+        if length > MAX_BODY_BYTES:
+            self.close_connection = True
+            self._age_refused("invalid_request")
+            return self._age_send(413, {"error": "invalid_request",
+                                        "error_description": "the body is over %d bytes" % MAX_BODY_BYTES})
+        body = self.rfile.read(length)
+        if len(body) < length:
+            self.close_connection = True
+            self._age_refused("invalid_request")
+            return self._age_send(400, {"error": "invalid_request",
+                                        "error_description": "the body is shorter than Content-Length"})
+        if path == AGE_REQUEST_PATH:
+            return self._age_request()
+        return self._age_response(body)
+
+    def _age_request(self):
+        try:
+            member = self.verifier.dc_api_request(self.age_origin)
+        except DcApiRequestsFull:
+            self._age_refused("temporarily_unavailable")
+            return self._age_send(503, {"error": "temporarily_unavailable",
+                                        "error_description": "too many requests are outstanding; try again later"})
+        except Exception:  # noqa: BLE001
+            self._age_refused("server_error")
+            return self._age_send(500, {"error": "server_error"})
+        return self._age_send(200, member)
+
+    def _age_response(self, body):
+        try:
+            document = _loads_depth_bounded(body, "request body", finite=True)
+        except ValueError:
+            document = None
+        code, verdict = None, None
+        if not isinstance(document, dict) or document.get("protocol") != DC_API_PROTOCOL:
+            said, code = COULD_NOT_CHECK, "invalid_request"
+        else:
+            try:
+                said, verdict = self.verifier.age_answer(document.get("data"), origin=self.age_origin)
+                if said == COULD_NOT_CHECK:
+                    code = getattr(verdict, "code", None) or "invalid_request"
+            except Exception:  # noqa: BLE001
+                said, code = COULD_NOT_CHECK, "server_error"
+        if code is not None:
+            self._age_refused(code)
+        return self._age_send(200, {"answer": said})
+
+    def _age_refused(self, code):
+        self.log_error("refused: %s", code if _AGE_CODE.fullmatch(str(code)) else "invalid_request")
+
+    def _age_send(self, status, body):
+        raw = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _age_file(self, raw, content_type, policy=None):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(raw)))
+        if policy:
+            self.send_header("Content-Security-Policy", policy)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, format, *args):  # noqa: A002  the base class names it this
+        path = getattr(self, "path", None)
+        if self.verbose and path is not None:
+            sys.stderr.write(logged_line("%s %s" % (self.command, path.partition("?")[0])) + "\n")
+
+
 class _CorsHandler(_Handler):
     """_Handler, answering CORS for a wallet that runs in a browser page. serve() builds its
     handler on this class only when it was given cors_origins, and sets `cors_origins` on it to
@@ -829,7 +973,7 @@ class _Server(http.server.ThreadingHTTPServer):
 def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
           on_verdict=None, background=True, verbose=False, on_request_object=None,
           cors_origins=None, control_token=None, on_control=None, name_requests=False,
-          on_control_read=None, dc_api_origin=None):
+          on_control_read=None, dc_api_origin=None, age_origin=None):
     """Start the two endpoints. Returns the HTTPServer so a caller can shut it down.
 
     TLS is not optional in the profile: the suite refuses a `request_uri` that is not HTTPS
@@ -870,10 +1014,31 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
     A verifier built for another format, or an origin `mdoc.dc_api_origin` refuses, raises
     ValueError before anything listens.
 
+    `age_origin` (experimental), for an `age.AgeVerifier`: the origin the age page is opened at, as
+    `mdoc.dc_api_origin` reads one. The listener then serves the age page and its routes and
+    nothing else (`_AgeHandler`), not the two endpoints. It takes none of `on_verdict`,
+    `on_request_object`, `cors_origins`, `control_token`, `on_control`, `on_control_read`,
+    `name_requests` and `dc_api_origin`: given beside it, or given for another verifier, it raises
+    ValueError before anything listens.
+
     Shut it down with `httpd.shutdown()` followed by `httpd.server_close()`: the first stops
     the loop and the second releases the socket, and skipping the second leaks a listening
     port for the life of the process.
     """
+    if age_origin is not None:
+        given = [name for name, value in (("on_verdict", on_verdict), ("on_request_object", on_request_object),
+                                          ("cors_origins", cors_origins), ("control_token", control_token),
+                                          ("on_control", on_control), ("on_control_read", on_control_read),
+                                          ("name_requests", name_requests), ("dc_api_origin", dc_api_origin))
+                 if value]
+        if not isinstance(verifier, AgeVerifier):
+            raise ValueError("age_origin is for an age.AgeVerifier, the verifier the age page asks with")
+        if given:
+            raise ValueError("the age page takes none of %s" % ", ".join(given))
+        members = {"verifier": verifier, "verbose": verbose, "age_origin": _dc_api_origin(age_origin),
+                   "age_page_bytes": age_page.page(verifier.age, [root.label for root in verifier.age_roots])}
+        return _listen(type("_BoundHandler", (_AgeHandler, _Handler), members), host, port, certfile, keyfile,
+                       background)
     origins = cors_origins_of(cors_origins)
     members = {"verifier": verifier, "verbose": verbose, "name_requests": bool(name_requests),
                "on_verdict": staticmethod(on_verdict) if on_verdict else None,
@@ -906,6 +1071,11 @@ def serve(verifier, *, host="127.0.0.1", port=9443, certfile=None, keyfile=None,
         members["dc_api_origin"] = _dc_api_origin(dc_api_origin)
         mixins = mixins + (_DcApiHandler,)
     handler = type("_BoundHandler", mixins + (base,), members)
+    return _listen(handler, host, port, certfile, keyfile, background)
+
+
+def _listen(handler, host, port, certfile, keyfile, background):
+    """The listener serve() starts, with `handler` answering each connection."""
     # A thread per connection, and a read timeout on every connection, the TLS handshake
     # included (_Server). Both are about one thing: a client that opens a socket and then goes
     # quiet must not take the listener off the air for every wallet. With a single accept loop

@@ -4056,7 +4056,7 @@ class MdocResponseTests(MdocVerifierCase):
             serve_module.serve: ["verifier", "host", "port", "certfile", "keyfile", "on_verdict",
                                  "background", "verbose", "on_request_object", "cors_origins",
                                  "control_token", "on_control", "name_requests",
-                                 "on_control_read", "dc_api_origin"],
+                                 "on_control_read", "dc_api_origin", "age_origin"],
         }
         for what, names in pinned.items():
             target = what.__init__ if what is Verifier else what

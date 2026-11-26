@@ -246,9 +246,9 @@ class EveryStderrLineIsBoundedTests(unittest.TestCase):
         tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
         writes = [n for n in ast.walk(tree)
                   if isinstance(n, ast.Call) and ast.unparse(n.func) == "sys.stderr.write"]
-        # log_error's line and its traceback, the two verbose request lines, and handle_error's
-        # line and traceback.
-        self.assertEqual(len(writes), 6)
+        # log_error's line and its traceback, the three verbose request lines (the age page's
+        # without its query), and handle_error's line and traceback.
+        self.assertEqual(len(writes), 7)
         # The standard library's own writers to stderr, each overridden here.
         import http.server
         import socketserver

@@ -72,10 +72,12 @@ PKG = ROOT / "packages" / "polaris-oid4vp"
 #: by raising (a scheme, an answer but 200, a total time, a size, no address it may connect to).
 #: `annexc.py` joined on 2026-11-21 with ISO/IEC 18013-7 Annex C: the request it builds and the
 #: encrypted response it opens, refusing by raising as mdoc.py does.
+#: `age.py` joined on 2026-11-26 with the age page (record 025, M5): the roots file and the
+#: verifier refuse by raising a ValueError; what its verdict decides is held by named mutants.
 SOURCES = ("polaris_oid4vp/sdjwt.py", "polaris_oid4vp/jwe.py", "polaris_oid4vp/verifier.py",
            "polaris_oid4vp/status.py", "polaris_oid4vp/serve.py", "polaris_oid4vp/cbor.py",
            "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py", "polaris_oid4vp/status_fetch.py",
-           "polaris_oid4vp/annexc.py")
+           "polaris_oid4vp/annexc.py", "polaris_oid4vp/age.py")
 
 #: The package's other modules, each with the reason it has no refusal for this drill to
 #: invert. A module that is in neither list fails the drill (`module_problems`): status.py sat
@@ -88,6 +90,9 @@ NO_REFUSALS = {
     "polaris_oid4vp/dc_api_page.py": "the bytes of a page and its script: test_serve holds what the "
                                      "listener sends, and scripts/polaris-oid4vp-dc-page-drill.py "
                                      "what a browser does with them",
+    "polaris_oid4vp/age_page.py": "the bytes of the age page and its script: test_age_page holds "
+                                  "what the listener sends and the script's shape, and the named "
+                                  "mutants below what that shape refuses",
 }
 
 #: Every suite in the package. A new test file that is not listed here is invisible to this
@@ -95,7 +100,7 @@ NO_REFUSALS = {
 #: is tested, and the drill still calls it unprotected or, worse, calls it protected by
 #: something else.
 SUITES = ("test_sdjwt", "test_jwe", "test_verifier", "test_serve", "test_cli",
-          "test_conformance_capture", "test_status", "test_mdoc", "test_annex_c")
+          "test_conformance_capture", "test_status", "test_mdoc", "test_annex_c", "test_age_page")
 
 #: Refusals a passing suite cannot reach, with the reason. Every one is the same shape: the
 #: guard fires only when `cryptography` is ABSENT, and a suite that runs has it installed,
@@ -150,9 +155,10 @@ _PATTERNS = (
      r"\1pass  # MUTANT\n\1\2("),
     # 2026-11-18, serve.py: a refusal the listener answers itself, a 4xx through `_send`, or the
     # control endpoint's bare 401, becomes a 200, which is the status a served request object
-    # and an accepted response carry. A 500 is not a refusal and is left alone.
-    (re.compile(r"^(\s*)return self\._send\((4\d\d),"),
-     r"\1return self._send(200, {})  # MUTANT\n\1return self._send(\2,"),
+    # and an accepted response carry. A 500 is not a refusal and is left alone. 2026-11-26: the
+    # age page's routes answer through `_age_send`, the same way.
+    (re.compile(r"^(\s*)return self\.(_send|_age_send)\((4\d\d),"),
+     r"\1return self.\2(200, {})  # MUTANT\n\1return self.\2(\3,"),
     (re.compile(r"^(\s*)self\.send_response\(401\)"),
      r"\1return self._send(200, {})  # MUTANT\n\1self.send_response(401)"),
 )
@@ -180,7 +186,7 @@ _STATUS_PATTERNS = (
 #: `from None`, which a bare call would not survive: a mutant that does not compile fails every
 #: test and reads as caught.
 _RAISING = ("polaris_oid4vp/cbor.py", "polaris_oid4vp/cose.py", "polaris_oid4vp/mdoc.py",
-            "polaris_oid4vp/status_fetch.py", "polaris_oid4vp/annexc.py")
+            "polaris_oid4vp/status_fetch.py", "polaris_oid4vp/annexc.py", "polaris_oid4vp/age.py")
 _RAISE_PATTERNS = (
     (re.compile(r"^(\s*)raise (CborError|CoseError|_Refused|_Unread|ValueError)\b"),
      r"\1pass  # MUTANT\n\1if False: raise \2"),
@@ -769,6 +775,70 @@ NAMED_MUTANTS = (
      '        return Verdict(False, refusal.code, refusal.reason)\n'
      '    return mdoc.verify_device_response(device_response, session_transcript=session.transcript,\n'
      '                                       iaca_roots=iaca_roots, doctype=session.doctype, now=now)\n'),
+    # 2026-11-26, age.py and the age page (record 025, M5): what is not a refusal. The element is
+    # read by its type, so 1 is not true; a refused answer ends its request, as an accepted one
+    # does; the request asks for one element, not retained, from one of its alternatives; each
+    # root signs only its own docType; true is "N or over" and false "under N".
+    ("age:the-element-read-by-equality", "polaris_oid4vp/age.py",
+     "        if type(elements[path]) is not bool:\n",
+     "        if elements[path] not in (True, False):  # MUTANT\n"),
+    ("age:the-element-read-by-truth", "polaris_oid4vp/age.py",
+     "        if type(elements[path]) is not bool:\n",
+     "        if False:  # MUTANT\n"),
+    ("age:a-refused-request-left-open", "polaris_oid4vp/age.py",
+     "        if not verdict.authentic:\n            # The request ends at its answer",
+     "        if False:  # MUTANT\n            # The request ends at its answer"),
+    ("age:the-element-retained", "polaris_oid4vp/age.py",
+     '"intent_to_retain": False}',
+     '"intent_to_retain": True}'),
+    ("age:alternatives-without-a-credential-set", "polaris_oid4vp/age.py",
+     "        if len(credentials) > 1:\n",
+     "        if False:  # MUTANT\n"),
+    ("age:two-answers-the-first-taken", "polaris_oid4vp/age.py",
+     "        if not isinstance(vp_token, dict) or len(vp_token) != 1:\n            return None\n"
+     "        (qid, value), = vp_token.items()\n",
+     "        if not isinstance(vp_token, dict) or not vp_token:\n            return None\n"
+     "        (qid, value) = next(iter(vp_token.items()))  # MUTANT\n"),
+    ("age:a-root-for-every-doctype", "polaris_oid4vp/age.py",
+     "        self.iaca_root = IacaRoot(pem, [doctype])\n",
+     "        self.iaca_root = IacaRoot(pem, list(AGE_DOCTYPES))  # MUTANT\n"),
+    ("age:the-answer-inverted", "polaris_oid4vp/age.py",
+     "return (answer_over(self.age) if value else answer_under(self.age)), verdict",
+     "return (answer_under(self.age) if value else answer_over(self.age)), verdict"),
+    # serve.py's age routes: the operator line carries the code and never the reason, and an
+    # answer posted under another protocol is not judged.
+    ("serve:age-line-carries-the-reason", "polaris_oid4vp/serve.py",
+     "        if code is not None:\n            self._age_refused(code)\n",
+     "        if code is not None:\n"
+     "            self.log_error(\"refused: %s: %s\", code, getattr(verdict, \"reason\", None))  # MUTANT\n"),
+    ("serve:age-response-under-any-protocol", "polaris_oid4vp/serve.py",
+     '        if not isinstance(document, dict) or document.get("protocol") != DC_API_PROTOCOL:\n',
+     "        if not isinstance(document, dict):  # MUTANT\n"),
+    # age_page.py's script, held by its shape (test_only_the_server_says_no): a catch that shows a
+    # verdict, a catch that says nothing, an answer that is not ok and a wallet that gives no
+    # credential each saying nothing, the protocol branch dropped, a browser that does not offer
+    # the protocol asked anyway, and the server's "could not check" shown as an answer.
+    ("age_page:a-catch-shows-a-verdict", "polaris_oid4vp/age_page.py",
+     "    } catch (e) {\n      say(COULD_NOT_CHECK);\n      await fetchRequest(false);\n",
+     "    } catch (e) {\n      say(\"The credential says: under 18.\");\n      await fetchRequest(false);\n"),
+    ("age_page:a-catch-says-nothing", "polaris_oid4vp/age_page.py",
+     "    } catch (e) {\n      say(COULD_NOT_CHECK);\n    }\n  }\n\n  async function ask() {\n",
+     "    } catch (e) {\n    }\n  }\n\n  async function ask() {\n"),
+    ("age_page:the-protocol-branch-dropped", "polaris_oid4vp/age_page.py",
+     "    return DigitalCredential.userAgentAllowsProtocol(PROTOCOL) !== false;\n",
+     "    return true;\n"),
+    ("age_page:an-answer-not-ok-says-nothing", "polaris_oid4vp/age_page.py",
+     "      if (!answer.ok) {\n        say(COULD_NOT_CHECK);\n        return;\n",
+     "      if (!answer.ok) {\n        return;\n"),
+    ("age_page:no-credential-says-nothing", "polaris_oid4vp/age_page.py",
+     "      say(COULD_NOT_CHECK);\n      await fetchRequest(false);\n      return;\n    }\n    try {\n",
+     "      await fetchRequest(false);\n      return;\n    }\n    try {\n"),
+    ("age_page:asked-where-not-offered", "polaris_oid4vp/age_page.py",
+     "    if (!offered()) {\n      say(COULD_NOT_CHECK);\n      return;\n    }\n",
+     "    if (!offered()) {\n      say(COULD_NOT_CHECK);\n    }\n"),
+    ("age_page:the-servers-no-answer-shown", "polaris_oid4vp/age_page.py",
+     '      if (typeof said !== "string" || said === NO_ANSWER) {\n',
+     '      if (typeof said !== "string") {\n'),
 )
 
 

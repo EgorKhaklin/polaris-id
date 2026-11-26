@@ -51,11 +51,12 @@ try:
 except ImportError:  # pragma: no cover
     _HAVE_CRYPTO = False
 
+from .age import AgeVerifier, answer_over, load_age_roots
 from .jwe import _loads_depth_bounded
 from .mdoc import IacaRoot, dc_api_origin
 from .sdjwt import (TRANSACTION_DATA_SCOPES, _es256_public_key, _not_an_es256_verification_key,
                     b64u_decode)
-from .serve import (CONTROL_PATH, DC_API_PAGE_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
+from .serve import (AGE_PAGE_PATH, CONTROL_PATH, DC_API_PAGE_PATH, REQUEST_PATH, RESPONSE_PATH, about_request,
                     control_token_problem, cors_origins_of, serve)
 from .verifier import (CREDENTIAL_FORMATS, MDOC_FORMAT, SD_JWT_FORMAT, VERIFIER_INFO_PROFILES,
                        Verifier, claim_query, dc_api_client_metadata_of, mdoc_claim_query, operator_text,
@@ -1084,6 +1085,128 @@ def _dc_api_options(args):
     return origin, metadata
 
 
+def _age_options(args):
+    """`(origin, roots, client_metadata)` for `serve --age-check N`, or None without it, read before
+    the PKI is: the origin as `mdoc.dc_api_origin` writes it, the roots as `age.load_age_roots`
+    reads them, and the metadata file as `--dc-api` reads it. Every flag the age page does not
+    read is refused rather than ignored. ValueError says what to change."""
+    if args.age_check is None:
+        if args.age_roots is not None:
+            raise ValueError("--age-roots belongs to --age-check, which this command was not given")
+        return None
+    if args.age_check not in ("18", "21"):
+        raise ValueError("--age-check is 18 or 21, not %r" % args.age_check)
+    if not args.experimental:
+        raise ValueError("--age-check is experimental and off by default; add --experimental to turn it on")
+    refused = [flag for flag, given in (
+        ("--claim", args.claim), ("--vct", args.vct), ("--doctype", args.doctype is not None),
+        ("--iaca-root", args.iaca_root), ("--format %s" % args.format, args.format not in (None, MDOC_FORMAT)),
+        ("--dc-api", args.dc_api), ("--once", args.once), ("--rearm", args.rearm), ("--result", args.result),
+        ("--control-token-file", args.control_token_file), ("--cors-origin", args.cors_origin),
+        ("--issuer-jwks", args.issuer_jwks), ("--issuer-trust-anchor", args.issuer_trust_anchor),
+        ("--status-anchor", args.status_anchor), ("--require-status", args.require_status),
+        ("--verifier-info", args.verifier_info), ("--verifier-info-profile", args.verifier_info_profile),
+        ("--credential-query-id", args.credential_query_id), ("--transaction-data", args.transaction_data))
+               if given]
+    if refused:
+        raise ValueError("--age-check is not combined with %s: the age page makes its own request, from "
+                         "its roots, and does not read %s" % (" and ".join(refused), "them" if len(refused) > 1 else "it"))
+    if args.dc_api_origin is None:
+        raise ValueError("--age-check needs --dc-api-origin, the origin the page is opened at, such as "
+                         "https://verifier.example")
+    try:
+        origin = dc_api_origin(args.dc_api_origin)
+    except ValueError as exc:
+        raise ValueError("--dc-api-origin %s" % exc) from None
+    if args.age_roots is None:
+        raise ValueError("--age-check needs --age-roots, a JSON array of the roots the page trusts, each "
+                         "{label, doctype, pem, sha256}")
+    try:
+        roots = load_age_roots(args.age_roots)
+    except ValueError as exc:
+        raise ValueError("--age-roots %s: %s" % (args.age_roots, exc)) from None
+    metadata = None
+    if args.dc_api_client_metadata is not None:
+        try:
+            with open(args.dc_api_client_metadata, encoding="utf-8") as fh:
+                metadata = dc_api_client_metadata_of(_loads_depth_bounded(fh.read(), "file", finite=True))
+        except (OSError, ValueError) as exc:
+            raise ValueError("--dc-api-client-metadata %s: %s" % (args.dc_api_client_metadata, exc)) from None
+    return origin, roots, metadata
+
+
+def _listener_names_its_host(args, pki, origin):
+    """None when the listener's TLS certificate names `--host`, else what to tell the operator.
+    Under TLS a wallet that checks the listener's name refuses a certificate that does not name
+    the host it was sent to, and the first sign of it would be that wallet's refusal: a pki an
+    earlier keygen made with no --host names localhost, the default then (2026-11-19). With
+    --public-base-url a wallet meets the proxy's or the tunnel's certificate, not this one, so
+    the check holds only the origin serve makes from --host and --port, and holds --host as
+    given, the host that origin is made from."""
+    if args.no_local_tls or args.public_base_url:
+        return None
+    host = args.host
+    tls_cert = pki / FILES["tls_cert"]
+    try:
+        listener = x509.load_pem_x509_certificate(tls_cert.read_bytes())
+    except (OSError, ValueError) as exc:
+        return "%s is not a PEM certificate: %s" % (tls_cert, exc)
+    if not certificate_names(listener, host):
+        named = _named_hosts(listener)
+        return ("%s names %s in its subjectAltName, not %s, the host of %s. Run "
+                "`polaris-oid4vp keygen --out %s --host %s`, or give serve the --host that keygen "
+                "was given."
+                % (tls_cert, " and ".join(named) if named else "no host", host, origin, pki, host))
+    return None
+
+
+def _serve_age(args, origin, roots, metadata) -> int:
+    """`serve --age-check N`: the age page and its routes, and nothing else, on the listener."""
+    pki = pathlib.Path(args.pki)
+    missing = [name for name in FILES.values() if not (pki / name).is_file()]
+    if missing:
+        print("polaris-oid4vp: %s is missing %s. Run `polaris-oid4vp keygen --out %s` first."
+              % (pki, ", ".join(missing), pki), file=sys.stderr)
+        return 2
+    base = args.public_base_url.rstrip("/") if args.public_base_url else "https://%s:%d" % (args.host, args.port)
+    try:
+        verifier = AgeVerifier(age=int(args.age_check), roots=roots,
+                               client_cert_pem=(pki / FILES["client_cert"]).read_bytes(),
+                               client_key_pem=(pki / FILES["client_key"]).read_bytes(),
+                               request_uri=base + REQUEST_PATH, response_uri=base + RESPONSE_PATH,
+                               dc_api_client_metadata=metadata)
+    except ValueError as exc:
+        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        return 2
+    why = _listener_names_its_host(args, pki, base)
+    if why:
+        print("polaris-oid4vp: %s" % why, file=sys.stderr)
+        return 2
+    httpd = serve(verifier, host=args.bind, port=args.port,
+                  certfile=None if args.no_local_tls else str(pki / FILES["tls_cert"]),
+                  keyfile=None if args.no_local_tls else str(pki / FILES["tls_key"]),
+                  verbose=args.verbose, age_origin=origin)
+    print("polaris-oid4vp serving on %s (listening on %s:%d)" % (base, args.bind, args.port))
+    if args.no_local_tls:
+        print("  the local listener is plain HTTP; a proxy or tunnel must provide the public HTTPS")
+    print("  client_id     %s" % verifier.client_id)
+    print("  age page      %s%s (asks whether the credential says %s; experimental)"
+          % (origin, AGE_PAGE_PATH, answer_over(verifier.age)))
+    for root in roots:
+        print("  root          %s, %s, SHA-256 %s" % (operator_text(root.label), root.doctype, root.sha256))
+    print("\nOpen the age page in a browser to ask a wallet.")
+    sys.stdout.flush()
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        print("\nstopping")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    return 0
+
+
 def _cmd_serve(args) -> int:
     # An empty address binds every interface, which only an address that names it may do.
     if not args.bind:
@@ -1095,6 +1218,15 @@ def _cmd_serve(args) -> int:
     if not args.public_base_url and _ipv6_host(args.host):
         print(IPV6_HOST_SERVE % args.host, file=sys.stderr)
         return 2
+    try:
+        age_options = _age_options(args)
+    except ValueError as exc:
+        print("polaris-oid4vp: %s" % exc, file=sys.stderr)
+        return 2
+    if age_options is not None:
+        return _serve_age(args, *age_options)
+    if args.format is None:
+        args.format = SD_JWT_FORMAT
     try:
         cors_origins = cors_origins_of(args.cors_origin)
     except ValueError as exc:
@@ -1236,29 +1368,10 @@ def _cmd_serve(args) -> int:
     except ValueError as exc:
         print("polaris-oid4vp: %s" % exc, file=sys.stderr)
         return 2
-    # Under TLS a wallet that checks the listener's name refuses a certificate that does not name
-    # the host it was sent to, and the first sign of it would be that wallet's refusal: a pki an
-    # earlier keygen made with no --host names localhost, the default then (2026-11-19). With
-    # --public-base-url a wallet meets the proxy's or the tunnel's certificate, not this one, so
-    # the check holds only the origin serve makes from --host and --port, and holds --host as
-    # given, the host that origin is made from.
-    if not args.no_local_tls and not args.public_base_url:
-        origin = verifier.request_uri[:-len(REQUEST_PATH)]
-        host = args.host
-        tls_cert = pki / FILES["tls_cert"]
-        try:
-            listener = x509.load_pem_x509_certificate(tls_cert.read_bytes())
-        except (OSError, ValueError) as exc:
-            print("polaris-oid4vp: %s is not a PEM certificate: %s" % (tls_cert, exc), file=sys.stderr)
-            return 2
-        if not certificate_names(listener, host):
-            named = _named_hosts(listener)
-            print("polaris-oid4vp: %s names %s in its subjectAltName, not %s, the host of %s. Run "
-                  "`polaris-oid4vp keygen --out %s --host %s`, or give serve the --host that keygen "
-                  "was given."
-                  % (tls_cert, " and ".join(named) if named else "no host", host, origin, pki, host),
-                  file=sys.stderr)
-            return 2
+    why = _listener_names_its_host(args, pki, verifier.request_uri[:-len(REQUEST_PATH)])
+    if why:
+        print("polaris-oid4vp: %s" % why, file=sys.stderr)
+        return 2
     if as_mdoc and not iaca_roots:
         print("polaris-oid4vp: no --iaca-root given, so no document can be verified: every "
               "presentation will be refused with `issuer_key`. That is the correct answer to an "
@@ -1573,7 +1686,7 @@ and one that judges a response already captured:
                         "'[\"org.iso.18013.5.1\",\"age_over_21\"]=true'")
     s.add_argument("--vct", action="append", default=[], metavar="TYPE",
                    help="a credential type to accept (repeatable; default urn:eudi:pid:1)")
-    s.add_argument("--format", default=SD_JWT_FORMAT, choices=CREDENTIAL_FORMATS,
+    s.add_argument("--format", default=None, choices=CREDENTIAL_FORMATS,
                    help="the credential format to ask for: dc+sd-jwt, the default, or mso_mdoc, "
                         "an ISO/IEC 18013-5 mdoc, which is experimental and needs --experimental")
     s.add_argument("--doctype", default=None, metavar="DOCTYPE",
@@ -1666,6 +1779,19 @@ and one that judges a response already captured:
                         "of one the verifier writes (jwks, vp_formats_supported, "
                         "encrypted_response_enc_values_supported); at most 16384 bytes written as "
                         "compact JSON")
+    s.add_argument("--age-check", default=None, metavar="N",
+                   help="with --experimental, --dc-api-origin and --age-roots: serve a page at /age/ "
+                        "that asks a wallet over the Digital Credentials API for one element, "
+                        "age_over_N (N is 18 or 21), and answers N or over, under N, or could not "
+                        "check; the listener then serves that page and nothing else. Implies "
+                        "--format mso_mdoc; takes --dc-api-client-metadata; refused with every flag "
+                        "that makes or reads another request")
+    s.add_argument("--age-roots", default=None, metavar="FILE",
+                   help="with --age-check: a JSON array of the roots the page trusts, each "
+                        "{\"label\", \"doctype\", \"pem\", \"sha256\"}: the label the page shows, the one "
+                        "docType the root may sign (org.iso.18013.5.1.mDL, com.google.wallet.idcard.1 "
+                        "or eu.europa.ec.av.1), the PEM file's path (relative to FILE) and the "
+                        "SHA-256 of that file's bytes, in hex; serve refuses to start on a mismatch")
     s.add_argument("--verbose", action="store_true")
     s.set_defaults(func=_cmd_serve)
 

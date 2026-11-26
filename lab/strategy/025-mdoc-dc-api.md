@@ -891,6 +891,12 @@ request lifecycle are part 2; version 1.1 with `readerAuthAll`, and Apple's samp
   `test_annex_c` alone, each turned it red by a failed assertion: the 14 refusal sites, the 6 named mutants, each of
   the 39 operands of an `and` in the module made `True` one at a time, and `ValueError` dropped from the HPKE refusal.
 
+**Amendment, 2026-11-26: two rows from M5.** M5 is built over `openid4vp-v1-signed` only (its amendment below), so
+part 2, when the page offers `org-iso-mdoc`, carries two of M5's rows for the age page:
+- `test_the_request_asks_for_one_age_element_and_nothing_else` over `org-iso-mdoc`: one DocRequest per docType the
+  roots name, each asking for `age_over_N` alone, with `intent_to_retain` false.
+- A DeviceResponse over `org-iso-mdoc` holding more than one document gets "could not check".
+
 **External witnesses.**
 - Apple Wallet through Safari on iOS with a real ID in Apple Wallet, behind the reader certificate: the certificate and
   the device are the owner's.
@@ -922,11 +928,12 @@ request lifecycle are part 2; version 1.1 with `readerAuthAll`, and Apple's samp
 ### M5: an over-18/21 page that keeps nothing
 
 **Scope.** `polaris-oid4vp serve --age-check 18` (or 21) serves one page with one button. It asks for one element,
-`age_over_18` (or `age_over_21`), with `intent_to_retain` false, from an mDL (`org.iso.18013.5.1`) or an EU age
-attestation (`eu.europa.ec.av.1`), over `openid4vp-v1-signed` or `org-iso-mdoc`, whichever the browser allows, one
-protocol per request. It answers yes, no, or could not check, and keeps nothing.
+`age_over_18` (or `age_over_21`), with `intent_to_retain` false, from an mDL (`org.iso.18013.5.1`), an ID pass
+(`com.google.wallet.idcard.1`) or an EU age attestation (`eu.europa.ec.av.1`), over `openid4vp-v1-signed`. It answers
+yes, no, or could not check, and writes the answer only to the page that asked; its log holds only a refused answer's
+code, and nothing that tells N or over from under N.
 
-**Module and API.** `serve.py`: `/age/` and its script, on M3's and M4's handlers; a result that holds one boolean or
+**Module and API.** `serve.py`: `/age/` and its script, on M3's handler; a result that holds one boolean or
 none; no `on_verdict` callback in this mode; the operator line prints the refusal code only.
 
 **Wire.** As M3 and M4; the AV profile's Annex A, A.4 (doctype, namespace, attributes) and A.6 (transport).
@@ -939,10 +946,10 @@ and in what form: UNCONFIRMED).
 the response bytes, the device key, the issuer's subject or any per-holder identifier; the session (nonce, keys, handle)
 is deleted at the verdict; the verdict holds one boolean. Python cannot promise to erase memory, so the bytes live in
 the process until the collector frees them: "stored" means written anywhere outside the process. It is a property of
-this code, shown by its tests. Nobody outside can check it of a running deployment, and the page says so. The W3C
+this code, shown by its tests. Nobody outside can check it of a running deployment. The W3C
 explainer asks the same of relying parties: "refrain from storing unencrypted credentials on their servers" (S3).
 
-**Honest limits** (on the page and here):
+**Honest limits** (here):
 - **The verifier still sees the mdoc.** Issuer, validity window, device key, MSO signature and every element's digest:
   enough to recognize the same mdoc next time, unless its issuer hands out single-use copies. The AV profile relies on
   batch issuance and single use for this (A.9); whether Apple's and Google's wallets present a fresh MSO each time is
@@ -960,7 +967,7 @@ explainer asks the same of relying parties: "refrain from storing unencrypted cr
   license or ID" (S6); for the web flows, UNCONFIRMED.
 - **Who is shut out.** People without a phone wallet, a supported ID or a browser that ships the API get "could not
   check". Mozilla's position on the DC API is negative, in part because routine identity requests "could mean that people
-  might be excluded from services and communities" (S13). The page offers no other route and says so.
+  might be excluded from services and communities" (S13). The page offers no other route.
 - **Zero knowledge.** The AV profile prefers a zero-knowledge proof (`longfellow-libzk-v1`, A.8) and requires its
   relying parties to verify both the proof and the plain mdoc fallback. This page verifies only the plain mdoc, so it is
   not an AV relying-party verifier.
@@ -969,15 +976,45 @@ explainer asks the same of relying parties: "refrain from storing unencrypted cr
 
 | Test | Input | Expected |
 |---|---|---|
-| `AgePageTests.test_the_request_asks_for_one_age_element_and_nothing_else` | `serve --age-check 18`, mDL and AV doctypes, both protocols | one element, `age_over_18`, `intent_to_retain` false |
+| `AgePageTests.test_the_request_asks_for_one_age_element_and_nothing_else` | `serve --age-check 18`, mDL and AV doctypes, over `openid4vp-v1-signed` | one element, `age_over_18`, `intent_to_retain` false |
 | `AgePageTests.test_a_true_answer_shows_yes_and_a_false_one_no` | test wallets answering true and false | "yes" and "no"; neither is an error |
 | `AgePageTests.test_an_untrusted_or_broken_answer_shows_could_not_check` | an unrelated root; a flipped MSO byte | "could not check", never "no" |
 | `AgePageTests.test_a_nearest_true_age_element_is_refused_until_measured` | `age_over_21` returned to an `age_over_18` request | "could not check" (`claims`) |
-| `AgePageTests.test_nothing_leaves_the_process` | an accepted and a refused presentation, driven through the handlers in a subprocess whose `sys.addaudithook` hook fails on any `open` for writing and any `socket.connect` (in a subprocess because the hook cannot be removed and would break the suite's own writes) | the subprocess exits 0: no write, no connection |
-| `AgePageTests.test_logs_carry_codes_never_values` | stderr of both runs | refusal codes only; no element value, issuer subject, device key or response bytes |
+| `NothingLeavesTests.test_nothing_leaves_the_process` | an accepted and a refused presentation, driven through the handlers in a subprocess whose `sys.addaudithook` hook fails on any `open` for writing and any `socket.connect` (in a subprocess because the hook cannot be removed and would break the suite's own writes) | the subprocess exits 0: no write, no connection |
+| `AgeLogTests.test_logs_carry_codes_never_values` | stderr of both runs | refusal codes only; no element value, issuer subject, device key or response bytes |
 | `AgePageTests.test_no_cookie_and_no_cache` | every response | no `Set-Cookie`; `Cache-Control: no-store` |
 | `AgePageTests.test_the_session_is_gone_after_the_verdict` | the session table after a verdict | the handle is absent; the result holds a boolean and nothing else |
-| `AgePageTests.test_the_page_states_its_limits` | `GET /age/` | the limits paragraph, linking to this section |
+| `AgePageTests.test_the_page_says_what_it_does_and_nothing_larger` | `GET /age/` and its script, under 18 and 21 | the three answers exactly ("The credential says: N or over.", "The credential says: under N.", "Could not check."), each root's label, escaped, and none of twenty larger words; a fixture page carrying each word fails it |
+
+**Amendment, 2026-11-26: built.** `age.py` (the request, the roots and the answer), `age_page.py` (the page and its
+script) and `serve.py`'s age routes; `serve --age-check 18|21` needs `--experimental`, `--dc-api-origin` and
+`--age-roots`.
+- The roots are a JSON array of `{label, doctype, pem, sha256}`, each root trusted only for its own docType; serve
+  refuses to start on a PEM that does not hash to its pin, a docType outside the table, an empty file or any other
+  member. The table: `org.iso.18013.5.1.mDL` and `com.google.wallet.idcard.1` under the namespace `org.iso.18013.5.1`,
+  `eu.europa.ec.av.1` under its own. The request asks for `age_over_N` once per docType, the queries the options of one
+  credential set.
+- The answer is in the body of the one response to `POST /age/response`, and nowhere else: the session is deleted at
+  the verdict, whatever it is, a replay gets "could not check", and the only state left is unanswered requests, capped
+  at 64 with their 300-second lifetime. The operator line carries the refusal code, never the reason.
+- The element is read by its type: 1, 0, "true", "false", null and a byte string each get "could not check". A response
+  holding two documents, or answering two alternatives, is refused as `malformed` (the mdoc judge reads one document).
+- In age mode the listener serves `/age/`, `/age/app.js`, `/age/request` and `/age/response`, and no other path, and
+  refuses every flag that makes or reads another request.
+- Rows added: `test_age_check_needs_experimental`, `test_the_roots_file_is_pinned`,
+  `test_the_roots_bind_each_root_to_its_own_doctype`, `test_the_age_element_is_a_boolean_by_type`,
+  `test_one_document_answers_one_alternative`, `test_an_element_not_asked_for_is_could_not_check` (one case an
+  `issuing_country` unlike the signer's), `test_only_the_server_says_no` (the script's shape: the Python suite runs no
+  script), `test_the_answer_exists_only_in_its_one_response`, `test_the_verdict_travels_in_a_body_only`,
+  `test_the_controls_main_already_refuses`, `test_a_body_the_page_does_not_send_is_refused`,
+  `test_the_age_path_reads_only_the_verifiers_clock`, with the logs row run under `--verbose` too, and
+  `test_nothing_leaves_the_process`'s hook also failing on a datagram (`socket.sendto`, `socket.sendmsg`) and on another
+  process (`subprocess.Popen`, `os.system`, `os.posix_spawn`); its positive controls
+  include a datagram and a child process.
+- `age.py` is a source of the OpenID4VP mutation drill, `test_age_page` one of its suites, and seventeen named mutants hold
+  what is not a refusal (the element read by equality or by truth, a refused request left open, the element retained,
+  no credential set, the first of two answers taken, a root for every docType, the answer inverted, the reason on the
+  operator line, an answer under another protocol judged, and seven of the script's shape).
 
 **External witnesses.** A named outsider runs the page with a wallet and an ID of their own; for a US mDL, verified under
 that state's IACA root (M7's condition for "US IDs").
