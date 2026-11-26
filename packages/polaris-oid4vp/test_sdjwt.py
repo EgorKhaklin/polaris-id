@@ -1658,6 +1658,87 @@ class CredentialValidityTests(unittest.TestCase):
         self.assertTrue(v.authentic, v.reason)
 
 
+def _element(salt, value):
+    """An array-element disclosure (RFC 9901 4.2.2) and the digest the payload carries for it."""
+    element = b64u_encode(json.dumps([salt, value], separators=(",", ":")).encode())
+    return element, b64u_encode(hashlib.sha256(element.encode("ascii")).digest())
+
+
+class CredentialAudienceTests(unittest.TestCase):
+    """The credential's own `aud`, which this verifier did not read until 2026-11-26.
+
+    RFC 9901 7.1 step 6: "Check that the SD-JWT is valid using claims such as nbf, exp, and aud
+    in the processed payload, if present." RFC 7519 4.1.3: a principal that does not identify
+    itself with a value in a present `aud` MUST reject the JWT. This verifier is the audience
+    the request named, the one the key binding JWT's `aud` is held to; a credential its issuer
+    addressed to another verifier verified as authentic, as a string and as a list.
+    """
+
+    OTHER = "x509_hash:another-verifier-entirely-0123456789abcdefghijklmn"
+
+    def setUp(self):
+        self.w = Wallet()
+
+    def _refused(self, presentation, **kw):
+        v = self.w.verify(presentation, **kw)
+        self.assertFalse(v.authentic, "a credential addressed elsewhere verified")
+        self.assertEqual(v.code, "credential_audience", v.reason)
+        return v
+
+    def test_an_aud_that_names_this_verifier_is_accepted(self):
+        """The direction that keeps the refusals honest: a string, and a list holding it."""
+        for aud in (AUDIENCE, [AUDIENCE], [self.OTHER, AUDIENCE]):
+            with self.subTest(aud=aud):
+                v = self.w.verify(self.w.present(payload_extra={"aud": aud}))
+                self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+                self.assertEqual(v.claims["aud"], aud)
+
+    def test_no_aud_is_not_refused_for_that(self):
+        """"if present": a credential without one is judged as before."""
+        v = self.w.verify(self.w.present())
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        self.assertNotIn("aud", v.claims)
+
+    def test_an_aud_that_names_another_verifier_is_refused(self):
+        for aud in (self.OTHER, [self.OTHER], [], AUDIENCE + " ", AUDIENCE.upper(), ""):
+            with self.subTest(aud=aud):
+                v = self._refused(self.w.present(payload_extra={"aud": aud}))
+                self.assertIn(AUDIENCE, v.reason)
+
+    def test_an_aud_that_is_not_a_string_or_a_list_of_strings_is_refused(self):
+        """RFC 7519 4.1.3: a string, or an array of strings. A list holding this verifier beside
+        something else is not one, and nor is null."""
+        for aud in (None, 5, True, {"aud": AUDIENCE}, [AUDIENCE, 5], [AUDIENCE, None],
+                    [AUDIENCE, [AUDIENCE]], [[AUDIENCE]]):
+            with self.subTest(aud=aud):
+                self._refused(self.w.present(payload_extra={"aud": aud}))
+
+    def test_the_aud_judged_is_the_processed_one(self):
+        """RFC 9901 9.7: an issuer MAY make individual entries of `aud` selectively disclosable.
+        The entry naming this verifier counts when it is disclosed and not when it is withheld,
+        and a disclosed `aud` is judged as one in clear text is."""
+        element, digest = _element("saltA", AUDIENCE)
+        listed = {"aud": [self.OTHER, {"...": digest}]}
+        v = self.w.verify(self.w.present(payload_extra=listed, extra_disclosure=element))
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        self.assertEqual(v.claims["aud"], [self.OTHER, AUDIENCE])
+        self._refused(self.w.present(payload_extra=listed))
+        other_element, other_digest = _element("saltB", self.OTHER)
+        self._refused(self.w.present(payload_extra={"aud": [{"...": other_digest}]},
+                                     extra_disclosure=other_element))
+        v = self.w.verify(self.w.present(claims=(("aud", AUDIENCE), ("given_name", "Jean"))))
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+        self._refused(self.w.present(claims=(("aud", self.OTHER), ("given_name", "Jean"))))
+
+    def test_without_key_binding_the_aud_is_still_judged(self):
+        """The path that returns before the key binding step reads the same rule."""
+        presentation = self.w.present(payload_extra={"aud": self.OTHER}, drop_key_binding=True)
+        self._refused(presentation, require_key_binding=False)
+        presentation = self.w.present(payload_extra={"aud": AUDIENCE}, drop_key_binding=True)
+        v = self.w.verify(presentation, require_key_binding=False)
+        self.assertTrue(v.authentic, "%s: %s" % (v.code, v.reason))
+
+
 class NonFiniteTimestampTests(unittest.TestCase):
     """Python's json parses the bare literals NaN, Infinity and -Infinity, and all three are
     floats. They walked straight past `isinstance(iat, (int, float))`."""
@@ -1695,7 +1776,7 @@ class NonFiniteTimestampTests(unittest.TestCase):
 
 
 class DisclosureCollisionTests(unittest.TestCase):
-    """SD-JWT section 9.3: a disclosure whose name is already a claim must be REJECTED.
+    """RFC 9901 7.1, step 3.c.ii.3: a disclosure whose name is already a claim must be REJECTED.
 
     Clear-text claims are written first and disclosed ones second, so before 2026-09-17 the
     disclosure silently won. `cnf` is the sharpest case: the returned claims named a key
@@ -2229,7 +2310,7 @@ class CredentialTypeTests(unittest.TestCase):
 
 
 class RecursiveDisclosureTests(unittest.TestCase):
-    """SD-JWT section 4.2.4.1, which this verifier rejected.
+    """RFC 9901 section 4.2.6, which this verifier rejected.
 
     A digest reachable only through another disclosure's value was never in the committed
     set, because the set was collected from the signed payload alone. Conformant credentials
