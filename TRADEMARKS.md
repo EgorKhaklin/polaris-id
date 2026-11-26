@@ -1,10 +1,10 @@
 # Trademarks
 
-The [Apache License](LICENSE) covers Polaris's code, documents and image files, except the
-OpenID Certified mark (the OpenID Foundation's; see below) and the pictures of the Polaris card
-reference design (all rights reserved; see [NOTICE](NOTICE)). It grants no right to use the names
-and marks those files carry (section 6 of the license). This page says what that means in
-practice.
+The [Apache License](LICENSE) covers Polaris's own code, documents and image files. It does not
+cover the OpenID Certified mark (the OpenID Foundation's; see below), the pictures of the Polaris
+card reference design (all rights reserved; see [NOTICE](NOTICE)), or the third-party files the
+tree carries under their own licences. It grants no right to use the names and marks Polaris's
+files carry (section 6 of the license). This page says what that means in practice.
 
 ## The marks
 

@@ -50,7 +50,7 @@ broken under it fails the build.
 | `polaris_logo.webp` | The emblem, rendered from an exact model of its geometry (gold relief with chiselled rays over blue enamel), 880 x 880, transparent outside its disc | `docs/assets/hero.svg` (embedded byte for byte), the desk of the Yivi check-in example (`packages/polaris-oid4vp/examples/yivi-checkin`) |
 | `polaris_logo_clean.png` | The emblem as first published, 440 x 440 | The Helm chart's icon (`deploy/helm/polaris/Chart.yaml`) |
 | `hero/coin-4-384.<hash>.avif`, `hero/coin-4-640.<hash>.avif`, `hero/coin-4-640.<hash>.webp` | The coin at rest: the emblem as a gold and enamel medallion, path-traced in Blender from the emblem's model and seen straight on. The WebP is for browsers without AVIF | `404.html` |
-| `hero/coin-shadow-dir.<hash>.avif`, `hero/coin-shadow-ao.<hash>.avif` | The coin's shadow on the sky, path-traced in two layers: the lamp's, and the room's | `404.html` |
+| `hero/coin-shadow-dir.<hash>.avif`, `hero/coin-shadow-ao.<hash>.avif`, `hero/coin-shadow-dir.<hash>.webp`, `hero/coin-shadow-ao.<hash>.webp` | The coin's shadow on the sky, path-traced in two layers: the lamp's, and the room's. The WebPs are for browsers without AVIF | `404.html` |
 | `openid-certified-mark-on-white.png` | The OpenID Certified mark in the Foundation's published form: linked to the listing, its text alternative naming the certified package and version, the profile and the credential format | `index.html` |
 
 ## Conventions
