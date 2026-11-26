@@ -196,6 +196,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - site/sitemap.xml lists the site's two pages, and robots.txt names it; the page carries Google Search Console's verification tag.
 - `check_public_claims_honest` holds a site h1 or h2 named by an aria-label to exactly its own text, and `check_interop_page_matches_the_count` fails when the site says "outside projects" anywhere it does not read the count (a "tested against N outside projects" sentence or the tally).
 - site/ drops the earlier page's files that no page loads: 90 images and stylesheets (the coin's other poses, the sky, the acts' renders, the portrait and two logo sizes), with their entries in NOTICE, REUSE.toml and TRADEMARKS.md.
+- README.md shows the card (site/og.png) as its banner; docs/assets/hero.svg, the October sky only it showed, is removed.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
 

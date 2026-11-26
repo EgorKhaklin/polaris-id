@@ -2696,7 +2696,7 @@ def test_claims_manifest_check_discriminates(tmp_path):
     def badge(alt, label, message):
         return "[![%s](https://img.shields.io/badge/%s-%s-2b5797?style=flat-square)](#status)" % (alt, label, message)
 
-    badges = ['<img src="docs/assets/hero.svg" width="100%" alt="Polaris ID">',
+    badges = ['<img src="site/og.png" width="100%" alt="Polaris ID">',
               badge("Status: pre-pilot", "status", "pre--pilot"),
               badge("SD-JWT VC", "SD--JWT_VC", "supported"),
               badge("Tested against 3 outside implementations", "tested_against", "3_outside_implementations"),
