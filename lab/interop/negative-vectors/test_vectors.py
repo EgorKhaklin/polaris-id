@@ -1043,12 +1043,11 @@ class MdocVectors(unittest.TestCase):
 
     def test_every_certificate_serial_is_at_least_2_to_the_71_in_20_octets_and_distinct(self):
         # ISO/IEC 18013-5:2021 Annex B, Tables B.1 (the IACA) and B.3 (the document signer), row "Serial number":
-        # "Non-sequential positive, non-zero integer, shall contain at least 63 bits of output from a CSPRNG, should
-        # contain at least 71 bits of output from a CSPRNG, maximum 20 octets." The generator drew each serial once as
-        # 71 CSPRNG bits under a set top bit (make_mdoc_vectors.py, IACA_SERIAL and DS_SERIAL); a test cannot see where
-        # a number came from, so this one holds what it can see. Read from every response, twin and trust anchor the
-        # file carries: each serial is at least 2**71, positive in at most 20 octets of DER, and the IACA's is not the
-        # document signer's. In 0.2.0 and before they were 1 and 2.
+        # shall, at least 63 bits of CSPRNG output; should, at least 71; at most 20 octets. The generator drew each
+        # serial once as 71 CSPRNG bits under a set top bit (make_mdoc_vectors.py, IACA_SERIAL and DS_SERIAL); a
+        # test cannot see where a number came from, so this one holds what it can see. Read from every response,
+        # twin and trust anchor the file carries: each serial is at least 2**71, positive in at most 20 octets of
+        # DER, and the IACA's is not the document signer's. In 0.2.0 and before they were 1 and 2.
         from cryptography import x509
         signers, anchors = set(), set()
         for vector in self.doc["vectors"]:
