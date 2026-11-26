@@ -2,9 +2,10 @@
 
 The [Apache License](LICENSE) covers what Polaris's contributors wrote and drew, except the
 pictures of the Polaris card reference design (all rights reserved; see [NOTICE](NOTICE)). Files
-from other projects keep their own licences, and the OpenID Certified mark is the OpenID
-Foundation's (see below). The license grants no right to use the names and marks Polaris's
-files carry (section 6 of the license). This page says what that means in practice.
+from other projects, and the Code of Conduct adapted from one, keep their own licences, and the
+OpenID Certified mark is the OpenID Foundation's (see below). The license grants no right to use
+the names and marks Polaris's files carry (section 6 of the license). This page says what that
+means in practice.
 
 ## The marks
 

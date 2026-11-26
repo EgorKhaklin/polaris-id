@@ -118,6 +118,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - polaris-oid4vp `Verifier` raises `ValueError` for an empty `claims` or `vct_values`, a `vct_values` entry that is not a non-empty string, and either one given as a bare string, instead of signing a DCQL query built from them (OpenID4VP 1.0 section 6.1).
 - `polaris-ship.py triage` names four flakes it called unknown: a runner whose apt-get update lists no Ubuntu archive; a 429 from raw.githubusercontent.com, which the eudi-issuer walk now names with its URL; and a Pages deploy that finds its artifact not yet listed, or listed twice after a re-run, for which it prints a fresh run in place of a re-run.
 - `polaris-ship.py triage` names a job whose hosted runner was lost mid-run as a known flake, with the rerun command, where it said UNKNOWN: when a finished run leaves no failed-job log, it reads the annotations of every failed job, not only of the jobs that never started, and calls the run a flake only when each failed job's own annotations name one.
+- polaris_web/static/vendor/VENDOR.md pinned lucide/sprite.svg at 22668 bytes; scripts/polaris-vendor-icons.py run on the pinned Lucide 1.49.0 release builds the tracked file, 17996 bytes, so the pin was the wrong side and now gives that file's size and SHA-256.
 
 ### Added
 
@@ -196,6 +197,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - site/sitemap.xml lists the site's two pages, and robots.txt names it; the page carries Google Search Console's verification tag.
 - `check_public_claims_honest` holds a site h1 or h2 named by an aria-label to exactly its own text, and `check_interop_page_matches_the_count` fails when the site says "outside projects" anywhere it does not read the count (a "tested against N outside projects" sentence or the tally).
 - site/ drops the earlier page's files that no page loads: 90 images and stylesheets (the coin's other poses, the sky, the acts' renders, the portrait and two logo sizes), with their entries in NOTICE, REUSE.toml and TRADEMARKS.md.
+- REUSE.toml records the licence and copyright of the fonts, MapLibre GL JS (its stylesheet, and its script with the 17 packages it bundles), Lucide, Lenis and the Code of Conduct, with each licence's text in LICENSES/. NOTICE, TRADEMARKS.md and the four package NOTICEs say the Code of Conduct keeps its own licence, and the package NOTICEs carry the root NOTICE's sentence on what the Apache License covers.
 - README.md shows the card (site/og.png) as its banner; docs/assets/hero.svg, the October sky only it showed, is removed.
 
 ## v1.0.0 — 2026-10-11 (an operator who is not the author runs the verifier)
