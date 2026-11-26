@@ -71,7 +71,7 @@ def file_name(key):
 def cited(docs):
     """[(vector id, ref, text)] for every quoted clause: the ISO ones are not quoted."""
     return [(v["id"], c["ref"], c["text"]) for doc in docs for v in doc["vectors"] for c in v.get("clauses", [])
-            if not c["text"].startswith("not quoted:")]
+            if not c["text"].startswith("not quoted;")]
 
 
 def _collapse(text):

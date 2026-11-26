@@ -235,8 +235,9 @@ doctypes)`; `serve --iaca-root FILE --doctype DOCTYPE`, repeatable). Trust comes
 configured, every mdoc refused (`issuer_key`), never skipped; a root carried in the response is never one. The
 document-signer (DS) certificate, the `x5chain` leaf, must chain to the root under the shared path rules, and:
 - `org.iso.18013.5.1.mDL`: the DS issued directly by the IACA, with SubjectKeyIdentifier and the id-mdl-ds EKU
-  (1.0.18013.5.1.2), following ISO/IEC 18013-5 Annex B as isomdl tabulates it (the ISO text is paywalled and was not
-  read); since M2b, also naming the IACA's countryName, and its stateOrProvinceName when the IACA carries one;
+  (1.0.18013.5.1.2), following ISO/IEC 18013-5:2021 Annex B, Table B.3 (the document signer certificate), as isomdl
+  implements it (checked against the 2021 edition on 2026-11-26; not quoted); since M2b, also naming the IACA's
+  countryName, and its stateOrProvinceName when the IACA carries one;
 - the EU PID: the PID rulebook states no DS profile, so the shared rules only: chain and validity as in M1, and key
   usage, which M1 left unenforced and M2 adds with a test;
 - `eu.europa.ec.av.1`: the shared rules only. isomdl implements an ETSI EN 319 411-1 policy rule for it, while the AV
@@ -340,9 +341,9 @@ fresh per request and never reused, as the response JWE key is today.
 **Selective disclosure.** Every mdoc element is its own salted digest in the MSO, so the wallet discloses only what is
 asked. The verifier asks for the fewest elements (`age_over_18`, not a birth date), sets `intent_to_retain` false
 (B.2.4), refuses any element it did not ask for (section 6.4), refuses a salt under 16 bytes (the floor the tree's
-[mdoc bridge](../../docs/design/mdoc-bridge.md) records; the ISO text was not read), and returns claims only for
-requested elements. What it still sees: the issuer, the validity window, the device key, the MSO signature and the
-digest of every element, withheld ones included.
+[mdoc bridge](../../docs/design/mdoc-bridge.md) records and ISO/IEC 18013-5:2021 9.1.2.5 sets, checked against the
+2021 edition on 2026-11-26 and not quoted), and returns claims only for requested elements. What it still sees: the
+issuer, the validity window, the device key, the MSO signature and the digest of every element, withheld ones included.
 
 **How a milestone is built.** Its tests are written first and run, and each is seen failing for the stated reason (an
 import error or a wrong verdict) before product code exists; the pull request quotes the failures. Guards that pass
@@ -475,8 +476,9 @@ joins the experimental half.
 **Wire.** OpenID4VP 1.0 (S1): section 5 (request), 6.1 and B.2.3 to B.2.4 (DCQL), 7.2 (claims path pointer), B.2.2
 (`vp_formats_supported`), 8.1 and B.2.5 (`vp_token`), 8.3 and 8.3.1 (`direct_post.jwt`), B.2.6.1 (OpenID4VPHandover),
 14.1.2 (replay), 14.8 (the full client identifier). HAIP 1.0 (S2): sections 5, 5.1, 5.3.1, 7, 8. ISO/IEC 18013-5 was not
-read: it is paywalled, and M1 read its content through Multipaz, isomdl and the EU reference verifier. Each of its
-clause numbers here is the number a named implementation or HAIP gives, with the edition that source names:
+read for M1 or M2: M1 read its content through Multipaz, isomdl and the EU reference verifier (the mdoc negative
+vectors' clause numbers were checked against the 2021 edition on 2026-11-26; not quoted). Each of its clause numbers
+here is the number a named implementation or HAIP gives, with the edition that source names:
 - 8.3.2.1.2 (DeviceRequest and DeviceResponse): OID4VCgo 0.49.0's `proximity` package, which its SPECIFICATIONS.md lists
   under "ISO/IEC 18013-5:2021", version "First edition". HAIP 1.0 5.3.1 cites 8.3.2.1.2.2: "each ISO mdoc MUST be
   returned in a separate DeviceResponse (as defined in 8.3.2.1.2.2 of [ISO.18013-5])"; its 3.3 lists [ISO.18013-5] as
@@ -486,8 +488,9 @@ clause numbers here is the number a named implementation or HAIP gives, with the
   8.3.2.1.2.3 (Table 8). Apple (S6) and the AV profile (S8) cited 8.3.2.1.2.3 when read on 2026-10-13; no copy of
   either is kept here, so the edition they name is not given. OID4VCgo 0.49.0's `oid4vpmdoc` numbers DeviceResponse
   10.3.2 and 10.3.3, naming no edition there.
-- 9.1.2 (issuer data authentication): the clause number is inferred, from the numbers under it. Indicio-tech/isomdl
-  `204440bd` numbers issuer data authentication's digest check 9.1.2.5; @owf/mdoc 0.8.2, isomdl-uniffi 0.2.0-indicio.2
+- 9.1.2 (issuer data authentication): the clause number, inferred from the numbers under it, was checked against the
+  2021 edition on 2026-11-26 (not quoted). Indicio-tech/isomdl `204440bd` numbers issuer data authentication's digest
+  check 9.1.2.5; @owf/mdoc 0.8.2, isomdl-uniffi 0.2.0-indicio.2
   and OID4VCgo 0.49.0's verifier tests number rules of the MSO 9.1.2.4; each names no edition there. OID4VCgo 0.49.0's
   `credential/mdoc` numbers the MSO 12.3.4 and the IssuerSignedItem digests 12.3.5, citing the 2025-09-14 CD ballot
   resolution draft of the second edition.
@@ -1184,8 +1187,9 @@ rule, not a falsifier.
 
 ## Sources (read 2026-10-13)
 
-ISO/IEC 18013-5:2021 and ISO/IEC 18013-7:2025 are paywalled and were not read; their content here is cited through the
-implementations and documents below.
+ISO/IEC 18013-5:2021 and ISO/IEC 18013-7:2025 were not read when these sources were; their content here is cited
+through the implementations and documents below. ISO/IEC 18013-5:2021 was checked on 2026-11-26 for the mdoc negative
+vectors' clause numbers and Annex B Table B.3; not quoted.
 
 - **S1.** OpenID for Verifiable Presentations 1.0, Final, 9 July 2025:
   https://openid.net/specs/openid-4-verifiable-presentations-1_0.html
