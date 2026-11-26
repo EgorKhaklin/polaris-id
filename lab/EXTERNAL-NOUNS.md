@@ -296,6 +296,9 @@ message to the project.
    ([PR 84](https://github.com/openeudi/openid4vp/pull/84), opened from here and merged by the maintainer,
    c29aa911), and 55 are refused (25 SD-JWT VC, 30 mso_mdoc), each with its repaired twin accepted. The first
    run on main with them ([45462582246](https://github.com/openeudi/openid4vp/actions/runs/45462582246)) passed.
+   On 2026-11-26 the maintainer opened and merged [PR 86](https://github.com/openeudi/openid4vp/pull/86)
+   (1fa22eae), which refuses Disclosures inside registered claims; its text names this repository's
+   `disclosed-status-sub-claim` vector (`vectors.json` 0.7.0) as what found it.
 7. 2026-11-17: Iya CyberSecurity Solutions'
    [id-proto-debugger](https://github.com/rcbj/id-proto-debugger) runs polaris-oid4vp v1.1.0's
    published image, copied into their own registry mirror, as the verifier in their scheduled test
