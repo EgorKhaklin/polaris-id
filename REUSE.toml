@@ -16,7 +16,7 @@ SPDX-License-Identifier = "Apache-2.0"
 # they carry (TRADEMARKS.md).
 [[annotations]]
 path = ["site/polaris_logo_clean.png", "site/polaris_logo.webp", "site/favicon.ico", "site/icon-*.png", "site/mark.webp",
-        "polaris_web/static/favicon.svg", "docs/assets/seal.svg", "docs/assets/hero.svg", "site/khaklin.svg",
+        "polaris_web/static/favicon.svg", "docs/assets/seal.svg", "site/khaklin.svg",
         "site/hero/coin-*"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Egor Khaklin"

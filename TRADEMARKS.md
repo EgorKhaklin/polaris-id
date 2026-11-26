@@ -13,7 +13,7 @@ Foundation's (see below). It grants no right to use the names and marks those fi
 | The Polaris and Polaris ID names, as the names of this project and its packages | throughout |
 | The Polaris logo and star mark | `site/polaris_logo_clean.png`, `site/polaris_logo.webp`, `site/favicon.ico`, `site/icon-*.png`, `site/mark.webp`, `site/hero/coin-*`, `polaris_web/static/favicon.svg` |
 | The owl emblem | `docs/assets/seal.svg` |
-| The Khaklin Technologies name and lockup, with the Polaris logo | `docs/assets/hero.svg` |
+| The Khaklin Technologies name and lockup | `site/khaklin.svg` |
 
 [REUSE.toml](REUSE.toml) declares these files. They are under Apache 2.0: the license covers
 the files, not the marks.
