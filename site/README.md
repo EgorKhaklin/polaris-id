@@ -44,7 +44,7 @@ broken under it fails the build.
 | `robots.txt` | Crawl policy: nothing private, and where the sitemap is | Crawlers |
 | `sitemap.xml` | The site's three pages, `/`, `/privacy` and `/contact`, for search engines | Crawlers, through `robots.txt` |
 | `llms.txt` | The project for a reading agent: what it is, the one-minute offline check with its exit codes, and where the specifications and evidence live, as absolute links | Agents and tools that read `/llms.txt` |
-| `og.png` | The 1200 x 630 link card: the Polaris card reference design at rest, the site's mark and name, the page's headline and the card's drawing number | `index.html` (`og:image`, `twitter:image`) |
+| `og.png` | The 1200 x 630 link card: the Polaris card reference design at rest, the site's mark and name and the page's headline | `index.html` (`og:image`, `twitter:image`) |
 | `khaklin.svg` | The KHAKLIN TECHNOLOGIES lockup in the site's gold, from the traced lettering and owl (never redrawn) | `index.html` (the opening screen and the footer), `contact.html` (the footer) |
 | `fonts/<face>.<hash>.woff2` | Inter, Cinzel and JetBrains Mono: the console's own files from `polaris_web/static/vendor/fonts/`, cut to the Latin characters a page can need and the ones this site uses, with every glyph outline, OpenType feature, variation axis and name record kept, each beside its SIL OFL licence (none reserves a font name) | `bp.css`, `404.css`, `privacy.css` |
 | `polaris_logo.webp` | The emblem, rendered from an exact model of its geometry (gold relief with chiselled rays over blue enamel), 880 x 880, transparent outside its disc | The desk of the Yivi check-in example (`packages/polaris-oid4vp/examples/yivi-checkin`) |
