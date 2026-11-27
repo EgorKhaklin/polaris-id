@@ -18,6 +18,7 @@ import ast
 import os
 import pathlib
 import re
+import subprocess
 
 import pytest
 
@@ -13579,6 +13580,102 @@ def test_private_keys_only_in_listed_fixtures_check_discriminates(tmp_path, monk
     listed.write_text('{"enc_key_pem": null}')
     assert checks.check_private_keys_only_in_listed_fixtures(tmp_path)[0].level == "FAIL", \
         "must FAIL on a listed fixture that no longer holds a key (a stale entry)"
+
+
+def _vendor_tree(root):
+    """The real tree's vendored files, VENDOR.md among them, copied under root; returns VENDOR.md's text."""
+    for rel in checks._tracked_files(REPO):
+        if rel.startswith(checks._VENDOR_DIR):
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((REPO / rel).read_bytes())
+    return (root / checks._VENDOR_MANIFEST).read_text(encoding="utf-8")
+
+
+def test_vendor_files_match_their_pins_check_discriminates(tmp_path):
+    manifest = _vendor_tree(tmp_path)
+    pins = tmp_path / checks._VENDOR_MANIFEST
+
+    def verdict(text, root=tmp_path):
+        pins.write_text(text, encoding="utf-8")
+        return checks.check_vendor_files_match_their_pins(root)[0]
+
+    assert checks.check_vendor_files_match_their_pins(tmp_path)[0].level == "OK", \
+        "must PASS on the real vendored files and their pins"
+    sprite = next(line for line in manifest.splitlines() if line.startswith("| `lucide/sprite.svg` |"))
+    size, digest = re.fullmatch(r"\| `lucide/sprite\.svg` \| (\d+) \| `([0-9a-f]{64})` \|", sprite).groups()
+    # The table at 92da1ece: the sprite's row pinned a sprite the tracked one had replaced.
+    at_92da1ece = "| `lucide/sprite.svg` | 22668 | `07b2c3543c2c27c304aa8e1036657b49546572fc0f859b1ab6af7c4edb550d2a` |"
+    found = verdict(manifest.replace(sprite, at_92da1ece))
+    assert found.level == "FAIL" and "lucide/sprite.svg" in found.message, "must FAIL on the 92da1ece table"
+    found = verdict(manifest.replace(sprite, sprite.replace("| %s |" % size, "| %d |" % (int(size) + 1))))
+    assert found.level == "FAIL" and "bytes" in found.message, "must FAIL when only the byte count is wrong"
+    other = digest[:-1] + ("1" if digest[-1] == "0" else "0")
+    found = verdict(manifest.replace(sprite, sprite.replace(digest, other)))
+    assert found.level == "FAIL" and "SHA-256 %s" % digest in found.message, "must FAIL when only the SHA-256 is wrong"
+    found = verdict(manifest.replace(sprite, sprite + "\n| `lucide/sprite.svg` | %s | `not-a-digest` |" % size))
+    assert found.level == "FAIL" and "not-a-digest" in found.message, "must FAIL on a pin line it cannot read"
+    found = verdict(manifest.replace(sprite, sprite + "\n| `lucide/gone.svg` | 1 | `%s` |" % ("0" * 64)))
+    assert found.level == "FAIL" and "not a tracked file" in found.message, "must FAIL on a pin for no tracked file"
+    extra = tmp_path / checks._VENDOR_DIR / "lucide" / "extra.svg"
+    extra.write_bytes(b"<svg/>")
+    found = verdict(manifest)
+    assert found.level == "FAIL" and "extra.svg" in found.message, "must FAIL on a vendored file no row pins"
+    extra.unlink()
+    assert verdict(manifest.replace(checks._VENDOR_PIN_HEADING, "## Files")).level == "FAIL", \
+        "must FAIL when the pin table's heading is gone"
+    pins.unlink()
+    assert checks.check_vendor_files_match_their_pins(tmp_path)[0].level == "FAIL", "must FAIL without VENDOR.md"
+    bare = tmp_path / "bare"
+    (bare / checks._VENDOR_DIR).mkdir(parents=True)
+    one = bare / checks._VENDOR_DIR / "one.svg"
+    one.write_bytes(b"<svg/>")
+    frame = "%s\n\n| File | Bytes | SHA-256 |\n|---|---|---|\n" % checks._VENDOR_PIN_HEADING
+    (bare / checks._VENDOR_MANIFEST).write_text(
+        frame + "| `one.svg` | 6 | `d4dc56669143034f31aa309635d4113d9ad76a02b1739da22c965ed2049be9e6` |\n",
+        encoding="utf-8")
+    assert checks.check_vendor_files_match_their_pins(bare)[0].level == "OK", "must PASS on one pinned file"
+    one.unlink()
+    (bare / checks._VENDOR_MANIFEST).write_text(frame, encoding="utf-8")
+    assert checks.check_vendor_files_match_their_pins(bare)[0].level == "FAIL", \
+        "must FAIL on a pin table with no row, even with nothing else vendored"
+
+
+def test_tracked_files_reads_a_non_ascii_path_as_its_own_name(tmp_path):
+    """_tracked_files asks git, and git quotes a path holding a byte outside ASCII unless -z is given: the quoted
+    spelling names no file, so a vendored file with such a name was invisible to the "no row pins it" guard of
+    check_vendor_files_match_their_pins, and to every other check that lists tracked files."""
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+    vendor = tmp_path / checks._VENDOR_DIR
+    vendor.mkdir(parents=True)
+    (vendor / "plain.svg").write_bytes(b"<svg/>")
+    (tmp_path / checks._VENDOR_MANIFEST).write_text(
+        "%s\n\n| File | Bytes | SHA-256 |\n|---|---|---|\n"
+        "| `plain.svg` | 6 | `d4dc56669143034f31aa309635d4113d9ad76a02b1739da22c965ed2049be9e6` |\n"
+        % checks._VENDOR_PIN_HEADING, encoding="utf-8")
+    # An untracked file no row pins: git leaves it out, the no-git fallback would not, so the control below shows
+    # git answered.
+    (vendor / "untracked.svg").write_bytes(b"<svg/>")
+    git("init", "-q")
+    git("config", "core.quotePath", "true")  # git's default, set here so no global setting can hide the quoting
+    listing = checks._tracked_files(tmp_path)
+    assert "" not in listing and checks._VENDOR_DIR + "untracked.svg" in listing, \
+        "with nothing tracked, git prints nothing and the tree walk answers, with no empty path"
+    git("add", checks._VENDOR_MANIFEST, checks._VENDOR_DIR + "plain.svg")
+    assert checks._tracked_files(tmp_path) == sorted([checks._VENDOR_MANIFEST, checks._VENDOR_DIR + "plain.svg"]), \
+        "the control: git, not the fallback, lists the tracked ASCII files"
+    assert checks.check_vendor_files_match_their_pins(tmp_path)[0].level == "OK", \
+        "the control: must PASS with every tracked vendored file pinned"
+    name = "ic" + chr(0xF4) + "ne.svg"
+    (vendor / name).write_bytes(b"<svg/>")
+    git("add", checks._VENDOR_DIR + name)
+    assert checks._VENDOR_DIR + name in checks._tracked_files(tmp_path), \
+        "a tracked path outside ASCII must come back as its own name, not git's quoted spelling"
+    found = checks.check_vendor_files_match_their_pins(tmp_path)[0]
+    assert found.level == "FAIL" and name in found.message, \
+        "must FAIL on a tracked vendored file no row pins when its name is not ASCII"
 
 
 def test_no_named_reference_systems_check_discriminates(tmp_path):
