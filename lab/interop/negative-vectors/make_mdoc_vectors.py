@@ -86,11 +86,10 @@ ENC_K, OTHER_ENC_K = mv._key("mdoc-response-encryption"), mv._key("mdoc-response
 IACA_CN = "Mdoc Vectors Test IACA"
 DS_CN = "Mdoc Vectors Test Document Signer"
 # The serial numbers. ISO/IEC 18013-5:2021 Annex B, Tables B.1 (IACA root certificate) and B.3 (document signer
-# certificate), row "Serial number": "Non-sequential positive, non-zero integer, shall contain at least 63 bits of
-# output from a CSPRNG, should contain at least 71 bits of output from a CSPRNG, maximum 20 octets." Each was drawn
-# once, on 2026-11-21, as secrets.randbits(71) | 1 << 71 (71 bits of CSPRNG output under a set top bit: a 72-bit
-# positive integer, 10 octets in DER), and is fixed here so that every run still writes the same bytes. In 0.2.0 and
-# before they were 1 and 2.
+# certificate), row "Serial number": shall, at least 63 bits of CSPRNG output; should, at least 71; at most 20
+# octets. Each was drawn once, on 2026-11-21, as secrets.randbits(71) | 1 << 71 (71 bits of CSPRNG output under a
+# set top bit: a 72-bit positive integer, 10 octets in DER), and is fixed here so that every run still writes the
+# same bytes. In 0.2.0 and before they were 1 and 2.
 IACA_SERIAL = 0xA719D39665D6EA635D
 DS_SERIAL = 0xE6E9C529272E67DCD3
 COUNTRY = "ZZ"  # a user-assigned ISO 3166-1 code: no country's

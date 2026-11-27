@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Egor Khaklin and the Polaris contributors
 #
-# polaris-gen-api-clients.sh -- generate API clients and a self-contained interactive explorer from the
+# polaris-gen-api-clients.sh -- generate API clients and an interactive explorer from the
 # single OpenAPI contract (docs/reference/openapi.yaml). "One spec, a typed harness in every
 # language." Nothing here is committed: these are build artifacts an integrator regenerates.
 #
@@ -18,7 +18,7 @@ mkdir -p "$OUT"
 echo ">> spec:   $SPEC"
 echo ">> outdir: $OUT"
 
-# A self-contained, offline interactive explorer (no network needed to view the result).
+# An interactive explorer, one HTML page.
 if command -v npx >/dev/null 2>&1; then
   npx -y @redocly/cli@latest build-docs "$SPEC" -o "$OUT/api-explorer.html"
   # TypeScript types (pair with openapi-fetch for a client).
