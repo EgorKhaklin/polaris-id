@@ -12413,6 +12413,67 @@ def _css_root_tokens(text: str) -> dict[str, str]:
     return out
 
 
+#: docs/design/console-design.md promises the console's third-party assets are self-hosted and
+#: unmodified, with their SHA-256 in VENDOR.md. The table under _VENDOR_PIN_HEADING is that pin:
+#: one row per vendored file, its path under _VENDOR_DIR, its bytes and its SHA-256.
+_VENDOR_DIR = "polaris_web/static/vendor/"
+_VENDOR_MANIFEST = "polaris_web/static/vendor/VENDOR.md"
+_VENDOR_PIN_HEADING = "## Files and SHA-256"
+_VENDOR_PIN_ROW = re.compile(r"\|\s*`([^`|]+)`\s*\|\s*([0-9]+)\s*\|\s*`([0-9a-f]{64})`\s*\|")
+_VENDOR_PIN_FRAME = re.compile(r"\|\s*File\s*\|\s*Bytes\s*\|\s*SHA-256\s*\||\|[-:|\s]+\|")
+
+
+def check_vendor_files_match_their_pins(root: pathlib.Path) -> list[Finding]:
+    """Every vendored file is the one VENDOR.md pins, byte for byte.
+
+    docs/design/console-design.md says the console's third-party assets are self-hosted and
+    unmodified, with their SHA-256 in polaris_web/static/vendor/VENDOR.md. Each row of its
+    "Files and SHA-256" table has its byte count and SHA-256 recomputed from the tracked file it
+    names. The check fails on a row whose file is not tracked, on a line of the table it cannot
+    read, on a table that parses to no row, and on a tracked file under the vendor directory that
+    no row pins (VENDOR.md itself aside). At 92da1ece the sprite's row said 22668 bytes for a
+    tracked sprite of 17996, and nothing failed.
+    """
+    name = "vendor_files_match_their_pins"
+    text = _read_raw(root, _VENDOR_MANIFEST)
+    if _VENDOR_PIN_HEADING not in text:
+        return _fail(name, "%s has no %r table, so nothing pins the vendored files"
+                     % (_VENDOR_MANIFEST, _VENDOR_PIN_HEADING))
+    table = text.split(_VENDOR_PIN_HEADING, 1)[1].split("\n## ", 1)[0]
+    rows, problems = [], []
+    for line in table.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or _VENDOR_PIN_FRAME.fullmatch(line):
+            continue
+        row = _VENDOR_PIN_ROW.fullmatch(line)
+        if row is None:
+            problems.append("%s holds a line of its pin table that is not a file, its bytes and its SHA-256: %r"
+                            % (_VENDOR_MANIFEST, line))
+            continue
+        rows.append(row.groups())
+    if not rows:
+        return _fail(name, "%s's pin table parses to no row, so nothing pins the vendored files" % _VENDOR_MANIFEST)
+    tracked = {rel for rel in _tracked_files(root) if rel.startswith(_VENDOR_DIR)}
+    listed = set()
+    for path, size, digest in rows:
+        rel = _VENDOR_DIR + path
+        listed.add(rel)
+        if rel not in tracked:
+            problems.append("%s pins %s, which is not a tracked file" % (_VENDOR_MANIFEST, rel))
+            continue
+        data = (root / rel).read_bytes()
+        if len(data) != int(size):
+            problems.append("%s is %d bytes and %s pins %s" % (rel, len(data), _VENDOR_MANIFEST, size))
+        if hashlib.sha256(data).hexdigest() != digest:
+            problems.append("%s has SHA-256 %s and %s pins %s"
+                            % (rel, hashlib.sha256(data).hexdigest(), _VENDOR_MANIFEST, digest))
+    for rel in sorted(tracked - listed - {_VENDOR_MANIFEST}):
+        problems.append("%s is vendored and %s does not pin it" % (rel, _VENDOR_MANIFEST))
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _ok(name, "%d vendored files, each the bytes and SHA-256 %s pins" % (len(rows), _VENDOR_MANIFEST))
+
+
 def check_site_tokens_match_app(root: pathlib.Path) -> list[Finding]:
     site = _css_root_tokens(_read(root, "site/tokens.css"))
     app = _css_root_tokens(_read(root, "polaris_web/static/polaris.css"))
@@ -32595,6 +32656,7 @@ CHECKS: list[Callable[[pathlib.Path], list[Finding]]] = [
     check_metrics_edge_acl,
     check_image_builds_are_retried,
     check_site_tokens_match_app,
+    check_vendor_files_match_their_pins,
     check_site_pages_render_under_their_headers,
     check_css_animations_resolve,
     check_system_map_covers_the_tree,
