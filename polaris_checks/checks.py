@@ -19679,12 +19679,16 @@ _PRIVATE_KEY_EXTS = _NAMED_REF_EXTS | {".pem", ".key", ".jwk"}
 
 
 def _tracked_files(root: pathlib.Path) -> list[str]:
-    """Tracked paths, from git when available, else every file under the tree."""
+    """Tracked paths, from git when available, else every file under the tree.
+
+    NUL-separated (-z): without it git prints a path holding a byte outside ASCII in quotes, each such byte as
+    an octal escape, and that spelling names no file, so every check that lists tracked files missed it.
+    """
     try:
-        out = subprocess.run(["git", "-C", str(root), "ls-files"],
-                             capture_output=True, text=True, timeout=30)
-        if out.returncode == 0 and out.stdout.strip():
-            return sorted(line for line in out.stdout.splitlines() if line.strip())
+        out = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
+                             capture_output=True, timeout=30)
+        if out.returncode == 0 and out.stdout.strip(b"\0"):
+            return sorted(name for name in out.stdout.decode("utf-8", "surrogateescape").split("\0") if name)
     except (OSError, subprocess.SubprocessError):
         pass
     return sorted("/".join(f.relative_to(root).parts) for f in _tree_rglob(root, "*") if f.is_file())

@@ -18,6 +18,7 @@ import ast
 import os
 import pathlib
 import re
+import subprocess
 
 import pytest
 
@@ -13638,6 +13639,43 @@ def test_vendor_files_match_their_pins_check_discriminates(tmp_path):
     (bare / checks._VENDOR_MANIFEST).write_text(frame, encoding="utf-8")
     assert checks.check_vendor_files_match_their_pins(bare)[0].level == "FAIL", \
         "must FAIL on a pin table with no row, even with nothing else vendored"
+
+
+def test_tracked_files_reads_a_non_ascii_path_as_its_own_name(tmp_path):
+    """_tracked_files asks git, and git quotes a path holding a byte outside ASCII unless -z is given: the quoted
+    spelling names no file, so a vendored file with such a name was invisible to the "no row pins it" guard of
+    check_vendor_files_match_their_pins, and to every other check that lists tracked files."""
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+    vendor = tmp_path / checks._VENDOR_DIR
+    vendor.mkdir(parents=True)
+    (vendor / "plain.svg").write_bytes(b"<svg/>")
+    (tmp_path / checks._VENDOR_MANIFEST).write_text(
+        "%s\n\n| File | Bytes | SHA-256 |\n|---|---|---|\n"
+        "| `plain.svg` | 6 | `d4dc56669143034f31aa309635d4113d9ad76a02b1739da22c965ed2049be9e6` |\n"
+        % checks._VENDOR_PIN_HEADING, encoding="utf-8")
+    # An untracked file no row pins: git leaves it out, the no-git fallback would not, so the control below shows
+    # git answered.
+    (vendor / "untracked.svg").write_bytes(b"<svg/>")
+    git("init", "-q")
+    git("config", "core.quotePath", "true")  # git's default, set here so no global setting can hide the quoting
+    listing = checks._tracked_files(tmp_path)
+    assert "" not in listing and checks._VENDOR_DIR + "untracked.svg" in listing, \
+        "with nothing tracked, git prints nothing and the tree walk answers, with no empty path"
+    git("add", checks._VENDOR_MANIFEST, checks._VENDOR_DIR + "plain.svg")
+    assert checks._tracked_files(tmp_path) == sorted([checks._VENDOR_MANIFEST, checks._VENDOR_DIR + "plain.svg"]), \
+        "the control: git, not the fallback, lists the tracked ASCII files"
+    assert checks.check_vendor_files_match_their_pins(tmp_path)[0].level == "OK", \
+        "the control: must PASS with every tracked vendored file pinned"
+    name = "ic" + chr(0xF4) + "ne.svg"
+    (vendor / name).write_bytes(b"<svg/>")
+    git("add", checks._VENDOR_DIR + name)
+    assert checks._VENDOR_DIR + name in checks._tracked_files(tmp_path), \
+        "a tracked path outside ASCII must come back as its own name, not git's quoted spelling"
+    found = checks.check_vendor_files_match_their_pins(tmp_path)[0]
+    assert found.level == "FAIL" and name in found.message, \
+        "must FAIL on a tracked vendored file no row pins when its name is not ASCII"
 
 
 def test_no_named_reference_systems_check_discriminates(tmp_path):
