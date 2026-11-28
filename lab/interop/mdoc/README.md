@@ -227,10 +227,11 @@ every stage each is counted for, each reached the verdict ours did.
   screen lock on this request; the screen lock had been entered on the phone by hand a minute before.
 - Verifier: polaris-oid4vp built from main at b82de544, installed from the wheel with SHA-256
   `8e7d39b4ce56342a80d20814822232edd218173a68d939b38fc80426c5d39ede`.
-  `serve --dc-api --experimental --format mso_mdoc --doctype com.google.wallet.idcard.1` served a request signed
-  with the sandbox test key pair Google publishes for relying parties (client_id `x509_hash`), the relying-party
-  metadata published beside it in `client_metadata`, protocol `openid4vp-v1-signed` and response mode `dc_api.jwt`.
-  The root was Google's sandbox IACA test root, from the same page (SHA-256
+  `serve --dc-api --experimental --format mso_mdoc --doctype com.google.wallet.idcard.1`, with `--dc-api-origin` set
+  to the tunnel's origin, served a request signed with the sandbox test key pair Google publishes for relying parties
+  (client_id `x509_hash`), the relying-party metadata published beside it in `client_metadata`, protocol
+  `openid4vp-v1-signed` and response mode `dc_api.jwt`.
+  The root was Google's sandbox IACA test root, from the same page (the PEM file's SHA-256
   `ed9b690fb7fc4f282fa377d7028169d34df0aae0e1fbe17954468309f3aacd68`).
 - It ran behind [`../altid/run_tunnel.sh`](../altid/run_tunnel.sh) over a cloudflared quick tunnel, inside
   [`capture_shim.py`](capture_shim.py) with one more wrapper, on the Digital Credentials API judge, that keeps each
@@ -262,6 +263,77 @@ as the only anchor (`vectors.json`, SHA-256 `28546b1c7f27246dd4145fd44ca5611373d
 - polaris-oid4vp 1.3.0 from PyPI (wheel SHA-256 `9084517c7a8d85b8e881daafa7a0afc6932c49229d17d4251aea77cca134457f`)
   judged the four DeviceResponses offline, at the answer's instant, under the SessionTranscripts the build made, and
   drew the same verdict on each as the build.
+
+## Milestone 3 against a release: polaris-oid4vp 1.4.0 (2026-11-27)
+
+Google Wallet, in its sandbox environment, presented its test ID pass over the Digital Credentials API to
+polaris-oid4vp 1.4.0 from PyPI, in its experimental mode, and 1.4.0 accepted the presentation. Four outside
+implementations judged the same bytes offline, each at the stages its own code decides.
+
+- Holder: as in Milestone 3, Google Wallet 26.45.1018379642 on a Pixel 9a, in its sandbox environment, holding its
+  test ID pass (doctype `com.google.wallet.idcard.1`), the request from the phone's Chrome 158.0.8127.42. The screen
+  lock was entered on the phone by hand.
+- The run: the page was opened and its button pressed over adb. Wallet shared the pass with no further prompt in the
+  screen captures.
+- Verifier: polaris-oid4vp 1.4.0 from PyPI, the wheel with SHA-256
+  `f78c0332c16c3169fbdbcd838ab03c77fe1472a0e4fcc7a0732976627999fa0b`.
+  `serve --dc-api --experimental --format mso_mdoc --doctype com.google.wallet.idcard.1` asked for one element,
+  age_over_18 (namespace org.iso.18013.5.1), with the tunnel's origin as `--dc-api-origin`, the request signer, the
+  relying-party metadata, protocol `openid4vp-v1-signed`, response mode `dc_api.jwt` and Google's sandbox IACA test
+  root (the PEM file's SHA-256 `ed9b690fb7fc4f282fa377d7028169d34df0aae0e1fbe17954468309f3aacd68`) as in Milestone 3.
+- It ran behind [`../altid/run_tunnel.sh`](../altid/run_tunnel.sh) over a cloudflared quick tunnel, inside the same
+  wrapper as in Milestone 3 (SHA-256 `281724a757adf9be673a5bd073360b2eea1cc44bb55dc97942ba9fc510c828c3`).
+- The verdict: `200 authentic` at 2026-11-27T02:37:56Z.
+- The answer: one DeviceResponse, 2246 bytes, SHA-256
+  `794ccac590dc0c50f3555733d4a587fd17782fdb3385251487f00cb3e0bac553`.
+- The request asked for one element, age_over_18 (namespace org.iso.18013.5.1); the answer carried that element and
+  no other.
+
+Five verifiers, over the answer and copies made from it, offline at the answer's instant with Google's root as the
+only anchor unless the row says otherwise. The copies: one element value changed (`age_over_18`, one byte; SHA-256
+`7392bd46874e0d29408b9d70c80401e95b86fcd5b7c21438d156d14a41575159`), the last byte of the issuer signature changed
+(SHA-256 `6c97b237aeba7bf0334debc8d4dc174af3a1e73f47cd9b1fe74169e742c7b308`), and the Document's docType changed in
+one byte with the MSO's untouched (SHA-256 `cc06fa9347dedd7840fd2125f61047c928f3a44f6ff2287e6936b6b8f4ae6b82`). The
+answer and its copies are one set, `vectors.json` (SHA-256
+`f6b382cc85dc3e980d283119595d40f5eca6aeb9df8dca1197376adaa322e856`). The unrelated root is
+[`witness-eudi/results/unrelated-root.pem`](witness-eudi/results/unrelated-root.pem).
+
+| vector | polaris-oid4vp 1.4.0 | @owf/mdoc 0.9.3 | OID4VCgo v0.85.0 | the EU reference verifier v0.12.0 | isomdl-uniffi 0.2.0-indicio.2 |
+|---|---|---|---|---|---|
+| the wallet's answer | accepted | accepted | accepted, by both | SessionTranscript the same as ours; trusted | issuer authentication verified |
+| the same answer under another response encryption key | refused: device signature | refused: device signature | refused: device signature, by both | SessionTranscript the same as ours for that key | not run (device stage) |
+| one element value changed | refused: digest | refused: digest | refused: digest mismatch, by both | not counted | refused: digest mismatch |
+| one byte of the issuer signature changed | refused: issuer signature | refused: issuer signature | refused: issuer signature, by both | not counted | refused: not authentic |
+| the Document's docType changed | refused: docType | refused: docType against the MSO's | refused: docType against the MSO's, by both | not counted | verified, not counted (its input, the IssuerSigned, is the answer's, unchanged) |
+| an unrelated root as the only anchor | refused: issuer key | refused: no trusted chain | not run | refused: not trusted (PKIX) | refused: no valid trust anchor |
+| no root | refused: issuer key | refused: no trusted chain | not run | not counted | not run |
+| one day after the MSO's validUntil | refused: validity | refused: MSO validity | refused: MSO expired, by both | refused: validity | not run |
+
+- Each witness is counted only at the stages its own code decides (record 025, M7). @owf/mdoc and OID4VCgo count at
+  the docType, the MSO signature, the digests and the device signature: neither shares code with walt.id's, and each
+  built the Digital Credentials API SessionTranscript itself. The EU reference verifier counts at the SessionTranscript
+  and handover, PKIX trust and the validity policy; its MSO signature, digests, docType and device signature are
+  walt.id's code, so they are not counted. isomdl-uniffi counts at issuer authentication and the elements. No no-root
+  case is counted.
+- @owf/mdoc ran [`witness-eudi/witness_owf.mjs`](witness-eudi/witness_owf.mjs) with one change: the SessionTranscript
+  is the library's own `SessionTranscript.forOid4VpDcApi(origin, nonce, jwkThumbprint)` (OpenID4VP 1.0 B.2.6.2) in
+  place of `forOid4Vp`. It was installed from [`witness-eudi/package-lock.json`](witness-eudi/package-lock.json), which
+  lists 74 packages under node_modules and none named walt, with `npm ci` from registry.npmjs.org only, in the node
+  image [`witness-eudi/run.sh`](witness-eudi/run.sh) pins, and then ran with no network. Its SessionTranscript was the
+  same as ours on all eight cases: the seven of one run, and the validity case, run on its own, whose transcript has
+  the same SHA-256 as the answer's in that run.
+- OID4VCgo ran [`witness-oid4vcgo/`](witness-oid4vcgo/) as committed, its functions composed by our harness and its
+  `mdocdcapi.VerifyResponse`, in the Go image its `run.sh` pins, fetching from proxy.golang.org only and then with no
+  network. Its `go.sum` has 8 lines and none names walt. It built the same 61-byte SessionTranscript, inside a tag 24
+  wrapper, on the two vectors where it built one.
+- The EU reference verifier ran [`witness-eudi/Witness.kt`](witness-eudi/Witness.kt), compiled against the classes of
+  the image `run.sh` pins and run on that image's own runtime with no network, with two changes: the handover is the
+  verifier's own `HandoverInfo.OpenID4VPDCAPIHandoverInfo(origin, nonce, key)`, reached through its `toHandover()`;
+  and one classification entry is ours, `com.google.wallet.idcard.1`, as the `eu.europa.ec.av.1` entry is, without
+  which it answers `NoClassification`.
+- isomdl-uniffi judged the pass as in Milestone 3, through `Mdoc.verify_issuer_signature`, over the IssuerSigned taken
+  byte for byte from the DeviceResponse.
+- Each run printed only hashes of the session values.
 
 ## Observations
 
