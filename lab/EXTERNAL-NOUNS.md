@@ -320,6 +320,11 @@ the words it agreed to.
    maintainer's [PR 66](https://github.com/cre8/rp-conformance/pull/66) (d5ad5ab4) brought
    [PR 36](https://github.com/cre8/rp-conformance/pull/36), opened from here, onto main; the CI run on that
    merge commit ([45030154195](https://github.com/cre8/rp-conformance/actions/runs/45030154195)) passed.
+   On 2026-11-27, under its new name [cre8/eudi-pcaf](https://github.com/cre8/eudi-pcaf), the maintainer merged
+   [PR 81](https://github.com/cre8/eudi-pcaf/pull/81) (65592637), "rows for the vectors of #10 that had none", and
+   closed [issue 10](https://github.com/cre8/eudi-pcaf/issues/10) with "Closing this since the PR got merged"; both
+   were opened from here. The CI run on that merge commit
+   ([46031235798](https://github.com/cre8/eudi-pcaf/actions/runs/46031235798)) passed.
 
 ### Findings from outside
 
