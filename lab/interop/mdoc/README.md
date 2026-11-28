@@ -227,9 +227,10 @@ every stage each is counted for, each reached the verdict ours did.
   screen lock on this request; the screen lock had been entered on the phone by hand a minute before.
 - Verifier: polaris-oid4vp built from main at b82de544, installed from the wheel with SHA-256
   `8e7d39b4ce56342a80d20814822232edd218173a68d939b38fc80426c5d39ede`.
-  `serve --dc-api --experimental --format mso_mdoc --doctype com.google.wallet.idcard.1` served a request signed
-  with the sandbox test key pair Google publishes for relying parties (client_id `x509_hash`), the relying-party
-  metadata published beside it in `client_metadata`, protocol `openid4vp-v1-signed` and response mode `dc_api.jwt`.
+  `serve --dc-api --experimental --format mso_mdoc --doctype com.google.wallet.idcard.1`, with `--dc-api-origin` set
+  to the tunnel's origin, served a request signed with the sandbox test key pair Google publishes for relying parties
+  (client_id `x509_hash`), the relying-party metadata published beside it in `client_metadata`, protocol
+  `openid4vp-v1-signed` and response mode `dc_api.jwt`.
   The root was Google's sandbox IACA test root, from the same page (the PEM file's SHA-256
   `ed9b690fb7fc4f282fa377d7028169d34df0aae0e1fbe17954468309f3aacd68`).
 - It ran behind [`../altid/run_tunnel.sh`](../altid/run_tunnel.sh) over a cloudflared quick tunnel, inside
@@ -277,9 +278,9 @@ implementations judged the same bytes offline, each at the stages its own code d
 - Verifier: polaris-oid4vp 1.4.0 from PyPI, the wheel with SHA-256
   `f78c0332c16c3169fbdbcd838ab03c77fe1472a0e4fcc7a0732976627999fa0b`.
   `serve --dc-api --experimental --format mso_mdoc --doctype com.google.wallet.idcard.1` asked for one element,
-  age_over_18 (namespace org.iso.18013.5.1), with the request signer, the relying-party metadata, protocol
-  `openid4vp-v1-signed`, response mode `dc_api.jwt` and Google's sandbox IACA test root (the PEM file's
-  SHA-256 `ed9b690fb7fc4f282fa377d7028169d34df0aae0e1fbe17954468309f3aacd68`) as in Milestone 3.
+  age_over_18 (namespace org.iso.18013.5.1), with the tunnel's origin as `--dc-api-origin`, the request signer, the
+  relying-party metadata, protocol `openid4vp-v1-signed`, response mode `dc_api.jwt` and Google's sandbox IACA test
+  root (the PEM file's SHA-256 `ed9b690fb7fc4f282fa377d7028169d34df0aae0e1fbe17954468309f3aacd68`) as in Milestone 3.
 - It ran behind [`../altid/run_tunnel.sh`](../altid/run_tunnel.sh) over a cloudflared quick tunnel, inside the same
   wrapper as in Milestone 3 (SHA-256 `281724a757adf9be673a5bd073360b2eea1cc44bb55dc97942ba9fc510c828c3`).
 - The verdict: `200 authentic` at 2026-11-27T02:37:56Z.
