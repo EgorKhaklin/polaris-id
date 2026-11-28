@@ -285,6 +285,8 @@ implementations judged the same bytes offline, each at the stages its own code d
 - The verdict: `200 authentic` at 2026-11-27T02:37:56Z.
 - The answer: one DeviceResponse, 2246 bytes, SHA-256
   `794ccac590dc0c50f3555733d4a587fd17782fdb3385251487f00cb3e0bac553`.
+- The request asked for one element, age_over_18 (namespace org.iso.18013.5.1); the answer carried that element and
+  no other.
 
 Five verifiers, over the answer and copies made from it, offline at the answer's instant with Google's root as the
 only anchor unless the row says otherwise. The copies: one element value changed (`age_over_18`, one byte; SHA-256
