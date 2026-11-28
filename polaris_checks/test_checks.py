@@ -23694,6 +23694,37 @@ def test_mdoc_dc_api_claims_check_discriminates(tmp_path):
     assert failed(check(write(**silent)), "at all")
 
 
+def test_mdoc_claims_the_verb_form_of_age_is_held(tmp_path):
+    # lab/strategy/025-mdoc-dc-api.md l.41, M7: no public claim of age verification ahead of its evidence. "It
+    # verifies age" says what "age verification" says, so the age path reads the verb too: at most two words
+    # between, none of them ending a sentence, and the noun itself, not a word that begins with it.
+    check = checks.check_mdoc_dc_api_claims_are_gated
+    files, write, said = _mdoc_claims_tree(tmp_path)
+    AGE = checks._MDOC_CLAIM_PATHS[-1][0]
+    assert AGE == "age verification"
+
+    def failed(findings, *words):
+        return any(f.level == "FAIL" and all(w in f.message for w in words) for f in findings)
+
+    def passed(findings):
+        return bool(findings) and all(f.level == "OK" for f in findings)
+
+    ok = check(write())
+    assert passed(ok) and "20 mentions" in ok[0].message, ok
+    for rel in checks._MDOC_CLAIM_SURFACES:
+        assert failed(check(said(rel, "polaris-oid4vp verifies age over 18.")), rel, "names " + AGE), rel
+    for text in ("Verify the holder's age.", "It verifies ages over 18.", "It verified the user's age.",
+                 "Verifying age takes one request.", "IT VERIFIES AGE.", "It verifies a holder's age at the door."):
+        assert failed(check(said("README.md", text)), "README.md", "names " + AGE), text
+    # A path that is not built may not be called experimental, in the verb form too.
+    assert failed(check(said("README.md", "It verifies age (experimental).")), "README.md", "names " + AGE,
+                  "it is not built")
+    # A word that begins with "age", a noun past a sentence's end, and "verifier" are not the verb form.
+    for text in ("It verifies the agent's key.", "It verifies the signature: age is a claim the issuer makes.",
+                 "It verifies the signatures. Ages vary.", "The verifier reads the page."):
+        assert passed(check(said("README.md", text))), text
+
+
 def test_mdoc_claims_each_path_is_held_by_its_own_gate(tmp_path):
     # lab/strategy/025, M7, as polaris-oid4vp 1.4.0 ships it: the Digital Credentials API and
     # ISO/IEC 18013-7 Annex C may be called experimental, each only while its own gate holds. The

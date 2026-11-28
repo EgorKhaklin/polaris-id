@@ -27433,7 +27433,10 @@ _MDOC_CLAIM_PATHS = (
      re.compile(r"(?i:apple\s+wallet|google\s+wallet|state-issued|\bstate\s+IDs?\b)|\bUS\s+(?:mobile\s+)?IDs?\b"),
      False, None),
     ("age verification",
-     re.compile(r"(?i:age[- ]verification|proof[- ]of[- ]age|\bage\s+attestations?\b)"),
+     # The verb form says it too ("verifies the holder's age"): at most two words between, none of
+     # them ending a sentence, and the noun is "age" or "ages", not a word that begins with it.
+     re.compile(r"(?i:age[- ]verification|proof[- ]of[- ]age|\bage\s+attestations?\b"
+                r"|\bverif(?:y|ies|ied|ying)\s+(?:[^\s.;:!?]+\s+){0,2}?ages?\b)"),
      False, None),
 )
 
