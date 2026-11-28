@@ -30,3 +30,13 @@ abstract: >-
   the algorithm is a row in the schema, not a constant, and migration runs on
   every push. Its cryptographic posture is stated in
   docs/PRODUCTION-READINESS.md.
+references:
+  - type: report
+    title: "Polaris, Version 3: The Map of the System"
+    authors:
+      - family-names: Khaklin
+        given-names: Egor
+        orcid: "https://orcid.org/0009-0007-0625-6655"
+    doi: "10.5281/zenodo.24618861"
+    url: "https://zenodo.org/records/24618861"
+    date-published: "2026-11-02"
