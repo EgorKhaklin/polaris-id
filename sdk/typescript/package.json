@@ -39,7 +39,7 @@
     "url": "git+https://github.com/EgorKhaklin/polaris-id.git",
     "directory": "sdk/typescript"
   },
-  "homepage": "https://github.com/EgorKhaklin/polaris-id/tree/main/sdk/typescript",
+  "homepage": "https://polaris-id.org/",
   "bugs": {
     "url": "https://github.com/EgorKhaklin/polaris-id/issues"
   },

@@ -71,7 +71,7 @@ user-mgmt = [
 polaris-id = "polaris_cli.polaris:main"
 
 [project.urls]
-Homepage = "https://github.com/EgorKhaklin/polaris-id"
+Homepage = "https://polaris-id.org/"
 Repository = "https://github.com/EgorKhaklin/polaris-id"
 Documentation = "https://github.com/EgorKhaklin/polaris-id/blob/main/polaris_cli/README.md"
 Issues = "https://github.com/EgorKhaklin/polaris-id/issues"

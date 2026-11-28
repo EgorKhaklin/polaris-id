@@ -35,6 +35,7 @@ broken under it fails the build.
 | `mark.webp` | The site's mark beside its name: the emblem's sun in gold, 512 x 512, transparent around it | `index.html`, `contact.html` |
 | `favicon.ico`, `icon-48.png`, `icon-96.png`, `icon-180.png`, `icon-192.png`, `icon-512.png` | The site icon: the emblem's sun in gold on a black square, 16, 32 and 48 in the icon file | Every page (the tab icon; 180 is the home-screen icon of `index.html` and `contact.html`), `site.webmanifest` (192 and 512), the landing page's structured data (512), and any client that asks for `/favicon.ico` |
 | `site.webmanifest` | The web manifest: the site's name, its icons and its colours | `index.html` |
+| `4ac59b58f7797e55ee147f5718346175.txt` | The site's IndexNow key: a search engine that takes IndexNow reads it to confirm that a list of changed pages came from this site | Bing, Yandex and the other IndexNow engines |
 | `grain.png` | A film grain laid over the page, 220 x 220 | `bp.css` |
 | `vercel.json` | The `_headers` policy and clean addresses in Vercel's format, for a build served there | Vercel |
 | `tokens.css` | The design tokens, under the same names `polaris_web/static/polaris.css` uses | `index.html`, `contact.html`, `404.html`, `privacy.html` |

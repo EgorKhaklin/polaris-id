@@ -1,6 +1,7 @@
 # polaris-oid4vp
 
 [![PyPI](https://img.shields.io/pypi/v/polaris-oid4vp?include_prereleases&label=PyPI&color=3775a9&labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-oid4vp/)
+[![Project site: polaris-id.org](https://img.shields.io/badge/site-polaris--id.org-c9a352?labelColor=0a1421&style=flat-square)](https://polaris-id.org/)
 [![Status: pre-pilot](https://img.shields.io/badge/status-pre--pilot-9a6b2f?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/PRODUCTION-READINESS.md)
 [![OpenID Certified: polaris-oid4vp 1.0.0rc7](https://img.shields.io/badge/OpenID_Certified-polaris--oid4vp_1.0.0rc7-c9a352?labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/blob/main/docs/reference/SPEC-COMPLIANCE.md#openid-certified)
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
