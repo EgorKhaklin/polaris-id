@@ -25,7 +25,7 @@ authors = [{ name = "Egor Khaklin" }]
 dependencies = ["cryptography>=50.0.0"]
 
 [project.urls]
-Homepage = "https://github.com/EgorKhaklin/polaris-id"
+Homepage = "https://polaris-id.org/"
 Documentation = "https://github.com/EgorKhaklin/polaris-id/tree/main/sdk/python#readme"
 Changelog = "https://github.com/EgorKhaklin/polaris-id/blob/main/CHANGELOG.md"
 Issues = "https://github.com/EgorKhaklin/polaris-id/issues"

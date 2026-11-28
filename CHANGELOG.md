@@ -159,6 +159,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 
 ### Changed
 
+- The five packages name https://polaris-id.org/ as their homepage (it was the repository); each registry page shows it from the package's next release. Their source, documentation and issue links still point at the repository.
 - polaris-negative-vectors moves to 0.1.1: it carries `mdoc-vectors.json` 0.3.1, whose ISO/IEC 18013-5 clause numbers are checked against the 2021 edition; `vectors.json` stays 0.7.0.
 - polaris-oid4vp `keygen`, and `serve` without `--public-base-url`, refuse an IPv6 `--host` (exit 2) and name what to give: a name or an IPv4 address.
 - polaris-oid4vp `serve --experimental`: the `<-` line for an accepted mdoc names what was checked.
