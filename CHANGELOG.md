@@ -126,6 +126,7 @@ Entries use the [Keep a Changelog](https://keepachangelog.com/) groups: Security
 - `check_vendor_files_match_their_pins` holds each row of VENDOR.md's pin table to the bytes and SHA-256 of the vendored file it names, and fails on a vendored file no row pins.
 - The checks that list tracked files read `git ls-files -z`, so a tracked path whose name is not ASCII is read as its own name instead of git's quoted spelling.
 - docs/reference/API-CLIENTS.md, empty since it was added, is the quickstart its links name. It generates the TypeScript types, the Python client and the explorer from openapi.yaml, then shows a verification call in TypeScript and in Python. Each command was run from an empty directory, and each type check was shown to refuse a wrong field. scripts/README.md and the generator's comments call the explorer what it is: one HTML page.
+- `check_public_claims_honest` refuses "production-ready", "production ready", "ready for production" and "ready in production" on the outward surfaces and the published READMEs unless the word right before it takes it back ("not", "never", "nor", "isn't", with "yet" alone between); MISSION.md's own sentence on the phrase is pinned word for word.
 
 ### Added
 

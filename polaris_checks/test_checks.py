@@ -11857,6 +11857,99 @@ def test_public_claims_honest_holds_a_description_that_says_certified_to_its_sco
             assert level({field: text}) == "FAIL", f"must FAIL on {field}: {why}"
 
 
+def test_public_claims_honest_refuses_production_ready_unless_negated(tmp_path):
+    # The readiness ledger bounds what may be claimed (docs/PRODUCTION-READINESS.md: not production-ready for real
+    # identity data). No outward surface or published README says the term, in either order, unless the word right
+    # before it takes it back; the one other sentence that may say it is MISSION.md's own, pinned word for word.
+    check = checks.check_public_claims_honest
+    surfaces = checks._OUTWARD_SURFACES + checks._PUBLISHED_READMES + ("polaris_cli/README.md",)
+    assert len(set(surfaces)) == 14 and {"packages/polaris-oid4vp/README.md", "polaris_cli/README.md",
+                                         "packages/polaris-negative-vectors/README.md"} <= set(surfaces), surfaces
+    PINNED = ('- The bound on what this repository may claim is\n'
+              '  [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md). "Production\n'
+              '  ready" is not a phrase this project applies to itself until the decisions\n'
+              '  listed there are recorded as made for a named deployment.\n')
+    BASE = {"README.md": "# POLARIS\n\nPre-pilot, on notional data.\n",
+            "site/index.html": '<title>Polaris ID</title>\n<meta property="og:title" content="Polaris ID">\n'
+                               "<body><h1>Proof over trust.</h1></body>\n",
+            "MISSION.md": "# Mission\n\n" + PINNED}
+    made = iter(range(10 ** 6))
+
+    def run(rel=None, text=None, base=BASE):
+        root = tmp_path / ("t%d" % next(made))
+        files = dict(base)
+        if rel is not None:
+            page = rel.endswith(".html") and not text.lstrip().startswith("<")
+            files[rel] = files.get(rel, "") + "\n" + ("<p>%s</p>" % text if page else text) + "\n"
+        for name, content in files.items():
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(content, encoding="utf-8")
+        return check(root)
+
+    def passes(rel, text):
+        return run(rel, text)[0].level == "OK"
+
+    def fails(rel, text):
+        found = run(rel, text)
+        return found[0].level == "FAIL" and found[0].message.startswith(rel + ":")
+
+    ok = run()
+    assert ok[0].level == "OK", "must PASS the surfaces that do not say it, and MISSION.md's pinned sentence"
+    assert "the 3 outward surfaces and published READMEs read say production-ready 1 time(s)" in ok[0].message, ok
+    assert run(base={k: v for k, v in BASE.items() if k != "MISSION.md"})[0].level == "OK", \
+        "must PASS a tree with no MISSION.md to hold the pin to"
+
+    # On every surface it reads, each form of the term as a claim fails, and the negated form passes.
+    for rel in surfaces:
+        for text in ("polaris-oid4vp is production-ready.", "Polaris is Production Ready.",
+                     "polaris-oid4vp is ready for production."):
+            assert fails(rel, text), (rel, text)
+        assert passes(rel, "Polaris is not production-ready."), rel
+
+    # The word right before it takes it back, "yet" alone between, across a line of one paragraph too.
+    for text in ("Polaris is not production-ready.", "Polaris is not yet production-ready.",
+                 "Polaris isn't production-ready.", "Polaris isn’t production-ready.",
+                 "It is never production-ready on notional data.", "Neither audited nor production-ready.",
+                 "It is not yet ready for production.", "Polaris is not\nproduction-ready.",
+                 "See [PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).",
+                 "The system is not production-ready ([PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md))."):
+        assert passes("README.md", text), text
+    # Anything else before it takes nothing back, and no grammar admits a quoted phrase.
+    for text in ("Production ready for the Digital Credentials API.",
+                 "Polaris is not audited but production-ready.",
+                 "Polaris has never been more production-ready.",
+                 "There is no doubt it is production-ready.",
+                 "Not a toy! Production-ready.",
+                 "| not audited | production-ready |",
+                 "| not | production-ready |",
+                 "It is not only production-ready, it is fast.",
+                 "It is ready in production today.",
+                 'Polaris is "production-ready".',
+                 '"Production-ready" is not a stretch for Polaris.',
+                 '"Production ready" is not an exaggeration.'):
+        assert fails("README.md", text), text
+
+    # The pinned sentence passes in MISSION.md alone and word for word, and it must still be there.
+    pinned = checks._READY_CLAIM_PINNED[0][1]
+    assert fails("README.md", pinned), "must FAIL on MISSION.md's sentence in another file"
+    assert fails("MISSION.md", pinned.replace("named deployment", "deployment")), "must FAIL on a changed copy"
+    changed = run(base=dict(BASE, **{"MISSION.md": "# Mission\n\n" + PINNED.replace("named deployment", "deployment")}))
+    assert changed[0].level == "FAIL" and changed[0].message.startswith("MISSION.md:"), changed
+    gone = run(base=dict(BASE, **{"MISSION.md": "# Mission\n\nNo such sentence.\n"}))
+    assert gone[0].level == "FAIL" and "no longer says the pinned sentence" in gone[0].message, gone
+    beside = run(base=dict(BASE, **{"MISSION.md": "# Mission\n\n" + PINNED.rstrip("\n") + " Polaris is production-ready.\n"}))
+    assert beside[0].level == "FAIL" and beside[0].message.startswith("MISSION.md:"), \
+        "the pin covers its own sentence, not a claim beside it in the same paragraph"
+
+    # On a page, a tag is read out of the text, and its attribute values are read after the text, set apart.
+    page = "site/index.html"
+    assert fails(page, "<p><strong>production</strong>-ready</p>"), "must read a word a tag splits as one word"
+    assert fails(page, '<img alt="production-ready" src="card.png">'), "must read an alt text"
+    assert fails(page, '<p>Polaris is not <img alt="production-ready" src="card.png"></p>'), \
+        "an alt text stands apart from the text before it"
+    assert passes(page, "<p>Polaris is not <em>production-ready</em>.</p>"), "must read through a tag between"
+
+
 def test_public_claims_honest_holds_a_headline_title_to_the_page_h1(tmp_path):
     # Owner, 2026-11-17: a name field may read "Polaris ID: " and exactly the page's own h1, so the
     # tab says what the page says first and nothing more; og:site_name stays the bare name.

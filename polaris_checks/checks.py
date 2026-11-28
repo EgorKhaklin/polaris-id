@@ -16693,6 +16693,21 @@ _BARE_NAMES = ("Polaris", "Polaris ID")
 _CARD_OVERCLAIMS = ((r"\bdeployed\b", "deployed"), (r"\bpiloted\b", "piloted"),
                     (r"\bproduction[- ]ready\b", "production-ready"))
 
+#: The readiness ledger's word, in either order, on an outward surface or a published README.
+_READY_CLAIM = re.compile(r"(?i:\bproduction[- ]ready\b|\bready\s+(?:for|in)\s+production\b)")
+#: The word right before the term that takes it back; "yet" alone may stand between.
+_READY_CLAIM_NEGATED = re.compile(r"(?i:\b(?:not|never|nor|(?:is|are|was|were)n['’]t)\s+(?:yet\s+)?\Z)")
+#: A tag, read out of the text; its attribute values are read after the text, each set apart.
+_READY_CLAIM_TAG = re.compile(r"<[^<>]*>")
+_READY_CLAIM_ATTRIBUTE = re.compile(r"""=\s*(?:"([^"]*)"|'([^']*)')""")
+#: The one sentence that says the term and passes without a negation right before it: the constitution's own,
+#: exactly as the block reader joins it (Odysseus, 2026-11-28). It holds while MISSION.md says it; when the
+#: sentence changes, the check fails until the pin is restated. No other sentence is admitted by its grammar.
+_READY_CLAIM_PINNED = (
+    ("MISSION.md", '"Production ready" is not a phrase this project applies to itself until the decisions listed '
+                   "there are recorded as made for a named deployment."),
+)
+
 
 # What a description or a card may say of the certification: this sentence, whole, at its opening, or nothing.
 _SITE_CERTIFIED_SENTENCE = ("polaris-oid4vp 1.0.0rc7 is OpenID Certified to the OpenID4VP 1.0 + HAIP 1.0 Verifier "
@@ -16707,7 +16722,10 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     never "certified"; an h1 named by an aria-label is named by exactly its own text; no field of the card, descriptions and image text included,
     calls Polaris national, deployed, piloted or production-ready, or unlinkable
     without its issuer qualifier (each occurrence), in any tag of that field, however it is quoted or
-    cased; the README must not carry the retired overclaims; a README comparison with a
+    cased; the README must not carry the retired overclaims; no outward surface or published
+    README says production-ready (or production ready, ready for production, ready in
+    production) unless the word right before it takes it back (not, never, nor, isn't; "yet"
+    alone may stand between); a README comparison with a
     row whose first cell begins with Polaris must keep the honest 'Deployed to a real population' column
     that marks Polaris the one system NOT deployed, so its design ticks are not read
     as a deployment; and a README that speaks of unlinkability or correlation must give
@@ -16720,7 +16738,10 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
     title and og:title that are "Polaris ID: " and the h1, which pass, one word, the period or the
     case off it, another tagline, the shorter name, the h1 alone, og:site_name in that form, two
     h1s, none, the text in a drawing, and a refused word in the h1 itself; and an h1 or an h2 whose
-    aria-label is another sentence, an empty one, or one carrying a refused word its letters do not."""
+    aria-label is another sentence, an empty one, or one carrying a refused word its letters do not;
+    and, in a test of its own, each form of the readiness term on every surface it reads, negated
+    and not, across a line, in a table cell, after another clause's negation, split by a tag and
+    in an alt text."""
     readme = _read(root, "README.md")
     site = _read(root, "site/index.html")
     if not readme or not site:
@@ -16837,11 +16858,52 @@ def check_public_claims_honest(root: pathlib.Path) -> list[Finding]:
                      "the comparison awards Polaris a deployment/national-scope tick; Polaris is not deployed and "
                      "does not issue at national scale, so both leading columns must be a negative (the paragraph "
                      "and the table must not argue)")
+    # "production-ready" is the readiness ledger's word (docs/PRODUCTION-READINESS.md: not
+    # production-ready for real identity data), and MISSION.md says the system is not. A surface that
+    # says it, or "ready for production", outruns the ledger. A mention passes only when the word
+    # right before it takes it back ("not", "never", "nor", "isn't").
+    # Only white space, or "yet", may stand between, so a negation anywhere else takes nothing back
+    # ("not audited but production-ready", "never been more production-ready", "| not |
+    # production-ready |", "Not a toy! Production-ready."). The one sentence that passes otherwise is
+    # pinned: MISSION.md's, word for word (_READY_CLAIM_PINNED), and it must still be there. Each block
+    # is read as check_mdoc_dc_api_claims_are_gated reads it. Tags are read out of the text, so a word
+    # a tag splits is one word, and their attribute values (an alt text, a title) are read after it,
+    # each set apart, so no negation in the text reaches one.
+    ready_mentions, ready_read, pinned_seen = 0, 0, set()
+    for rel in _OUTWARD_SURFACES + _PUBLISHED_READMES + ("polaris_cli/README.md",):
+        text = _read_raw(root, rel)
+        if not text:
+            continue
+        ready_read += 1
+        for start, _, block in _mdoc_claim_blocks(text, not rel.endswith(".md")):
+            values = [a or b for tag in _READY_CLAIM_TAG.findall(block) for a, b in _READY_CLAIM_ATTRIBUTE.findall(tag)]
+            said = " | ".join([_READY_CLAIM_TAG.sub("", block)] + values)
+            for found in _READY_CLAIM.finditer(said):
+                ready_mentions += 1
+                if _READY_CLAIM_NEGATED.search(said[:found.start()]):
+                    continue
+                pins = [pin for pin in _READY_CLAIM_PINNED if pin[0] == rel and pin[1] in said
+                        and said.index(pin[1]) <= found.start() and found.end() <= said.index(pin[1]) + len(pin[1])]
+                if pins:
+                    pinned_seen.update(pins)
+                    continue
+                around = " ".join(said[max(0, found.start() - 60):found.end() + 60].split())
+                return _fail("public_claims",
+                             f"{rel}:{start} says {found.group(0)!r} ({around!r}); the readiness ledger "
+                             "(docs/PRODUCTION-READINESS.md) says Polaris is not, so the sentence says what "
+                             "it is instead")
+    for rel, sentence in _READY_CLAIM_PINNED:
+        if (rel, sentence) not in pinned_seen and _read_raw(root, rel):
+            return _fail("public_claims",
+                         f"{rel} no longer says the pinned sentence {sentence!r}; restate _READY_CLAIM_PINNED "
+                         "to what it says now, or drop the pin")
     return _ok("public_claims",
                "the title and social card do not overstate Polaris (each name field the bare name or 'pre-pilot', "
                "none 'certified'; no field national, deployed, piloted, production-ready or bare 'unlinkable'), "
-               "the README carries no retired overclaim, and any comparison marks Polaris neither deployed "
-               "nor issuing at national scale so its design ticks are not read as a deployment")
+               "the README carries no retired overclaim, the %d outward surfaces and published READMEs read say "
+               "production-ready %d time(s), each negated by the word before it or MISSION.md's pinned sentence, "
+               "and any comparison marks Polaris neither deployed nor issuing at national scale so its design "
+               "ticks are not read as a deployment" % (ready_read, ready_mentions))
 
 
 # ---------------------------------------------------------------------------
