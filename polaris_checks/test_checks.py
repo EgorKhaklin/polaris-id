@@ -11940,6 +11940,12 @@ def test_public_claims_honest_refuses_production_ready_unless_negated(tmp_path):
     beside = run(base=dict(BASE, **{"MISSION.md": "# Mission\n\n" + PINNED.rstrip("\n") + " Polaris is production-ready.\n"}))
     assert beside[0].level == "FAIL" and beside[0].message.startswith("MISSION.md:"), \
         "the pin covers its own sentence, not a claim beside it in the same paragraph"
+    # A denial of the quoted term is a common way to affirm it, so no grammar admits one, in MISSION.md or elsewhere.
+    for rel in ("MISSION.md", "README.md"):
+        for text in ('"Production-ready" is not an overstatement for Polaris.',
+                     '"Production-ready" is not just a label: Polaris is.',
+                     '"Production ready" is never in doubt here.'):
+            assert fails(rel, text), (rel, text)
 
     # On a page, a tag is read out of the text, and its attribute values are read after the text, set apart.
     page = "site/index.html"
