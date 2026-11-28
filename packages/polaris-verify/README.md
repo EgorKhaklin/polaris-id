@@ -1,6 +1,7 @@
 # polaris-verify
 
 [![PyPI](https://img.shields.io/pypi/v/polaris-verify?include_prereleases&label=PyPI&color=3775a9&labelColor=0a1421&style=flat-square)](https://pypi.org/project/polaris-verify/)
+[![Project site: polaris-id.org](https://img.shields.io/badge/site-polaris--id.org-c9a352?labelColor=0a1421&style=flat-square)](https://polaris-id.org/)
 [![CI](https://img.shields.io/github/actions/workflow/status/EgorKhaklin/polaris-id/ci.yml?branch=main&label=CI&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/EgorKhaklin/polaris-id?label=stars&labelColor=0a1421&style=flat-square)](https://github.com/EgorKhaklin/polaris-id)
 [![Discord](https://img.shields.io/badge/Discord-join_the_server-5865F2?logo=discord&logoColor=white&labelColor=0a1421&style=flat-square)](https://discord.gg/ragewuCKj)

@@ -1,6 +1,6 @@
 # polaris-id-cli
 
-The operator command line for a [Polaris ID](https://github.com/EgorKhaklin/polaris-id) database:
+The operator command line for a [Polaris ID](https://polaris-id.org/) database:
 the use-case stored procedures, inspection and read-only queries, and the
 operator records (users, authorities, quotas, revocation bounds, relying
 parties, authority keys, retention), without a browser. Polaris ID is
