@@ -794,7 +794,7 @@
     {
       "id": "llms-outside-ci",
       "kind": "statement",
-      "claim": "Since 2026-10-11, OID4VCgo runs the verifier in its own CI, every day and on each of its releases, and four outside projects have merged Polaris's refusal tests into their own CI.",
+      "claim": "Since 2026-10-11, OID4VCgo runs polaris-oid4vp in its own CI, every day and on each of its releases, and four outside projects have merged Polaris's refusal tests into their own CI.",
       "surfaces": [
         "site/llms.txt"
       ],
