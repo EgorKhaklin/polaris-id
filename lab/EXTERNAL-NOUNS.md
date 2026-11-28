@@ -224,7 +224,8 @@ Operator, in test: IDFoundry/OID4VCgo's CI runs polaris-oid4vp, daily and per re
 2026-10-11 (see Use).
 
 National wallet sandboxes. Each row is the authority's own act toward Polaris, in its written
-message to the project.
+message to the project, or a run in its sandbox that the authority agreed to have recorded, in
+the words it agreed to.
 
 | Date | Authority | Act | Evidence |
 |---|---|---|---|
@@ -232,6 +233,7 @@ message to the project.
 | 2026-11-05 | Norway's Digdir | registered Polaris as a relying party in its national wallet sandbox and issued its access certificate | the access certificate it issued, subject CN=Polaris verifier |
 | 2026-11-06 | Taiwan's Ministry of Digital Affairs | opened issuer and verifier accounts for Polaris in its digital wallet sandbox | |
 | 2026-11-12 | Denmark's Agency for Digital Government | opened AltID test environment access for Polaris | [the run on its test app, 2026-11-13](interop/altid/README.md) |
+| | Germany's EUDI wallet sandbox | polaris-oid4vp completed a presentation with the closed beta of the National EUDI Wallet in the sandbox, with test data | |
 
 ### Use
 
