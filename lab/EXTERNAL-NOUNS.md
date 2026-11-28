@@ -302,7 +302,10 @@ the words it agreed to.
    run on main with them ([45462582246](https://github.com/openeudi/openid4vp/actions/runs/45462582246)) passed.
    On 2026-11-26 the maintainer opened and merged [PR 86](https://github.com/openeudi/openid4vp/pull/86)
    (1fa22eae), which refuses Disclosures inside registered claims; its text names this repository's
-   `disclosed-status-sub-claim` vector (`vectors.json` 0.7.0) as what found it.
+   `disclosed-status-sub-claim` vector (`vectors.json` 0.7.0) as what found it. On 2026-11-28 the maintainer
+   merged [PR 88](https://github.com/openeudi/openid4vp/pull/88) (9f8e332e), "test: update the Polaris mdoc
+   negative vectors to 0.3.1", which they had opened on 2026-11-27; the CI run on that merge commit
+   ([46138123095](https://github.com/openeudi/openid4vp/actions/runs/46138123095)) passed.
 7. 2026-11-17: Iya CyberSecurity Solutions'
    [id-proto-debugger](https://github.com/rcbj/id-proto-debugger) runs polaris-oid4vp v1.1.0's
    published image, copied into their own registry mirror, as the verifier in their scheduled test
